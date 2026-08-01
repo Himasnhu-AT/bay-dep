@@ -11,9 +11,11 @@ Living status of the Phase-0 de-risk spikes. Updated as tasks land.
 | **P0-GPU-01** — Freeze workspace-wide wgpu | ✅ done | Single `wgpu = "=29.0.1"` in `[workspace.dependencies]`; whole native graph resolves to one wgpu (`cargo tree` shows only `wgpu v29.0.1`). |
 | **P0-GPU-02** — Native RGBA upload + readback | ✅ done | `GpuContext::upload_rgba_texture` / `read_texture_rgba`; 2 headless tests pass on Metal. |
 | **P0-GPU-03** — Compositor → native winit/wgpu window | ✅ built | `native-preview` bin drives the unmodified `Compositor::render_frame` to a window surface; compiles clean. On-screen present is user-runnable (`cargo run -p native-preview`). |
+| **P0-ARCH-01** — Owned-Editor + Command-enum + EventBus borrow model | ✅ done | `rust/crates/opencut-core`; 8 tests prove execute/undo/redo, `selectionOverride` semantics, one-event-per-command; zero `Arc`/`RwLock`/`RefCell`. |
 | P0-GPU-04 — GPUI↔wgpu interop GO/NO-GO | 🔜 reframed | See finding below — premise changed from wgpu-sharing to blade↔wgpu. |
 | P0-GPU-05 — GPUI sourcing + Tauri fallback | 🔜 next | crates.io GPUI 0.2.2 already vendored in `apps/desktop`; blade backend confirmed. |
-| P0-MED-* / P0-TXT-* / P0-ARCH-* | ⬜ not started | — |
+| P0-MED-* / P0-TXT-* | ⬜ not started | — |
+| P0-ARCH-02 — golden-fixture capture tooling | ⬜ not started | — |
 
 ## What landed
 
@@ -31,6 +33,26 @@ Living status of the Phase-0 de-risk spikes. Updated as tasks land.
 
 ### Native preview window (P0-GPU-03)
 `rust/crates/native-preview` — winit 0.30 `ApplicationHandler`; `instance.create_surface(Arc<Window>)` (rwh 0.6 aligns winit↔wgpu) → `Surface<'static>`; drives **`compositor::Compositor::render_frame`** with a 3-layer `FrameDescriptor` (opaque bg + accent + a half-transparent `Screen`-blended layer) each redraw. The engine crates are unchanged — same code that renders in wasm renders to a desktop surface. Run: `cargo run -p native-preview`.
+
+### Owned-Editor borrow model (P0-ARCH-01)
+`rust/crates/opencut-core` — the Phase-1 engine seed, proving the central architecture on the
+two pure managers before anything is built on it:
+- **One owned `Editor`** with a single `EditorState` (selection + clipboard + a minimal
+  document). The web's per-manager listener classes collapse into stateless free-function
+  modules (`selection::`, `clipboard::`) taking `&mut` slices — **no `Arc`, no `RwLock`, no
+  `RefCell`** (grep-verified); the borrow checker alone guarantees no aliasing.
+- **A serde-tagged `Command` enum** (`SetSelection` / `InsertElements` / `Paste`) that is at
+  once the undo/redo unit and the autosave/MCP wire format — a test pins the exact tagged JSON.
+- **A coalesced `EventBus`**: a command touching document + selection surfaces as *one* event
+  flagging both domains. Subscribers get `&EditorEvent` only (never `&Editor`), so nothing can
+  re-enter and alias the state a command still holds `&mut`.
+- **Web-faithful `selectionOverride` undo**: undo restores the prior selection only for
+  commands that declared a selection change; a command with no selection intent leaves a later
+  UI click's selection untouched. Both paths are tested.
+
+Sign-off: the model holds — Phase 1 can build the remaining managers on this shape. `EditorState`
+grows new fields (scenes, timeline, playback…) and each manager becomes another free-function
+module + `Command` variants; the event/undo plumbing does not change.
 
 ## Findings
 
