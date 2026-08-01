@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bytemuck = { version = "1.25.0", features = ["derive"] }
+bytemuck = { workspace = true }
 effects = { version = "0.1.0", path = "../effects" }
 gpu = { version = "0.1.0", path = "../gpu" }
 masks = { version = "0.1.0", path = "../masks" }
-serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.18"
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Block on the async GpuContext::new() inside synchronous #[test] functions.
+pollster = "0.4"

@@ -693,3 +693,140 @@ impl GpuContext {
         Ok(())
     }
 }
+
+/// Native (non-wasm) texture I/O.
+///
+/// On the browser, source frames enter the compositor via `import_offscreen_canvas_texture`
+/// (a `copy_external_image_to_texture` from a Canvas). Native has no Canvas, so the decoder /
+/// raster / test paths hand us a CPU-side tightly-packed RGBA8 buffer that we upload directly.
+/// These two helpers are the native replacement for that Canvas path and the readback used by
+/// the golden/parity harness.
+#[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+impl GpuContext {
+    /// Uploads a tightly-packed (`width * 4` byte-per-row) RGBA8 buffer into a fresh render
+    /// texture, swizzling R↔B when the device's native format is `Bgra8Unorm` (Metal / most
+    /// desktop backends) so the stored texels match the compositor's expectation.
+    ///
+    /// `queue.write_texture` imposes **no** 256-byte row-pitch alignment — that constraint is
+    /// specific to buffer⇄texture copies — so rows are written at their natural pitch.
+    pub fn upload_rgba_texture(
+        &self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        label: &'static str,
+    ) -> wgpu::Texture {
+        let expected = (width as usize) * (height as usize) * 4;
+        assert_eq!(
+            rgba.len(),
+            expected,
+            "upload_rgba_texture: buffer is {} bytes, expected {width}x{height}x4 = {expected}",
+            rgba.len(),
+        );
+        let texture = self.create_render_texture(width, height, label);
+        let pixels = self.swizzle_for_native_format(rgba);
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        texture
+    }
+
+    /// Reads a texture back into a tightly-packed RGBA8 `Vec` (length `width * height * 4`).
+    ///
+    /// `copy_texture_to_buffer` requires the staging buffer's row pitch to be a multiple of
+    /// `COPY_BYTES_PER_ROW_ALIGNMENT` (256), so we copy into a padded buffer, then strip the
+    /// per-row padding and reverse the native BGRA swizzle to hand callers canonical RGBA.
+    /// Blocks on `device.poll(Wait)` — intended for tests and offline export, not the hot path.
+    pub fn read_texture_rgba(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+        let unpadded_bytes_per_row = (width as usize) * 4;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu-readback-buffer"),
+            size: (padded_bytes_per_row * height as usize) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gpu-readback-encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row as u32),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::wgt::PollType::wait_indefinitely())
+            .expect("device.poll(Wait) failed during texture readback");
+
+        let mapped = slice.get_mapped_range();
+        let mut out = vec![0u8; unpadded_bytes_per_row * height as usize];
+        for row in 0..height as usize {
+            let src_start = row * padded_bytes_per_row;
+            let dst_start = row * unpadded_bytes_per_row;
+            out[dst_start..dst_start + unpadded_bytes_per_row]
+                .copy_from_slice(&mapped[src_start..src_start + unpadded_bytes_per_row]);
+        }
+        drop(mapped);
+        buffer.unmap();
+
+        if self.texture_format == wgpu::TextureFormat::Bgra8Unorm {
+            for texel in out.chunks_exact_mut(4) {
+                texel.swap(0, 2);
+            }
+        }
+        out
+    }
+
+    /// Swaps R and B when the native texture format is BGRA so a caller-supplied RGBA buffer
+    /// lands in the right channels; a no-op copy on RGBA backends.
+    fn swizzle_for_native_format(&self, rgba: &[u8]) -> Vec<u8> {
+        let mut bytes = rgba.to_vec();
+        if self.texture_format == wgpu::TextureFormat::Bgra8Unorm {
+            for texel in bytes.chunks_exact_mut(4) {
+                texel.swap(0, 2);
+            }
+        }
+        bytes
+    }
+}
