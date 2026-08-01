@@ -14,8 +14,8 @@ Living status of the Phase-0 de-risk spikes. Updated as tasks land.
 | **P0-ARCH-01** — Owned-Editor + Command-enum + EventBus borrow model | ✅ done | `rust/crates/opencut-core`; 8 tests prove execute/undo/redo, `selectionOverride` semantics, one-event-per-command; zero `Arc`/`RwLock`/`RefCell`. |
 | P0-GPU-04 — GPUI↔wgpu interop GO/NO-GO | 🔜 reframed | See finding below — premise changed from wgpu-sharing to blade↔wgpu. |
 | P0-GPU-05 — GPUI sourcing + Tauri fallback | 🔜 next | crates.io GPUI 0.2.2 already vendored in `apps/desktop`; blade backend confirmed. |
+| **P0-ARCH-02** — golden-fixture capture tooling | 🟡 core done | Migration chain v0→v31 + keybindings captured headlessly & deterministically to `fixtures/golden/`; a vitest spec is both the capture command and a drift guard. Descriptor/media-probe/audio-mix are browser-only — documented for in-app capture. |
 | P0-MED-* / P0-TXT-* | ⬜ not started | — |
-| P0-ARCH-02 — golden-fixture capture tooling | ⬜ not started | — |
 
 ## What landed
 
@@ -53,6 +53,25 @@ two pure managers before anything is built on it:
 Sign-off: the model holds — Phase 1 can build the remaining managers on this shape. `EditorState`
 grows new fields (scenes, timeline, playback…) and each manager becomes another free-function
 module + `Command` variants; the event/undo plumbing does not change.
+
+### Golden-fixture capture (P0-ARCH-02)
+`fixtures/golden/` — provenance-correct reference data captured from the real web code (never
+hand-authored), for the native migration-/descriptor-parity suites. See `fixtures/golden/README.md`.
+- **Migration chain v0→v31** (`migrations/v0.json … v31.json` + `_manifest.json`): a v0 seed
+  (`{id,name}`) threaded through all 31 real migrations; full chain runs with **no skips**, ends at
+  `version: 31`. Deterministic (frozen clock `2020-01-01Z` + counter UUIDs).
+- **Default keybindings** (`keybindings/default.json`): 25 defaults via `serializeKeybindingsState`.
+- Captured by `apps/web/.../migrations/__tests__/golden-fixtures.test.ts` — the **same spec is the
+  capture command** (`CAPTURE_GOLDEN=1 vitest run …`) **and a drift guard** (plain run asserts the
+  code still reproduces the committed fixtures byte-for-byte; tamper → fail, verified). Full web
+  suite stays green: 38 files / 222 passed / 3 skipped.
+- **Finding:** only `v1-to-v2.ts` among the 31 migrations is IndexedDB-coupled (loads + deletes
+  legacy per-scene track stores). Captured via its pure `transformProjectV1ToV2` with an explicit
+  empty context (what its own unit test does), avoiding the destructive cleanup — no `fake-indexeddb`
+  dependency needed.
+- **Deferred (browser-only):** descriptor / media-probe / audio-mix producers bind to
+  CanvasRenderer / WebCodecs / Web Audio at module load, so they can't be captured in Node. The
+  README documents exact in-app capture recipes + schemas + the Rust-side mirrors.
 
 ## Findings
 
