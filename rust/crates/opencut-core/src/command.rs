@@ -115,6 +115,13 @@ pub enum Command {
         property: String,
         time: MediaTime,
     },
+    /// Apply a motion preset (a bundle of effects + animation channels) to an element in one
+    /// undoable step. Effect ids should be pre-minted by the caller to avoid collisions.
+    ApplyMotionPreset {
+        reference: ElementRef,
+        effects: Vec<Effect>,
+        animations: std::collections::BTreeMap<String, AnimationChannel>,
+    },
     /// Add an empty overlay/audio track.
     AddTrack {
         lane: TrackLane,
@@ -159,6 +166,7 @@ pub enum CommandKind {
     SetEffectParam,
     AddKeyframe,
     RemoveKeyframe,
+    ApplyMotionPreset,
     AddTrack,
     RemoveTrack,
     AddScene,
@@ -824,6 +832,41 @@ impl Command {
                         property: property.clone(),
                         channel,
                     }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::ApplyMotionPreset {
+                reference,
+                effects,
+                animations,
+            } => {
+                let element = scene.element(reference)?;
+                if matches!(element.kind(), ElementKind::Audio) {
+                    return None;
+                }
+                let base = element.effects().len();
+                let mut forward = Vec::new();
+                for (offset, effect) in effects.iter().enumerate() {
+                    forward.push(ProjectPatch::AddEffect {
+                        reference: reference.clone(),
+                        index: base + offset,
+                        effect: effect.clone(),
+                    });
+                }
+                for (property, channel) in animations {
+                    forward.push(ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel.clone()),
+                    });
+                }
+                if forward.is_empty() {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::ApplyMotionPreset,
+                    forward,
                     selection_patch: None,
                 })
             }

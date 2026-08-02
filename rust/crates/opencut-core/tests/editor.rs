@@ -499,6 +499,43 @@ fn keyframes_animate_a_property_and_reverse() {
 }
 
 #[test]
+fn apply_motion_preset_adds_effects_and_animations_reversibly() {
+    use opencut_core::{AnimationChannel, Effect, Keyframe};
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title");
+
+    let mut animations = std::collections::BTreeMap::new();
+    animations.insert(
+        "opacity".to_string(),
+        AnimationChannel {
+            keys: vec![Keyframe {
+                time: MediaTime::ZERO,
+                value: 0.2,
+            }],
+        },
+    );
+    assert!(editor.execute(Command::ApplyMotionPreset {
+        reference: reference.clone(),
+        effects: vec![Effect {
+            id: "p-fx".into(),
+            effect_type: "brightness".into(),
+            enabled: true,
+            params: [("amount".to_string(), 1.5)].into_iter().collect(),
+        }],
+        animations,
+    }));
+
+    let element = editor.active_scene().element(&reference).unwrap();
+    assert_eq!(element.effects().len(), 1);
+    assert_eq!(element.animated_property_count(), 1);
+
+    editor.undo();
+    let element = editor.active_scene().element(&reference).unwrap();
+    assert!(element.effects().is_empty());
+    assert_eq!(element.animated_property_count(), 0);
+}
+
+#[test]
 fn each_command_emits_exactly_one_coalesced_event() {
     let mut editor = Editor::starter();
     let rx = record_events(&mut editor);

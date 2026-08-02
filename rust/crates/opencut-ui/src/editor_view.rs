@@ -42,6 +42,14 @@ struct DragState {
 const MIN_BLOCK_WIDTH: f32 = 10.0;
 const TRIM_HANDLE_WIDTH: f32 = 7.0;
 
+/// A saved bundle of a clip's effects + animations (in-memory motion-graphics preset).
+#[derive(Clone)]
+struct MotionPreset {
+    name: String,
+    effects: Vec<opencut_core::Effect>,
+    animations: std::collections::BTreeMap<String, opencut_core::AnimationChannel>,
+}
+
 // Keyboard actions. Bound to keystrokes in `key_bindings()` and handled on the root element.
 gpui::actions!(
     vii,
@@ -120,6 +128,7 @@ pub struct EditorView {
     preview: Option<PreviewRenderer>,
     preview_image: Option<Arc<RenderImage>>,
     preview_sig: Option<u64>,
+    presets: Vec<MotionPreset>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -142,7 +151,52 @@ impl EditorView {
             preview,
             preview_image: None,
             preview_sig: None,
+            presets: Vec::new(),
         }
+    }
+
+    /// Save the selected clip's effects + animations as an in-memory motion preset.
+    fn save_preset(&mut self) {
+        let captured = self.editor.selected_element().map(|element| {
+            (
+                element.effects().to_vec(),
+                element.animations().cloned().unwrap_or_default(),
+            )
+        });
+        if let Some((effects, animations)) = captured {
+            if effects.is_empty() && animations.is_empty() {
+                return;
+            }
+            let name = format!("Preset {}", self.presets.len() + 1);
+            self.presets.push(MotionPreset {
+                name,
+                effects,
+                animations,
+            });
+        }
+    }
+
+    /// Apply a saved preset to the selected clip (minting fresh effect ids), one undo step.
+    fn apply_preset(&mut self, index: usize) {
+        let Some(reference) = self.editor.selection().first().cloned() else {
+            return;
+        };
+        let Some(preset) = self.presets.get(index).cloned() else {
+            return;
+        };
+        let mut effects = Vec::with_capacity(preset.effects.len());
+        for effect in preset.effects {
+            self.add_counter += 1;
+            effects.push(opencut_core::Effect {
+                id: format!("fx-{}", self.add_counter),
+                ..effect
+            });
+        }
+        self.editor.execute(Command::ApplyMotionPreset {
+            reference,
+            effects,
+            animations: preset.animations,
+        });
     }
 
     /// A cheap signature of everything that affects the composited preview.
@@ -1393,6 +1447,31 @@ impl EditorView {
                     });
                 }
             }));
+
+            // Motion presets (in-memory): save the clip's effects+animations, apply elsewhere.
+            body = body
+                .child(div().text_xs().text_color(rgb(theme::MUTED)).child("PRESETS"))
+                .child(self.button("save-preset", "Save Preset", true, cx, |this, _cx| {
+                    this.save_preset()
+                }));
+            for (index, preset) in self.presets.iter().enumerate() {
+                let label = format!("Apply {}", preset.name);
+                body = body.child(
+                    div()
+                        .id(SharedString::from(format!("apply-preset-{index}")))
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(theme::PANEL_ALT))
+                        .text_sm()
+                        .text_color(rgb(theme::TEXT))
+                        .child(Self::shared(label))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.apply_preset(index);
+                            cx.notify();
+                        })),
+                );
+            }
         }
 
         panel.child(body)
