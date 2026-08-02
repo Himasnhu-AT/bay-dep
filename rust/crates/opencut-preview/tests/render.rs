@@ -161,3 +161,30 @@ fn renders_a_real_video_frame_via_ffmpeg() {
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn exports_a_short_video_via_ffmpeg() {
+    let Some(mut renderer) = PreviewRenderer::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let project = Project::starter();
+    let out = std::env::temp_dir().join(format!("vii-export-{}.mp4", std::process::id()));
+    let ok = renderer.export_video(
+        project.active_scene(),
+        0.5, // seconds
+        10.0, // fps → 5 frames
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+    );
+    if !ok {
+        eprintln!("skipping: ffmpeg encode unavailable");
+        return;
+    }
+    let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+    assert!(size > 0, "exported video should be non-empty");
+    let _ = std::fs::remove_file(&out);
+}

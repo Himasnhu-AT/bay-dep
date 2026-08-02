@@ -99,6 +99,68 @@ impl PreviewRenderer {
         element.id().to_string()
     }
 
+    /// Encode the timeline to a video file by rendering each frame and piping raw RGBA to the
+    /// ffmpeg CLI. Returns `false` if ffmpeg is unavailable or encoding fails. Blocks until done.
+    #[allow(clippy::too_many_arguments)]
+    pub fn export_video(
+        &mut self,
+        scene: &Scene,
+        duration_seconds: f64,
+        fps: f64,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+        out_path: &str,
+    ) -> bool {
+        use std::io::Write;
+
+        let Ok(mut child) = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgba",
+                "-s",
+                &format!("{width}x{height}"),
+                "-r",
+                &format!("{fps}"),
+                "-i",
+                "pipe:0",
+                "-pix_fmt",
+                "yuv420p",
+                out_path,
+            ])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        else {
+            return false;
+        };
+        let Some(mut stdin) = child.stdin.take() else {
+            return false;
+        };
+
+        let total_frames = (duration_seconds * fps).ceil().max(1.0) as u64;
+        for index in 0..total_frames {
+            let seconds = index as f64 / fps;
+            let playhead = MediaTime::from_seconds_f64(seconds).unwrap_or(MediaTime::ZERO);
+            let frame = self.render(scene, playhead, width, height, background, media);
+            let mut rgba = frame.bgra;
+            for texel in rgba.chunks_exact_mut(4) {
+                texel.swap(0, 2); // BGRA → RGBA for ffmpeg input
+            }
+            if stdin.write_all(&rgba).is_err() {
+                break;
+            }
+        }
+        drop(stdin);
+        child.wait().map(|s| s.success()).unwrap_or(false)
+    }
+
     /// Composite `scene` at `playhead` into a `width × height` BGRA frame. `media` resolves image
     /// element `media_id`s to files on disk.
     pub fn render(

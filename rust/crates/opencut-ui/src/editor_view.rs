@@ -95,6 +95,11 @@ fn export_frame_path() -> std::path::PathBuf {
     home_dir().join("vii-frame.png")
 }
 
+/// Where "Export Video" writes the encoded timeline.
+fn export_video_path() -> std::path::PathBuf {
+    home_dir().join("vii-export.mp4")
+}
+
 fn home_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
 }
@@ -386,6 +391,37 @@ impl EditorView {
         }
     }
 
+    /// Encode the whole timeline to an MP4 (via the ffmpeg sidecar), capped at 1280px wide.
+    fn export_video(&mut self) {
+        if self.preview.is_none() {
+            return;
+        }
+        let canvas = self.editor.project().settings.canvas;
+        let fps = self.editor.project().settings.fps.as_f64().max(1.0);
+        let duration = self.editor.duration().to_seconds_f64().max(0.1);
+        let background = self.editor.project().settings.background.clone();
+
+        // Even dimensions (yuv420p), capped for reasonable export time.
+        let scale = (1280.0 / canvas.width as f32).min(1.0);
+        let width = (((canvas.width as f32 * scale) as u32) / 2) * 2;
+        let height = (((canvas.height as f32 * scale) as u32) / 2) * 2;
+
+        let renderer = self.preview.as_mut().unwrap();
+        let scene = self.editor.active_scene();
+        let media = self.editor.media();
+        let out = export_video_path();
+        let _ = renderer.export_video(
+            scene,
+            duration,
+            fps,
+            width.max(2),
+            height.max(2),
+            &background,
+            media,
+            &out.to_string_lossy(),
+        );
+    }
+
     /// Split the selected element at the playhead into two clips.
     fn split_selected(&mut self) {
         if let Some(reference) = self.editor.selection().first().cloned() {
@@ -520,6 +556,13 @@ impl EditorView {
                         self.preview.is_some(),
                         cx,
                         |this, _cx| this.export_frame(),
+                    ))
+                    .child(self.button(
+                        "export-video",
+                        "Export Video",
+                        self.preview.is_some(),
+                        cx,
+                        |this, _cx| this.export_video(),
                     )),
             )
             .child(
