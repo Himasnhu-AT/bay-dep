@@ -46,22 +46,32 @@ editor's preview pane is a placeholder.
   `EditorViewModel::build(&Editor)`), so it is unit-tested without opening a window.
 
 ## What works today
-- Native GPUI window with toolbar (**+ Text, Delete, Copy, Paste, Undo, Redo**), media panel,
-  preview placeholder (canvas size + background color), inspector (selected clip properties), and a
-  timeline rendering the three lanes (overlay/main/audio) with clickable element blocks.
-- Click a block → selects it (inspector updates, block highlights). Toolbar edits go through the
-  engine's command/undo system.
-- Starter project loads content so the editor opens non-empty.
+- **Scene bar** — tabs per scene (active highlighted) + **＋ Scene**; click to switch.
+- **Toolbar** — Save/Load (JSON), + Text, Delete, **Split**, Copy, Paste, Undo, Redo (disabled when N/A).
+- **Media panel** — click a clip to add it to the timeline **at the playhead**.
+- **Preview** — canvas size + live background color (placeholder until the compositor is wired).
+- **Inspector** — selected clip's Name/Kind/Text with **−/+ steppers for Start and Duration**.
+- **Timeline** — three lanes with element blocks: **click to select**, **drag to move**, a **playhead
+  line**, and **transport** (Play/Pause + |◀ ◀1s 1s▶ ▶|) with a `playhead / duration` readout.
+- **Playback** — Play animates the playhead in real time (stops at the end).
+- **Keyboard** — Cmd+Z/Cmd+Shift+Z, Backspace/Delete, **s** (split), Space (play/pause), ←/→ (seek),
+  Cmd+C/Cmd+V.
+- **Save/Load** — `~/vii-project.json` (same serde wire format as the web app).
+- Every edit flows through the engine's **command/undo** system.
 
 ## Roadmap toward feature parity with the web app
-1. **Live preview** — resolve `P0-GPU-04` (blade↔wgpu) and render the compositor into the preview
-   pane; add a playhead + transport (play/pause/seek) driven by `MediaTime`.
-2. **Direct manipulation** — drag to move/trim elements on the timeline; zoom/scroll; snapping.
-3. **Media import** — native decode (ffmpeg/gstreamer, per `P0-MED-01`) feeding real clips.
-4. **Inspector editing** — edit text/transform/opacity/effects; wire the effect + motion-preset
-   systems from the web app.
-5. **Persistence** — load/save the project JSON (already migration-compatible via `opencut-project`).
-6. **Audio** — waveform display + playback (`P0-*` audio path).
+Done: shell, selection, undo/redo, playhead+transport+playback, drag-to-move, inspector editing,
+media→timeline, split, multi-scene, save/load, keyboard shortcuts.
+
+Remaining (larger / partly gated):
+1. **Live video preview** — the big one: render the wgpu compositor into the GPUI window. Blocked on
+   the `P0-GPU-04` blade↔wgpu interop decision (shared IOSurface vs. per-frame GPU copy vs. Tauri).
+2. **Media decode** — native ffmpeg/gstreamer (`P0-MED-01`) so clips carry real frames/audio.
+3. **Direct manipulation, part 2** — drag clip **edges to trim**, timeline zoom/scroll, snapping.
+4. **Effects / masks / animation / motion-preset UI** — extend the element model + inspector.
+5. **Text editing** — inline text input (GPUI text field) for the Name/Text fields.
+6. **Export** — drive the compositor over the timeline to an encoded file.
+7. **Audio** — waveform display + mixed playback.
 
 ## Tests
 - `opencut-project`: model invariants + JSON round-trip (`tests/model.rs`).
