@@ -7,11 +7,35 @@
 //! lands; the compositing (background, transform, opacity, blend) is real.
 
 use compositor::{
-    BlendMode, CanvasClearDescriptor, Compositor, FrameDescriptor, FrameItemDescriptor,
-    LayerDescriptor, QuadTransformDescriptor,
+    BlendMode, CanvasClearDescriptor, Compositor, EffectPassDescriptor,
+    EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
+    QuadTransformDescriptor,
 };
 use gpu::GpuContext;
-use opencut_project::{Background, ElementKind, MediaTime, Scene};
+use opencut_project::{Background, Element, ElementKind, MediaTime, Scene};
+
+/// Map an element's enabled, supported effects to compositor effect-pass groups (one group per
+/// effect). Only `brightness` is supported today; unknown effect types are skipped so the
+/// compositor never errors on an unknown shader.
+fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
+    element
+        .effects()
+        .iter()
+        .filter(|effect| effect.enabled && effect.effect_type == "brightness")
+        .map(|effect| {
+            let amount = effect.params.get("amount").copied().unwrap_or(1.0);
+            let mut uniforms = std::collections::HashMap::new();
+            uniforms.insert(
+                "u_amount".to_string(),
+                EffectUniformValueDescriptor::Number(amount),
+            );
+            vec![EffectPassDescriptor {
+                shader: "brightness".to_string(),
+                uniforms,
+            }]
+        })
+        .collect()
+}
 
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
 pub struct PreviewFrame {
@@ -82,7 +106,7 @@ impl PreviewRenderer {
                     },
                     opacity: transform.opacity.clamp(0.0, 1.0),
                     blend_mode: BlendMode::Normal,
-                    effect_pass_groups: Vec::new(),
+                    effect_pass_groups: effect_groups(element),
                     mask: None,
                 }));
             }

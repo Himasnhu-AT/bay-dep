@@ -161,6 +161,15 @@ impl EditorView {
                             t.opacity.to_bits(),
                         ]
                         .hash(&mut hasher);
+                        for effect in element.effects() {
+                            effect.id.hash(&mut hasher);
+                            effect.effect_type.hash(&mut hasher);
+                            effect.enabled.hash(&mut hasher);
+                            for (key, value) in &effect.params {
+                                key.hash(&mut hasher);
+                                value.to_bits().hash(&mut hasher);
+                            }
+                        }
                     }
                 }
             }
