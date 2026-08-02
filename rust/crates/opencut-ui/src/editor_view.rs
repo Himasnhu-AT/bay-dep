@@ -30,6 +30,8 @@ const MIN_DURATION_TICKS: i64 = TICKS_PER_SECOND / 10;
 pub struct EditorView {
     editor: Editor,
     add_counter: u64,
+    playing: bool,
+    last_frame: Option<std::time::Instant>,
 }
 
 impl EditorView {
@@ -37,6 +39,44 @@ impl EditorView {
         Self {
             editor,
             add_counter: 0,
+            playing: false,
+            last_frame: None,
+        }
+    }
+
+    /// Start/stop transport playback. Restarts from 0 if pressed at the end.
+    fn toggle_play(&mut self) {
+        if self.playing {
+            self.playing = false;
+            self.last_frame = None;
+        } else {
+            if self.editor.playhead() >= self.editor.duration() {
+                self.editor.seek(MediaTime::ZERO);
+            }
+            self.playing = true;
+            self.last_frame = None;
+        }
+    }
+
+    /// Advance the playhead by the real time elapsed since the last animated frame; stop at the end.
+    fn advance_playback(&mut self) {
+        let now = std::time::Instant::now();
+        let dt = self
+            .last_frame
+            .map(|prev| now.duration_since(prev).as_secs_f64())
+            .unwrap_or(0.0);
+        self.last_frame = Some(now);
+
+        let duration = self.editor.duration();
+        let next_ticks =
+            self.editor.playhead().as_ticks() + (dt * TICKS_PER_SECOND as f64) as i64;
+        let next = MediaTime::from_ticks(next_ticks);
+        if next >= duration {
+            self.editor.seek(duration);
+            self.playing = false;
+            self.last_frame = None;
+        } else {
+            self.editor.seek(next);
         }
     }
 
@@ -499,6 +539,12 @@ impl EditorView {
             .flex_row()
             .items_center()
             .gap_2()
+            .child(self.transport_button(
+                "play",
+                if self.playing { "⏸ Pause" } else { "▶ Play" },
+                cx,
+                |this| this.toggle_play(),
+            ))
             .child(self.transport_button("seek-start", "|◀", cx, |this| {
                 this.editor.seek(MediaTime::ZERO)
             }))
@@ -610,7 +656,13 @@ impl EditorView {
 }
 
 impl Render for EditorView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.playing {
+            self.advance_playback();
+            if self.playing {
+                window.request_animation_frame();
+            }
+        }
         let vm = EditorViewModel::build(&self.editor);
 
         div()
