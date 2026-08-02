@@ -15,4 +15,5 @@ path = "src/lib.rs"
 compositor = { version = "0.1.0", path = "../compositor" }
 gpu = { version = "0.1.0", path = "../gpu" }
 opencut-project = { version = "0.1.0", path = "../opencut-project" }
+opencut-text = { version = "0.1.0", path = "../opencut-text" }
 pollster = "0.4"

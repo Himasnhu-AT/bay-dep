@@ -13,6 +13,7 @@ use compositor::{
 };
 use gpu::GpuContext;
 use opencut_project::{Background, Element, ElementKind, MediaTime, Scene};
+use opencut_text::TextRaster;
 
 /// Map an element's enabled, supported effects to compositor effect-pass groups (one group per
 /// effect). Only `brightness` is supported today; unknown effect types are skipped so the
@@ -47,6 +48,7 @@ pub struct PreviewFrame {
 pub struct PreviewRenderer {
     ctx: GpuContext,
     compositor: Compositor,
+    text: TextRaster,
 }
 
 impl PreviewRenderer {
@@ -55,7 +57,11 @@ impl PreviewRenderer {
     pub fn new() -> Option<Self> {
         let ctx = pollster::block_on(GpuContext::new()).ok()?;
         let compositor = Compositor::new(&ctx);
-        Some(Self { ctx, compositor })
+        Some(Self {
+            ctx,
+            compositor,
+            text: TextRaster::new(),
+        })
     }
 
     /// Composite `scene` at `playhead` into a `width × height` BGRA frame.
@@ -86,10 +92,22 @@ impl PreviewRenderer {
                     continue;
                 }
 
-                let color = kind_color(element.kind());
+                // Text elements are rasterized to real glyphs; other visuals use a solid
+                // placeholder color (until native media decode provides real frames).
+                let (tex_w, tex_h, rgba) = match element {
+                    Element::Text(text) => {
+                        let tw = (transform.scale * width as f32).clamp(16.0, width as f32) as u32;
+                        let th =
+                            (transform.scale * height as f32).clamp(16.0, height as f32) as u32;
+                        let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
+                        let image = self.text.render(&text.content, font_px, &text.color, tw, th);
+                        (image.width, image.height, image.rgba)
+                    }
+                    _ => (8, 8, solid_rgba(kind_color(element.kind()))),
+                };
                 let texture = self
                     .ctx
-                    .upload_rgba_texture(&solid_rgba(color), 8, 8, "preview-layer");
+                    .upload_rgba_texture(&rgba, tex_w, tex_h, "preview-layer");
                 self.compositor
                     .upsert_texture(element.id().to_string(), texture);
 
