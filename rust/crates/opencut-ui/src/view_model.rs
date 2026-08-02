@@ -49,6 +49,7 @@ pub struct ElementBlock {
     pub reference: ElementRef,
     pub label: String,
     pub kind_label: String,
+    pub media_id: Option<String>,
     pub start_seconds: f64,
     pub duration_seconds: f64,
     pub selected: bool,
@@ -93,11 +94,18 @@ impl EditorViewModel {
                     .map(|element| {
                         let reference =
                             ElementRef::new(track.id.clone(), element.id().to_string());
+                        let media_id = match element {
+                            opencut_core::Element::Video(v) => Some(v.media_id.clone()),
+                            opencut_core::Element::Image(i) => Some(i.media_id.clone()),
+                            opencut_core::Element::Audio(a) => Some(a.media_id.clone()),
+                            opencut_core::Element::Text(_) => None,
+                        };
                         ElementBlock {
                             selected: editor.is_selected(&reference),
                             reference,
                             label: element.name().to_string(),
                             kind_label: element.kind().label().to_string(),
+                            media_id,
                             start_seconds: element.start().to_seconds_f64(),
                             duration_seconds: element.duration().to_seconds_f64(),
                         }

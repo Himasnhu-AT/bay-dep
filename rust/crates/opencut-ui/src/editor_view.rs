@@ -129,6 +129,8 @@ pub struct EditorView {
     preview_image: Option<Arc<RenderImage>>,
     preview_sig: Option<u64>,
     presets: Vec<MotionPreset>,
+    /// media id → cached waveform peaks (empty vec = decoded but no audio / failed).
+    waveforms: std::collections::HashMap<String, Vec<f32>>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -152,6 +154,30 @@ impl EditorView {
             preview_image: None,
             preview_sig: None,
             presets: Vec::new(),
+            waveforms: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Extract waveform peaks (once) for audio clips whose media resolves to a file.
+    fn ensure_waveforms(&mut self) {
+        let mut todo: Vec<(String, String)> = Vec::new();
+        {
+            let project = self.editor.project();
+            for track in &self.editor.active_scene().tracks.audio {
+                for element in &track.elements {
+                    if let opencut_core::Element::Audio(audio) = element {
+                        if !self.waveforms.contains_key(&audio.media_id) {
+                            if let Some(path) = project.media_path(&audio.media_id) {
+                                todo.push((audio.media_id.clone(), path.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (media_id, path) in todo {
+            let peaks = opencut_audio::waveform_peaks(&path, 48).unwrap_or_default();
+            self.waveforms.insert(media_id, peaks);
         }
     }
 
@@ -362,6 +388,7 @@ impl EditorView {
                 "Media",
                 &[
                     "png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "mov", "mkv", "webm", "avi",
+                    "m4v", "mp3", "wav", "m4a", "aac", "flac", "ogg",
                 ],
             )
             .pick_file()
@@ -376,6 +403,10 @@ impl EditorView {
         let is_video = matches!(
             extension.as_str(),
             "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v"
+        );
+        let is_audio = matches!(
+            extension.as_str(),
+            "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg"
         );
 
         self.add_counter += 1;
@@ -394,33 +425,52 @@ impl EditorView {
             path: path.to_string_lossy().into_owned(),
         });
 
-        let element = if is_video {
-            Element::Video(VideoElement {
-                id: format!("vid-{uid}"),
-                name,
-                start,
-                duration,
-                media_id,
-                trim_start: MediaTime::ZERO,
-                trim_end: duration,
-                transform: Transform::default(),
-                effects: Vec::new(),
-                        animations: Default::default(),
-            })
+        let (track_id, element) = if is_audio {
+            (
+                "track-audio",
+                Element::Audio(AudioElement {
+                    id: format!("aud-{uid}"),
+                    name,
+                    start,
+                    duration,
+                    media_id,
+                    muted: false,
+                    volume: 1.0,
+                }),
+            )
+        } else if is_video {
+            (
+                "track-main",
+                Element::Video(VideoElement {
+                    id: format!("vid-{uid}"),
+                    name,
+                    start,
+                    duration,
+                    media_id,
+                    trim_start: MediaTime::ZERO,
+                    trim_end: duration,
+                    transform: Transform::default(),
+                    effects: Vec::new(),
+                    animations: Default::default(),
+                }),
+            )
         } else {
-            Element::Image(ImageElement {
-                id: format!("img-{uid}"),
-                name,
-                start,
-                duration,
-                media_id,
-                transform: Transform::default(),
-                effects: Vec::new(),
-                        animations: Default::default(),
-            })
+            (
+                "track-main",
+                Element::Image(ImageElement {
+                    id: format!("img-{uid}"),
+                    name,
+                    start,
+                    duration,
+                    media_id,
+                    transform: Transform::default(),
+                    effects: Vec::new(),
+                    animations: Default::default(),
+                }),
+            )
         };
         self.editor.execute(Command::AddElement {
-            track_id: "track-main".into(),
+            track_id: track_id.into(),
             element,
             select: true,
         });
@@ -1610,15 +1660,12 @@ impl EditorView {
                         cx,
                     ),
                 );
-            let body = div()
+            let base_body = div()
                 .id(("move", id))
                 .flex_1()
                 .h(px(inner_height))
                 .px_2()
                 .overflow_hidden()
-                .text_xs()
-                .text_color(rgb(theme::TEXT))
-                .child(Self::shared(block.label.clone()))
                 .on_mouse_down(
                     MouseButton::Left,
                     self.begin_drag(
@@ -1629,6 +1676,30 @@ impl EditorView {
                         cx,
                     ),
                 );
+            // Audio clips with an extracted waveform draw peak bars; everything else shows a label.
+            let waveform = if block.kind_label == "Audio" {
+                block
+                    .media_id
+                    .as_ref()
+                    .and_then(|m| self.waveforms.get(m))
+                    .filter(|peaks| !peaks.is_empty())
+            } else {
+                None
+            };
+            let body = match waveform {
+                Some(peaks) => base_body.flex().flex_row().items_end().children(
+                    peaks.iter().map(|p| {
+                        div()
+                            .w(px(2.0))
+                            .h(px((p * (inner_height - 6.0)).max(1.0)))
+                            .bg(rgb(theme::ACCENT))
+                    }),
+                ),
+                None => base_body
+                    .text_xs()
+                    .text_color(rgb(theme::TEXT))
+                    .child(Self::shared(block.label.clone())),
+            };
             let right_handle = div()
                 .id(("trim-end", id))
                 .w(px(TRIM_HANDLE_WIDTH))
@@ -1757,6 +1828,7 @@ impl Render for EditorView {
             window.focus(&self.focus_handle);
         }
         self.update_preview();
+        self.ensure_waveforms();
         let vm = EditorViewModel::build(&self.editor);
 
         div()

@@ -11,6 +11,7 @@ members = [
     "rust/crates/native-preview",
     "rust/crates/opencut-core",
     "rust/crates/opencut-project",
+    "rust/crates/opencut-audio",
     "rust/crates/opencut-preview",
     "rust/crates/opencut-text",
     "rust/crates/opencut-ui",

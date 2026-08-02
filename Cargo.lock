@@ -4202,6 +4202,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "opencut-audio"
+version = "0.1.0"
+
+[[package]]
 name = "opencut-core"
 version = "0.1.0"
 dependencies = [
@@ -4251,6 +4255,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "image",
+ "opencut-audio",
  "opencut-core",
  "opencut-preview",
  "rfd",
