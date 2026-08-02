@@ -283,6 +283,20 @@ impl EditorView {
                     .child(self.button("split", "Split", vm.selected.is_some(), cx, |this, _cx| {
                         this.split_selected();
                     }))
+                    .child(self.button(
+                        "duplicate",
+                        "Duplicate",
+                        vm.selected.is_some(),
+                        cx,
+                        |this, _cx| {
+                            if let Some(reference) = this.editor.selection().first().cloned() {
+                                this.add_counter += 1;
+                                let new_id = format!("dup-{}", this.add_counter);
+                                this.editor
+                                    .execute(Command::DuplicateElement { reference, new_id });
+                            }
+                        },
+                    ))
                     .child(self.button("copy", "Copy", vm.selected.is_some(), cx, |this, _cx| {
                         this.editor.copy();
                     }))
@@ -504,6 +518,32 @@ impl EditorView {
             .rounded_md()
             .bg(rgb(theme::PANEL_ALT))
             .text_sm()
+            .text_color(rgb(theme::TEXT))
+            .child(Self::shared(label.to_string()))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                handler(this);
+                cx.notify();
+            }))
+    }
+
+    /// A small square toggle (used for track hide/mute); highlighted when `active`.
+    fn track_toggle(
+        &self,
+        id: SharedString,
+        label: &str,
+        active: bool,
+        cx: &mut Context<Self>,
+        handler: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        div()
+            .id(id)
+            .w(px(20.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .bg(rgb(if active { theme::SELECTED } else { theme::PANEL_ALT }))
+            .text_xs()
             .text_color(rgb(theme::TEXT))
             .child(Self::shared(label.to_string()))
             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -791,9 +831,50 @@ impl EditorView {
             .child(
                 div()
                     .w(px(TRACK_LABEL_WIDTH))
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child(Self::shared(format!("{} · {}", track.name, track.kind_label))),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(rgb(theme::MUTED))
+                            .overflow_hidden()
+                            .child(Self::shared(track.name.clone())),
+                    )
+                    .child(self.track_toggle(
+                        SharedString::from(format!("{}-hide", track.id)),
+                        "H",
+                        track.hidden,
+                        cx,
+                        {
+                            let track_id = track.id.clone();
+                            let hidden = track.hidden;
+                            move |this| {
+                                this.editor.execute(Command::SetTrackHidden {
+                                    track_id: track_id.clone(),
+                                    hidden: !hidden,
+                                });
+                            }
+                        },
+                    ))
+                    .child(self.track_toggle(
+                        SharedString::from(format!("{}-mute", track.id)),
+                        "M",
+                        track.muted,
+                        cx,
+                        {
+                            let track_id = track.id.clone();
+                            let muted = track.muted;
+                            move |this| {
+                                this.editor.execute(Command::SetTrackMuted {
+                                    track_id: track_id.clone(),
+                                    muted: !muted,
+                                });
+                            }
+                        },
+                    )),
             )
             .child(
                 div()

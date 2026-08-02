@@ -77,6 +77,15 @@ pub enum Command {
     AddScene { id: String, name: String },
     /// Remove a scene (never the last one).
     RemoveScene { scene_id: String },
+    /// Duplicate an element (placed right after it) and select the copy.
+    DuplicateElement {
+        reference: ElementRef,
+        new_id: String,
+    },
+    /// Show/hide a track.
+    SetTrackHidden { track_id: String, hidden: bool },
+    /// Mute/unmute a track.
+    SetTrackMuted { track_id: String, muted: bool },
     /// Paste the clipboard elements onto the main track and select them (ids are minted).
     Paste,
 }
@@ -96,6 +105,9 @@ pub enum CommandKind {
     RemoveTrack,
     AddScene,
     RemoveScene,
+    DuplicateElement,
+    SetTrackHidden,
+    SetTrackMuted,
     Paste,
 }
 
@@ -136,6 +148,14 @@ pub(crate) enum ProjectPatch {
     RemoveTrack {
         lane: TrackLane,
         track_id: String,
+    },
+    SetTrackHidden {
+        track_id: String,
+        hidden: bool,
+    },
+    SetTrackMuted {
+        track_id: String,
+        muted: bool,
     },
     AddScene {
         index: usize,
@@ -271,6 +291,32 @@ impl ProjectPatch {
                     };
                 }
                 ProjectPatch::Noop
+            }
+            ProjectPatch::SetTrackHidden { track_id, hidden } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.hidden;
+                        track.hidden = hidden;
+                        ProjectPatch::SetTrackHidden {
+                            track_id,
+                            hidden: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackMuted { track_id, muted } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.muted;
+                        track.muted = muted;
+                        ProjectPatch::SetTrackMuted {
+                            track_id,
+                            muted: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
             }
         }
     }
@@ -519,6 +565,54 @@ impl Command {
                     kind: CommandKind::RemoveScene,
                     forward: vec![ProjectPatch::RemoveScene {
                         scene_id: scene_id.clone(),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::DuplicateElement { reference, new_id } => {
+                let element = scene.element(reference)?;
+                let track = scene.tracks.track(&reference.track_id)?;
+                let index = track
+                    .elements
+                    .iter()
+                    .position(|e| e.id() == reference.element_id)?;
+                let mut copy = element.clone();
+                copy.set_id(new_id.clone());
+                copy.set_start(element.end()); // place immediately after the original
+                Some(Lowered {
+                    kind: CommandKind::DuplicateElement,
+                    forward: vec![ProjectPatch::InsertElement {
+                        track_id: reference.track_id.clone(),
+                        index: index + 1,
+                        element: copy,
+                    }],
+                    selection_patch: Some(SelectionPatch::select_elements(vec![ElementRef::new(
+                        reference.track_id.clone(),
+                        new_id.clone(),
+                    )])),
+                })
+            }
+
+            Command::SetTrackHidden { track_id, hidden } => {
+                scene.tracks.track(track_id)?;
+                Some(Lowered {
+                    kind: CommandKind::SetTrackHidden,
+                    forward: vec![ProjectPatch::SetTrackHidden {
+                        track_id: track_id.clone(),
+                        hidden: *hidden,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackMuted { track_id, muted } => {
+                scene.tracks.track(track_id)?;
+                Some(Lowered {
+                    kind: CommandKind::SetTrackMuted,
+                    forward: vec![ProjectPatch::SetTrackMuted {
+                        track_id: track_id.clone(),
+                        muted: *muted,
                     }],
                     selection_patch: None,
                 })

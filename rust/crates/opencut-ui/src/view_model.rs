@@ -29,6 +29,8 @@ pub struct TrackRow {
     pub id: String,
     pub name: String,
     pub kind_label: String,
+    pub hidden: bool,
+    pub muted: bool,
     pub elements: Vec<ElementBlock>,
 }
 
@@ -84,6 +86,8 @@ impl EditorViewModel {
                     id: track.id.clone(),
                     name: track.name.clone(),
                     kind_label: format!("{:?}", track.kind),
+                    hidden: track.hidden,
+                    muted: track.muted,
                     elements,
                 }
             })

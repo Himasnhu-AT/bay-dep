@@ -295,6 +295,52 @@ fn load_project_replaces_state_and_resets_history() {
 }
 
 #[test]
+fn duplicate_element_places_a_copy_after_the_original() {
+    let mut editor = Editor::starter();
+    let before = editor.active_scene().tracks.main.elements.len();
+    let original_end = editor
+        .active_scene()
+        .element(&main_ref("el-title"))
+        .unwrap()
+        .end();
+
+    assert!(editor.execute(Command::DuplicateElement {
+        reference: main_ref("el-title"),
+        new_id: "el-title-dup".into(),
+    }));
+    assert_eq!(editor.active_scene().tracks.main.elements.len(), before + 1);
+    let copy = editor.active_scene().element(&main_ref("el-title-dup")).unwrap();
+    assert_eq!(copy.start(), original_end); // placed right after
+    assert!(editor.is_selected(&main_ref("el-title-dup")));
+
+    editor.undo();
+    assert!(editor.active_scene().element(&main_ref("el-title-dup")).is_none());
+}
+
+#[test]
+fn track_hidden_and_muted_toggle_reversibly() {
+    let mut editor = Editor::starter();
+    assert!(!editor.active_scene().tracks.main.hidden);
+
+    editor.execute(Command::SetTrackHidden {
+        track_id: "track-main".into(),
+        hidden: true,
+    });
+    assert!(editor.active_scene().tracks.main.hidden);
+
+    editor.execute(Command::SetTrackMuted {
+        track_id: "track-audio".into(),
+        muted: true,
+    });
+    assert!(editor.active_scene().tracks.audio[0].muted);
+
+    editor.undo(); // mute
+    assert!(!editor.active_scene().tracks.audio[0].muted);
+    editor.undo(); // hidden
+    assert!(!editor.active_scene().tracks.main.hidden);
+}
+
+#[test]
 fn each_command_emits_exactly_one_coalesced_event() {
     let mut editor = Editor::starter();
     let rx = record_events(&mut editor);
