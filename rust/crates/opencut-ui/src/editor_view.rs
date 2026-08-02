@@ -3,11 +3,23 @@
 //! re-render. All editing goes through `Command`s (undoable); clicks use direct selection.
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, App, Context, Div, FocusHandle, KeyBinding, SharedString, Window};
+use gpui::{
+    div, px, rgb, App, Context, Div, FocusHandle, KeyBinding, MouseButton, MouseDownEvent,
+    MouseMoveEvent, SharedString, Window,
+};
 
 use opencut_core::{
-    AudioElement, Command, Editor, Element, ImageElement, MediaTime, TextElement, VideoElement,
+    AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaTime, TextElement,
+    VideoElement,
 };
+
+/// In-progress drag of a timeline element.
+struct DragState {
+    reference: ElementRef,
+    origin_ticks: i64,
+    pointer_start_x: f32,
+    delta_px: f32,
+}
 
 // Keyboard actions. Bound to keystrokes in `key_bindings()` and handled on the root element.
 gpui::actions!(
@@ -64,6 +76,7 @@ pub struct EditorView {
     last_frame: Option<std::time::Instant>,
     focus_handle: FocusHandle,
     needs_focus: bool,
+    dragging: Option<DragState>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -81,6 +94,22 @@ impl EditorView {
             last_frame: None,
             focus_handle,
             needs_focus: true,
+            dragging: None,
+        }
+    }
+
+    /// Finish a drag: commit a single undoable MoveElement from the drag origin to the drop point.
+    fn finish_drag(&mut self) {
+        let Some(drag) = self.dragging.take() else {
+            return;
+        };
+        let delta_ticks = (drag.delta_px / PIXELS_PER_SECOND * TICKS_PER_SECOND as f32) as i64;
+        if delta_ticks != 0 {
+            let new_start = (drag.origin_ticks + delta_ticks).max(0);
+            self.editor.execute(Command::MoveElement {
+                reference: drag.reference,
+                start: MediaTime::from_ticks(new_start),
+            });
         }
     }
 
@@ -642,7 +671,15 @@ impl EditorView {
             let id = *block_index;
             *block_index += 1;
             let reference = block.reference.clone();
-            let left = block.start_seconds as f32 * PIXELS_PER_SECOND;
+            let origin_ticks = (block.start_seconds * TICKS_PER_SECOND as f64) as i64;
+
+            // Offset the block live while it is the one being dragged.
+            let mut left = block.start_seconds as f32 * PIXELS_PER_SECOND;
+            if let Some(drag) = &self.dragging {
+                if drag.reference == block.reference {
+                    left = (left + drag.delta_px).max(0.0);
+                }
+            }
             let width = (block.duration_seconds as f32 * PIXELS_PER_SECOND).max(24.0);
             let fill = theme::element_color(&block.kind_label);
 
@@ -660,10 +697,20 @@ impl EditorView {
                 .text_color(rgb(theme::TEXT))
                 .overflow_hidden()
                 .child(Self::shared(block.label.clone()))
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.editor.select(vec![reference.clone()]);
-                    cx.notify();
-                }));
+                // Press selects immediately and begins a drag; the root's mouse-move/up finish it.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                        this.editor.select(vec![reference.clone()]);
+                        this.dragging = Some(DragState {
+                            reference: reference.clone(),
+                            origin_ticks,
+                            pointer_start_x: f32::from(event.position.x),
+                            delta_px: 0.0,
+                        });
+                        cx.notify();
+                    }),
+                );
             if block.selected {
                 element = element.border_1().border_color(rgb(theme::SELECTED_BORDER));
             }
@@ -760,6 +807,21 @@ impl Render for EditorView {
                 this.editor.execute(Command::Paste);
                 cx.notify();
             }))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                if let Some(drag) = this.dragging.as_mut() {
+                    drag.delta_px = f32::from(event.position.x) - drag.pointer_start_x;
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, cx| {
+                    if this.dragging.is_some() {
+                        this.finish_drag();
+                        cx.notify();
+                    }
+                }),
+            )
             .child(self.toolbar(&vm, cx))
             .child(
                 div()
