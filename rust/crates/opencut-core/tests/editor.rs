@@ -18,6 +18,7 @@ fn text(id: &str, name: &str) -> Element {
         font_size: 48.0,
         color: "#fff".into(),
         transform: opencut_project::Transform::default(),
+        effects: Vec::new(),
     })
 }
 
@@ -394,6 +395,64 @@ fn track_hidden_and_muted_toggle_reversibly() {
     assert!(!editor.active_scene().tracks.audio[0].muted);
     editor.undo(); // hidden
     assert!(!editor.active_scene().tracks.main.hidden);
+}
+
+#[test]
+fn effects_add_toggle_param_and_remove_all_reverse() {
+    use opencut_core::Effect;
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title");
+    let brightness = Effect {
+        id: "fx1".into(),
+        effect_type: "brightness".into(),
+        enabled: true,
+        params: [("amount".to_string(), 1.5)].into_iter().collect(),
+    };
+
+    // Add
+    assert!(editor.execute(Command::AddEffect {
+        reference: reference.clone(),
+        effect: brightness,
+    }));
+    assert_eq!(editor.active_scene().element(&reference).unwrap().effects().len(), 1);
+
+    // Toggle enabled off
+    assert!(editor.execute(Command::ToggleEffect {
+        reference: reference.clone(),
+        effect_id: "fx1".into(),
+    }));
+    assert!(!editor.active_scene().element(&reference).unwrap().effects()[0].enabled);
+
+    // Set a param
+    assert!(editor.execute(Command::SetEffectParam {
+        reference: reference.clone(),
+        effect_id: "fx1".into(),
+        key: "amount".into(),
+        value: 2.0,
+    }));
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().effects()[0].params["amount"],
+        2.0
+    );
+
+    // Undo param, toggle, add → back to empty
+    editor.undo();
+    assert_eq!(editor.active_scene().element(&reference).unwrap().effects()[0].params["amount"], 1.5);
+    editor.undo();
+    assert!(editor.active_scene().element(&reference).unwrap().effects()[0].enabled);
+    editor.undo();
+    assert!(editor.active_scene().element(&reference).unwrap().effects().is_empty());
+
+    // Audio can't take effects.
+    assert!(!editor.execute(Command::AddEffect {
+        reference: ElementRef::new("track-audio", "el-music"),
+        effect: Effect {
+            id: "fx2".into(),
+            effect_type: "brightness".into(),
+            enabled: true,
+            params: Default::default(),
+        },
+    }));
 }
 
 #[test]

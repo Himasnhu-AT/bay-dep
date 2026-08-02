@@ -1,8 +1,21 @@
 //! Timeline elements. One `Element` enum over the four concrete kinds, each sharing the
 //! common `id / name / start / duration` fields plus its own payload.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use time::MediaTime;
+
+/// A GPU effect applied to a visual element (e.g. `brightness`), with named scalar params.
+/// `BTreeMap` keeps params in a deterministic order for stable serialization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Effect {
+    pub id: String,
+    pub effect_type: String,
+    pub enabled: bool,
+    pub params: BTreeMap<String, f32>,
+}
 
 /// A visual element's on-canvas placement. Position is the element center as a fraction of the
 /// canvas (0..1); `scale` is the fraction of the canvas the element spans (1 = full-frame).
@@ -40,6 +53,8 @@ pub struct VideoElement {
     pub trim_end: MediaTime,
     #[serde(default)]
     pub transform: Transform,
+    #[serde(default)]
+    pub effects: Vec<Effect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,6 +67,8 @@ pub struct ImageElement {
     pub media_id: String,
     #[serde(default)]
     pub transform: Transform,
+    #[serde(default)]
+    pub effects: Vec<Effect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,6 +83,8 @@ pub struct TextElement {
     pub color: String,
     #[serde(default)]
     pub transform: Transform,
+    #[serde(default)]
+    pub effects: Vec<Effect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,6 +205,26 @@ impl Element {
             Element::Image(e) => e.transform = transform,
             Element::Text(e) => e.transform = transform,
             Element::Audio(_) => {}
+        }
+    }
+
+    /// Effects applied to a visual element (empty for audio).
+    pub fn effects(&self) -> &[Effect] {
+        match self {
+            Element::Video(e) => &e.effects,
+            Element::Image(e) => &e.effects,
+            Element::Text(e) => &e.effects,
+            Element::Audio(_) => &[],
+        }
+    }
+
+    /// Mutable effect list for visual elements (`None` for audio).
+    pub fn effects_mut(&mut self) -> Option<&mut Vec<Effect>> {
+        match self {
+            Element::Video(e) => Some(&mut e.effects),
+            Element::Image(e) => Some(&mut e.effects),
+            Element::Text(e) => Some(&mut e.effects),
+            Element::Audio(_) => None,
         }
     }
 }

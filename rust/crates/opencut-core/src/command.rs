@@ -7,7 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use opencut_project::{Element, ElementRef, MediaTime, Project, Scene, Track, TrackKind, Transform};
+use opencut_project::{
+    Effect, Element, ElementKind, ElementRef, MediaTime, Project, Scene, Track, TrackKind,
+    Transform,
+};
 
 use crate::selection::SelectionPatch;
 use crate::state::EditorState;
@@ -76,6 +79,28 @@ pub enum Command {
         reference: ElementRef,
         transform: Transform,
     },
+    /// Add an effect to a visual element.
+    AddEffect {
+        reference: ElementRef,
+        effect: Effect,
+    },
+    /// Remove an effect from an element.
+    RemoveEffect {
+        reference: ElementRef,
+        effect_id: String,
+    },
+    /// Toggle an effect's enabled flag.
+    ToggleEffect {
+        reference: ElementRef,
+        effect_id: String,
+    },
+    /// Set one scalar parameter of an effect.
+    SetEffectParam {
+        reference: ElementRef,
+        effect_id: String,
+        key: String,
+        value: f32,
+    },
     /// Add an empty overlay/audio track.
     AddTrack {
         lane: TrackLane,
@@ -114,6 +139,10 @@ pub enum CommandKind {
     RenameElement,
     SetTextContent,
     SetTransform,
+    AddEffect,
+    RemoveEffect,
+    ToggleEffect,
+    SetEffectParam,
     AddTrack,
     RemoveTrack,
     AddScene,
@@ -156,6 +185,20 @@ pub(crate) enum ProjectPatch {
     SetElementTransform {
         reference: ElementRef,
         transform: Transform,
+    },
+    AddEffect {
+        reference: ElementRef,
+        index: usize,
+        effect: Effect,
+    },
+    RemoveEffect {
+        reference: ElementRef,
+        effect_id: String,
+    },
+    ReplaceEffect {
+        reference: ElementRef,
+        effect_id: String,
+        effect: Effect,
     },
     AddTrack {
         lane: TrackLane,
@@ -300,6 +343,57 @@ impl ProjectPatch {
                 },
                 None => ProjectPatch::Noop,
             },
+            ProjectPatch::AddEffect {
+                reference,
+                index,
+                effect,
+            } => {
+                let effect_id = effect.id.clone();
+                match scene.element_mut(&reference).and_then(|e| e.effects_mut()) {
+                    Some(effects) => {
+                        let idx = index.min(effects.len());
+                        effects.insert(idx, effect);
+                        ProjectPatch::RemoveEffect {
+                            reference,
+                            effect_id,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::RemoveEffect {
+                reference,
+                effect_id,
+            } => {
+                if let Some(effects) = scene.element_mut(&reference).and_then(|e| e.effects_mut()) {
+                    if let Some(pos) = effects.iter().position(|f| f.id == effect_id) {
+                        let effect = effects.remove(pos);
+                        return ProjectPatch::AddEffect {
+                            reference,
+                            index: pos,
+                            effect,
+                        };
+                    }
+                }
+                ProjectPatch::Noop
+            }
+            ProjectPatch::ReplaceEffect {
+                reference,
+                effect_id,
+                effect,
+            } => {
+                if let Some(effects) = scene.element_mut(&reference).and_then(|e| e.effects_mut()) {
+                    if let Some(pos) = effects.iter().position(|f| f.id == effect_id) {
+                        let previous = std::mem::replace(&mut effects[pos], effect);
+                        return ProjectPatch::ReplaceEffect {
+                            reference,
+                            effect_id,
+                            effect: previous,
+                        };
+                    }
+                }
+                ProjectPatch::Noop
+            }
             ProjectPatch::AddTrack { lane, index, track } => {
                 let track_id = track.id.clone();
                 let lane_tracks = match lane {
@@ -572,6 +666,78 @@ impl Command {
                     forward: vec![ProjectPatch::SetElementTransform {
                         reference: reference.clone(),
                         transform: *transform,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::AddEffect { reference, effect } => {
+                let element = scene.element(reference)?;
+                if matches!(element.kind(), ElementKind::Audio) {
+                    return None; // audio has no effects
+                }
+                Some(Lowered {
+                    kind: CommandKind::AddEffect,
+                    forward: vec![ProjectPatch::AddEffect {
+                        reference: reference.clone(),
+                        index: element.effects().len(),
+                        effect: effect.clone(),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::RemoveEffect {
+                reference,
+                effect_id,
+            } => {
+                let element = scene.element(reference)?;
+                element.effects().iter().find(|f| &f.id == effect_id)?;
+                Some(Lowered {
+                    kind: CommandKind::RemoveEffect,
+                    forward: vec![ProjectPatch::RemoveEffect {
+                        reference: reference.clone(),
+                        effect_id: effect_id.clone(),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::ToggleEffect {
+                reference,
+                effect_id,
+            } => {
+                let element = scene.element(reference)?;
+                let effect = element.effects().iter().find(|f| &f.id == effect_id)?;
+                let mut toggled = effect.clone();
+                toggled.enabled = !toggled.enabled;
+                Some(Lowered {
+                    kind: CommandKind::ToggleEffect,
+                    forward: vec![ProjectPatch::ReplaceEffect {
+                        reference: reference.clone(),
+                        effect_id: effect_id.clone(),
+                        effect: toggled,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetEffectParam {
+                reference,
+                effect_id,
+                key,
+                value,
+            } => {
+                let element = scene.element(reference)?;
+                let effect = element.effects().iter().find(|f| &f.id == effect_id)?;
+                let mut updated = effect.clone();
+                updated.params.insert(key.clone(), *value);
+                Some(Lowered {
+                    kind: CommandKind::SetEffectParam,
+                    forward: vec![ProjectPatch::ReplaceEffect {
+                        reference: reference.clone(),
+                        effect_id: effect_id.clone(),
+                        effect: updated,
                     }],
                     selection_patch: None,
                 })

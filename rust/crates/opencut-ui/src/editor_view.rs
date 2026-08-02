@@ -333,6 +333,7 @@ impl EditorView {
                             font_size: 48.0,
                             color: "#ffffff".into(),
                             transform: Transform::default(),
+                            effects: Vec::new(),
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),
@@ -461,6 +462,7 @@ impl EditorView {
                                     trim_start: MediaTime::ZERO,
                                     trim_end: duration,
                                     transform: Transform::default(),
+                                    effects: Vec::new(),
                                 }),
                             ),
                             "image" => (
@@ -472,6 +474,7 @@ impl EditorView {
                                     duration,
                                     media_id: id.into(),
                                     transform: Transform::default(),
+                                    effects: Vec::new(),
                                 }),
                             ),
                             _ => (
@@ -909,6 +912,128 @@ impl EditorView {
                     cx,
                     |t, sign| t.y = (t.y + sign * 0.05).clamp(0.0, 1.0),
                 ));
+
+            // Effects list + add.
+            body = body.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child("EFFECTS"),
+            );
+            for effect in &selected.effects {
+                let effect_id = effect.id.clone();
+                let mut controls = div().flex().flex_row().items_center().gap_1();
+                if let Some(amount) = effect.amount {
+                    controls = controls
+                        .child(self.mini_button(
+                            SharedString::from(format!("{effect_id}-amt-minus")),
+                            "−",
+                            cx,
+                            {
+                                let reference = selected.reference.clone();
+                                let effect_id = effect_id.clone();
+                                move |this| {
+                                    this.editor.execute(Command::SetEffectParam {
+                                        reference: reference.clone(),
+                                        effect_id: effect_id.clone(),
+                                        key: "amount".into(),
+                                        value: (amount - 0.1).max(0.0),
+                                    });
+                                }
+                            },
+                        ))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme::TEXT))
+                                .child(Self::shared(format!("{amount:.1}"))),
+                        )
+                        .child(self.mini_button(
+                            SharedString::from(format!("{effect_id}-amt-plus")),
+                            "+",
+                            cx,
+                            {
+                                let reference = selected.reference.clone();
+                                let effect_id = effect_id.clone();
+                                move |this| {
+                                    this.editor.execute(Command::SetEffectParam {
+                                        reference: reference.clone(),
+                                        effect_id: effect_id.clone(),
+                                        key: "amount".into(),
+                                        value: (amount + 0.1).min(4.0),
+                                    });
+                                }
+                            },
+                        ));
+                }
+                controls = controls
+                    .child(self.track_toggle(
+                        SharedString::from(format!("{effect_id}-toggle")),
+                        if effect.enabled { "on" } else { "off" },
+                        effect.enabled,
+                        cx,
+                        {
+                            let reference = selected.reference.clone();
+                            let effect_id = effect_id.clone();
+                            move |this| {
+                                this.editor.execute(Command::ToggleEffect {
+                                    reference: reference.clone(),
+                                    effect_id: effect_id.clone(),
+                                });
+                            }
+                        },
+                    ))
+                    .child(self.mini_button(
+                        SharedString::from(format!("{effect_id}-rm")),
+                        "✕",
+                        cx,
+                        {
+                            let reference = selected.reference.clone();
+                            let effect_id = effect_id.clone();
+                            move |this| {
+                                this.editor.execute(Command::RemoveEffect {
+                                    reference: reference.clone(),
+                                    effect_id: effect_id.clone(),
+                                });
+                            }
+                        },
+                    ));
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(if effect.enabled {
+                                    theme::TEXT
+                                } else {
+                                    theme::MUTED
+                                }))
+                                .child(Self::shared(effect.effect_type.clone())),
+                        )
+                        .child(controls),
+                );
+            }
+            body = body.child(self.button("add-effect", "+ Brightness", true, cx, {
+                let reference = selected.reference.clone();
+                move |this, _cx| {
+                    this.add_counter += 1;
+                    let effect = opencut_core::Effect {
+                        id: format!("fx-{}", this.add_counter),
+                        effect_type: "brightness".into(),
+                        enabled: true,
+                        params: [("amount".to_string(), 1.0)].into_iter().collect(),
+                    };
+                    this.editor.execute(Command::AddEffect {
+                        reference: reference.clone(),
+                        effect,
+                    });
+                }
+            }));
         }
 
         panel.child(body)

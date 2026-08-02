@@ -76,6 +76,7 @@ impl Project {
                         rotation: 0.0,
                         opacity: 1.0,
                     },
+                    effects: Vec::new(),
                 }),
                 Element::Image(ImageElement {
                     id: "el-logo".into(),
@@ -90,6 +91,7 @@ impl Project {
                         rotation: 0.0,
                         opacity: 1.0,
                     },
+                    effects: Vec::new(),
                 }),
             ],
         };
@@ -115,6 +117,7 @@ impl Project {
                     rotation: 0.0,
                     opacity: 0.85,
                 },
+                effects: Vec::new(),
             })],
         }];
 

@@ -25,7 +25,7 @@ pub use state::{ClipboardEntry, ClipboardState, EditorState, SelectionKind, Sele
 /// The domain model this engine edits.
 pub use opencut_project as project;
 pub use opencut_project::{
-    AudioElement, Background, CanvasSize, Element, ElementKind, Fps, ImageElement, MediaTime,
-    Project, ProjectMetadata, ProjectSettings, Scene, TextElement, Track, TrackKind, Tracks,
-    Transform, VideoElement,
+    AudioElement, Background, CanvasSize, Effect, Element, ElementKind, Fps, ImageElement,
+    MediaTime, Project, ProjectMetadata, ProjectSettings, Scene, TextElement, Track, TrackKind,
+    Tracks, Transform, VideoElement,
 };

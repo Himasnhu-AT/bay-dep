@@ -25,7 +25,8 @@ mod settings;
 mod track;
 
 pub use element::{
-    AudioElement, Element, ElementKind, ImageElement, TextElement, Transform, VideoElement,
+    AudioElement, Effect, Element, ElementKind, ImageElement, TextElement, Transform,
+    VideoElement,
 };
 pub use project::{Project, ProjectMetadata};
 pub use refs::ElementRef;

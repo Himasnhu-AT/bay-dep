@@ -62,6 +62,14 @@ pub struct ElementInfo {
     pub duration_seconds: f64,
     pub text_content: Option<String>,
     pub transform: Option<opencut_core::Transform>,
+    pub effects: Vec<EffectInfo>,
+}
+
+pub struct EffectInfo {
+    pub id: String,
+    pub effect_type: String,
+    pub enabled: bool,
+    pub amount: Option<f32>,
 }
 
 impl EditorViewModel {
@@ -143,6 +151,16 @@ impl EditorViewModel {
                 duration_seconds: element.duration().to_seconds_f64(),
                 text_content,
                 transform: element.transform(),
+                effects: element
+                    .effects()
+                    .iter()
+                    .map(|effect| EffectInfo {
+                        id: effect.id.clone(),
+                        effect_type: effect.effect_type.clone(),
+                        enabled: effect.enabled,
+                        amount: effect.params.get("amount").copied(),
+                    })
+                    .collect(),
             })
         });
 
