@@ -12,6 +12,8 @@ pub struct EditorViewModel {
     pub can_undo: bool,
     pub can_redo: bool,
     pub clipboard_len: usize,
+    pub playhead_seconds: f64,
+    pub duration_seconds: f64,
     pub tracks: Vec<TrackRow>,
     pub selected: Option<ElementInfo>,
 }
@@ -103,6 +105,8 @@ impl EditorViewModel {
             can_undo: editor.can_undo(),
             can_redo: editor.can_redo(),
             clipboard_len: editor.clipboard_len(),
+            playhead_seconds: editor.playhead().to_seconds_f64(),
+            duration_seconds: editor.duration().to_seconds_f64(),
             tracks,
             selected,
         }
@@ -145,6 +149,17 @@ mod tests {
                 .flat_map(|t| &t.elements)
                 .any(|b| b.selected && b.label == "Title")
         );
+    }
+
+    #[test]
+    fn exposes_playhead_and_content_duration() {
+        let mut editor = Editor::starter();
+        let vm = EditorViewModel::build(&editor);
+        assert_eq!(vm.playhead_seconds, 0.0);
+        assert!(vm.duration_seconds >= 7.0); // the starter music clip runs 0..7s
+
+        editor.seek(opencut_core::MediaTime::from_ticks(120_000)); // 1s
+        assert_eq!(EditorViewModel::build(&editor).playhead_seconds, 1.0);
     }
 
     #[test]

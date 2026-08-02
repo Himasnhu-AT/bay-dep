@@ -14,6 +14,10 @@ use crate::view_model::{EditorViewModel, TrackRow};
 const PIXELS_PER_SECOND: f32 = 48.0;
 const TRACK_LABEL_WIDTH: f32 = 132.0;
 const LANE_HEIGHT: f32 = 40.0;
+const TICKS_PER_SECOND: i64 = 120_000;
+/// Inspector nudge step (0.5s) and minimum element duration (0.1s), in ticks.
+const NUDGE_TICKS: i64 = TICKS_PER_SECOND / 2;
+const MIN_DURATION_TICKS: i64 = TICKS_PER_SECOND / 10;
 
 pub struct EditorView {
     editor: Editor,
@@ -195,47 +199,105 @@ impl EditorView {
             )
     }
 
-    fn inspector(&self, vm: &EditorViewModel) -> Div {
-        let body = match &vm.selected {
-            None => div()
-                .text_sm()
-                .text_color(rgb(theme::MUTED))
-                .child("Select a clip to inspect it."),
-            Some(selected) => {
-                let mut rows = vec![
-                    ("Name", selected.name.clone()),
-                    ("Kind", selected.kind_label.clone()),
-                    ("Start", format!("{:.2}s", selected.start_seconds)),
-                    ("Duration", format!("{:.2}s", selected.duration_seconds)),
-                ];
-                if let Some(content) = &selected.text_content {
-                    rows.push(("Text", content.clone()));
-                }
-                div().flex().flex_col().gap_2().children(rows.into_iter().map(
-                    |(label, value)| {
-                        div()
-                            .flex()
-                            .flex_row()
-                            .justify_between()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme::MUTED))
-                                    .child(label),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(rgb(theme::TEXT))
-                                    .child(Self::shared(value)),
-                            )
-                    },
-                ))
-            }
-        };
-
+    fn info_row(&self, label: &str, value: &str) -> Div {
         div()
+            .flex()
+            .flex_row()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child(Self::shared(label.to_string())),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme::TEXT))
+                    .child(Self::shared(value.to_string())),
+            )
+    }
+
+    fn mini_button(
+        &self,
+        id: SharedString,
+        label: &str,
+        cx: &mut Context<Self>,
+        handler: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        div()
+            .id(id)
+            .w(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .bg(rgb(theme::PANEL_ALT))
+            .text_sm()
+            .text_color(rgb(theme::TEXT))
+            .child(Self::shared(label.to_string()))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                handler(this);
+                cx.notify();
+            }))
+    }
+
+    /// A label + value with `−`/`+` steppers that call `handler(this, delta_ticks)`.
+    fn nudge_row(
+        &self,
+        label: &str,
+        value: String,
+        id_prefix: &'static str,
+        cx: &mut Context<Self>,
+        handler: impl Fn(&mut EditorView, i64) + Clone + 'static,
+    ) -> Div {
+        let minus = {
+            let handler = handler.clone();
+            self.mini_button(
+                SharedString::from(format!("{id_prefix}-minus")),
+                "−",
+                cx,
+                move |this| handler(this, -NUDGE_TICKS),
+            )
+        };
+        let plus = self.mini_button(
+            SharedString::from(format!("{id_prefix}-plus")),
+            "+",
+            cx,
+            move |this| handler(this, NUDGE_TICKS),
+        );
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child(Self::shared(label.to_string())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(minus)
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme::TEXT))
+                            .child(Self::shared(value)),
+                    )
+                    .child(plus),
+            )
+    }
+
+    fn inspector(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let panel = div()
             .flex()
             .flex_col()
             .w(px(260.0))
@@ -250,39 +312,147 @@ impl EditorView {
                     .text_xs()
                     .text_color(rgb(theme::MUTED))
                     .child("INSPECTOR"),
-            )
-            .child(body)
+            );
+
+        let Some(selected) = &vm.selected else {
+            return panel.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme::MUTED))
+                    .child("Select a clip to inspect it."),
+            );
+        };
+
+        let start_ref = selected.reference.clone();
+        let duration_ref = selected.reference.clone();
+
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(self.info_row("Name", &selected.name))
+            .child(self.info_row("Kind", &selected.kind_label))
+            .child(self.nudge_row(
+                "Start",
+                format!("{:.2}s", selected.start_seconds),
+                "start",
+                cx,
+                move |this, delta| {
+                    let current = this
+                        .editor
+                        .active_scene()
+                        .element(&start_ref)
+                        .map(|element| element.start().as_ticks());
+                    if let Some(ticks) = current {
+                        this.editor.execute(Command::MoveElement {
+                            reference: start_ref.clone(),
+                            start: MediaTime::from_ticks((ticks + delta).max(0)),
+                        });
+                    }
+                },
+            ))
+            .child(self.nudge_row(
+                "Duration",
+                format!("{:.2}s", selected.duration_seconds),
+                "duration",
+                cx,
+                move |this, delta| {
+                    let current = this
+                        .editor
+                        .active_scene()
+                        .element(&duration_ref)
+                        .map(|element| element.duration().as_ticks());
+                    if let Some(ticks) = current {
+                        this.editor.execute(Command::SetElementDuration {
+                            reference: duration_ref.clone(),
+                            duration: MediaTime::from_ticks(
+                                (ticks + delta).max(MIN_DURATION_TICKS),
+                            ),
+                        });
+                    }
+                },
+            ));
+
+        if let Some(content) = &selected.text_content {
+            body = body.child(self.info_row("Text", content));
+        }
+
+        panel.child(body)
+    }
+
+    fn transport_button(
+        &self,
+        id: &'static str,
+        label: &str,
+        cx: &mut Context<Self>,
+        handler: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        div()
+            .id(id)
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(theme::PANEL_ALT))
+            .text_xs()
+            .text_color(rgb(theme::TEXT))
+            .child(Self::shared(label.to_string()))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                handler(this);
+                cx.notify();
+            }))
     }
 
     fn timeline(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
         let mut rows: Vec<Div> = Vec::new();
         let mut block_index: usize = 0;
-
         for track in &vm.tracks {
-            rows.push(self.track_row(track, &mut block_index, cx));
+            rows.push(self.track_row(track, vm.playhead_seconds, &mut block_index, cx));
         }
+
+        let readout = format!("{:.2}s / {:.2}s", vm.playhead_seconds, vm.duration_seconds);
+        let transport = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(self.transport_button("seek-start", "|◀", cx, |this| {
+                this.editor.seek(MediaTime::ZERO)
+            }))
+            .child(self.transport_button("seek-back", "◀ 1s", cx, |this| {
+                let ticks = this.editor.playhead().as_ticks();
+                this.editor.seek(MediaTime::from_ticks(ticks - TICKS_PER_SECOND));
+            }))
+            .child(self.transport_button("seek-fwd", "1s ▶", cx, |this| {
+                let ticks = this.editor.playhead().as_ticks();
+                this.editor.seek(MediaTime::from_ticks(ticks + TICKS_PER_SECOND));
+            }))
+            .child(self.transport_button("seek-end", "▶|", cx, |this| {
+                this.editor.seek(this.editor.duration())
+            }))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child(Self::shared(readout)),
+            );
 
         div()
             .flex()
             .flex_col()
-            .h(px(230.0))
+            .h(px(250.0))
             .p_2()
             .gap_1()
             .bg(rgb(theme::PANEL))
             .border_t_1()
             .border_color(rgb(theme::BORDER))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child("TIMELINE"),
-            )
+            .child(transport)
             .children(rows)
     }
 
     fn track_row(
         &self,
         track: &TrackRow,
+        playhead_seconds: f64,
         block_index: &mut usize,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -340,7 +510,17 @@ impl EditorView {
                     .rounded_md()
                     .bg(rgb(theme::LANE))
                     .overflow_hidden()
-                    .children(blocks),
+                    .children(blocks)
+                    .child(
+                        // Playhead line across this lane.
+                        div()
+                            .absolute()
+                            .left(px(playhead_seconds as f32 * PIXELS_PER_SECOND))
+                            .top(px(0.0))
+                            .w(px(2.0))
+                            .h(px(LANE_HEIGHT))
+                            .bg(rgb(theme::ACCENT)),
+                    ),
             )
     }
 }
@@ -364,7 +544,7 @@ impl Render for EditorView {
                     .min_h(px(0.0))
                     .child(self.media_panel())
                     .child(self.preview(&vm))
-                    .child(self.inspector(&vm)),
+                    .child(self.inspector(&vm, cx)),
             )
             .child(self.timeline(&vm, cx))
     }

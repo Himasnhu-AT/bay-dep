@@ -2,7 +2,7 @@
 //! stacks of reversible patches, and a coalesced event bus. No `Arc`, no `RwLock`, no `RefCell`.
 //! The UI reads through the Query API and drives edits with [`Command`]s.
 
-use opencut_project::{Element, ElementRef, Project, Scene};
+use opencut_project::{Element, ElementRef, MediaTime, Project, Scene};
 
 use crate::clipboard;
 use crate::command::{Command, CommandKind, Lowered, ProjectPatch};
@@ -78,6 +78,22 @@ impl Editor {
         self.active_scene().element(reference)
     }
 
+    /// The transport playhead position.
+    pub fn playhead(&self) -> MediaTime {
+        self.state.playhead
+    }
+
+    /// The active scene's content duration = the latest element end across all lanes.
+    pub fn duration(&self) -> MediaTime {
+        self.active_scene()
+            .tracks
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .map(|element| element.end())
+            .max()
+            .unwrap_or(MediaTime::ZERO)
+    }
+
     pub fn clipboard_len(&self) -> usize {
         self.state
             .clipboard
@@ -125,6 +141,19 @@ impl Editor {
         }
         self.bus.commit();
         copied
+    }
+
+    /// Move the transport playhead, clamped to `[0, duration]`. Direct, non-undoable UI state;
+    /// emits one `Playhead` event iff the position actually changed.
+    pub fn seek(&mut self, time: MediaTime) {
+        let clamped = time.clamp(MediaTime::ZERO, self.duration());
+        if clamped == self.state.playhead {
+            return;
+        }
+        self.bus.begin();
+        self.state.playhead = clamped;
+        self.bus.mark(Domain::Playhead);
+        self.bus.commit();
     }
 
     /// Direct, non-undoable selection change — a UI click / box-select between commands.

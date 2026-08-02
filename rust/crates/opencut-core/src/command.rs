@@ -49,6 +49,11 @@ pub enum Command {
         reference: ElementRef,
         start: MediaTime,
     },
+    /// Set an element's duration.
+    SetElementDuration {
+        reference: ElementRef,
+        duration: MediaTime,
+    },
     /// Rename an element.
     RenameElement { reference: ElementRef, name: String },
     /// Set a text element's content (no-op for non-text elements).
@@ -72,6 +77,7 @@ pub enum CommandKind {
     AddElement,
     RemoveElement,
     MoveElement,
+    SetElementDuration,
     RenameElement,
     SetTextContent,
     AddTrack,
@@ -95,6 +101,10 @@ pub(crate) enum ProjectPatch {
     SetElementStart {
         reference: ElementRef,
         start: MediaTime,
+    },
+    SetElementDuration {
+        reference: ElementRef,
+        duration: MediaTime,
     },
     SetElementName {
         reference: ElementRef,
@@ -168,6 +178,20 @@ impl ProjectPatch {
                     None => ProjectPatch::Noop,
                 }
             }
+            ProjectPatch::SetElementDuration {
+                reference,
+                duration,
+            } => match scene.element_mut(&reference) {
+                Some(element) => {
+                    let previous = element.duration();
+                    element.set_duration(duration);
+                    ProjectPatch::SetElementDuration {
+                        reference,
+                        duration: previous,
+                    }
+                }
+                None => ProjectPatch::Noop,
+            },
             ProjectPatch::SetElementName { reference, name } => {
                 match scene.element_mut(&reference) {
                     Some(element) => {
@@ -289,6 +313,21 @@ impl Command {
                     forward: vec![ProjectPatch::SetElementStart {
                         reference: reference.clone(),
                         start: *start,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetElementDuration {
+                reference,
+                duration,
+            } => {
+                scene.element(reference)?;
+                Some(Lowered {
+                    kind: CommandKind::SetElementDuration,
+                    forward: vec![ProjectPatch::SetElementDuration {
+                        reference: reference.clone(),
+                        duration: *duration,
                     }],
                     selection_patch: None,
                 })

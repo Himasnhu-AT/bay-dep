@@ -13,17 +13,19 @@ pub struct DomainSet {
     pub selection: bool,
     pub clipboard: bool,
     pub document: bool,
+    pub playhead: bool,
 }
 
 impl DomainSet {
     pub fn any(&self) -> bool {
-        self.selection || self.clipboard || self.document
+        self.selection || self.clipboard || self.document || self.playhead
     }
 
     fn union(&mut self, other: DomainSet) {
         self.selection |= other.selection;
         self.clipboard |= other.clipboard;
         self.document |= other.document;
+        self.playhead |= other.playhead;
     }
 }
 
@@ -33,6 +35,7 @@ pub enum Domain {
     Selection,
     Clipboard,
     Document,
+    Playhead,
 }
 
 /// One coalesced notification.
@@ -73,6 +76,7 @@ impl EventBus {
             Domain::Selection => pending.selection = true,
             Domain::Clipboard => pending.clipboard = true,
             Domain::Document => pending.document = true,
+            Domain::Playhead => pending.playhead = true,
         }
     }
 

@@ -15,6 +15,12 @@ const TICKS_PER_SECOND_F64: f64 = TICKS_PER_SECOND as f64;
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct MediaTime(i64);
 
+impl Default for MediaTime {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
 impl MediaTime {
     pub const ZERO: Self = Self(0);
     pub const ONE_TICK: Self = Self(1);

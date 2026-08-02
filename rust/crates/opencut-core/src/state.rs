@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use opencut_project::{Element, Project};
+use opencut_project::{Element, MediaTime, Project};
 
 use crate::refs::{ElementRef, KeyframeRef, MaskPointSelection};
 
@@ -66,6 +66,9 @@ pub struct EditorState {
     pub project: Project,
     pub selection: SelectionState,
     pub clipboard: ClipboardState,
+    /// The transport playhead position (non-undoable UI state).
+    #[serde(default)]
+    pub playhead: MediaTime,
 }
 
 impl EditorState {
@@ -74,6 +77,7 @@ impl EditorState {
             project,
             selection: SelectionState::default(),
             clipboard: ClipboardState::default(),
+            playhead: MediaTime::ZERO,
         }
     }
 }

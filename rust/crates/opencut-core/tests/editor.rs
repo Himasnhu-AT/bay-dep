@@ -80,6 +80,41 @@ fn move_and_rename_are_reversible() {
 }
 
 #[test]
+fn set_element_duration_is_reversible() {
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title");
+    let original = editor.active_scene().element(&reference).unwrap().duration();
+
+    editor.execute(Command::SetElementDuration {
+        reference: reference.clone(),
+        duration: MediaTime::from_ticks(1_000_000),
+    });
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().duration(),
+        MediaTime::from_ticks(1_000_000)
+    );
+
+    editor.undo();
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().duration(),
+        original
+    );
+}
+
+#[test]
+fn seek_clamps_to_content_duration() {
+    let mut editor = Editor::starter();
+    let duration = editor.duration();
+    assert!(duration > MediaTime::ZERO);
+
+    editor.seek(MediaTime::from_ticks(i64::MAX)); // past the end
+    assert_eq!(editor.playhead(), duration);
+
+    editor.seek(MediaTime::from_ticks(-100)); // before the start
+    assert_eq!(editor.playhead(), MediaTime::ZERO);
+}
+
+#[test]
 fn set_text_content_only_applies_to_text_elements() {
     let mut editor = Editor::starter();
 
