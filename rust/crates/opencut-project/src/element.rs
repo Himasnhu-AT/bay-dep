@@ -135,4 +135,8 @@ impl Element {
     pub fn set_start(&mut self, start: MediaTime) {
         with_inner!(self, e => e.start = start);
     }
+
+    pub fn set_duration(&mut self, duration: MediaTime) {
+        with_inner!(self, e => e.duration = duration);
+    }
 }

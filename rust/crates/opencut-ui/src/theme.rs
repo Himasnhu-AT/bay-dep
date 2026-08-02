@@ -8,6 +8,7 @@ pub const BORDER: u32 = 0x2a2a36;
 pub const TEXT: u32 = 0xe7e7ee;
 pub const MUTED: u32 = 0x8a8a9a;
 pub const ACCENT: u32 = 0x5b8cff;
+pub const SELECTED: u32 = 0x2d3a66;
 pub const SELECTED_BORDER: u32 = 0x8fb0ff;
 
 /// Block fill per element kind label ("Video" / "Image" / "Text" / "Audio").

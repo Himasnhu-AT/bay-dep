@@ -65,6 +65,14 @@ impl Editor {
         self.state.project.active_scene()
     }
 
+    pub fn scenes(&self) -> &[Scene] {
+        &self.state.project.scenes
+    }
+
+    pub fn active_scene_id(&self) -> &str {
+        &self.state.project.current_scene_id
+    }
+
     pub fn selection(&self) -> &[ElementRef] {
         &self.state.selection.elements
     }
@@ -166,6 +174,25 @@ impl Editor {
         }
         self.bus.begin();
         self.state.playhead = clamped;
+        self.bus.mark(Domain::Playhead);
+        self.bus.commit();
+    }
+
+    /// Switch the active scene (non-undoable navigation). Clears selection and resets the
+    /// playhead; no-op if the scene doesn't exist or is already active.
+    pub fn switch_scene(&mut self, scene_id: impl Into<String>) {
+        let scene_id = scene_id.into();
+        if self.state.project.current_scene_id == scene_id
+            || !self.state.project.scenes.iter().any(|s| s.id == scene_id)
+        {
+            return;
+        }
+        self.bus.begin();
+        self.state.project.current_scene_id = scene_id;
+        selection::clear(&mut self.state.selection);
+        self.state.playhead = MediaTime::ZERO;
+        self.bus.mark(Domain::Document);
+        self.bus.mark(Domain::Selection);
         self.bus.mark(Domain::Playhead);
         self.bus.commit();
     }

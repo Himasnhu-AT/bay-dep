@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use opencut_project::{Element, ElementRef, MediaTime, Track, TrackKind};
+use opencut_project::{Element, ElementRef, MediaTime, Project, Scene, Track, TrackKind};
 
 use crate::selection::SelectionPatch;
 use crate::state::EditorState;
@@ -66,6 +66,10 @@ pub enum Command {
     },
     /// Remove an overlay/audio track (the main lane cannot be removed).
     RemoveTrack { track_id: String },
+    /// Add a new empty scene.
+    AddScene { id: String, name: String },
+    /// Remove a scene (never the last one).
+    RemoveScene { scene_id: String },
     /// Paste the clipboard elements onto the main track and select them (ids are minted).
     Paste,
 }
@@ -82,6 +86,8 @@ pub enum CommandKind {
     SetTextContent,
     AddTrack,
     RemoveTrack,
+    AddScene,
+    RemoveScene,
     Paste,
 }
 
@@ -123,13 +129,29 @@ pub(crate) enum ProjectPatch {
         lane: TrackLane,
         track_id: String,
     },
+    AddScene {
+        index: usize,
+        scene: Scene,
+    },
+    RemoveScene {
+        scene_id: String,
+    },
 }
 
 impl ProjectPatch {
-    /// Apply to the active scene, returning the inverse patch (or `Noop` if nothing changed).
-    pub(crate) fn apply(self, project: &mut opencut_project::Project) -> ProjectPatch {
+    /// Apply to the project, returning the inverse patch (or `Noop` if nothing changed).
+    pub(crate) fn apply(self, project: &mut Project) -> ProjectPatch {
+        // Scene-level patches act on the whole project rather than the active scene.
+        match &self {
+            ProjectPatch::AddScene { .. } | ProjectPatch::RemoveScene { .. } => {
+                return self.apply_scene(project);
+            }
+            _ => {}
+        }
+
         let scene = project.active_scene_mut();
         match self {
+            ProjectPatch::AddScene { .. } | ProjectPatch::RemoveScene { .. } => unreachable!(),
             ProjectPatch::Noop => ProjectPatch::Noop,
             ProjectPatch::InsertElement {
                 track_id,
@@ -242,6 +264,34 @@ impl ProjectPatch {
                 }
                 ProjectPatch::Noop
             }
+        }
+    }
+
+    fn apply_scene(self, project: &mut Project) -> ProjectPatch {
+        match self {
+            ProjectPatch::AddScene { index, scene } => {
+                let scene_id = scene.id.clone();
+                let idx = index.min(project.scenes.len());
+                project.scenes.insert(idx, scene);
+                ProjectPatch::RemoveScene { scene_id }
+            }
+            ProjectPatch::RemoveScene { scene_id } => {
+                // Never remove the last remaining scene.
+                if project.scenes.len() <= 1 {
+                    return ProjectPatch::Noop;
+                }
+                match project.scenes.iter().position(|s| s.id == scene_id) {
+                    Some(pos) => {
+                        let scene = project.scenes.remove(pos);
+                        if project.current_scene_id == scene_id {
+                            project.current_scene_id = project.scenes[0].id.clone();
+                        }
+                        ProjectPatch::AddScene { index: pos, scene }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            _ => ProjectPatch::Noop,
         }
     }
 }
@@ -395,6 +445,30 @@ impl Command {
                         track_id: track_id.clone(),
                     }],
                     selection_patch,
+                })
+            }
+
+            Command::AddScene { id, name } => Some(Lowered {
+                kind: CommandKind::AddScene,
+                forward: vec![ProjectPatch::AddScene {
+                    index: state.project.scenes.len(),
+                    scene: Scene::empty(id.clone(), name.clone()),
+                }],
+                selection_patch: None,
+            }),
+
+            Command::RemoveScene { scene_id } => {
+                if state.project.scenes.len() <= 1
+                    || !state.project.scenes.iter().any(|s| &s.id == scene_id)
+                {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::RemoveScene,
+                    forward: vec![ProjectPatch::RemoveScene {
+                        scene_id: scene_id.clone(),
+                    }],
+                    selection_patch: None,
                 })
             }
 

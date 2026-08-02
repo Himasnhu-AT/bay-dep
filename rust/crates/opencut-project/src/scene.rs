@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::element::Element;
 use crate::refs::ElementRef;
-use crate::track::Tracks;
+use crate::track::{Track, TrackKind, Tracks};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +16,22 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// A new empty scene: a single (empty) main video track, no overlay/audio lanes.
+    pub fn empty(id: impl Into<String>, name: impl Into<String>) -> Self {
+        let id = id.into();
+        let main = Track::new(format!("{id}-main"), "Main", TrackKind::Video);
+        Self {
+            id,
+            name: name.into(),
+            is_main: false,
+            tracks: Tracks {
+                overlay: Vec::new(),
+                main,
+                audio: Vec::new(),
+            },
+        }
+    }
+
     /// Resolve an [`ElementRef`] to its element within this scene.
     pub fn element(&self, reference: &ElementRef) -> Option<&Element> {
         self.tracks

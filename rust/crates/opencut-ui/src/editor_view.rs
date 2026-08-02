@@ -279,6 +279,52 @@ impl EditorView {
             )
     }
 
+    fn scene_bar(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let mut tabs: Vec<gpui::Stateful<Div>> = Vec::new();
+        for (index, scene) in vm.scenes.iter().enumerate() {
+            let id = scene.id.clone();
+            let active = scene.active;
+            tabs.push(
+                div()
+                    .id(("scene", index))
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(if active { theme::SELECTED } else { theme::PANEL_ALT }))
+                    .text_sm()
+                    .text_color(rgb(if active { theme::TEXT } else { theme::MUTED }))
+                    .child(Self::shared(scene.name.clone()))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.editor.switch_scene(id.clone());
+                        cx.notify();
+                    })),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .h(px(40.0))
+            .px_3()
+            .bg(rgb(theme::PANEL_ALT))
+            .border_b_1()
+            .border_color(rgb(theme::BORDER))
+            .child(div().text_xs().text_color(rgb(theme::MUTED)).child("SCENES"))
+            .children(tabs)
+            .child(self.transport_button("add-scene", "＋ Scene", cx, |this| {
+                this.add_counter += 1;
+                let id = format!("scene-{}", this.add_counter);
+                let name = format!("Scene {}", this.editor.scenes().len() + 1);
+                this.editor.execute(Command::AddScene {
+                    id: id.clone(),
+                    name,
+                });
+                this.editor.switch_scene(id);
+            }))
+    }
+
     fn media_panel(&self, cx: &mut Context<Self>) -> Div {
         // (element-id, display name, kind).
         let items: [(&'static str, &'static str, &'static str); 3] = [
@@ -823,6 +869,7 @@ impl Render for EditorView {
                 }),
             )
             .child(self.toolbar(&vm, cx))
+            .child(self.scene_bar(&vm, cx))
             .child(
                 div()
                     .flex()

@@ -187,6 +187,37 @@ fn add_and_remove_track_are_reversible() {
 }
 
 #[test]
+fn add_and_remove_scene_are_reversible_and_switch_works() {
+    let mut editor = Editor::starter();
+    assert_eq!(editor.scenes().len(), 1);
+
+    assert!(editor.execute(Command::AddScene {
+        id: "scene-2".into(),
+        name: "Scene 2".into(),
+    }));
+    assert_eq!(editor.scenes().len(), 2);
+
+    // Switch to the new scene (non-undoable nav) — it starts empty.
+    editor.switch_scene("scene-2");
+    assert_eq!(editor.active_scene_id(), "scene-2");
+    assert!(editor.active_scene().tracks.main.elements.is_empty());
+
+    editor.undo(); // undo AddScene
+    assert_eq!(editor.scenes().len(), 1);
+    // Removing the now-missing active scene fell back to the first scene.
+    assert_eq!(editor.active_scene_id(), "scene-main");
+}
+
+#[test]
+fn the_last_scene_cannot_be_removed() {
+    let mut editor = Editor::starter();
+    assert!(!editor.execute(Command::RemoveScene {
+        scene_id: "scene-main".into(),
+    }));
+    assert_eq!(editor.scenes().len(), 1);
+}
+
+#[test]
 fn copy_paste_duplicates_selected_elements_with_fresh_ids() {
     let mut editor = Editor::starter();
     editor.select(vec![main_ref("el-title")]);

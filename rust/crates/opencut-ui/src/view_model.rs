@@ -14,8 +14,15 @@ pub struct EditorViewModel {
     pub clipboard_len: usize,
     pub playhead_seconds: f64,
     pub duration_seconds: f64,
+    pub scenes: Vec<SceneTab>,
     pub tracks: Vec<TrackRow>,
     pub selected: Option<ElementInfo>,
+}
+
+pub struct SceneTab {
+    pub id: String,
+    pub name: String,
+    pub active: bool,
 }
 
 pub struct TrackRow {
@@ -107,6 +114,15 @@ impl EditorViewModel {
             clipboard_len: editor.clipboard_len(),
             playhead_seconds: editor.playhead().to_seconds_f64(),
             duration_seconds: editor.duration().to_seconds_f64(),
+            scenes: editor
+                .scenes()
+                .iter()
+                .map(|scene| SceneTab {
+                    id: scene.id.clone(),
+                    name: scene.name.clone(),
+                    active: scene.id == editor.active_scene_id(),
+                })
+                .collect(),
             tracks,
             selected,
         }
@@ -160,6 +176,23 @@ mod tests {
 
         editor.seek(opencut_core::MediaTime::from_ticks(120_000)); // 1s
         assert_eq!(EditorViewModel::build(&editor).playhead_seconds, 1.0);
+    }
+
+    #[test]
+    fn scenes_map_to_tabs_with_the_active_one_flagged() {
+        let mut editor = Editor::starter();
+        editor.execute(Command::AddScene {
+            id: "s2".into(),
+            name: "Scene 2".into(),
+        });
+        let vm = EditorViewModel::build(&editor);
+        assert_eq!(vm.scenes.len(), 2);
+        assert!(vm.scenes.iter().find(|s| s.id == "scene-main").unwrap().active);
+
+        editor.switch_scene("s2");
+        let vm = EditorViewModel::build(&editor);
+        assert!(vm.scenes.iter().find(|s| s.id == "s2").unwrap().active);
+        assert!(!vm.scenes.iter().find(|s| s.id == "scene-main").unwrap().active);
     }
 
     #[test]
