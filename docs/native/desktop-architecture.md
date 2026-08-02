@@ -72,13 +72,17 @@ Done: **compositor preview with real decoded media + export**.
 - **Export:** still frame → PNG, and the whole timeline → MP4 (render each frame → pipe raw RGBA to
   ffmpeg encode). All ffmpeg-free to build (sidecar, not linked).
 
-Remaining (individually smaller than the media/export pipeline, which is done):
-1. **Inline text editing** (GPUI text input) — edit text content / rename in-app.
-2. **Keyframe animation** — animate transform/opacity over time (model + inspector + interpolation).
-3. **Audio** — waveform display + mixed playback; **motion presets**.
-4. **Video-playback performance** — decode-per-frame is fine for scrubbing but slow at play rate;
+Also done since: **keyframe animation** (transform/opacity over time, interpolated, visible in the
+preview), **motion presets** (save/apply effects+animations), and **audio waveforms** (`opencut-audio`
+extracts peaks via ffmpeg; audio clips draw them on the timeline).
+
+Remaining (the hard/refinement long tail):
+1. **Inline text editing** — GPUI text input (DIY key/cursor/IME handling) to edit text content /
+   rename in-app; today text content comes from the project/import.
+2. **Audio playback** — hearing the mix (cpal/rodio + playhead sync); waveform display is done.
+3. **Video-playback performance** — decode-per-frame is fine for scrubbing but slow at play rate;
    needs a decoder that holds the stream open (ffmpeg-next or a persistent sidecar) + frame cache.
-5. Optionally the **zero-copy blade↔wgpu** interop to drop the per-frame readback.
+4. Optionally the **zero-copy blade↔wgpu** interop to drop the per-frame readback.
 2. **Media decode** — native ffmpeg/gstreamer (`P0-MED-01`) so clips carry real frames/audio.
 3. **Direct manipulation, part 2** — drag clip **edges to trim**, timeline zoom/scroll, snapping.
 4. **Effects / masks / animation / motion-preset UI** — extend the element model + inspector.
