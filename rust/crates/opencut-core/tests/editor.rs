@@ -17,6 +17,7 @@ fn text(id: &str, name: &str) -> Element {
         content: "x".into(),
         font_size: 48.0,
         color: "#fff".into(),
+        transform: opencut_project::Transform::default(),
     })
 }
 
@@ -163,6 +164,42 @@ fn seek_clamps_to_content_duration() {
 
     editor.seek(MediaTime::from_ticks(-100)); // before the start
     assert_eq!(editor.playhead(), MediaTime::ZERO);
+}
+
+#[test]
+fn set_transform_applies_to_visuals_and_reverses() {
+    use opencut_core::Transform;
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title");
+    let original = editor.active_scene().element(&reference).unwrap().transform().unwrap();
+
+    let moved = Transform {
+        x: 0.1,
+        y: 0.2,
+        scale: 0.5,
+        rotation: 15.0,
+        opacity: 0.4,
+    };
+    assert!(editor.execute(Command::SetTransform {
+        reference: reference.clone(),
+        transform: moved,
+    }));
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().transform().unwrap(),
+        moved
+    );
+
+    // Audio has no transform → no-op.
+    assert!(!editor.execute(Command::SetTransform {
+        reference: ElementRef::new("track-audio", "el-music"),
+        transform: moved,
+    }));
+
+    editor.undo();
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().transform().unwrap(),
+        original
+    );
 }
 
 #[test]

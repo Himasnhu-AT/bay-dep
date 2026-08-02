@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use time::MediaTime;
 
-use crate::element::{AudioElement, Element, ImageElement, TextElement};
+use crate::element::{AudioElement, Element, ImageElement, TextElement, Transform};
 use crate::scene::Scene;
 use crate::settings::ProjectSettings;
 use crate::track::{Track, TrackKind, Tracks};
@@ -69,6 +69,13 @@ impl Project {
                     content: "Hello, vii".into(),
                     font_size: 96.0,
                     color: "#ffffff".into(),
+                    transform: Transform {
+                        x: 0.5,
+                        y: 0.42,
+                        scale: 0.8,
+                        rotation: 0.0,
+                        opacity: 1.0,
+                    },
                 }),
                 Element::Image(ImageElement {
                     id: "el-logo".into(),
@@ -76,6 +83,13 @@ impl Project {
                     start: secs(3.0),
                     duration: secs(4.0),
                     media_id: "media-logo".into(),
+                    transform: Transform {
+                        x: 0.72,
+                        y: 0.28,
+                        scale: 0.35,
+                        rotation: 0.0,
+                        opacity: 1.0,
+                    },
                 }),
             ],
         };
@@ -94,6 +108,13 @@ impl Project {
                 content: "native • fast".into(),
                 font_size: 48.0,
                 color: "#99aadd".into(),
+                transform: Transform {
+                    x: 0.5,
+                    y: 0.84,
+                    scale: 0.5,
+                    rotation: 0.0,
+                    opacity: 0.85,
+                },
             })],
         }];
 

@@ -10,7 +10,7 @@ use gpui::{
 
 use opencut_core::{
     AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaTime, TextElement,
-    VideoElement,
+    Transform, VideoElement,
 };
 
 /// Which part of a clip a drag is manipulating.
@@ -332,6 +332,7 @@ impl EditorView {
                             content: "New text".into(),
                             font_size: 48.0,
                             color: "#ffffff".into(),
+                            transform: Transform::default(),
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),
@@ -459,6 +460,7 @@ impl EditorView {
                                     media_id: id.into(),
                                     trim_start: MediaTime::ZERO,
                                     trim_end: duration,
+                                    transform: Transform::default(),
                                 }),
                             ),
                             "image" => (
@@ -469,6 +471,7 @@ impl EditorView {
                                     start,
                                     duration,
                                     media_id: id.into(),
+                                    transform: Transform::default(),
                                 }),
                             ),
                             _ => (
@@ -522,6 +525,38 @@ impl EditorView {
             .map(theme::hex_to_rgb)
             .unwrap_or(0x202028);
 
+        const PREVIEW_W: f32 = 512.0;
+        const PREVIEW_H: f32 = 288.0; // 16:9
+
+        // Each active layer as a positioned/sized rect (center x/y, scale of canvas, opacity).
+        let mut layers: Vec<Div> = Vec::new();
+        for layer in &vm.preview_layers {
+            let w = (layer.scale * PREVIEW_W).max(8.0);
+            let h = (layer.scale * PREVIEW_H).max(8.0);
+            let left = layer.x * PREVIEW_W - w / 2.0;
+            let top = layer.y * PREVIEW_H - h / 2.0;
+            layers.push(
+                div()
+                    .absolute()
+                    .left(px(left))
+                    .top(px(top))
+                    .w(px(w))
+                    .h(px(h))
+                    .rounded_md()
+                    .bg(rgb(theme::element_color(&layer.kind_label)))
+                    .opacity(layer.opacity)
+                    .border_1()
+                    .border_color(rgb(theme::BORDER))
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(rgb(theme::TEXT))
+                    .child(Self::shared(layer.label.clone())),
+            );
+        }
+
         div()
             .flex()
             .flex_1()
@@ -532,18 +567,24 @@ impl EditorView {
             .bg(rgb(theme::BG))
             .child(
                 div()
-                    .w(px(480.0))
-                    .h(px(270.0))
+                    .relative()
+                    .w(px(PREVIEW_W))
+                    .h(px(PREVIEW_H))
                     .rounded_md()
                     .bg(rgb(fill))
                     .border_1()
-                    .border_color(rgb(theme::BORDER)),
+                    .border_color(rgb(theme::BORDER))
+                    .overflow_hidden()
+                    .children(layers),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(theme::MUTED))
-                    .child(Self::shared(format!("{width} × {height}"))),
+                    .child(Self::shared(format!(
+                        "{width} × {height}  ·  {} layer(s) at playhead",
+                        vm.preview_layers.len()
+                    ))),
             )
     }
 
@@ -670,6 +711,87 @@ impl EditorView {
             )
     }
 
+    /// Like `nudge_row` but the steppers call `handler(this, sign)` with `sign = ∓1.0` (the
+    /// closure applies the field-specific step). Used for float transform fields.
+    fn stepper_row(
+        &self,
+        label: &str,
+        value: String,
+        id_prefix: &'static str,
+        cx: &mut Context<Self>,
+        handler: impl Fn(&mut EditorView, f32) + Clone + 'static,
+    ) -> Div {
+        let minus = {
+            let handler = handler.clone();
+            self.mini_button(
+                SharedString::from(format!("{id_prefix}-minus")),
+                "−",
+                cx,
+                move |this| handler(this, -1.0),
+            )
+        };
+        let plus = self.mini_button(
+            SharedString::from(format!("{id_prefix}-plus")),
+            "+",
+            cx,
+            move |this| handler(this, 1.0),
+        );
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child(Self::shared(label.to_string())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(minus)
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme::TEXT))
+                            .child(Self::shared(value)),
+                    )
+                    .child(plus),
+            )
+    }
+
+    /// A transform stepper that reads the element's current transform, applies `edit`, and
+    /// dispatches a SetTransform command.
+    fn transform_row(
+        &self,
+        label: &str,
+        value: String,
+        id_prefix: &'static str,
+        reference: ElementRef,
+        cx: &mut Context<Self>,
+        edit: impl Fn(&mut Transform, f32) + Clone + 'static,
+    ) -> Div {
+        self.stepper_row(label, value, id_prefix, cx, move |this, sign| {
+            let current = this
+                .editor
+                .active_scene()
+                .element(&reference)
+                .and_then(|e| e.transform());
+            if let Some(mut transform) = current {
+                edit(&mut transform, sign);
+                this.editor.execute(Command::SetTransform {
+                    reference: reference.clone(),
+                    transform,
+                });
+            }
+        })
+    }
+
     fn inspector(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
         let panel = div()
             .flex()
@@ -749,6 +871,44 @@ impl EditorView {
 
         if let Some(content) = &selected.text_content {
             body = body.child(self.info_row("Text", content));
+        }
+
+        // Transform controls for visual elements (drive the layout preview).
+        if let Some(transform) = selected.transform {
+            let reference = selected.reference.clone();
+            body = body
+                .child(self.transform_row(
+                    "Opacity",
+                    format!("{:.0}%", transform.opacity * 100.0),
+                    "opacity",
+                    reference.clone(),
+                    cx,
+                    |t, sign| t.opacity = (t.opacity + sign * 0.1).clamp(0.0, 1.0),
+                ))
+                .child(self.transform_row(
+                    "Scale",
+                    format!("{:.2}", transform.scale),
+                    "scale",
+                    reference.clone(),
+                    cx,
+                    |t, sign| t.scale = (t.scale + sign * 0.1).clamp(0.05, 4.0),
+                ))
+                .child(self.transform_row(
+                    "X",
+                    format!("{:.2}", transform.x),
+                    "posx",
+                    reference.clone(),
+                    cx,
+                    |t, sign| t.x = (t.x + sign * 0.05).clamp(0.0, 1.0),
+                ))
+                .child(self.transform_row(
+                    "Y",
+                    format!("{:.2}", transform.y),
+                    "posy",
+                    reference,
+                    cx,
+                    |t, sign| t.y = (t.y + sign * 0.05).clamp(0.0, 1.0),
+                ));
         }
 
         panel.child(body)

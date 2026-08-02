@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use opencut_project::{Element, ElementRef, MediaTime, Project, Scene, Track, TrackKind};
+use opencut_project::{Element, ElementRef, MediaTime, Project, Scene, Track, TrackKind, Transform};
 
 use crate::selection::SelectionPatch;
 use crate::state::EditorState;
@@ -71,6 +71,11 @@ pub enum Command {
     RenameElement { reference: ElementRef, name: String },
     /// Set a text element's content (no-op for non-text elements).
     SetTextContent { reference: ElementRef, content: String },
+    /// Set a visual element's on-canvas transform (no-op for audio).
+    SetTransform {
+        reference: ElementRef,
+        transform: Transform,
+    },
     /// Add an empty overlay/audio track.
     AddTrack {
         lane: TrackLane,
@@ -108,6 +113,7 @@ pub enum CommandKind {
     TrimElement,
     RenameElement,
     SetTextContent,
+    SetTransform,
     AddTrack,
     RemoveTrack,
     AddScene,
@@ -146,6 +152,10 @@ pub(crate) enum ProjectPatch {
     SetTextContent {
         reference: ElementRef,
         content: String,
+    },
+    SetElementTransform {
+        reference: ElementRef,
+        transform: Transform,
     },
     AddTrack {
         lane: TrackLane,
@@ -274,6 +284,22 @@ impl ProjectPatch {
                     _ => ProjectPatch::Noop,
                 }
             }
+            ProjectPatch::SetElementTransform {
+                reference,
+                transform,
+            } => match scene.element_mut(&reference) {
+                Some(element) => match element.transform() {
+                    Some(previous) => {
+                        element.set_transform(transform);
+                        ProjectPatch::SetElementTransform {
+                            reference,
+                            transform: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop, // audio has no transform
+                },
+                None => ProjectPatch::Noop,
+            },
             ProjectPatch::AddTrack { lane, index, track } => {
                 let track_id = track.id.clone();
                 let lane_tracks = match lane {
@@ -530,6 +556,22 @@ impl Command {
                     forward: vec![ProjectPatch::SetTextContent {
                         reference: reference.clone(),
                         content: content.clone(),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTransform {
+                reference,
+                transform,
+            } => {
+                // Only visual elements have a transform.
+                scene.element(reference).and_then(|e| e.transform())?;
+                Some(Lowered {
+                    kind: CommandKind::SetTransform,
+                    forward: vec![ProjectPatch::SetElementTransform {
+                        reference: reference.clone(),
+                        transform: *transform,
                     }],
                     selection_patch: None,
                 })

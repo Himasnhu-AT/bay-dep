@@ -16,7 +16,18 @@ pub struct EditorViewModel {
     pub duration_seconds: f64,
     pub scenes: Vec<SceneTab>,
     pub tracks: Vec<TrackRow>,
+    pub preview_layers: Vec<PreviewLayer>,
     pub selected: Option<ElementInfo>,
+}
+
+/// A visual element on screen at the current playhead, for the layout preview.
+pub struct PreviewLayer {
+    pub label: String,
+    pub kind_label: String,
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub opacity: f32,
 }
 
 pub struct SceneTab {
@@ -50,6 +61,7 @@ pub struct ElementInfo {
     pub start_seconds: f64,
     pub duration_seconds: f64,
     pub text_content: Option<String>,
+    pub transform: Option<opencut_core::Transform>,
 }
 
 impl EditorViewModel {
@@ -93,6 +105,30 @@ impl EditorViewModel {
             })
             .collect();
 
+        // Visual elements on screen at the playhead, main lane first (bottom), overlay on top.
+        let playhead = editor.playhead();
+        let mut preview_layers = Vec::new();
+        for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+            if track.hidden {
+                continue;
+            }
+            for element in &track.elements {
+                let Some(transform) = element.transform() else {
+                    continue;
+                };
+                if element.start() <= playhead && playhead < element.end() {
+                    preview_layers.push(PreviewLayer {
+                        label: element.name().to_string(),
+                        kind_label: element.kind().label().to_string(),
+                        x: transform.x,
+                        y: transform.y,
+                        scale: transform.scale,
+                        opacity: transform.opacity,
+                    });
+                }
+            }
+        }
+
         let selected = editor.selected_element().and_then(|element| {
             let reference = editor.selection().first()?.clone();
             let text_content = match element {
@@ -106,6 +142,7 @@ impl EditorViewModel {
                 start_seconds: element.start().to_seconds_f64(),
                 duration_seconds: element.duration().to_seconds_f64(),
                 text_content,
+                transform: element.transform(),
             })
         });
 
@@ -128,6 +165,7 @@ impl EditorViewModel {
                 })
                 .collect(),
             tracks,
+            preview_layers,
             selected,
         }
     }

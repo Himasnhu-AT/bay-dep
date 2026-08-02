@@ -27,5 +27,5 @@ pub use opencut_project as project;
 pub use opencut_project::{
     AudioElement, Background, CanvasSize, Element, ElementKind, Fps, ImageElement, MediaTime,
     Project, ProjectMetadata, ProjectSettings, Scene, TextElement, Track, TrackKind, Tracks,
-    VideoElement,
+    Transform, VideoElement,
 };

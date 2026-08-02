@@ -4,6 +4,30 @@
 use serde::{Deserialize, Serialize};
 use time::MediaTime;
 
+/// A visual element's on-canvas placement. Position is the element center as a fraction of the
+/// canvas (0..1); `scale` is the fraction of the canvas the element spans (1 = full-frame).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transform {
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub rotation: f32,
+    pub opacity: f32,
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            x: 0.5,
+            y: 0.5,
+            scale: 1.0,
+            rotation: 0.0,
+            opacity: 1.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoElement {
@@ -14,6 +38,8 @@ pub struct VideoElement {
     pub media_id: String,
     pub trim_start: MediaTime,
     pub trim_end: MediaTime,
+    #[serde(default)]
+    pub transform: Transform,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +50,8 @@ pub struct ImageElement {
     pub start: MediaTime,
     pub duration: MediaTime,
     pub media_id: String,
+    #[serde(default)]
+    pub transform: Transform,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +64,8 @@ pub struct TextElement {
     pub content: String,
     pub font_size: f32,
     pub color: String,
+    #[serde(default)]
+    pub transform: Transform,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,5 +168,24 @@ impl Element {
 
     pub fn set_duration(&mut self, duration: MediaTime) {
         with_inner!(self, e => e.duration = duration);
+    }
+
+    /// The on-canvas transform for visual elements (`None` for audio).
+    pub fn transform(&self) -> Option<Transform> {
+        match self {
+            Element::Video(e) => Some(e.transform),
+            Element::Image(e) => Some(e.transform),
+            Element::Text(e) => Some(e.transform),
+            Element::Audio(_) => None,
+        }
+    }
+
+    pub fn set_transform(&mut self, transform: Transform) {
+        match self {
+            Element::Video(e) => e.transform = transform,
+            Element::Image(e) => e.transform = transform,
+            Element::Text(e) => e.transform = transform,
+            Element::Audio(_) => {}
+        }
     }
 }
