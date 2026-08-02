@@ -47,12 +47,28 @@ pub struct PreviewFrame {
     pub bgra: Vec<u8>,
 }
 
+/// All frames of a video clip decoded once at a fixed size (for smooth playback + fast scrub).
+struct VideoClip {
+    fps: f32,
+    width: u32,
+    height: u32,
+    frames: Vec<Vec<u8>>, // RGBA, `width*height*4` each
+}
+
+/// Decode size + limits for the cached video frames.
+const VIDEO_W: u32 = 320;
+const VIDEO_H: u32 = 180;
+const VIDEO_FPS: f32 = 30.0;
+const VIDEO_MAX_FRAMES: u32 = 450; // ~15s cap
+
 pub struct PreviewRenderer {
     ctx: GpuContext,
     compositor: Compositor,
     text: TextRaster,
     /// media ids whose decoded image is already uploaded into the compositor texture store.
     uploaded_media: HashSet<String>,
+    /// media id → all decoded video frames (one ffmpeg decode per clip, then indexed by time).
+    video_cache: std::collections::HashMap<String, VideoClip>,
 }
 
 impl PreviewRenderer {
@@ -66,6 +82,7 @@ impl PreviewRenderer {
             compositor,
             text: TextRaster::new(),
             uploaded_media: HashSet::new(),
+            video_cache: std::collections::HashMap::new(),
         })
     }
 
@@ -218,24 +235,31 @@ impl PreviewRenderer {
                         }
                     }
                     Element::Video(video) => {
-                        // Frame at (trim_start + playhead-into-clip), decoded via the ffmpeg CLI.
-                        let into_clip =
-                            (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
-                                / 120_000.0;
-                        let seconds = video.trim_start.to_seconds_f64() + into_clip;
-                        let tw =
-                            (transform.scale * width as f32).clamp(16.0, width as f32) as u32;
-                        let th =
-                            (transform.scale * height as f32).clamp(16.0, height as f32) as u32;
-                        let path = media
-                            .iter()
-                            .find(|m| m.id == video.media_id)
-                            .map(|m| m.path.clone());
-                        match path.and_then(|p| decode_video_frame(&p, seconds, tw, th)) {
-                            Some(rgba) => {
-                                let texture = self
-                                    .ctx
-                                    .upload_rgba_texture(&rgba, tw, th, "preview-video");
+                        let media_id = video.media_id.clone();
+                        // Decode the whole clip once, then index frames by time (fast playback).
+                        if !self.video_cache.contains_key(&media_id) {
+                            if let Some(path) =
+                                media.iter().find(|m| m.id == media_id).map(|m| m.path.clone())
+                            {
+                                if let Some(clip) = decode_video_clip(&path) {
+                                    self.video_cache.insert(media_id.clone(), clip);
+                                }
+                            }
+                        }
+                        let frame = self.video_cache.get(&media_id).and_then(|clip| {
+                            let seconds = video.trim_start.to_seconds_f64()
+                                + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
+                                    / 120_000.0;
+                            let index = ((seconds * clip.fps as f64).floor() as usize)
+                                .min(clip.frames.len().saturating_sub(1));
+                            clip.frames
+                                .get(index)
+                                .map(|rgba| (clip.width, clip.height, rgba.clone()))
+                        });
+                        match frame {
+                            Some((w, h, rgba)) => {
+                                let texture =
+                                    self.ctx.upload_rgba_texture(&rgba, w, h, "preview-video");
                                 self.compositor
                                     .upsert_texture(element.id().to_string(), texture);
                                 element.id().to_string()
@@ -290,27 +314,27 @@ impl PreviewRenderer {
     }
 }
 
-/// Decode a single video frame at `seconds` scaled to `width × height` RGBA, by shelling out to
-/// the `ffmpeg` CLI (the sidecar-decoder escape hatch — no native ffmpeg linking). Returns `None`
-/// if ffmpeg is unavailable or the decode fails.
-fn decode_video_frame(path: &str, seconds: f64, width: u32, height: u32) -> Option<Vec<u8>> {
+/// Decode an entire video clip to a sequence of RGBA frames at a fixed size/fps in one ffmpeg
+/// invocation (the sidecar-decoder escape hatch — no native ffmpeg linking). Capped at
+/// `VIDEO_MAX_FRAMES`. Returns `None` if ffmpeg is unavailable or there is no video.
+fn decode_video_clip(path: &str) -> Option<VideoClip> {
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-nostdin",
             "-loglevel",
             "error",
-            "-ss",
-            &format!("{seconds}"),
             "-i",
             path,
+            "-r",
+            &format!("{VIDEO_FPS}"),
+            "-s",
+            &format!("{VIDEO_W}x{VIDEO_H}"),
             "-frames:v",
-            "1",
+            &VIDEO_MAX_FRAMES.to_string(),
             "-f",
             "rawvideo",
             "-pix_fmt",
             "rgba",
-            "-s",
-            &format!("{width}x{height}"),
             "pipe:1",
         ])
         .output()
@@ -318,8 +342,21 @@ fn decode_video_frame(path: &str, seconds: f64, width: u32, height: u32) -> Opti
     if !output.status.success() {
         return None;
     }
-    let expected = (width * height * 4) as usize;
-    (output.stdout.len() == expected).then_some(output.stdout)
+    let frame_size = (VIDEO_W * VIDEO_H * 4) as usize;
+    let frames: Vec<Vec<u8>> = output
+        .stdout
+        .chunks_exact(frame_size)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+    if frames.is_empty() {
+        return None;
+    }
+    Some(VideoClip {
+        fps: VIDEO_FPS,
+        width: VIDEO_W,
+        height: VIDEO_H,
+        frames,
+    })
 }
 
 fn kind_color(kind: ElementKind) -> [u8; 4] {
