@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 compositor = { version = "0.1.0", path = "../compositor" }
 gpu = { version = "0.1.0", path = "../gpu" }
+image = "0.25"
 opencut-project = { version = "0.1.0", path = "../opencut-project" }
 opencut-text = { version = "0.1.0", path = "../opencut-text" }
 pollster = "0.4"

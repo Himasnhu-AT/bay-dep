@@ -1,8 +1,9 @@
-//! The preview renderer composites the starter scene to a non-empty BGRA frame on a real GPU.
-//! Skips if no adapter is available.
+//! The preview renderer composites scenes to non-empty BGRA frames on a real GPU (skips if none).
 
 use opencut_preview::PreviewRenderer;
-use opencut_project::{Effect, Element, MediaTime, Project};
+use opencut_project::{
+    Effect, Element, ImageElement, MediaAsset, MediaTime, Project, Transform,
+};
 
 #[test]
 fn renders_starter_scene_to_a_nonempty_frame() {
@@ -14,14 +15,14 @@ fn renders_starter_scene_to_a_nonempty_frame() {
     let (width, height) = (128, 72);
     let frame = renderer.render(
         project.active_scene(),
-        MediaTime::ZERO, // the title layer is on screen at t=0
+        MediaTime::ZERO,
         width,
         height,
         &project.settings.background,
+        &project.media,
     );
 
     assert_eq!(frame.bgra.len() as u32, width * height * 4);
-    // The top-left corner is background; some interior pixels are the title layer.
     let corner = &frame.bgra[0..4];
     assert!(
         frame.bgra.chunks_exact(4).any(|texel| texel != corner),
@@ -36,7 +37,6 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
         return;
     };
     let mut project = Project::starter();
-    // Attach a brightness effect to the title element.
     if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
         title.effects.push(Effect {
             id: "fx1".into(),
@@ -52,6 +52,54 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
         width,
         height,
         &project.settings.background,
+        &project.media,
     );
     assert_eq!(frame.bgra.len() as u32, width * height * 4);
+}
+
+#[test]
+fn renders_a_real_image_element_from_disk() {
+    let Some(mut renderer) = PreviewRenderer::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+
+    // Write a small solid-red PNG to a unique temp path.
+    let path = std::env::temp_dir().join(format!("vii-test-image-{}.png", std::process::id()));
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([200, 30, 30, 255]))
+        .save(&path)
+        .unwrap();
+
+    let mut project = Project::starter();
+    project.media.push(MediaAsset {
+        id: "m1".into(),
+        name: "Pic".into(),
+        path: path.to_string_lossy().into_owned(),
+    });
+    project
+        .active_scene_mut()
+        .tracks
+        .main
+        .elements
+        .push(Element::Image(ImageElement {
+            id: "img1".into(),
+            name: "Pic".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            media_id: "m1".into(),
+            transform: Transform::default(),
+            effects: Vec::new(),
+        }));
+
+    let frame = renderer.render(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    );
+    assert_eq!(frame.bgra.len(), 64 * 36 * 4);
+
+    let _ = std::fs::remove_file(&path);
 }

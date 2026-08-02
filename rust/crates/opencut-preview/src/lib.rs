@@ -11,8 +11,10 @@ use compositor::{
     EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
     QuadTransformDescriptor,
 };
+use std::collections::HashSet;
+
 use gpu::GpuContext;
-use opencut_project::{Background, Element, ElementKind, MediaTime, Scene};
+use opencut_project::{Background, Element, ElementKind, MediaAsset, MediaTime, Scene};
 use opencut_text::TextRaster;
 
 /// Map an element's enabled, supported effects to compositor effect-pass groups (one group per
@@ -49,6 +51,8 @@ pub struct PreviewRenderer {
     ctx: GpuContext,
     compositor: Compositor,
     text: TextRaster,
+    /// media ids whose decoded image is already uploaded into the compositor texture store.
+    uploaded_media: HashSet<String>,
 }
 
 impl PreviewRenderer {
@@ -61,10 +65,42 @@ impl PreviewRenderer {
             ctx,
             compositor,
             text: TextRaster::new(),
+            uploaded_media: HashSet::new(),
         })
     }
 
-    /// Composite `scene` at `playhead` into a `width × height` BGRA frame.
+    /// Decode + upload an image media asset once, returning its texture id, or `None` on failure.
+    fn ensure_image_texture(&mut self, media_id: &str, media: &[MediaAsset]) -> Option<String> {
+        if self.uploaded_media.contains(media_id) {
+            return Some(media_id.to_string());
+        }
+        let path = media.iter().find(|m| m.id == media_id)?.path.clone();
+        let decoded = image::open(&path).ok()?;
+        let rgba = decoded.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let texture = self
+            .ctx
+            .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image");
+        self.compositor.upsert_texture(media_id.to_string(), texture);
+        self.uploaded_media.insert(media_id.to_string());
+        Some(media_id.to_string())
+    }
+
+    /// Upload an 8×8 solid placeholder for an element and return its texture id.
+    fn upload_solid_placeholder(&mut self, element: &Element) -> String {
+        let texture = self.ctx.upload_rgba_texture(
+            &solid_rgba(kind_color(element.kind())),
+            8,
+            8,
+            "preview-solid",
+        );
+        self.compositor
+            .upsert_texture(element.id().to_string(), texture);
+        element.id().to_string()
+    }
+
+    /// Composite `scene` at `playhead` into a `width × height` BGRA frame. `media` resolves image
+    /// element `media_id`s to files on disk.
     pub fn render(
         &mut self,
         scene: &Scene,
@@ -72,6 +108,7 @@ impl PreviewRenderer {
         width: u32,
         height: u32,
         background: &Background,
+        media: &[MediaAsset],
     ) -> PreviewFrame {
         let clear = match background {
             Background::Color { color } => hex_to_rgba(color),
@@ -92,27 +129,35 @@ impl PreviewRenderer {
                     continue;
                 }
 
-                // Text elements are rasterized to real glyphs; other visuals use a solid
-                // placeholder color (until native media decode provides real frames).
-                let (tex_w, tex_h, rgba) = match element {
+                // Text → real glyphs; Image → decoded file (cached); others → solid placeholder.
+                let texture_id = match element {
                     Element::Text(text) => {
                         let tw = (transform.scale * width as f32).clamp(16.0, width as f32) as u32;
                         let th =
                             (transform.scale * height as f32).clamp(16.0, height as f32) as u32;
                         let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
                         let image = self.text.render(&text.content, font_px, &text.color, tw, th);
-                        (image.width, image.height, image.rgba)
+                        let texture = self.ctx.upload_rgba_texture(
+                            &image.rgba,
+                            image.width,
+                            image.height,
+                            "preview-text",
+                        );
+                        self.compositor
+                            .upsert_texture(element.id().to_string(), texture);
+                        element.id().to_string()
                     }
-                    _ => (8, 8, solid_rgba(kind_color(element.kind()))),
+                    Element::Image(image_element) => {
+                        match self.ensure_image_texture(&image_element.media_id, media) {
+                            Some(texture_id) => texture_id,
+                            None => self.upload_solid_placeholder(element),
+                        }
+                    }
+                    _ => self.upload_solid_placeholder(element),
                 };
-                let texture = self
-                    .ctx
-                    .upload_rgba_texture(&rgba, tex_w, tex_h, "preview-layer");
-                self.compositor
-                    .upsert_texture(element.id().to_string(), texture);
 
                 items.push(FrameItemDescriptor::Layer(LayerDescriptor {
-                    texture_id: element.id().to_string(),
+                    texture_id,
                     transform: QuadTransformDescriptor {
                         center_x: transform.x * width as f32,
                         center_y: transform.y * height as f32,

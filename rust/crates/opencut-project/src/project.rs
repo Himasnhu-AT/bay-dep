@@ -15,6 +15,15 @@ pub struct ProjectMetadata {
     pub name: String,
 }
 
+/// An imported media file the timeline references by id (image/video/audio on disk).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaAsset {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -22,6 +31,19 @@ pub struct Project {
     pub settings: ProjectSettings,
     pub scenes: Vec<Scene>,
     pub current_scene_id: String,
+    /// Imported media assets, referenced by element `media_id`.
+    #[serde(default)]
+    pub media: Vec<MediaAsset>,
+}
+
+impl Project {
+    /// Resolve a media id to its file path.
+    pub fn media_path(&self, media_id: &str) -> Option<&str> {
+        self.media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .map(|asset| asset.path.as_str())
+    }
 }
 
 fn secs(seconds: f64) -> MediaTime {
@@ -157,6 +179,7 @@ impl Project {
             settings: ProjectSettings::default(),
             scenes: vec![scene],
             current_scene_id: "scene-main".into(),
+            media: Vec::new(),
         }
     }
 }

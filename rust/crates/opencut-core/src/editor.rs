@@ -150,6 +150,18 @@ impl Editor {
         self.bus.commit();
     }
 
+    /// Add an imported media asset to the project library (non-undoable).
+    pub fn add_media(&mut self, asset: opencut_project::MediaAsset) {
+        self.bus.begin();
+        self.state.project.media.push(asset);
+        self.bus.mark(Domain::Document);
+        self.bus.commit();
+    }
+
+    pub fn media(&self) -> &[opencut_project::MediaAsset] {
+        &self.state.project.media
+    }
+
     /// Copy the selected elements to the clipboard. Non-undoable; emits one event iff non-empty.
     pub fn copy(&mut self) -> bool {
         self.bus.begin();

@@ -28,7 +28,7 @@ pub use element::{
     AudioElement, Effect, Element, ElementKind, ImageElement, TextElement, Transform,
     VideoElement,
 };
-pub use project::{Project, ProjectMetadata};
+pub use project::{MediaAsset, Project, ProjectMetadata};
 pub use refs::ElementRef;
 pub use scene::Scene;
 pub use settings::{Background, CanvasSize, Fps, ProjectSettings};

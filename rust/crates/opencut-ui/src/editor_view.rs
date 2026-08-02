@@ -11,8 +11,8 @@ use gpui::{
 };
 
 use opencut_core::{
-    AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaTime, TextElement,
-    Transform, VideoElement,
+    AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaTime,
+    TextElement, Transform, VideoElement,
 };
 use opencut_preview::PreviewRenderer;
 
@@ -201,12 +201,14 @@ impl EditorView {
         // Disjoint field borrows: &mut self.preview and &self.editor.
         let renderer = self.preview.as_mut().unwrap();
         let scene = self.editor.active_scene();
+        let media = self.editor.media();
         let frame = renderer.render(
             scene,
             playhead,
             PREVIEW_RENDER_W,
             PREVIEW_RENDER_H,
             &background,
+            media,
         );
 
         if let Some(buffer) =
@@ -285,6 +287,43 @@ impl EditorView {
         }
     }
 
+    /// Pick an image file, import it as a media asset, and add an image clip at the playhead.
+    fn import_image(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg", "webp", "gif", "bmp"])
+            .pick_file()
+        else {
+            return;
+        };
+        self.add_counter += 1;
+        let uid = self.add_counter;
+        let media_id = format!("media-{uid}");
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Image".to_string());
+
+        self.editor.add_media(MediaAsset {
+            id: media_id.clone(),
+            name: name.clone(),
+            path: path.to_string_lossy().into_owned(),
+        });
+        self.editor.execute(Command::AddElement {
+            track_id: "track-main".into(),
+            element: Element::Image(ImageElement {
+                id: format!("img-{uid}"),
+                name,
+                start: self.editor.playhead(),
+                duration: MediaTime::from_ticks(TICKS_PER_SECOND * 4),
+                media_id,
+                transform: Transform::default(),
+                effects: Vec::new(),
+            }),
+            select: true,
+        });
+        self.preview_sig = None; // new media asset → force a re-render
+    }
+
     /// Render the composited frame at the playhead at full canvas resolution and save it as a PNG.
     fn export_frame(&mut self) {
         if self.preview.is_none() {
@@ -295,7 +334,15 @@ impl EditorView {
         let background = self.editor.project().settings.background.clone();
         let renderer = self.preview.as_mut().unwrap();
         let scene = self.editor.active_scene();
-        let frame = renderer.render(scene, playhead, canvas.width, canvas.height, &background);
+        let media = self.editor.media();
+        let frame = renderer.render(
+            scene,
+            playhead,
+            canvas.width,
+            canvas.height,
+            &background,
+            media,
+        );
 
         let mut rgba = frame.bgra;
         for texel in rgba.chunks_exact_mut(4) {
@@ -638,6 +685,9 @@ impl EditorView {
             .border_r_1()
             .border_color(rgb(theme::BORDER))
             .child(div().text_xs().text_color(rgb(theme::MUTED)).child("MEDIA"))
+            .child(self.button("import-image", "Import Image…", true, cx, |this, _cx| {
+                this.import_image()
+            }))
             .child(
                 div()
                     .text_xs()
