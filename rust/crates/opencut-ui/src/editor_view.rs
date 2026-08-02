@@ -5,7 +5,9 @@
 use gpui::prelude::*;
 use gpui::{div, px, rgb, Context, Div, SharedString, Window};
 
-use opencut_core::{Command, Editor, Element, MediaTime, TextElement};
+use opencut_core::{
+    AudioElement, Command, Editor, Element, ImageElement, MediaTime, TextElement, VideoElement,
+};
 
 use crate::theme;
 use crate::view_model::{EditorViewModel, TrackRow};
@@ -137,7 +139,77 @@ impl EditorView {
             )
     }
 
-    fn media_panel(&self) -> Div {
+    fn media_panel(&self, cx: &mut Context<Self>) -> Div {
+        // (element-id, display name, kind).
+        let items: [(&'static str, &'static str, &'static str); 3] = [
+            ("media-clip", "Clip.mp4", "video"),
+            ("media-logo", "Logo.png", "image"),
+            ("media-music", "Music.mp3", "audio"),
+        ];
+
+        let mut buttons: Vec<gpui::Stateful<Div>> = Vec::new();
+        for (id, name, kind) in items {
+            buttons.push(
+                div()
+                    .id(id)
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(theme::PANEL_ALT))
+                    .text_sm()
+                    .text_color(rgb(theme::TEXT))
+                    .child(name)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.add_counter += 1;
+                        let uid = this.add_counter;
+                        let start = this.editor.playhead();
+                        let duration = MediaTime::from_ticks(TICKS_PER_SECOND * 5);
+                        let (track_id, element) = match kind {
+                            "video" => (
+                                "track-main".to_string(),
+                                Element::Video(VideoElement {
+                                    id: format!("clip-{uid}"),
+                                    name: name.into(),
+                                    start,
+                                    duration,
+                                    media_id: id.into(),
+                                    trim_start: MediaTime::ZERO,
+                                    trim_end: duration,
+                                }),
+                            ),
+                            "image" => (
+                                "track-main".to_string(),
+                                Element::Image(ImageElement {
+                                    id: format!("img-{uid}"),
+                                    name: name.into(),
+                                    start,
+                                    duration,
+                                    media_id: id.into(),
+                                }),
+                            ),
+                            _ => (
+                                "track-audio".to_string(),
+                                Element::Audio(AudioElement {
+                                    id: format!("aud-{uid}"),
+                                    name: name.into(),
+                                    start,
+                                    duration,
+                                    media_id: id.into(),
+                                    muted: false,
+                                    volume: 1.0,
+                                }),
+                            ),
+                        };
+                        this.editor.execute(Command::AddElement {
+                            track_id,
+                            element,
+                            select: true,
+                        });
+                        cx.notify();
+                    })),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
@@ -148,22 +220,14 @@ impl EditorView {
             .bg(rgb(theme::PANEL))
             .border_r_1()
             .border_color(rgb(theme::BORDER))
+            .child(div().text_xs().text_color(rgb(theme::MUTED)).child("MEDIA"))
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(theme::MUTED))
-                    .child("MEDIA"),
+                    .child("Click to add at playhead"),
             )
-            .children(["Logo.png", "Music.mp3", "Clip.mp4"].into_iter().map(|name| {
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(theme::PANEL_ALT))
-                    .text_sm()
-                    .text_color(rgb(theme::TEXT))
-                    .child(name)
-            }))
+            .children(buttons)
     }
 
     fn preview(&self, vm: &EditorViewModel) -> Div {
@@ -542,7 +606,7 @@ impl Render for EditorView {
                     .flex_row()
                     .flex_1()
                     .min_h(px(0.0))
-                    .child(self.media_panel())
+                    .child(self.media_panel(cx))
                     .child(self.preview(&vm))
                     .child(self.inspector(&vm, cx)),
             )
