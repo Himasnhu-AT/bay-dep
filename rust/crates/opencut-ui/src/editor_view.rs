@@ -87,8 +87,16 @@ const TICKS_PER_SECOND: i64 = 120_000;
 
 /// Where "Save"/"Load" read and write the project JSON.
 fn project_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join("vii-project.json")
+    home_dir().join("vii-project.json")
+}
+
+/// Where "Export Frame" writes the composited still.
+fn export_frame_path() -> std::path::PathBuf {
+    home_dir().join("vii-frame.png")
+}
+
+fn home_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
 }
 /// Inspector nudge step (0.5s) and minimum element duration (0.1s), in ticks.
 const NUDGE_TICKS: i64 = TICKS_PER_SECOND / 2;
@@ -277,6 +285,27 @@ impl EditorView {
         }
     }
 
+    /// Render the composited frame at the playhead at full canvas resolution and save it as a PNG.
+    fn export_frame(&mut self) {
+        if self.preview.is_none() {
+            return;
+        }
+        let canvas = self.editor.project().settings.canvas;
+        let playhead = self.editor.playhead();
+        let background = self.editor.project().settings.background.clone();
+        let renderer = self.preview.as_mut().unwrap();
+        let scene = self.editor.active_scene();
+        let frame = renderer.render(scene, playhead, canvas.width, canvas.height, &background);
+
+        let mut rgba = frame.bgra;
+        for texel in rgba.chunks_exact_mut(4) {
+            texel.swap(0, 2); // BGRA → RGBA for PNG
+        }
+        if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, rgba) {
+            let _ = buffer.save(export_frame_path());
+        }
+    }
+
     /// Split the selected element at the playhead into two clips.
     fn split_selected(&mut self) {
         if let Some(reference) = self.editor.selection().first().cloned() {
@@ -404,7 +433,14 @@ impl EditorView {
                                 this.editor.load_project(project);
                             }
                         }
-                    })),
+                    }))
+                    .child(self.button(
+                        "export-frame",
+                        "Export Frame",
+                        self.preview.is_some(),
+                        cx,
+                        |this, _cx| this.export_frame(),
+                    )),
             )
             .child(
                 div()
