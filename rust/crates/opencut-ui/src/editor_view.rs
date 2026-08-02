@@ -28,6 +28,7 @@ gpui::actions!(
         Undo,
         Redo,
         DeleteSelected,
+        SplitClip,
         TogglePlay,
         SeekForward,
         SeekBackward,
@@ -43,6 +44,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-z", Redo, None),
         KeyBinding::new("backspace", DeleteSelected, None),
         KeyBinding::new("delete", DeleteSelected, None),
+        KeyBinding::new("s", SplitClip, None),
         KeyBinding::new("space", TogglePlay, None),
         KeyBinding::new("right", SeekForward, None),
         KeyBinding::new("left", SeekBackward, None),
@@ -116,6 +118,20 @@ impl EditorView {
     fn delete_selected(&mut self) {
         if let Some(reference) = self.editor.selection().first().cloned() {
             self.editor.execute(Command::RemoveElement { reference });
+        }
+    }
+
+    /// Split the selected element at the playhead into two clips.
+    fn split_selected(&mut self) {
+        if let Some(reference) = self.editor.selection().first().cloned() {
+            self.add_counter += 1;
+            let new_id = format!("split-{}", self.add_counter);
+            let at = self.editor.playhead();
+            self.editor.execute(Command::SplitElement {
+                reference,
+                at,
+                new_id,
+            });
         }
     }
 
@@ -263,6 +279,9 @@ impl EditorView {
                         if let Some(reference) = this.editor.selection().first().cloned() {
                             this.editor.execute(Command::RemoveElement { reference });
                         }
+                    }))
+                    .child(self.button("split", "Split", vm.selected.is_some(), cx, |this, _cx| {
+                        this.split_selected();
                     }))
                     .child(self.button("copy", "Copy", vm.selected.is_some(), cx, |this, _cx| {
                         this.editor.copy();
@@ -831,6 +850,10 @@ impl Render for EditorView {
             }))
             .on_action(cx.listener(|this, _: &DeleteSelected, _window, cx| {
                 this.delete_selected();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SplitClip, _window, cx| {
+                this.split_selected();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &TogglePlay, _window, cx| {

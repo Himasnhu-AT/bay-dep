@@ -54,6 +54,13 @@ pub enum Command {
         reference: ElementRef,
         duration: MediaTime,
     },
+    /// Split an element into two at `at` (must be strictly inside the element); the right part
+    /// becomes a new element with id `new_id`, which is selected.
+    SplitElement {
+        reference: ElementRef,
+        at: MediaTime,
+        new_id: String,
+    },
     /// Rename an element.
     RenameElement { reference: ElementRef, name: String },
     /// Set a text element's content (no-op for non-text elements).
@@ -82,6 +89,7 @@ pub enum CommandKind {
     RemoveElement,
     MoveElement,
     SetElementDuration,
+    SplitElement,
     RenameElement,
     SetTextContent,
     AddTrack,
@@ -380,6 +388,50 @@ impl Command {
                         duration: *duration,
                     }],
                     selection_patch: None,
+                })
+            }
+
+            Command::SplitElement {
+                reference,
+                at,
+                new_id,
+            } => {
+                let element = scene.element(reference)?;
+                let start = element.start();
+                let end = element.end();
+                if *at <= start || *at >= end {
+                    return None; // split point must be strictly inside the element
+                }
+                let track = scene.tracks.track(&reference.track_id)?;
+                let index = track
+                    .elements
+                    .iter()
+                    .position(|e| e.id() == reference.element_id)?;
+
+                let first_duration = MediaTime::from_ticks(at.as_ticks() - start.as_ticks());
+                let second_duration = MediaTime::from_ticks(end.as_ticks() - at.as_ticks());
+                let mut right = element.clone();
+                right.set_id(new_id.clone());
+                right.set_start(*at);
+                right.set_duration(second_duration);
+
+                Some(Lowered {
+                    kind: CommandKind::SplitElement,
+                    forward: vec![
+                        ProjectPatch::SetElementDuration {
+                            reference: reference.clone(),
+                            duration: first_duration,
+                        },
+                        ProjectPatch::InsertElement {
+                            track_id: reference.track_id.clone(),
+                            index: index + 1,
+                            element: right,
+                        },
+                    ],
+                    selection_patch: Some(SelectionPatch::select_elements(vec![ElementRef::new(
+                        reference.track_id.clone(),
+                        new_id.clone(),
+                    )])),
                 })
             }
 

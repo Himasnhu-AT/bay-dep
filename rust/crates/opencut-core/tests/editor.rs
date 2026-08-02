@@ -102,6 +102,38 @@ fn set_element_duration_is_reversible() {
 }
 
 #[test]
+fn split_element_divides_it_and_undo_rejoins() {
+    let mut editor = Editor::starter();
+    // el-title runs 0..3s; split at 1s.
+    assert!(editor.execute(Command::SplitElement {
+        reference: main_ref("el-title"),
+        at: MediaTime::from_ticks(120_000),
+        new_id: "el-title-b".into(),
+    }));
+
+    let main = &editor.active_scene().tracks.main;
+    assert_eq!(main.element("el-title").unwrap().duration(), MediaTime::from_ticks(120_000));
+    let right = main.element("el-title-b").unwrap();
+    assert_eq!(right.start(), MediaTime::from_ticks(120_000));
+    assert_eq!(right.duration(), MediaTime::from_ticks(240_000));
+    assert!(editor.is_selected(&main_ref("el-title-b")));
+
+    // A split point outside the element is a no-op.
+    assert!(!editor.execute(Command::SplitElement {
+        reference: main_ref("el-title"),
+        at: MediaTime::ZERO,
+        new_id: "nope".into(),
+    }));
+
+    editor.undo();
+    assert!(editor.active_scene().tracks.main.element("el-title-b").is_none());
+    assert_eq!(
+        editor.active_scene().tracks.main.element("el-title").unwrap().duration(),
+        MediaTime::from_ticks(360_000)
+    );
+}
+
+#[test]
 fn seek_clamps_to_content_duration() {
     let mut editor = Editor::starter();
     let duration = editor.duration();
