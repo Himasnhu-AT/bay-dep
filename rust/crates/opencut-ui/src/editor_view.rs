@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, img, px, rgb, App, Context, Div, FocusHandle, ImageSource, KeyBinding, MouseButton,
-    MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
+    div, img, px, rgb, App, Context, Div, FocusHandle, ImageSource, KeyBinding, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
 };
 
 use opencut_core::{
@@ -68,17 +68,20 @@ gpui::actions!(
 
 /// The default keymap for the editor window.
 pub fn key_bindings() -> Vec<KeyBinding> {
+    // Bound only in the "Editor" key context; while editing text the root switches to "TextEdit",
+    // so these don't fire and every keystroke goes to the text buffer instead.
+    let editor = Some("Editor");
     vec![
-        KeyBinding::new("cmd-z", Undo, None),
-        KeyBinding::new("cmd-shift-z", Redo, None),
-        KeyBinding::new("backspace", DeleteSelected, None),
-        KeyBinding::new("delete", DeleteSelected, None),
-        KeyBinding::new("s", SplitClip, None),
-        KeyBinding::new("space", TogglePlay, None),
-        KeyBinding::new("right", SeekForward, None),
-        KeyBinding::new("left", SeekBackward, None),
-        KeyBinding::new("cmd-c", CopyClip, None),
-        KeyBinding::new("cmd-v", PasteClip, None),
+        KeyBinding::new("cmd-z", Undo, editor),
+        KeyBinding::new("cmd-shift-z", Redo, editor),
+        KeyBinding::new("backspace", DeleteSelected, editor),
+        KeyBinding::new("delete", DeleteSelected, editor),
+        KeyBinding::new("s", SplitClip, editor),
+        KeyBinding::new("space", TogglePlay, editor),
+        KeyBinding::new("right", SeekForward, editor),
+        KeyBinding::new("left", SeekBackward, editor),
+        KeyBinding::new("cmd-c", CopyClip, editor),
+        KeyBinding::new("cmd-v", PasteClip, editor),
     ]
 }
 
@@ -135,6 +138,8 @@ pub struct EditorView {
     audio_output: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
     audio_sink: Option<rodio::Sink>,
     audio_cache: std::collections::HashMap<String, std::sync::Arc<opencut_audio::AudioPcm>>,
+    /// When editing a text clip: (element ref, current edit buffer).
+    editing_text: Option<(ElementRef, String)>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -162,6 +167,37 @@ impl EditorView {
             audio_output: rodio::OutputStream::try_default().ok(),
             audio_sink: None,
             audio_cache: std::collections::HashMap::new(),
+            editing_text: None,
+        }
+    }
+
+    /// Handle a keystroke while editing a text clip's content. Commits on Enter, cancels on Escape.
+    fn handle_text_key(&mut self, keystroke: &gpui::Keystroke) {
+        match keystroke.key.as_str() {
+            "enter" => {
+                if let Some((reference, content)) = self.editing_text.take() {
+                    self.editor
+                        .execute(Command::SetTextContent { reference, content });
+                }
+            }
+            "escape" => self.editing_text = None,
+            "backspace" => {
+                if let Some((_, buffer)) = self.editing_text.as_mut() {
+                    buffer.pop();
+                }
+            }
+            "space" => {
+                if let Some((_, buffer)) = self.editing_text.as_mut() {
+                    buffer.push(' ');
+                }
+            }
+            _ => {
+                if let (Some((_, buffer)), Some(ch)) =
+                    (self.editing_text.as_mut(), keystroke.key_char.as_ref())
+                {
+                    buffer.push_str(ch);
+                }
+            }
         }
     }
 
@@ -1396,7 +1432,46 @@ impl EditorView {
             ));
 
         if let Some(content) = &selected.text_content {
-            body = body.child(self.info_row("Text", content));
+            let editing = self
+                .editing_text
+                .as_ref()
+                .filter(|(reference, _)| reference == &selected.reference);
+            match editing {
+                Some((_, buffer)) => {
+                    body = body
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme::MUTED))
+                                .child("Editing (Enter = save, Esc = cancel)"),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(rgb(theme::SELECTED))
+                                .text_sm()
+                                .text_color(rgb(theme::TEXT))
+                                .child(Self::shared(format!("{buffer}\u{258f}"))),
+                        );
+                }
+                None => {
+                    body = body.child(self.info_row("Text", content)).child(self.button(
+                        "edit-text",
+                        "Edit Text",
+                        true,
+                        cx,
+                        {
+                            let reference = selected.reference.clone();
+                            let content = content.clone();
+                            move |this, _cx| {
+                                this.editing_text = Some((reference.clone(), content.clone()));
+                            }
+                        },
+                    ));
+                }
+            }
         }
 
         // Transform controls for visual elements (drive the layout preview).
@@ -1920,7 +1995,17 @@ impl Render for EditorView {
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::TEXT))
             .track_focus(&self.focus_handle)
-            .key_context("Editor")
+            .key_context(if self.editing_text.is_some() {
+                "TextEdit"
+            } else {
+                "Editor"
+            })
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                if this.editing_text.is_some() {
+                    this.handle_text_key(&event.keystroke);
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &Undo, _window, cx| {
                 this.editor.undo();
                 cx.notify();
