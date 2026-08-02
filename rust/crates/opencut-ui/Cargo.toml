@@ -16,4 +16,5 @@ opencut-audio = { version = "0.1.0", path = "../opencut-audio" }
 opencut-core = { version = "0.1.0", path = "../opencut-core" }
 opencut-preview = { version = "0.1.0", path = "../opencut-preview" }
 rfd = "0.15"
+rodio = "0.19"
 serde_json = "1"

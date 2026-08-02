@@ -131,6 +131,10 @@ pub struct EditorView {
     presets: Vec<MotionPreset>,
     /// media id → cached waveform peaks (empty vec = decoded but no audio / failed).
     waveforms: std::collections::HashMap<String, Vec<f32>>,
+    /// Audio output (kept alive) + the current playing sink + decoded-PCM cache.
+    audio_output: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
+    audio_sink: Option<rodio::Sink>,
+    audio_cache: std::collections::HashMap<String, std::sync::Arc<opencut_audio::AudioPcm>>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -155,6 +159,81 @@ impl EditorView {
             preview_sig: None,
             presets: Vec::new(),
             waveforms: std::collections::HashMap::new(),
+            audio_output: rodio::OutputStream::try_default().ok(),
+            audio_sink: None,
+            audio_cache: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Start playing the first active, non-muted audio clip from the playhead.
+    fn start_audio(&mut self) {
+        let Some(handle) = self.audio_output.as_ref().map(|(_, h)| h.clone()) else {
+            return;
+        };
+        let playhead = self.editor.playhead();
+        let clip = {
+            let scene = self.editor.active_scene();
+            let mut found = None;
+            'search: for track in &scene.tracks.audio {
+                if track.muted {
+                    continue;
+                }
+                for element in &track.elements {
+                    if let opencut_core::Element::Audio(audio) = element {
+                        if !audio.muted
+                            && element.start() <= playhead
+                            && playhead < element.end()
+                        {
+                            found = Some((audio.media_id.clone(), element.start(), audio.volume));
+                            break 'search;
+                        }
+                    }
+                }
+            }
+            found
+        };
+        let Some((media_id, start, volume)) = clip else {
+            return;
+        };
+        let Some(path) = self
+            .editor
+            .project()
+            .media_path(&media_id)
+            .map(|s| s.to_string())
+        else {
+            return;
+        };
+        if !self.audio_cache.contains_key(&media_id) {
+            match opencut_audio::decode_pcm(&path, 44_100) {
+                Some(pcm) => {
+                    self.audio_cache
+                        .insert(media_id.clone(), std::sync::Arc::new(pcm));
+                }
+                None => return,
+            }
+        }
+        let Some(pcm) = self.audio_cache.get(&media_id) else {
+            return;
+        };
+
+        use rodio::Source;
+        let source =
+            rodio::buffer::SamplesBuffer::new(pcm.channels, pcm.sample_rate, pcm.samples.clone());
+        let offset = std::time::Duration::from_secs_f64(
+            (playhead.as_ticks() - start.as_ticks()).max(0) as f64 / 120_000.0,
+        );
+        let source = source.skip_duration(offset);
+        if let Ok(sink) = rodio::Sink::try_new(&handle) {
+            sink.set_volume(volume.clamp(0.0, 2.0));
+            sink.append(source);
+            sink.play();
+            self.audio_sink = Some(sink);
+        }
+    }
+
+    fn stop_audio(&mut self) {
+        if let Some(sink) = self.audio_sink.take() {
+            sink.stop();
         }
     }
 
@@ -596,12 +675,14 @@ impl EditorView {
         if self.playing {
             self.playing = false;
             self.last_frame = None;
+            self.stop_audio();
         } else {
             if self.editor.playhead() >= self.editor.duration() {
                 self.editor.seek(MediaTime::ZERO);
             }
             self.playing = true;
             self.last_frame = None;
+            self.start_audio();
         }
     }
 
@@ -622,6 +703,7 @@ impl EditorView {
             self.editor.seek(duration);
             self.playing = false;
             self.last_frame = None;
+            self.stop_audio();
         } else {
             self.editor.seek(next);
         }
