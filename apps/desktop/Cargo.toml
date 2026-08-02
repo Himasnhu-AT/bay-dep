@@ -8,4 +8,4 @@ name = "opencut"
 path = "src/main.rs"
 
 [dependencies]
-gpui = "0.2.2"
+opencut-ui = { version = "0.1.0", path = "../../rust/crates/opencut-ui" }

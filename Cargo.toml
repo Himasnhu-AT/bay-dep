@@ -10,6 +10,8 @@ members = [
     "rust/wasm", "rust/crates/compositor",
     "rust/crates/native-preview",
     "rust/crates/opencut-core",
+    "rust/crates/opencut-project",
+    "rust/crates/opencut-ui",
 ]
 
 # P0-GPU-01 — single frozen wgpu major for the whole native workspace.

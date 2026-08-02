@@ -3,17 +3,17 @@ name = "opencut-core"
 version = "0.1.0"
 edition = "2024"
 
-# P0-ARCH-01 — the headless engine seed. This crate proves the central-EditorState
-# + stateless-free-function borrow model on the two pure managers (Selection,
-# Clipboard) before the rest of Phase 1 is built on top of it. No GPU, no wasm, no
-# per-manager Arc<RwLock>: one owned Editor, a serde-tagged Command enum that is
-# simultaneously the undo/redo, autosave, and (future) MCP surface, and a coalesced
-# EventBus that emits exactly one event per command.
+# The headless editor engine: one owned Editor over an EditorState (a Project +
+# selection + clipboard), a serde-tagged Command enum that is simultaneously the
+# undo/redo, autosave, and (future) MCP surface, reversible ProjectPatch history, and a
+# coalesced EventBus. No GPU, no wasm, no per-manager Arc<RwLock>. The UI (opencut-ui)
+# reads state via the Query API and drives it with Commands.
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
+opencut-project = { version = "0.1.0", path = "../opencut-project" }
 
 [dev-dependencies]
 serde_json = "1"
