@@ -4182,6 +4182,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "opencut-preview"
+version = "0.1.0"
+dependencies = [
+ "compositor",
+ "gpu",
+ "opencut-project",
+ "pollster 0.4.0",
+]
+
+[[package]]
 name = "opencut-project"
 version = "0.1.0"
 dependencies = [
@@ -4195,7 +4205,9 @@ name = "opencut-ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "image",
  "opencut-core",
+ "opencut-preview",
  "serde_json",
 ]
 

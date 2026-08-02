@@ -63,9 +63,15 @@ editor's preview pane is a placeholder.
 Done: shell, selection, undo/redo, playhead+transport+playback, drag-to-move, inspector editing,
 media→timeline, split, multi-scene, save/load, keyboard shortcuts.
 
+Done (this session): **compositor preview** — `opencut-preview` renders the scene through the real
+wgpu `Compositor` and reads it back to a BGRA buffer that GPUI displays as a `RenderImage`. This is
+the **`P0-GPU-04` GO decision via a CPU-readback path** — real compositing (background, transform,
+opacity, blend) shows in the window today; clip textures are solid-color placeholders until media
+decode lands, and the readback can later be replaced by zero-copy blade↔wgpu without changing callers.
+
 Remaining (larger / partly gated):
-1. **Live video preview** — the big one: render the wgpu compositor into the GPUI window. Blocked on
-   the `P0-GPU-04` blade↔wgpu interop decision (shared IOSurface vs. per-frame GPU copy vs. Tauri).
+1. **Decoded frames in the preview** — feed real video/text textures (needs media decode + text
+   raster); and optionally the zero-copy interop to drop the per-frame readback.
 2. **Media decode** — native ffmpeg/gstreamer (`P0-MED-01`) so clips carry real frames/audio.
 3. **Direct manipulation, part 2** — drag clip **edges to trim**, timeline zoom/scroll, snapping.
 4. **Effects / masks / animation / motion-preset UI** — extend the element model + inspector.

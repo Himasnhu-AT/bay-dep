@@ -1,0 +1,18 @@
+[package]
+name = "opencut-preview"
+version = "0.1.0"
+edition = "2024"
+
+# Renders a scene at a given playhead through the real wgpu Compositor and reads the result
+# back to a CPU BGRA buffer, ready to hand to the GPUI preview as an image. Single
+# responsibility: scene → composited pixels. This is the CPU-readback preview path (the
+# working answer to the P0-GPU-04 interop question; a zero-copy blade↔wgpu path can replace
+# the readback later without changing this crate's callers).
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+compositor = { version = "0.1.0", path = "../compositor" }
+gpu = { version = "0.1.0", path = "../gpu" }
+opencut-project = { version = "0.1.0", path = "../opencut-project" }
+pollster = "0.4"

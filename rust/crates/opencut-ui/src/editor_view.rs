@@ -2,16 +2,23 @@
 //! `opencut_core::Editor` directly, so an interaction mutates it and calls `cx.notify()` to
 //! re-render. All editing goes through `Command`s (undoable); clicks use direct selection.
 
+use std::sync::Arc;
+
 use gpui::prelude::*;
 use gpui::{
-    div, px, rgb, App, Context, Div, FocusHandle, KeyBinding, MouseButton, MouseDownEvent,
-    MouseMoveEvent, SharedString, Window,
+    div, img, px, rgb, App, Context, Div, FocusHandle, ImageSource, KeyBinding, MouseButton,
+    MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
 };
 
 use opencut_core::{
     AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaTime, TextElement,
     Transform, VideoElement,
 };
+use opencut_preview::PreviewRenderer;
+
+/// Resolution the compositor preview is rendered + read back at (16:9).
+const PREVIEW_RENDER_W: u32 = 640;
+const PREVIEW_RENDER_H: u32 = 360;
 
 /// Which part of a clip a drag is manipulating.
 #[derive(Clone, Copy, PartialEq)]
@@ -96,6 +103,10 @@ pub struct EditorView {
     needs_focus: bool,
     dragging: Option<DragState>,
     pixels_per_second: f32,
+    /// GPU compositor preview (None if no adapter); the rendered image + a change signature.
+    preview: Option<PreviewRenderer>,
+    preview_image: Option<Arc<RenderImage>>,
+    preview_sig: Option<u64>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -105,7 +116,7 @@ impl gpui::Focusable for EditorView {
 }
 
 impl EditorView {
-    pub fn new(editor: Editor, focus_handle: FocusHandle) -> Self {
+    pub fn new(editor: Editor, focus_handle: FocusHandle, preview: Option<PreviewRenderer>) -> Self {
         Self {
             editor,
             add_counter: 0,
@@ -115,6 +126,77 @@ impl EditorView {
             needs_focus: true,
             dragging: None,
             pixels_per_second: DEFAULT_PIXELS_PER_SECOND,
+            preview,
+            preview_image: None,
+            preview_sig: None,
+        }
+    }
+
+    /// A cheap signature of everything that affects the composited preview.
+    fn preview_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let playhead = self.editor.playhead();
+        playhead.as_ticks().hash(&mut hasher);
+        self.editor.active_scene_id().hash(&mut hasher);
+        if let opencut_core::Background::Color { color } =
+            &self.editor.project().settings.background
+        {
+            color.hash(&mut hasher);
+        }
+        let scene = self.editor.active_scene();
+        for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+            if track.hidden {
+                continue;
+            }
+            for element in &track.elements {
+                if let Some(t) = element.transform() {
+                    if element.start() <= playhead && playhead < element.end() {
+                        element.id().hash(&mut hasher);
+                        [
+                            t.x.to_bits(),
+                            t.y.to_bits(),
+                            t.scale.to_bits(),
+                            t.rotation.to_bits(),
+                            t.opacity.to_bits(),
+                        ]
+                        .hash(&mut hasher);
+                    }
+                }
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Re-composite the preview if anything affecting it changed since the last frame.
+    fn update_preview(&mut self) {
+        if self.preview.is_none() {
+            return;
+        }
+        let signature = self.preview_signature();
+        if self.preview_sig == Some(signature) {
+            return;
+        }
+        self.preview_sig = Some(signature);
+
+        let playhead = self.editor.playhead();
+        let background = self.editor.project().settings.background.clone();
+        // Disjoint field borrows: &mut self.preview and &self.editor.
+        let renderer = self.preview.as_mut().unwrap();
+        let scene = self.editor.active_scene();
+        let frame = renderer.render(
+            scene,
+            playhead,
+            PREVIEW_RENDER_W,
+            PREVIEW_RENDER_H,
+            &background,
+        );
+
+        if let Some(buffer) =
+            image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
+        {
+            let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
+            self.preview_image = Some(Arc::new(render_image));
         }
     }
 
@@ -568,7 +650,23 @@ impl EditorView {
             .justify_center()
             .gap_2()
             .bg(rgb(theme::BG))
-            .child(
+            .child(if let Some(image) = &self.preview_image {
+                // Real composited output from the wgpu compositor (CPU-readback path).
+                div()
+                    .relative()
+                    .w(px(PREVIEW_W))
+                    .h(px(PREVIEW_H))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(theme::BORDER))
+                    .overflow_hidden()
+                    .child(
+                        img(ImageSource::Render(image.clone()))
+                            .w(px(PREVIEW_W))
+                            .h(px(PREVIEW_H)),
+                    )
+            } else {
+                // Fallback layout view (no GPU adapter): elements as positioned rects.
                 div()
                     .relative()
                     .w(px(PREVIEW_W))
@@ -578,16 +676,18 @@ impl EditorView {
                     .border_1()
                     .border_color(rgb(theme::BORDER))
                     .overflow_hidden()
-                    .children(layers),
-            )
+                    .children(layers)
+            })
             .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child(Self::shared(format!(
-                        "{width} × {height}  ·  {} layer(s) at playhead",
-                        vm.preview_layers.len()
-                    ))),
+                div().text_xs().text_color(rgb(theme::MUTED)).child(Self::shared(format!(
+                    "{width} × {height}  ·  {} layer(s)  ·  {}",
+                    vm.preview_layers.len(),
+                    if self.preview_image.is_some() {
+                        "compositor"
+                    } else {
+                        "layout"
+                    }
+                ))),
             )
     }
 
@@ -1318,6 +1418,7 @@ impl Render for EditorView {
             self.needs_focus = false;
             window.focus(&self.focus_handle);
         }
+        self.update_preview();
         let vm = EditorViewModel::build(&self.editor);
 
         div()

@@ -17,7 +17,10 @@ use opencut_core::Editor;
 
 /// Launch the native editor window over the starter project.
 pub fn run() {
-    Application::new().run(|cx: &mut App| {
+    // Build the GPU compositor preview up front (None if no adapter → layout-rect fallback).
+    let preview = opencut_preview::PreviewRenderer::new();
+
+    Application::new().run(move |cx: &mut App| {
         cx.bind_keys(key_bindings());
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         cx.open_window(
@@ -25,9 +28,9 @@ pub fn run() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| {
+            move |_, cx| {
                 let focus_handle = cx.focus_handle();
-                cx.new(|_| EditorView::new(Editor::starter(), focus_handle))
+                cx.new(|_| EditorView::new(Editor::starter(), focus_handle, preview))
             },
         )
         .expect("failed to open editor window");

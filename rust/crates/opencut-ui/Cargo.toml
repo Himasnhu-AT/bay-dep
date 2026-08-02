@@ -11,5 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 gpui = "0.2.2"
+image = "0.25"
 opencut-core = { version = "0.1.0", path = "../opencut-core" }
+opencut-preview = { version = "0.1.0", path = "../opencut-preview" }
 serde_json = "1"
