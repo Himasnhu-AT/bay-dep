@@ -17,6 +17,12 @@ const PIXELS_PER_SECOND: f32 = 48.0;
 const TRACK_LABEL_WIDTH: f32 = 132.0;
 const LANE_HEIGHT: f32 = 40.0;
 const TICKS_PER_SECOND: i64 = 120_000;
+
+/// Where "Save"/"Load" read and write the project JSON.
+fn project_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join("vii-project.json")
+}
 /// Inspector nudge step (0.5s) and minimum element duration (0.1s), in ticks.
 const NUDGE_TICKS: i64 = TICKS_PER_SECOND / 2;
 const MIN_DURATION_TICKS: i64 = TICKS_PER_SECOND / 10;
@@ -92,7 +98,21 @@ impl EditorView {
                             .text_xs()
                             .text_color(rgb(theme::MUTED))
                             .child(Self::shared(clipboard)),
-                    ),
+                    )
+                    .child(self.button("save", "Save", true, cx, |this, _cx| {
+                        if let Ok(json) = serde_json::to_string_pretty(this.editor.project()) {
+                            let _ = std::fs::write(project_path(), json);
+                        }
+                    }))
+                    .child(self.button("load", "Load", true, cx, |this, _cx| {
+                        if let Ok(json) = std::fs::read_to_string(project_path()) {
+                            if let Ok(project) =
+                                serde_json::from_str::<opencut_core::Project>(&json)
+                            {
+                                this.editor.load_project(project);
+                            }
+                        }
+                    })),
             )
             .child(
                 div()

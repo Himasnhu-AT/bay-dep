@@ -128,6 +128,20 @@ impl Editor {
         }
     }
 
+    /// Replace the whole project (e.g. after loading a file). Resets history, selection, and the
+    /// playhead, and emits one event. Not itself undoable.
+    pub fn load_project(&mut self, project: Project) {
+        self.state = EditorState::new(project);
+        self.history.clear();
+        self.redo_stack.clear();
+        self.paste_counter = 0;
+        self.bus.begin();
+        self.bus.mark(Domain::Document);
+        self.bus.mark(Domain::Selection);
+        self.bus.mark(Domain::Playhead);
+        self.bus.commit();
+    }
+
     /// Copy the selected elements to the clipboard. Non-undoable; emits one event iff non-empty.
     pub fn copy(&mut self) -> bool {
         self.bus.begin();

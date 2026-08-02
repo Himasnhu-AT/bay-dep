@@ -207,6 +207,31 @@ fn copy_paste_duplicates_selected_elements_with_fresh_ids() {
 }
 
 #[test]
+fn load_project_replaces_state_and_resets_history() {
+    let mut editor = Editor::starter();
+    editor.execute(Command::RenameElement {
+        reference: main_ref("el-title"),
+        name: "Edited".into(),
+    });
+    editor.select(vec![main_ref("el-title")]);
+    assert!(editor.can_undo());
+
+    // A fresh project (round-tripped through JSON, as a load would be).
+    let json = serde_json::to_string(&opencut_project::Project::starter()).unwrap();
+    let loaded: opencut_project::Project = serde_json::from_str(&json).unwrap();
+    editor.load_project(loaded);
+
+    // Original content is back, history/selection/playhead are reset.
+    assert_eq!(
+        editor.active_scene().element(&main_ref("el-title")).unwrap().name(),
+        "Title"
+    );
+    assert!(!editor.can_undo());
+    assert!(editor.selection().is_empty());
+    assert_eq!(editor.playhead(), MediaTime::ZERO);
+}
+
+#[test]
 fn each_command_emits_exactly_one_coalesced_event() {
     let mut editor = Editor::starter();
     let rx = record_events(&mut editor);
