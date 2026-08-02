@@ -287,38 +287,71 @@ impl EditorView {
         }
     }
 
-    /// Pick an image file, import it as a media asset, and add an image clip at the playhead.
-    fn import_image(&mut self) {
+    /// Pick an image or video file, import it as a media asset, and add a clip at the playhead.
+    fn import_media(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Image", &["png", "jpg", "jpeg", "webp", "gif", "bmp"])
+            .add_filter(
+                "Media",
+                &[
+                    "png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "mov", "mkv", "webm", "avi",
+                ],
+            )
             .pick_file()
         else {
             return;
         };
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let is_video = matches!(
+            extension.as_str(),
+            "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v"
+        );
+
         self.add_counter += 1;
         let uid = self.add_counter;
         let media_id = format!("media-{uid}");
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Image".to_string());
+            .unwrap_or_else(|| "Media".to_string());
+        let start = self.editor.playhead();
+        let duration = MediaTime::from_ticks(TICKS_PER_SECOND * 4);
 
         self.editor.add_media(MediaAsset {
             id: media_id.clone(),
             name: name.clone(),
             path: path.to_string_lossy().into_owned(),
         });
-        self.editor.execute(Command::AddElement {
-            track_id: "track-main".into(),
-            element: Element::Image(ImageElement {
+
+        let element = if is_video {
+            Element::Video(VideoElement {
+                id: format!("vid-{uid}"),
+                name,
+                start,
+                duration,
+                media_id,
+                trim_start: MediaTime::ZERO,
+                trim_end: duration,
+                transform: Transform::default(),
+                effects: Vec::new(),
+            })
+        } else {
+            Element::Image(ImageElement {
                 id: format!("img-{uid}"),
                 name,
-                start: self.editor.playhead(),
-                duration: MediaTime::from_ticks(TICKS_PER_SECOND * 4),
+                start,
+                duration,
                 media_id,
                 transform: Transform::default(),
                 effects: Vec::new(),
-            }),
+            })
+        };
+        self.editor.execute(Command::AddElement {
+            track_id: "track-main".into(),
+            element,
             select: true,
         });
         self.preview_sig = None; // new media asset → force a re-render
@@ -685,8 +718,8 @@ impl EditorView {
             .border_r_1()
             .border_color(rgb(theme::BORDER))
             .child(div().text_xs().text_color(rgb(theme::MUTED)).child("MEDIA"))
-            .child(self.button("import-image", "Import Image…", true, cx, |this, _cx| {
-                this.import_image()
+            .child(self.button("import-media", "Import Media…", true, cx, |this, _cx| {
+                this.import_media()
             }))
             .child(
                 div()

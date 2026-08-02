@@ -2,7 +2,7 @@
 
 use opencut_preview::PreviewRenderer;
 use opencut_project::{
-    Effect, Element, ImageElement, MediaAsset, MediaTime, Project, Transform,
+    Effect, Element, ImageElement, MediaAsset, MediaTime, Project, Transform, VideoElement,
 };
 
 #[test]
@@ -101,5 +101,63 @@ fn renders_a_real_image_element_from_disk() {
     );
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
 
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn renders_a_real_video_frame_via_ffmpeg() {
+    let Some(mut renderer) = PreviewRenderer::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+
+    // Generate a short red test clip via ffmpeg; skip if ffmpeg isn't available.
+    let path = std::env::temp_dir().join(format!("vii-test-video-{}.mp4", std::process::id()));
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
+            "-i", "color=c=red:s=32x32:d=1:r=10", "-frames:v", "10",
+            "-pix_fmt", "yuv420p", path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !generated {
+        eprintln!("skipping: ffmpeg unavailable");
+        return;
+    }
+
+    let mut project = Project::starter();
+    project.media.push(MediaAsset {
+        id: "v1".into(),
+        name: "Vid".into(),
+        path: path.to_string_lossy().into_owned(),
+    });
+    project
+        .active_scene_mut()
+        .tracks
+        .main
+        .elements
+        .push(Element::Video(VideoElement {
+            id: "vid1".into(),
+            name: "Vid".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            media_id: "v1".into(),
+            trim_start: MediaTime::ZERO,
+            trim_end: MediaTime::from_ticks(120_000),
+            transform: Transform::default(),
+            effects: Vec::new(),
+        }));
+
+    let frame = renderer.render(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    );
+    assert_eq!(frame.bgra.len(), 64 * 36 * 4);
     let _ = std::fs::remove_file(&path);
 }
