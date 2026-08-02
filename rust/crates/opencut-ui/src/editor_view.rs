@@ -3,11 +3,41 @@
 //! re-render. All editing goes through `Command`s (undoable); clicks use direct selection.
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Context, Div, SharedString, Window};
+use gpui::{div, px, rgb, App, Context, Div, FocusHandle, KeyBinding, SharedString, Window};
 
 use opencut_core::{
     AudioElement, Command, Editor, Element, ImageElement, MediaTime, TextElement, VideoElement,
 };
+
+// Keyboard actions. Bound to keystrokes in `key_bindings()` and handled on the root element.
+gpui::actions!(
+    vii,
+    [
+        Undo,
+        Redo,
+        DeleteSelected,
+        TogglePlay,
+        SeekForward,
+        SeekBackward,
+        CopyClip,
+        PasteClip,
+    ]
+);
+
+/// The default keymap for the editor window.
+pub fn key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("cmd-z", Undo, None),
+        KeyBinding::new("cmd-shift-z", Redo, None),
+        KeyBinding::new("backspace", DeleteSelected, None),
+        KeyBinding::new("delete", DeleteSelected, None),
+        KeyBinding::new("space", TogglePlay, None),
+        KeyBinding::new("right", SeekForward, None),
+        KeyBinding::new("left", SeekBackward, None),
+        KeyBinding::new("cmd-c", CopyClip, None),
+        KeyBinding::new("cmd-v", PasteClip, None),
+    ]
+}
 
 use crate::theme;
 use crate::view_model::{EditorViewModel, TrackRow};
@@ -32,16 +62,37 @@ pub struct EditorView {
     add_counter: u64,
     playing: bool,
     last_frame: Option<std::time::Instant>,
+    focus_handle: FocusHandle,
+    needs_focus: bool,
+}
+
+impl gpui::Focusable for EditorView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl EditorView {
-    pub fn new(editor: Editor) -> Self {
+    pub fn new(editor: Editor, focus_handle: FocusHandle) -> Self {
         Self {
             editor,
             add_counter: 0,
             playing: false,
             last_frame: None,
+            focus_handle,
+            needs_focus: true,
         }
+    }
+
+    fn delete_selected(&mut self) {
+        if let Some(reference) = self.editor.selection().first().cloned() {
+            self.editor.execute(Command::RemoveElement { reference });
+        }
+    }
+
+    fn seek_by(&mut self, delta_ticks: i64) {
+        let ticks = self.editor.playhead().as_ticks();
+        self.editor.seek(MediaTime::from_ticks(ticks + delta_ticks));
     }
 
     /// Start/stop transport playback. Restarts from 0 if pressed at the end.
@@ -663,6 +714,10 @@ impl Render for EditorView {
                 window.request_animation_frame();
             }
         }
+        if self.needs_focus {
+            self.needs_focus = false;
+            window.focus(&self.focus_handle);
+        }
         let vm = EditorViewModel::build(&self.editor);
 
         div()
@@ -671,6 +726,40 @@ impl Render for EditorView {
             .flex_col()
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::TEXT))
+            .track_focus(&self.focus_handle)
+            .key_context("Editor")
+            .on_action(cx.listener(|this, _: &Undo, _window, cx| {
+                this.editor.undo();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &Redo, _window, cx| {
+                this.editor.redo();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &DeleteSelected, _window, cx| {
+                this.delete_selected();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &TogglePlay, _window, cx| {
+                this.toggle_play();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SeekForward, _window, cx| {
+                this.seek_by(TICKS_PER_SECOND);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SeekBackward, _window, cx| {
+                this.seek_by(-TICKS_PER_SECOND);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &CopyClip, _window, cx| {
+                this.editor.copy();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &PasteClip, _window, cx| {
+                this.editor.execute(Command::Paste);
+                cx.notify();
+            }))
             .child(self.toolbar(&vm, cx))
             .child(
                 div()
