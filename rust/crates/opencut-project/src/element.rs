@@ -17,6 +17,65 @@ pub struct Effect {
     pub params: BTreeMap<String, f32>,
 }
 
+/// A single animation keyframe: a scalar `value` at a `time` relative to the element's start.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Keyframe {
+    pub time: MediaTime,
+    pub value: f32,
+}
+
+/// Keyframes for one animated property, kept sorted by time. Linear interpolation between keys;
+/// clamped to the first/last value outside the range.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimationChannel {
+    pub keys: Vec<Keyframe>,
+}
+
+impl AnimationChannel {
+    /// Sample the animated value at `time` (relative to element start), or `None` if no keys.
+    pub fn sample(&self, time: MediaTime) -> Option<f32> {
+        let t = time.as_ticks();
+        let first = self.keys.first()?;
+        if t <= first.time.as_ticks() {
+            return Some(first.value);
+        }
+        let last = self.keys.last()?;
+        if t >= last.time.as_ticks() {
+            return Some(last.value);
+        }
+        for window in self.keys.windows(2) {
+            let (a, b) = (window[0], window[1]);
+            let (ta, tb) = (a.time.as_ticks(), b.time.as_ticks());
+            if t >= ta && t <= tb {
+                let fraction = if tb == ta {
+                    0.0
+                } else {
+                    (t - ta) as f32 / (tb - ta) as f32
+                };
+                return Some(a.value + (b.value - a.value) * fraction);
+            }
+        }
+        Some(last.value)
+    }
+
+    /// Insert or replace the keyframe at `time`, keeping keys sorted.
+    pub fn upsert(&mut self, time: MediaTime, value: f32) {
+        match self.keys.iter().position(|k| k.time == time) {
+            Some(index) => self.keys[index].value = value,
+            None => {
+                let position = self
+                    .keys
+                    .iter()
+                    .position(|k| k.time.as_ticks() > time.as_ticks())
+                    .unwrap_or(self.keys.len());
+                self.keys.insert(position, Keyframe { time, value });
+            }
+        }
+    }
+}
+
 /// A visual element's on-canvas placement. Position is the element center as a fraction of the
 /// canvas (0..1); `scale` is the fraction of the canvas the element spans (1 = full-frame).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -55,6 +114,8 @@ pub struct VideoElement {
     pub transform: Transform,
     #[serde(default)]
     pub effects: Vec<Effect>,
+    #[serde(default)]
+    pub animations: BTreeMap<String, AnimationChannel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,6 +130,8 @@ pub struct ImageElement {
     pub transform: Transform,
     #[serde(default)]
     pub effects: Vec<Effect>,
+    #[serde(default)]
+    pub animations: BTreeMap<String, AnimationChannel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,6 +148,8 @@ pub struct TextElement {
     pub transform: Transform,
     #[serde(default)]
     pub effects: Vec<Effect>,
+    #[serde(default)]
+    pub animations: BTreeMap<String, AnimationChannel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -226,5 +291,53 @@ impl Element {
             Element::Text(e) => Some(&mut e.effects),
             Element::Audio(_) => None,
         }
+    }
+
+    /// Animation channels keyed by property path ("opacity"/"scale"/"x"/"y"/"rotation").
+    pub fn animations(&self) -> Option<&BTreeMap<String, AnimationChannel>> {
+        match self {
+            Element::Video(e) => Some(&e.animations),
+            Element::Image(e) => Some(&e.animations),
+            Element::Text(e) => Some(&e.animations),
+            Element::Audio(_) => None,
+        }
+    }
+
+    pub fn animations_mut(&mut self) -> Option<&mut BTreeMap<String, AnimationChannel>> {
+        match self {
+            Element::Video(e) => Some(&mut e.animations),
+            Element::Image(e) => Some(&mut e.animations),
+            Element::Text(e) => Some(&mut e.animations),
+            Element::Audio(_) => None,
+        }
+    }
+
+    /// The transform with animated properties evaluated at `local_time` (relative to element
+    /// start). Non-animated properties keep their base values. `None` for audio.
+    pub fn sampled_transform(&self, local_time: MediaTime) -> Option<Transform> {
+        let mut transform = self.transform()?;
+        if let Some(animations) = self.animations() {
+            if let Some(v) = animations.get("opacity").and_then(|c| c.sample(local_time)) {
+                transform.opacity = v;
+            }
+            if let Some(v) = animations.get("scale").and_then(|c| c.sample(local_time)) {
+                transform.scale = v;
+            }
+            if let Some(v) = animations.get("x").and_then(|c| c.sample(local_time)) {
+                transform.x = v;
+            }
+            if let Some(v) = animations.get("y").and_then(|c| c.sample(local_time)) {
+                transform.y = v;
+            }
+            if let Some(v) = animations.get("rotation").and_then(|c| c.sample(local_time)) {
+                transform.rotation = v;
+            }
+        }
+        Some(transform)
+    }
+
+    /// Number of animated properties on this element.
+    pub fn animated_property_count(&self) -> usize {
+        self.animations().map_or(0, |a| a.len())
     }
 }

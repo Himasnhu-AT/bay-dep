@@ -183,6 +183,15 @@ impl EditorView {
                                 value.to_bits().hash(&mut hasher);
                             }
                         }
+                        if let Some(animations) = element.animations() {
+                            for (property, channel) in animations {
+                                property.hash(&mut hasher);
+                                for key in &channel.keys {
+                                    key.time.as_ticks().hash(&mut hasher);
+                                    key.value.to_bits().hash(&mut hasher);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -342,6 +351,7 @@ impl EditorView {
                 trim_end: duration,
                 transform: Transform::default(),
                 effects: Vec::new(),
+                        animations: Default::default(),
             })
         } else {
             Element::Image(ImageElement {
@@ -352,6 +362,7 @@ impl EditorView {
                 media_id,
                 transform: Transform::default(),
                 effects: Vec::new(),
+                        animations: Default::default(),
             })
         };
         self.editor.execute(Command::AddElement {
@@ -432,6 +443,41 @@ impl EditorView {
                 reference,
                 at,
                 new_id,
+            });
+        }
+    }
+
+    /// Add a keyframe for `property` at the playhead using the element's current sampled value.
+    fn add_keyframe(&mut self, property: &'static str) {
+        let Some(reference) = self.editor.selection().first().cloned() else {
+            return;
+        };
+        let playhead = self.editor.playhead();
+        let computed = {
+            let scene = self.editor.active_scene();
+            let Some(element) = scene.element(&reference) else {
+                return;
+            };
+            let local = MediaTime::from_ticks(
+                (playhead.as_ticks() - element.start().as_ticks()).max(0),
+            );
+            element.sampled_transform(local).map(|t| {
+                let value = match property {
+                    "scale" => t.scale,
+                    "x" => t.x,
+                    "y" => t.y,
+                    "rotation" => t.rotation,
+                    _ => t.opacity,
+                };
+                (local, value)
+            })
+        };
+        if let Some((time, value)) = computed {
+            self.editor.execute(Command::AddKeyframe {
+                reference,
+                property: property.to_string(),
+                time,
+                value,
             });
         }
     }
@@ -584,6 +630,7 @@ impl EditorView {
                             color: "#ffffff".into(),
                             transform: Transform::default(),
                             effects: Vec::new(),
+                        animations: Default::default(),
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),
@@ -713,6 +760,7 @@ impl EditorView {
                                     trim_end: duration,
                                     transform: Transform::default(),
                                     effects: Vec::new(),
+                        animations: Default::default(),
                                 }),
                             ),
                             "image" => (
@@ -725,6 +773,7 @@ impl EditorView {
                                     media_id: id.into(),
                                     transform: Transform::default(),
                                     effects: Vec::new(),
+                        animations: Default::default(),
                                 }),
                             ),
                             _ => (
@@ -902,6 +951,23 @@ impl EditorView {
             .child(Self::shared(label.to_string()))
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 handler(this);
+                cx.notify();
+            }))
+    }
+
+    /// A button that adds a keyframe for `property` at the playhead.
+    fn kf_button(&self, property: &'static str, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        div()
+            .id(SharedString::from(format!("kf-{property}")))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(theme::PANEL_ALT))
+            .text_xs()
+            .text_color(rgb(theme::TEXT))
+            .child(Self::shared(property.to_string()))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.add_keyframe(property);
                 cx.notify();
             }))
     }
@@ -1183,6 +1249,28 @@ impl EditorView {
                     cx,
                     |t, sign| t.y = (t.y + sign * 0.05).clamp(0.0, 1.0),
                 ));
+
+            // Keyframe the current value of a property at the playhead.
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme::MUTED))
+                            .child(Self::shared(format!(
+                                "◇ keyframe ({} animated):",
+                                selected.animated_count
+                            ))),
+                    )
+                    .child(self.kf_button("opacity", cx))
+                    .child(self.kf_button("scale", cx))
+                    .child(self.kf_button("x", cx))
+                    .child(self.kf_button("y", cx)),
+            );
 
             // Effects list + add.
             body = body.child(

@@ -184,12 +184,14 @@ impl PreviewRenderer {
                 continue;
             }
             for element in &track.elements {
-                let Some(transform) = element.transform() else {
-                    continue;
-                };
                 if !(element.start() <= playhead && playhead < element.end()) {
                     continue;
                 }
+                // Evaluate keyframe animations at the time into the clip.
+                let local = MediaTime::from_ticks(playhead.as_ticks() - element.start().as_ticks());
+                let Some(transform) = element.sampled_transform(local) else {
+                    continue;
+                };
 
                 // Text → real glyphs; Image → decoded file (cached); others → solid placeholder.
                 let texture_id = match element {

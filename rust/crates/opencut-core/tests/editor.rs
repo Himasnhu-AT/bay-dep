@@ -19,6 +19,7 @@ fn text(id: &str, name: &str) -> Element {
         color: "#fff".into(),
         transform: opencut_project::Transform::default(),
         effects: Vec::new(),
+                        animations: Default::default(),
     })
 }
 
@@ -452,6 +453,48 @@ fn effects_add_toggle_param_and_remove_all_reverse() {
             enabled: true,
             params: Default::default(),
         },
+    }));
+}
+
+#[test]
+fn keyframes_animate_a_property_and_reverse() {
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title");
+
+    // Two opacity keyframes: 1.0 at t=0, 0.0 at t=1s.
+    editor.execute(Command::AddKeyframe {
+        reference: reference.clone(),
+        property: "opacity".into(),
+        time: MediaTime::ZERO,
+        value: 1.0,
+    });
+    editor.execute(Command::AddKeyframe {
+        reference: reference.clone(),
+        property: "opacity".into(),
+        time: MediaTime::from_ticks(120_000),
+        value: 0.0,
+    });
+
+    let element = editor.active_scene().element(&reference).unwrap();
+    // Midpoint (0.5s) interpolates to 0.5 opacity.
+    let sampled = element.sampled_transform(MediaTime::from_ticks(60_000)).unwrap();
+    assert!((sampled.opacity - 0.5).abs() < 1e-4, "got {}", sampled.opacity);
+    assert_eq!(element.animated_property_count(), 1);
+
+    // Undo both keyframes → no animation left.
+    editor.undo();
+    editor.undo();
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().animated_property_count(),
+        0
+    );
+
+    // Keyframes only apply to visual elements.
+    assert!(!editor.execute(Command::AddKeyframe {
+        reference: ElementRef::new("track-audio", "el-music"),
+        property: "opacity".into(),
+        time: MediaTime::ZERO,
+        value: 0.5,
     }));
 }
 

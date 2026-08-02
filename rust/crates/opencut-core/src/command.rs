@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use opencut_project::{
-    Effect, Element, ElementKind, ElementRef, MediaTime, Project, Scene, Track, TrackKind,
-    Transform,
+    AnimationChannel, Effect, Element, ElementKind, ElementRef, MediaTime, Project, Scene, Track,
+    TrackKind, Transform,
 };
 
 use crate::selection::SelectionPatch;
@@ -101,6 +101,20 @@ pub enum Command {
         key: String,
         value: f32,
     },
+    /// Add/replace a keyframe on an animated property ("opacity"/"scale"/"x"/"y"/"rotation") at
+    /// `time` (relative to the element start).
+    AddKeyframe {
+        reference: ElementRef,
+        property: String,
+        time: MediaTime,
+        value: f32,
+    },
+    /// Remove the keyframe at `time` on a property.
+    RemoveKeyframe {
+        reference: ElementRef,
+        property: String,
+        time: MediaTime,
+    },
     /// Add an empty overlay/audio track.
     AddTrack {
         lane: TrackLane,
@@ -143,6 +157,8 @@ pub enum CommandKind {
     RemoveEffect,
     ToggleEffect,
     SetEffectParam,
+    AddKeyframe,
+    RemoveKeyframe,
     AddTrack,
     RemoveTrack,
     AddScene,
@@ -199,6 +215,11 @@ pub(crate) enum ProjectPatch {
         reference: ElementRef,
         effect_id: String,
         effect: Effect,
+    },
+    SetAnimationChannel {
+        reference: ElementRef,
+        property: String,
+        channel: Option<AnimationChannel>,
     },
     AddTrack {
         lane: TrackLane,
@@ -394,6 +415,29 @@ impl ProjectPatch {
                 }
                 ProjectPatch::Noop
             }
+            ProjectPatch::SetAnimationChannel {
+                reference,
+                property,
+                channel,
+            } => match scene.element_mut(&reference).and_then(|e| e.animations_mut()) {
+                Some(animations) => {
+                    let previous = animations.get(&property).cloned();
+                    match channel {
+                        Some(channel) => {
+                            animations.insert(property.clone(), channel);
+                        }
+                        None => {
+                            animations.remove(&property);
+                        }
+                    }
+                    ProjectPatch::SetAnimationChannel {
+                        reference,
+                        property,
+                        channel: previous,
+                    }
+                }
+                None => ProjectPatch::Noop,
+            },
             ProjectPatch::AddTrack { lane, index, track } => {
                 let track_id = track.id.clone();
                 let lane_tracks = match lane {
@@ -738,6 +782,47 @@ impl Command {
                         reference: reference.clone(),
                         effect_id: effect_id.clone(),
                         effect: updated,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::AddKeyframe {
+                reference,
+                property,
+                time,
+                value,
+            } => {
+                let element = scene.element(reference)?;
+                let animations = element.animations()?; // visual only
+                let mut channel = animations.get(property).cloned().unwrap_or_default();
+                channel.upsert(*time, *value);
+                Some(Lowered {
+                    kind: CommandKind::AddKeyframe,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::RemoveKeyframe {
+                reference,
+                property,
+                time,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                channel.keys.retain(|k| k.time != *time);
+                let channel = (!channel.keys.is_empty()).then_some(channel);
+                Some(Lowered {
+                    kind: CommandKind::RemoveKeyframe,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel,
                     }],
                     selection_patch: None,
                 })

@@ -99,6 +99,7 @@ impl Project {
                         opacity: 1.0,
                     },
                     effects: Vec::new(),
+                        animations: Default::default(),
                 }),
                 Element::Image(ImageElement {
                     id: "el-logo".into(),
@@ -114,6 +115,7 @@ impl Project {
                         opacity: 1.0,
                     },
                     effects: Vec::new(),
+                        animations: Default::default(),
                 }),
             ],
         };
@@ -140,6 +142,7 @@ impl Project {
                     opacity: 0.85,
                 },
                 effects: Vec::new(),
+                        animations: Default::default(),
             })],
         }];
 

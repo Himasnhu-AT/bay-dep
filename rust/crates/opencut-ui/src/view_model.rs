@@ -63,6 +63,7 @@ pub struct ElementInfo {
     pub text_content: Option<String>,
     pub transform: Option<opencut_core::Transform>,
     pub effects: Vec<EffectInfo>,
+    pub animated_count: usize,
 }
 
 pub struct EffectInfo {
@@ -161,6 +162,7 @@ impl EditorViewModel {
                         amount: effect.params.get("amount").copied(),
                     })
                     .collect(),
+                animated_count: element.animated_property_count(),
             })
         });
 

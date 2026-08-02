@@ -89,6 +89,7 @@ fn renders_a_real_image_element_from_disk() {
             media_id: "m1".into(),
             transform: Transform::default(),
             effects: Vec::new(),
+                        animations: Default::default(),
         }));
 
     let frame = renderer.render(
@@ -148,6 +149,7 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             trim_end: MediaTime::from_ticks(120_000),
             transform: Transform::default(),
             effects: Vec::new(),
+                        animations: Default::default(),
         }));
 
     let frame = renderer.render(
