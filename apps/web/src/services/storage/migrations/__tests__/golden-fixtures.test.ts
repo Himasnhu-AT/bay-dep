@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { getDefaultShortcuts } from "@/actions/definitions";
 import { serializeKeybindingsState } from "@/actions/keybindings/persistence";
@@ -49,23 +49,27 @@ let originalRandomUUID: typeof crypto.randomUUID;
 let uuidCounter = 0;
 
 beforeAll(() => {
+	// Freeze the clock: the real transformers call `new Date()` / `Date.now()`.
+	vi.useFakeTimers();
+	vi.setSystemTime(FIXED_TIME);
+
+	// Deterministic v4-shaped UUIDs (the transformers call crypto.randomUUID).
 	originalRandomUUID = crypto.randomUUID.bind(crypto);
 	uuidCounter = 0;
-	// Deterministic v4-shaped UUIDs.
-	(crypto as { randomUUID: () => `${string}-${string}-${string}-${string}-${string}` }).randomUUID =
-		() => {
-			const n = (uuidCounter++).toString(16).padStart(12, "0");
-			return `00000000-0000-4000-8000-${n}` as ReturnType<typeof crypto.randomUUID>;
-		};
+	crypto.randomUUID = (() => {
+		const n = (uuidCounter++).toString(16).padStart(12, "0");
+		return `00000000-0000-4000-8000-${n}`;
+	}) as typeof crypto.randomUUID;
 });
 
 afterAll(() => {
 	crypto.randomUUID = originalRandomUUID;
+	vi.useRealTimers();
 });
 
 /** Assert a computed fixture matches the committed file, or (in capture mode) write it. */
-function reconcile(relativePath: string, value: unknown): void {
-	const absolute = resolve(GOLDEN_DIR, relativePath);
+function reconcile({ path, value }: { path: string; value: unknown }): void {
+	const absolute = resolve(GOLDEN_DIR, path);
 	const serialized = `${JSON.stringify(value, null, "\t")}\n`;
 
 	if (CAPTURE) {
@@ -76,7 +80,7 @@ function reconcile(relativePath: string, value: unknown): void {
 
 	if (!existsSync(absolute)) {
 		throw new Error(
-			`missing golden fixture ${relativePath}; run with CAPTURE_GOLDEN=1 to generate it`,
+			`missing golden fixture ${path}; run with CAPTURE_GOLDEN=1 to generate it`,
 		);
 	}
 	// Compare parsed values so formatting alone never fails the guard.
@@ -85,65 +89,49 @@ function reconcile(relativePath: string, value: unknown): void {
 
 describe("golden fixtures: project migration chain v0→v31", () => {
 	it("threads one seed project through every migration and captures each version", async () => {
-		// Freeze wall-clock so `new Date()` inside transformers is deterministic.
-		const RealDate = Date;
-		globalThis.Date = class extends RealDate {
-			constructor(...args: ConstructorParameters<typeof Date>) {
-				super(...(args.length ? args : [FIXED_TIME.getTime()]));
-			}
-			static now() {
-				return FIXED_TIME.getTime();
-			}
-		} as DateConstructor;
+		const ordered = [...migrations].sort((a, b) => a.from - b.from);
+		expect(ordered.map((m) => [m.from, m.to])).toEqual(
+			Array.from({ length: 31 }, (_, i) => [i, i + 1]),
+		);
 
-		try {
-			const ordered = [...migrations].sort((a, b) => a.from - b.from);
-			expect(ordered.map((m) => [m.from, m.to])).toEqual(
-				Array.from({ length: 31 }, (_, i) => [i, i + 1]),
-			);
+		// A minimal but valid v0 project: id + name, no `scenes` (v0→v1 wraps it into a
+		// main scene). This is the exact shape a brand-new pre-scenes project had.
+		const seed: ProjectRecord = { id: "golden-project", name: "Golden Project" };
+		const projectId = "golden-project";
 
-			// A minimal but valid v0 project: id + name, no `scenes` (v0→v1 wraps it into a
-			// main scene). This is the exact shape a brand-new pre-scenes project had.
-			const seed: ProjectRecord = { id: "golden-project", name: "Golden Project" };
-			const projectId = "golden-project";
+		reconcile({ path: "migrations/v0.json", value: seed });
 
-			reconcile("migrations/v0.json", seed);
+		const manifest: Array<{ from: number; to: number; skipped: boolean; reason?: string }> = [];
+		let project: ProjectRecord = seed;
 
-			const manifest: Array<{ from: number; to: number; skipped: boolean; reason?: string }> =
-				[];
-			let project: ProjectRecord = seed;
-
-			for (const migration of ordered) {
-				// v1→v2 is the one migration whose `.run()` reads legacy per-scene tracks
-				// from separate IndexedDB stores and then destructively deletes them. Drive
-				// its pure transformer directly with an explicit (empty, for this seed)
-				// context — exactly what its own unit test does — to stay headless and avoid
-				// the destructive cleanup. Every other step runs its real `.run()` unchanged.
-				const result =
-					migration.from === 1
-						? transformProjectV1ToV2({
-								project,
-								context: { legacyTracksBySceneId: {}, mediaTypesById: {} },
-							})
-						: await migration.run({ projectId, project });
-				manifest.push({
-					from: migration.from,
-					to: migration.to,
-					skipped: result.skipped,
-					reason: result.reason,
-				});
-				// Capture the concrete project at this version regardless of skip (a skip
-				// records the unchanged project — an honest no-op step).
-				project = result.project;
-				reconcile(`migrations/v${migration.to}.json`, project);
-			}
-
-			// The end of the chain must be at the current schema version.
-			expect((project as { version?: number }).version).toBe(31);
-			reconcile("migrations/_manifest.json", manifest);
-		} finally {
-			globalThis.Date = RealDate;
+		for (const migration of ordered) {
+			// v1→v2 is the one migration whose `.run()` reads legacy per-scene tracks from
+			// separate IndexedDB stores and then destructively deletes them. Drive its pure
+			// transformer directly with an explicit (empty, for this seed) context — exactly
+			// what its own unit test does — to stay headless and avoid the destructive
+			// cleanup. Every other step runs its real `.run()` unchanged.
+			const result =
+				migration.from === 1
+					? transformProjectV1ToV2({
+							project,
+							context: { legacyTracksBySceneId: {}, mediaTypesById: {} },
+						})
+					: await migration.run({ projectId, project });
+			manifest.push({
+				from: migration.from,
+				to: migration.to,
+				skipped: result.skipped,
+				reason: result.reason,
+			});
+			// Capture the concrete project at this version regardless of skip (a skip records
+			// the unchanged project — an honest no-op step).
+			project = result.project;
+			reconcile({ path: `migrations/v${migration.to}.json`, value: project });
 		}
+
+		// The end of the chain must be at the current schema version.
+		expect((project as { version?: number }).version).toBe(31);
+		reconcile({ path: "migrations/_manifest.json", value: manifest });
 	});
 });
 
@@ -156,6 +144,6 @@ describe("golden fixtures: default keybindings", () => {
 		// Sanity: a non-trivial, deterministic map.
 		expect(Object.keys(serialized.keybindings).length).toBeGreaterThan(0);
 		expect(serialized.isCustomized).toBe(false);
-		reconcile("keybindings/default.json", serialized);
+		reconcile({ path: "keybindings/default.json", value: serialized });
 	});
 });
