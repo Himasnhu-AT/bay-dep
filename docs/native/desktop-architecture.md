@@ -63,15 +63,22 @@ editor's preview pane is a placeholder.
 Done: shell, selection, undo/redo, playhead+transport+playback, drag-to-move, inspector editing,
 media→timeline, split, multi-scene, save/load, keyboard shortcuts.
 
-Done (this session): **compositor preview** — `opencut-preview` renders the scene through the real
-wgpu `Compositor` and reads it back to a BGRA buffer that GPUI displays as a `RenderImage`. This is
-the **`P0-GPU-04` GO decision via a CPU-readback path** — real compositing (background, transform,
-opacity, blend) shows in the window today; clip textures are solid-color placeholders until media
-decode lands, and the readback can later be replaced by zero-copy blade↔wgpu without changing callers.
+Done: **compositor preview with real decoded media + export**.
+- `opencut-preview` renders the scene through the real wgpu `Compositor` and reads it back to BGRA,
+  displayed by GPUI as a `RenderImage` (the **`P0-GPU-04` GO decision, CPU-readback path**).
+- **Real textures:** text via `opencut-text` (cosmic-text), images via the `image` crate, video
+  frames via the **ffmpeg CLI sidecar** (`-ss T -frames:v 1 -f rawvideo`). Effects (brightness) run
+  on the layers. Media import (`rfd` file dialog) adds image/video clips.
+- **Export:** still frame → PNG, and the whole timeline → MP4 (render each frame → pipe raw RGBA to
+  ffmpeg encode). All ffmpeg-free to build (sidecar, not linked).
 
-Remaining (larger / partly gated):
-1. **Decoded frames in the preview** — feed real video/text textures (needs media decode + text
-   raster); and optionally the zero-copy interop to drop the per-frame readback.
+Remaining (individually smaller than the media/export pipeline, which is done):
+1. **Inline text editing** (GPUI text input) — edit text content / rename in-app.
+2. **Keyframe animation** — animate transform/opacity over time (model + inspector + interpolation).
+3. **Audio** — waveform display + mixed playback; **motion presets**.
+4. **Video-playback performance** — decode-per-frame is fine for scrubbing but slow at play rate;
+   needs a decoder that holds the stream open (ffmpeg-next or a persistent sidecar) + frame cache.
+5. Optionally the **zero-copy blade↔wgpu** interop to drop the per-frame readback.
 2. **Media decode** — native ffmpeg/gstreamer (`P0-MED-01`) so clips carry real frames/audio.
 3. **Direct manipulation, part 2** — drag clip **edges to trim**, timeline zoom/scroll, snapping.
 4. **Effects / masks / animation / motion-preset UI** — extend the element model + inspector.
