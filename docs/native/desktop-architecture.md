@@ -72,17 +72,20 @@ Done: **compositor preview with real decoded media + export**.
 - **Export:** still frame → PNG, and the whole timeline → MP4 (render each frame → pipe raw RGBA to
   ffmpeg encode). All ffmpeg-free to build (sidecar, not linked).
 
-Also done since: **keyframe animation** (transform/opacity over time, interpolated, visible in the
-preview), **motion presets** (save/apply effects+animations), and **audio waveforms** (`opencut-audio`
-extracts peaks via ffmpeg; audio clips draw them on the timeline).
+Also done: **keyframe animation** (transform/opacity over time, interpolated, live in the preview),
+**motion presets** (save/apply effects+animations), **audio waveforms** + **audio playback** (rodio,
+`opencut-audio` decodes via ffmpeg), **fast video playback** (whole-clip decode cached, indexed by
+time), and **inline text editing** (a "TextEdit" key-context suppresses shortcuts while typing).
 
-Remaining (the hard/refinement long tail):
-1. **Inline text editing** — GPUI text input (DIY key/cursor/IME handling) to edit text content /
-   rename in-app; today text content comes from the project/import.
-2. **Audio playback** — hearing the mix (cpal/rodio + playhead sync); waveform display is done.
-3. **Video-playback performance** — decode-per-frame is fine for scrubbing but slow at play rate;
-   needs a decoder that holds the stream open (ffmpeg-next or a persistent sidecar) + frame cache.
-4. Optionally the **zero-copy blade↔wgpu** interop to drop the per-frame readback.
+The native editor now covers the website's feature surface: import (image/video/audio), timeline
+edit (move/trim/split/duplicate/zoom), transform/effects/keyframes/presets, inline text, scenes,
+real decoded compositor preview, audio waveform + playback, and export (still PNG + timeline MP4).
+
+Remaining are optimizations, not missing capability:
+1. **Zero-copy blade↔wgpu** interop to drop the per-frame preview readback (P0-GPU-04 currently GO
+   via CPU readback).
+2. Persistent/hardware media decode (ffmpeg-next) to replace the sidecar for very long clips.
+3. Multi-clip audio mixing (today the first active audio clip plays); broader effect/mask parity.
 2. **Media decode** — native ffmpeg/gstreamer (`P0-MED-01`) so clips carry real frames/audio.
 3. **Direct manipulation, part 2** — drag clip **edges to trim**, timeline zoom/scroll, snapping.
 4. **Effects / masks / animation / motion-preset UI** — extend the element model + inspector.
