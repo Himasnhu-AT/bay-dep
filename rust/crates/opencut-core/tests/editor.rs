@@ -134,6 +134,25 @@ fn split_element_divides_it_and_undo_rejoins() {
 }
 
 #[test]
+fn trim_element_sets_start_and_duration_in_one_undo_step() {
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title"); // starts 0, dur 3s
+    editor.execute(Command::TrimElement {
+        reference: reference.clone(),
+        start: MediaTime::from_ticks(60_000),   // 0.5s
+        duration: MediaTime::from_ticks(180_000), // 1.5s
+    });
+    let element = editor.active_scene().element(&reference).unwrap();
+    assert_eq!(element.start(), MediaTime::from_ticks(60_000));
+    assert_eq!(element.duration(), MediaTime::from_ticks(180_000));
+
+    editor.undo(); // one step restores both
+    let element = editor.active_scene().element(&reference).unwrap();
+    assert_eq!(element.start(), MediaTime::ZERO);
+    assert_eq!(element.duration(), MediaTime::from_ticks(360_000));
+}
+
+#[test]
 fn seek_clamps_to_content_duration() {
     let mut editor = Editor::starter();
     let duration = editor.duration();

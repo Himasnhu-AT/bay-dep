@@ -61,6 +61,12 @@ pub enum Command {
         at: MediaTime,
         new_id: String,
     },
+    /// Set an element's start and duration together (a timeline edge-trim), as one undo step.
+    TrimElement {
+        reference: ElementRef,
+        start: MediaTime,
+        duration: MediaTime,
+    },
     /// Rename an element.
     RenameElement { reference: ElementRef, name: String },
     /// Set a text element's content (no-op for non-text elements).
@@ -99,6 +105,7 @@ pub enum CommandKind {
     MoveElement,
     SetElementDuration,
     SplitElement,
+    TrimElement,
     RenameElement,
     SetTextContent,
     AddTrack,
@@ -478,6 +485,28 @@ impl Command {
                         reference.track_id.clone(),
                         new_id.clone(),
                     )])),
+                })
+            }
+
+            Command::TrimElement {
+                reference,
+                start,
+                duration,
+            } => {
+                scene.element(reference)?;
+                Some(Lowered {
+                    kind: CommandKind::TrimElement,
+                    forward: vec![
+                        ProjectPatch::SetElementStart {
+                            reference: reference.clone(),
+                            start: *start,
+                        },
+                        ProjectPatch::SetElementDuration {
+                            reference: reference.clone(),
+                            duration: *duration,
+                        },
+                    ],
+                    selection_patch: None,
                 })
             }
 

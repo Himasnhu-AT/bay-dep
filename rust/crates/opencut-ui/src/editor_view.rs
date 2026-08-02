@@ -13,13 +13,27 @@ use opencut_core::{
     VideoElement,
 };
 
+/// Which part of a clip a drag is manipulating.
+#[derive(Clone, Copy, PartialEq)]
+enum DragMode {
+    Move,
+    TrimStart,
+    TrimEnd,
+}
+
 /// In-progress drag of a timeline element.
 struct DragState {
     reference: ElementRef,
-    origin_ticks: i64,
+    mode: DragMode,
+    origin_start_ticks: i64,
+    origin_duration_ticks: i64,
     pointer_start_x: f32,
     delta_px: f32,
 }
+
+/// Minimum on-screen width of a clip block, and its trim handle width.
+const MIN_BLOCK_WIDTH: f32 = 10.0;
+const TRIM_HANDLE_WIDTH: f32 = 7.0;
 
 // Keyboard actions. Bound to keystrokes in `key_bindings()` and handled on the root element.
 gpui::actions!(
@@ -100,19 +114,66 @@ impl EditorView {
         }
     }
 
-    /// Finish a drag: commit a single undoable MoveElement from the drag origin to the drop point.
+    /// Finish a drag: commit a single undoable edit (move or edge-trim) from origin to drop point.
     fn finish_drag(&mut self) {
         let Some(drag) = self.dragging.take() else {
             return;
         };
         let delta_ticks = (drag.delta_px / PIXELS_PER_SECOND * TICKS_PER_SECOND as f32) as i64;
-        if delta_ticks != 0 {
-            let new_start = (drag.origin_ticks + delta_ticks).max(0);
-            self.editor.execute(Command::MoveElement {
-                reference: drag.reference,
-                start: MediaTime::from_ticks(new_start),
-            });
+        if delta_ticks == 0 {
+            return;
         }
+        match drag.mode {
+            DragMode::Move => {
+                let new_start = (drag.origin_start_ticks + delta_ticks).max(0);
+                self.editor.execute(Command::MoveElement {
+                    reference: drag.reference,
+                    start: MediaTime::from_ticks(new_start),
+                });
+            }
+            DragMode::TrimStart => {
+                let new_start = (drag.origin_start_ticks + delta_ticks).max(0);
+                let consumed = new_start - drag.origin_start_ticks;
+                let new_duration = (drag.origin_duration_ticks - consumed).max(MIN_DURATION_TICKS);
+                self.editor.execute(Command::TrimElement {
+                    reference: drag.reference,
+                    start: MediaTime::from_ticks(new_start),
+                    duration: MediaTime::from_ticks(new_duration),
+                });
+            }
+            DragMode::TrimEnd => {
+                let new_duration = (drag.origin_duration_ticks + delta_ticks).max(MIN_DURATION_TICKS);
+                self.editor.execute(Command::TrimElement {
+                    reference: drag.reference,
+                    start: MediaTime::from_ticks(drag.origin_start_ticks),
+                    duration: MediaTime::from_ticks(new_duration),
+                });
+            }
+        }
+    }
+
+    /// Build the mouse-down listener that begins a drag in `mode` for `reference`.
+    #[allow(clippy::type_complexity)]
+    fn begin_drag(
+        &self,
+        reference: ElementRef,
+        mode: DragMode,
+        origin_start_ticks: i64,
+        origin_duration_ticks: i64,
+        cx: &mut Context<Self>,
+    ) -> Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static> {
+        Box::new(cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+            this.editor.select(vec![reference.clone()]);
+            this.dragging = Some(DragState {
+                reference: reference.clone(),
+                mode,
+                origin_start_ticks,
+                origin_duration_ticks,
+                pointer_start_x: f32::from(event.position.x),
+                delta_px: 0.0,
+            });
+            cx.notify();
+        }))
     }
 
     fn delete_selected(&mut self) {
@@ -776,46 +837,97 @@ impl EditorView {
             let id = *block_index;
             *block_index += 1;
             let reference = block.reference.clone();
-            let origin_ticks = (block.start_seconds * TICKS_PER_SECOND as f64) as i64;
+            let origin_start_ticks = (block.start_seconds * TICKS_PER_SECOND as f64) as i64;
+            let origin_duration_ticks = (block.duration_seconds * TICKS_PER_SECOND as f64) as i64;
 
-            // Offset the block live while it is the one being dragged.
-            let mut left = block.start_seconds as f32 * PIXELS_PER_SECOND;
+            // Live geometry while this block is the one being dragged/trimmed.
+            let base_left = block.start_seconds as f32 * PIXELS_PER_SECOND;
+            let base_width = (block.duration_seconds as f32 * PIXELS_PER_SECOND).max(MIN_BLOCK_WIDTH);
+            let (mut left, mut width) = (base_left, base_width);
             if let Some(drag) = &self.dragging {
                 if drag.reference == block.reference {
-                    left = (left + drag.delta_px).max(0.0);
+                    match drag.mode {
+                        DragMode::Move => left = (base_left + drag.delta_px).max(0.0),
+                        DragMode::TrimStart => {
+                            left = (base_left + drag.delta_px).max(0.0);
+                            width = (base_width - drag.delta_px).max(MIN_BLOCK_WIDTH);
+                        }
+                        DragMode::TrimEnd => {
+                            width = (base_width + drag.delta_px).max(MIN_BLOCK_WIDTH);
+                        }
+                    }
                 }
             }
-            let width = (block.duration_seconds as f32 * PIXELS_PER_SECOND).max(24.0);
+            let inner_height = LANE_HEIGHT - 8.0;
             let fill = theme::element_color(&block.kind_label);
+
+            // Three sibling regions: left trim handle, move body, right trim handle.
+            let left_handle = div()
+                .id(("trim-start", id))
+                .w(px(TRIM_HANDLE_WIDTH))
+                .h(px(inner_height))
+                .bg(rgb(theme::SELECTED_BORDER))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    self.begin_drag(
+                        reference.clone(),
+                        DragMode::TrimStart,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                        cx,
+                    ),
+                );
+            let body = div()
+                .id(("move", id))
+                .flex_1()
+                .h(px(inner_height))
+                .px_2()
+                .overflow_hidden()
+                .text_xs()
+                .text_color(rgb(theme::TEXT))
+                .child(Self::shared(block.label.clone()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    self.begin_drag(
+                        reference.clone(),
+                        DragMode::Move,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                        cx,
+                    ),
+                );
+            let right_handle = div()
+                .id(("trim-end", id))
+                .w(px(TRIM_HANDLE_WIDTH))
+                .h(px(inner_height))
+                .bg(rgb(theme::SELECTED_BORDER))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    self.begin_drag(
+                        reference.clone(),
+                        DragMode::TrimEnd,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                        cx,
+                    ),
+                );
 
             let mut element = div()
                 .id(id)
                 .absolute()
                 .left(px(left))
                 .top(px(4.0))
-                .h(px(LANE_HEIGHT - 8.0))
+                .h(px(inner_height))
                 .w(px(width))
-                .px_2()
                 .rounded_md()
                 .bg(rgb(fill))
-                .text_xs()
-                .text_color(rgb(theme::TEXT))
                 .overflow_hidden()
-                .child(Self::shared(block.label.clone()))
-                // Press selects immediately and begins a drag; the root's mouse-move/up finish it.
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                        this.editor.select(vec![reference.clone()]);
-                        this.dragging = Some(DragState {
-                            reference: reference.clone(),
-                            origin_ticks,
-                            pointer_start_x: f32::from(event.position.x),
-                            delta_px: 0.0,
-                        });
-                        cx.notify();
-                    }),
-                );
+                .flex()
+                .flex_row()
+                .items_center()
+                .child(left_handle)
+                .child(body)
+                .child(right_handle);
             if block.selected {
                 element = element.border_1().border_color(rgb(theme::SELECTED_BORDER));
             }
