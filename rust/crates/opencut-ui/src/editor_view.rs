@@ -71,7 +71,9 @@ use crate::theme;
 use crate::view_model::{EditorViewModel, TrackRow};
 
 /// Pixels per timeline second.
-const PIXELS_PER_SECOND: f32 = 48.0;
+const DEFAULT_PIXELS_PER_SECOND: f32 = 48.0;
+const MIN_ZOOM: f32 = 8.0;
+const MAX_ZOOM: f32 = 400.0;
 const TRACK_LABEL_WIDTH: f32 = 132.0;
 const LANE_HEIGHT: f32 = 40.0;
 const TICKS_PER_SECOND: i64 = 120_000;
@@ -93,6 +95,7 @@ pub struct EditorView {
     focus_handle: FocusHandle,
     needs_focus: bool,
     dragging: Option<DragState>,
+    pixels_per_second: f32,
 }
 
 impl gpui::Focusable for EditorView {
@@ -111,6 +114,7 @@ impl EditorView {
             focus_handle,
             needs_focus: true,
             dragging: None,
+            pixels_per_second: DEFAULT_PIXELS_PER_SECOND,
         }
     }
 
@@ -119,7 +123,7 @@ impl EditorView {
         let Some(drag) = self.dragging.take() else {
             return;
         };
-        let delta_ticks = (drag.delta_px / PIXELS_PER_SECOND * TICKS_PER_SECOND as f32) as i64;
+        let delta_ticks = (drag.delta_px / self.pixels_per_second * TICKS_PER_SECOND as f32) as i64;
         if delta_ticks == 0 {
             return;
         }
@@ -810,7 +814,13 @@ impl EditorView {
                     .text_xs()
                     .text_color(rgb(theme::MUTED))
                     .child(Self::shared(readout)),
-            );
+            )
+            .child(self.transport_button("zoom-out", "− zoom", cx, |this| {
+                this.pixels_per_second = (this.pixels_per_second / 1.5).max(MIN_ZOOM);
+            }))
+            .child(self.transport_button("zoom-in", "zoom +", cx, |this| {
+                this.pixels_per_second = (this.pixels_per_second * 1.5).min(MAX_ZOOM);
+            }));
 
         div()
             .flex()
@@ -841,8 +851,8 @@ impl EditorView {
             let origin_duration_ticks = (block.duration_seconds * TICKS_PER_SECOND as f64) as i64;
 
             // Live geometry while this block is the one being dragged/trimmed.
-            let base_left = block.start_seconds as f32 * PIXELS_PER_SECOND;
-            let base_width = (block.duration_seconds as f32 * PIXELS_PER_SECOND).max(MIN_BLOCK_WIDTH);
+            let base_left = block.start_seconds as f32 * self.pixels_per_second;
+            let base_width = (block.duration_seconds as f32 * self.pixels_per_second).max(MIN_BLOCK_WIDTH);
             let (mut left, mut width) = (base_left, base_width);
             if let Some(drag) = &self.dragging {
                 if drag.reference == block.reference {
@@ -1001,7 +1011,7 @@ impl EditorView {
                         // Playhead line across this lane.
                         div()
                             .absolute()
-                            .left(px(playhead_seconds as f32 * PIXELS_PER_SECOND))
+                            .left(px(playhead_seconds as f32 * self.pixels_per_second))
                             .top(px(0.0))
                             .w(px(2.0))
                             .h(px(LANE_HEIGHT))
