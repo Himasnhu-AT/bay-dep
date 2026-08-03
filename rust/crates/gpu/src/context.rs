@@ -749,11 +749,12 @@ impl GpuContext {
 
     /// Reads a texture back into a tightly-packed RGBA8 `Vec` (length `width * height * 4`).
     ///
-    /// `copy_texture_to_buffer` requires the staging buffer's row pitch to be a multiple of
-    /// `COPY_BYTES_PER_ROW_ALIGNMENT` (256), so we copy into a padded buffer, then strip the
-    /// per-row padding and reverse the native BGRA swizzle to hand callers canonical RGBA.
-    /// Blocks on `device.poll(Wait)` — intended for tests and offline export, not the hot path.
-    pub fn read_texture_rgba(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+    /// Read `texture` back to CPU in its **native channel order** (BGRA on Metal/DX12, RGBA on
+    /// GL). `copy_texture_to_buffer` requires the staging buffer's row pitch to be a multiple of
+    /// `COPY_BYTES_PER_ROW_ALIGNMENT` (256), so we copy into a padded buffer then strip the
+    /// per-row padding. No channel swizzle — callers pick [`read_texture_rgba`] or
+    /// [`read_texture_bgra`] for a specific order. Blocks on `device.poll(Wait)`.
+    fn read_texture_native(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
         let unpadded_bytes_per_row = (width as usize) * 4;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
@@ -809,8 +810,27 @@ impl GpuContext {
         }
         drop(mapped);
         buffer.unmap();
+        out
+    }
 
+    /// Read `texture` back as canonical **RGBA** (swizzles once on BGRA backends). For tests and
+    /// offline export where downstream consumers (PNG, ffmpeg) expect RGBA.
+    pub fn read_texture_rgba(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+        let mut out = self.read_texture_native(texture, width, height);
         if self.texture_format == wgpu::TextureFormat::Bgra8Unorm {
+            for texel in out.chunks_exact_mut(4) {
+                texel.swap(0, 2);
+            }
+        }
+        out
+    }
+
+    /// Read `texture` back as **BGRA** — the byte order GPUI's `RenderImage` wants. On Metal/DX12
+    /// (native BGRA) this is the raw readback with *no* channel swizzle, so the live preview path
+    /// avoids a full-buffer pass every frame; only GL backends swap once.
+    pub fn read_texture_bgra(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+        let mut out = self.read_texture_native(texture, width, height);
+        if self.texture_format == wgpu::TextureFormat::Rgba8Unorm {
             for texel in out.chunks_exact_mut(4) {
                 texel.swap(0, 2);
             }

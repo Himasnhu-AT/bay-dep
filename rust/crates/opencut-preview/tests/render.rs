@@ -31,6 +31,39 @@ fn renders_starter_scene_to_a_nonempty_frame() {
 }
 
 #[test]
+fn reuses_cached_text_rasters_across_frames() {
+    // Re-rendering the same scene must not re-rasterise (and re-cache) unchanged text.
+    let Some(mut renderer) = PreviewRenderer::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let project = Project::starter();
+    let (width, height) = (128, 72);
+    let render_once = |renderer: &mut PreviewRenderer, at: MediaTime| {
+        renderer.render(
+            project.active_scene(),
+            at,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        );
+    };
+
+    render_once(&mut renderer, MediaTime::ZERO);
+    let after_first = renderer.text_cache_len();
+    assert!(after_first > 0, "starter scene has text; something should be cached");
+
+    // A second render at the same time re-draws identical text → no new cache entries.
+    render_once(&mut renderer, MediaTime::ZERO);
+    assert_eq!(
+        renderer.text_cache_len(),
+        after_first,
+        "identical text should be served from the cache, not re-rasterised"
+    );
+}
+
+#[test]
 fn renders_a_clip_with_a_brightness_effect_without_error() {
     let Some(mut renderer) = PreviewRenderer::new() else {
         eprintln!("skipping: no GPU adapter");

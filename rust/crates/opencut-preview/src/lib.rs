@@ -84,6 +84,10 @@ const VIDEO_H: u32 = 180;
 const VIDEO_FPS: f32 = 30.0;
 const VIDEO_MAX_FRAMES: u32 = 450; // ~15s cap
 
+/// Max distinct text rasters kept resident in the compositor store before the least-recently
+/// inserted is evicted. Static captions reuse one entry; inline editing churns keys, so we cap.
+const TEXT_CACHE_CAP: usize = 64;
+
 pub struct PreviewRenderer {
     ctx: GpuContext,
     compositor: Compositor,
@@ -92,6 +96,10 @@ pub struct PreviewRenderer {
     uploaded_media: HashSet<String>,
     /// media id → all decoded video frames (one ffmpeg decode per clip, then indexed by time).
     video_cache: std::collections::HashMap<String, VideoClip>,
+    /// Content+style keys of text textures already rasterised and uploaded, so unchanged text
+    /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
+    text_keys: HashSet<String>,
+    text_order: std::collections::VecDeque<String>,
 }
 
 impl PreviewRenderer {
@@ -106,7 +114,45 @@ impl PreviewRenderer {
             text: TextRaster::new(),
             uploaded_media: HashSet::new(),
             video_cache: std::collections::HashMap::new(),
+            text_keys: HashSet::new(),
+            text_order: std::collections::VecDeque::new(),
         })
+    }
+
+    /// Rasterise + upload a text texture keyed by its content/style, reusing the cached texture
+    /// when the exact same text was drawn before. Evicts the least-recently inserted entry (and
+    /// releases its GPU texture) once the cache is full. Returns the texture id (the key).
+    fn ensure_text_texture(
+        &mut self,
+        content: &str,
+        font_px: f32,
+        color: &str,
+        tw: u32,
+        th: u32,
+    ) -> String {
+        let key = format!("text:{color}:{font}:{tw}x{th}:{content}", font = font_px.to_bits());
+        if self.text_keys.contains(&key) {
+            return key;
+        }
+        let image = self.text.render(content, font_px, color, tw, th);
+        let texture =
+            self.ctx
+                .upload_rgba_texture(&image.rgba, image.width, image.height, "preview-text");
+        self.compositor.upsert_texture(key.clone(), texture);
+        self.text_keys.insert(key.clone());
+        self.text_order.push_back(key.clone());
+        while self.text_order.len() > TEXT_CACHE_CAP {
+            if let Some(evicted) = self.text_order.pop_front() {
+                self.text_keys.remove(&evicted);
+                self.compositor.release_texture(&evicted);
+            }
+        }
+        key
+    }
+
+    /// Number of distinct text rasters currently resident in the cache (for tests/diagnostics).
+    pub fn text_cache_len(&self) -> usize {
+        self.text_keys.len()
     }
 
     /// Decode + upload an image media asset once, returning its texture id, or `None` on failure.
@@ -240,16 +286,8 @@ impl PreviewRenderer {
                         let th =
                             (transform.scale * height as f32).clamp(16.0, height as f32) as u32;
                         let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
-                        let image = self.text.render(&text.content, font_px, &text.color, tw, th);
-                        let texture = self.ctx.upload_rgba_texture(
-                            &image.rgba,
-                            image.width,
-                            image.height,
-                            "preview-text",
-                        );
-                        self.compositor
-                            .upsert_texture(element.id().to_string(), texture);
-                        element.id().to_string()
+                        // Cached by content/style, so static captions aren't re-shaped per frame.
+                        self.ensure_text_texture(&text.content, font_px, &text.color, tw, th)
                     }
                     Element::Image(image_element) => {
                         match self.ensure_image_texture(&image_element.media_id, media) {
@@ -323,16 +361,14 @@ impl PreviewRenderer {
             .compositor
             .render_frame_to_texture(&self.ctx, &frame)
             .expect("compositor render_frame_to_texture failed");
-        let mut pixels = self.ctx.read_texture_rgba(&texture, width, height);
-        // GPUI's RenderImage wants BGRA; read_texture_rgba returns RGBA.
-        for texel in pixels.chunks_exact_mut(4) {
-            texel.swap(0, 2);
-        }
+        // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
+        // native order, so there is no per-frame channel swizzle on the hot path.
+        let bgra = self.ctx.read_texture_bgra(&texture, width, height);
 
         PreviewFrame {
             width,
             height,
-            bgra: pixels,
+            bgra,
         }
     }
 }
