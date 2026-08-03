@@ -81,17 +81,29 @@ The native editor now covers the website's feature surface: import (image/video/
 edit (move/trim/split/duplicate/zoom), transform/effects/keyframes/presets, inline text, scenes,
 real decoded compositor preview, audio waveform + playback, and export (still PNG + timeline MP4).
 
-Remaining are optimizations, not missing capability:
-1. **Zero-copy blade↔wgpu** interop to drop the per-frame preview readback (P0-GPU-04 currently GO
-   via CPU readback).
-2. Persistent/hardware media decode (ffmpeg-next) to replace the sidecar for very long clips.
-3. Multi-clip audio mixing (today the first active audio clip plays); broader effect/mask parity.
-2. **Media decode** — native ffmpeg/gstreamer (`P0-MED-01`) so clips carry real frames/audio.
-3. **Direct manipulation, part 2** — drag clip **edges to trim**, timeline zoom/scroll, snapping.
-4. **Effects / masks / animation / motion-preset UI** — extend the element model + inspector.
-5. **Text editing** — inline text input (GPUI text field) for the Name/Text fields.
-6. **Export** — drive the compositor over the timeline to an encoded file.
-7. **Audio** — waveform display + mixed playback.
+### Optimizations done since feature parity
+- **Effect library** — `contrast`, `saturation`, and separable-gaussian `blur` join `brightness`
+  (one shader + one pack arm each in `effects`); the inspector adds any of the four.
+- **Hardware decode** — the video sidecar runs `-hwaccel auto` (VideoToolbox on macOS, automatic
+  software fallback).
+- **Preview hot path** — text textures are cached by content/style (bounded LRU) so static captions
+  aren't re-shaped through cosmic-text every frame; the readback now reads the compositor's
+  **native BGRA** order directly (`read_texture_bgra`), dropping two cancelling full-buffer channel
+  swizzles per frame on Metal.
+- **Multi-clip audio mixing** — `opencut_audio::mix_stereo` (pure, unit-tested) sums every non-muted
+  audio clip sounding at/after the playhead into one buffer; playback was previously first-clip-only.
+
+### The one remaining item: true zero-copy preview (`P0-GPU-04`)
+The preview still does a CPU readback (now native-order, no swizzle) before GPUI displays it as a
+`RenderImage`. Fully zero-copy would render the compositor into an **IOSurface-backed** texture and
+hand GPUI the `CVPixelBuffer` via its `surface()` element. That path is **blocked by wgpu 29**: its
+Metal hal exposes `Texture::raw_handle()` (export the `MTLTexture`) but **no `texture_from_raw`** to
+*import* an external IOSurface-backed one, so the compositor cannot render straight into a
+GPUI-shared surface. The only workaround is a raw-Metal blit (compositor texture → IOSurface texture
+via `MTLBlitCommandEncoder` on wgpu's device, then wrap as a `CVPixelBuffer`) — a sizeable,
+macOS-only unsafe interop across `wgpu-hal`/`objc2-metal`/`io-surface`/`core-video` with a
+cross-device (wgpu vs. GPUI/blade) synchronization hazard. It is a deliberate, self-contained spike
+whose payoff is latency only, so it is deferred rather than half-built.
 
 ## Tests
 - `opencut-project`: model invariants + JSON round-trip (`tests/model.rs`).
