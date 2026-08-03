@@ -203,64 +203,93 @@ impl EditorView {
 
     /// Start playing the first active, non-muted audio clip from the playhead.
     fn start_audio(&mut self) {
+        const SAMPLE_RATE: u32 = 44_100;
         let Some(handle) = self.audio_output.as_ref().map(|(_, h)| h.clone()) else {
             return;
         };
-        let playhead = self.editor.playhead();
-        let clip = {
+        let playhead_sec = self.editor.playhead().to_seconds_f64();
+        let total_sec = (self.editor.duration().to_seconds_f64() - playhead_sec).max(0.0);
+        if total_sec <= 0.0 {
+            return;
+        }
+
+        // Every non-muted audio clip still sounding at/after the playhead contributes to the mix.
+        struct Active {
+            media_id: String,
+            start_sec: f64,
+            end_sec: f64,
+            volume: f32,
+        }
+        let active: Vec<Active> = {
             let scene = self.editor.active_scene();
-            let mut found = None;
-            'search: for track in &scene.tracks.audio {
+            let mut clips = Vec::new();
+            for track in &scene.tracks.audio {
                 if track.muted {
                     continue;
                 }
                 for element in &track.elements {
                     if let opencut_core::Element::Audio(audio) = element {
-                        if !audio.muted
-                            && element.start() <= playhead
-                            && playhead < element.end()
-                        {
-                            found = Some((audio.media_id.clone(), element.start(), audio.volume));
-                            break 'search;
+                        let end_sec = element.end().to_seconds_f64();
+                        if audio.muted || end_sec <= playhead_sec {
+                            continue;
                         }
+                        clips.push(Active {
+                            media_id: audio.media_id.clone(),
+                            start_sec: element.start().to_seconds_f64(),
+                            end_sec,
+                            volume: audio.volume,
+                        });
                     }
                 }
             }
-            found
+            clips
         };
-        let Some((media_id, start, volume)) = clip else {
+        if active.is_empty() {
             return;
-        };
-        let Some(path) = self
-            .editor
-            .project()
-            .media_path(&media_id)
-            .map(|s| s.to_string())
-        else {
-            return;
-        };
-        if !self.audio_cache.contains_key(&media_id) {
-            match opencut_audio::decode_pcm(&path, 44_100) {
-                Some(pcm) => {
+        }
+
+        // Decode each referenced media once (cached across seeks/plays).
+        for clip in &active {
+            if self.audio_cache.contains_key(&clip.media_id) {
+                continue;
+            }
+            if let Some(path) = self
+                .editor
+                .project()
+                .media_path(&clip.media_id)
+                .map(|s| s.to_string())
+            {
+                if let Some(pcm) = opencut_audio::decode_pcm(&path, SAMPLE_RATE) {
                     self.audio_cache
-                        .insert(media_id.clone(), std::sync::Arc::new(pcm));
+                        .insert(clip.media_id.clone(), std::sync::Arc::new(pcm));
                 }
-                None => return,
             }
         }
-        let Some(pcm) = self.audio_cache.get(&media_id) else {
-            return;
+
+        // Mix all decoded clips into one buffer starting at the playhead (borrow ends with block).
+        let mixed = {
+            let specs: Vec<opencut_audio::MixClip> = active
+                .iter()
+                .filter_map(|clip| {
+                    let pcm = self.audio_cache.get(&clip.media_id)?;
+                    Some(opencut_audio::MixClip {
+                        pcm: pcm.as_ref(),
+                        // Audio has no trim: source position tracks the playhead into the clip.
+                        src_start_secs: (playhead_sec - clip.start_sec).max(0.0),
+                        dst_start_secs: (clip.start_sec - playhead_sec).max(0.0),
+                        play_secs: clip.end_sec - clip.start_sec.max(playhead_sec),
+                        volume: clip.volume.clamp(0.0, 2.0),
+                    })
+                })
+                .collect();
+            if specs.is_empty() {
+                return;
+            }
+            opencut_audio::mix_stereo(&specs, SAMPLE_RATE, total_sec)
         };
 
-        use rodio::Source;
-        let source =
-            rodio::buffer::SamplesBuffer::new(pcm.channels, pcm.sample_rate, pcm.samples.clone());
-        let offset = std::time::Duration::from_secs_f64(
-            (playhead.as_ticks() - start.as_ticks()).max(0) as f64 / 120_000.0,
-        );
-        let source = source.skip_duration(offset);
+        let source = rodio::buffer::SamplesBuffer::new(2, SAMPLE_RATE, mixed);
         if let Ok(sink) = rodio::Sink::try_new(&handle) {
-            sink.set_volume(volume.clamp(0.0, 2.0));
             sink.append(source);
             sink.play();
             self.audio_sink = Some(sink);
