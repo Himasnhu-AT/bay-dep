@@ -58,6 +58,40 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
 }
 
 #[test]
+fn renders_contrast_saturation_and_blur_on_gpu() {
+    // Exercises the new effect shaders end-to-end (WGSL compiles + runs on the real GPU).
+    let Some(mut renderer) = PreviewRenderer::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    for effect_type in ["contrast", "saturation", "blur"] {
+        let mut project = Project::starter();
+        if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
+            title.effects.push(Effect {
+                id: format!("fx-{effect_type}"),
+                effect_type: effect_type.into(),
+                enabled: true,
+                params: [("amount".to_string(), 1.5)].into_iter().collect(),
+            });
+        }
+        let (width, height) = (128, 72);
+        let frame = renderer.render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        );
+        assert_eq!(
+            frame.bgra.len() as u32,
+            width * height * 4,
+            "{effect_type} produced a malformed frame"
+        );
+    }
+}
+
+#[test]
 fn renders_a_real_image_element_from_disk() {
     let Some(mut renderer) = PreviewRenderer::new() else {
         eprintln!("skipping: no GPU adapter");

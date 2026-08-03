@@ -1638,22 +1638,33 @@ impl EditorView {
                         .child(controls),
                 );
             }
-            body = body.child(self.button("add-effect", "+ Brightness", true, cx, {
+            // One add-button per supported effect type. Blur seeds a 4px sigma; the colour
+            // adjustments seed amount 1.0 (no change), then the ± stepper tunes them.
+            let add_effects: [(&'static str, &'static str, &'static str); 4] = [
+                ("add-fx-brightness", "brightness", "+ Bright"),
+                ("add-fx-contrast", "contrast", "+ Contrast"),
+                ("add-fx-saturation", "saturation", "+ Sat"),
+                ("add-fx-blur", "blur", "+ Blur"),
+            ];
+            let mut add_row = div().flex().flex_row().flex_wrap().gap_1();
+            for (id, effect_type, label) in add_effects {
                 let reference = selected.reference.clone();
-                move |this, _cx| {
+                add_row = add_row.child(self.button(id, label, true, cx, move |this, _cx| {
                     this.add_counter += 1;
+                    let amount = if effect_type == "blur" { 4.0 } else { 1.0 };
                     let effect = opencut_core::Effect {
                         id: format!("fx-{}", this.add_counter),
-                        effect_type: "brightness".into(),
+                        effect_type: effect_type.into(),
                         enabled: true,
-                        params: [("amount".to_string(), 1.0)].into_iter().collect(),
+                        params: [("amount".to_string(), amount)].into_iter().collect(),
                     };
                     this.editor.execute(Command::AddEffect {
                         reference: reference.clone(),
                         effect,
                     });
-                }
-            }));
+                }));
+            }
+            body = body.child(add_row);
 
             // Motion presets (in-memory): save the clip's effects+animations, apply elsewhere.
             body = body

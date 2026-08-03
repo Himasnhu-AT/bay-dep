@@ -11,6 +11,10 @@ const GAUSSIAN_BLUR_SHADER_ID: &str = "gaussian-blur";
 const GAUSSIAN_BLUR_SHADER_SOURCE: &str = include_str!("shaders/gaussian_blur.wgsl");
 const BRIGHTNESS_SHADER_ID: &str = "brightness";
 const BRIGHTNESS_SHADER_SOURCE: &str = include_str!("shaders/brightness.wgsl");
+const CONTRAST_SHADER_ID: &str = "contrast";
+const CONTRAST_SHADER_SOURCE: &str = include_str!("shaders/contrast.wgsl");
+const SATURATION_SHADER_ID: &str = "saturation";
+const SATURATION_SHADER_SOURCE: &str = include_str!("shaders/saturation.wgsl");
 
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
@@ -93,6 +97,20 @@ impl EffectPipeline {
                     label: Some("effects-brightness-shader"),
                     source: wgpu::ShaderSource::Wgsl(BRIGHTNESS_SHADER_SOURCE.into()),
                 });
+        let contrast_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-contrast-shader"),
+                    source: wgpu::ShaderSource::Wgsl(CONTRAST_SHADER_SOURCE.into()),
+                });
+        let saturation_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-saturation-shader"),
+                    source: wgpu::ShaderSource::Wgsl(SATURATION_SHADER_SOURCE.into()),
+                });
         let pipeline_layout =
             context
                 .device()
@@ -126,6 +144,26 @@ impl EffectPipeline {
                     &vertex_shader_module,
                     &brightness_shader_module,
                     "effects-brightness-pipeline",
+                ),
+            ),
+            (
+                CONTRAST_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    &contrast_shader_module,
+                    "effects-contrast-pipeline",
+                ),
+            ),
+            (
+                SATURATION_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    &saturation_shader_module,
+                    "effects-saturation-pipeline",
                 ),
             ),
         ]);
@@ -323,7 +361,8 @@ fn pack_effect_uniforms(
                 scalars: [sigma, step, 0.0, 0.0],
             })
         }
-        BRIGHTNESS_SHADER_ID => {
+        BRIGHTNESS_SHADER_ID | CONTRAST_SHADER_ID | SATURATION_SHADER_ID => {
+            // These three share one contract: a single `u_amount` in scalars.x.
             let amount = read_number_uniform(pass, "u_amount")?;
             reject_unsupported_uniforms(pass, &["u_amount"])?;
             Ok(EffectUniformBuffer {
@@ -464,5 +503,35 @@ mod tests {
             pack_effect_uniforms(&p, 1, 1),
             Err(EffectsError::UnknownEffectShader { .. })
         ));
+    }
+
+    #[test]
+    fn packs_contrast_and_saturation_amount() {
+        for shader in [CONTRAST_SHADER_ID, SATURATION_SHADER_ID] {
+            let p = pass(shader, &[("u_amount", UniformValue::Number(0.75))]);
+            let packed = pack_effect_uniforms(&p, 640, 360).unwrap();
+            assert_eq!(packed.scalars[0], 0.75, "shader {shader}");
+            assert_eq!(packed.resolution, [640.0, 360.0]);
+        }
+    }
+
+    #[test]
+    fn contrast_and_saturation_reject_unknown_uniforms() {
+        for shader in [CONTRAST_SHADER_ID, SATURATION_SHADER_ID] {
+            let p = pass(
+                shader,
+                &[
+                    ("u_amount", UniformValue::Number(1.0)),
+                    ("u_bogus", UniformValue::Number(0.0)),
+                ],
+            );
+            assert!(
+                matches!(
+                    pack_effect_uniforms(&p, 1, 1),
+                    Err(EffectsError::UnsupportedUniform { .. })
+                ),
+                "shader {shader} should reject unknown uniforms"
+            );
+        }
     }
 }

@@ -18,24 +18,47 @@ use opencut_project::{Background, Element, ElementKind, MediaAsset, MediaTime, S
 use opencut_text::TextRaster;
 
 /// Map an element's enabled, supported effects to compositor effect-pass groups (one group per
-/// effect). Only `brightness` is supported today; unknown effect types are skipped so the
-/// compositor never errors on an unknown shader.
+/// effect). `brightness`/`contrast`/`saturation` are single-`amount` colour adjustments; `blur`
+/// expands into a separable two-pass gaussian (horizontal then vertical). Unknown effect types
+/// are skipped so the compositor never errors on an unknown shader.
 fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
+    fn number(amount: f32) -> EffectUniformValueDescriptor {
+        EffectUniformValueDescriptor::Number(amount)
+    }
+
     element
         .effects()
         .iter()
-        .filter(|effect| effect.enabled && effect.effect_type == "brightness")
-        .map(|effect| {
-            let amount = effect.params.get("amount").copied().unwrap_or(1.0);
-            let mut uniforms = std::collections::HashMap::new();
-            uniforms.insert(
-                "u_amount".to_string(),
-                EffectUniformValueDescriptor::Number(amount),
-            );
-            vec![EffectPassDescriptor {
-                shader: "brightness".to_string(),
-                uniforms,
-            }]
+        .filter(|effect| effect.enabled)
+        .filter_map(|effect| {
+            let amount = effect.params.get("amount").copied();
+            match effect.effect_type.as_str() {
+                // Colour adjustments: `amount` defaults to 1.0 (no change).
+                shader @ ("brightness" | "contrast" | "saturation") => Some(vec![
+                    EffectPassDescriptor {
+                        shader: shader.to_string(),
+                        uniforms: [("u_amount".to_string(), number(amount.unwrap_or(1.0)))].into(),
+                    },
+                ]),
+                // Separable gaussian blur: `amount` is sigma (px); split into H then V.
+                "blur" => {
+                    let sigma = amount.unwrap_or(2.0).max(0.1);
+                    let pass = |dir: [f32; 2]| EffectPassDescriptor {
+                        shader: "gaussian-blur".to_string(),
+                        uniforms: [
+                            ("u_sigma".to_string(), number(sigma)),
+                            ("u_step".to_string(), number(1.0)),
+                            (
+                                "u_direction".to_string(),
+                                EffectUniformValueDescriptor::Vector(vec![dir[0], dir[1]]),
+                            ),
+                        ]
+                        .into(),
+                    };
+                    Some(vec![pass([1.0, 0.0]), pass([0.0, 1.0])])
+                }
+                _ => None,
+            }
         })
         .collect()
 }
