@@ -346,6 +346,10 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
             "-nostdin",
             "-loglevel",
             "error",
+            // Offload decode to the GPU when possible (VideoToolbox on macOS); ffmpeg falls
+            // back to software automatically if no hardware decoder fits the input.
+            "-hwaccel",
+            "auto",
             "-i",
             path,
             "-r",
