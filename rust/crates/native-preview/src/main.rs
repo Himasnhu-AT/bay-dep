@@ -50,7 +50,9 @@ impl Preview {
         // Three layers of different sizes/opacities/blends prove real multi-layer compositing,
         // not just a single blit: an opaque dark background, an opaque accent rectangle, and a
         // half-transparent Screen-blended rectangle overlapping it.
-        let layers: [(&str, [u8; 4], u32, u32, f32, f32, f32, BlendMode); 3] = [
+        // (id, rgba, width, height, center_x, center_y, opacity, blend)
+        type LayerSpec = (&'static str, [u8; 4], u32, u32, f32, f32, f32, BlendMode);
+        let layers: [LayerSpec; 3] = [
             (
                 "bg",
                 [24, 26, 32, 255],

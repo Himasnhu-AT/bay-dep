@@ -46,7 +46,11 @@ fn tracks_iterate_top_to_bottom_and_resolve_by_ref() {
         .expect("caption resolves");
     assert_eq!(caption.name(), "Caption");
 
-    assert!(scene.element(&ElementRef::new("track-main", "missing")).is_none());
+    assert!(
+        scene
+            .element(&ElementRef::new("track-main", "missing"))
+            .is_none()
+    );
 }
 
 #[test]

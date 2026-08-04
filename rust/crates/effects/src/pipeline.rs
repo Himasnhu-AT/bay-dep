@@ -377,10 +377,7 @@ fn pack_effect_uniforms(
     }
 }
 
-fn reject_unsupported_uniforms(
-    pass: &EffectPass,
-    allowed: &[&str],
-) -> Result<(), EffectsError> {
+fn reject_unsupported_uniforms(pass: &EffectPass, allowed: &[&str]) -> Result<(), EffectsError> {
     for uniform in pass.uniforms.keys() {
         if !allowed.contains(&uniform.as_str()) {
             return Err(EffectsError::UnsupportedUniform {
@@ -449,7 +446,10 @@ mod tests {
 
     #[test]
     fn packs_brightness_amount_into_first_scalar() {
-        let p = pass(BRIGHTNESS_SHADER_ID, &[("u_amount", UniformValue::Number(1.5))]);
+        let p = pass(
+            BRIGHTNESS_SHADER_ID,
+            &[("u_amount", UniformValue::Number(1.5))],
+        );
         let packed = pack_effect_uniforms(&p, 1920, 1080).unwrap();
         assert_eq!(packed.scalars[0], 1.5);
         assert_eq!(packed.resolution, [1920.0, 1080.0]);

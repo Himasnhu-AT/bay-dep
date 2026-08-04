@@ -26,7 +26,6 @@ pub use state::{ClipboardEntry, ClipboardState, EditorState, SelectionKind, Sele
 pub use opencut_project as project;
 pub use opencut_project::{
     AnimationChannel, AudioElement, Background, BlendMode, CanvasSize, Effect, Element,
-    ElementKind, Fps,
-    ImageElement, Keyframe, MediaAsset, MediaTime, Project, ProjectMetadata, ProjectSettings,
-    Scene, TextElement, Track, TrackKind, Tracks, Transform, VideoElement,
+    ElementKind, Fps, ImageElement, Keyframe, MediaAsset, MediaTime, Project, ProjectMetadata,
+    ProjectSettings, Scene, TextElement, Track, TrackKind, Tracks, Transform, VideoElement,
 };

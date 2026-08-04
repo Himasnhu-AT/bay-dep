@@ -149,7 +149,11 @@ impl gpui::Focusable for EditorView {
 }
 
 impl EditorView {
-    pub fn new(editor: Editor, focus_handle: FocusHandle, preview: Option<PreviewRenderer>) -> Self {
+    pub fn new(
+        editor: Editor,
+        focus_handle: FocusHandle,
+        preview: Option<PreviewRenderer>,
+    ) -> Self {
         Self {
             editor,
             add_counter: 0,
@@ -450,9 +454,7 @@ impl EditorView {
             media,
         );
 
-        if let Some(buffer) =
-            image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
-        {
+        if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra) {
             let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
             self.preview_image = Some(Arc::new(render_image));
         }
@@ -486,7 +488,8 @@ impl EditorView {
                 });
             }
             DragMode::TrimEnd => {
-                let new_duration = (drag.origin_duration_ticks + delta_ticks).max(MIN_DURATION_TICKS);
+                let new_duration =
+                    (drag.origin_duration_ticks + delta_ticks).max(MIN_DURATION_TICKS);
                 self.editor.execute(Command::TrimElement {
                     reference: drag.reference,
                     start: MediaTime::from_ticks(drag.origin_start_ticks),
@@ -506,18 +509,20 @@ impl EditorView {
         origin_duration_ticks: i64,
         cx: &mut Context<Self>,
     ) -> Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static> {
-        Box::new(cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-            this.editor.select(vec![reference.clone()]);
-            this.dragging = Some(DragState {
-                reference: reference.clone(),
-                mode,
-                origin_start_ticks,
-                origin_duration_ticks,
-                pointer_start_x: f32::from(event.position.x),
-                delta_px: 0.0,
-            });
-            cx.notify();
-        }))
+        Box::new(
+            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                this.editor.select(vec![reference.clone()]);
+                this.dragging = Some(DragState {
+                    reference: reference.clone(),
+                    mode,
+                    origin_start_ticks,
+                    origin_duration_ticks,
+                    pointer_start_x: f32::from(event.position.x),
+                    delta_px: 0.0,
+                });
+                cx.notify();
+            }),
+        )
     }
 
     fn delete_selected(&mut self) {
@@ -605,7 +610,7 @@ impl EditorView {
                     transform: Transform::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
-            blend_mode: Default::default(),
+                    blend_mode: Default::default(),
                 }),
             )
         } else {
@@ -620,7 +625,7 @@ impl EditorView {
                     transform: Transform::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
-            blend_mode: Default::default(),
+                    blend_mode: Default::default(),
                 }),
             )
         };
@@ -717,9 +722,8 @@ impl EditorView {
             let Some(element) = scene.element(&reference) else {
                 return;
             };
-            let local = MediaTime::from_ticks(
-                (playhead.as_ticks() - element.start().as_ticks()).max(0),
-            );
+            let local =
+                MediaTime::from_ticks((playhead.as_ticks() - element.start().as_ticks()).max(0));
             element.sampled_transform(local).map(|t| {
                 let value = match property {
                     "scale" => t.scale,
@@ -772,8 +776,7 @@ impl EditorView {
         self.last_frame = Some(now);
 
         let duration = self.editor.duration();
-        let next_ticks =
-            self.editor.playhead().as_ticks() + (dt * TICKS_PER_SECOND as f64) as i64;
+        let next_ticks = self.editor.playhead().as_ticks() + (dt * TICKS_PER_SECOND as f64) as i64;
         let next = MediaTime::from_ticks(next_ticks);
         if next >= duration {
             self.editor.seek(duration);
@@ -892,8 +895,8 @@ impl EditorView {
                             color: "#ffffff".into(),
                             transform: Transform::default(),
                             effects: Vec::new(),
-                        animations: Default::default(),
-            blend_mode: Default::default(),
+                            animations: Default::default(),
+                            blend_mode: Default::default(),
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),
@@ -902,14 +905,22 @@ impl EditorView {
                         });
                         let _ = cx;
                     }))
-                    .child(self.button("delete", "Delete", vm.selected.is_some(), cx, |this, _cx| {
-                        if let Some(reference) = this.editor.selection().first().cloned() {
-                            this.editor.execute(Command::RemoveElement { reference });
-                        }
-                    }))
-                    .child(self.button("split", "Split", vm.selected.is_some(), cx, |this, _cx| {
-                        this.split_selected();
-                    }))
+                    .child(self.button(
+                        "delete",
+                        "Delete",
+                        vm.selected.is_some(),
+                        cx,
+                        |this, _cx| {
+                            if let Some(reference) = this.editor.selection().first().cloned() {
+                                this.editor.execute(Command::RemoveElement { reference });
+                            }
+                        },
+                    ))
+                    .child(
+                        self.button("split", "Split", vm.selected.is_some(), cx, |this, _cx| {
+                            this.split_selected();
+                        }),
+                    )
                     .child(self.button(
                         "duplicate",
                         "Duplicate",
@@ -924,12 +935,16 @@ impl EditorView {
                             }
                         },
                     ))
-                    .child(self.button("copy", "Copy", vm.selected.is_some(), cx, |this, _cx| {
-                        this.editor.copy();
-                    }))
-                    .child(self.button("paste", "Paste", vm.clipboard_len > 0, cx, |this, _cx| {
-                        this.editor.execute(Command::Paste);
-                    }))
+                    .child(
+                        self.button("copy", "Copy", vm.selected.is_some(), cx, |this, _cx| {
+                            this.editor.copy();
+                        }),
+                    )
+                    .child(
+                        self.button("paste", "Paste", vm.clipboard_len > 0, cx, |this, _cx| {
+                            this.editor.execute(Command::Paste);
+                        }),
+                    )
                     .child(self.button("undo", "Undo", vm.can_undo, cx, |this, _cx| {
                         this.editor.undo();
                     }))
@@ -950,7 +965,11 @@ impl EditorView {
                     .px_3()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(if active { theme::SELECTED } else { theme::PANEL_ALT }))
+                    .bg(rgb(if active {
+                        theme::SELECTED
+                    } else {
+                        theme::PANEL_ALT
+                    }))
                     .text_sm()
                     .text_color(rgb(if active { theme::TEXT } else { theme::MUTED }))
                     .child(Self::shared(scene.name.clone()))
@@ -971,7 +990,12 @@ impl EditorView {
             .bg(rgb(theme::PANEL_ALT))
             .border_b_1()
             .border_color(rgb(theme::BORDER))
-            .child(div().text_xs().text_color(rgb(theme::MUTED)).child("SCENES"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child("SCENES"),
+            )
             .children(tabs)
             .child(self.transport_button("add-scene", "＋ Scene", cx, |this| {
                 this.add_counter += 1;
@@ -1023,8 +1047,8 @@ impl EditorView {
                                     trim_end: duration,
                                     transform: Transform::default(),
                                     effects: Vec::new(),
-                        animations: Default::default(),
-            blend_mode: Default::default(),
+                                    animations: Default::default(),
+                                    blend_mode: Default::default(),
                                 }),
                             ),
                             "image" => (
@@ -1037,8 +1061,8 @@ impl EditorView {
                                     media_id: id.into(),
                                     transform: Transform::default(),
                                     effects: Vec::new(),
-                        animations: Default::default(),
-            blend_mode: Default::default(),
+                                    animations: Default::default(),
+                                    blend_mode: Default::default(),
                                 }),
                             ),
                             _ => (
@@ -1075,9 +1099,11 @@ impl EditorView {
             .border_r_1()
             .border_color(rgb(theme::BORDER))
             .child(div().text_xs().text_color(rgb(theme::MUTED)).child("MEDIA"))
-            .child(self.button("import-media", "Import Media…", true, cx, |this, _cx| {
-                this.import_media()
-            }))
+            .child(
+                self.button("import-media", "Import Media…", true, cx, |this, _cx| {
+                    this.import_media()
+                }),
+            )
             .child(
                 div()
                     .text_xs()
@@ -1164,15 +1190,18 @@ impl EditorView {
                     .children(layers)
             })
             .child(
-                div().text_xs().text_color(rgb(theme::MUTED)).child(Self::shared(format!(
-                    "{width} × {height}  ·  {} layer(s)  ·  {}",
-                    vm.preview_layers.len(),
-                    if self.preview_image.is_some() {
-                        "compositor"
-                    } else {
-                        "layout"
-                    }
-                ))),
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::MUTED))
+                    .child(Self::shared(format!(
+                        "{width} × {height}  ·  {} layer(s)  ·  {}",
+                        vm.preview_layers.len(),
+                        if self.preview_image.is_some() {
+                            "compositor"
+                        } else {
+                            "layout"
+                        }
+                    ))),
             )
     }
 
@@ -1253,7 +1282,11 @@ impl EditorView {
             .items_center()
             .justify_center()
             .rounded_md()
-            .bg(rgb(if active { theme::SELECTED } else { theme::PANEL_ALT }))
+            .bg(rgb(if active {
+                theme::SELECTED
+            } else {
+                theme::PANEL_ALT
+            }))
             .text_xs()
             .text_color(rgb(theme::TEXT))
             .child(Self::shared(label.to_string()))
@@ -1500,19 +1533,15 @@ impl EditorView {
                         );
                 }
                 None => {
-                    body = body.child(self.info_row("Text", content)).child(self.button(
-                        "edit-text",
-                        "Edit Text",
-                        true,
-                        cx,
-                        {
+                    body = body
+                        .child(self.info_row("Text", content))
+                        .child(self.button("edit-text", "Edit Text", true, cx, {
                             let reference = selected.reference.clone();
                             let content = content.clone();
                             move |this, _cx| {
                                 this.editing_text = Some((reference.clone(), content.clone()));
                             }
-                        },
-                    ));
+                        }));
                 }
             }
         }
@@ -1715,26 +1744,29 @@ impl EditorView {
                 let reference = selected.reference.clone();
                 body = body
                     .child(div().text_xs().text_color(rgb(theme::MUTED)).child("BLEND"))
-                    .child(self.button(
-                        "blend-mode",
-                        mode.label(),
-                        true,
-                        cx,
-                        move |this, _cx| {
+                    .child(
+                        self.button("blend-mode", mode.label(), true, cx, move |this, _cx| {
                             this.editor.execute(Command::SetBlendMode {
                                 reference: reference.clone(),
                                 blend_mode: mode.next(),
                             });
-                        },
-                    ));
+                        }),
+                    );
             }
 
             // Motion presets (in-memory): save the clip's effects+animations, apply elsewhere.
             body = body
-                .child(div().text_xs().text_color(rgb(theme::MUTED)).child("PRESETS"))
-                .child(self.button("save-preset", "Save Preset", true, cx, |this, _cx| {
-                    this.save_preset()
-                }));
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme::MUTED))
+                        .child("PRESETS"),
+                )
+                .child(
+                    self.button("save-preset", "Save Preset", true, cx, |this, _cx| {
+                        this.save_preset()
+                    }),
+                );
             for (index, preset) in self.presets.iter().enumerate() {
                 let label = format!("Apply {}", preset.name);
                 body = body.child(
@@ -1795,7 +1827,11 @@ impl EditorView {
             .gap_2()
             .child(self.transport_button(
                 "play",
-                if self.playing { "⏸ Pause" } else { "▶ Play" },
+                if self.playing {
+                    "⏸ Pause"
+                } else {
+                    "▶ Play"
+                },
                 cx,
                 |this| this.toggle_play(),
             ))
@@ -1804,11 +1840,13 @@ impl EditorView {
             }))
             .child(self.transport_button("seek-back", "◀ 1s", cx, |this| {
                 let ticks = this.editor.playhead().as_ticks();
-                this.editor.seek(MediaTime::from_ticks(ticks - TICKS_PER_SECOND));
+                this.editor
+                    .seek(MediaTime::from_ticks(ticks - TICKS_PER_SECOND));
             }))
             .child(self.transport_button("seek-fwd", "1s ▶", cx, |this| {
                 let ticks = this.editor.playhead().as_ticks();
-                this.editor.seek(MediaTime::from_ticks(ticks + TICKS_PER_SECOND));
+                this.editor
+                    .seek(MediaTime::from_ticks(ticks + TICKS_PER_SECOND));
             }))
             .child(self.transport_button("seek-end", "▶|", cx, |this| {
                 this.editor.seek(this.editor.duration())
@@ -1856,7 +1894,8 @@ impl EditorView {
 
             // Live geometry while this block is the one being dragged/trimmed.
             let base_left = block.start_seconds as f32 * self.pixels_per_second;
-            let base_width = (block.duration_seconds as f32 * self.pixels_per_second).max(MIN_BLOCK_WIDTH);
+            let base_width =
+                (block.duration_seconds as f32 * self.pixels_per_second).max(MIN_BLOCK_WIDTH);
             let (mut left, mut width) = (base_left, base_width);
             if let Some(drag) = &self.dragging {
                 if drag.reference == block.reference {
@@ -1918,14 +1957,16 @@ impl EditorView {
                 None
             };
             let body = match waveform {
-                Some(peaks) => base_body.flex().flex_row().items_end().children(
-                    peaks.iter().map(|p| {
+                Some(peaks) => base_body
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .children(peaks.iter().map(|p| {
                         div()
                             .w(px(2.0))
                             .h(px((p * (inner_height - 6.0)).max(1.0)))
                             .bg(rgb(theme::ACCENT))
-                    }),
-                ),
+                    })),
                 None => base_body
                     .text_xs()
                     .text_color(rgb(theme::TEXT))

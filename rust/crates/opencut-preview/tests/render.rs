@@ -52,7 +52,10 @@ fn reuses_cached_text_rasters_across_frames() {
 
     render_once(&mut renderer, MediaTime::ZERO);
     let after_first = renderer.text_cache_len();
-    assert!(after_first > 0, "starter scene has text; something should be cached");
+    assert!(
+        after_first > 0,
+        "starter scene has text; something should be cached"
+    );
 
     // A second render at the same time re-draws identical text → no new cache entries.
     render_once(&mut renderer, MediaTime::ZERO);
@@ -153,7 +156,7 @@ fn renders_a_real_image_element_from_disk() {
             media_id: "m1".into(),
             transform: Transform::default(),
             effects: Vec::new(),
-                        animations: Default::default(),
+            animations: Default::default(),
             blend_mode: Default::default(),
         }));
 
@@ -180,9 +183,19 @@ fn renders_a_real_video_frame_via_ffmpeg() {
     let path = std::env::temp_dir().join(format!("vii-test-video-{}.mp4", std::process::id()));
     let generated = std::process::Command::new("ffmpeg")
         .args([
-            "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
-            "-i", "color=c=red:s=32x32:d=1:r=10", "-frames:v", "10",
-            "-pix_fmt", "yuv420p", path.to_str().unwrap(),
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=32x32:d=1:r=10",
+            "-frames:v",
+            "10",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
         ])
         .status()
         .map(|s| s.success())
@@ -212,7 +225,7 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             trim_end: MediaTime::from_ticks(120_000),
             transform: Transform::default(),
             effects: Vec::new(),
-                        animations: Default::default(),
+            animations: Default::default(),
             blend_mode: Default::default(),
         }));
 
@@ -237,7 +250,7 @@ fn exports_a_short_video_via_ffmpeg() {
     let out = std::env::temp_dir().join(format!("vii-export-{}.mp4", std::process::id()));
     let ok = renderer.export_video(
         project.active_scene(),
-        0.5, // seconds
+        0.5,  // seconds
         10.0, // fps → 5 frames
         64,
         36,
@@ -365,17 +378,21 @@ fn a_non_square_image_is_not_stretched_to_the_canvas() {
     let scene = project.active_scene_mut();
     scene.tracks.main.elements.clear();
     scene.tracks.overlay.clear();
-    scene.tracks.main.elements.push(Element::Image(ImageElement {
-        id: "el-wide".into(),
-        name: "wide".into(),
-        start: MediaTime::ZERO,
-        duration: MediaTime::from_seconds_f64(2.0).unwrap(),
-        media_id: "wide".into(),
-        transform: Transform::default(), // centered, scale 1.0 => full-canvas box
-        effects: Vec::new(),
-        animations: Default::default(),
-        blend_mode: Default::default(),
-    }));
+    scene
+        .tracks
+        .main
+        .elements
+        .push(Element::Image(ImageElement {
+            id: "el-wide".into(),
+            name: "wide".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_seconds_f64(2.0).unwrap(),
+            media_id: "wide".into(),
+            transform: Transform::default(), // centered, scale 1.0 => full-canvas box
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+        }));
 
     let size = 64; // square canvas
     let frame = renderer.render(
@@ -395,7 +412,10 @@ fn a_non_square_image_is_not_stretched_to_the_canvas() {
         })
     };
 
-    assert!(row_has_red(size / 2), "the image must be visible mid-canvas");
+    assert!(
+        row_has_red(size / 2),
+        "the image must be visible mid-canvas"
+    );
     assert!(
         !row_has_red(0) && !row_has_red(size - 1),
         "a 4:1 image in a square canvas must be letterboxed, not stretched to the edges"

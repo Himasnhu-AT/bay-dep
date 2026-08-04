@@ -34,9 +34,21 @@ fn overlapping_clips_sum_and_offset_places_audio() {
     let a = tone(1000, 1.0, 0.3);
     let b = tone(1000, 1.0, 0.3);
     let clips = [
-        MixClip { pcm: &a, src_start_secs: 0.0, dst_start_secs: 0.0, play_secs: 1.0, volume: 1.0 },
+        MixClip {
+            pcm: &a,
+            src_start_secs: 0.0,
+            dst_start_secs: 0.0,
+            play_secs: 1.0,
+            volume: 1.0,
+        },
         // b starts half a second in — the first 0.5s is a alone, then a+b overlap.
-        MixClip { pcm: &b, src_start_secs: 0.0, dst_start_secs: 0.5, play_secs: 1.0, volume: 1.0 },
+        MixClip {
+            pcm: &b,
+            src_start_secs: 0.0,
+            dst_start_secs: 0.5,
+            play_secs: 1.0,
+            volume: 1.0,
+        },
     ];
     let mixed = opencut_audio::mix_stereo(&clips, 1000, 2.0);
     assert!((mixed[0] - 0.3).abs() < 1e-6, "only a plays at t=0");
@@ -49,10 +61,25 @@ fn overlapping_clips_sum_and_offset_places_audio() {
 fn sums_are_soft_clamped() {
     let loud = tone(1000, 1.0, 0.9);
     let clips = [
-        MixClip { pcm: &loud, src_start_secs: 0.0, dst_start_secs: 0.0, play_secs: 1.0, volume: 1.0 },
-        MixClip { pcm: &loud, src_start_secs: 0.0, dst_start_secs: 0.0, play_secs: 1.0, volume: 1.0 },
+        MixClip {
+            pcm: &loud,
+            src_start_secs: 0.0,
+            dst_start_secs: 0.0,
+            play_secs: 1.0,
+            volume: 1.0,
+        },
+        MixClip {
+            pcm: &loud,
+            src_start_secs: 0.0,
+            dst_start_secs: 0.0,
+            play_secs: 1.0,
+            volume: 1.0,
+        },
     ];
     let mixed = opencut_audio::mix_stereo(&clips, 1000, 1.0);
-    assert!(mixed.iter().all(|s| (-1.0..=1.0).contains(s)), "clamped to [-1, 1]");
+    assert!(
+        mixed.iter().all(|s| (-1.0..=1.0).contains(s)),
+        "clamped to [-1, 1]"
+    );
     assert!((mixed[0] - 1.0).abs() < 1e-6, "0.9 + 0.9 clamps to 1.0");
 }

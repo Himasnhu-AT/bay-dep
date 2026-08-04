@@ -73,7 +73,10 @@ pub enum Command {
     /// Rename an element.
     RenameElement { reference: ElementRef, name: String },
     /// Set a text element's content (no-op for non-text elements).
-    SetTextContent { reference: ElementRef, content: String },
+    SetTextContent {
+        reference: ElementRef,
+        content: String,
+    },
     /// Set a visual element's on-canvas transform (no-op for audio).
     SetTransform {
         reference: ElementRef,
@@ -302,15 +305,15 @@ impl ProjectPatch {
                 track_id,
                 element_id,
             } => {
-                if let Some(track) = scene.tracks.track_mut(&track_id) {
-                    if let Some(pos) = track.elements.iter().position(|e| e.id() == element_id) {
-                        let element = track.elements.remove(pos);
-                        return ProjectPatch::InsertElement {
-                            track_id,
-                            index: pos,
-                            element,
-                        };
-                    }
+                if let Some(track) = scene.tracks.track_mut(&track_id)
+                    && let Some(pos) = track.elements.iter().position(|e| e.id() == element_id)
+                {
+                    let element = track.elements.remove(pos);
+                    return ProjectPatch::InsertElement {
+                        track_id,
+                        index: pos,
+                        element,
+                    };
                 }
                 ProjectPatch::Noop
             }
@@ -420,15 +423,15 @@ impl ProjectPatch {
                 reference,
                 effect_id,
             } => {
-                if let Some(effects) = scene.element_mut(&reference).and_then(|e| e.effects_mut()) {
-                    if let Some(pos) = effects.iter().position(|f| f.id == effect_id) {
-                        let effect = effects.remove(pos);
-                        return ProjectPatch::AddEffect {
-                            reference,
-                            index: pos,
-                            effect,
-                        };
-                    }
+                if let Some(effects) = scene.element_mut(&reference).and_then(|e| e.effects_mut())
+                    && let Some(pos) = effects.iter().position(|f| f.id == effect_id)
+                {
+                    let effect = effects.remove(pos);
+                    return ProjectPatch::AddEffect {
+                        reference,
+                        index: pos,
+                        effect,
+                    };
                 }
                 ProjectPatch::Noop
             }
@@ -437,15 +440,15 @@ impl ProjectPatch {
                 effect_id,
                 effect,
             } => {
-                if let Some(effects) = scene.element_mut(&reference).and_then(|e| e.effects_mut()) {
-                    if let Some(pos) = effects.iter().position(|f| f.id == effect_id) {
-                        let previous = std::mem::replace(&mut effects[pos], effect);
-                        return ProjectPatch::ReplaceEffect {
-                            reference,
-                            effect_id,
-                            effect: previous,
-                        };
-                    }
+                if let Some(effects) = scene.element_mut(&reference).and_then(|e| e.effects_mut())
+                    && let Some(pos) = effects.iter().position(|f| f.id == effect_id)
+                {
+                    let previous = std::mem::replace(&mut effects[pos], effect);
+                    return ProjectPatch::ReplaceEffect {
+                        reference,
+                        effect_id,
+                        effect: previous,
+                    };
                 }
                 ProjectPatch::Noop
             }
@@ -453,7 +456,10 @@ impl ProjectPatch {
                 reference,
                 property,
                 channel,
-            } => match scene.element_mut(&reference).and_then(|e| e.animations_mut()) {
+            } => match scene
+                .element_mut(&reference)
+                .and_then(|e| e.animations_mut())
+            {
                 Some(animations) => {
                     let previous = animations.get(&property).cloned();
                     match channel {

@@ -94,8 +94,7 @@ impl EditorViewModel {
                     .elements
                     .iter()
                     .map(|element| {
-                        let reference =
-                            ElementRef::new(track.id.clone(), element.id().to_string());
+                        let reference = ElementRef::new(track.id.clone(), element.id().to_string());
                         let media_id = match element {
                             opencut_core::Element::Video(v) => Some(v.media_id.clone()),
                             opencut_core::Element::Image(i) => Some(i.media_id.clone()),
@@ -179,7 +178,10 @@ impl EditorViewModel {
 
         Self {
             project_name: project.metadata.name.clone(),
-            canvas: (project.settings.canvas.width, project.settings.canvas.height),
+            canvas: (
+                project.settings.canvas.width,
+                project.settings.canvas.height,
+            ),
             background_color,
             can_undo: editor.can_undo(),
             can_redo: editor.can_redo(),
@@ -232,12 +234,11 @@ mod tests {
         let selected = vm.selected.expect("a selection");
         assert_eq!(selected.kind_label, "Text");
         assert_eq!(selected.text_content.as_deref(), Some("Hello, vii"));
-        assert!(
-            vm.tracks
-                .iter()
-                .flat_map(|t| &t.elements)
-                .any(|b| b.selected && b.label == "Title")
-        );
+        assert!(vm
+            .tracks
+            .iter()
+            .flat_map(|t| &t.elements)
+            .any(|b| b.selected && b.label == "Title"));
     }
 
     #[test]
@@ -260,12 +261,24 @@ mod tests {
         });
         let vm = EditorViewModel::build(&editor);
         assert_eq!(vm.scenes.len(), 2);
-        assert!(vm.scenes.iter().find(|s| s.id == "scene-main").unwrap().active);
+        assert!(
+            vm.scenes
+                .iter()
+                .find(|s| s.id == "scene-main")
+                .unwrap()
+                .active
+        );
 
         editor.switch_scene("s2");
         let vm = EditorViewModel::build(&editor);
         assert!(vm.scenes.iter().find(|s| s.id == "s2").unwrap().active);
-        assert!(!vm.scenes.iter().find(|s| s.id == "scene-main").unwrap().active);
+        assert!(
+            !vm.scenes
+                .iter()
+                .find(|s| s.id == "scene-main")
+                .unwrap()
+                .active
+        );
     }
 
     #[test]

@@ -432,7 +432,10 @@ impl Element {
             if let Some(v) = animations.get("y").and_then(|c| c.sample(local_time)) {
                 transform.y = v;
             }
-            if let Some(v) = animations.get("rotation").and_then(|c| c.sample(local_time)) {
+            if let Some(v) = animations
+                .get("rotation")
+                .and_then(|c| c.sample(local_time))
+            {
                 transform.rotation = v;
             }
         }

@@ -3,9 +3,7 @@
 
 use std::sync::mpsc;
 
-use opencut_core::{
-    Command, Editor, EditorEvent, ElementRef, TextElement, TrackLane,
-};
+use opencut_core::{Command, Editor, EditorEvent, ElementRef, TextElement, TrackLane};
 use opencut_project::{Element, MediaTime};
 
 fn text(id: &str, name: &str) -> Element {
@@ -19,8 +17,8 @@ fn text(id: &str, name: &str) -> Element {
         color: "#fff".into(),
         transform: opencut_project::Transform::default(),
         effects: Vec::new(),
-                        animations: Default::default(),
-                        blend_mode: Default::default(),
+        animations: Default::default(),
+        blend_mode: Default::default(),
     })
 }
 
@@ -54,7 +52,14 @@ fn add_element_executes_undoes_and_redoes() {
 
     assert!(editor.redo());
     assert_eq!(editor.active_scene().tracks.main.elements.len(), before + 1);
-    assert!(editor.active_scene().tracks.main.element("el-new").is_some());
+    assert!(
+        editor
+            .active_scene()
+            .tracks
+            .main
+            .element("el-new")
+            .is_some()
+    );
 }
 
 #[test]
@@ -71,36 +76,57 @@ fn move_and_rename_are_reversible() {
         reference: reference.clone(),
         name: "Renamed".into(),
     });
-    assert_eq!(editor.active_scene().element(&reference).unwrap().name(), "Renamed");
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().name(),
+        "Renamed"
+    );
     assert_eq!(
         editor.active_scene().element(&reference).unwrap().start(),
         MediaTime::from_ticks(600_000)
     );
 
     editor.undo(); // rename
-    assert_eq!(editor.active_scene().element(&reference).unwrap().name(), "Title");
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().name(),
+        "Title"
+    );
     editor.undo(); // move
-    assert_eq!(editor.active_scene().element(&reference).unwrap().start(), original_start);
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().start(),
+        original_start
+    );
 }
 
 #[test]
 fn set_element_duration_is_reversible() {
     let mut editor = Editor::starter();
     let reference = main_ref("el-title");
-    let original = editor.active_scene().element(&reference).unwrap().duration();
+    let original = editor
+        .active_scene()
+        .element(&reference)
+        .unwrap()
+        .duration();
 
     editor.execute(Command::SetElementDuration {
         reference: reference.clone(),
         duration: MediaTime::from_ticks(1_000_000),
     });
     assert_eq!(
-        editor.active_scene().element(&reference).unwrap().duration(),
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .duration(),
         MediaTime::from_ticks(1_000_000)
     );
 
     editor.undo();
     assert_eq!(
-        editor.active_scene().element(&reference).unwrap().duration(),
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .duration(),
         original
     );
 }
@@ -116,7 +142,10 @@ fn split_element_divides_it_and_undo_rejoins() {
     }));
 
     let main = &editor.active_scene().tracks.main;
-    assert_eq!(main.element("el-title").unwrap().duration(), MediaTime::from_ticks(120_000));
+    assert_eq!(
+        main.element("el-title").unwrap().duration(),
+        MediaTime::from_ticks(120_000)
+    );
     let right = main.element("el-title-b").unwrap();
     assert_eq!(right.start(), MediaTime::from_ticks(120_000));
     assert_eq!(right.duration(), MediaTime::from_ticks(240_000));
@@ -130,9 +159,22 @@ fn split_element_divides_it_and_undo_rejoins() {
     }));
 
     editor.undo();
-    assert!(editor.active_scene().tracks.main.element("el-title-b").is_none());
+    assert!(
+        editor
+            .active_scene()
+            .tracks
+            .main
+            .element("el-title-b")
+            .is_none()
+    );
     assert_eq!(
-        editor.active_scene().tracks.main.element("el-title").unwrap().duration(),
+        editor
+            .active_scene()
+            .tracks
+            .main
+            .element("el-title")
+            .unwrap()
+            .duration(),
         MediaTime::from_ticks(360_000)
     );
 }
@@ -143,7 +185,7 @@ fn trim_element_sets_start_and_duration_in_one_undo_step() {
     let reference = main_ref("el-title"); // starts 0, dur 3s
     editor.execute(Command::TrimElement {
         reference: reference.clone(),
-        start: MediaTime::from_ticks(60_000),   // 0.5s
+        start: MediaTime::from_ticks(60_000),     // 0.5s
         duration: MediaTime::from_ticks(180_000), // 1.5s
     });
     let element = editor.active_scene().element(&reference).unwrap();
@@ -174,7 +216,12 @@ fn set_transform_applies_to_visuals_and_reverses() {
     use opencut_core::Transform;
     let mut editor = Editor::starter();
     let reference = main_ref("el-title");
-    let original = editor.active_scene().element(&reference).unwrap().transform().unwrap();
+    let original = editor
+        .active_scene()
+        .element(&reference)
+        .unwrap()
+        .transform()
+        .unwrap();
 
     let moved = Transform {
         x: 0.1,
@@ -188,7 +235,12 @@ fn set_transform_applies_to_visuals_and_reverses() {
         transform: moved,
     }));
     assert_eq!(
-        editor.active_scene().element(&reference).unwrap().transform().unwrap(),
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .transform()
+            .unwrap(),
         moved
     );
 
@@ -200,7 +252,12 @@ fn set_transform_applies_to_visuals_and_reverses() {
 
     editor.undo();
     assert_eq!(
-        editor.active_scene().element(&reference).unwrap().transform().unwrap(),
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .transform()
+            .unwrap(),
         original
     );
 }
@@ -219,7 +276,10 @@ fn set_text_content_only_applies_to_text_elements() {
         content: "nope".into(),
     }));
 
-    let title = editor.active_scene().element(&main_ref("el-title")).unwrap();
+    let title = editor
+        .active_scene()
+        .element(&main_ref("el-title"))
+        .unwrap();
     assert!(matches!(title, Element::Text(t) if t.content == "Updated"));
 }
 
@@ -232,11 +292,21 @@ fn removing_a_selected_element_clears_it_and_undo_restores_both() {
     assert!(editor.execute(Command::RemoveElement {
         reference: main_ref("el-title"),
     }));
-    assert!(editor.active_scene().element(&main_ref("el-title")).is_none());
+    assert!(
+        editor
+            .active_scene()
+            .element(&main_ref("el-title"))
+            .is_none()
+    );
     assert!(!editor.is_selected(&main_ref("el-title")));
 
     editor.undo();
-    assert!(editor.active_scene().element(&main_ref("el-title")).is_some());
+    assert!(
+        editor
+            .active_scene()
+            .element(&main_ref("el-title"))
+            .is_some()
+    );
     assert!(editor.is_selected(&main_ref("el-title"))); // selection restored (override)
 }
 
@@ -264,7 +334,10 @@ fn add_and_remove_track_are_reversible() {
         id: "track-x".into(),
         name: "Extra".into(),
     }));
-    assert_eq!(editor.active_scene().tracks.overlay.len(), overlay_before + 1);
+    assert_eq!(
+        editor.active_scene().tracks.overlay.len(),
+        overlay_before + 1
+    );
 
     assert!(editor.execute(Command::RemoveTrack {
         track_id: "track-x".into(),
@@ -320,7 +393,9 @@ fn copy_paste_duplicates_selected_elements_with_fresh_ids() {
     assert_eq!(editor.active_scene().tracks.main.elements.len(), before + 1);
 
     // The pasted copy has a fresh id and is now selected.
-    let pasted = editor.selected_element().expect("a pasted element is selected");
+    let pasted = editor
+        .selected_element()
+        .expect("a pasted element is selected");
     assert_ne!(pasted.id(), "el-title");
     assert!(pasted.id().starts_with("el-title-copy-"));
 
@@ -345,7 +420,11 @@ fn load_project_replaces_state_and_resets_history() {
 
     // Original content is back, history/selection/playhead are reset.
     assert_eq!(
-        editor.active_scene().element(&main_ref("el-title")).unwrap().name(),
+        editor
+            .active_scene()
+            .element(&main_ref("el-title"))
+            .unwrap()
+            .name(),
         "Title"
     );
     assert!(!editor.can_undo());
@@ -368,12 +447,20 @@ fn duplicate_element_places_a_copy_after_the_original() {
         new_id: "el-title-dup".into(),
     }));
     assert_eq!(editor.active_scene().tracks.main.elements.len(), before + 1);
-    let copy = editor.active_scene().element(&main_ref("el-title-dup")).unwrap();
+    let copy = editor
+        .active_scene()
+        .element(&main_ref("el-title-dup"))
+        .unwrap();
     assert_eq!(copy.start(), original_end); // placed right after
     assert!(editor.is_selected(&main_ref("el-title-dup")));
 
     editor.undo();
-    assert!(editor.active_scene().element(&main_ref("el-title-dup")).is_none());
+    assert!(
+        editor
+            .active_scene()
+            .element(&main_ref("el-title-dup"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -416,7 +503,15 @@ fn effects_add_toggle_param_and_remove_all_reverse() {
         reference: reference.clone(),
         effect: brightness,
     }));
-    assert_eq!(editor.active_scene().element(&reference).unwrap().effects().len(), 1);
+    assert_eq!(
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .effects()
+            .len(),
+        1
+    );
 
     // Toggle enabled off
     assert!(editor.execute(Command::ToggleEffect {
@@ -439,11 +534,21 @@ fn effects_add_toggle_param_and_remove_all_reverse() {
 
     // Undo param, toggle, add → back to empty
     editor.undo();
-    assert_eq!(editor.active_scene().element(&reference).unwrap().effects()[0].params["amount"], 1.5);
+    assert_eq!(
+        editor.active_scene().element(&reference).unwrap().effects()[0].params["amount"],
+        1.5
+    );
     editor.undo();
     assert!(editor.active_scene().element(&reference).unwrap().effects()[0].enabled);
     editor.undo();
-    assert!(editor.active_scene().element(&reference).unwrap().effects().is_empty());
+    assert!(
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .effects()
+            .is_empty()
+    );
 
     // Audio can't take effects.
     assert!(!editor.execute(Command::AddEffect {
@@ -478,15 +583,25 @@ fn keyframes_animate_a_property_and_reverse() {
 
     let element = editor.active_scene().element(&reference).unwrap();
     // Midpoint (0.5s) interpolates to 0.5 opacity.
-    let sampled = element.sampled_transform(MediaTime::from_ticks(60_000)).unwrap();
-    assert!((sampled.opacity - 0.5).abs() < 1e-4, "got {}", sampled.opacity);
+    let sampled = element
+        .sampled_transform(MediaTime::from_ticks(60_000))
+        .unwrap();
+    assert!(
+        (sampled.opacity - 0.5).abs() < 1e-4,
+        "got {}",
+        sampled.opacity
+    );
     assert_eq!(element.animated_property_count(), 1);
 
     // Undo both keyframes → no animation left.
     editor.undo();
     editor.undo();
     assert_eq!(
-        editor.active_scene().element(&reference).unwrap().animated_property_count(),
+        editor
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .animated_property_count(),
         0
     );
 
@@ -599,7 +714,12 @@ fn set_blend_mode_is_undoable_and_ignores_audio() {
     let reference = main_ref("el-title");
 
     assert_eq!(
-        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        editor
+            .project()
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .blend_mode(),
         Some(BlendMode::Normal),
         "elements default to Normal"
     );
@@ -609,19 +729,34 @@ fn set_blend_mode_is_undoable_and_ignores_audio() {
         blend_mode: BlendMode::Screen,
     }));
     assert_eq!(
-        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        editor
+            .project()
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .blend_mode(),
         Some(BlendMode::Screen)
     );
 
     // Undo restores the previous mode (the patch is self-inverting).
     assert!(editor.undo());
     assert_eq!(
-        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        editor
+            .project()
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .blend_mode(),
         Some(BlendMode::Normal)
     );
     assert!(editor.redo());
     assert_eq!(
-        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        editor
+            .project()
+            .active_scene()
+            .element(&reference)
+            .unwrap()
+            .blend_mode(),
         Some(BlendMode::Screen)
     );
 

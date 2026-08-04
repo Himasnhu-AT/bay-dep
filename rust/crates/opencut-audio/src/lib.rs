@@ -14,8 +14,18 @@ pub struct AudioPcm {
 pub fn decode_pcm(path: &str, sample_rate: u32) -> Option<AudioPcm> {
     let output = std::process::Command::new("ffmpeg")
         .args([
-            "-nostdin", "-loglevel", "error", "-i", path, "-ac", "2", "-ar",
-            &sample_rate.to_string(), "-f", "f32le", "pipe:1",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            path,
+            "-ac",
+            "2",
+            "-ar",
+            &sample_rate.to_string(),
+            "-f",
+            "f32le",
+            "pipe:1",
         ])
         .output()
         .ok()?;
@@ -103,8 +113,18 @@ pub fn waveform_peaks(path: &str, buckets: usize) -> Option<Vec<f32>> {
     }
     let output = std::process::Command::new("ffmpeg")
         .args([
-            "-nostdin", "-loglevel", "error", "-i", path, "-ac", "1", "-ar", "8000", "-f",
-            "s16le", "pipe:1",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            path,
+            "-ac",
+            "1",
+            "-ar",
+            "8000",
+            "-f",
+            "s16le",
+            "pipe:1",
         ])
         .output()
         .ok()?;

@@ -1,7 +1,7 @@
 //! `parse_ffprobe_json` is pure, so these run without ffmpeg installed. One case per shape we
 //! actually see in the wild, including every "optional field absent" path.
 
-use opencut_preview::probe::{parse_ffprobe_json, ProbeError};
+use opencut_preview::probe::{ProbeError, parse_ffprobe_json};
 
 #[test]
 fn parses_an_mp4_with_video_and_audio() {
@@ -139,8 +139,16 @@ fn probes_a_real_generated_clip() {
     let path = std::env::temp_dir().join(format!("vii-probe-{}.mp4", std::process::id()));
     let generated = std::process::Command::new("ffmpeg")
         .args([
-            "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
-            "testsrc=size=320x240:duration=2:rate=25", "-pix_fmt", "yuv420p",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:duration=2:rate=25",
+            "-pix_fmt",
+            "yuv420p",
             path.to_str().unwrap(),
         ])
         .status()
@@ -175,7 +183,10 @@ fn short_clips_decode_at_full_rate_and_source_aspect() {
     // A 5s 1920x1080 clip fits the budget easily: full 30fps, downscaled keeping 16:9.
     let (w, h, fps, frames) = opencut_preview::plan_decode_for_test((1920, 1080), 5.0);
     assert_eq!(w, 480, "downscaled to the preview width budget");
-    assert_eq!(h, 270, "16:9 preserved (was hardcoded 320x180 regardless of source)");
+    assert_eq!(
+        h, 270,
+        "16:9 preserved (was hardcoded 320x180 regardless of source)"
+    );
     assert!((fps - 30.0).abs() < 0.01, "fps={fps}");
     assert_eq!(frames, 150);
 }

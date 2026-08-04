@@ -9,8 +9,15 @@ fn sine_tone(tag: &str) -> Option<std::path::PathBuf> {
     let path = std::env::temp_dir().join(format!("vii-test-{tag}-{}.wav", std::process::id()));
     let generated = std::process::Command::new("ffmpeg")
         .args([
-            "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
-            "-i", "sine=frequency=440:duration=1", path.to_str().unwrap(),
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            path.to_str().unwrap(),
         ])
         .status()
         .map(|s| s.success())
@@ -20,12 +27,17 @@ fn sine_tone(tag: &str) -> Option<std::path::PathBuf> {
 
 #[test]
 fn extracts_peaks_from_a_sine_tone() {
-    let Some(path) = sine_tone("tone") else { return };
+    let Some(path) = sine_tone("tone") else {
+        return;
+    };
 
-    let peaks = opencut_audio::waveform_peaks(path.to_str().unwrap(), 64)
-        .expect("peaks from a valid tone");
+    let peaks =
+        opencut_audio::waveform_peaks(path.to_str().unwrap(), 64).expect("peaks from a valid tone");
     assert_eq!(peaks.len(), 64);
-    assert!(peaks.iter().any(|&p| p > 0.1), "a sine tone should have real amplitude");
+    assert!(
+        peaks.iter().any(|&p| p > 0.1),
+        "a sine tone should have real amplitude"
+    );
     assert!(peaks.iter().all(|&p| (0.0..=1.0).contains(&p)));
 
     let _ = std::fs::remove_file(&path);

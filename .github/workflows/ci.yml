@@ -99,23 +99,11 @@ jobs:
       - name: Install ffmpeg
         run: brew install ffmpeg
 
-      # TODO: drop `continue-on-error` once `cargo fmt --all` has been run. As of the commit
-      # that added this job, 14 files are unformatted (opencut-core, opencut-ui,
-      # opencut-preview, opencut-project, opencut-audio, opencut-text, effects). The fix is
-      # mechanical but it collides with in-flight parity work, so it is not done here.
       - name: Format
         run: cargo fmt --all --check
-        continue-on-error: true
 
-      # TODO: drop `continue-on-error` once these 10 warnings are gone. The workspace
-      # compiles clean; only lints stand between it and `-D warnings`:
-      #   clippy::collapsible_if     opencut-core/src/command.rs (3), opencut-preview/src/lib.rs (2)
-      #   clippy::too_many_arguments compositor/src/compositor.rs (3)
-      #   clippy::type_complexity    native-preview/src/main.rs (1)
-      #   clippy::single_match       gpu/src/context.rs (1)
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-        continue-on-error: true
 
       - name: Test
         run: cargo test --workspace

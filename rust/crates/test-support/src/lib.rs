@@ -232,14 +232,25 @@ mod tests {
 
     #[test]
     fn missing_capability_skips_when_not_required() {
-        let skipped = gate(Capability::Ffmpeg, Err::<u8, _>("no ffmpeg".to_string()), false);
-        assert_eq!(skipped, None, "an unrequired capability must skip, not fail");
+        let skipped = gate(
+            Capability::Ffmpeg,
+            Err::<u8, _>("no ffmpeg".to_string()),
+            false,
+        );
+        assert_eq!(
+            skipped, None,
+            "an unrequired capability must skip, not fail"
+        );
     }
 
     #[test]
     #[should_panic(expected = "VII_REQUIRE_GPU")]
     fn missing_gpu_panics_when_required() {
-        gate(Capability::Gpu, Err::<u8, _>("no adapter".to_string()), true);
+        gate(
+            Capability::Gpu,
+            Err::<u8, _>("no adapter".to_string()),
+            true,
+        );
     }
 
     #[test]

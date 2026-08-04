@@ -36,12 +36,12 @@ fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
             let amount = effect.params.get("amount").copied();
             match effect.effect_type.as_str() {
                 // Colour adjustments: `amount` defaults to 1.0 (no change).
-                shader @ ("brightness" | "contrast" | "saturation") => Some(vec![
-                    EffectPassDescriptor {
+                shader @ ("brightness" | "contrast" | "saturation") => {
+                    Some(vec![EffectPassDescriptor {
                         shader: shader.to_string(),
                         uniforms: [("u_amount".to_string(), number(amount.unwrap_or(1.0)))].into(),
-                    },
-                ]),
+                    }])
+                }
                 // Separable gaussian blur: `amount` is sigma (px); split into H then V.
                 "blur" => {
                     let sigma = amount.unwrap_or(2.0).max(0.1);
@@ -229,7 +229,10 @@ impl PreviewRenderer {
         tw: u32,
         th: u32,
     ) -> String {
-        let key = format!("text:{color}:{font}:{tw}x{th}:{content}", font = font_px.to_bits());
+        let key = format!(
+            "text:{color}:{font}:{tw}x{th}:{content}",
+            font = font_px.to_bits()
+        );
         if self.text_keys.contains(&key) {
             return key;
         }
@@ -269,11 +272,13 @@ impl PreviewRenderer {
         let decoded = image::open(&path).ok()?;
         let rgba = decoded.to_rgba8();
         let (width, height) = rgba.dimensions();
-        let texture = self
-            .ctx
-            .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image");
-        self.compositor.upsert_texture(media_id.to_string(), texture);
-        self.uploaded_media.insert(media_id.to_string(), (width, height));
+        let texture =
+            self.ctx
+                .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image");
+        self.compositor
+            .upsert_texture(media_id.to_string(), texture);
+        self.uploaded_media
+            .insert(media_id.to_string(), (width, height));
         Some((media_id.to_string(), (width, height)))
     }
 
@@ -407,14 +412,14 @@ impl PreviewRenderer {
                     Element::Video(video) => {
                         let media_id = video.media_id.clone();
                         // Decode the whole clip once, then index frames by time (fast playback).
-                        if !self.video_cache.contains_key(&media_id) {
-                            if let Some(path) =
-                                media.iter().find(|m| m.id == media_id).map(|m| m.path.clone())
-                            {
-                                if let Some(clip) = decode_video_clip(&path) {
-                                    self.video_cache.insert(media_id.clone(), clip);
-                                }
-                            }
+                        if !self.video_cache.contains_key(&media_id)
+                            && let Some(path) = media
+                                .iter()
+                                .find(|m| m.id == media_id)
+                                .map(|m| m.path.clone())
+                            && let Some(clip) = decode_video_clip(&path)
+                        {
+                            self.video_cache.insert(media_id.clone(), clip);
                         }
                         let frame = self.video_cache.get(&media_id).and_then(|clip| {
                             let seconds = video.trim_start.to_seconds_f64()
@@ -498,10 +503,7 @@ impl PreviewRenderer {
 fn decode_video_clip(path: &str) -> Option<VideoClip> {
     // Probe first so the decode matches the source's real aspect and length.
     let (natural, duration_secs) = match probe::probe_media(path) {
-        Ok(meta) => (
-            (meta.width, meta.height),
-            meta.duration.to_seconds_f64(),
-        ),
+        Ok(meta) => ((meta.width, meta.height), meta.duration.to_seconds_f64()),
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 10.0),
     };
     let (decode_w, decode_h, fps, max_frames) = plan_decode(natural, duration_secs);

@@ -5,6 +5,7 @@
 //! [`editor_view`]. [`run`] opens the editor window.
 
 pub mod editor_view;
+pub mod geometry;
 pub mod theme;
 pub mod view_model;
 

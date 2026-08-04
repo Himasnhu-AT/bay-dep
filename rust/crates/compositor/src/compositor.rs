@@ -561,6 +561,10 @@ impl Compositor {
         texture
     }
 
+    // Internal render helpers: these take the wgpu context, encoder and the full quad
+    // description. Bundling them into a struct would add indirection without clarifying
+    // anything at the only three call sites.
+    #[allow(clippy::too_many_arguments)]
     fn render_source_to_texture(
         &self,
         context: &GpuContext,
@@ -642,6 +646,10 @@ impl Compositor {
         }
     }
 
+    // Internal render helpers: these take the wgpu context, encoder and the full quad
+    // description. Bundling them into a struct would add indirection without clarifying
+    // anything at the only three call sites.
+    #[allow(clippy::too_many_arguments)]
     fn apply_mask(
         &mut self,
         context: &GpuContext,
@@ -740,6 +748,10 @@ impl Compositor {
         target
     }
 
+    // Internal render helpers: these take the wgpu context, encoder and the full quad
+    // description. Bundling them into a struct would add indirection without clarifying
+    // anything at the only three call sites.
+    #[allow(clippy::too_many_arguments)]
     fn blend_texture(
         &mut self,
         context: &GpuContext,
