@@ -20,6 +20,10 @@ describe("brightness effect", () => {
 		const [param] = brightnessEffectDefinition.params;
 		expect(param.key).toBe("amount");
 		expect(param.type).toBe("number");
+		// Narrow the ParamDefinition union to the number variant for min/max.
+		if (param.type !== "number") {
+			throw new Error("expected a number param");
+		}
 		expect(param.default).toBe(1);
 		expect(param.min).toBe(0);
 		expect(param.max).toBe(3);

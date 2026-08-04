@@ -1,0 +1,9 @@
+[package]
+name = "opencut-audio"
+version = "0.1.0"
+edition = "2024"
+
+# Extract a waveform peak envelope from an audio/video file via the ffmpeg CLI (decode → mono
+# s16 PCM → per-bucket peaks). Single responsibility: file → normalized peaks for display.
+[lib]
+path = "src/lib.rs"

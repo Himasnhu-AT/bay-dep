@@ -1,0 +1,20 @@
+[package]
+name = "opencut-ui"
+version = "0.1.0"
+edition = "2021"
+
+# The GPUI view layer for the native editor. Single responsibility: render the editor's
+# state and translate user interaction into opencut-core Commands. Presentation logic that
+# doesn't need GPUI lives in the pure, unit-tested `view_model` module.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+gpui = "0.2.2"
+image = "0.25"
+opencut-audio = { version = "0.1.0", path = "../opencut-audio" }
+opencut-core = { version = "0.1.0", path = "../opencut-core" }
+opencut-preview = { version = "0.1.0", path = "../opencut-preview" }
+rfd = "0.15"
+rodio = "0.19"
+serde_json = "1"
