@@ -81,6 +81,30 @@ The native editor now covers the website's feature surface: import (image/video/
 edit (move/trim/split/duplicate/zoom), transform/effects/keyframes/presets, inline text, scenes,
 real decoded compositor preview, audio waveform + playback, and export (still PNG + timeline MP4).
 
+### Parity work against palmier-pro
+A 9-agent audit ([`palmier-gap-audit.md`](palmier-gap-audit.md)) diffed this editor against
+palmier-io/palmier-pro; the plan and execution list are
+[`palmier-parity-plan.md`](palmier-parity-plan.md) and
+[`palmier-parity-todo.md`](palmier-parity-todo.md). Landed so far:
+
+- **17 blend modes** are reachable (the WGSL blend shader was fully implemented but the preview
+  hardcoded `Normal` and `Element` had no field). Wire format is **kebab-case**, matching the
+  compositor and the web app so projects interchange.
+- **Sources are fitted, not stretched** — `fit_contain` sizes a layer from its natural size, and
+  video decode plans against the **display** size (ffmpeg autorotates, so a 90° phone clip was
+  being squashed into a landscape buffer).
+- **Real media probing** — `opencut-preview::probe` parses `ffprobe` JSON for duration, size,
+  rational fps, audio presence and rotation. Import used to hardcode 4s for every file. Stills
+  are never probed for duration (ffprobe reports ~0.04s for a JPEG).
+- **Decode is off the render path.** `PreviewRenderer` spawns a worker per clip and draws a
+  placeholder while `ClipState::Pending`; the UI keeps requesting frames until it lands. Export
+  calls `await_decodes` first, because a placeholder must never be baked into a file. A failed
+  decode is remembered (`ClipState::Failed`) instead of respawning ffmpeg every frame, and a
+  global LRU byte budget bounds the whole cache, not just one clip.
+- **The render path no longer panics** on non-finite transforms or sub-16px canvases.
+- **A status line** in the toolbar surfaces failures that were previously swallowed by `let _ =`
+  (export, save, missing ffprobe).
+
 ### Optimizations done since feature parity
 - **Effect library** — `contrast`, `saturation`, and separable-gaussian `blur` join `brightness`
   (one shader + one pack arm each in `effects`); the inspector adds any of the four.

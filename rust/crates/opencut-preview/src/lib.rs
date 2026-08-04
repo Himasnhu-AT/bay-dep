@@ -110,6 +110,21 @@ pub fn fit_contain_for_test(natural: Option<(u32, u32)>, box_w: f32, box_h: f32)
     fit_contain(natural, box_w, box_h)
 }
 
+/// Replace any non-finite transform component with a safe default. NaN/inf reaching the
+/// compositor panics `f32::clamp` and crashes the editor; a sane layer is a better outcome.
+fn sanitise_transform(t: opencut_project::Transform) -> opencut_project::Transform {
+    fn finite(value: f32, fallback: f32) -> f32 {
+        if value.is_finite() { value } else { fallback }
+    }
+    opencut_project::Transform {
+        x: finite(t.x, 0.5),
+        y: finite(t.y, 0.5),
+        scale: finite(t.scale, 1.0).max(0.0),
+        rotation: finite(t.rotation, 0.0),
+        opacity: finite(t.opacity, 1.0),
+    }
+}
+
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
 pub struct PreviewFrame {
     pub width: u32,
@@ -123,6 +138,12 @@ struct VideoClip {
     width: u32,
     height: u32,
     frames: Vec<Vec<u8>>, // RGBA, `width*height*4` each
+}
+
+impl VideoClip {
+    fn bytes(&self) -> usize {
+        self.frames.len() * (self.width as usize) * (self.height as usize) * 4
+    }
 }
 
 /// Decode budget for the cached video frames. The whole clip is decoded once and indexed by
@@ -212,16 +233,30 @@ pub fn plan_decode_for_test(
 /// inserted is evicted. Static captions reuse one entry; inline editing churns keys, so we cap.
 const TEXT_CACHE_CAP: usize = 64;
 
+/// Ceiling on decoded video frames held across **all** clips. [`VIDEO_MEMORY_BUDGET`] bounds a
+/// single clip; without a global cap, ten imported clips would each claim their own budget.
+const GLOBAL_VIDEO_MEMORY_BUDGET: usize = 384 * 1024 * 1024;
+
+/// Where a clip's decode has got to. Decoding runs on a worker thread so the render path never
+/// blocks: a 10-minute clip took ~33s of frozen UI when this was a synchronous call.
+enum ClipState {
+    /// Worker is decoding; poll the channel each frame and draw a placeholder meanwhile.
+    Pending(std::sync::mpsc::Receiver<Option<VideoClip>>),
+    Ready(VideoClip),
+    /// Decode failed. Remembered so an undecodable file is not retried every frame.
+    Failed,
+}
+
 pub struct PreviewRenderer {
     ctx: GpuContext,
     compositor: Compositor,
     text: TextRaster,
     /// media id → natural pixel size for images already uploaded into the compositor store.
     uploaded_media: std::collections::HashMap<String, (u32, u32)>,
-    /// media id → all decoded video frames (one ffmpeg decode per clip, then indexed by time).
-    /// `None` records a decode that FAILED, so an undecodable file does not respawn ffmpeg on
-    /// every single rendered frame.
-    video_cache: std::collections::HashMap<String, Option<VideoClip>>,
+    /// media id → decode state (pending on a worker thread, ready, or permanently failed).
+    video_cache: std::collections::HashMap<String, ClipState>,
+    /// Ready clips in least-recently-used order, for eviction under the global byte budget.
+    video_lru: std::collections::VecDeque<String>,
     /// Content+style keys of text textures already rasterised and uploaded, so unchanged text
     /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
     text_keys: HashSet<String>,
@@ -240,6 +275,7 @@ impl PreviewRenderer {
             text: TextRaster::new(),
             uploaded_media: std::collections::HashMap::new(),
             video_cache: std::collections::HashMap::new(),
+            video_lru: std::collections::VecDeque::new(),
             text_keys: HashSet::new(),
             text_order: std::collections::VecDeque::new(),
         })
@@ -284,6 +320,83 @@ impl PreviewRenderer {
         self.text_keys.len()
     }
 
+    /// True while any clip is still decoding. The UI polls this to keep requesting frames so a
+    /// finished decode is picked up even when playback is paused.
+    pub fn has_pending_decodes(&self) -> bool {
+        self.video_cache
+            .values()
+            .any(|s| matches!(s, ClipState::Pending(_)))
+    }
+
+    /// Bytes of decoded video currently resident across all clips.
+    pub fn video_cache_bytes(&self) -> usize {
+        self.video_cache
+            .values()
+            .filter_map(|s| match s {
+                ClipState::Ready(clip) => Some(clip.bytes()),
+                _ => None,
+            })
+            .sum()
+    }
+
+    /// Advance a clip's decode state: start a worker if this is the first sighting, otherwise
+    /// check whether the worker has finished. Never blocks.
+    fn poll_decode(&mut self, media_id: &str, path: Option<&str>) {
+        match self.video_cache.get(media_id) {
+            None => {
+                let Some(path) = path else {
+                    // Media is missing entirely — remember it so we do not look again.
+                    self.video_cache
+                        .insert(media_id.to_string(), ClipState::Failed);
+                    return;
+                };
+                let (tx, rx) = std::sync::mpsc::channel();
+                let owned = path.to_string();
+                // Detached worker: the receiver is the only handle we keep. If the renderer is
+                // dropped first the send simply fails and the thread exits.
+                std::thread::spawn(move || {
+                    let _ = tx.send(decode_video_clip(&owned));
+                });
+                self.video_cache
+                    .insert(media_id.to_string(), ClipState::Pending(rx));
+            }
+            Some(ClipState::Pending(rx)) => match rx.try_recv() {
+                Ok(Some(clip)) => {
+                    self.video_cache
+                        .insert(media_id.to_string(), ClipState::Ready(clip));
+                    self.touch_clip(media_id);
+                    self.enforce_video_budget();
+                }
+                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.video_cache
+                        .insert(media_id.to_string(), ClipState::Failed);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {} // still decoding
+            },
+            Some(ClipState::Ready(_)) => self.touch_clip(media_id),
+            Some(ClipState::Failed) => {}
+        }
+    }
+
+    /// Move a clip to the most-recently-used end of the eviction queue.
+    fn touch_clip(&mut self, media_id: &str) {
+        if let Some(index) = self.video_lru.iter().position(|id| id == media_id) {
+            self.video_lru.remove(index);
+        }
+        self.video_lru.push_back(media_id.to_string());
+    }
+
+    /// Evict least-recently-used decoded clips until the total fits the global budget.
+    /// `VIDEO_MEMORY_BUDGET` bounds one clip; this bounds the whole cache.
+    fn enforce_video_budget(&mut self) {
+        while self.video_cache_bytes() > GLOBAL_VIDEO_MEMORY_BUDGET && self.video_lru.len() > 1 {
+            let Some(oldest) = self.video_lru.pop_front() else {
+                break;
+            };
+            self.video_cache.remove(&oldest);
+        }
+    }
+
     /// Decode + upload an image media asset once, returning its texture id, or `None` on failure.
     /// Returns the texture id and the image's natural pixel size (needed to fit it without
     /// distortion); the size is cached alongside the upload so repeats stay cheap.
@@ -325,6 +438,33 @@ impl PreviewRenderer {
     /// Encode the timeline to a video file by rendering each frame and piping raw RGBA to the
     /// ffmpeg CLI. Returns `false` if ffmpeg is unavailable or encoding fails. Blocks until done.
     #[allow(clippy::too_many_arguments)]
+    /// Block until every video clip referenced by `scene` has finished decoding.
+    ///
+    /// The preview can draw a placeholder while a worker decodes, but an export cannot — a
+    /// placeholder would be baked into the output file. Export therefore waits.
+    pub fn await_decodes(&mut self, scene: &Scene, media: &[MediaAsset]) {
+        for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+            for element in &track.elements {
+                let Element::Video(video) = element else {
+                    continue;
+                };
+                let path = media
+                    .iter()
+                    .find(|m| m.id == video.media_id)
+                    .map(|m| m.path.clone());
+                loop {
+                    self.poll_decode(&video.media_id, path.as_deref());
+                    match self.video_cache.get(&video.media_id) {
+                        Some(ClipState::Pending(_)) => {
+                            std::thread::sleep(std::time::Duration::from_millis(10))
+                        }
+                        _ => break,
+                    }
+                }
+            }
+        }
+    }
+
     pub fn export_video(
         &mut self,
         scene: &Scene,
@@ -366,6 +506,9 @@ impl PreviewRenderer {
         let Some(mut stdin) = child.stdin.take() else {
             return false;
         };
+
+        // Placeholders must never be baked into an export, so wait for every decode first.
+        self.await_decodes(scene, media);
 
         let total_frames = (duration_seconds * fps).ceil().max(1.0) as u64;
         for index in 0..total_frames {
@@ -415,13 +558,21 @@ impl PreviewRenderer {
                 let Some(transform) = element.sampled_transform(local) else {
                     continue;
                 };
+                // A non-finite transform (NaN scale from a degenerate keyframe, say) would
+                // propagate into f32::clamp and panic, taking the whole editor down. Skip the
+                // layer instead — one missing layer beats a crashed app.
+                let transform = sanitise_transform(transform);
 
                 // Text → real glyphs; Image → decoded file (cached); others → solid placeholder.
                 let (texture_id, natural_size) = match element {
                     Element::Text(text) => {
-                        let tw = (transform.scale * width as f32).clamp(16.0, width as f32) as u32;
-                        let th =
-                            (transform.scale * height as f32).clamp(16.0, height as f32) as u32;
+                        // `clamp(16.0, w)` panics when w < 16 (a tiny or zero-sized canvas),
+                        // so clamp against the canvas first and only then apply the floor.
+                        let tw = (transform.scale * width as f32).min(width as f32).max(1.0) as u32;
+                        let th = (transform.scale * height as f32)
+                            .min(height as f32)
+                            .max(1.0) as u32;
+                        let (tw, th) = (tw.max(1), th.max(1));
                         let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
                         // Cached by content/style, so static captions aren't re-shaped per frame.
                         // The raster is already box-shaped, so it has no intrinsic aspect to fit.
@@ -438,20 +589,22 @@ impl PreviewRenderer {
                     }
                     Element::Video(video) => {
                         let media_id = video.media_id.clone();
-                        // Decode the whole clip once, then index frames by time (fast playback).
-                        if !self.video_cache.contains_key(&media_id) {
-                            let decoded = media
-                                .iter()
-                                .find(|m| m.id == media_id)
-                                .and_then(|m| decode_video_clip(&m.path));
-                            // Cache the failure too: without this, an unreadable or
-                            // undecodable file respawns ffmpeg on every rendered frame.
-                            self.video_cache.insert(media_id.clone(), decoded);
-                        }
+                        // Decode the clip once on a WORKER THREAD, then index frames by time.
+                        // Doing this inline used to block the render path for the whole decode
+                        // (~33s of frozen UI for a 10-minute clip).
+                        let path = media
+                            .iter()
+                            .find(|m| m.id == media_id)
+                            .map(|m| m.path.clone());
+                        self.poll_decode(&media_id, path.as_deref());
+
                         let frame = self
                             .video_cache
                             .get(&media_id)
-                            .and_then(|c| c.as_ref())
+                            .and_then(|state| match state {
+                                ClipState::Ready(clip) => Some(clip),
+                                _ => None,
+                            })
                             .and_then(|clip| {
                                 let seconds = video.trim_start.to_seconds_f64()
                                     + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64

@@ -238,7 +238,10 @@ fn renders_a_real_video_frame_via_ffmpeg() {
         scene.tracks.main.elements.retain(|e| e.id() == "vid1");
     }
 
-    let frame = renderer.render(
+    // Decoding runs on a worker thread, so drive frames until it lands before asserting on
+    // pixels (a single render would legitimately show the placeholder).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut frame = renderer.render(
         project.active_scene(),
         MediaTime::ZERO,
         64,
@@ -246,6 +249,19 @@ fn renders_a_real_video_frame_via_ffmpeg() {
         &project.settings.background,
         &project.media,
     );
+    while renderer.has_pending_decodes() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        frame = renderer.render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            36,
+            &project.settings.background,
+            &project.media,
+        );
+    }
+    assert!(!renderer.has_pending_decodes(), "decode never completed");
+
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
     // The clip is solid red; decoded frames must actually reach the canvas.
     let red_texels = frame
@@ -500,4 +516,222 @@ fn every_blend_mode_reaches_the_gpu_over_a_chromatic_backdrop() {
         differing >= 10,
         "only {differing} of 16 non-Normal modes changed the output"
     );
+}
+
+#[test]
+fn decode_runs_off_the_render_path_and_is_cached() {
+    // Regression: decode_video_clip used to run inline in render(), blocking the UI thread for
+    // the whole decode (~33s for a 10-minute clip). It now runs on a worker; the first render
+    // must return promptly with a placeholder and the clip must appear once the worker lands.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let path = std::env::temp_dir().join(format!("vii-async-{}.mp4", std::process::id()));
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=64x64:d=3:r=25",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the async decode fixture") {
+        return;
+    }
+
+    let mut project = Project::starter();
+    project.media.push(MediaAsset {
+        id: "async1".into(),
+        name: "Async".into(),
+        path: path.to_string_lossy().into_owned(),
+    });
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements.clear();
+        scene
+            .tracks
+            .main
+            .elements
+            .push(Element::Video(VideoElement {
+                id: "vid-async".into(),
+                name: "Async".into(),
+                start: MediaTime::ZERO,
+                duration: MediaTime::from_seconds_f64(3.0).unwrap(),
+                media_id: "async1".into(),
+                trim_start: MediaTime::ZERO,
+                trim_end: MediaTime::from_seconds_f64(3.0).unwrap(),
+                transform: Transform::default(),
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+            }));
+    }
+
+    let render_once = |r: &mut PreviewRenderer, p: &Project| {
+        r.render(
+            p.active_scene(),
+            MediaTime::ZERO,
+            48,
+            48,
+            &p.settings.background,
+            &p.media,
+        )
+    };
+
+    // First render kicks off the worker and must NOT block for the decode.
+    let started = std::time::Instant::now();
+    let _ = render_once(&mut renderer, &project);
+    let first_render = started.elapsed();
+    assert!(
+        first_render < std::time::Duration::from_millis(1500),
+        "first render blocked for {first_render:?} — decode is back on the render path"
+    );
+
+    // Drive frames until the worker lands (bounded, so a hang fails rather than spins).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while renderer.has_pending_decodes() && std::time::Instant::now() < deadline {
+        let _ = render_once(&mut renderer, &project);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(!renderer.has_pending_decodes(), "decode never completed");
+
+    let frame = render_once(&mut renderer, &project);
+    let red = frame
+        .bgra
+        .chunks_exact(4)
+        .filter(|t| t[2] > 150 && t[0] < 90 && t[1] < 90)
+        .count();
+    assert!(
+        red > 100,
+        "decoded clip should be on screen, found {red} red texels"
+    );
+
+    // Decoded bytes are accounted for, and stay inside the global ceiling.
+    assert!(renderer.video_cache_bytes() > 0);
+    assert!(renderer.video_cache_bytes() <= 384 * 1024 * 1024);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_missing_media_file_fails_once_and_does_not_crash() {
+    // Regression: a failed decode was retried on every rendered frame, respawning ffmpeg.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    project.media.push(MediaAsset {
+        id: "gone".into(),
+        name: "Missing".into(),
+        path: "/nonexistent/definitely-not-here.mp4".into(),
+    });
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements.clear();
+        scene
+            .tracks
+            .main
+            .elements
+            .push(Element::Video(VideoElement {
+                id: "vid-missing".into(),
+                name: "Missing".into(),
+                start: MediaTime::ZERO,
+                duration: MediaTime::from_seconds_f64(1.0).unwrap(),
+                media_id: "gone".into(),
+                trim_start: MediaTime::ZERO,
+                trim_end: MediaTime::from_seconds_f64(1.0).unwrap(),
+                transform: Transform::default(),
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+            }));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let frame = renderer.render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            32,
+            32,
+            &project.settings.background,
+            &project.media,
+        );
+        assert_eq!(
+            frame.bgra.len(),
+            32 * 32 * 4,
+            "must render a placeholder, not panic"
+        );
+        if !renderer.has_pending_decodes() || std::time::Instant::now() > deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !renderer.has_pending_decodes(),
+        "failure should be terminal"
+    );
+    assert_eq!(
+        renderer.video_cache_bytes(),
+        0,
+        "a failure caches no frames"
+    );
+}
+
+#[test]
+fn a_non_finite_transform_does_not_panic_the_renderer() {
+    // Regression: NaN reaching f32::clamp panicked and took the whole editor down.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
+        title.transform = Transform {
+            x: f32::NAN,
+            y: f32::INFINITY,
+            scale: f32::NAN,
+            rotation: f32::NEG_INFINITY,
+            opacity: f32::NAN,
+        };
+    }
+    let frame = renderer.render(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    );
+    assert_eq!(frame.bgra.len(), 64 * 36 * 4);
+}
+
+#[test]
+fn a_tiny_canvas_does_not_panic() {
+    // Regression: `clamp(16.0, width)` panics when width < 16 (min > max).
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    for (w, h) in [(1u32, 1u32), (8, 4), (2, 16)] {
+        let frame = renderer.render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            w,
+            h,
+            &project.settings.background,
+            &project.media,
+        );
+        assert_eq!(frame.bgra.len() as u32, w * h * 4, "{w}x{h} canvas");
+    }
 }

@@ -140,6 +140,10 @@ pub struct EditorView {
     audio_cache: std::collections::HashMap<String, std::sync::Arc<opencut_audio::AudioPcm>>,
     /// When editing a text clip: (element ref, current edit buffer).
     editing_text: Option<(ElementRef, String)>,
+    /// Last user-facing status/error. Until now every failure (a discarded export, a failed
+    /// save, an unavailable ffprobe) was swallowed with `let _ =`, so the app looked broken
+    /// with no explanation.
+    status: Option<String>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -172,6 +176,7 @@ impl EditorView {
             audio_sink: None,
             audio_cache: std::collections::HashMap::new(),
             editing_text: None,
+            status: None,
         }
     }
 
@@ -441,7 +446,14 @@ impl EditorView {
             return;
         }
         let signature = self.preview_signature();
-        if self.preview_sig == Some(signature) {
+        // A decode finishing on a worker thread does NOT change the signature (the project is
+        // unchanged), so while any decode is in flight we must re-render unconditionally —
+        // otherwise the placeholder would never be replaced by the real frame.
+        let awaiting_decode = self
+            .preview
+            .as_ref()
+            .is_some_and(|p| p.has_pending_decodes());
+        if self.preview_sig == Some(signature) && !awaiting_decode {
             return;
         }
         self.preview_sig = Some(signature);
@@ -580,9 +592,25 @@ impl EditorView {
         // A probe failure (no ffprobe, unreadable file) falls back rather than aborting.
         const DEFAULT_STILL: i64 = TICKS_PER_SECOND * 4;
         let duration = if is_audio || is_video {
+            use opencut_preview::probe::ProbeError;
             match opencut_preview::probe::probe_media(&path.to_string_lossy()) {
                 Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
-                _ => MediaTime::from_ticks(DEFAULT_STILL),
+                // Do NOT pretend the fallback is the real length: without ffprobe every clip
+                // silently imports as 4s, which is the bug probing was added to fix.
+                Err(ProbeError::Unavailable) => {
+                    self.status = Some(
+                        "ffprobe not found — clip length is a 4s guess. Install ffmpeg for real \
+                         durations."
+                            .to_string(),
+                    );
+                    MediaTime::from_ticks(DEFAULT_STILL)
+                }
+                Err(error) => {
+                    self.status =
+                        Some(format!("Could not read media duration ({error}); using 4s"));
+                    MediaTime::from_ticks(DEFAULT_STILL)
+                }
+                Ok(_) => MediaTime::from_ticks(DEFAULT_STILL),
             }
         } else {
             MediaTime::from_ticks(DEFAULT_STILL)
@@ -673,7 +701,11 @@ impl EditorView {
             texel.swap(0, 2); // BGRA → RGBA for PNG
         }
         if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, rgba) {
-            let _ = buffer.save(export_frame_path());
+            let path = export_frame_path();
+            self.status = Some(match buffer.save(&path) {
+                Ok(()) => format!("Exported frame to {}", path.display()),
+                Err(error) => format!("Frame export failed: {error}"),
+            });
         }
     }
 
@@ -696,7 +728,7 @@ impl EditorView {
         let scene = self.editor.active_scene();
         let media = self.editor.media();
         let out = export_video_path();
-        let _ = renderer.export_video(
+        let ok = renderer.export_video(
             scene,
             duration,
             fps,
@@ -706,6 +738,11 @@ impl EditorView {
             media,
             &out.to_string_lossy(),
         );
+        self.status = Some(if ok {
+            format!("Exported video to {}", out.display())
+        } else {
+            "Video export failed (is ffmpeg installed?)".to_string()
+        });
     }
 
     /// Split the selected element at the playhead into two clips.
@@ -858,9 +895,32 @@ impl EditorView {
                             .text_color(rgb(theme::MUTED))
                             .child(Self::shared(clipboard)),
                     )
+                    // Status line: the one place failures become visible to the user.
+                    .children(self.status.clone().map(|message| {
+                        div()
+                            .id("status")
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(theme::PANEL_ALT))
+                            .text_xs()
+                            .text_color(rgb(theme::TEXT))
+                            .child(Self::shared(message))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.status = None; // click to dismiss
+                                cx.notify();
+                            }))
+                    }))
                     .child(self.button("save", "Save", true, cx, |this, _cx| {
-                        if let Ok(json) = serde_json::to_string_pretty(this.editor.project()) {
-                            let _ = std::fs::write(project_path(), json);
+                        match serde_json::to_string_pretty(this.editor.project())
+                            .map_err(|e| e.to_string())
+                            .and_then(|json| {
+                                std::fs::write(project_path(), json).map_err(|e| e.to_string())
+                            }) {
+                            Ok(()) => {
+                                this.status = Some(format!("Saved to {}", project_path().display()))
+                            }
+                            Err(error) => this.status = Some(format!("Save failed: {error}")),
                         }
                     }))
                     .child(self.button("load", "Load", true, cx, |this, _cx| {
@@ -2105,6 +2165,15 @@ impl Render for EditorView {
             if self.playing {
                 window.request_animation_frame();
             }
+        }
+        // Video decodes run on worker threads. Keep asking for frames while any are in flight so
+        // the finished clip actually appears, even when playback is paused.
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|p| p.has_pending_decodes())
+        {
+            window.request_animation_frame();
         }
         if self.needs_focus {
             self.needs_focus = false;

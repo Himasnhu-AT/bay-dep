@@ -152,7 +152,8 @@ criterion's point estimate (the middle of the `[lower estimate upper]` triple).
 | 16 | 10 s | 6.702 ms | 71.6 M | **1 490×** | 23 900 |
 
 Reading it: the marginal cost per clip is flat at ~**23 000 clip-seconds mixed per CPU-second**,
-i.e. ~43 ns per clip-second, independent of clip count and output length. The single-clip cases
+i.e. ~43 **µs** of CPU per clip-second mixed, independent of clip count and output
+length. (An earlier revision said "43 ns" — that was off by 1000x; 1/23 000 s is 43 µs.) The single-clip cases
 sit lower (19 600) because the final clamp pass over the output buffer is paid once regardless of
 clip count, and with one clip that fixed pass is a large share of the work.
 

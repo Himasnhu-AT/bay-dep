@@ -36,7 +36,7 @@ All paths are repo-relative to `/Users/himanshu/codes/synthai/vii`.
 
 | Milestone | Name | Tasks | Status |
 |---|---|---|---|
-| **M0** | Foundations: CI, tokens, geometry, feedback, shell primitives | 16 | ◐ in progress (4/16) — T-001 CI, T-002 capability gating, T-008 geometry (module landed, call sites not yet migrated), benchmarks |
+| **M0** | Foundations: CI, tokens, geometry, feedback, shell primitives | 16 | ◐ in progress (5/16) — T-001 CI, T-002 capability gating, T-008 geometry (module landed, call sites not yet migrated), benchmarks, and a minimal T-009 status line (toolbar message on export/save/probe failure; no toast stack yet) |
 | **M1** | Undo transactions + a save that cannot lose your work | 8 | ☐ not started |
 | **M2** | Honest media: real metadata, real library, named offline files | 9 | ◐ in progress (1.5/9) — T-201 probe parser done; import uses the real probed duration, but MediaAsset does not yet carry metadata and probing is still synchronous |
 | **M3** | Model truth: aspect-correct transforms, real source trims, presets | 9 | ◐ in progress (0.5/9) — sources are no longer stretched (fit_contain at render time), but Transform still has one uniform `scale` and trims still do not write source in/out |
@@ -45,7 +45,7 @@ All paths are repo-relative to `/Users/himanshu/codes/synthai/vii`.
 | **M6** | A timeline you can navigate, with real track headers | 8 | ☐ not started |
 | **M7** | Multi-select, link groups and snapping | 6 | ☐ not started |
 | **M8** | Clips stop overlapping: cross-track drag and overwrite | 6 | ☐ not started |
-| **M9** | Video decode that survives a real clip | 6 | ◐ in progress (1/6) — plan_decode covers a clip's full duration within a memory budget at the source aspect; decode is still whole-clip, in RAM, and synchronous (windowed/streaming decode not started) |
+| **M9** | Video decode that survives a real clip | 6 | ◐ in progress (3/6) — plan_decode covers a clip's full duration within a memory budget at the source **display** aspect; decode now runs on a worker thread (placeholder while pending, export awaits), failures are terminal, and a global LRU byte budget bounds the cache. Still whole-clip in RAM: a long clip is a low-fps proxy, and windowed/streaming decode is not started |
 | **M10** | Audio that is actually a mix | 5 | ☐ not started |
 | **M11** | Streaming audio mixer and real waveforms | 9 | ☐ not started |
 | **M12** | An export you can trust | 7 | ☐ not started |

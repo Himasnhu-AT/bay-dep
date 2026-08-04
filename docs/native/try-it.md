@@ -42,15 +42,21 @@ The starter project is a **skeleton scene**, intentionally shipping with no medi
   so the compositor draws solid-color stand-ins.
 
 To see **real decoded frames**, click **Import Media…** (top toolbar) and pick an
-image / video / audio file. It's added to the media panel; click it to drop it on the
-timeline at the playhead.
+image / video / audio file. **It is placed straight onto the timeline at the playhead** with its
+real probed duration.
+
+> **Known gap.** The left **MEDIA** column still shows three hardcoded demo tiles
+> (`Clip.mp4`, `Logo.png`, `Music.mp3`) and does *not* yet list what you imported — that is
+> task T-203 in [`palmier-parity-todo.md`](palmier-parity-todo.md). Imported media is really in
+> the project (it renders, plays and exports); only the panel listing is missing.
 
 ---
 
 ## 4. Five-minute guided tour (hits every feature)
 
 1. **Import** — `Import Media…` → pick a short `.mp4` and a `.png`, and a `.mp3`/`.wav`.
-2. **Add to timeline** — click each clip in the left **Media** panel; it lands at the playhead.
+2. **Add to timeline** — `Import Media…` puts the file on the timeline at the playhead directly.
+   (The left **MEDIA** column's three tiles are demo placeholders, not your imports — see above.)
 3. **Select + move** — click a block in the timeline, drag its **middle** to move it.
 4. **Trim** — drag a block's **left/right edge** to trim start/end.
 5. **Split** — put the playhead mid-clip, press **`s`**.
