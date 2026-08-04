@@ -137,23 +137,34 @@ const VIDEO_MEMORY_BUDGET: usize = 192 * 1024 * 1024;
 const VIDEO_FALLBACK_W: u32 = 320;
 const VIDEO_FALLBACK_H: u32 = 180;
 
-/// Choose decode dimensions, sample rate and frame count for a clip, given its natural size and
-/// duration. Pure so the budget policy is unit-testable.
-fn plan_decode(natural: (u32, u32), duration_secs: f64) -> (u32, u32, f32, u32) {
+/// Choose decode dimensions, sample rate and frame count for a clip.
+///
+/// `natural` is the source's **coded** size and `rotation` its display-matrix rotation. ffmpeg
+/// autorotates on decode, so a 90°/270° clip arrives transposed — planning against the coded
+/// size would squash it into a landscape buffer, which is exactly the stretch bug this whole
+/// change set is about. Pure so the budget policy is unit-testable.
+fn plan_decode(natural: (u32, u32), rotation: i32, duration_secs: f64) -> (u32, u32, f32, u32) {
     let (nw, nh) = natural;
     let (nw, nh) = if nw == 0 || nh == 0 {
         (VIDEO_FALLBACK_W, VIDEO_FALLBACK_H)
     } else {
         (nw, nh)
     };
+    // Plan against the DISPLAY size, which is what ffmpeg will hand us.
+    let (nw, nh) = if rotation == 90 || rotation == 270 {
+        (nh, nw)
+    } else {
+        (nw, nh)
+    };
+
+    let even = |v: f32| ((v.round() as u32).max(2) / 2) * 2;
     // Downscale to the preview budget, keeping aspect; ffmpeg wants even dimensions.
     let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32).min(1.0);
-    let even = |v: f32| ((v.round() as u32).max(2) / 2) * 2;
-    let (w, h) = (even(nw as f32 * scale), even(nh as f32 * scale));
+    let (mut w, mut h) = (even(nw as f32 * scale), even(nh as f32 * scale));
 
     let duration = duration_secs.max(0.05);
-    let frame_bytes = (w as usize) * (h as usize) * 4;
-    let frames_affordable = (VIDEO_MEMORY_BUDGET / frame_bytes.max(1)).max(1) as f64;
+    let frames_affordable =
+        (VIDEO_MEMORY_BUDGET / ((w as usize) * (h as usize) * 4).max(1)).max(1) as f64;
 
     // Coverage of the whole clip is non-negotiable — truncating it is what made long clips
     // freeze on their last decoded frame. So spend the budget on frame RATE first, and only
@@ -163,24 +174,38 @@ fn plan_decode(natural: (u32, u32), duration_secs: f64) -> (u32, u32, f32, u32) 
         .max(VIDEO_MIN_FPS as f64) as f32;
     let frames = ((duration * fps as f64).ceil() as u32).max(1);
 
-    let needed_bytes = frames as usize * frame_bytes;
-    let (w, h) = if needed_bytes > VIDEO_MEMORY_BUDGET {
-        // Shrink both axes by the same factor so aspect survives; area scales by the ratio.
-        let shrink = (VIDEO_MEMORY_BUDGET as f64 / needed_bytes as f64).sqrt();
-        (
+    // `frames` is now fixed by the coverage promise, so the budget can only be met by shrinking
+    // the frames. Iterate: one shrink can land back on the same even dimensions (rounding), so
+    // a single pass is not enough to guarantee the ceiling actually holds.
+    while frames as usize * (w as usize) * (h as usize) * 4 > VIDEO_MEMORY_BUDGET && w > 2 && h > 2
+    {
+        let needed = frames as usize * (w as usize) * (h as usize) * 4;
+        let shrink = (VIDEO_MEMORY_BUDGET as f64 / needed as f64)
+            .sqrt()
+            .min(0.95);
+        let (next_w, next_h) = (
             even(w as f32 * shrink as f32),
             even(h as f32 * shrink as f32),
-        )
-    } else {
-        (w, h)
-    };
+        );
+        // Guarantee forward progress even when rounding would keep us in place.
+        w = if next_w < w { next_w } else { w - 2 };
+        h = if next_h < h {
+            next_h
+        } else {
+            h.saturating_sub(2).max(2)
+        };
+    }
 
     (w, h, fps, frames)
 }
 
 /// Test hook for [`plan_decode`].
-pub fn plan_decode_for_test(natural: (u32, u32), duration_secs: f64) -> (u32, u32, f32, u32) {
-    plan_decode(natural, duration_secs)
+pub fn plan_decode_for_test(
+    natural: (u32, u32),
+    rotation: i32,
+    duration_secs: f64,
+) -> (u32, u32, f32, u32) {
+    plan_decode(natural, rotation, duration_secs)
 }
 
 /// Max distinct text rasters kept resident in the compositor store before the least-recently
@@ -194,7 +219,9 @@ pub struct PreviewRenderer {
     /// media id → natural pixel size for images already uploaded into the compositor store.
     uploaded_media: std::collections::HashMap<String, (u32, u32)>,
     /// media id → all decoded video frames (one ffmpeg decode per clip, then indexed by time).
-    video_cache: std::collections::HashMap<String, VideoClip>,
+    /// `None` records a decode that FAILED, so an undecodable file does not respawn ffmpeg on
+    /// every single rendered frame.
+    video_cache: std::collections::HashMap<String, Option<VideoClip>>,
     /// Content+style keys of text textures already rasterised and uploaded, so unchanged text
     /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
     text_keys: HashSet<String>,
@@ -412,25 +439,29 @@ impl PreviewRenderer {
                     Element::Video(video) => {
                         let media_id = video.media_id.clone();
                         // Decode the whole clip once, then index frames by time (fast playback).
-                        if !self.video_cache.contains_key(&media_id)
-                            && let Some(path) = media
+                        if !self.video_cache.contains_key(&media_id) {
+                            let decoded = media
                                 .iter()
                                 .find(|m| m.id == media_id)
-                                .map(|m| m.path.clone())
-                            && let Some(clip) = decode_video_clip(&path)
-                        {
-                            self.video_cache.insert(media_id.clone(), clip);
+                                .and_then(|m| decode_video_clip(&m.path));
+                            // Cache the failure too: without this, an unreadable or
+                            // undecodable file respawns ffmpeg on every rendered frame.
+                            self.video_cache.insert(media_id.clone(), decoded);
                         }
-                        let frame = self.video_cache.get(&media_id).and_then(|clip| {
-                            let seconds = video.trim_start.to_seconds_f64()
-                                + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
-                                    / 120_000.0;
-                            let index = ((seconds * clip.fps as f64).floor() as usize)
-                                .min(clip.frames.len().saturating_sub(1));
-                            clip.frames
-                                .get(index)
-                                .map(|rgba| (clip.width, clip.height, rgba.clone()))
-                        });
+                        let frame = self
+                            .video_cache
+                            .get(&media_id)
+                            .and_then(|c| c.as_ref())
+                            .and_then(|clip| {
+                                let seconds = video.trim_start.to_seconds_f64()
+                                    + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
+                                        / 120_000.0;
+                                let index = ((seconds * clip.fps as f64).floor() as usize)
+                                    .min(clip.frames.len().saturating_sub(1));
+                                clip.frames
+                                    .get(index)
+                                    .map(|rgba| (clip.width, clip.height, rgba.clone()))
+                            });
                         match frame {
                             Some((w, h, rgba)) => {
                                 let texture =
@@ -497,16 +528,23 @@ impl PreviewRenderer {
     }
 }
 
-/// Decode an entire video clip to a sequence of RGBA frames at a fixed size/fps in one ffmpeg
-/// invocation (the sidecar-decoder escape hatch — no native ffmpeg linking). Capped at
-/// `VIDEO_MAX_FRAMES`. Returns `None` if ffmpeg is unavailable or there is no video.
+/// Decode an entire video clip to a sequence of RGBA frames in one ffmpeg invocation (the
+/// sidecar-decoder escape hatch — no native ffmpeg linking), sized and sampled by
+/// [`plan_decode`]. Returns `None` if ffmpeg is unavailable or there is no video.
+///
+/// NOTE: this blocks for the whole decode (seconds, for a long clip) and is currently called
+/// from the render path. Moving it off-thread is tracked as M9 in the parity plan.
 fn decode_video_clip(path: &str) -> Option<VideoClip> {
-    // Probe first so the decode matches the source's real aspect and length.
-    let (natural, duration_secs) = match probe::probe_media(path) {
-        Ok(meta) => ((meta.width, meta.height), meta.duration.to_seconds_f64()),
-        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 10.0),
+    // Probe first so the decode matches the source's real display aspect and length.
+    let (natural, rotation, duration_secs) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
     };
-    let (decode_w, decode_h, fps, max_frames) = plan_decode(natural, duration_secs);
+    let (decode_w, decode_h, fps, max_frames) = plan_decode(natural, rotation, duration_secs);
 
     let output = std::process::Command::new("ffmpeg")
         .args([

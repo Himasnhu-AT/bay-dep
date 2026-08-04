@@ -168,31 +168,39 @@ Reported time is for a batch of 64 operations; the per-op column is that divided
 
 | Operation | N | Batch time (64 ops) | **Per operation** |
 |---|---:|---:|---:|
-| `MoveElement` | 100 | 17.36 µs | **271 ns** |
-| `MoveElement` | 1000 | 53.38 µs | **834 ns** |
-| `AddElement` | 100 | 20.38 µs | **318 ns** |
-| `AddElement` | 1000 | 43.32 µs | **677 ns** |
-| `undo` (MoveElement) | 100 | 7.58 µs | **118 ns** |
-| `undo` (MoveElement) | 1000 | 14.68 µs | **229 ns** |
-| `undo` (AddElement) | 100 | 11.90 µs | **186 ns** |
-| `undo` (AddElement) | 1000 | 20.48 µs | **320 ns** |
-| `redo` (MoveElement) | 100 | 7.49 µs | **117 ns** |
-| `redo` (MoveElement) | 1000 | 14.38 µs | **225 ns** |
-| `redo` (AddElement) | 100 | 8.40 µs | **131 ns** |
-| `redo` (AddElement) | 1000 | 7.51 µs | **117 ns** |
+| `MoveElement` | 100 | 12.94 µs | **202 ns** |
+| `MoveElement` | 1000 | 26.40 µs | **413 ns** |
+| `AddElement` | 100 | 13.84 µs | **216 ns** |
+| `AddElement` | 1000 | 16.19 µs | **253 ns** |
+| `undo` (MoveElement) | 100 | 7.59 µs | **119 ns** |
+| `undo` (MoveElement) | 1000 | 14.14 µs | **221 ns** |
+| `undo` (AddElement) | 100 | 12.10 µs | **189 ns** |
+| `undo` (AddElement) | 1000 | 20.98 µs | **328 ns** |
+| `redo` (MoveElement) | 100 | 7.56 µs | **118 ns** |
+| `redo` (MoveElement) | 1000 | 13.98 µs | **218 ns** |
+| `redo` (AddElement) | 100 | 7.49 µs | **117 ns** |
+| `redo` (AddElement) | 1000 | 7.59 µs | **119 ns** |
 
 Reading it:
 
-- **Execute costs more than undo/redo, and the gap widens with N** — `MoveElement` is 2.3× its own
-  undo at N=100 and 3.6× at N=1000, because execute scales 3.1× from N=100 to N=1000 while its undo
-  scales only 1.9×. That is `Command::lower` doing its own ref resolution on top of the one
-  `ProjectPatch::apply` does; undo replays an already-lowered patch and pays the scan once.
+> **Corrected 2026-08-04.** The first version of these execute rows was inflated by up to 2.9×.
+> The bench used criterion's `iter_batched`, which *moves* the input into the routine, so dropping
+> the `Editor` (a cloned `Project` plus 64 patches of undo history) was timed as part of the
+> operation — 24–68% of each reported figure. The undo/redo rows used `iter_batched_ref` and were
+> never affected. The bench now uses `iter_batched_ref` throughout and the table above is the
+> re-measured result. Any narrative built on the old numbers has been removed rather than restated.
+
+- **Execute costs more than undo/redo, but modestly** — `MoveElement` execute is ~1.7× its own undo
+  at N=100 and ~1.9× at N=1000. That is `Command::lower` resolving refs on top of the resolution
+  `ProjectPatch::apply` already does; undo replays an already-lowered patch. `AddElement` execute
+  is actually *cheaper* than its undo at N=1000 (253 ns vs 328 ns): appending is O(1) at the end of
+  a track while undo scans for the element to remove.
 - **`redo` of `AddElement` is flat in N** (117 ns at both sizes) while its `undo` grows: redo
   re-inserts at a known index at the end of the track, undo has to scan for the element to remove.
 - Against the plan's absolute budget — *undo/redo of a 500-element transaction < 5 ms* — a 500-op
-  undo at N=1000 extrapolates to ~115 µs, about 43× inside budget. There is no batched-transaction
+  undo at N=1000 extrapolates to ~111 µs, about 45× inside budget. There is no batched-transaction
   API yet (T-101), so this is per-command undo repeated, not one transaction.
-- A drag at 60 fps has 16.6 ms per frame and dispatches one `MoveElement`; at 834 ns for a
+- A drag at 60 fps has 16.6 ms per frame and dispatches one `MoveElement`; at 413 ns for a
   1000-element project, dispatch is ~0.005 % of the frame. Command dispatch is not, and is not
   close to being, the timeline's bottleneck.
 

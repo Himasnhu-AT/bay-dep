@@ -181,7 +181,7 @@ fn probes_a_real_generated_clip() {
 #[test]
 fn short_clips_decode_at_full_rate_and_source_aspect() {
     // A 5s 1920x1080 clip fits the budget easily: full 30fps, downscaled keeping 16:9.
-    let (w, h, fps, frames) = opencut_preview::plan_decode_for_test((1920, 1080), 5.0);
+    let (w, h, fps, frames) = opencut_preview::plan_decode_for_test((1920, 1080), 0, 5.0);
     assert_eq!(w, 480, "downscaled to the preview width budget");
     assert_eq!(
         h, 270,
@@ -193,7 +193,7 @@ fn short_clips_decode_at_full_rate_and_source_aspect() {
 
 #[test]
 fn portrait_clips_keep_their_aspect() {
-    let (w, h, _, _) = opencut_preview::plan_decode_for_test((1080, 1920), 3.0);
+    let (w, h, _, _) = opencut_preview::plan_decode_for_test((1080, 1920), 0, 3.0);
     assert!(h > w, "a portrait source must decode portrait, got {w}x{h}");
     assert!(((w as f32 / h as f32) - (1080.0 / 1920.0)).abs() < 0.02);
 }
@@ -203,7 +203,7 @@ fn long_clips_span_their_whole_duration_instead_of_freezing() {
     // The old fixed 450-frame cap meant a 10-minute clip decoded only its first 15 seconds and
     // then showed the last decoded frame forever. The budget must now cover the full duration.
     let duration = 600.0; // 10 minutes
-    let (w, h, fps, frames) = opencut_preview::plan_decode_for_test((1920, 1080), duration);
+    let (w, h, fps, frames) = opencut_preview::plan_decode_for_test((1920, 1080), 0, duration);
     let covered = frames as f64 / fps as f64;
     assert!(
         (covered - duration).abs() < 1.0,
@@ -227,9 +227,56 @@ fn decode_plan_is_always_sane() {
         ((4000, 3000), 3600.0),
         ((16, 9), 0.001),
     ] {
-        let (w, h, fps, frames) = opencut_preview::plan_decode_for_test(natural, duration);
+        let (w, h, fps, frames) = opencut_preview::plan_decode_for_test(natural, 0, duration);
         assert!(w >= 2 && h >= 2, "{natural:?}/{duration} -> {w}x{h}");
         assert!(w % 2 == 0 && h % 2 == 0, "ffmpeg needs even dimensions");
         assert!(fps > 0.0 && frames >= 1);
+    }
+}
+
+#[test]
+fn rotated_phone_footage_is_planned_at_its_display_size() {
+    // Regression: ffmpeg autorotates on decode, so a portrait phone clip (coded 1920x1080 with
+    // a 90-degree display matrix) arrives as 1080x1920. Planning against the CODED size
+    // squashed it into a landscape buffer — the exact stretch bug this work set out to fix.
+    let (w, h, _, _) = opencut_preview::plan_decode_for_test((1920, 1080), 90, 5.0);
+    assert!(h > w, "a 90-rotated source must plan portrait, got {w}x{h}");
+    assert!(
+        ((w as f32 / h as f32) - (1080.0 / 1920.0)).abs() < 0.02,
+        "display aspect must be 9:16, got {w}x{h}"
+    );
+
+    // 270 behaves the same; 180 does not transpose.
+    let (w270, h270, _, _) = opencut_preview::plan_decode_for_test((1920, 1080), 270, 5.0);
+    assert!(h270 > w270);
+    let (w180, h180, _, _) = opencut_preview::plan_decode_for_test((1920, 1080), 180, 5.0);
+    assert!(w180 > h180, "180 is not a transpose");
+}
+
+#[test]
+fn the_decode_plan_never_exceeds_the_memory_budget() {
+    // Regression: `frames` is fixed by the coverage promise and was computed BEFORE the
+    // resolution shrink, so ordinary inputs (1080p/60s) overshot the ceiling. Sweep a wide
+    // range rather than trusting one hand-picked case.
+    const BUDGET: usize = 192 * 1024 * 1024;
+    for &(nw, nh) in &[(1920u32, 1080u32), (3840, 2160), (1080, 1920), (640, 480)] {
+        for &secs in &[0.5f64, 5.0, 30.0, 60.0, 120.0, 600.0, 3600.0] {
+            for &rot in &[0i32, 90] {
+                let (w, h, fps, frames) =
+                    opencut_preview::plan_decode_for_test((nw, nh), rot, secs);
+                let bytes = frames as usize * (w as usize) * (h as usize) * 4;
+                assert!(
+                    bytes <= BUDGET,
+                    "{nw}x{nh} rot{rot} {secs}s -> {w}x{h} @{fps}fps x{frames} = {} MB > budget",
+                    bytes / 1024 / 1024
+                );
+                // Coverage must still hold: the cache spans the whole clip.
+                let covered = frames as f64 / fps as f64;
+                assert!(
+                    covered + 0.5 >= secs.max(0.05),
+                    "{nw}x{nh} {secs}s only covered {covered:.2}s"
+                );
+            }
+        }
     }
 }

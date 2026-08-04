@@ -140,15 +140,20 @@ fn bench_commands(c: &mut Criterion) {
 
         for op in [Op::Move, Op::Add] {
             group.bench_function(BenchmarkId::new(op.label(), n), |b| {
-                b.iter_batched(
+                // `iter_batched_ref`, NOT `iter_batched`: the latter MOVES the input into the
+                // routine, so dropping the Editor (a cloned Project plus its accumulated undo
+                // history) lands inside criterion's timed span and inflates the reported cost
+                // — measured at 24-68% of the total. Passing by reference keeps teardown out
+                // of the measurement, matching the undo/redo arms below.
+                b.iter_batched_ref(
                     || {
                         (
                             Editor::new(project.clone()),
                             batch_commands(&project, &references, op),
                         )
                     },
-                    |(mut editor, commands)| {
-                        for command in commands {
+                    |(editor, commands)| {
+                        for command in commands.drain(..) {
                             assert!(editor.execute(command), "command lowered to a no-op");
                         }
                     },

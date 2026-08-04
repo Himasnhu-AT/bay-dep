@@ -1,9 +1,16 @@
-//! Pure timeline and viewer geometry — the one owner of pixel ↔ tick ↔ frame conversions.
+//! Pure timeline and viewer geometry — the intended single owner of pixel ↔ tick ↔ frame
+//! conversions.
 //!
-//! Nothing else in the UI multiplies by `pixels_per_second` or divides by [`TICKS_PER_SECOND`].
-//! Scattering those two constants is how a ruler, a clip block and a playhead end up
-//! disagreeing about where a second is, and how a drag commits a start time that falls
-//! between two frames.
+//! **Status: not yet adopted.** This module is written and tested but has no callers.
+//! `editor_view.rs` still declares its own `TICKS_PER_SECOND` and does its own
+//! `pixels_per_second` arithmetic inline. Migrating those call sites is the remainder of
+//! T-008 in `docs/native/palmier-parity-todo.md`; until that lands, the guarantees below
+//! describe this module's own behaviour, not the UI's.
+//!
+//! The goal: nothing else in the UI multiplies by `pixels_per_second` or divides by
+//! [`TICKS_PER_SECOND`]. Scattering those two constants is how a ruler, a clip block and a
+//! playhead end up disagreeing about where a second is, and how a drag commits a start time
+//! that falls between two frames.
 //!
 //! Two rules the rest of the crate depends on:
 //!

@@ -229,6 +229,15 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             blend_mode: Default::default(),
         }));
 
+    // Clear the starter content so only the video clip is on screen; otherwise the title text
+    // would satisfy any "something rendered" assertion and this test would pass with a broken
+    // decoder (it previously asserted only buffer LENGTH, which held even for a missing file).
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements.retain(|e| e.id() == "vid1");
+    }
+
     let frame = renderer.render(
         project.active_scene(),
         MediaTime::ZERO,
@@ -238,6 +247,16 @@ fn renders_a_real_video_frame_via_ffmpeg() {
         &project.media,
     );
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
+    // The clip is solid red; decoded frames must actually reach the canvas.
+    let red_texels = frame
+        .bgra
+        .chunks_exact(4)
+        .filter(|t| t[2] > 150 && t[0] < 90 && t[1] < 90)
+        .count();
+    assert!(
+        red_texels > 100,
+        "expected the decoded red clip to fill the canvas, found {red_texels} red texels"
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -423,4 +442,62 @@ fn a_non_square_image_is_not_stretched_to_the_canvas() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&dir);
+}
+
+#[test]
+fn every_blend_mode_reaches_the_gpu_over_a_chromatic_backdrop() {
+    // The narrower test uses white-on-grey, where several modes are mathematically degenerate
+    // (Luminosity == Normal; Hue/Saturation/Color coincide) — so it cannot prove all 17 are
+    // wired. Use a coloured layer over a differently-coloured backdrop instead, and require
+    // that the set of rendered results is mostly distinct.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let (width, height) = (48, 48);
+    let backdrop = opencut_project::Background::Color {
+        color: "#2060c0".to_string(), // saturated blue
+    };
+
+    let mut rendered = Vec::new();
+    for mode in opencut_project::BlendMode::ALL {
+        let mut project = Project::starter();
+        {
+            let scene = project.active_scene_mut();
+            scene.tracks.overlay.clear();
+            scene.tracks.main.elements.retain(|e| e.id() == "el-title");
+        }
+        if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
+            title.blend_mode = mode;
+            title.color = "#e0a020".into(); // saturated orange: differs in hue AND luma
+        }
+        let frame = renderer.render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &backdrop,
+            &project.media,
+        );
+        assert_eq!(frame.bgra.len(), (width * height * 4) as usize, "{mode:?}");
+        rendered.push((mode, frame.bgra));
+    }
+
+    assert_eq!(rendered.len(), 17, "all 17 modes must render");
+
+    // Most modes must produce a genuinely different composite. Some coincidences are correct
+    // blend maths for a given colour pair, so require a strong majority rather than all-distinct.
+    let unique: std::collections::HashSet<&Vec<u8>> = rendered.iter().map(|(_, b)| b).collect();
+    assert!(
+        unique.len() >= 12,
+        "expected most of the 17 modes to differ, got {} distinct results",
+        unique.len()
+    );
+
+    // And Normal must not be the universal answer: at least 10 modes differ from it.
+    let normal = &rendered[0].1;
+    let differing = rendered.iter().skip(1).filter(|(_, b)| b != normal).count();
+    assert!(
+        differing >= 10,
+        "only {differing} of 16 non-Normal modes changed the output"
+    );
 }

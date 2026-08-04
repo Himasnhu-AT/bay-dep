@@ -567,14 +567,18 @@ impl EditorView {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Media".to_string());
         let start = self.editor.playhead();
-        // Probe the file for its real length. Stills have no duration, and a probe failure
-        // (no ffprobe, unreadable file) falls back to a sensible default rather than aborting
-        // the import — but a 3-minute clip no longer imports as a 4-second one.
+        // Probe timed media for its real length, so a 3-minute clip no longer imports as a
+        // 4-second one. Stills are NEVER probed for duration: ffprobe reports a nominal
+        // ~0.04s for a JPEG (a one-frame "video"), which would import a photo as a 40ms clip.
+        // A probe failure (no ffprobe, unreadable file) falls back rather than aborting.
         const DEFAULT_STILL: i64 = TICKS_PER_SECOND * 4;
-        let probed = opencut_preview::probe::probe_media(&path.to_string_lossy());
-        let duration = match &probed {
-            Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
-            _ => MediaTime::from_ticks(DEFAULT_STILL),
+        let duration = if is_audio || is_video {
+            match opencut_preview::probe::probe_media(&path.to_string_lossy()) {
+                Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
+                _ => MediaTime::from_ticks(DEFAULT_STILL),
+            }
+        } else {
+            MediaTime::from_ticks(DEFAULT_STILL)
         };
 
         self.editor.add_media(MediaAsset {
