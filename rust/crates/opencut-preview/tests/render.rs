@@ -307,3 +307,100 @@ fn blend_modes_actually_change_the_composited_frame() {
         "Multiply must not composite identically to Normal"
     );
 }
+
+#[test]
+fn fit_contain_preserves_source_aspect_ratio() {
+    // Pure geometry check of the fix for the stretch bug: a source is fitted into the scale
+    // box, never distorted. Exercised through the public render path by the test below.
+    // 16:9 source into a square box -> full width, letterboxed height.
+    let (w, h) = opencut_preview::fit_contain_for_test(Some((1920, 1080)), 100.0, 100.0);
+    assert!((w - 100.0).abs() < 0.01, "w={w}");
+    assert!((h - 56.25).abs() < 0.01, "h={h}");
+
+    // Portrait source into a wide box -> full height, pillarboxed width.
+    let (w, h) = opencut_preview::fit_contain_for_test(Some((1080, 1920)), 200.0, 100.0);
+    assert!((h - 100.0).abs() < 0.01, "h={h}");
+    assert!((w - 56.25).abs() < 0.01, "w={w}");
+
+    // Aspect is preserved in both cases.
+    let (w, h) = opencut_preview::fit_contain_for_test(Some((640, 480)), 300.0, 300.0);
+    assert!(((w / h) - (640.0 / 480.0)).abs() < 0.001);
+
+    // No intrinsic size (text raster / solid placeholder) fills the box exactly.
+    assert_eq!(
+        opencut_preview::fit_contain_for_test(None, 80.0, 40.0),
+        (80.0, 40.0)
+    );
+    // Degenerate sources fall back to filling rather than dividing by zero.
+    assert_eq!(
+        opencut_preview::fit_contain_for_test(Some((0, 10)), 80.0, 40.0),
+        (80.0, 40.0)
+    );
+}
+
+#[test]
+fn a_non_square_image_is_not_stretched_to_the_canvas() {
+    // End-to-end: render a deliberately wide image into a SQUARE canvas. Before the fix every
+    // source was stretched to the full canvas box, so the top and bottom rows would be image
+    // pixels. With contain-fit they must remain background.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("vii-aspect-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("wide.png");
+    // A 64x16 (4:1) solid red image.
+    let mut img = image::RgbaImage::new(64, 16);
+    for pixel in img.pixels_mut() {
+        *pixel = image::Rgba([255, 0, 0, 255]);
+    }
+    img.save(&path).expect("write test png");
+
+    let mut project = Project::starter();
+    project.media.push(MediaAsset {
+        id: "wide".into(),
+        name: "wide.png".into(),
+        path: path.to_string_lossy().to_string(),
+    });
+    let scene = project.active_scene_mut();
+    scene.tracks.main.elements.clear();
+    scene.tracks.overlay.clear();
+    scene.tracks.main.elements.push(Element::Image(ImageElement {
+        id: "el-wide".into(),
+        name: "wide".into(),
+        start: MediaTime::ZERO,
+        duration: MediaTime::from_seconds_f64(2.0).unwrap(),
+        media_id: "wide".into(),
+        transform: Transform::default(), // centered, scale 1.0 => full-canvas box
+        effects: Vec::new(),
+        animations: Default::default(),
+        blend_mode: Default::default(),
+    }));
+
+    let size = 64; // square canvas
+    let frame = renderer.render(
+        project.active_scene(),
+        MediaTime::ZERO,
+        size,
+        size,
+        &project.settings.background,
+        &project.media,
+    );
+
+    let row_has_red = |row: u32| {
+        (0..size).any(|x| {
+            let i = ((row * size + x) * 4) as usize;
+            // BGRA: red is B=0,G=0,R=255
+            frame.bgra[i + 2] > 200 && frame.bgra[i] < 60 && frame.bgra[i + 1] < 60
+        })
+    };
+
+    assert!(row_has_red(size / 2), "the image must be visible mid-canvas");
+    assert!(
+        !row_has_red(0) && !row_has_red(size - 1),
+        "a 4:1 image in a square canvas must be letterboxed, not stretched to the edges"
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&dir);
+}

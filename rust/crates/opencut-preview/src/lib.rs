@@ -88,6 +88,26 @@ fn blend_mode(mode: opencut_project::BlendMode) -> BlendMode {
     }
 }
 
+/// Fit a source of `natural` pixel size inside a `box_w × box_h` box without distorting it
+/// (CSS `object-fit: contain`). Sources with no intrinsic size (text rasters, solid
+/// placeholders) fill the box exactly, which is what `None` selects.
+fn fit_contain(natural: Option<(u32, u32)>, box_w: f32, box_h: f32) -> (f32, f32) {
+    let Some((nw, nh)) = natural else {
+        return (box_w, box_h);
+    };
+    if nw == 0 || nh == 0 {
+        return (box_w, box_h);
+    }
+    let scale = (box_w / nw as f32).min(box_h / nh as f32);
+    ((nw as f32 * scale).max(1.0), (nh as f32 * scale).max(1.0))
+}
+
+/// Test hook for [`fit_contain`] — the geometry is pure, so it is worth asserting directly
+/// rather than only through rendered pixels.
+pub fn fit_contain_for_test(natural: Option<(u32, u32)>, box_w: f32, box_h: f32) -> (f32, f32) {
+    fit_contain(natural, box_w, box_h)
+}
+
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
 pub struct PreviewFrame {
     pub width: u32,
@@ -117,8 +137,8 @@ pub struct PreviewRenderer {
     ctx: GpuContext,
     compositor: Compositor,
     text: TextRaster,
-    /// media ids whose decoded image is already uploaded into the compositor texture store.
-    uploaded_media: HashSet<String>,
+    /// media id → natural pixel size for images already uploaded into the compositor store.
+    uploaded_media: std::collections::HashMap<String, (u32, u32)>,
     /// media id → all decoded video frames (one ffmpeg decode per clip, then indexed by time).
     video_cache: std::collections::HashMap<String, VideoClip>,
     /// Content+style keys of text textures already rasterised and uploaded, so unchanged text
@@ -137,7 +157,7 @@ impl PreviewRenderer {
             ctx,
             compositor,
             text: TextRaster::new(),
-            uploaded_media: HashSet::new(),
+            uploaded_media: std::collections::HashMap::new(),
             video_cache: std::collections::HashMap::new(),
             text_keys: HashSet::new(),
             text_order: std::collections::VecDeque::new(),
@@ -181,9 +201,15 @@ impl PreviewRenderer {
     }
 
     /// Decode + upload an image media asset once, returning its texture id, or `None` on failure.
-    fn ensure_image_texture(&mut self, media_id: &str, media: &[MediaAsset]) -> Option<String> {
-        if self.uploaded_media.contains(media_id) {
-            return Some(media_id.to_string());
+    /// Returns the texture id and the image's natural pixel size (needed to fit it without
+    /// distortion); the size is cached alongside the upload so repeats stay cheap.
+    fn ensure_image_texture(
+        &mut self,
+        media_id: &str,
+        media: &[MediaAsset],
+    ) -> Option<(String, (u32, u32))> {
+        if let Some(size) = self.uploaded_media.get(media_id) {
+            return Some((media_id.to_string(), *size));
         }
         let path = media.iter().find(|m| m.id == media_id)?.path.clone();
         let decoded = image::open(&path).ok()?;
@@ -193,8 +219,8 @@ impl PreviewRenderer {
             .ctx
             .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image");
         self.compositor.upsert_texture(media_id.to_string(), texture);
-        self.uploaded_media.insert(media_id.to_string());
-        Some(media_id.to_string())
+        self.uploaded_media.insert(media_id.to_string(), (width, height));
+        Some((media_id.to_string(), (width, height)))
     }
 
     /// Upload an 8×8 solid placeholder for an element and return its texture id.
@@ -305,19 +331,23 @@ impl PreviewRenderer {
                 };
 
                 // Text → real glyphs; Image → decoded file (cached); others → solid placeholder.
-                let texture_id = match element {
+                let (texture_id, natural_size) = match element {
                     Element::Text(text) => {
                         let tw = (transform.scale * width as f32).clamp(16.0, width as f32) as u32;
                         let th =
                             (transform.scale * height as f32).clamp(16.0, height as f32) as u32;
                         let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
                         // Cached by content/style, so static captions aren't re-shaped per frame.
-                        self.ensure_text_texture(&text.content, font_px, &text.color, tw, th)
+                        // The raster is already box-shaped, so it has no intrinsic aspect to fit.
+                        (
+                            self.ensure_text_texture(&text.content, font_px, &text.color, tw, th),
+                            None,
+                        )
                     }
                     Element::Image(image_element) => {
                         match self.ensure_image_texture(&image_element.media_id, media) {
-                            Some(texture_id) => texture_id,
-                            None => self.upload_solid_placeholder(element),
+                            Some((texture_id, natural)) => (texture_id, Some(natural)),
+                            None => (self.upload_solid_placeholder(element), None),
                         }
                     }
                     Element::Video(video) => {
@@ -348,21 +378,31 @@ impl PreviewRenderer {
                                     self.ctx.upload_rgba_texture(&rgba, w, h, "preview-video");
                                 self.compositor
                                     .upsert_texture(element.id().to_string(), texture);
-                                element.id().to_string()
+                                (element.id().to_string(), Some((w, h)))
                             }
-                            None => self.upload_solid_placeholder(element),
+                            None => (self.upload_solid_placeholder(element), None),
                         }
                     }
-                    _ => self.upload_solid_placeholder(element),
+                    _ => (self.upload_solid_placeholder(element), None),
                 };
+
+                // `scale` defines a box as a fraction of the canvas; a source with a natural
+                // size is *fitted* inside that box (contain) so it keeps its aspect ratio.
+                // Stretching every source to the box was a live rendering bug: a 16:9 clip and a
+                // square image both filled the whole canvas.
+                let (box_w, box_h) = (
+                    (transform.scale * width as f32).max(1.0),
+                    (transform.scale * height as f32).max(1.0),
+                );
+                let (layer_w, layer_h) = fit_contain(natural_size, box_w, box_h);
 
                 items.push(FrameItemDescriptor::Layer(LayerDescriptor {
                     texture_id,
                     transform: QuadTransformDescriptor {
                         center_x: transform.x * width as f32,
                         center_y: transform.y * height as f32,
-                        width: (transform.scale * width as f32).max(1.0),
-                        height: (transform.scale * height as f32).max(1.0),
+                        width: layer_w,
+                        height: layer_h,
                         rotation_degrees: transform.rotation,
                         flip_x: false,
                         flip_y: false,
