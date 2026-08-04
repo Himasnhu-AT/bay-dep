@@ -200,7 +200,9 @@ impl TimelineGeometry {
         let major = candidates
             .iter()
             .copied()
-            .find(|&ticks| self.delta_ticks_to_px(MediaTime::from_ticks(ticks)) >= MIN_LABEL_SPACING_PX)
+            .find(|&ticks| {
+                self.delta_ticks_to_px(MediaTime::from_ticks(ticks)) >= MIN_LABEL_SPACING_PX
+            })
             .unwrap_or_else(|| *candidates.last().expect("ladder is never empty"));
 
         // Densest subdivision that still divides the major interval exactly and stays readable.
@@ -315,8 +317,8 @@ pub fn frame_of(time: MediaTime, fps: Fps) -> i64 {
 /// Index of the frame containing `time`.
 pub fn frame_floor_of(time: MediaTime, fps: Fps) -> i64 {
     let (numerator, denominator) = rational(fps);
-    (i128::from(time.as_ticks()) * numerator)
-        .div_euclid(denominator * i128::from(TICKS_PER_SECOND)) as i64
+    (i128::from(time.as_ticks()) * numerator).div_euclid(denominator * i128::from(TICKS_PER_SECOND))
+        as i64
 }
 
 /// Start time of frame `frame`. Exact for every rate whose frame is a whole number of ticks.
@@ -369,7 +371,8 @@ pub fn zoom_at(
     min_pps: f32,
     max_pps: f32,
 ) -> (f32, f32) {
-    let pixels_per_second = sane(pixels_per_second, PIXELS_PER_SECOND_FLOOR).max(PIXELS_PER_SECOND_FLOOR);
+    let pixels_per_second =
+        sane(pixels_per_second, PIXELS_PER_SECOND_FLOOR).max(PIXELS_PER_SECOND_FLOOR);
     let low = sane(min_pps, PIXELS_PER_SECOND_FLOOR).max(PIXELS_PER_SECOND_FLOOR);
     let high = sane(max_pps, low).max(low);
     let seconds_under_cursor = f64::from(scroll_x + cursor_x) / f64::from(pixels_per_second);
@@ -583,7 +586,13 @@ mod tests {
         assert_eq!(ticks_per_frame(FPS_30), Some(4_000));
         assert_eq!(ticks_per_frame(FPS_5994), Some(2_002));
         // Not representable on the 120 000/s grid, and not pretended to be.
-        assert_eq!(ticks_per_frame(Fps { numerator: 7, denominator: 3 }), None);
+        assert_eq!(
+            ticks_per_frame(Fps {
+                numerator: 7,
+                denominator: 3
+            }),
+            None
+        );
     }
 
     // ---- px ↔ ticks ----------------------------------------------------------------------
@@ -652,8 +661,18 @@ mod tests {
         assert!(g.ticks_to_px(MediaTime::from_ticks(1_000)).is_finite());
         assert!(g.px_to_seconds(10.0).is_finite());
 
-        let bad_rate = geometry(48.0, 0.0, Fps { numerator: 0, denominator: 0 });
-        assert_eq!(bad_rate.quantize_to_frame(MediaTime::from_ticks(7)), MediaTime::ZERO);
+        let bad_rate = geometry(
+            48.0,
+            0.0,
+            Fps {
+                numerator: 0,
+                denominator: 0,
+            },
+        );
+        assert_eq!(
+            bad_rate.quantize_to_frame(MediaTime::from_ticks(7)),
+            MediaTime::ZERO
+        );
     }
 
     // ---- frames --------------------------------------------------------------------------
@@ -662,7 +681,10 @@ mod tests {
     fn quantize_snaps_to_the_nearest_frame() {
         let g = geometry(48.0, 0.0, FPS_30);
         // 4000 ticks per frame: 1999 rounds down, 2000 (the tie) rounds up.
-        assert_eq!(g.quantize_to_frame(MediaTime::from_ticks(1_999)), MediaTime::ZERO);
+        assert_eq!(
+            g.quantize_to_frame(MediaTime::from_ticks(1_999)),
+            MediaTime::ZERO
+        );
         assert_eq!(
             g.quantize_to_frame(MediaTime::from_ticks(2_000)),
             MediaTime::from_ticks(4_000)
@@ -679,14 +701,28 @@ mod tests {
 
     #[test]
     fn quantize_leaves_a_frame_boundary_untouched_and_is_idempotent() {
-        for fps in [FPS_2398, FPS_25, FPS_2997, FPS_30, FPS_5994, Fps { numerator: 7, denominator: 3 }] {
+        for fps in [
+            FPS_2398,
+            FPS_25,
+            FPS_2997,
+            FPS_30,
+            FPS_5994,
+            Fps {
+                numerator: 7,
+                denominator: 3,
+            },
+        ] {
             for frame in [0_i64, 1, 7, 1_000, 17_982] {
                 let on_boundary = time_of_frame(frame, fps);
                 assert_eq!(quantize_to_frame(on_boundary, fps), on_boundary);
             }
             for ticks in [-9_001_i64, -1, 0, 1, 37, 4_003, 999_983] {
                 let once = quantize_to_frame(MediaTime::from_ticks(ticks), fps);
-                assert_eq!(quantize_to_frame(once, fps), once, "fps={fps:?} ticks={ticks}");
+                assert_eq!(
+                    quantize_to_frame(once, fps),
+                    once,
+                    "fps={fps:?} ticks={ticks}"
+                );
             }
         }
     }
@@ -840,7 +876,10 @@ mod tests {
                 assert_eq!(ladder.major.as_ticks() % ladder.minor.as_ticks(), 0);
                 assert!(g.delta_ticks_to_px(ladder.minor) >= MIN_MINOR_SPACING_PX);
                 // The chosen interval is the *smallest* that fits, not an arbitrarily coarse one.
-                assert!(spacing < MIN_LABEL_SPACING_PX * 10.0, "pps={step} spacing={spacing}");
+                assert!(
+                    spacing < MIN_LABEL_SPACING_PX * 10.0,
+                    "pps={step} spacing={spacing}"
+                );
             }
         }
     }
@@ -851,8 +890,14 @@ mod tests {
         let width = 1_200.0;
         let marks = g.ruler_ticks(width);
         let bound = (width / MIN_MINOR_SPACING_PX) as usize + 2;
-        assert!(marks.len() <= bound, "{} marks exceeds {bound}", marks.len());
-        assert!(marks.iter().all(|mark| mark.x >= -20.0 && mark.x <= width + 20.0));
+        assert!(
+            marks.len() <= bound,
+            "{} marks exceeds {bound}",
+            marks.len()
+        );
+        assert!(marks
+            .iter()
+            .all(|mark| mark.x >= -20.0 && mark.x <= width + 20.0));
         assert!(marks.iter().any(|mark| mark.major && mark.label.is_some()));
         assert!(marks.iter().all(|mark| mark.major == mark.label.is_some()));
     }
@@ -888,7 +933,10 @@ mod tests {
         for (scroll, pps, cursor_x, factor) in cases {
             let before = geometry(pps, scroll, FPS_30);
             let after = before.zoom_at(cursor_x, factor, 8.0, 400.0);
-            let (was, now) = (before.px_to_seconds(cursor_x), after.px_to_seconds(cursor_x));
+            let (was, now) = (
+                before.px_to_seconds(cursor_x),
+                after.px_to_seconds(cursor_x),
+            );
             assert!(
                 (was - now).abs() < 1e-3,
                 "scroll={scroll} pps={pps} cursor={cursor_x} factor={factor}: {was} -> {now}"
@@ -915,7 +963,9 @@ mod tests {
         assert_eq!(g.content_width_px(MediaTime::from_ticks(-5), 240.0), 240.0);
         assert_eq!(g.clamped_scroll(740.0, 800.0).scroll_x(), 0.0);
         assert_eq!(
-            g.with_scroll_x(1_000.0).clamped_scroll(740.0, 400.0).scroll_x(),
+            g.with_scroll_x(1_000.0)
+                .clamped_scroll(740.0, 400.0)
+                .scroll_x(),
             340.0
         );
     }
@@ -953,7 +1003,10 @@ mod tests {
         let base = fit_rect((1_600.0, 900.0), 16.0 / 9.0, 1.0, (0.0, 0.0));
         let zoomed = fit_rect((1_600.0, 900.0), 16.0 / 9.0, 2.0, (0.0, 0.0));
         let base_centre = (base.x + base.width / 2.0, base.y + base.height / 2.0);
-        let zoomed_centre = (zoomed.x + zoomed.width / 2.0, zoomed.y + zoomed.height / 2.0);
+        let zoomed_centre = (
+            zoomed.x + zoomed.width / 2.0,
+            zoomed.y + zoomed.height / 2.0,
+        );
         assert!((base_centre.0 - zoomed_centre.0).abs() < 0.01);
         assert!((base_centre.1 - zoomed_centre.1).abs() < 0.01);
         assert!((zoomed.width - base.width * 2.0).abs() < 0.01);

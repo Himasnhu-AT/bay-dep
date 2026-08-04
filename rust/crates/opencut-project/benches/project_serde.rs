@@ -64,14 +64,14 @@ pub fn synthetic_project(n: usize) -> Project {
         element.set_duration(secs(duration));
         cursor[lane] += duration;
 
-        if i % 3 == 0 {
-            if let Some(animations) = element.animations_mut() {
-                let mut opacity = AnimationChannel::default();
-                opacity.upsert(MediaTime::ZERO, 0.0);
-                opacity.upsert(secs(duration * 0.5), 1.0);
-                opacity.upsert(secs(duration), 0.0);
-                animations.insert("opacity".to_string(), opacity);
-            }
+        if i % 3 == 0
+            && let Some(animations) = element.animations_mut()
+        {
+            let mut opacity = AnimationChannel::default();
+            opacity.upsert(MediaTime::ZERO, 0.0);
+            opacity.upsert(secs(duration * 0.5), 1.0);
+            opacity.upsert(secs(duration), 0.0);
+            animations.insert("opacity".to_string(), opacity);
         }
 
         let track = match lane {
@@ -105,9 +105,13 @@ fn bench_project_serde(c: &mut Criterion) {
         let project = synthetic_project(n);
         assert_eq!(element_count(&project), n, "fixture lost elements");
         let json = serde_json::to_string(&project).expect("project serializes");
+        // The document size is half the story of any MiB/s number, so state it rather than
+        // making the reader back it out of the throughput.
+        println!("fixture: {n} elements = {} bytes of JSON", json.len());
 
         // Bytes throughput makes the two directions directly comparable and independent of how
-        // fat an individual element happens to be.
+        // fat an individual element happens to be. `roundtrip` is keyed to the same byte count,
+        // so it reads as "bytes of document per second", not "bytes moved".
         group.throughput(Throughput::Bytes(json.len() as u64));
 
         group.bench_with_input(BenchmarkId::new("serialize", n), &project, |b, project| {

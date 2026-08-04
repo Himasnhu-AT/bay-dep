@@ -1,9 +1,12 @@
 //! Extracting peaks from a generated sine tone yields the requested count with real amplitude.
+//!
+//! Both tests need the ffmpeg CLI: without it they skip, unless `VII_REQUIRE_FFMPEG` is set.
 
-#[test]
-fn extracts_peaks_from_a_sine_tone() {
-    // Generate a 1s sine WAV via ffmpeg; skip if ffmpeg is unavailable.
-    let path = std::env::temp_dir().join(format!("vii-test-tone-{}.wav", std::process::id()));
+use test_support::require_ffmpeg_step;
+
+/// A 1s 440Hz sine WAV at a unique temp path, or `None` once the ffmpeg gate has skipped.
+fn sine_tone(tag: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::temp_dir().join(format!("vii-test-{tag}-{}.wav", std::process::id()));
     let generated = std::process::Command::new("ffmpeg")
         .args([
             "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
@@ -12,10 +15,12 @@ fn extracts_peaks_from_a_sine_tone() {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if !generated {
-        eprintln!("skipping: ffmpeg unavailable");
-        return;
-    }
+    require_ffmpeg_step(generated, "generate the sine-tone WAV fixture").then_some(path)
+}
+
+#[test]
+fn extracts_peaks_from_a_sine_tone() {
+    let Some(path) = sine_tone("tone") else { return };
 
     let peaks = opencut_audio::waveform_peaks(path.to_str().unwrap(), 64)
         .expect("peaks from a valid tone");
@@ -28,19 +33,7 @@ fn extracts_peaks_from_a_sine_tone() {
 
 #[test]
 fn decodes_pcm_from_a_sine_tone() {
-    let path = std::env::temp_dir().join(format!("vii-test-pcm-{}.wav", std::process::id()));
-    let generated = std::process::Command::new("ffmpeg")
-        .args([
-            "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi",
-            "-i", "sine=frequency=440:duration=1", path.to_str().unwrap(),
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !generated {
-        eprintln!("skipping: ffmpeg unavailable");
-        return;
-    }
+    let Some(path) = sine_tone("pcm") else { return };
     let pcm = opencut_audio::decode_pcm(path.to_str().unwrap(), 44_100).expect("pcm");
     assert_eq!(pcm.sample_rate, 44_100);
     assert_eq!(pcm.channels, 2);

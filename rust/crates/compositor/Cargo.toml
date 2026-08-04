@@ -12,5 +12,5 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-# Block on the async GpuContext::new() inside synchronous #[test] functions.
-pollster = "0.4"
+# T-002 capability gate: hands out a real GpuContext, or skips (panics under VII_REQUIRE_GPU).
+test-support = { version = "0.1.0", path = "../test-support", features = ["gpu"] }

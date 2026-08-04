@@ -18,6 +18,7 @@ image = "0.25"
 opencut-project = { version = "0.1.0", path = "../opencut-project" }
 opencut-text = { version = "0.1.0", path = "../opencut-text" }
 pollster = "0.4"
+serde_json = "1"
 
 [dev-dependencies]
 # T-002 capability gate: skips on a GPU-less/ffmpeg-less box, panics under VII_REQUIRE_*.

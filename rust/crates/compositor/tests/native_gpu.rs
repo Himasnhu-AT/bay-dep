@@ -7,24 +7,14 @@
 //!
 //! Runs headless on any backend wgpu can reach (Metal / Vulkan / DX12). If no adapter is
 //! available (e.g. a GPU-less CI runner), each test skips rather than failing so the suite
-//! stays green until the Phase-0 CI matrix (P0-MED-03) provisions GPU runners.
+//! stays green until the Phase-0 CI matrix (P0-MED-03) provisions GPU runners — set
+//! `VII_REQUIRE_GPU=1` (as CI does on a GPU runner) to turn that skip into a hard failure.
 
 use compositor::{
     BlendMode, CanvasClearDescriptor, Compositor, FrameDescriptor, FrameItemDescriptor,
     LayerDescriptor, QuadTransformDescriptor,
 };
-use gpu::GpuContext;
-
-/// Builds a GPU context, or returns `None` (with a skip note) when no adapter is present.
-fn try_context() -> Option<GpuContext> {
-    match pollster::block_on(GpuContext::new()) {
-        Ok(ctx) => Some(ctx),
-        Err(err) => {
-            eprintln!("skipping native GPU test: no adapter available ({err})");
-            None
-        }
-    }
-}
+use test_support::require_gpu;
 
 /// A per-pixel RGBA gradient — distinct in every channel and every row so a stride/padding
 /// or channel-swizzle bug cannot accidentally pass.
@@ -46,7 +36,7 @@ fn gradient_rgba(width: u32, height: u32) -> Vec<u8> {
 /// (applied on upload, reversed on readback), so the identity here proves both.
 #[test]
 fn native_rgba_upload_readback_is_identity() {
-    let Some(ctx) = try_context() else { return };
+    let Some(ctx) = require_gpu() else { return };
 
     let (width, height) = (8u32, 8u32);
     let source = gradient_rgba(width, height);
@@ -66,7 +56,7 @@ fn native_rgba_upload_readback_is_identity() {
 /// resolves to exactly the layer color, so this is deterministic within unorm8 rounding.
 #[test]
 fn native_render_frame_to_texture_fills_with_layer_color() {
-    let Some(ctx) = try_context() else { return };
+    let Some(ctx) = require_gpu() else { return };
 
     let (width, height) = (16u32, 16u32);
     let color = [200u8, 100u8, 50u8, 255u8];

@@ -72,3 +72,83 @@ jobs:
 
       - name: Build
         run: pnpm --filter @opencut/web build
+
+  # The native editor's home platform: Metal and the ffmpeg CLI are both really present, so
+  # VII_REQUIRE_* turns a missing capability into a loud failure instead of a silent skip.
+  # This is the only job that lints; `rust-linux` exists purely to exercise the skip path.
+  rust-mac:
+    runs-on: macos-latest
+
+    env:
+      VII_REQUIRE_GPU: "1"
+      VII_REQUIRE_FFMPEG: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # opencut-audio and opencut-preview shell out to `ffmpeg`; nothing links against it.
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+
+      # TODO: drop `continue-on-error` once `cargo fmt --all` has been run. As of the commit
+      # that added this job, 14 files are unformatted (opencut-core, opencut-ui,
+      # opencut-preview, opencut-project, opencut-audio, opencut-text, effects). The fix is
+      # mechanical but it collides with in-flight parity work, so it is not done here.
+      - name: Format
+        run: cargo fmt --all --check
+        continue-on-error: true
+
+      # TODO: drop `continue-on-error` once these 10 warnings are gone. The workspace
+      # compiles clean; only lints stand between it and `-D warnings`:
+      #   clippy::collapsible_if     opencut-core/src/command.rs (3), opencut-preview/src/lib.rs (2)
+      #   clippy::too_many_arguments compositor/src/compositor.rs (3)
+      #   clippy::type_complexity    native-preview/src/main.rs (1)
+      #   clippy::single_match       gpu/src/context.rs (1)
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        continue-on-error: true
+
+      - name: Test
+        run: cargo test --workspace
+
+  # Deliberately no VII_REQUIRE_* here. This runner has no GPU and no ffmpeg, so a green run
+  # is the proof that every capability-gated test still skips gracefully instead of failing.
+  rust-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # GPUI (opencut-ui) and rodio need these to build at all on Linux; they say nothing
+      # about what the tests can actually exercise here.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libfontconfig-dev \
+            libssl-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            pkg-config
+
+      - name: Test
+        run: cargo test --workspace

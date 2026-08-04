@@ -6,6 +6,8 @@
 //! `RenderImage` expects. Clip textures are solid-color placeholders until native media decode
 //! lands; the compositing (background, transform, opacity, blend) is real.
 
+pub mod probe;
+
 use compositor::{
     BlendMode, CanvasClearDescriptor, Compositor, EffectPassDescriptor,
     EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
@@ -123,11 +125,63 @@ struct VideoClip {
     frames: Vec<Vec<u8>>, // RGBA, `width*height*4` each
 }
 
-/// Decode size + limits for the cached video frames.
-const VIDEO_W: u32 = 320;
-const VIDEO_H: u32 = 180;
-const VIDEO_FPS: f32 = 30.0;
-const VIDEO_MAX_FRAMES: u32 = 450; // ~15s cap
+/// Decode budget for the cached video frames. The whole clip is decoded once and indexed by
+/// time, so the budget is a memory ceiling: rather than truncating long clips (which froze
+/// anything past ~15s on the last decoded frame), the sample rate is lowered so the cache still
+/// spans the clip's full duration.
+const VIDEO_MAX_WIDTH: u32 = 480;
+const VIDEO_MAX_FPS: f32 = 30.0;
+const VIDEO_MIN_FPS: f32 = 2.0;
+const VIDEO_MEMORY_BUDGET: usize = 192 * 1024 * 1024;
+/// Fallback decode size when the clip cannot be probed.
+const VIDEO_FALLBACK_W: u32 = 320;
+const VIDEO_FALLBACK_H: u32 = 180;
+
+/// Choose decode dimensions, sample rate and frame count for a clip, given its natural size and
+/// duration. Pure so the budget policy is unit-testable.
+fn plan_decode(natural: (u32, u32), duration_secs: f64) -> (u32, u32, f32, u32) {
+    let (nw, nh) = natural;
+    let (nw, nh) = if nw == 0 || nh == 0 {
+        (VIDEO_FALLBACK_W, VIDEO_FALLBACK_H)
+    } else {
+        (nw, nh)
+    };
+    // Downscale to the preview budget, keeping aspect; ffmpeg wants even dimensions.
+    let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32).min(1.0);
+    let even = |v: f32| ((v.round() as u32).max(2) / 2) * 2;
+    let (w, h) = (even(nw as f32 * scale), even(nh as f32 * scale));
+
+    let duration = duration_secs.max(0.05);
+    let frame_bytes = (w as usize) * (h as usize) * 4;
+    let frames_affordable = (VIDEO_MEMORY_BUDGET / frame_bytes.max(1)).max(1) as f64;
+
+    // Coverage of the whole clip is non-negotiable — truncating it is what made long clips
+    // freeze on their last decoded frame. So spend the budget on frame RATE first, and only
+    // when even the minimum rate will not fit do we shrink the frames themselves.
+    let fps = (frames_affordable / duration)
+        .min(VIDEO_MAX_FPS as f64)
+        .max(VIDEO_MIN_FPS as f64) as f32;
+    let frames = ((duration * fps as f64).ceil() as u32).max(1);
+
+    let needed_bytes = frames as usize * frame_bytes;
+    let (w, h) = if needed_bytes > VIDEO_MEMORY_BUDGET {
+        // Shrink both axes by the same factor so aspect survives; area scales by the ratio.
+        let shrink = (VIDEO_MEMORY_BUDGET as f64 / needed_bytes as f64).sqrt();
+        (
+            even(w as f32 * shrink as f32),
+            even(h as f32 * shrink as f32),
+        )
+    } else {
+        (w, h)
+    };
+
+    (w, h, fps, frames)
+}
+
+/// Test hook for [`plan_decode`].
+pub fn plan_decode_for_test(natural: (u32, u32), duration_secs: f64) -> (u32, u32, f32, u32) {
+    plan_decode(natural, duration_secs)
+}
 
 /// Max distinct text rasters kept resident in the compositor store before the least-recently
 /// inserted is evicted. Static captions reuse one entry; inline editing churns keys, so we cap.
@@ -442,6 +496,16 @@ impl PreviewRenderer {
 /// invocation (the sidecar-decoder escape hatch — no native ffmpeg linking). Capped at
 /// `VIDEO_MAX_FRAMES`. Returns `None` if ffmpeg is unavailable or there is no video.
 fn decode_video_clip(path: &str) -> Option<VideoClip> {
+    // Probe first so the decode matches the source's real aspect and length.
+    let (natural, duration_secs) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 10.0),
+    };
+    let (decode_w, decode_h, fps, max_frames) = plan_decode(natural, duration_secs);
+
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-nostdin",
@@ -454,11 +518,11 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
             "-i",
             path,
             "-r",
-            &format!("{VIDEO_FPS}"),
+            &format!("{fps}"),
             "-s",
-            &format!("{VIDEO_W}x{VIDEO_H}"),
+            &format!("{decode_w}x{decode_h}"),
             "-frames:v",
-            &VIDEO_MAX_FRAMES.to_string(),
+            &max_frames.to_string(),
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -470,7 +534,7 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
     if !output.status.success() {
         return None;
     }
-    let frame_size = (VIDEO_W * VIDEO_H * 4) as usize;
+    let frame_size = (decode_w * decode_h * 4) as usize;
     let frames: Vec<Vec<u8>> = output
         .stdout
         .chunks_exact(frame_size)
@@ -480,9 +544,9 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
         return None;
     }
     Some(VideoClip {
-        fps: VIDEO_FPS,
-        width: VIDEO_W,
-        height: VIDEO_H,
+        fps,
+        width: decode_w,
+        height: decode_h,
         frames,
     })
 }
