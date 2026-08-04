@@ -403,6 +403,13 @@ impl EditorView {
                         ]
                         .hash(&mut hasher);
                         element.blend_mode().hash(&mut hasher);
+                        // Text content/style must be in the signature or the preview goes stale
+                        // while the user types — which silently defeats inline text editing.
+                        if let opencut_core::Element::Text(text) = element {
+                            text.content.hash(&mut hasher);
+                            text.color.hash(&mut hasher);
+                            text.font_size.to_bits().hash(&mut hasher);
+                        }
                         for effect in element.effects() {
                             effect.id.hash(&mut hasher);
                             effect.effect_type.hash(&mut hasher);

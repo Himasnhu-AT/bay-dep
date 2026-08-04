@@ -79,8 +79,11 @@ impl AnimationChannel {
 /// How a layer composites against everything beneath it. Mirrors the compositor's WGSL blend
 /// set (and the web app's wire format) but stays GPU-free so the data model has no render
 /// dependency; `opencut-preview` maps these onto `compositor::BlendMode`.
+/// Wire format is **kebab-case** to match `compositor::BlendMode` and the web app's
+/// `BlendMode` union (`apps/web/src/rendering/index.ts`) — e.g. `"color-burn"`,
+/// `"plus-lighter"`. Using camelCase here would silently break project interchange.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "kebab-case")]
 pub enum BlendMode {
     #[default]
     Normal,

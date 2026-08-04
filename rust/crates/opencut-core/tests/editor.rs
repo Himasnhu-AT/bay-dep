@@ -780,3 +780,21 @@ fn blend_mode_cycles_through_every_mode() {
     assert_eq!(mode, BlendMode::Normal, "cycling wraps back to the start");
     assert_eq!(seen.len(), 17);
 }
+
+#[test]
+fn blend_mode_wire_format_is_kebab_case_for_interop() {
+    use opencut_project::BlendMode;
+    // The compositor (rust/crates/compositor/src/blend_mode.rs) and the web app
+    // (apps/web/src/rendering/index.ts) both use kebab-case. A camelCase project file would
+    // silently fail to round-trip between the native and web editors.
+    for (mode, wire) in [
+        (BlendMode::ColorBurn, "\"color-burn\""),
+        (BlendMode::PlusLighter, "\"plus-lighter\""),
+        (BlendMode::SoftLight, "\"soft-light\""),
+        (BlendMode::Normal, "\"normal\""),
+    ] {
+        assert_eq!(serde_json::to_string(&mode).unwrap(), wire);
+        let back: BlendMode = serde_json::from_str(wire).unwrap();
+        assert_eq!(back, mode);
+    }
+}
