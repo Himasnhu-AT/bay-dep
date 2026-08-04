@@ -63,6 +63,31 @@ fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
         .collect()
 }
 
+/// Map the project's GPU-free blend mode onto the compositor's WGSL blend set. The two enums
+/// are deliberately separate so the data model carries no render dependency.
+fn blend_mode(mode: opencut_project::BlendMode) -> BlendMode {
+    use opencut_project::BlendMode as Src;
+    match mode {
+        Src::Normal => BlendMode::Normal,
+        Src::Darken => BlendMode::Darken,
+        Src::Multiply => BlendMode::Multiply,
+        Src::ColorBurn => BlendMode::ColorBurn,
+        Src::Lighten => BlendMode::Lighten,
+        Src::Screen => BlendMode::Screen,
+        Src::PlusLighter => BlendMode::PlusLighter,
+        Src::ColorDodge => BlendMode::ColorDodge,
+        Src::Overlay => BlendMode::Overlay,
+        Src::SoftLight => BlendMode::SoftLight,
+        Src::HardLight => BlendMode::HardLight,
+        Src::Difference => BlendMode::Difference,
+        Src::Exclusion => BlendMode::Exclusion,
+        Src::Hue => BlendMode::Hue,
+        Src::Saturation => BlendMode::Saturation,
+        Src::Color => BlendMode::Color,
+        Src::Luminosity => BlendMode::Luminosity,
+    }
+}
+
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
 pub struct PreviewFrame {
     pub width: u32,
@@ -343,7 +368,7 @@ impl PreviewRenderer {
                         flip_y: false,
                     },
                     opacity: transform.opacity.clamp(0.0, 1.0),
-                    blend_mode: BlendMode::Normal,
+                    blend_mode: blend_mode(element.blend_mode().unwrap_or_default()),
                     effect_pass_groups: effect_groups(element),
                     mask: None,
                 }));

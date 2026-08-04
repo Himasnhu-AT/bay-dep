@@ -100,6 +100,7 @@ impl Project {
                     },
                     effects: Vec::new(),
                         animations: Default::default(),
+                        blend_mode: Default::default(),
                 }),
                 Element::Image(ImageElement {
                     id: "el-logo".into(),
@@ -116,6 +117,7 @@ impl Project {
                     },
                     effects: Vec::new(),
                         animations: Default::default(),
+                        blend_mode: Default::default(),
                 }),
             ],
         };
@@ -143,6 +145,7 @@ impl Project {
                 },
                 effects: Vec::new(),
                         animations: Default::default(),
+                        blend_mode: Default::default(),
             })],
         }];
 

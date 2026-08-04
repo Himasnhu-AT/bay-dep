@@ -20,6 +20,7 @@ fn text(id: &str, name: &str) -> Element {
         transform: opencut_project::Transform::default(),
         effects: Vec::new(),
                         animations: Default::default(),
+                        blend_mode: Default::default(),
     })
 }
 
@@ -589,4 +590,58 @@ fn command_enum_is_a_stable_tagged_serde_surface() {
 
     let round_tripped: Command = serde_json::from_str(&json).unwrap();
     assert!(matches!(round_tripped, Command::MoveElement { .. }));
+}
+
+#[test]
+fn set_blend_mode_is_undoable_and_ignores_audio() {
+    use opencut_project::BlendMode;
+    let mut editor = Editor::starter();
+    let reference = main_ref("el-title");
+
+    assert_eq!(
+        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        Some(BlendMode::Normal),
+        "elements default to Normal"
+    );
+
+    assert!(editor.execute(Command::SetBlendMode {
+        reference: reference.clone(),
+        blend_mode: BlendMode::Screen,
+    }));
+    assert_eq!(
+        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        Some(BlendMode::Screen)
+    );
+
+    // Undo restores the previous mode (the patch is self-inverting).
+    assert!(editor.undo());
+    assert_eq!(
+        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        Some(BlendMode::Normal)
+    );
+    assert!(editor.redo());
+    assert_eq!(
+        editor.project().active_scene().element(&reference).unwrap().blend_mode(),
+        Some(BlendMode::Screen)
+    );
+
+    // Audio has no blend mode, so the command must not record history.
+    let audio = ElementRef::new("track-audio", "el-music");
+    assert!(!editor.execute(Command::SetBlendMode {
+        reference: audio,
+        blend_mode: BlendMode::Multiply,
+    }));
+}
+
+#[test]
+fn blend_mode_cycles_through_every_mode() {
+    use opencut_project::BlendMode;
+    let mut seen = std::collections::HashSet::new();
+    let mut mode = BlendMode::Normal;
+    for _ in 0..BlendMode::ALL.len() {
+        assert!(seen.insert(mode), "next() must not repeat before wrapping");
+        mode = mode.next();
+    }
+    assert_eq!(mode, BlendMode::Normal, "cycling wraps back to the start");
+    assert_eq!(seen.len(), 17);
 }

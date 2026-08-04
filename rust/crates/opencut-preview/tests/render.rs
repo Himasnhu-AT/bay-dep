@@ -1,14 +1,15 @@
-//! The preview renderer composites scenes to non-empty BGRA frames on a real GPU (skips if none).
+//! The preview renderer composites scenes to non-empty BGRA frames on a real GPU (skips if
+//! none — set `VII_REQUIRE_GPU=1` / `VII_REQUIRE_FFMPEG=1` to turn those skips into failures).
 
 use opencut_preview::PreviewRenderer;
 use opencut_project::{
     Effect, Element, ImageElement, MediaAsset, MediaTime, Project, Transform, VideoElement,
 };
+use test_support::{require_ffmpeg_step, require_gpu_backed};
 
 #[test]
 fn renders_starter_scene_to_a_nonempty_frame() {
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
     let project = Project::starter();
@@ -33,8 +34,7 @@ fn renders_starter_scene_to_a_nonempty_frame() {
 #[test]
 fn reuses_cached_text_rasters_across_frames() {
     // Re-rendering the same scene must not re-rasterise (and re-cache) unchanged text.
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
     let project = Project::starter();
@@ -65,8 +65,7 @@ fn reuses_cached_text_rasters_across_frames() {
 
 #[test]
 fn renders_a_clip_with_a_brightness_effect_without_error() {
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
     let mut project = Project::starter();
@@ -93,8 +92,7 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
 #[test]
 fn renders_contrast_saturation_and_blur_on_gpu() {
     // Exercises the new effect shaders end-to-end (WGSL compiles + runs on the real GPU).
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
     for effect_type in ["contrast", "saturation", "blur"] {
@@ -126,8 +124,7 @@ fn renders_contrast_saturation_and_blur_on_gpu() {
 
 #[test]
 fn renders_a_real_image_element_from_disk() {
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
 
@@ -157,6 +154,7 @@ fn renders_a_real_image_element_from_disk() {
             transform: Transform::default(),
             effects: Vec::new(),
                         animations: Default::default(),
+            blend_mode: Default::default(),
         }));
 
     let frame = renderer.render(
@@ -174,8 +172,7 @@ fn renders_a_real_image_element_from_disk() {
 
 #[test]
 fn renders_a_real_video_frame_via_ffmpeg() {
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
 
@@ -190,8 +187,7 @@ fn renders_a_real_video_frame_via_ffmpeg() {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if !generated {
-        eprintln!("skipping: ffmpeg unavailable");
+    if !require_ffmpeg_step(generated, "generate the h264 test clip") {
         return;
     }
 
@@ -217,6 +213,7 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             transform: Transform::default(),
             effects: Vec::new(),
                         animations: Default::default(),
+            blend_mode: Default::default(),
         }));
 
     let frame = renderer.render(
@@ -233,8 +230,7 @@ fn renders_a_real_video_frame_via_ffmpeg() {
 
 #[test]
 fn exports_a_short_video_via_ffmpeg() {
-    let Some(mut renderer) = PreviewRenderer::new() else {
-        eprintln!("skipping: no GPU adapter");
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
     let project = Project::starter();
@@ -249,11 +245,65 @@ fn exports_a_short_video_via_ffmpeg() {
         &project.media,
         out.to_str().unwrap(),
     );
-    if !ok {
-        eprintln!("skipping: ffmpeg encode unavailable");
+    if !require_ffmpeg_step(ok, "encode the exported mp4") {
         return;
     }
     let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
     assert!(size > 0, "exported video should be non-empty");
     let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn blend_modes_actually_change_the_composited_frame() {
+    // The 17-mode WGSL blend shader was previously unreachable (the preview hardcoded Normal).
+    // Render the same scene under different modes and require the pixels to differ.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    // Big enough that the title actually rasterizes, over a MID-GREY backdrop: on the default
+    // black background every mode collapses to the same result (e.g. Difference(0,s) == s), so a
+    // black backdrop would make this test vacuously pass-or-fail for the wrong reason.
+    let (width, height) = (128, 72);
+    let backdrop = opencut_project::Background::Color {
+        color: "#808080".to_string(),
+    };
+
+    let render_with = |renderer: &mut PreviewRenderer, mode: opencut_project::BlendMode| {
+        let mut project = Project::starter();
+        if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
+            title.blend_mode = mode;
+        }
+        renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                width,
+                height,
+                &backdrop,
+                &project.media,
+            )
+            .bgra
+    };
+
+    let normal = render_with(&mut renderer, opencut_project::BlendMode::Normal);
+    let difference = render_with(&mut renderer, opencut_project::BlendMode::Difference);
+    let multiply = render_with(&mut renderer, opencut_project::BlendMode::Multiply);
+
+    assert_eq!(normal.len(), (width * height * 4) as usize);
+    // Guard: if the title never rasterized, every frame would be flat backdrop and the
+    // comparisons below would be meaningless.
+    let corner = &normal[0..4];
+    assert!(
+        normal.chunks_exact(4).any(|texel| texel != corner),
+        "the title layer must actually be visible for this test to mean anything"
+    );
+
+    assert_ne!(
+        normal, difference,
+        "Difference must not composite identically to Normal"
+    );
+    assert_ne!(
+        normal, multiply,
+        "Multiply must not composite identically to Normal"
+    );
 }

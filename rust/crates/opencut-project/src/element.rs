@@ -76,6 +76,84 @@ impl AnimationChannel {
     }
 }
 
+/// How a layer composites against everything beneath it. Mirrors the compositor's WGSL blend
+/// set (and the web app's wire format) but stays GPU-free so the data model has no render
+/// dependency; `opencut-preview` maps these onto `compositor::BlendMode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Darken,
+    Multiply,
+    ColorBurn,
+    Lighten,
+    Screen,
+    PlusLighter,
+    ColorDodge,
+    Overlay,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl BlendMode {
+    /// Every mode, in the order the inspector cycles through them.
+    pub const ALL: [BlendMode; 17] = [
+        BlendMode::Normal,
+        BlendMode::Darken,
+        BlendMode::Multiply,
+        BlendMode::ColorBurn,
+        BlendMode::Lighten,
+        BlendMode::Screen,
+        BlendMode::PlusLighter,
+        BlendMode::ColorDodge,
+        BlendMode::Overlay,
+        BlendMode::SoftLight,
+        BlendMode::HardLight,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
+        BlendMode::Hue,
+        BlendMode::Saturation,
+        BlendMode::Color,
+        BlendMode::Luminosity,
+    ];
+
+    /// Human-readable name for the inspector.
+    pub fn label(self) -> &'static str {
+        match self {
+            BlendMode::Normal => "Normal",
+            BlendMode::Darken => "Darken",
+            BlendMode::Multiply => "Multiply",
+            BlendMode::ColorBurn => "Color Burn",
+            BlendMode::Lighten => "Lighten",
+            BlendMode::Screen => "Screen",
+            BlendMode::PlusLighter => "Plus Lighter",
+            BlendMode::ColorDodge => "Color Dodge",
+            BlendMode::Overlay => "Overlay",
+            BlendMode::SoftLight => "Soft Light",
+            BlendMode::HardLight => "Hard Light",
+            BlendMode::Difference => "Difference",
+            BlendMode::Exclusion => "Exclusion",
+            BlendMode::Hue => "Hue",
+            BlendMode::Saturation => "Saturation",
+            BlendMode::Color => "Color",
+            BlendMode::Luminosity => "Luminosity",
+        }
+    }
+
+    /// The next mode in `ALL`, wrapping — drives the inspector's cycle button.
+    pub fn next(self) -> BlendMode {
+        let index = BlendMode::ALL.iter().position(|m| *m == self).unwrap_or(0);
+        BlendMode::ALL[(index + 1) % BlendMode::ALL.len()]
+    }
+}
+
 /// A visual element's on-canvas placement. Position is the element center as a fraction of the
 /// canvas (0..1); `scale` is the fraction of the canvas the element spans (1 = full-frame).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -116,6 +194,8 @@ pub struct VideoElement {
     pub effects: Vec<Effect>,
     #[serde(default)]
     pub animations: BTreeMap<String, AnimationChannel>,
+    #[serde(default)]
+    pub blend_mode: BlendMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +212,8 @@ pub struct ImageElement {
     pub effects: Vec<Effect>,
     #[serde(default)]
     pub animations: BTreeMap<String, AnimationChannel>,
+    #[serde(default)]
+    pub blend_mode: BlendMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -150,6 +232,8 @@ pub struct TextElement {
     pub effects: Vec<Effect>,
     #[serde(default)]
     pub animations: BTreeMap<String, AnimationChannel>,
+    #[serde(default)]
+    pub blend_mode: BlendMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -269,6 +353,25 @@ impl Element {
             Element::Video(e) => e.transform = transform,
             Element::Image(e) => e.transform = transform,
             Element::Text(e) => e.transform = transform,
+            Element::Audio(_) => {}
+        }
+    }
+
+    /// How this element composites over the layers beneath it. `None` for audio (not visual).
+    pub fn blend_mode(&self) -> Option<BlendMode> {
+        match self {
+            Element::Video(e) => Some(e.blend_mode),
+            Element::Image(e) => Some(e.blend_mode),
+            Element::Text(e) => Some(e.blend_mode),
+            Element::Audio(_) => None,
+        }
+    }
+
+    pub fn set_blend_mode(&mut self, blend_mode: BlendMode) {
+        match self {
+            Element::Video(e) => e.blend_mode = blend_mode,
+            Element::Image(e) => e.blend_mode = blend_mode,
+            Element::Text(e) => e.blend_mode = blend_mode,
             Element::Audio(_) => {}
         }
     }

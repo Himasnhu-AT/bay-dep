@@ -398,6 +398,7 @@ impl EditorView {
                             t.opacity.to_bits(),
                         ]
                         .hash(&mut hasher);
+                        element.blend_mode().hash(&mut hasher);
                         for effect in element.effects() {
                             effect.id.hash(&mut hasher);
                             effect.effect_type.hash(&mut hasher);
@@ -596,6 +597,7 @@ impl EditorView {
                     transform: Transform::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
+            blend_mode: Default::default(),
                 }),
             )
         } else {
@@ -610,6 +612,7 @@ impl EditorView {
                     transform: Transform::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
+            blend_mode: Default::default(),
                 }),
             )
         };
@@ -882,6 +885,7 @@ impl EditorView {
                             transform: Transform::default(),
                             effects: Vec::new(),
                         animations: Default::default(),
+            blend_mode: Default::default(),
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),
@@ -1012,6 +1016,7 @@ impl EditorView {
                                     transform: Transform::default(),
                                     effects: Vec::new(),
                         animations: Default::default(),
+            blend_mode: Default::default(),
                                 }),
                             ),
                             "image" => (
@@ -1025,6 +1030,7 @@ impl EditorView {
                                     transform: Transform::default(),
                                     effects: Vec::new(),
                         animations: Default::default(),
+            blend_mode: Default::default(),
                                 }),
                             ),
                             _ => (
@@ -1694,6 +1700,26 @@ impl EditorView {
                 }));
             }
             body = body.child(add_row);
+
+            // Blend mode: how this layer composites over everything beneath it. One button
+            // cycling all 17 modes — the compositor's full WGSL blend set.
+            if let Some(mode) = selected.blend_mode {
+                let reference = selected.reference.clone();
+                body = body
+                    .child(div().text_xs().text_color(rgb(theme::MUTED)).child("BLEND"))
+                    .child(self.button(
+                        "blend-mode",
+                        mode.label(),
+                        true,
+                        cx,
+                        move |this, _cx| {
+                            this.editor.execute(Command::SetBlendMode {
+                                reference: reference.clone(),
+                                blend_mode: mode.next(),
+                            });
+                        },
+                    ));
+            }
 
             // Motion presets (in-memory): save the clip's effects+animations, apply elsewhere.
             body = body

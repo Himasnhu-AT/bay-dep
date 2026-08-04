@@ -63,6 +63,8 @@ pub struct ElementInfo {
     pub duration_seconds: f64,
     pub text_content: Option<String>,
     pub transform: Option<opencut_core::Transform>,
+    /// How the element composites over lower layers (`None` for audio).
+    pub blend_mode: Option<opencut_core::BlendMode>,
     pub effects: Vec<EffectInfo>,
     pub animated_count: usize,
 }
@@ -160,6 +162,7 @@ impl EditorViewModel {
                 duration_seconds: element.duration().to_seconds_f64(),
                 text_content,
                 transform: element.transform(),
+                blend_mode: element.blend_mode(),
                 effects: element
                     .effects()
                     .iter()

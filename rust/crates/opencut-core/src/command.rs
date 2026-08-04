@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use opencut_project::{
-    AnimationChannel, Effect, Element, ElementKind, ElementRef, MediaTime, Project, Scene, Track,
-    TrackKind, Transform,
+    AnimationChannel, BlendMode, Effect, Element, ElementKind, ElementRef, MediaTime, Project,
+    Scene, Track, TrackKind, Transform,
 };
 
 use crate::selection::SelectionPatch;
@@ -78,6 +78,11 @@ pub enum Command {
     SetTransform {
         reference: ElementRef,
         transform: Transform,
+    },
+    /// Set how a visual element composites over the layers beneath it (no-op for audio).
+    SetBlendMode {
+        reference: ElementRef,
+        blend_mode: BlendMode,
     },
     /// Add an effect to a visual element.
     AddEffect {
@@ -160,6 +165,7 @@ pub enum CommandKind {
     RenameElement,
     SetTextContent,
     SetTransform,
+    SetBlendMode,
     AddEffect,
     RemoveEffect,
     ToggleEffect,
@@ -209,6 +215,10 @@ pub(crate) enum ProjectPatch {
     SetElementTransform {
         reference: ElementRef,
         transform: Transform,
+    },
+    SetElementBlendMode {
+        reference: ElementRef,
+        blend_mode: BlendMode,
     },
     AddEffect {
         reference: ElementRef,
@@ -369,6 +379,22 @@ impl ProjectPatch {
                         }
                     }
                     None => ProjectPatch::Noop, // audio has no transform
+                },
+                None => ProjectPatch::Noop,
+            },
+            ProjectPatch::SetElementBlendMode {
+                reference,
+                blend_mode,
+            } => match scene.element_mut(&reference) {
+                Some(element) => match element.blend_mode() {
+                    Some(previous) => {
+                        element.set_blend_mode(blend_mode);
+                        ProjectPatch::SetElementBlendMode {
+                            reference,
+                            blend_mode: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop, // audio does not composite
                 },
                 None => ProjectPatch::Noop,
             },
@@ -718,6 +744,22 @@ impl Command {
                     forward: vec![ProjectPatch::SetElementTransform {
                         reference: reference.clone(),
                         transform: *transform,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetBlendMode {
+                reference,
+                blend_mode,
+            } => {
+                // Only visual elements composite.
+                scene.element(reference).and_then(|e| e.blend_mode())?;
+                Some(Lowered {
+                    kind: CommandKind::SetBlendMode,
+                    forward: vec![ProjectPatch::SetElementBlendMode {
+                        reference: reference.clone(),
+                        blend_mode: *blend_mode,
                     }],
                     selection_patch: None,
                 })

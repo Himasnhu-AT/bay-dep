@@ -25,8 +25,8 @@ mod settings;
 mod track;
 
 pub use element::{
-    AnimationChannel, AudioElement, Effect, Element, ElementKind, ImageElement, Keyframe,
-    TextElement, Transform, VideoElement,
+    AnimationChannel, AudioElement, BlendMode, Effect, Element, ElementKind, ImageElement,
+    Keyframe, TextElement, Transform, VideoElement,
 };
 pub use project::{MediaAsset, Project, ProjectMetadata};
 pub use refs::ElementRef;
