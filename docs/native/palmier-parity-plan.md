@@ -51,7 +51,7 @@ presentation mapping; the wgpu stack has a **complete, GPU-tested 17-mode WGSL b
 unreachable dead code because `opencut-preview` hardcodes `BlendMode::Normal` (lib.rs:346) and
 `mask: None` (lib.rs:348). Our `MediaTime` (i64 ticks at 120 000/s) plus rational `Fps` is a better
 time model than palmier's `Int` frames, our patch-based undo is cleaner than their whole-timeline
-snapshot swap, and `apps/web` gives us a second mature implementation to port from that palmier does
+snapshot swap, and `dep/apps/web` gives us a second mature implementation to port from that palmier does
 not have — including a bezier/tangent keyframe model **strictly richer** than palmier's three modes.
 The blocking problem is not missing features: it is that **the data model cannot describe a video
 editor**. `Transform` has one uniform `scale`, so every non-16:9 source is stretched *right now*.
@@ -177,22 +177,22 @@ modifiers — palmier's `magnify()` has no equivalent), **any accessibility laye
 in `TextStyle`, **cursor repositioning** (so a scrub drag cannot warp the pointer), and **any
 component library at all** — every widget in §5 is ours to write.
 
-### 3.4 Port-from-apps/web policy
+### 3.4 Port-from-dep/apps/web policy
 
-`apps/web` is a real asset, but "port it" is a *logic* shortcut, not a *testing* shortcut. Two of the
+`dep/apps/web` is a real asset, but "port it" is a *logic* shortcut, not a *testing* shortcut. Two of the
 named targets are thinner than the audit implies. Honest verdicts:
 
 | Target | Location | Verdict |
 |---|---|---|
-| Bezier/tangent keyframe model | `apps/web/src/animation/{types,bezier}.ts` | **Port, with tests.** `linear \| hold \| bezier` with `CurveHandle{dt,dv}`, TangentMode, extrapolation modes — strictly richer than palmier's three modes. Solver tests come across |
-| Preview hit-test + element bounds | `apps/web/src/preview/{hit-test,element-bounds}.ts` | **Port.** `pointInRotatedRect` is a ~20-line direct translation. **Invert the z-order rule** — our topmost is the *last* overlay element |
-| Preview coordinate mapping | `apps/web/src/preview/preview-coords.ts` | **Port.** `screenPixelsToLogicalThreshold` is the piece people forget: handle hit slop must be constant in *screen* px |
-| Canvas snapping guides | `apps/web/src/preview/preview-snap.ts` (539 lines) | **Port** |
-| Audio mastering (dB scale, −1 dBFS limiter) | `apps/web/src/media/audio-mastering.ts` | **Port.** `clampDb`, `dBToLinear`, `VOLUME_DB_MIN/MAX`, the limiter. Replaces the hard ±1 clamp at `opencut-audio/src/lib.rs:90-93` |
-| Audio scheduling model | `apps/web/src/media/audio-manager.ts` | **Port the design** (chunks against the audio clock, 2 s lookahead), not the code — the runtime is cpal/rodio's `Source` trait |
-| SRT/ASS subtitles | `apps/web/src/subtitles/` | **Port when captions land** — not this round |
-| Ripple range math | `apps/web/src/ripple/{diff,shift,apply}.ts` (373 lines) | **Port the range math when ripple lands (next round).** It has **no tests**; palmier's real added value is the validate-then-refuse pass, which apps/web lacks entirely |
-| Snapping | `apps/web/src/timeline/snapping` (93 lines) | **Do NOT port the algorithm.** `resolve.ts` is 29 lines of nearest-point search, `threshold.ts` is 15; no hysteresis, no multi-probe, no tests. **Take the `SnapPoint{time, kind, element_id, track_id}` shape and the source-registry idea; write the algorithm fresh in Rust** against palmier's documented behaviour (sticky 2.5× multiplier, per-target-kind thresholds, multi-probe). Budget the tests as new work |
+| Bezier/tangent keyframe model | `dep/apps/web/src/animation/{types,bezier}.ts` | **Port, with tests.** `linear \| hold \| bezier` with `CurveHandle{dt,dv}`, TangentMode, extrapolation modes — strictly richer than palmier's three modes. Solver tests come across |
+| Preview hit-test + element bounds | `dep/apps/web/src/preview/{hit-test,element-bounds}.ts` | **Port.** `pointInRotatedRect` is a ~20-line direct translation. **Invert the z-order rule** — our topmost is the *last* overlay element |
+| Preview coordinate mapping | `dep/apps/web/src/preview/preview-coords.ts` | **Port.** `screenPixelsToLogicalThreshold` is the piece people forget: handle hit slop must be constant in *screen* px |
+| Canvas snapping guides | `dep/apps/web/src/preview/preview-snap.ts` (539 lines) | **Port** |
+| Audio mastering (dB scale, −1 dBFS limiter) | `dep/apps/web/src/media/audio-mastering.ts` | **Port.** `clampDb`, `dBToLinear`, `VOLUME_DB_MIN/MAX`, the limiter. Replaces the hard ±1 clamp at `opencut-audio/src/lib.rs:90-93` |
+| Audio scheduling model | `dep/apps/web/src/media/audio-manager.ts` | **Port the design** (chunks against the audio clock, 2 s lookahead), not the code — the runtime is cpal/rodio's `Source` trait |
+| SRT/ASS subtitles | `dep/apps/web/src/subtitles/` | **Port when captions land** — not this round |
+| Ripple range math | `dep/apps/web/src/ripple/{diff,shift,apply}.ts` (373 lines) | **Port the range math when ripple lands (next round).** It has **no tests**; palmier's real added value is the validate-then-refuse pass, which dep/apps/web lacks entirely |
+| Snapping | `dep/apps/web/src/timeline/snapping` (93 lines) | **Do NOT port the algorithm.** `resolve.ts` is 29 lines of nearest-point search, `threshold.ts` is 15; no hysteresis, no multi-probe, no tests. **Take the `SnapPoint{time, kind, element_id, track_id}` shape and the source-registry idea; write the algorithm fresh in Rust** against palmier's documented behaviour (sticky 2.5× multiplier, per-target-kind thresholds, multi-probe). Budget the tests as new work |
 
 ### 3.5 Cut list — what we are explicitly not building
 
@@ -233,7 +233,7 @@ audit or an earlier design output, it says so.
 |---|---|---|---|
 | 1 | Does GPUI have a scroll container? (brief: no / IA: yes, verified) | **Yes it does.** Use `overflow_y_scroll` + `uniform_list` for the media panel and inspector; **own `scroll_x`/`scroll_y` in view state for the timeline** | Cursor-anchored zoom, scroll-to-playhead and edge auto-scroll all need to *write* the offset in the frame they *read* it, across three synchronized regions. Fighting a scroller that mutates its own offset in prepaint is strictly more code. Where we gain nothing from ownership, take the built-in and get native inertia free. **M6 gets cheaper than the PM plan assumed** |
 | 2 | Text input: digits-only key state machine (PM M14) vs a real `TextField` (IA) | **Build one real `TextField` in M0**, adapted from `gpui/examples/input.rs` | Seven consumers across M0–M14 (media search, project rename, clip rename, numeric type-in, text content, folder naming, `W:H` parser). The `EntityInputHandler` path is IME-correct; a key buffer never will be. It also deletes the `key_context("TextEdit")` hack that currently disables **every** shortcut while typing |
-| 3 | Snapping: port from apps/web (PM M7) vs write fresh (interaction + QA) | **Write the algorithm fresh in Rust.** Take apps/web's `SnapPoint` shape and source-registry idea only | apps/web's `resolve.ts` is 29 lines of nearest-point search with no hysteresis, no multi-probe and **no tests**. The audit slightly oversold it. The behaviours we actually want (sticky 2.5×, per-kind thresholds, multi-probe over every selected clip's start *and* end) come from palmier |
+| 3 | Snapping: port from dep/apps/web (PM M7) vs write fresh (interaction + QA) | **Write the algorithm fresh in Rust.** Take dep/apps/web's `SnapPoint` shape and source-registry idea only | dep/apps/web's `resolve.ts` is 29 lines of nearest-point search with no hysteresis, no multi-probe and **no tests**. The audit slightly oversold it. The behaviours we actually want (sticky 2.5×, per-kind thresholds, multi-probe over every selected clip's start *and* end) come from palmier |
 | 4 | Where does the keyframe lane live? (inspector, per palmier / timeline, per IA) | **Timeline**, as expandable sub-lanes under the clip's track. The inspector keeps only the per-row stamp + `‹ ›` nav | A keyframe lane needs a time axis. Putting one in a 320 px inspector means a *second* ruler, a second px↔ticks mapping, a second zoom and a second scroll offset — two sources of truth for "where is time" in an app whose whole job is time. It also inherits the snap engine free. **Consequence: M14b gains a dependency on M6** |
 | 5 | GPUI drag API vs hand-rolled mouse drags | **Both, split by gesture.** GPUI `on_drag`/`on_drop`/`can_drop` for cross-surface drags (media tile → lane, Finder → window, track header reorder). Hand-rolled root `on_mouse_move`/`on_mouse_up` for in-timeline clip gestures | Cross-surface drags get free ghost rendering, free hit-testing across panels and free type checking. In-timeline gestures need Esc-cancel, a 4 px threshold, live plan preview and edge auto-scroll — GPUI's drag owns the pointer and offers no cancel hook. **Verify early**: a GPUI drag that must also auto-scroll needs a `request_animation_frame` pump alongside it |
 | 6 | Failure surface: timeline gutter notices (interaction) vs status bar + toasts (IA) | **One `Notifications` model, two surfaces**: a 24 px status bar (persistent jobs, current hint) and a bottom-right toast stack (transient + sticky errors). Drop the gutter variant | A third surface fragments the code and the user's attention. Drag-time *refusals* still render inline (red edge on the offending lane + badge) because they are spatial; everything else is a toast or a status row. The status bar is also where export progress must live for "export while you keep editing" to be possible |
@@ -311,7 +311,7 @@ the px↔time↔frame math exists once, pure and tested.
   `key_context("TextEntry")`.
 - `cx.set_menus` renders vii / File / Edit / Clip / Sequence / View / Window / Help. A test asserts no
   duplicate chord within a `key_context`, that every `ActionDef` has a label and group, and that the
-  table serializes to `fixtures/golden/native/keybindings/default.json` (mirror of the existing web-side golden).
+  table serializes to `dep/fixtures/golden/native/keybindings/default.json` (mirror of the existing web-side golden).
 - Every fallible or long-running op has a `notify()` path. Toasts: max 3 visible, info auto-dismiss at
   6 s, errors sticky with an action button. Status bar shows one row per background job with a
   working cancel.
@@ -395,7 +395,7 @@ relative paths and relink · multi-file import + name search (the two cheap slic
   until it returns. Rotation is recorded even though it is out of scope to *apply* — dropping it
   silently would make M3's natural-size work wrong for phone footage.
 - `parse_ffprobe_json(&str) -> MediaMetadata` is pure, tested against committed fixtures under
-  `fixtures/golden/native/ffprobe/` covering: mp4 with audio, mp4 without audio, mov with a rotation
+  `dep/fixtures/golden/native/ffprobe/` covering: mp4 with audio, mp4 without audio, mov with a rotation
   matrix, VFR, mp3, png, and a corrupt/empty file. Each fixture records the producing ffmpeg version.
 - Adding a 3-minute file creates a 3-minute element with `trim_end == source duration`. The
   `MediaTime::from_ticks(TICKS_PER_SECOND * 4)` hardcode at `editor_view.rs:564` is gone.
@@ -641,7 +641,7 @@ snapping toggle · drag threshold and Esc-cancel.
   frame); multi-probes every selected clip's start **and** end simultaneously; per-target-kind
   thresholds (playhead 1.5×); sticky until the **raw** cursor moves 2.5× the threshold away, with the
   hysteresis state living in the drag; returns `{ snapped_time, indicator_px, target_kind }`.
-- Written fresh in Rust (§3.6/#3), taking apps/web's `SnapPoint` shape and cross-checked against
+- Written fresh in Rust (§3.6/#3), taking dep/apps/web's `SnapPoint` shape and cross-checked against
   palmier's sticky multiplier and multi-probe behaviour. Tests are new work.
 - A snap indicator renders during move, trim-left and trim-right drags as a **1 px full-timeline-height
   line in a dedicated `snap_guide` role (white)** — never the playhead accent — with a 6 px cap glyph
@@ -766,7 +766,7 @@ and fade.
   clip boundary so cuts stop clicking.
 - `Track` gains `volume` and `solo`; `Project` gains a master gain. **ONE** pure mix path composes
   clip gain × fade × track gain × solo/mute × master — no second code path.
-- A −1 dBFS master limiter ported from `apps/web/src/media/audio-mastering.ts` replaces the hard ±1
+- A −1 dBFS master limiter ported from `dep/apps/web/src/media/audio-mastering.ts` replaces the hard ±1
   clamp at `opencut-audio/src/lib.rs:90-93`. Unit tests over synthetic buffers assert no output sample
   exceeds the ceiling and that `clampDb`/`dBToLinear` round-trip.
 - Keyframed gain is sampled on the **same clock the mixer runs on**. Land that sampling API here even
@@ -905,7 +905,7 @@ it, and zoom/pan the canvas.
   strokes below 100 %.
 - Drag snapping to canvas edges and centre with full-height/full-width guides in **magenta `#ff4dd2`**
   (the Figma convention, and distinct from both the red playhead and every clip hue), ported from
-  `apps/web/src/preview/preview-snap.ts`, skipped when the clip is rotated.
+  `dep/apps/web/src/preview/preview-snap.ts`, skipped when the clip is rotated.
 - Viewer drags are throttled to the animation frame and use the scrub quality tier — with CPU readback,
   every live drag frame is a full render plus readback.
 
@@ -975,7 +975,7 @@ itself around what is actually selected.
   circle = linear (the Premiere/AE convention). Ship three static SVGs; do **not** rotate a square,
   because `svg().with_transformation()` does not rotate the hitbox.
 - `Keyframe` gains an easing field; `AnimationChannel::sample` supports `linear | hold | bezier` with
-  `CurveHandle{dt,dv}`, ported from `apps/web/src/animation` with its solver tests carried over.
+  `CurveHandle{dt,dv}`, ported from `dep/apps/web/src/animation` with its solver tests carried over.
 - `view_model` exposes a `SelectionSummary` where every field is `Field<T> = Uniform(T) | Mixed | Absent`
   instead of `ElementInfo` built from `selection().first()`. `Mixed` renders "—" and writing it applies
   to **all** selected; `Absent` hides the row. The fold is order-independent and unit-tested.
@@ -1567,7 +1567,7 @@ Written into `AGENTS.md` so it is enforceable in review.
 |---|---|---|
 | T1 | Pure unit | `#[cfg(test)] mod tests` inline (existing style: `view_model.rs`, `effects/src/pipeline.rs`) |
 | T2 | Pure integration / cross-module | `crates/<c>/tests/<topic>.rs` (existing style: `opencut-core/tests/editor.rs`) |
-| T3 | Golden / snapshot | `crates/<c>/tests/golden_<topic>.rs`, data in `fixtures/golden/native/<topic>/`, regenerated with `CAPTURE_GOLDEN=1` |
+| T3 | Golden / snapshot | `crates/<c>/tests/golden_<topic>.rs`, data in `dep/fixtures/golden/native/<topic>/`, regenerated with `CAPTURE_GOLDEN=1` |
 | T4 | Capability (real GPU / real ffmpeg) | `crates/<c>/tests/<topic>_gpu.rs` or `_ffmpeg.rs`, gated skip helper |
 | T5 | Benchmarks | `crates/<c>/benches/` (criterion) and `rust/crates/bench` (`vii-bench`) — never in CI |
 
@@ -1589,7 +1589,7 @@ without reading — worse than no test.
 | Tier | What | GPU? | Use for |
 |---|---|---|---|
 | **A** | Invariant assertions, no golden file | yes | "an opaque Normal full-frame layer reproduces its source colour within ±1"; "pixels outside the content rect equal the background exactly"; "a 9:16 project in a 16:9 buffer has exactly N letterbox columns". Self-describing, never regenerated. **The majority.** |
-| **C** | `FrameDescriptor` JSON goldens | **no** | **The default for scene-level correctness.** Serialize `scene_to_frame()` output for curated scenes to `fixtures/golden/native/descriptor/<case>.json`, assert byte-equality. Catches wrong layer w/h, `blend_mode` still Normal, `mask: None` when a mask was set, missing/reordered effect passes, wrong z-order, missing letterbox, wrong keyframe sample. Runs on every machine, readable in a PR diff, zero flake by construction |
+| **C** | `FrameDescriptor` JSON goldens | **no** | **The default for scene-level correctness.** Serialize `scene_to_frame()` output for curated scenes to `dep/fixtures/golden/native/descriptor/<case>.json`, assert byte-equality. Catches wrong layer w/h, `blend_mode` still Normal, `mask: None` when a mask was set, missing/reordered effect passes, wrong z-order, missing letterbox, wrong keyframe sample. Runs on every machine, readable in a PR diff, zero flake by construction |
 | **B** | Perceptual pixel goldens, 160×90 PNG | yes | Small and curated (~10–15 cases + ~3 per effect). Only for what pixels alone can prove: the shader itself, blend maths, feather falloff, colour space |
 
 **Tier B metric — both must pass.** (i) *localized*: count pixels whose max channel delta > 8; fail if
@@ -1623,7 +1623,7 @@ diff isolated from the diff that caused it.
 
 | Area | Approach |
 |---|---|
-| **Project model / schema** (highest consequence, currently unguarded) | `migrate.rs` chain (`decode(json) -> Result<Project, LoadError>` walking vN→vN+1), mirroring the web app's v0..v31 chain. (1) **Migration goldens**: `fixtures/golden/native/projects/v<N>.json` per version, captured from a *rich* seed; a test loads every committed vN, migrates to current, and asserts a structural summary (element count, per-element start/duration/trim, sampled transform at 3 playhead positions). The capture test **asserts the seed is rich** — every `Element` variant, every registered effect, ≥1 animated channel per animatable property — failing with "add the new field to the golden seed". (2) Round-trip equality + "unknown future version → `LoadError::UnsupportedVersion`, not a silent no-op". (3) Atomic write: an interrupted save leaves the original byte-identical |
+| **Project model / schema** (highest consequence, currently unguarded) | `migrate.rs` chain (`decode(json) -> Result<Project, LoadError>` walking vN→vN+1), mirroring the web app's v0..v31 chain. (1) **Migration goldens**: `dep/fixtures/golden/native/projects/v<N>.json` per version, captured from a *rich* seed; a test loads every committed vN, migrates to current, and asserts a structural summary (element count, per-element start/duration/trim, sampled transform at 3 playhead positions). The capture test **asserts the seed is rich** — every `Element` variant, every registered effect, ≥1 animated channel per animatable property — failing with "add the new field to the golden seed". (2) Round-trip equality + "unknown future version → `LoadError::UnsupportedVersion`, not a silent no-op". (3) Atomic write: an interrupted save leaves the original byte-identical |
 | **Undo / transactions** | `assert_timeline_valid(&Scene)`: no overlaps within a track, every duration > 0, `trim_start < trim_end` and within source bounds, `start >= 0`, no duplicate ids, keyframe times within `[0, duration]` — asserted after **every** command in every timeline test. Plus a **proptest** harness: 1..50 random commands weighted toward destructive ones (ripple delete, overwrite move, cross-track drag, split, multi-select move), built from *live* state (real refs, real tracks, in-range starts); execute all, validate after each; undo all and assert the serialized state is byte-equal to the initial snapshot; redo all and assert equality with the post-execute snapshot. `EditorState` already derives `Serialize + Clone` and `serde_json` is already a dev-dep, so snapshot-by-serialization is free. Take proptest specifically for **shrinking** — a failing 47-command sequence with no shrinker is an unreadable artifact. The harness asserts a floor (≥60 % of generated commands returned `true` from `execute`) so a degenerate generator fails loudly instead of vacuously |
 | **Interactions GPUI cannot test** | Every gesture is a pure reducer in `opencut-ui/src/interaction/`: `enum PointerEvent { Down/Move/Up/Key/Cancel }`, `enum Outcome { None, Preview(PreviewState), Commit(Vec<Command>), Cancelled }`, `fn handle(&mut self, ev, geom: &TimelineGeometry, editor: &Editor) -> Outcome`. The view does exactly two things: translate the GPUI event, and match the `Outcome`. Tests drive whole gestures as event sequences against a real `Editor` and assert both the commands and the intermediate preview — no window, no GPU. `interaction/` contains **no `use gpui`**, enforced by the same grep meta-test. `TimelineGeometry` is a plain **value** constructed per frame and passed in — never a reference back into the view; if that slips and the reducer holds a `WeakEntity`, the seam is dead |
 | **Audio** | Block-size invariance · null test · envelope correctness at sample resolution (a 0.5 s fade-in is exactly −6 dB at midpoint, gain composes clip × fade × track × master in that order) · preview == export byte-identical · injected-clock transport drift · meter ballistics as a pure state machine (−60 dB floor, 24 dB/s level decay, 18 dB/s peak decay, 1.5 s hold, sticky clip latch). Real-time constraint asserted, not hoped: a 512-frame block at 48 kHz with 8 clips has a hard p99 budget of 0.5 ms |
@@ -1738,8 +1738,8 @@ reducers, action table), ~20 in `opencut-preview` (scene_to_frame + descriptor g
 policy, export argv, probe parsing), ~15 in `opencut-audio` (graph, block invariance, meter), plus ~15
 Tier-B pixel goldens and ~5 gated capability tests.
 
-Budget explicitly for the fact that **apps/web's ripple (373 lines) and snapping (93 lines) have no
-tests** — "port from apps/web" is a logic shortcut, never a testing one.
+Budget explicitly for the fact that **dep/apps/web's ripple (373 lines) and snapping (93 lines) have no
+tests** — "port from dep/apps/web" is a logic shortcut, never a testing one.
 
 Keep it fast: GPU and ffmpeg tiers are a small minority by design; proptest defaults to 64 cases (raise
 via env in a nightly run, not per-PR); `cargo test --workspace` excluding T4 should stay **under 30

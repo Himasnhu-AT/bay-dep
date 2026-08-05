@@ -2,14 +2,14 @@
 
 [Plan](plan.md) · [Phase 0 progress](phase-0-progress.md)
 
-The native GPUI editor (`apps/desktop`, binary `opencut`) is built from small crates, each with a
+The native GPUI editor (`rust/desktop`, binary `opencut`) is built from small crates, each with a
 single responsibility, so the domain model, the editing engine, and the UI evolve independently
 and stay testable.
 
 ## Crate graph
 
 ```
-apps/desktop (opencut-desktop)      thin binary — just `opencut_ui::run()`
+rust/desktop (opencut-desktop)      thin binary — just `opencut_ui::run()`
         │
         ▼
 opencut-ui        GPUI views: toolbar, media panel, preview, inspector, timeline.

@@ -30,7 +30,7 @@ import type { ProjectRecord } from "@/services/storage/migrations/transformers/t
 function repoRoot(): string {
 	let dir = dirname(fileURLToPath(import.meta.url));
 	for (let i = 0; i < 12; i += 1) {
-		if (existsSync(resolve(dir, "Cargo.toml")) && existsSync(resolve(dir, "apps"))) {
+		if (existsSync(resolve(dir, "pnpm-workspace.yaml")) && existsSync(resolve(dir, "fixtures"))) {
 			return dir;
 		}
 		dir = dirname(dir);

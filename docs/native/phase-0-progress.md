@@ -13,14 +13,14 @@ Living status of the Phase-0 de-risk spikes. Updated as tasks land.
 | **P0-GPU-03** — Compositor → native winit/wgpu window | ✅ built | `native-preview` bin drives the unmodified `Compositor::render_frame` to a window surface; compiles clean. On-screen present is user-runnable (`cargo run -p native-preview`). |
 | **P0-ARCH-01** — Owned-Editor + Command-enum + EventBus borrow model | ✅ done | `rust/crates/opencut-core`; 8 tests prove execute/undo/redo, `selectionOverride` semantics, one-event-per-command; zero `Arc`/`RwLock`/`RefCell`. |
 | P0-GPU-04 — GPUI↔wgpu interop GO/NO-GO | 🔜 reframed | See finding below — premise changed from wgpu-sharing to blade↔wgpu. |
-| P0-GPU-05 — GPUI sourcing + Tauri fallback | 🔜 next | crates.io GPUI 0.2.2 already vendored in `apps/desktop`; blade backend confirmed. |
-| **P0-ARCH-02** — golden-fixture capture tooling | 🟡 core done | Migration chain v0→v31 + keybindings captured headlessly & deterministically to `fixtures/golden/`; a vitest spec is both the capture command and a drift guard. Descriptor/media-probe/audio-mix are browser-only — documented for in-app capture. |
+| P0-GPU-05 — GPUI sourcing + Tauri fallback | 🔜 next | crates.io GPUI 0.2.2 already vendored in `rust/desktop`; blade backend confirmed. |
+| **P0-ARCH-02** — golden-fixture capture tooling | 🟡 core done | Migration chain v0→v31 + keybindings captured headlessly & deterministically to `dep/fixtures/golden/`; a vitest spec is both the capture command and a drift guard. Descriptor/media-probe/audio-mix are browser-only — documented for in-app capture. |
 | P0-MED-* / P0-TXT-* | ⬜ not started | — |
 
 ## What landed
 
 ### Single-lock workspace (P0-GPU-01)
-- The repo-root `Cargo.toml` already declared the workspace (`apps/desktop`, all `rust/crates/*`, `rust/wasm`). Added a `[workspace.dependencies]` block pinning **`wgpu = "=29.0.1"`** (plus `bytemuck`, `thiserror`, `serde`), and switched `gpu`, `effects`, `masks`, `compositor` to `{ workspace = true }`. One `=`-pinned constraint now single-sources the wgpu major so a stray `cargo update` can't split it, and any future GPU crate must align to it.
+- The repo-root `Cargo.toml` already declared the workspace (`rust/desktop`, all `rust/crates/*`, `rust/wasm`). Added a `[workspace.dependencies]` block pinning **`wgpu = "=29.0.1"`** (plus `bytemuck`, `thiserror`, `serde`), and switched `gpu`, `effects`, `masks`, `compositor` to `{ workspace = true }`. One `=`-pinned constraint now single-sources the wgpu major so a stray `cargo update` can't split it, and any future GPU crate must align to it.
 - `rust/wasm` (the published `opencut-wasm`) stays a member and still checks clean for `wasm32-unknown-unknown` against the frozen deps.
 
 ### Native texture I/O (P0-GPU-02)
@@ -55,13 +55,13 @@ grows new fields (scenes, timeline, playback…) and each manager becomes anothe
 module + `Command` variants; the event/undo plumbing does not change.
 
 ### Golden-fixture capture (P0-ARCH-02)
-`fixtures/golden/` — provenance-correct reference data captured from the real web code (never
-hand-authored), for the native migration-/descriptor-parity suites. See `fixtures/golden/README.md`.
+`dep/fixtures/golden/` — provenance-correct reference data captured from the real web code (never
+hand-authored), for the native migration-/descriptor-parity suites. See `dep/fixtures/golden/README.md`.
 - **Migration chain v0→v31** (`migrations/v0.json … v31.json` + `_manifest.json`): a v0 seed
   (`{id,name}`) threaded through all 31 real migrations; full chain runs with **no skips**, ends at
   `version: 31`. Deterministic (frozen clock `2020-01-01Z` + counter UUIDs).
 - **Default keybindings** (`keybindings/default.json`): 25 defaults via `serializeKeybindingsState`.
-- Captured by `apps/web/.../migrations/__tests__/golden-fixtures.test.ts` — the **same spec is the
+- Captured by `dep/apps/web/.../migrations/__tests__/golden-fixtures.test.ts` — the **same spec is the
   capture command** (`CAPTURE_GOLDEN=1 vitest run …`) **and a drift guard** (plain run asserts the
   code still reproduces the committed fixtures byte-for-byte; tamper → fail, verified). Full web
   suite stays green: 38 files / 222 passed / 3 skipped.

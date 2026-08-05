@@ -43,12 +43,12 @@ Define Project/ProjectSettings/Background/Scene/Bookmark/SceneTracks and the 5 t
 > **Test gate:** Golden roundtrip: a captured real v31 project JSON deserializes and re-serializes to JSON-value equality (proves enum tags, optional-field elision, i64 ticks).
 
 #### `P1-FND-02` — Params registry + color model (FOUNDATIONAL)
-Port apps/web/src/params: ParamDefinition/ParamValue, buildDefaultParamValues, and parseColorToLinearRgba/formatLinearRgba. This is the single source of the shared value type that animation, effects, masks, graphics, gradients, and text all reference; it MUST land before them.
+Port dep/apps/web/src/params: ParamDefinition/ParamValue, buildDefaultParamValues, and parseColorToLinearRgba/formatLinearRgba. This is the single source of the shared value type that animation, effects, masks, graphics, gradients, and text all reference; it MUST land before them.
 
 > **Test gate:** Unit: buildDefaultParamValues seeds every element/effect/mask/graphic default; color parse/format round-trips linear RGBA against captured web values (gamma/clamp/hex-format exact).
 
 #### `P1-FND-03` — fps utils
-Port apps/web/src/fps: frameRateToFloat, standard-rate snapping/tolerance, detect-fps-from-asset, getRaisedProjectFpsForImportedMedia, presets/defaults — the shared module consumed by placement, export framecount, ruler, and the project fps-ratchet.
+Port dep/apps/web/src/fps: frameRateToFloat, standard-rate snapping/tolerance, detect-fps-from-asset, getRaisedProjectFpsForImportedMedia, presets/defaults — the shared module consumed by placement, export framecount, ruler, and the project fps-ratchet.
 
 > **Test gate:** Property: getRaisedProjectFpsForImportedMedia never lowers fps and matches web output; unit tests for rate snapping across 24/25/30/29.97/60.
 
@@ -258,7 +258,7 @@ Reuse the JFA-SDF crate against a native adapter (remove wasm gating), fed the a
 > **Test gate:** Golden: feathered circle alpha ramp width + radial symmetry; unit: seed codec roundtrip incl. no-seed sentinel; unit: step count == ceil(log2(max(w,h))); perf: full JFA on 4K within budget.
 
 #### `P1-GFX-01` — graphics-definitions registry
-Completeness-critic addition: port apps/web/src/graphics — DefinitionRegistry, rectangle/ellipse/polygon/star GraphicDefinition.render as kurbo BezPath fill/stroke, default-instance builders, stroke handling, and resolveGraphicElementParamsAtTime (called every frame by resolve).
+Completeness-critic addition: port dep/apps/web/src/graphics — DefinitionRegistry, rectangle/ellipse/polygon/star GraphicDefinition.render as kurbo BezPath fill/stroke, default-instance builders, stroke handling, and resolveGraphicElementParamsAtTime (called every frame by resolve).
 
 > **Test gate:** Golden: each shape at 512px vs reference PNG; unit: default-instance param seeding; unit: resolveGraphicElementParamsAtTime returns animated values at sampled times.
 
@@ -356,7 +356,7 @@ Replace the class hierarchy with a RenderNode enum; build_scene walks SceneTrack
 > **Test gate:** Unit: node order bottom-to-top main-last + sorted; unit: Color adds one node, transparent none, Blur adds BlurBackground; unit: hidden/absent-media skipped; golden: serialized RenderNode tree vs committed snapshot (zero GPU).
 
 #### `P1-RND-02` — Preview geometry (hit-test/bounds/coords/snap)
-Port apps/web/src/preview pure math into core: point-in-rotated-rect, hit stack, visible-element bounds (contain-scale + text visualRect via P1-TXT-02), handle positions, screen/canvas/overlay transforms, snapScale/Axes/Rotation + snap lines; Rect replaces DOMRect; shared by resolve overlays and the Phase 3 interaction layer.
+Port dep/apps/web/src/preview pure math into core: point-in-rotated-rect, hit stack, visible-element bounds (contain-scale + text visualRect via P1-TXT-02), handle positions, screen/canvas/overlay transforms, snapScale/Axes/Rotation + snap lines; Rect replaces DOMRect; shared by resolve overlays and the Phase 3 interaction layer.
 
 > **Test gate:** Property: inverse-rotation hit roundtrip; unit: hit stack == draw order + preferred-hit selected; property: coord roundtrip within eps; unit: 90° rotation snap; unit: bounds vs reference for asymmetric scale+rotation.
 

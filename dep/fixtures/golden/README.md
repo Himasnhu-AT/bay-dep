@@ -1,4 +1,4 @@
-# Golden fixtures (`fixtures/golden/`)
+# Golden fixtures (`dep/fixtures/golden/`)
 
 Provenance-correct reference data captured from the **web** app, consumed by the **native**
 Rust port's tests (Phase 1 migration-parity / descriptor-parity suites). These are *captured
@@ -11,11 +11,11 @@ from the real code*, never hand-authored — see the capture command for each be
 
 | Path | Source | Capture |
 |------|--------|---------|
-| `migrations/v0.json … v31.json` | The real project migration chain (`apps/web/src/services/storage/migrations`) threaded from a v0 seed through every step | vitest, below |
+| `migrations/v0.json … v31.json` | The real project migration chain (`dep/apps/web/src/services/storage/migrations`) threaded from a v0 seed through every step | vitest, below |
 | `migrations/_manifest.json` | Per-step `{from,to,skipped,reason}` record of the chain run | vitest, below |
 | `keybindings/default.json` | `serializeKeybindingsState({ keybindings: getDefaultShortcuts(), isCustomized:false })` | vitest, below |
 
-**Capture / re-capture command** (from `apps/web`):
+**Capture / re-capture command** (from `dep/apps/web`):
 ```bash
 CAPTURE_GOLDEN=1 pnpm exec vitest run \
   src/services/storage/migrations/__tests__/golden-fixtures.test.ts
@@ -50,26 +50,26 @@ Web Audio, and a `CanvasRenderer`/GPU at module load. Capture these from the **r
 
 ### `descriptor/` — FrameDescriptor scene golden
 The Rust compositor's `FrameDescriptor` counterpart. Source: `buildFrameDescriptor({ node, renderer })`
-in `apps/web/src/services/renderer/compositor/frame-descriptor.ts`, fed by `buildScene(...)`
+in `dep/apps/web/src/services/renderer/compositor/frame-descriptor.ts`, fed by `buildScene(...)`
 (`scene-builder.ts`) + `resolveRenderTree({ node, renderer, time })` (`resolve.ts`). Needs a live
 `CanvasRenderer` and decoded sources, so it runs during a real preview/export.
 - Capture: in the running editor with a scene loaded, obtain the preview renderer's built root
   node and call `buildFrameDescriptor`, then `JSON.stringify(frame)` (the `frame` half is
   serializable; the `textures` half carries `CanvasImageSource`/`draw` callbacks — drop it or
   record only `{id,width,height,kind}`). Save as `descriptor/<sceneName>@<timeMs>.json`.
-- Schema: `apps/web/src/services/renderer/compositor/types.ts` (`FrameDescriptor`), mirrored in
+- Schema: `dep/apps/web/src/services/renderer/compositor/types.ts` (`FrameDescriptor`), mirrored in
   Rust at `rust/crates/compositor/src/frame.rs`.
 
 ### `media-probe/` — media-probe table
-Source: `readVideoFile({ file })` in `apps/web/src/media/mediabunny.ts` (WebCodecs). Persisted shape:
-`MediaAssetData` in `apps/web/src/services/storage/types.ts` (`{id,name,type,size,lastModified,
+Source: `readVideoFile({ file })` in `dep/apps/web/src/media/mediabunny.ts` (WebCodecs). Persisted shape:
+`MediaAssetData` in `dep/apps/web/src/services/storage/types.ts` (`{id,name,type,size,lastModified,
 width?,height?,duration?,fps?,hasAudio?,codec?}`).
 - Capture: import a known test clip in the app, read the resulting `MediaAsset`/`MediaAssetData`
   from the media store, and save the array as `media-probe/<clip>.json`.
 
 ### `audio-mix/` — audio-mix reference buffer
 Source: `createTimelineAudioBuffer({ tracks, mediaAssets, duration, sampleRate })` in
-`apps/web/src/media/audio.ts` (OfflineAudioContext).
+`dep/apps/web/src/media/audio.ts` (OfflineAudioContext).
 - Capture: run it for a small known scene, then serialize the resulting `AudioBuffer` to a compact
   reference — `{ sampleRate, length, numberOfChannels, channels: number[][] }` (or a WAV) — as
   `audio-mix/<scene>.json`. Keep the scene tiny; these files are large.

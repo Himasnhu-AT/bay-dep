@@ -22,7 +22,7 @@ Both scripts skip installation if Rust is already present. On Linux/macOS/WSL on
 
 ```bash
 # Linux / macOS / WSL
-./apps/desktop/script/setup
+./rust/desktop/script/setup
 ```
 
 ```powershell

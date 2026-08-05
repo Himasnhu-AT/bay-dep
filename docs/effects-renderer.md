@@ -2,9 +2,9 @@
 
 ## How to add a new effect
 
-1. Create a new file in `apps/web/src/lib/effects/definitions/` (e.g. `brightness.ts`)
+1. Create a new file in `dep/apps/web/src/lib/effects/definitions/` (e.g. `brightness.ts`)
 2. Export an `EffectDefinition` — see `blur.ts` as a reference
-3. Register it in `apps/web/src/lib/effects/definitions/index.ts`
+3. Register it in `dep/apps/web/src/lib/effects/definitions/index.ts`
 
 An effect definition has:
 - `type` — unique string identifier
@@ -56,7 +56,7 @@ This handles the `buildPasses` vs static `passes` dispatch automatically.
 
 ### Pipeline
 
-Linear effect chains go through `gpuRenderer.applyEffect()` in `apps/web/src/services/renderer/gpu-renderer.ts`.
+Linear effect chains go through `gpuRenderer.applyEffect()` in `dep/apps/web/src/services/renderer/gpu-renderer.ts`.
 
 TypeScript resolves `EffectPass[]` from effect definitions. Each pass contains:
 - `shader` — a stable identifier such as `"gaussian-blur"`

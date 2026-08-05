@@ -18,7 +18,7 @@ lives so implementation is grounded, not guesswork:
 3. **More text + effects** — extend text elements and the effects system.
 4. **Save effects as motion graphics** — persist effect/animation presets ("motion graphics").
 5. **Test coverage** for all of the above.
-6. **Desktop version?** — determine what the `apps/desktop` target actually is here.
+6. **Desktop version?** — determine what the `rust/desktop` target actually is here.
 
 ---
 

@@ -11,12 +11,12 @@
 
 ### 1.1 The headline finding: CI does not actually run the tests — **HIGH, genuine concern**
 
-The repo ships **30 colocated test files** under `apps/web/src/**/__tests__/`, but the CI workflow
+The repo ships **30 colocated test files** under `dep/apps/web/src/**/__tests__/`, but the CI workflow
 `.github/workflows/bun-ci.yml` **never executes them**. Its final step is literally:
 
 ```yaml
 - name: Run tests
-  working-directory: apps/web
+  working-directory: dep/apps/web
   run: echo "No tests implemented yet"
   continue-on-error: true
 ```
@@ -48,7 +48,7 @@ resolution, curve/param evaluation. This is the right stuff to test first and is
 
 ### 1.3 The large untested surface — **HIGH, genuine concern (given ~91k LOC)**
 
-`apps/web/src` is **~91,028 LOC across ~152 `.tsx` components** and 0 of them have any test. Untested subsystems:
+`dep/apps/web/src` is **~91,028 LOC across ~152 `.tsx` components** and 0 of them have any test. Untested subsystems:
 - **Rendering pipeline** — `services/renderer/scene-builder.ts`, `resolve.ts`, `canvas-renderer.ts`,
   the whole `nodes/` scene-graph, `scene-exporter.ts`. No tests.
 - **WASM compositor bridge** — `services/renderer/compositor/wasm-compositor.ts`,
@@ -81,20 +81,20 @@ test path.
 
 Three different declarations coexist:
 - Root `package.json`: `"packageManager": "pnpm@11.13.0"`, and a root `workspaces` field (`apps/*`, `packages/*`).
-- `apps/web/package.json`: `"packageManager": "bun@1.2.18"` — still declares Bun.
+- `dep/apps/web/package.json`: `"packageManager": "bun@1.2.18"` — still declares Bun.
 - `pnpm-workspace.yaml`: globs `apps/*` **and `packages/*`**.
 - Test script: `"test": "bun test"` (Bun).
 
 Only `pnpm-lock.yaml` exists at root now (no `bun.lock`, no root `package-lock`). So the source of truth
-is pnpm, but `apps/web` still advertises Bun and the test path still requires it.
+is pnpm, but `dep/apps/web` still advertises Bun and the test path still requires it.
 
 ### 2.2 CI still assumes Bun end-to-end — **HIGH, genuine concern**
 
 `.github/workflows/bun-ci.yml` is entirely Bun-based even after the pnpm migration:
 - Installs Bun 1.2.18 via `oven-sh/setup-bun`.
-- Caches `~/.bun/install/cache` keyed on **`apps/web/bun.lock`** — a file that **no longer exists** in the
+- Caches `~/.bun/install/cache` keyed on **`dep/apps/web/bun.lock`** — a file that **no longer exists** in the
   repo (the migration left only `pnpm-lock.yaml`). The cache key will never hit.
-- `bun install` + `bun run build` in `apps/web`.
+- `bun install` + `bun run build` in `dep/apps/web`.
 - Does not run tests (§1.1).
 
 So CI is out of sync with the declared package manager: it installs with Bun against a missing lockfile,
@@ -104,7 +104,7 @@ builds. **Genuine concern**, cheap to fix.
 ### 2.3 `packages/*` is referenced but does not exist — **LOW, expected for stage**
 
 Both root `package.json` `workspaces` and `pnpm-workspace.yaml` glob `packages/*`, but there is **no
-`packages/` directory** (confirmed in repo map §1; shared code lives in `apps/web/src` and `rust/`). Harmless
+`packages/` directory** (confirmed in repo map §1; shared code lives in `dep/apps/web/src` and `rust/`). Harmless
 today (empty glob), but it signals an intended-but-unrealized shared-package extraction. Expected for a repo
 mid-refactor; worth deleting the glob until real packages land.
 
@@ -112,16 +112,16 @@ mid-refactor; worth deleting the glob until real packages land.
 
 `pnpm-workspace.yaml` includes an `allowBuilds` / `onlyBuiltDependencies` block with a comment
 "migrated from bun's trustedDependencies" (esbuild, onnxruntime-node, protobufjs, sharp, workerd,
-@tailwindcss/oxide). The pnpm side of the migration was done thoughtfully — but the CI + `apps/web`
+@tailwindcss/oxide). The pnpm side of the migration was done thoughtfully — but the CI + `dep/apps/web`
 package-manager field + the `bun:test` runner were left on Bun, so the migration is **half-complete**.
 
 ---
 
 ## 3. Desktop Gap
 
-### 3.1 `apps/desktop` is a 41-LOC stub — **not a concern, but a scope reality (expected)**
+### 3.1 `rust/desktop` is a 41-LOC stub — **not a concern, but a scope reality (expected)**
 
-`apps/desktop/src/main.rs` is **41 lines** (confirmed via `wc -l`): a GPUI `Application` that opens one
+`rust/desktop/src/main.rs` is **41 lines** (confirmed via `wc -l`): a GPUI `Application` that opens one
 1280×720 window rendering centered "OpenCut" text. **No editor logic, no WASM/crate wiring, ~0% of editor
 functionality.** Per `AGENTS.md` the intent is for desktop to eventually call the same Rust core, but today
 it is a skeleton. For queued feature goal #6 ("Desktop version?") the honest answer is: **there is no desktop
@@ -221,7 +221,7 @@ sync safety net. Expected for a privacy-first design, but a real user-facing ris
 
 ### 7.1 Marker sweep — **LOW, notably clean**
 
-A grep across `apps/web/src` and `rust` for `TODO/FIXME/HACK/XXX` found **exactly one** marker:
+A grep across `dep/apps/web/src` and `rust` for `TODO/FIXME/HACK/XXX` found **exactly one** marker:
 `changelog/components/changelog-notification.tsx:34` —
 `// TODO(v0.4): revert to the standard "null = first-time visitor, record silently"`.
 No `FIXME`/`HACK`/`XXX` anywhere. For a ~91k-LOC codebase this is **unusually clean** and speaks well of
@@ -266,5 +266,5 @@ assertions about migration *skip semantics*, not skipped tests). The suite is fu
 
 **Bottom line:** the codebase itself is clean and its *pure* logic is well-tested; the real, actionable debt
 is a **test/tooling delivery gap** — CI doesn't run the tests it has, the pnpm migration left CI + the test
-runner + `apps/web` on Bun, and the entire render/WASM/GPU/component surface (the code the 6 queued features
+runner + `dep/apps/web` on Bun, and the entire render/WASM/GPU/component surface (the code the 6 queued features
 touch) has no tests or established test pattern.

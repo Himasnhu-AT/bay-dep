@@ -20,7 +20,7 @@ Thank you for your interest in contributing to OpenCut! This document provides g
 - [Bun](https://bun.sh/docs/installation)
   (for `npm` alternative)
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- Rust toolchain (only needed for `apps/desktop`)
+- Rust toolchain (only needed for `rust/desktop`)
 
 > **Note:** Docker is optional, but it's essential for running the local database and Redis services. If you're planning to contribute to frontend features, you can skip the Docker setup. If you have followed the steps below in [Setup](#setup), you're all set to go!
 
@@ -28,7 +28,7 @@ Thank you for your interest in contributing to OpenCut! This document provides g
 
 1. Fork the repository
 2. Clone your fork locally
-3. Navigate to the web app directory: `cd apps/web`
+3. Navigate to the web app directory: `cd dep/apps/web`
 4. Copy `.env.example` to `.env.local`:
 
    ```bash
@@ -47,11 +47,11 @@ Thank you for your interest in contributing to OpenCut! This document provides g
 
 > **Note:** Web development uses the published `opencut-wasm` package by default, so a fresh clone does not need a local WASM build.
 >
-> If you are editing `rust/wasm`, run `bun run build:wasm`, then `cd rust/wasm/pkg && bun link`, then `cd ../../../apps/web && bun link opencut-wasm`.
+> If you are editing `rust/wasm`, run `bun run build:wasm`, then `cd rust/wasm/pkg && bun link`, then `cd ../../../dep/apps/web && bun link opencut-wasm`.
 
 ### Desktop setup
 
-Only needed if you're working on `apps/desktop`. See [`apps/desktop/README.md`](../apps/desktop/README.md) — it's a two-step process: Rust toolchain first via `script/setup-rust`, then desktop native dependencies via `apps/desktop/script/setup`.
+Only needed if you're working on `rust/desktop`. See [`rust/desktop/README.md`](../rust/desktop/README.md) — it's a two-step process: Rust toolchain first via `script/setup-rust`, then desktop native dependencies via `rust/desktop/script/setup`.
 
 ## What to Focus On
 
@@ -90,7 +90,7 @@ If you're unsure whether your idea falls into the preview category, feel free to
 2. Navigate to the web app directory:
 
    ```bash
-   cd apps/web
+   cd dep/apps/web
    ```
 
 3. Copy `.env.example` to `.env.local`:
@@ -146,7 +146,7 @@ If you're unsure whether your idea falls into the preview category, feel free to
 
 ### Desktop
 
-Working on `apps/desktop`? See [`apps/desktop/README.md`](../apps/desktop/README.md) for setup. Web-only contributors can ignore this entirely.
+Working on `rust/desktop`? See [`rust/desktop/README.md`](../rust/desktop/README.md) for setup. Web-only contributors can ignore this entirely.
 
 ## How to Contribute
 
@@ -168,8 +168,8 @@ Working on `apps/desktop`? See [`apps/desktop/README.md`](../apps/desktop/README
 2. Make your changes
 3. Run the relevant checks for the area you touched:
 
-   - Web changes: from `apps/web`, run `bun run lint` and `bun run format`
-   - Desktop changes: run `./apps/desktop/script/setup` if your environment isn't set up yet
+   - Web changes: from `dep/apps/web`, run `bun run lint` and `bun run format`
+   - Desktop changes: run `./rust/desktop/script/setup` if your environment isn't set up yet
 
 4. Commit your changes with a descriptive message
 5. Push to your fork and create a pull request
@@ -177,8 +177,8 @@ Working on `apps/desktop`? See [`apps/desktop/README.md`](../apps/desktop/README
 ## Code Style
 
 - We use ESLint for linting and Prettier for formatting
-- Run `bun run format` from the `apps/web` directory to format code
-- Run `bun run lint` from the `apps/web` directory to check for linting issues
+- Run `bun run format` from the `dep/apps/web` directory to format code
+- Run `bun run lint` from the `dep/apps/web` directory to check for linting issues
 - Follow the existing code patterns
 
 ## Pull Request Process

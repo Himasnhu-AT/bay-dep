@@ -11,8 +11,8 @@
 
 OpenCut is a **browser-first, privacy-focused, non-linear video editor** (`README.md`).
 All project/timeline/media content lives on the user's device (IndexedDB + OPFS); the server
-holds only auth/feedback. The web app (`apps/web`, Next.js 16 + React 19) is the real editor;
-`apps/desktop` is a 41-LOC GPUI stub (empty window). Per `AGENTS.md` there is an **ongoing
+holds only auth/feedback. The web app (`dep/apps/web`, Next.js 16 + React 19) is the real editor;
+`rust/desktop` is a 41-LOC GPUI stub (empty window). Per `AGENTS.md` there is an **ongoing
 migration** to move all non-UI logic into `rust/` (compiled to WASM, published as
 `opencut-wasm`); today the migration has landed the **time math** (`rust/crates/time`) and the
 whole **GPU compositor / effects / masks pipeline** (`rust/crates/{compositor,effects,masks,gpu}`),
@@ -144,7 +144,7 @@ but narrow; **Nascent** = scaffolding/one example only.
   (IndexedDB + OPFS). **31-version migration chain** (`services/storage/migrations/`).
 
 ### Desktop — Nascent (~0%)
-- `apps/desktop/src/main.rs` = 41 LOC GPUI window titled "OpenCut", no editor wiring. Answer to
+- `rust/desktop/src/main.rs` = 41 LOC GPUI window titled "OpenCut", no editor wiring. Answer to
   the goal-6 question: today it is a placeholder shell, not an editor.
 
 ---

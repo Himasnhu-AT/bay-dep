@@ -437,7 +437,6 @@ impl PreviewRenderer {
 
     /// Encode the timeline to a video file by rendering each frame and piping raw RGBA to the
     /// ffmpeg CLI. Returns `false` if ffmpeg is unavailable or encoding fails. Blocks until done.
-    #[allow(clippy::too_many_arguments)]
     /// Block until every video clip referenced by `scene` has finished decoding.
     ///
     /// The preview can draw a placeholder while a worker decodes, but an export cannot — a
@@ -465,6 +464,9 @@ impl PreviewRenderer {
         }
     }
 
+    /// Encoding needs the whole frame description; bundling these into a struct would add
+    /// indirection at the single call site without clarifying anything.
+    #[allow(clippy::too_many_arguments)]
     pub fn export_video(
         &mut self,
         scene: &Scene,

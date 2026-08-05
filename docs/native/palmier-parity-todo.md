@@ -26,8 +26,8 @@ All paths are repo-relative to `/Users/himanshu/codes/synthai/vii`.
 6. **GPU/ffmpeg-dependent tests skip gracefully when the capability is absent** (existing
    convention), but on a runner with `VII_REQUIRE_GPU=1` / `VII_REQUIRE_FFMPEG=1` a skip is a
    hard failure. That gate is T-002; do not write capability tests before it exists.
-7. **When a task says "port from `apps/web`", read the TypeScript, port the *logic*, and write the
-   Rust tests from scratch.** `apps/web`'s ripple (373 lines) and snapping (93 lines) have no
+7. **When a task says "port from `dep/apps/web`", read the TypeScript, port the *logic*, and write the
+   Rust tests from scratch.** `dep/apps/web`'s ripple (373 lines) and snapping (93 lines) have no
    tests. Porting is a logic shortcut, never a testing shortcut.
 
 ---
@@ -67,7 +67,7 @@ document follows the decision.
 |---|---|---|---|
 | 1 | Brief says GPUI 0.2.2 has **no scroll container, no text input, no menu bar**. IA and visual-system both read the vendored crate and found `.overflow_scroll()` + `ScrollHandle::set_offset` + `uniform_list`, `EntityInputHandler`/`ElementInputHandler` (+ a 746-line `examples/input.rs`), `cx.set_menus`, `on_drag`/`on_drop`, `canvas()`, `anchored()`/`deferred()`, `svg()`, `.tooltip()`, `pattern_slash()`. | **Trust the source reads**, but gate on T-003, which re-verifies every claimed API against the vendored crate and records the result. Anything that fails verification falls back to the brief's assumption and the dependent task is re-scoped. | The claims are specific and file/line-cited. But they change effort estimates on ~8 tasks, so a 1-hour verification pass is cheap insurance. Pinch-to-magnify genuinely does not exist — record it as a known gap. |
 | 2 | Timeline scrolling: use GPUI's scroller, or own the offset? | **Own `scroll_x`/`scroll_y` for the timeline; use `.overflow_y_scroll()` for the media panel and inspector.** | Cursor-anchored zoom, scroll-to-playhead, edge auto-scroll and three-region sync all need to write the offset in the frame they read it. Where we gain nothing from owning it, take GPUI's inertia for free. |
-| 3 | Snapping: PM says "port from `apps/web`". QA and the interaction agent say `apps/web`'s snapping is thin (29-line resolve, 15-line threshold, no hysteresis, no multi-probe, no tests). | **Take the `SnapPoint { time, kind, element_id, track_id }` shape and the source-registry idea from `apps/web`; write the algorithm fresh** using palmier's documented sticky multiplier (2.5×), per-target-kind thresholds and multi-probe. Write all tests from scratch. | Porting a thinner implementation and then rewriting it is strictly worse than writing the real one once. |
+| 3 | Snapping: PM says "port from `dep/apps/web`". QA and the interaction agent say `dep/apps/web`'s snapping is thin (29-line resolve, 15-line threshold, no hysteresis, no multi-probe, no tests). | **Take the `SnapPoint { time, kind, element_id, track_id }` shape and the source-registry idea from `dep/apps/web`; write the algorithm fresh** using palmier's documented sticky multiplier (2.5×), per-target-kind thresholds and multi-probe. Write all tests from scratch. | Porting a thinner implementation and then rewriting it is strictly worse than writing the real one once. |
 | 4 | Keyframe lane location: audit says palmier docks a KeyframesPanel next to the inspector; IA argues for the timeline. | **Timeline.** The inspector keeps only the per-row `‹ ◇ ›` stamp/nav control. | A keyframe lane needs a time axis. Putting one in a 320px inspector means a second ruler, a second px↔ticks mapping, a second zoom and a second scroll offset — two sources of truth for "where is time". |
 | 5 | PM's plan starts at M1; IA says a Tier 0/Tier 1 substrate (tokens, notifications, command table, geometry, TextField, overlay layer) must exist before any Wave 1 UI; QA says CI must exist before any test. | **Insert M0.** It is invisible to users and it is not optional: without it, five features each hand-roll a worse text field, a worse error path and their own hex literals. | Named blockers, not preference. IA: "sequencing them first converts three XL items into L items." |
 | 6 | `ScrubbableNumber` is in PM's M14; IA and visual-system both say it is the *first consumer* of M1's apply/commit triad and a prerequisite for text, colour and audio work. | **Build it in M1 (T-108), not M14.** M14 then only consumes it. | It halves M14, the biggest bundle in the plan, and every inspector task after M3 wants it. |
@@ -274,13 +274,13 @@ outputs.
   - Reserve for the menu bar and do **not** bind as `KeyBinding`s: ⌘N ⌘O ⌘S ⇧⌘S ⌘I ⌘E ⌘, ⌘W ⌘Q.
 - **Tests:** `rust/crates/opencut-ui/tests/actions.rs` — no duplicate chord within a `key_context`;
   every action has a non-empty label and group; the table serializes to
-  `fixtures/golden/native/keybindings/default.json` and matches (drift guard, mirroring the
-  existing `fixtures/golden/keybindings/default.json` on the web side).
+  `dep/fixtures/golden/native/keybindings/default.json` and matches (drift guard, mirroring the
+  existing `dep/fixtures/golden/keybindings/default.json` on the web side).
 - **Done when:** `key_bindings()` is gone, the table is the only source, and the golden exists.
 
 ### [ ] T-011 — Native macOS menu bar
 
-- **Files:** `rust/crates/opencut-ui/src/lib.rs`, `apps/desktop/src/main.rs`
+- **Files:** `rust/crates/opencut-ui/src/lib.rs`, `rust/desktop/src/main.rs`
 - **Do:**
   - `cx.set_menus(vec![Menu{..}])` at app start for: vii / File / Edit / Clip / Sequence / View /
     Window / Help, built from `ACTIONS`' `menu_path`.
@@ -334,20 +334,20 @@ outputs.
 
 - **Files:** new `rust/crates/opencut-preview/tests/golden_descriptor.rs`, new
   `rust/crates/opencut-preview/tests/golden_frames.rs`, new
-  `rust/crates/opencut-preview/src/test_golden.rs`, `fixtures/golden/native/`
+  `rust/crates/opencut-preview/src/test_golden.rs`, `dep/fixtures/golden/native/`
 - **Do:**
   - **Tier C (default, no GPU):** serialize `FrameDescriptor` to
-    `fixtures/golden/native/descriptor/<case>.json`, assert byte-equality. Seed 6–8 curated scenes
+    `dep/fixtures/golden/native/descriptor/<case>.json`, assert byte-equality. Seed 6–8 curated scenes
     (a stacked overlay, a text clip, a non-16:9 source, an effect chain, an animated element at
     three playhead positions).
-  - **Tier B (GPU only, ~10–15 cases):** 160×90 PNGs at `fixtures/golden/native/frames/<case>.png`,
+  - **Tier B (GPU only, ~10–15 cases):** 160×90 PNGs at `dep/fixtures/golden/native/frames/<case>.png`,
     compared by **both** metrics: (i) localized — pixels with max channel delta > 8 must be ≤0.2%
     of pixels; (ii) global — MAE ≤ 1.5/255 **and** 64-bin luma-histogram L1 ≤ 0.01. On failure
     write `target/frame-diffs/<case>.{actual,expected,diff}.png` and print the paths.
   - Each pixel golden gets a sidecar `<case>.json` recording `{adapter, backend, driver, wgpu_version, canvas, playhead_ticks}`;
     on an unrecognised adapter, log-and-skip rather than fail.
   - Regeneration: `CAPTURE_GOLDEN=1 cargo test -p opencut-preview --test golden_frames`, matching
-    the convention already in `fixtures/golden/README.md`.
+    the convention already in `dep/fixtures/golden/README.md`.
   - Thresholds live as named `const`s in one module with a comment stating what each buys; changing
     one must be its own commit.
 - **Tests:** the harness's own tests (a synthetically perturbed frame trips the localized metric; a
@@ -473,7 +473,7 @@ M2–M14 changes the model — which is exactly what the schema version protects
 ### [ ] T-106 — The golden project seed and per-version migration goldens
 
 - **Files:** new `rust/crates/opencut-project/tests/golden_migrations.rs`,
-  `fixtures/golden/native/projects/v<N>.json`
+  `dep/fixtures/golden/native/projects/v<N>.json`
 - **Do:**
   - Build one **rich** seed exercising every element kind, every effect, every animation channel,
     every blend mode and every settings field currently in the model.
@@ -530,7 +530,7 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
 ### [ ] T-201 — `parse_ffprobe_json` + `MediaMetadata` (pure)
 
 - **Files:** new `rust/crates/opencut-preview/src/probe.rs`,
-  `fixtures/golden/native/ffprobe/*.json`
+  `dep/fixtures/golden/native/ffprobe/*.json`
 - **Do:**
   - `parse_ffprobe_json(&str) -> Result<MediaMetadata, ProbeError>` with
     `{ duration, width, height, fps: Fps (rational), has_audio, rotation }`.
@@ -1122,10 +1122,10 @@ Depends on M1, M5, M6.
 ### [ ] T-704 — `opencut-core/src/snap.rs`
 
 - **Files:** new `rust/crates/opencut-core/src/timeline/snap.rs`; read
-  `apps/web/src/timeline/snapping/{types,build,resolve,threshold}.ts` for the data shape only
+  `dep/apps/web/src/timeline/snapping/{types,build,resolve,threshold}.ts` for the data shape only
 - **Do:**
   - Take `SnapPoint { time, kind, element_id, track_id }` and the source-registry idea from
-    `apps/web`. Write the algorithm fresh (see contradiction #3).
+    `dep/apps/web`. Write the algorithm fresh (see contradiction #3).
   - Targets: every non-dragged clip start and end, the playhead, timeline zero, and (later)
     in/out bounds and markers.
   - **Multi-probe:** every selected clip's start AND end is a probe simultaneously; the winning
@@ -1408,7 +1408,7 @@ callback.
 ### [ ] T-1005 — A −1 dBFS master limiter
 
 - **Files:** `rust/crates/opencut-audio/src/lib.rs` (hard clamp L90-93); port from
-  `apps/web/src/media/audio-mastering.ts`
+  `dep/apps/web/src/media/audio-mastering.ts`
 - **Do:**
   - Replace the hard ±1 clamp with the ported limiter plus `clampDb` / `dBToLinear` helpers.
 - **Tests:** `mix.rs` — over synthetic buffers, no output sample exceeds the −1 dBFS ceiling;
@@ -1640,7 +1640,7 @@ pure function.
 ### [ ] T-1302 — `hit_test` (pure)
 
 - **Files:** `rust/crates/opencut-ui/src/view_model.rs` (or a sibling pure module); port
-  `apps/web/src/preview/{hit-test.ts, element-bounds.ts, preview-coords.ts}`
+  `dep/apps/web/src/preview/{hit-test.ts, element-bounds.ts, preview-coords.ts}`
 - **Do:**
   - Chain: window pt → −viewport.origin → −fit_rect.origin → ÷ fit_rect.size → × canvas → clip-local
     (translate by −centre, rotate by −θ) → `|x| ≤ w/2 && |y| ≤ h/2`.
@@ -1702,7 +1702,7 @@ pure function.
 ### [ ] T-1306 — Canvas snapping guides
 
 - **Files:** `rust/crates/opencut-ui/src/interaction/canvas_drag.rs`; port
-  `apps/web/src/preview/preview-snap.ts`
+  `dep/apps/web/src/preview/preview-snap.ts`
 - **Do:**
   - Snap to canvas edges and centre with full-height / full-width guide lines in **magenta**
     `#ff4dd2` (the Figma convention; distinct from the red playhead and every clip hue). Same sticky
@@ -1764,7 +1764,7 @@ between T-1401..T-1403 (correctness + fields) and T-1404..T-1406 (lane + IA).
 ### [ ] T-1404 — Keyframe easing
 
 - **Files:** `rust/crates/opencut-project/src/element.rs` (Keyframe, `sample` L38-68); port
-  `apps/web/src/animation/{types.ts, bezier.ts, interpolation.ts}` and carry its solver tests over
+  `dep/apps/web/src/animation/{types.ts, bezier.ts, interpolation.ts}` and carry its solver tests over
 - **Do:**
   - `Keyframe` gains an `easing` field. `AnimationChannel::sample` supports `linear | hold | bezier`
     with `CurveHandle { dt, dv }`. Extend the T-106 seed and add a migration step defaulting
@@ -1862,7 +1862,7 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 - **Files:** new `rust/crates/opencut-core/src/timeline/ripple.rs`,
   `rust/crates/opencut-core/src/command.rs` (RemoveElement L575-590); port
-  `apps/web/src/ripple/{diff,shift,apply}.ts`
+  `dep/apps/web/src/ripple/{diff,shift,apply}.ts`
 - **Do:** `compute_shifts`, `compute_shifts_for_ranges`, `compute_push`, `merge_ranges`, and a
   `validate(...) -> Result<Plan, RippleRefusal>` pass. Ripple delete (Shift-Backspace), ripple trim,
   ripple insert (Cmd-drag, with the green gap band + downstream shift preview and
@@ -1892,7 +1892,7 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 - **Files:** `rust/crates/opencut-project/src/element.rs` (TextElement),
   `rust/crates/opencut-text/src/lib.rs`, `rust/crates/opencut-preview/src/lib.rs`
-  (`ensure_text_texture`); port `apps/web/src/text/{typography,background,primitives,layout}.ts`
+  (`ensure_text_texture`); port `dep/apps/web/src/text/{typography,background,primitives,layout}.ts`
 - **Do:** font family/size/scale, tracking, line spacing, case, traits, RGBA colour (hardcoded
   `"#ffffff"` at creation today, never changeable), alignment, shadow, two-pass stroke outline,
   background (padding, radius, offset). `FontSystem::db()` enumerates families cheaply. Colour
@@ -1939,7 +1939,7 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-09 — App shell: project package, Save As / Open / recents, home launcher, settings window
 
-- **Files:** `rust/crates/opencut-ui/src/lib.rs` (run L19-39), `apps/desktop/src/main.rs`,
+- **Files:** `rust/crates/opencut-ui/src/lib.rs` (run L19-39), `rust/desktop/src/main.rs`,
   `rust/crates/opencut-project/src/project.rs`
 - **Do:** the ergonomics half deferred out of M1 — a `.vii` directory package (project.json +
   media.json + thumbnail + media/), Save As / Open / Open Recent wired to the menu bar built in

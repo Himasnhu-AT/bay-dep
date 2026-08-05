@@ -80,7 +80,7 @@ Snap guide lines, overlay planes, toolbar, and context menu positioned via P1-RN
 > **Test gate:** Manual: guides appear at snap points; toolbar/context-menu actions dispatch correct commands.
 
 #### `P3-PRV-06` — Guides & grid overlays
-Completeness-critic addition: composition grid + platform safe-area layouts (TikTok etc.) + custom guides as preview overlays (apps/web/src/guides).
+Completeness-critic addition: composition grid + platform safe-area layouts (TikTok etc.) + custom guides as preview overlays (dep/apps/web/src/guides).
 
 > **Test gate:** Unit: guide definitions produce correct overlay geometry; manual: platform safe-areas render at expected positions.
 

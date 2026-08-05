@@ -13,9 +13,9 @@
 on the client (IndexedDB + OPFS), never on a server. It is a **Turborepo monorepo** (migrated to
 pnpm) with three targets and a shared Rust core:
 
-- **`apps/web`** — the real, working editor. Next.js 16 (App Router, Turbopack) + React 19 +
+- **`dep/apps/web`** — the real, working editor. Next.js 16 (App Router, Turbopack) + React 19 +
   Tailwind 4. ~91k LOC. This is where everything happens.
-- **`apps/desktop`** — a **41-LOC GPUI skeleton** (opens a window showing "OpenCut"). ~0% of the
+- **`rust/desktop`** — a **41-LOC GPUI skeleton** (opens a window showing "OpenCut"). ~0% of the
   editor. Not a functional desktop app.
 - **`rust/`** — a platform-agnostic Rust core compiled to WASM (`opencut-wasm`): a **wgpu GPU
   compositor**, effects, masks (JFA SDF feathering), and the `MediaTime` tick-math library. Per
@@ -33,7 +33,7 @@ Redis back **only** auth/feedback/rate-limiting — **no project data**. So the 
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                     Turborepo monorepo (turbo + pnpm)                       │
 │                                                                            │
-│   apps/web  (Next.js 16 — THE EDITOR)          apps/desktop  (GPUI stub)   │
+│   dep/apps/web  (Next.js 16 — THE EDITOR)          rust/desktop  (GPUI stub)   │
 │   ├── app/editor/[project_id]  ── EditorProvider → EditorLayout            │
 │   │      AssetsPanel │ PreviewPanel │ PropertiesPanel │ Timeline           │
 │   ├── core/  EditorCore singleton = 12 managers (observable/subscribe)     │
@@ -53,7 +53,7 @@ Redis back **only** auth/feedback/rate-limiting — **no project data**. So the 
 ## 3. Editor architecture (the important part)
 
 ### 3.1 State model — hybrid
-- **`EditorCore` singleton** (`apps/web/src/core/index.ts`, `core/managers/*`) composes **12
+- **`EditorCore` singleton** (`dep/apps/web/src/core/index.ts`, `core/managers/*`) composes **12
   managers**: `timeline, command, playback, scenes, project, media, renderer, save, audio,
   selection, clipboard, diagnostics`. Each is an **observable external store** (`subscribe`).
 - **`useEditor(selector)`** (`editor/use-editor.ts`) is a `useSyncExternalStore` hook subscribing
@@ -124,7 +124,7 @@ needed (presets live in a separate DB).
   placement, animation, retime, fps, mask-snap) and all `import { ... } from "bun:test"`.
 - **CI does not run them**: `.github/workflows/bun-ci.yml`'s test step is `echo "No tests
   implemented yet"` with `continue-on-error: true`.
-- **The pnpm migration is half-done for tests**: the runner is `bun test`, `apps/web/package.json`
+- **The pnpm migration is half-done for tests**: the runner is `bun test`, `dep/apps/web/package.json`
   still declares `bun@1.2.18`, and **bun is not installed** here. So neither the existing tests nor
   new ones run until we pick a runner: **(a) install bun as a test-runner only**, or **(b) port
   `bun:test` → vitest** (single pnpm/vitest toolchain, no bun). Whole render/WASM/GPU/React surface

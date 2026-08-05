@@ -22,14 +22,53 @@ Thanks to [Vercel](https://vercel.com?utm_source=github-opencut&utm_campaign=oss
 - **Free features**: Most basic CapCut features are now paywalled 
 - **Simple**: People want editors that are easy to use - CapCut proved that
 
-## Project Structure
+## Repository layout
 
-- `apps/web/`: Next.js web application
-- `apps/desktop/`: Native desktop app built with GPUI (in progress)
-- `rust/`: Platform-agnostic core: GPU compositor, effects, masks, and WASM bindings. We're actively migrating business logic here from TypeScript.
-- `docs/`: Architecture and subsystem documentation
+The root holds the Rust workspace and the shell scripts that drive it. Everything belonging to
+the legacy JS/web stack lives under `dep/`.
 
-## Getting Started
+```
+vii/
+├── rust/          the Rust workspace — this is the product
+│   ├── Cargo.toml     workspace root (run cargo from here, or use the scripts)
+│   ├── desktop/       the GPUI desktop binary (`opencut`)
+│   ├── crates/        engine, model, compositor, effects, masks, gpu, audio, text, ui
+│   └── wasm/          wasm bindings consumed by the web app
+├── dep/           the legacy JS/web stack (Next.js app + its whole toolchain)
+│   ├── apps/web/      Next.js web application
+│   ├── fixtures/      golden fixtures used by the web tests
+│   └── package.json, pnpm-*, turbo.json, biome.json, eslint/, node_modules/, docker-compose.yml
+├── docs/          architecture, subsystem and parity documentation
+├── script/        Rust toolchain setup helpers
+├── build.sh       release build of the desktop app
+├── run.sh         launch the desktop app
+└── test.sh        fmt + clippy + tests (STRICT=1 to fail on missing GPU/ffmpeg, WEB=1 to add web)
+```
+
+## Native desktop app (quick start)
+
+```bash
+./run.sh              # debug build, fastest to start
+RELEASE=1 ./run.sh    # release build — much smoother playback
+./test.sh             # fmt + clippy -D warnings + the full Rust suite
+```
+
+`ffmpeg` on `PATH` is required for video/audio decode, probing, waveforms and MP4 export
+(`brew install ffmpeg`). Without it text and images still work and the rest degrades with a
+message rather than failing silently.
+
+Cargo commands run from `rust/`, not the repo root:
+
+```bash
+cd rust && cargo test --workspace
+```
+
+A hands-on walkthrough is in [`docs/native/try-it.md`](docs/native/try-it.md); current status and
+known gaps are in [`docs/native/parity-status.md`](docs/native/parity-status.md).
+
+## Getting Started (web app, in `dep/`)
+
+> All commands in this section run from `dep/`, not the repo root.
 
 ### Prerequisites
 
@@ -46,10 +85,10 @@ Thanks to [Vercel](https://vercel.com?utm_source=github-opencut&utm_campaign=oss
 
    ```bash
    # Unix/Linux/Mac
-   cp apps/web/.env.example apps/web/.env.local
+   cp dep/apps/web/.env.example dep/apps/web/.env.local
 
    # Windows PowerShell
-   Copy-Item apps/web/.env.example apps/web/.env.local
+   Copy-Item dep/apps/web/.env.example dep/apps/web/.env.local
    ```
 
 3. Start the database and Redis:
@@ -73,7 +112,7 @@ The `.env.example` has sensible defaults that match the Docker Compose config �
 
 Desktop is opt-in. If you're only working on the web app, skip this entirely.
 
-If you want to get ready for `apps/desktop`, see [`apps/desktop/README.md`](apps/desktop/README.md). It's a two-step setup: Rust toolchain first, then desktop native dependencies.
+If you want to get ready for `rust/desktop`, see [`rust/desktop/README.md`](rust/desktop/README.md). It's a two-step setup: Rust toolchain first, then desktop native dependencies.
 
 ### Local WASM development
 
@@ -105,10 +144,10 @@ cargo install cargo-watch
    bun link
    ```
 
-3. Link `apps/web` to the local package:
+3. Link `dep/apps/web` to the local package:
 
    ```bash
-   cd apps/web
+   cd dep/apps/web
    bun link opencut-wasm
    ```
 
@@ -118,10 +157,10 @@ cargo install cargo-watch
    bun dev:wasm
    ```
 
-To switch `apps/web` back to the published package, run:
+To switch `dep/apps/web` back to the published package, run:
 
 ```bash
-cd apps/web
+cd dep/apps/web
 bun add opencut-wasm
 ```
 
@@ -149,7 +188,7 @@ See our [Contributing Guide](.github/CONTRIBUTING.md) for detailed setup instruc
 
 - Fork the repo and clone locally
 - Follow the setup instructions in CONTRIBUTING.md
-- Working on `apps/desktop`? See [`apps/desktop/README.md`](apps/desktop/README.md) for setup
+- Working on `rust/desktop`? See [`rust/desktop/README.md`](rust/desktop/README.md) for setup
 - Create a feature branch and submit a PR
 
 ## License

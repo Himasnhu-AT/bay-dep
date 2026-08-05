@@ -4,7 +4,7 @@
 > 6 clusters · 64 subsystems.
 
 ## Editor core & state model
-CROSS-CUTTING NATIVE ARCHITECTURE (opencut-core): (1) The Command enum IS the MCP surface. Every TS command class (~45 in apps/web/src/commands/**) and every TimelineManager/ScenesManager/ProjectManager dispatch method becomes a serde-tagged Command or Query variant; Editor::execute(Command)->CommandResult and Editor::query(Query)->QueryResult are the two MCP entry points. This gives undo/redo, autosave-dirty, and MCP for free from one dispatch path. (2) Singleton -> owned Editor. Replace EditorCore.getInstance() (a process-global that commands reach into at execute() time) with a caller-owned Editor struct; commands become pure (&mut EditorState)->CommandResult. This is the single biggest porting risk: TS managers hold &-refs to each other and mutate inside each other's notify() cycle, which Rust's borrow checker forbids. Resolution: centralize ALL mutable state in one EditorState and make the 12 'managers' stateless modules/impls over &mut EditorState + a Ctx, NOT 12 independently-locked objects (Arc<RwLock<Manager>>-per-manager invites deadlocks given the dense cross-references). (3) imbl persistent Vectors for SceneTracks/element/scene lists: almost every TS command undoes by restoring a captured whole-SceneTracks 'savedState' snapshot, and the live-drag previewOverlay merges patches over committed tracks every frame — persistent structures make both O(1)-clone with structural sharing instead of deep copies. (imbl v7 is the maintained fork; im/im-rc and rpds are alternatives — imbl chosen for Arc thread-safety + active maintenance.) (4) Reactivity: the nine-manager useSyncExternalStore bridge (subscribe-all + shallow-array-equality selector memoization) collapses into a coalesced EventBus: per-domain version counters + a DomainFlags bitflags emitted ONCE per committed command over tokio::sync::broadcast. The shallow-equality memoization is a UI concern that moves into the GPUI shell; MCP consumes coalesced change-notifications. (5) Clock injection: PlaybackManager's RAF/performance.now() becomes an injectable Clock so headless/MCP mode steps deterministically while the GPUI shell (or, ideally, the audio device clock) drives real time. (6) Reuse rust/crates/time for all MediaTime math (roundFrameTime/mediaTimeFromSeconds/clampMediaTime) to guarantee bit-parity with the web.
+CROSS-CUTTING NATIVE ARCHITECTURE (opencut-core): (1) The Command enum IS the MCP surface. Every TS command class (~45 in dep/apps/web/src/commands/**) and every TimelineManager/ScenesManager/ProjectManager dispatch method becomes a serde-tagged Command or Query variant; Editor::execute(Command)->CommandResult and Editor::query(Query)->QueryResult are the two MCP entry points. This gives undo/redo, autosave-dirty, and MCP for free from one dispatch path. (2) Singleton -> owned Editor. Replace EditorCore.getInstance() (a process-global that commands reach into at execute() time) with a caller-owned Editor struct; commands become pure (&mut EditorState)->CommandResult. This is the single biggest porting risk: TS managers hold &-refs to each other and mutate inside each other's notify() cycle, which Rust's borrow checker forbids. Resolution: centralize ALL mutable state in one EditorState and make the 12 'managers' stateless modules/impls over &mut EditorState + a Ctx, NOT 12 independently-locked objects (Arc<RwLock<Manager>>-per-manager invites deadlocks given the dense cross-references). (3) imbl persistent Vectors for SceneTracks/element/scene lists: almost every TS command undoes by restoring a captured whole-SceneTracks 'savedState' snapshot, and the live-drag previewOverlay merges patches over committed tracks every frame — persistent structures make both O(1)-clone with structural sharing instead of deep copies. (imbl v7 is the maintained fork; im/im-rc and rpds are alternatives — imbl chosen for Arc thread-safety + active maintenance.) (4) Reactivity: the nine-manager useSyncExternalStore bridge (subscribe-all + shallow-array-equality selector memoization) collapses into a coalesced EventBus: per-domain version counters + a DomainFlags bitflags emitted ONCE per committed command over tokio::sync::broadcast. The shallow-equality memoization is a UI concern that moves into the GPUI shell; MCP consumes coalesced change-notifications. (5) Clock injection: PlaybackManager's RAF/performance.now() becomes an injectable Clock so headless/MCP mode steps deterministically while the GPUI shell (or, ideally, the audio device clock) drives real time. (6) Reuse rust/crates/time for all MediaTime math (roundFrameTime/mediaTimeFromSeconds/clampMediaTime) to guarantee bit-parity with the web.
 
 CLUSTER BOUNDARIES: several managers are thin state/orchestration shells over work owned by OTHER clusters — flagged per-subsystem to avoid double-implementing. Persistence/IndexedDB/OPFS + the 31-step migration chain (SaveManager/ProjectManager/ScenesManager call into it) = persistence cluster. Compositor/render-tree build + encode (RendererManager, thumbnails) = compositor/export cluster. Media decode/thumbnail/waveform + Web Audio decode (MediaManager, AudioManager) = media cluster. Placement/snapping/ripple-diff engines (invoked by insert/move/paste commands) = timeline-editing cluster. Animation sampling (keyframe pre-sample on delete, gain automation) = animation cluster.
 
@@ -13,7 +13,7 @@ EFFORT RANKING (this cluster): TimelineManager and AudioManager are the two 1-2 
 RECOMMENDED CRATES (validated on crates.io Aug 2026): imbl (persistent structures), serde/serde_json (Command/Query + persistence + MCP), uuid, chrono, bitflags, tokio (broadcast/timers for events+autosave), arc-swap (lock-free snapshot reads), tracing/thiserror. For undo plumbing the `undo` crate (Record/History, command-pattern Edit trait) is usable but a hand-rolled Vec<HistoryEntry> maps the selectionOverride 'restore-only-when-declared' nuance and the ripple-inside-execute pass more directly. Audio: cpal (output), symphonia (decode), rubato (resample), rtrb (lock-free ring buffer to the callback), dasp (sample utils).
 
 #### EditorCore singleton & lifecycle  `1-2 weeks`
-**Web:** `apps/web/src/core/index.ts`, `apps/web/src/components/providers/editor-provider.tsx`, `apps/web/src/editor/use-editor.ts`
+**Web:** `dep/apps/web/src/core/index.ts`, `dep/apps/web/src/components/providers/editor-provider.tsx`, `dep/apps/web/src/editor/use-editor.ts`
 **Browser deps:** `Module-level singleton (browser tab lifetime)`, `EditorProvider ties creation to React mount and calls initializeGpuRenderer() / setDegraded()`
 **Depends on:** Command pattern & undo/redo, Observable/subscription reactivity model, TimelineManager (mutation & query surface), ScenesManager, ProjectManager
 
@@ -42,7 +42,7 @@ _Risks:_
 ---
 
 #### Command pattern & undo/redo  `2-4 weeks`
-**Web:** `apps/web/src/core/managers/commands.ts`, `apps/web/src/commands/base-command.ts`, `apps/web/src/commands/batch-command.ts`, `apps/web/src/commands/index.ts`, `apps/web/src/commands/timeline/tracks-snapshot.ts`, `apps/web/src/commands/timeline/element/update-elements.ts`, `apps/web/src/commands/timeline/element/insert-element.ts`, `apps/web/src/commands/timeline/**`, `apps/web/src/commands/scene/**`, `apps/web/src/commands/project/**`, `apps/web/src/commands/media/**`, `apps/web/src/commands/preview-tracker.ts`
+**Web:** `dep/apps/web/src/core/managers/commands.ts`, `dep/apps/web/src/commands/base-command.ts`, `dep/apps/web/src/commands/batch-command.ts`, `dep/apps/web/src/commands/index.ts`, `dep/apps/web/src/commands/timeline/tracks-snapshot.ts`, `dep/apps/web/src/commands/timeline/element/update-elements.ts`, `dep/apps/web/src/commands/timeline/element/insert-element.ts`, `dep/apps/web/src/commands/timeline/**`, `dep/apps/web/src/commands/scene/**`, `dep/apps/web/src/commands/project/**`, `dep/apps/web/src/commands/media/**`, `dep/apps/web/src/commands/preview-tracker.ts`
 **Browser deps:** `structuredClone (preview-tracker.ts)`, `Commands re-fetch EditorCore.getInstance() internally at execute() time`
 **Depends on:** TimelineManager (mutation & query surface), ScenesManager, SelectionManager, Observable/subscription reactivity model
 
@@ -82,7 +82,7 @@ _Risks:_
 ---
 
 #### Observable/subscription reactivity model  `1-2 weeks`
-**Web:** `apps/web/src/editor/use-editor.ts`, `apps/web/src/core/managers/commands.ts`, `apps/web/src/core/managers/timeline-manager.ts`, `apps/web/src/core/managers/scenes-manager.ts`
+**Web:** `dep/apps/web/src/editor/use-editor.ts`, `dep/apps/web/src/core/managers/commands.ts`, `dep/apps/web/src/core/managers/timeline-manager.ts`, `dep/apps/web/src/core/managers/scenes-manager.ts`
 **Browser deps:** `React useSyncExternalStore / useMemo / useRef / useCallback`, `Synchronous notify()->re-render inside the mutation call stack`
 **Depends on:** EditorCore singleton & lifecycle
 
@@ -112,7 +112,7 @@ _Risks:_
 ---
 
 #### TimelineManager (mutation & query surface)  `1-2 months`
-**Web:** `apps/web/src/core/managers/timeline-manager.ts`, `apps/web/src/timeline/track-element-update.ts`, `apps/web/src/timeline/update-pipeline.ts`, `apps/web/src/timeline/types.ts`, `apps/web/src/commands/timeline/element/**`, `apps/web/src/commands/timeline/track/**`
+**Web:** `dep/apps/web/src/core/managers/timeline-manager.ts`, `dep/apps/web/src/timeline/track-element-update.ts`, `dep/apps/web/src/timeline/update-pipeline.ts`, `dep/apps/web/src/timeline/types.ts`, `dep/apps/web/src/commands/timeline/element/**`, `dep/apps/web/src/commands/timeline/track/**`
 **Browser deps:** `None in the manager itself (pure logic); structuredClone via PreviewTracker in the preview path`
 **Depends on:** Command pattern & undo/redo, ScenesManager, PlaybackManager (playback clock), SelectionManager
 
@@ -148,7 +148,7 @@ _Risks:_
 ---
 
 #### ScenesManager  `2-4 weeks`
-**Web:** `apps/web/src/core/managers/scenes-manager.ts`, `apps/web/src/timeline/scenes.ts`, `apps/web/src/timeline/bookmarks/index.ts`, `apps/web/src/commands/scene/**`
+**Web:** `dep/apps/web/src/core/managers/scenes-manager.ts`, `dep/apps/web/src/timeline/scenes.ts`, `dep/apps/web/src/timeline/bookmarks/index.ts`, `dep/apps/web/src/commands/scene/**`
 **Browser deps:** `storageService (IndexedDB) in loadProjectScenes`, `new Date() for updatedAt (nondeterministic)`
 **Depends on:** Command pattern & undo/redo, ProjectManager, PlaybackManager (playback clock)
 
@@ -178,7 +178,7 @@ _Risks:_
 ---
 
 #### ProjectManager  `2-4 weeks`
-**Web:** `apps/web/src/core/managers/project-manager.ts`, `apps/web/src/project/types.ts`, `apps/web/src/commands/project/update-project-settings.ts`, `apps/web/src/services/storage/migrations/index.ts`
+**Web:** `dep/apps/web/src/core/managers/project-manager.ts`, `dep/apps/web/src/project/types.ts`, `dep/apps/web/src/commands/project/update-project-settings.ts`, `dep/apps/web/src/services/storage/migrations/index.ts`
 **Browser deps:** `storageService (IndexedDB + OPFS)`, `CanvasRenderer + document.createElement('canvas').toDataURL (thumbnail)`, `loadFonts (Google Fonts network)`, `toast (sonner)`, `SceneExporter (WebCodecs/mediabunny) via renderer`
 **Depends on:** Command pattern & undo/redo, ScenesManager, MediaManager (asset registry), RendererManager (render-tree state & export orchestration), SaveManager (autosave)
 
@@ -212,7 +212,7 @@ _Risks:_
 ---
 
 #### PlaybackManager (playback clock)  `1-2 weeks`
-**Web:** `apps/web/src/core/managers/playback-manager.ts`
+**Web:** `dep/apps/web/src/core/managers/playback-manager.ts`
 **Browser deps:** `requestAnimationFrame / cancelAnimationFrame`, `performance.now()`
 **Depends on:** TimelineManager (mutation & query surface), ProjectManager, Observable/subscription reactivity model
 
@@ -243,7 +243,7 @@ _Risks:_
 ---
 
 #### SelectionManager  `days`
-**Web:** `apps/web/src/core/managers/selection-manager.ts`, `apps/web/src/selection/editor-selection.ts`
+**Web:** `dep/apps/web/src/core/managers/selection-manager.ts`, `dep/apps/web/src/selection/editor-selection.ts`
 **Browser deps:** `None — pure value logic (strong first-port candidate)`
 **Depends on:** —
 
@@ -271,7 +271,7 @@ _Risks:_
 ---
 
 #### ClipboardManager  `days`
-**Web:** `apps/web/src/core/managers/clipboard-manager.ts`, `apps/web/src/clipboard/index.ts`, `apps/web/src/commands/timeline/clipboard/paste.ts`, `apps/web/src/commands/timeline/clipboard/paste-keyframes.ts`
+**Web:** `dep/apps/web/src/core/managers/clipboard-manager.ts`, `dep/apps/web/src/clipboard/index.ts`, `dep/apps/web/src/commands/timeline/clipboard/paste.ts`, `dep/apps/web/src/commands/timeline/clipboard/paste-keyframes.ts`
 **Browser deps:** `None for the manager (app-internal clipboard, not the OS clipboard); paste reads playback.getCurrentTime()`
 **Depends on:** Command pattern & undo/redo, SelectionManager, PlaybackManager (playback clock), TimelineManager (mutation & query surface)
 
@@ -297,7 +297,7 @@ _Risks:_
 ---
 
 #### SaveManager (autosave)  `days`
-**Web:** `apps/web/src/core/managers/save-manager.ts`
+**Web:** `dep/apps/web/src/core/managers/save-manager.ts`
 **Browser deps:** `setTimeout / clearTimeout`
 **Depends on:** Observable/subscription reactivity model, ProjectManager, ScenesManager
 
@@ -326,7 +326,7 @@ _Risks:_
 ---
 
 #### MediaManager (asset registry)  `1-2 weeks`
-**Web:** `apps/web/src/core/managers/media-manager.ts`, `apps/web/src/media/types.ts`
+**Web:** `dep/apps/web/src/core/managers/media-manager.ts`, `dep/apps/web/src/media/types.ts`
 **Browser deps:** `storageService (IndexedDB metadata + OPFS blobs)`, `URL.revokeObjectURL (blob URL lifecycle)`, `videoCache / waveformCache (decode caches)`, `toast (sonner), quota-exceeded detection`
 **Depends on:** Command pattern & undo/redo, ProjectManager, SaveManager (autosave)
 
@@ -355,7 +355,7 @@ _Risks:_
 ---
 
 #### RendererManager (render-tree state & export orchestration)  `1-2 weeks`
-**Web:** `apps/web/src/core/managers/renderer-manager.ts`
+**Web:** `dep/apps/web/src/core/managers/renderer-manager.ts`
 **Browser deps:** `CanvasRenderer / OffscreenCanvas, canvas.toBlob`, `ClipboardItem / navigator.clipboard.write`, `SceneExporter (WebCodecs / mediabunny)`, `downloadBlob, opencut-wasm formatTimecode`
 **Depends on:** TimelineManager (mutation & query surface), ProjectManager, MediaManager (asset registry), Observable/subscription reactivity model
 
@@ -383,7 +383,7 @@ _Risks:_
 ---
 
 #### DiagnosticsManager  `days`
-**Web:** `apps/web/src/core/managers/diagnostics-manager.ts`, `apps/web/src/diagnostics/types.ts`, `apps/web/src/transcription/diagnostics.ts`
+**Web:** `dep/apps/web/src/core/managers/diagnostics-manager.ts`, `dep/apps/web/src/diagnostics/types.ts`, `dep/apps/web/src/transcription/diagnostics.ts`
 **Browser deps:** `None in the manager; individual check predicates may inspect browser-derived state (e.g. GPU degraded)`
 **Depends on:** EditorCore singleton & lifecycle
 
@@ -410,7 +410,7 @@ _Risks:_
 ---
 
 #### AudioManager (playback mixing)  `1-2 months`
-**Web:** `apps/web/src/core/managers/audio-manager.ts`, `apps/web/src/media/audio.ts`, `apps/web/src/media/audio-mastering.ts`, `apps/web/src/timeline/audio-state.ts`, `apps/web/src/retime/index.ts`
+**Web:** `dep/apps/web/src/core/managers/audio-manager.ts`, `dep/apps/web/src/media/audio.ts`, `dep/apps/web/src/media/audio-mastering.ts`, `dep/apps/web/src/timeline/audio-state.ts`, `dep/apps/web/src/retime/index.ts`
 **Browser deps:** `Web Audio API (AudioContext, GainNode, AudioBufferSourceNode, OfflineAudioContext)`, `mediabunny (Input / AudioBufferSink / BlobSource)`, `soundtouchjs (pitch preservation)`, `setInterval / setTimeout`
 **Depends on:** PlaybackManager (playback clock), TimelineManager (mutation & query surface), MediaManager (asset registry)
 
@@ -440,18 +440,18 @@ _Risks:_
 - `au-schedule` _(property)_ — For random timelines, scheduled clip playback has no gaps/overlaps and respects mute/trim boundaries
 
 ## Timeline system
-SCOPE NOTE: "ripple" and "retime/speed" physically live outside apps/web/src/timeline (apps/web/src/ripple/*, apps/web/src/retime/*) but are timeline-domain logic and are included here per the cluster brief. The React components (*.tsx), hooks/* and controllers/* are the GPUI-interaction boundary; everything else in timeline/ is pure model/logic.
+SCOPE NOTE: "ripple" and "retime/speed" physically live outside dep/apps/web/src/timeline (dep/apps/web/src/ripple/*, dep/apps/web/src/retime/*) but are timeline-domain logic and are included here per the cluster brief. The React components (*.tsx), hooks/* and controllers/* are the GPUI-interaction boundary; everything else in timeline/ is pure model/logic.
 
-FOUNDATION ALREADY NATIVE: The integer-tick time type MediaTime(i64), FrameRate, timecode parsing and TICKS_PER_SECOND=120000 already exist in rust/crates/time (media_time.rs, frame_rate.rs, timecode.rs) and are exported to the web app via opencut-wasm + the rust/crates/bridge `#[export]` macro. The TS side (apps/web/src/wasm/media-time.ts) is a thin branded-number wrapper over these. This means the hardest correctness primitive (frame-exact tick arithmetic) is done — most timeline math is a mechanical port that becomes MORE correct in Rust because i64 replaces JS floats (the group-resize invariant trimStart+duration*rate+trimEnd==sourceDuration and the roundMediaTime -0 normalization are float hazards that vanish natively).
+FOUNDATION ALREADY NATIVE: The integer-tick time type MediaTime(i64), FrameRate, timecode parsing and TICKS_PER_SECOND=120000 already exist in rust/crates/time (media_time.rs, frame_rate.rs, timecode.rs) and are exported to the web app via opencut-wasm + the rust/crates/bridge `#[export]` macro. The TS side (dep/apps/web/src/wasm/media-time.ts) is a thin branded-number wrapper over these. This means the hardest correctness primitive (frame-exact tick arithmetic) is done — most timeline math is a mechanical port that becomes MORE correct in Rust because i64 replaces JS floats (the group-resize invariant trimStart+duration*rate+trimEnd==sourceDuration and the roundMediaTime -0 normalization are float hazards that vanish natively).
 
 ARCHITECTURE RECOMMENDATION: Land the pure subsystems (core-model → placement → snapping → group-move/group-resize → ripple → update-pipeline) in opencut-core as a framework-agnostic crate with a pure `fn(state, input) -> new_state` shape. They already have this shape in TS (strategy/result records, no side effects, immutable SceneTracks spreads). MCP and GPUI then both drive the same kernels. Only the controllers/* and hooks/* and *.tsx are GPUI-specific and should be rewritten, not ported — but their inner decision kernels (pixelToTime, isClickGesture, snap resolution, buildMoveGroup/resolveGroupMove/computeGroupResize) are already extracted into the pure modules.
 
-IMMUTABILITY: The entire cluster is written in a persistent/COW style (findTrackInSceneTracks/updateTrackInSceneTracks return new trees via spreads). This maps cleanly to rpds/imbl persistent Vectors which give O(1) clone + structural sharing — valuable for the undo/redo command stack (apps/web/src/core/managers/commands.ts) and for the ripple before/after diffing.
+IMMUTABILITY: The entire cluster is written in a persistent/COW style (findTrackInSceneTracks/updateTrackInSceneTracks return new trees via spreads). This maps cleanly to rpds/imbl persistent Vectors which give O(1) clone + structural sharing — valuable for the undo/redo command stack (dep/apps/web/src/core/managers/commands.ts) and for the ripple before/after diffing.
 
 CROSS-CLUSTER DEPS (out of scope but load-bearing): animation (clampAnimationsToDuration, getElementKeyframes, resolveNumberAtTime, cloneAnimations), params (ParamValues registry), effects/masks/graphics default-instance builders, media (MediaAsset.hasAudio), fps utils. These are consumed by update-pipeline, snapping, audio-state, audio-separation and element-utils.
 
 #### timeline-core-model  `2-4 weeks`
-**Web:** `apps/web/src/timeline/types.ts`, `apps/web/src/timeline/tracks.ts`, `apps/web/src/timeline/track-capabilities.ts`, `apps/web/src/timeline/track-element-update.ts`, `apps/web/src/timeline/scenes.ts`, `apps/web/src/timeline/creation.ts`, `apps/web/src/timeline/defaults.ts`, `apps/web/src/timeline/index.ts`, `apps/web/src/timeline/element-utils.ts`, `apps/web/src/wasm/media-time.ts`
+**Web:** `dep/apps/web/src/timeline/types.ts`, `dep/apps/web/src/timeline/tracks.ts`, `dep/apps/web/src/timeline/track-capabilities.ts`, `dep/apps/web/src/timeline/track-element-update.ts`, `dep/apps/web/src/timeline/scenes.ts`, `dep/apps/web/src/timeline/creation.ts`, `dep/apps/web/src/timeline/defaults.ts`, `dep/apps/web/src/timeline/index.ts`, `dep/apps/web/src/timeline/element-utils.ts`, `dep/apps/web/src/wasm/media-time.ts`
 **Browser deps:** `AudioElement.buffer?: AudioBuffer / VideoElement decode is browser-side (WebAudio/WebCodecs); native replaces with symphonia-decoded buffers`, `generateUUID (crypto.randomUUID) via @/utils/id`
 **Depends on:** —
 
@@ -488,7 +488,7 @@ _Risks:_
 ---
 
 #### update-pipeline  `1-2 weeks`
-**Web:** `apps/web/src/timeline/update-pipeline.ts`, `apps/web/src/timeline/__tests__/update-pipeline.test.ts`
+**Web:** `dep/apps/web/src/timeline/update-pipeline.ts`, `dep/apps/web/src/timeline/__tests__/update-pipeline.test.ts`
 **Browser deps:** —
 **Depends on:** timeline-core-model, retime-speed
 
@@ -518,7 +518,7 @@ _Risks:_
 ---
 
 #### placement-engine  `2-4 weeks`
-**Web:** `apps/web/src/timeline/placement/resolve.ts`, `apps/web/src/timeline/placement/overlap.ts`, `apps/web/src/timeline/placement/compatibility.ts`, `apps/web/src/timeline/placement/insert-index.ts`, `apps/web/src/timeline/placement/main-track.ts`, `apps/web/src/timeline/placement/apply.ts`, `apps/web/src/timeline/placement/track-factory.ts`, `apps/web/src/timeline/placement/types.ts`, `apps/web/src/timeline/placement/index.ts`, `apps/web/src/timeline/placement/__tests__/resolve.test.ts`
+**Web:** `dep/apps/web/src/timeline/placement/resolve.ts`, `dep/apps/web/src/timeline/placement/overlap.ts`, `dep/apps/web/src/timeline/placement/compatibility.ts`, `dep/apps/web/src/timeline/placement/insert-index.ts`, `dep/apps/web/src/timeline/placement/main-track.ts`, `dep/apps/web/src/timeline/placement/apply.ts`, `dep/apps/web/src/timeline/placement/track-factory.ts`, `dep/apps/web/src/timeline/placement/types.ts`, `dep/apps/web/src/timeline/placement/index.ts`, `dep/apps/web/src/timeline/placement/__tests__/resolve.test.ts`
 **Browser deps:** —
 **Depends on:** timeline-core-model
 
@@ -552,7 +552,7 @@ _Risks:_
 ---
 
 #### snapping  `1-2 weeks`
-**Web:** `apps/web/src/timeline/snapping/build.ts`, `apps/web/src/timeline/snapping/resolve.ts`, `apps/web/src/timeline/snapping/threshold.ts`, `apps/web/src/timeline/snapping/types.ts`, `apps/web/src/timeline/snapping/index.ts`, `apps/web/src/timeline/element-snap-source.ts`, `apps/web/src/timeline/playhead-snap-source.ts`, `apps/web/src/timeline/animation-snap-points.ts`, `apps/web/src/timeline/bookmarks/snap-source.ts`
+**Web:** `dep/apps/web/src/timeline/snapping/build.ts`, `dep/apps/web/src/timeline/snapping/resolve.ts`, `dep/apps/web/src/timeline/snapping/threshold.ts`, `dep/apps/web/src/timeline/snapping/types.ts`, `dep/apps/web/src/timeline/snapping/index.ts`, `dep/apps/web/src/timeline/element-snap-source.ts`, `dep/apps/web/src/timeline/playhead-snap-source.ts`, `dep/apps/web/src/timeline/animation-snap-points.ts`, `dep/apps/web/src/timeline/bookmarks/snap-source.ts`
 **Browser deps:** `Threshold input is a pixel count and zoom level - a viewport concern; GPUI supplies zoom/px-per-second`
 **Depends on:** timeline-core-model
 
@@ -581,7 +581,7 @@ _Risks:_
 ---
 
 #### group-move  `2-4 weeks`
-**Web:** `apps/web/src/timeline/group-move/build-group.ts`, `apps/web/src/timeline/group-move/resolve-move.ts`, `apps/web/src/timeline/group-move/snap.ts`, `apps/web/src/timeline/group-move/track-placement.ts`, `apps/web/src/timeline/group-move/types.ts`, `apps/web/src/timeline/group-move/index.ts`
+**Web:** `dep/apps/web/src/timeline/group-move/build-group.ts`, `dep/apps/web/src/timeline/group-move/resolve-move.ts`, `dep/apps/web/src/timeline/group-move/snap.ts`, `dep/apps/web/src/timeline/group-move/track-placement.ts`, `dep/apps/web/src/timeline/group-move/types.ts`, `dep/apps/web/src/timeline/group-move/index.ts`
 **Browser deps:** —
 **Depends on:** timeline-core-model, placement-engine, snapping
 
@@ -615,7 +615,7 @@ _Risks:_
 ---
 
 #### group-resize  `2-4 weeks`
-**Web:** `apps/web/src/timeline/group-resize/compute-resize.ts`, `apps/web/src/timeline/group-resize/types.ts`, `apps/web/src/timeline/group-resize/index.ts`, `apps/web/src/timeline/controllers/resize-controller.ts (buildResizeMembers, hasResizeChanges - pure helpers)`
+**Web:** `dep/apps/web/src/timeline/group-resize/compute-resize.ts`, `dep/apps/web/src/timeline/group-resize/types.ts`, `dep/apps/web/src/timeline/group-resize/index.ts`, `dep/apps/web/src/timeline/controllers/resize-controller.ts (buildResizeMembers, hasResizeChanges - pure helpers)`
 **Browser deps:** `FrameRate comes from opencut-wasm (already native in rust/crates/time)`
 **Depends on:** timeline-core-model, retime-speed
 
@@ -648,7 +648,7 @@ _Risks:_
 ---
 
 #### ripple  `1-2 weeks`
-**Web:** `apps/web/src/ripple/diff.ts`, `apps/web/src/ripple/apply.ts`, `apps/web/src/ripple/shift.ts`, `apps/web/src/ripple/index.ts`
+**Web:** `dep/apps/web/src/ripple/diff.ts`, `dep/apps/web/src/ripple/apply.ts`, `dep/apps/web/src/ripple/shift.ts`, `dep/apps/web/src/ripple/index.ts`
 **Browser deps:** —
 **Depends on:** timeline-core-model
 
@@ -679,7 +679,7 @@ _Risks:_
 ---
 
 #### retime-speed  `2-4 weeks`
-**Web:** `apps/web/src/retime/rate.ts`, `apps/web/src/retime/resolve.ts`, `apps/web/src/retime/split.ts`, `apps/web/src/retime/presets.ts`, `apps/web/src/retime/audio-stretch.ts`, `apps/web/src/retime/index.ts`, `apps/web/src/retime/__tests__/split.test.ts`, `apps/web/src/retime/__tests__/resolve.test.ts`, `apps/web/src/commands/timeline/element/keyframes/retime-keyframe.ts`
+**Web:** `dep/apps/web/src/retime/rate.ts`, `dep/apps/web/src/retime/resolve.ts`, `dep/apps/web/src/retime/split.ts`, `dep/apps/web/src/retime/presets.ts`, `dep/apps/web/src/retime/audio-stretch.ts`, `dep/apps/web/src/retime/index.ts`, `dep/apps/web/src/retime/__tests__/split.test.ts`, `dep/apps/web/src/retime/__tests__/resolve.test.ts`, `dep/apps/web/src/commands/timeline/element/keyframes/retime-keyframe.ts`
 **Browser deps:** `audio-stretch.ts: WebAudio AudioBuffer, BaseAudioContext, OfflineAudioContext (createBuffer/startRendering/copyToChannel), createBufferSource`, `soundtouchjs PitchShifter (npm) for pitch-preserving time-stretch`, `sourceBuffer.getChannelData / sampleRate (WebAudio decoded PCM)`
 **Depends on:** timeline-core-model
 
@@ -711,7 +711,7 @@ _Risks:_
 ---
 
 #### bookmarks-model  `days`
-**Web:** `apps/web/src/timeline/bookmarks/utils.ts`, `apps/web/src/timeline/bookmarks/index.ts`, `apps/web/src/timeline/bookmarks/snap-source.ts`
+**Web:** `dep/apps/web/src/timeline/bookmarks/utils.ts`, `dep/apps/web/src/timeline/bookmarks/index.ts`, `dep/apps/web/src/timeline/bookmarks/snap-source.ts`
 **Browser deps:** `bookmarks/components/*.tsx, bookmarks/hooks/use-bookmark-drag.ts, preview-overlay-source.tsx are React/DOM (UI - excluded from this pure subsystem)`
 **Depends on:** timeline-core-model, snapping
 
@@ -738,7 +738,7 @@ _Risks:_
 ---
 
 #### audio-separation-and-state  `1-2 weeks`
-**Web:** `apps/web/src/timeline/audio-separation/index.ts`, `apps/web/src/timeline/audio-separation/__tests__/audio-separation.test.ts`, `apps/web/src/timeline/audio-state.ts`, `apps/web/src/timeline/audio-constants.ts`, `apps/web/src/timeline/audio-display.ts`, `apps/web/src/timeline/__tests__/audio-state.test.ts`
+**Web:** `dep/apps/web/src/timeline/audio-separation/index.ts`, `dep/apps/web/src/timeline/audio-separation/__tests__/audio-separation.test.ts`, `dep/apps/web/src/timeline/audio-state.ts`, `dep/apps/web/src/timeline/audio-constants.ts`, `dep/apps/web/src/timeline/audio-display.ts`, `dep/apps/web/src/timeline/__tests__/audio-state.test.ts`
 **Browser deps:** —
 **Depends on:** timeline-core-model
 
@@ -768,7 +768,7 @@ _Risks:_
 ---
 
 #### scale-ruler-viewport-utils  `1-2 weeks`
-**Web:** `apps/web/src/timeline/scale.ts`, `apps/web/src/timeline/pixel-utils.ts`, `apps/web/src/timeline/zoom-utils.ts`, `apps/web/src/timeline/ruler-utils.ts`, `apps/web/src/timeline/drag-utils.ts`
+**Web:** `dep/apps/web/src/timeline/scale.ts`, `dep/apps/web/src/timeline/pixel-utils.ts`, `dep/apps/web/src/timeline/zoom-utils.ts`, `dep/apps/web/src/timeline/ruler-utils.ts`, `dep/apps/web/src/timeline/drag-utils.ts`
 **Browser deps:** `pixel-utils reads window.devicePixelRatio (device-pixel grid snapping)`, `drag-utils takes a DOMRect and scrollLeft (viewport geometry)`
 **Depends on:** timeline-core-model
 
@@ -797,7 +797,7 @@ _Risks:_
 ---
 
 #### drop-target-computation  `1-2 weeks`
-**Web:** `apps/web/src/timeline/components/drop-target.ts`, `apps/web/src/timeline/components/track-layout.ts`, `apps/web/src/timeline/components/layout.ts`
+**Web:** `dep/apps/web/src/timeline/components/drop-target.ts`, `dep/apps/web/src/timeline/components/track-layout.ts`, `dep/apps/web/src/timeline/components/layout.ts`
 **Browser deps:** `Track pixel heights (getTrackHeight) and TIMELINE_TRACK_GAP_PX are UI/theme layout constants`, `Mouse x/y and pixelsPerSecond/zoom are viewport inputs`
 **Depends on:** timeline-core-model, placement-engine
 
@@ -827,7 +827,7 @@ _Risks:_
 ---
 
 #### interaction-controllers-gpui  `2-4 months`
-**Web:** `apps/web/src/timeline/controllers/drag-drop-controller.ts`, `apps/web/src/timeline/controllers/element-interaction-controller.ts`, `apps/web/src/timeline/controllers/resize-controller.ts`, `apps/web/src/timeline/controllers/seek-controller.ts`, `apps/web/src/timeline/controllers/zoom-controller.ts`, `apps/web/src/timeline/controllers/playhead-controller.ts`, `apps/web/src/timeline/controllers/keyframe-drag-controller.ts`, `apps/web/src/timeline/hooks/use-edge-auto-scroll.ts`, `apps/web/src/timeline/hooks/use-scroll-sync.ts`, `apps/web/src/timeline/hooks/element/use-keyframe-box-select.ts`, `apps/web/src/timeline/components/selection-hit-testing.ts`, `apps/web/src/timeline/timeline-store.ts`
+**Web:** `dep/apps/web/src/timeline/controllers/drag-drop-controller.ts`, `dep/apps/web/src/timeline/controllers/element-interaction-controller.ts`, `dep/apps/web/src/timeline/controllers/resize-controller.ts`, `dep/apps/web/src/timeline/controllers/seek-controller.ts`, `dep/apps/web/src/timeline/controllers/zoom-controller.ts`, `dep/apps/web/src/timeline/controllers/playhead-controller.ts`, `dep/apps/web/src/timeline/controllers/keyframe-drag-controller.ts`, `dep/apps/web/src/timeline/hooks/use-edge-auto-scroll.ts`, `dep/apps/web/src/timeline/hooks/use-scroll-sync.ts`, `dep/apps/web/src/timeline/hooks/element/use-keyframe-box-select.ts`, `dep/apps/web/src/timeline/components/selection-hit-testing.ts`, `dep/apps/web/src/timeline/timeline-store.ts`
 **Browser deps:** `React MouseEvent / native MouseEvent, event.button/clientX/clientY/timeStamp/target`, `DOM element refs via configRef getters: getBoundingClientRect, scrollLeft, contains()`, `window addEventListener(mousemove/mouseup), requestAnimationFrame, setTimeout debounce`, `React ref/subscription plumbing (subscribers Set, configRef.current)`
 **Depends on:** timeline-core-model, placement-engine, group-move, group-resize, snapping, drop-target-computation, scale-ruler-viewport-utils
 
@@ -868,14 +868,14 @@ WHAT'S ALREADY NATIVE AND REUSED AS-IS: rust/crates/compositor/src/compositor.rs
 
 TWO-RASTERIZER STRATEGY (key decision): the TS renderer rasterizes non-media layers (color/gradient, text, mask shapes, graphic vector shapes, blur backdrop) on Canvas2D into OffscreenCanvas then uploads as textures; media (video/image/sticker) are 'external' textures uploaded by source identity. Keep that exact split. For the CPU raster stage pick tiny-skia (deterministic, stable, ideal for golden tests + the export path). OPTIONALLY add a vello fast-path for interactive preview that renders vector/text straight into a wgpu texture (no CPU round-trip) — but vello is alpha and non-deterministic across drivers, so it must NOT be the golden path.
 
-DETERMINISM / GOLDEN STRATEGY (cross-cutting): GPU output varies by driver, so golden testing is three-tier. Tier 0 (cheapest, highest value): descriptor-level golden — serialize the FrameDescriptor the native scene-builder+resolve produces for a fixture project and diff JSON vs a committed snapshot; catches scene/resolve regressions with zero GPU (the existing apps/web/src/services/renderer/__tests__/scene-builder-background.test.ts is the TS precedent). Tier 1 (exact, CPU): golden-PNG the tiny-skia raster outputs (text/color/gradient/mask/graphic) at 0 tolerance — pure and deterministic. Tier 2 (tolerant, GPU): render whole composited frames through a software adapter (lavapipe/llvmpipe via WGPU_ADAPTER_NAME, or a headless offscreen GpuContext) and diff vs committed goldens with a small per-pixel tolerance + max-diff-count budget. IMPORTANT: text goldens must be regenerated against the native raster (cosmic-text != Canvas2D metrics), they cannot be shared with the web renderer.
+DETERMINISM / GOLDEN STRATEGY (cross-cutting): GPU output varies by driver, so golden testing is three-tier. Tier 0 (cheapest, highest value): descriptor-level golden — serialize the FrameDescriptor the native scene-builder+resolve produces for a fixture project and diff JSON vs a committed snapshot; catches scene/resolve regressions with zero GPU (the existing dep/apps/web/src/services/renderer/__tests__/scene-builder-background.test.ts is the TS precedent). Tier 1 (exact, CPU): golden-PNG the tiny-skia raster outputs (text/color/gradient/mask/graphic) at 0 tolerance — pure and deterministic. Tier 2 (tolerant, GPU): render whole composited frames through a software adapter (lavapipe/llvmpipe via WGPU_ADAPTER_NAME, or a headless offscreen GpuContext) and diff vs committed goldens with a small per-pixel tolerance + max-diff-count budget. IMPORTANT: text goldens must be regenerated against the native raster (cosmic-text != Canvas2D metrics), they cannot be shared with the web renderer.
 
 CROSS-CLUSTER DEPENDENCIES (out of scope, depended on): (1) Timeline/state cluster owns SceneTracks/TimelineElement/MediaAsset/params/retime — scene-builder consumes these; commit/preview-overlay API backs the handle controllers. (2) Animation cluster owns resolveTransformAtTime/resolveOpacityAtTime/resolveColorAtTime/resolveEffectParamsAtTime/getElementLocalTime + bezier sampler — resolve.ts calls these every node every frame. (3) Media/decode cluster owns videoCache.getFrameAt (native video decode -> RGBA frame) + image decode — the single biggest external dependency of resolve; MUST expose a stable id+version for the external-texture cache. (4) Text cluster owns measureTextElement/typography/layout/background + fonts/atlas -> becomes cosmic-text/parley + fontdb; blocks both the raster and the geometry subsystems. (5) Effects cluster owns effectsRegistry + resolveEffectPasses + the WGSL shader set (only gaussian-blur wired). (6) Masks cluster owns mask definitions + builtin shape path builders (the CPU shapes I rasterize) + the native JFA feather crate. (7) Graphics cluster owns GraphicDefinition.render (Canvas2D path draw -> kurbo paths). (8) Gradients cluster owns drawCssBackground (CSS gradient parsing -> lightningcss). (9) Audio cluster owns createTimelineAudioBuffer (mixed PCM) that export muxes. (10) Playback clock feeds preview render time. Effort numbers assume those clusters deliver native equivalents.
 
 SEQUENCING for core-first: build in this order — (A) Scene-graph model + scene builder (pure, unblocks descriptor goldens), (B) Pure geometry (pure, unblocks selection/hit-test and later UI), (C) Frame-descriptor bridge + wgpu compositor integration (small, reuses native crates, gets pixels on screen), (D) Canvas2D->native raster + resolve (the long pole, gated on text/fonts + media decode), (E) Export/muxing (reuses D's offscreen path), (F) Interactive preview GPUI shell (last, UI). The renderer can produce correct composited frames as soon as C+D land even before any GPUI UI exists — that is the natural first end-to-end milestone (headless render of a fixture project to PNG/MP4).
 
 #### Scene-graph model + scene builder  `2-4 weeks`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/scene-builder.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/base-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/root-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/visual-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/video-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/image-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/text-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/sticker-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/graphic-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/color-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/blur-background-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/effect-layer-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/rendering/animation-values.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/rendering/index.ts`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/scene-builder.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/base-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/root-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/visual-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/video-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/image-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/text-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/sticker-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/graphic-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/color-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/blur-background-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/effect-layer-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/rendering/animation-values.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/rendering/index.ts`
 **Browser deps:** `None intrinsic — pure data transform (JS Map + object spreads). Consumes @/timeline, @/media/types, @/project/types, @/rendering shapes`
 **Depends on:** Timeline/state model (SceneTracks, elements, params), Media assets map, Animation transform readers, Effects & Masks value types
 
@@ -905,7 +905,7 @@ _Risks:_
 ---
 
 #### Render-tree resolve (per-frame state sampling)  `1-2 months`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/resolve.ts`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/resolve.ts`
 **Browser deps:** `videoCache.getFrameAt returns a frame whose .canvas is an OffscreenCanvas/VideoFrame-backed surface`, `loadImageSource uses HTMLImageElement + OffscreenCanvas downscale; loadStickerSource loads Iconify SVG URL as <img> at 200x200`, `getTextMeasurementContext() = Canvas2D context for measureText`, `async/Promise.all fan-out over children (decode + image load are async)`
 **Depends on:** Media/decode cluster (frame provider, image decode), Animation cluster (transform/opacity/color/effect-param sampling), Text cluster (measure), Effects registry, Graphics param resolve, Stickers source bytes, time crate
 
@@ -941,7 +941,7 @@ _Risks:_
 ---
 
 #### Canvas2D -> native 2D rasterization (text, color/gradient, mask shapes, graphics)  `1-2 months`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/canvas-utils.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/text-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/text/primitives.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/graphic-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/nodes/color-node.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/compositor/frame-descriptor.ts`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/canvas-utils.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/text-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/text/primitives.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/graphic-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/nodes/color-node.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/frame-descriptor.ts`
 **Browser deps:** `OffscreenCanvas + OffscreenCanvasRenderingContext2D (createCanvasSurface)`, `ctx.fillText/strokeText/measureText/font/textAlign/textBaseline/letterSpacing/roundRect/fill(Path2D)/stroke(Path2D)/drawImage-with-transform`, `Path2D in mask/graphic definitions`, `CSS gradient parsing via drawCssBackground (createLinearGradient/createRadialGradient)`
 **Depends on:** Text/fonts cluster (font DB, shaping), Graphics definitions, Masks builtin shape path builders, Gradients CSS parsing, Masks crate (JFA feather, native)
 
@@ -978,7 +978,7 @@ _Risks:_
 ---
 
 #### Frame-descriptor build + texture cache/bridge (serde boundary removal)  `1-2 weeks`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/compositor/frame-descriptor.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/compositor/wasm-compositor.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/compositor/types.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/canvas-renderer.ts`, `/Users/himanshu/codes/synthai/vii/rust/crates/compositor/src/frame.rs`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/frame-descriptor.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/wasm-compositor.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/types.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/canvas-renderer.ts`, `/Users/himanshu/codes/synthai/vii/rust/crates/compositor/src/frame.rs`
 **Browser deps:** `serde-wasm-bindgen: FrameDescriptor deserialized in rust/wasm/src/compositor.rs`, `opencut-wasm exports initCompositor/resizeCompositor/getCompositorCanvas/uploadTexture/releaseTexture/renderFrame/getLastFrameProfile`, `OffscreenCanvas backing store for rendered textures; uploadTexture does a GPU canvas import`, `WeakMap<object,number> for external identity; JSON.stringify for content hashes`, `HTMLCanvasElement mount (getCompositorCanvas)`
 **Depends on:** Native compositor crate (exists), Media frame provider versioning, Raster subsystem (produces pixmaps)
 
@@ -1012,7 +1012,7 @@ _Risks:_
 ---
 
 #### wgpu compositor integration + GPU init (reuse native crate)  `2-4 weeks`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/gpu-renderer.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/mask-feather.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/effect-preview.ts`, `/Users/himanshu/codes/synthai/vii/rust/wasm/src/compositor.rs`, `/Users/himanshu/codes/synthai/vii/rust/wasm/src/gpu.rs`, `/Users/himanshu/codes/synthai/vii/rust/crates/compositor/src/compositor.rs`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/gpu-renderer.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/mask-feather.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/effect-preview.ts`, `/Users/himanshu/codes/synthai/vii/rust/wasm/src/compositor.rs`, `/Users/himanshu/codes/synthai/vii/rust/wasm/src/gpu.rs`, `/Users/himanshu/codes/synthai/vii/rust/crates/compositor/src/compositor.rs`
 **Browser deps:** `opencut-wasm initializeGpu/applyEffectPasses/applyMaskFeather (wasm-bindgen)`, `wgpu surface bound to HtmlCanvasElement (SurfaceTarget::Canvas); WebGL vs WebGPU branch`, `OffscreenCanvas in/out of applyEffect/applyMaskFeather`, `compositor mounts getCompositorCanvas() into the DOM`
 **Depends on:** gpu/compositor/effects/masks crates (exist), GPUI/window surface handle, Effects registry
 
@@ -1043,7 +1043,7 @@ _Risks:_
 ---
 
 #### Export pipeline + native muxing  `2-4 weeks`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/services/renderer/scene-exporter.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/export/index.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/export/defaults.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/export/mime-types.ts`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/scene-exporter.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/export/index.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/export/defaults.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/export/mime-types.ts`
 **Browser deps:** `mediabunny (Output/Mp4OutputFormat/WebMOutputFormat/CanvasSource/AudioBufferSource) — WebCodecs encode+mux`, `WebCodecs AudioEncoder for aac-support probe`, `CanvasSource reads the compositor HTMLCanvasElement each frame (getOutputCanvas)`, `AudioBuffer (Web Audio) as mixed audio input`, `Blob / URL.createObjectURL / anchor download`, `eventemitter3`
 **Depends on:** NativeRenderer offscreen readback, Audio cluster (mixed PCM buffer), time crate (ticks/fps), fps utils
 
@@ -1078,7 +1078,7 @@ _Risks:_
 ---
 
 #### Pure geometry: hit-test, element bounds, coordinate transforms, snapping  `2-4 weeks`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/hit-test.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/element-bounds.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/preview-coords.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/preview-snap.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/zoom.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/overlays.ts`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/hit-test.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/element-bounds.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/preview-coords.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/preview-snap.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/zoom.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/overlays.ts`
 **Browser deps:** `DOMRect in screenToCanvas (replaceable with a plain rect)`, `text bounds calls measureTextElement via a throwaway document.createElement('canvas') 2D context — the ONLY browser touch`, `everything else pure trig/number math`
 **Depends on:** Text cluster (native measure), Animation transform sampling, Timeline element/media types
 
@@ -1110,7 +1110,7 @@ _Risks:_
 ---
 
 #### Interactive preview viewport + transform/mask handle controllers (UI shell)  `1-2 months`
-**Web:** `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/index.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/preview-viewport.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/transform-handles.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/handle-primitives.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/mask-handles.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/preview-interaction-overlay.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/overlay-layer.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/snap-guides.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/text-edit-overlay.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/toolbar.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/context-menu.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/cursors.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/components/guide-popover.tsx`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/controllers/preview-interaction-controller.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/controllers/transform-handle-controller.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/hooks/use-preview-interaction.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/hooks/use-transform-handles.ts`, `/Users/himanshu/codes/synthai/vii/apps/web/src/preview/preview-store.ts`
+**Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/index.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/preview-viewport.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/transform-handles.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/handle-primitives.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/mask-handles.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/preview-interaction-overlay.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/overlay-layer.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/snap-guides.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/text-edit-overlay.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/toolbar.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/context-menu.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/cursors.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/components/guide-popover.tsx`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/controllers/preview-interaction-controller.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/controllers/transform-handle-controller.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/hooks/use-preview-interaction.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/hooks/use-transform-handles.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/preview/preview-store.ts`
 **Browser deps:** `React 19 hooks (useRafLoop, useContainerSize, useFullscreen, useSyncExternalStore via useEditor)`, `DOM pointer events + setPointerCapture/releasePointerCapture`, `WheelEvent (deltaMode normalization), requestAnimationFrame`, `contentEditable + CSS (-webkit-text-stroke) for text edit overlay`, `HTML/CSS absolute overlays; Radix context menu; use-deep-compare-effect`, `the compositor HTMLCanvasElement mounted into a div`
 **Depends on:** Pure geometry subsystem, NativeRenderer, Timeline preview-overlay API (state cluster), Masks cluster (mask handle params), Text cluster (edit overlay), GPUI shell
 
@@ -1146,7 +1146,7 @@ _Risks:_
 Cluster crux: three concerns share the same shape — a data-driven registry of definitions (EffectDefinition / MaskDefinition), a per-frame *sampling* layer (channel/curve math, effect-param resolution, mask shape geometry), and a *rasterization/GPU* layer. The GPU layer is ALREADY native Rust (rust/crates/effects: gaussian-blur + brightness pipelines with uniform packing + tests; rust/crates/masks: JFA-SDF two-sided distance + analytic feather, but GPU-untested). What is still TS and must be ported is (a) all channel/curve MATH (bezier solve, interpolation, extrapolation, normalization, clamp/split, curve<->normalized-cubic-bezier bridge), (b) the effect registry + per-effect uniform BUILDERS (currently TS closures; Rust pack_effect_uniforms hard-codes per shader and rejects unknown uniforms — the two representations are duplicated and must be unified), and (c) mask SHAPE RASTERIZATION, which today runs entirely on browser Canvas2D Path2D + OffscreenCanvasRenderingContext2D (fill/stroke/createLinearGradient) inside frame-descriptor.buildMaskArtifacts, then uploads the alpha texture to wgpu. That Canvas2D dependency is the single biggest native gap in the cluster; tiny-skia is the drop-in CPU replacement (same fill/stroke/linear-gradient/clip model), with kurbo for curve math and cosmic-text+swash for the text mask. IMPORTANT correctness facts to preserve on port: (1) keyframe times are MediaTime integer ticks RELATIVE to element start, resolved via getElementLocalTime clamped to [0,duration]; the tick math already lives in the Rust `time` crate so channel math must consume MediaTime, not seconds. (2) bezier segments solve *progress-for-time* by 20-iteration bisection over the time-axis cubic, THEN evaluate the value-axis cubic — a naive t-uniform sampling will not match. (3) color paths are COMPOSITE channels (r/g/b/a scalar sub-channels in linear RGBA) — resolve/keyframe-query fold them back to a formatted color string; discrete channels are step-held. (4) split mask zeroes GPU feather and bakes a linear-gradient feather on the CPU (frame-descriptor.ts:408) to avoid JFA's two-sided edge artifact — the native rasterizer must reproduce drawWithFeather vs drawWithFeather-fastpath vs fillPath branching. (5) only masks[0] is honored today (frame-descriptor.ts:388). Only ONE effect (blur) is user-registered though the Rust pipeline also carries brightness; adding effects is the stated product goal, so the native EffectDefinition representation should make uniform-building data-driven rather than a Rust match arm per shader. Suggested Cargo layout: extend rust/crates/effects with a platform-agnostic `registry`/`definition` module (no wgpu), add a new rust/crates/animation crate (pure math, depends on `time`), and add a rust/crates/mask-raster module (tiny-skia, no wgpu) feeding the existing rust/crates/masks GPU feather. Graph-editor UI and mask-handle hooks are React/SVG/pointer/localStorage and are GPUI rewrites, but their underlying math (snap, geometry, computeParamUpdate, curve-bridge, easing presets) is pure and ports with the core.
 
 #### animation-channel-curve-math  `1-2 weeks`
-**Web:** `apps/web/src/animation/types.ts`, `apps/web/src/animation/bezier.ts`, `apps/web/src/animation/interpolation.ts`, `apps/web/src/animation/resolve.ts`, `apps/web/src/animation/values.ts`, `apps/web/src/animation/channel-data.ts`, `apps/web/src/animation/path.ts`, `apps/web/src/animation/property-groups.ts`, `apps/web/src/animation/index.ts`, `apps/web/src/rendering/animation-values.ts`, `apps/web/src/animation/__tests__/animated-params.test.ts`
+**Web:** `dep/apps/web/src/animation/types.ts`, `dep/apps/web/src/animation/bezier.ts`, `dep/apps/web/src/animation/interpolation.ts`, `dep/apps/web/src/animation/resolve.ts`, `dep/apps/web/src/animation/values.ts`, `dep/apps/web/src/animation/channel-data.ts`, `dep/apps/web/src/animation/path.ts`, `dep/apps/web/src/animation/property-groups.ts`, `dep/apps/web/src/animation/index.ts`, `dep/apps/web/src/rendering/animation-values.ts`, `dep/apps/web/src/animation/__tests__/animated-params.test.ts`
 **Browser deps:** `MediaTime brand from @/wasm (integer ticks) — already backed by the native `time` crate, only a numeric newtype at runtime`, `no DOM/Canvas/GPU — pure arithmetic; @/utils/math clamp and @/params color parsing are the only non-time imports`
 **Depends on:** time crate (MediaTime tick math), params color parse/format (parseColorToLinearRgba/formatLinearRgba)
 
@@ -1184,7 +1184,7 @@ _Risks:_
 ---
 
 #### animation-keyframe-crud  `2-4 weeks`
-**Web:** `apps/web/src/animation/keyframes.ts`, `apps/web/src/animation/keyframe-query.ts`, `apps/web/src/animation/curve-bridge.ts`, `apps/web/src/animation/graph-channels.ts`, `apps/web/src/commands/timeline/element/keyframes/`, `apps/web/src/commands/timeline/element/effects/`, `apps/web/src/commands/timeline/element/masks/`
+**Web:** `dep/apps/web/src/animation/keyframes.ts`, `dep/apps/web/src/animation/keyframe-query.ts`, `dep/apps/web/src/animation/curve-bridge.ts`, `dep/apps/web/src/animation/graph-channels.ts`, `dep/apps/web/src/commands/timeline/element/keyframes/`, `dep/apps/web/src/commands/timeline/element/effects/`, `dep/apps/web/src/commands/timeline/element/masks/`
 **Browser deps:** `MediaTime + roundMediaTime from @/wasm (native `time` crate)`, `generateUUID / id utils for new keyframe ids (crypto.randomUUID in browser)`, `no DOM — pure state transforms; consumed by undo/redo commands`
 **Depends on:** animation-channel-curve-math, time crate, timeline element/command layer (out-of-cluster boundary)
 
@@ -1218,7 +1218,7 @@ _Risks:_
 ---
 
 #### animation-param-channels  `days`
-**Web:** `apps/web/src/animation/effect-param-channel.ts`, `apps/web/src/animation/graphic-param-channel.ts`, `apps/web/src/animation/graph-channels.ts`, `apps/web/src/animation/property-groups.ts`
+**Web:** `dep/apps/web/src/animation/effect-param-channel.ts`, `dep/apps/web/src/animation/graphic-param-channel.ts`, `dep/apps/web/src/animation/graph-channels.ts`, `dep/apps/web/src/animation/property-groups.ts`
 **Browser deps:** `none beyond animation-channel-curve-math; string path parsing only`
 **Depends on:** animation-channel-curve-math, effects-registry (ParamValue type), params registry
 
@@ -1246,7 +1246,7 @@ _Risks:_
 ---
 
 #### animation-graph-editor-ui  `1-2 months`
-**Web:** `apps/web/src/timeline/components/graph-editor/bezier-graph.tsx`, `apps/web/src/timeline/components/graph-editor/use-controller.ts`, `apps/web/src/timeline/components/graph-editor/easing-presets.ts`, `apps/web/src/timeline/components/graph-editor/custom-presets-store.ts`, `apps/web/src/timeline/components/graph-editor/session.ts`, `apps/web/src/timeline/components/graph-editor/popover.tsx`
+**Web:** `dep/apps/web/src/timeline/components/graph-editor/bezier-graph.tsx`, `dep/apps/web/src/timeline/components/graph-editor/use-controller.ts`, `dep/apps/web/src/timeline/components/graph-editor/easing-presets.ts`, `dep/apps/web/src/timeline/components/graph-editor/custom-presets-store.ts`, `dep/apps/web/src/timeline/components/graph-editor/session.ts`, `dep/apps/web/src/timeline/components/graph-editor/popover.tsx`
 **Browser deps:** `React 19 + JSX components`, `SVG/DOM rendering of curve and handles, pointer events for dragging`, `localStorage persistence (custom presets)`, `useSyncExternalStore subscription pattern`
 **Depends on:** animation-keyframe-crud, animation-channel-curve-math (curve-bridge), GPUI shell, desktop persistence layer
 
@@ -1275,7 +1275,7 @@ _Risks:_
 ---
 
 #### effects-registry-and-definitions  `1-2 weeks`
-**Web:** `apps/web/src/effects/types.ts`, `apps/web/src/effects/registry.ts`, `apps/web/src/effects/index.ts`, `apps/web/src/effects/definitions/index.ts`, `apps/web/src/effects/definitions/blur.ts`, `apps/web/src/effects/definitions/brightness.ts`, `apps/web/src/effects/__tests__/brightness.test.ts`, `apps/web/src/effects/components/effects-tab.tsx`, `apps/web/src/effects/components/assets-view.tsx`, `apps/web/src/services/renderer/resolve.ts`
+**Web:** `dep/apps/web/src/effects/types.ts`, `dep/apps/web/src/effects/registry.ts`, `dep/apps/web/src/effects/index.ts`, `dep/apps/web/src/effects/definitions/index.ts`, `dep/apps/web/src/effects/definitions/blur.ts`, `dep/apps/web/src/effects/definitions/brightness.ts`, `dep/apps/web/src/effects/__tests__/brightness.test.ts`, `dep/apps/web/src/effects/components/effects-tab.tsx`, `dep/apps/web/src/effects/components/assets-view.tsx`, `dep/apps/web/src/services/renderer/resolve.ts`
 **Browser deps:** `none intrinsic — pure config + math; generateUUID for instance ids; effects-tab.tsx/assets-view.tsx are React panels`
 **Depends on:** params registry (ParamDefinition/ParamValue), rust/crates/effects GPU pipeline (consumer), animation-param-channels (animated effect params feed uniforms)
 
@@ -1309,7 +1309,7 @@ _Risks:_
 ---
 
 #### effects-gpu-pipeline  `1-2 weeks`
-**Web:** `rust/crates/effects/src/pipeline.rs`, `rust/crates/effects/src/types.rs`, `rust/crates/effects/src/effects.rs`, `rust/crates/effects/src/shaders/gaussian_blur.wgsl`, `rust/crates/effects/src/shaders/brightness.wgsl`, `apps/web/src/services/renderer/compositor/frame-descriptor.ts (effectPassGroups build)`
+**Web:** `rust/crates/effects/src/pipeline.rs`, `rust/crates/effects/src/types.rs`, `rust/crates/effects/src/effects.rs`, `rust/crates/effects/src/shaders/gaussian_blur.wgsl`, `rust/crates/effects/src/shaders/brightness.wgsl`, `dep/apps/web/src/services/renderer/compositor/frame-descriptor.ts (effectPassGroups build)`
 **Browser deps:** `ALREADY NATIVE — wgpu 29 + bytemuck; wasm feature only toggles wgpu/webgl backend. No browser dependency to remove; native build just drops the wasm cfg.`
 **Depends on:** effects-registry-and-definitions (pass source), gpu crate (GpuContext), compositor cluster (texture format/handoff)
 
@@ -1338,7 +1338,7 @@ _Risks:_
 ---
 
 #### masks-shapes-and-rasterization  `1-2 months`
-**Web:** `apps/web/src/masks/types.ts`, `apps/web/src/masks/registry.ts`, `apps/web/src/masks/index.ts`, `apps/web/src/masks/dimensions.ts`, `apps/web/src/masks/feather.ts`, `apps/web/src/masks/utils.ts`, `apps/web/src/masks/param-update.ts`, `apps/web/src/masks/builtin/box-like.ts`, `apps/web/src/masks/builtin/definitions/rectangle.ts`, `apps/web/src/masks/builtin/definitions/ellipse.ts`, `apps/web/src/masks/builtin/definitions/heart.ts`, `apps/web/src/masks/builtin/definitions/diamond.ts`, `apps/web/src/masks/builtin/definitions/star.ts`, `apps/web/src/masks/builtin/definitions/split.ts`, `apps/web/src/masks/builtin/definitions/cinematic-bars.ts`, `apps/web/src/masks/builtin/definitions/text.ts`, `apps/web/src/masks/freeform/definition.ts`, `apps/web/src/masks/freeform/path.ts`, `apps/web/src/services/renderer/compositor/frame-descriptor.ts (buildMaskArtifacts)`
+**Web:** `dep/apps/web/src/masks/types.ts`, `dep/apps/web/src/masks/registry.ts`, `dep/apps/web/src/masks/index.ts`, `dep/apps/web/src/masks/dimensions.ts`, `dep/apps/web/src/masks/feather.ts`, `dep/apps/web/src/masks/utils.ts`, `dep/apps/web/src/masks/param-update.ts`, `dep/apps/web/src/masks/builtin/box-like.ts`, `dep/apps/web/src/masks/builtin/definitions/rectangle.ts`, `dep/apps/web/src/masks/builtin/definitions/ellipse.ts`, `dep/apps/web/src/masks/builtin/definitions/heart.ts`, `dep/apps/web/src/masks/builtin/definitions/diamond.ts`, `dep/apps/web/src/masks/builtin/definitions/star.ts`, `dep/apps/web/src/masks/builtin/definitions/split.ts`, `dep/apps/web/src/masks/builtin/definitions/cinematic-bars.ts`, `dep/apps/web/src/masks/builtin/definitions/text.ts`, `dep/apps/web/src/masks/freeform/definition.ts`, `dep/apps/web/src/masks/freeform/path.ts`, `dep/apps/web/src/services/renderer/compositor/frame-descriptor.ts (buildMaskArtifacts)`
 **Browser deps:** `Canvas2D Path2D (bezierCurveTo/lineTo/moveTo/closePath) — used by every shape body/stroke`, `OffscreenCanvasRenderingContext2D: fill, stroke, createLinearGradient/addColorStop (split feather), fillRect, fillStyle`, `text mask needs Canvas2D text metrics + glyph fill (font loading via @/fonts)`, `frame-descriptor draws into an OffscreenCanvas then hands the texture to wgpu`
 **Depends on:** masks-interaction (geometry helpers), params registry (ParamDefinition), text/font cluster (glyph rasterization for text mask), masks-gpu-feather (feather stage), compositor cluster (texture upload)
 
@@ -1378,7 +1378,7 @@ _Risks:_
 ---
 
 #### masks-interaction-and-snapping  `2-4 weeks`
-**Web:** `apps/web/src/masks/geometry.ts`, `apps/web/src/masks/snap.ts`, `apps/web/src/masks/handle-positions.ts`, `apps/web/src/masks/use-mask-handles.ts`, `apps/web/src/masks/param-update.ts`, `apps/web/src/masks/components/`, `apps/web/src/masks/__tests__/snap.test.ts`, `apps/web/src/preview/mask-handles.tsx`
+**Web:** `dep/apps/web/src/masks/geometry.ts`, `dep/apps/web/src/masks/snap.ts`, `dep/apps/web/src/masks/handle-positions.ts`, `dep/apps/web/src/masks/use-mask-handles.ts`, `dep/apps/web/src/masks/param-update.ts`, `dep/apps/web/src/masks/components/`, `dep/apps/web/src/masks/__tests__/snap.test.ts`, `dep/apps/web/src/preview/mask-handles.tsx`
 **Browser deps:** `React hook use-mask-handles.ts and mask-handles.tsx (pointer events, overlay rendering)`, `depends on preview/preview-snap and preview/element-bounds (out-of-cluster preview module) — pure math but not in this cluster`, `cursor strings / DOM overlay descriptors (MaskOverlay line/rect/shape/canvas-path)`
 **Depends on:** masks-shapes-and-rasterization, preview/transform cluster (preview-snap, element-bounds), GPUI shell
 
@@ -1410,7 +1410,7 @@ _Risks:_
 ---
 
 #### masks-gpu-feather  `days`
-**Web:** `rust/crates/masks/src/masks.rs`, `rust/crates/masks/src/sdf.rs`, `rust/crates/masks/src/feather.rs`, `rust/crates/masks/src/shaders/jfa_init.wgsl`, `rust/crates/masks/src/shaders/jfa_step.wgsl`, `rust/crates/masks/src/shaders/jfa_distance.wgsl`, `apps/web/src/services/renderer/compositor (mask.wgsl consumption in compositor cluster)`
+**Web:** `rust/crates/masks/src/masks.rs`, `rust/crates/masks/src/sdf.rs`, `rust/crates/masks/src/feather.rs`, `rust/crates/masks/src/shaders/jfa_init.wgsl`, `rust/crates/masks/src/shaders/jfa_step.wgsl`, `rust/crates/masks/src/shaders/jfa_distance.wgsl`, `dep/apps/web/src/services/renderer/compositor (mask.wgsl consumption in compositor cluster)`
 **Browser deps:** `ALREADY NATIVE — wgpu 29 + bytemuck; only wasm cfg gating in rust/wasm. No browser API used.`
 **Depends on:** masks-shapes-and-rasterization (produces the input alpha texture), gpu crate, compositor cluster (mask.wgsl blend)
 
@@ -1438,10 +1438,10 @@ _Risks:_
 - `masks-jfa-unit-stepcount` _(unit)_ — step count = ceil(log2(max(w,h))) for representative sizes
 
 ## Media, audio & text/fonts
-Cluster boundary facts. (1) Everything decode/demux-related funnels through ONE npm dep, mediabunny (^1.29.1), used in exactly 4 places: apps/web/src/media/mediabunny.ts (probe+thumbnail), apps/web/src/media/audio.ts (resolveAudioBufferForAsset), apps/web/src/core/managers/audio-manager.ts (streaming AudioBufferSink playback), apps/web/src/services/video-cache/service.ts (CanvasSink frame decode). All time is in TICKS_PER_SECOND (from @/wasm) — the Rust `time` crate already owns this constant, so native code should reuse it, not reinvent seconds<->ticks. (2) Audio is 100% WebAudio: AudioBuffer is the universal in-memory currency (Float32 planar, per-buffer sampleRate), OfflineAudioContext does all resampling, AudioContext+GainNode+setInterval lookahead does all playback, DynamicsCompressor is the only "mastering". EXPORT_SAMPLE_RATE=44100, MAX_AUDIO_CHANNELS=2 are hardcoded. Native must replace the AudioBuffer abstraction with a planar f32 buffer struct + explicit resampler (rubato) since there is no OfflineAudioContext. (3) Time-stretch pitch preservation is the ONE npm dep besides mediabunny/transformers: soundtouchjs (^0.3.0), used only in apps/web/src/retime/audio-stretch.ts. (4) Text is entirely Canvas2D measureText/fillText/strokeText — NOT GPU, NOT the effects/ Rust crate. Fonts are loaded as CSS @font-face via document.fonts.load + a prebuilt /public/fonts/font-atlas.json preview atlas (this atlas is a UI thumbnail sheet, NOT a glyph atlas). fonts/use-font-atlas.ts is a font-NAME picker, per the audit. (5) Transcription is Whisper via @huggingface/transformers (^3.8.1, ONNX, q4, WebGPU) in a Web Worker; input is always 16kHz mono Float32Array produced by decodeAudioToFloat32 after extractTimelineAudio renders a full-timeline WAV. Existing Rust crates (rust/crates/{compositor,gpu,effects,masks,time,bridge}) are wgpu/video-frame consumers — the native text subsystem must produce glyph bitmaps/quads that feed compositor (cross-cluster dep, not owned here). The single biggest greenfield risk across the cluster is matching browser Canvas2D text metrics (actualBoundingBoxAscent/Descent, letterSpacing, "middle" baseline centering via visualCenterOffset) byte-for-byte against a native shaper — golden tests are mandatory. Existing pure-logic modules that port almost verbatim (no browser deps): apps/web/src/timeline/audio-state.ts (dB<->linear, keyframe gain), apps/web/src/media/waveform-summary.ts (RMS/peak bucketing), apps/web/src/transcription/caption.ts (caption chunking), apps/web/src/text/layout.ts (rect math) — these are days-level ports and should be done first as the stable core the harder subsystems build on.
+Cluster boundary facts. (1) Everything decode/demux-related funnels through ONE npm dep, mediabunny (^1.29.1), used in exactly 4 places: dep/apps/web/src/media/mediabunny.ts (probe+thumbnail), dep/apps/web/src/media/audio.ts (resolveAudioBufferForAsset), dep/apps/web/src/core/managers/audio-manager.ts (streaming AudioBufferSink playback), dep/apps/web/src/services/video-cache/service.ts (CanvasSink frame decode). All time is in TICKS_PER_SECOND (from @/wasm) — the Rust `time` crate already owns this constant, so native code should reuse it, not reinvent seconds<->ticks. (2) Audio is 100% WebAudio: AudioBuffer is the universal in-memory currency (Float32 planar, per-buffer sampleRate), OfflineAudioContext does all resampling, AudioContext+GainNode+setInterval lookahead does all playback, DynamicsCompressor is the only "mastering". EXPORT_SAMPLE_RATE=44100, MAX_AUDIO_CHANNELS=2 are hardcoded. Native must replace the AudioBuffer abstraction with a planar f32 buffer struct + explicit resampler (rubato) since there is no OfflineAudioContext. (3) Time-stretch pitch preservation is the ONE npm dep besides mediabunny/transformers: soundtouchjs (^0.3.0), used only in dep/apps/web/src/retime/audio-stretch.ts. (4) Text is entirely Canvas2D measureText/fillText/strokeText — NOT GPU, NOT the effects/ Rust crate. Fonts are loaded as CSS @font-face via document.fonts.load + a prebuilt /public/fonts/font-atlas.json preview atlas (this atlas is a UI thumbnail sheet, NOT a glyph atlas). fonts/use-font-atlas.ts is a font-NAME picker, per the audit. (5) Transcription is Whisper via @huggingface/transformers (^3.8.1, ONNX, q4, WebGPU) in a Web Worker; input is always 16kHz mono Float32Array produced by decodeAudioToFloat32 after extractTimelineAudio renders a full-timeline WAV. Existing Rust crates (rust/crates/{compositor,gpu,effects,masks,time,bridge}) are wgpu/video-frame consumers — the native text subsystem must produce glyph bitmaps/quads that feed compositor (cross-cluster dep, not owned here). The single biggest greenfield risk across the cluster is matching browser Canvas2D text metrics (actualBoundingBoxAscent/Descent, letterSpacing, "middle" baseline centering via visualCenterOffset) byte-for-byte against a native shaper — golden tests are mandatory. Existing pure-logic modules that port almost verbatim (no browser deps): dep/apps/web/src/timeline/audio-state.ts (dB<->linear, keyframe gain), dep/apps/web/src/media/waveform-summary.ts (RMS/peak bucketing), dep/apps/web/src/transcription/caption.ts (caption chunking), dep/apps/web/src/text/layout.ts (rect math) — these are days-level ports and should be done first as the stable core the harder subsystems build on.
 
 #### media-demux-decode  `2-4 months`
-**Web:** `apps/web/src/media/mediabunny.ts`, `apps/web/src/services/video-cache/service.ts`, `apps/web/src/media/processing.ts`
+**Web:** `dep/apps/web/src/media/mediabunny.ts`, `dep/apps/web/src/services/video-cache/service.ts`, `dep/apps/web/src/media/processing.ts`
 **Browser deps:** `mediabunny (Input, BlobSource, ALL_FORMATS, VideoSampleSink, CanvasSink, AudioBufferSink, WrappedCanvas)`, `browser WebCodecs VideoDecoder under mediabunny (hence canDecode() false for HEVC on Chrome)`, `File/Blob.arrayBuffer()`, `OffscreenCanvas/Canvas for CanvasSink output`, `URL.createObjectURL`
 **Depends on:** audio-decode-resample
 
@@ -1477,7 +1477,7 @@ _Risks:_
 ---
 
 #### audio-decode-resample  `2-4 weeks`
-**Web:** `apps/web/src/media/audio.ts`
+**Web:** `dep/apps/web/src/media/audio.ts`
 **Browser deps:** `mediabunny AudioBufferSink`, `WebAudio AudioContext.decodeAudioData`, `OfflineAudioContext (used purely as a resampler)`, `AudioBuffer.copyToChannel/getChannelData`, `fetch() for library audio`
 **Depends on:** —
 
@@ -1506,7 +1506,7 @@ _Risks:_
 ---
 
 #### audio-mix-export  `2-4 weeks`
-**Web:** `apps/web/src/media/audio.ts`, `apps/web/src/media/mediabunny.ts`
+**Web:** `dep/apps/web/src/media/audio.ts`, `dep/apps/web/src/media/mediabunny.ts`
 **Browser deps:** `AudioContext/OfflineAudioContext.createBuffer`, `AudioBuffer.getChannelData`, `DataView/ArrayBuffer for WAV encode`, `TICKS_PER_SECOND from @/wasm`
 **Depends on:** audio-decode-resample, audio-retime-pitch, audio-gain-model, audio-mastering
 
@@ -1537,7 +1537,7 @@ _Risks:_
 ---
 
 #### audio-playback-scheduling  `1-2 months`
-**Web:** `apps/web/src/core/managers/audio-manager.ts`
+**Web:** `dep/apps/web/src/core/managers/audio-manager.ts`
 **Browser deps:** `WebAudio AudioContext (currentTime clock, createBufferSource, createGain, start(when,offset), gain.setValueAtTime/linearRampToValueAtTime/cancelScheduledValues)`, `mediabunny AudioBufferSink streaming iterator + Input`, `window.setInterval/clearInterval`, `OfflineAudioContext (in decode/prepare paths)`
 **Depends on:** audio-decode-resample, audio-retime-pitch, audio-gain-model, audio-mastering
 
@@ -1571,7 +1571,7 @@ _Risks:_
 ---
 
 #### audio-mastering  `1-2 weeks`
-**Web:** `apps/web/src/media/audio-mastering.ts`
+**Web:** `dep/apps/web/src/media/audio-mastering.ts`
 **Browser deps:** `WebAudio DynamicsCompressorNode (the actual limiter DSP)`, `GainNode`, `OfflineAudioContext render`
 **Depends on:** —
 
@@ -1597,7 +1597,7 @@ _Risks:_
 ---
 
 #### audio-retime-pitch  `2-4 weeks`
-**Web:** `apps/web/src/retime/audio-stretch.ts`, `apps/web/src/retime/resolve.ts`, `apps/web/src/retime/rate.ts`
+**Web:** `dep/apps/web/src/retime/audio-stretch.ts`, `dep/apps/web/src/retime/resolve.ts`, `dep/apps/web/src/retime/rate.ts`
 **Browser deps:** `soundtouchjs (WSOLA/phase-vocoder time-stretch)`, `OfflineAudioContext (resample + stretch render)`, `AudioBuffer copyToChannel/getChannelData`
 **Depends on:** audio-gain-model
 
@@ -1624,7 +1624,7 @@ _Risks:_
 ---
 
 #### audio-gain-model  `days`
-**Web:** `apps/web/src/timeline/audio-state.ts`, `apps/web/src/timeline/audio-separation/index.ts`, `apps/web/src/timeline/audio-constants.ts`
+**Web:** `dep/apps/web/src/timeline/audio-state.ts`, `dep/apps/web/src/timeline/audio-separation/index.ts`, `dep/apps/web/src/timeline/audio-constants.ts`
 **Browser deps:** `none (pure logic over @/animation resolveNumberAtTime + TICKS_PER_SECOND)`
 **Depends on:** —
 
@@ -1653,7 +1653,7 @@ _Risks:_
 ---
 
 #### waveform  `1-2 weeks`
-**Web:** `apps/web/src/media/waveform-summary.ts`, `apps/web/src/services/waveform-cache/service.ts`, `apps/web/src/media/audio.ts`
+**Web:** `dep/apps/web/src/media/waveform-summary.ts`, `dep/apps/web/src/services/waveform-cache/service.ts`, `dep/apps/web/src/media/audio.ts`
 **Browser deps:** `AudioContext.decodeAudioData (in WaveformCache.buildSummary)`, `AudioBuffer.getChannelData`, `fetch() for url sources`
 **Depends on:** audio-decode-resample
 
@@ -1684,7 +1684,7 @@ _Risks:_
 ---
 
 #### thumbnails  `1-2 weeks`
-**Web:** `apps/web/src/media/thumbnail.ts`, `apps/web/src/media/processing.ts`, `apps/web/src/media/mediabunny.ts`
+**Web:** `dep/apps/web/src/media/thumbnail.ts`, `dep/apps/web/src/media/processing.ts`, `dep/apps/web/src/media/mediabunny.ts`
 **Browser deps:** `Canvas2D getContext('2d')/drawImage/toDataURL`, `HTMLImageElement (image decode)`, `mediabunny VideoSampleSink for the video first-frame`, `HTMLVideoElement/HTMLAudioElement loadedmetadata for duration`, `URL.createObjectURL`
 **Depends on:** media-demux-decode
 
@@ -1713,7 +1713,7 @@ _Risks:_
 ---
 
 #### media-import-pipeline  `1-2 weeks`
-**Web:** `apps/web/src/media/processing.ts`, `apps/web/src/media/use-file-upload.ts`, `apps/web/src/media/use-paste-media.ts`, `apps/web/src/media/media-utils.ts`, `apps/web/src/media/types.ts`, `apps/web/src/media/upload-toast.ts`
+**Web:** `dep/apps/web/src/media/processing.ts`, `dep/apps/web/src/media/use-file-upload.ts`, `dep/apps/web/src/media/use-paste-media.ts`, `dep/apps/web/src/media/media-utils.ts`, `dep/apps/web/src/media/types.ts`, `dep/apps/web/src/media/upload-toast.ts`
 **Browser deps:** `File/FileList/Blob, MIME type sniffing via file.type`, `URL.createObjectURL`, `sonner toasts (UI)`, `IndexedDB storage service (other cluster) for quota check`, `mediabunny (readVideoFile)`
 **Depends on:** media-demux-decode, thumbnails, audio-decode-resample
 
@@ -1741,7 +1741,7 @@ _Risks:_
 ---
 
 #### text-layout-measure  `1-2 months`
-**Web:** `apps/web/src/text/primitives.ts`, `apps/web/src/text/measure-element.ts`, `apps/web/src/text/layout.ts`, `apps/web/src/text/background.ts`, `apps/web/src/text/typography.ts`, `apps/web/src/text/__tests__/text-stroke.test.ts`
+**Web:** `dep/apps/web/src/text/primitives.ts`, `dep/apps/web/src/text/measure-element.ts`, `dep/apps/web/src/text/layout.ts`, `dep/apps/web/src/text/background.ts`, `dep/apps/web/src/text/typography.ts`, `dep/apps/web/src/text/__tests__/text-stroke.test.ts`
 **Browser deps:** `Canvas2D CanvasRenderingContext2D/OffscreenCanvas: font parsing, measureText -> TextMetrics (width, actualBoundingBoxAscent/Descent), letterSpacing property, textBaseline 'middle', fillText/strokeText/roundRect/fillRect`, `document.fonts availability implied for font selection`
 **Depends on:** fonts
 
@@ -1775,7 +1775,7 @@ _Risks:_
 ---
 
 #### fonts  `2-4 weeks`
-**Web:** `apps/web/src/fonts/google-fonts.ts`, `apps/web/src/fonts/system-fonts.ts`, `apps/web/src/fonts/use-font-atlas.ts`, `apps/web/src/fonts/types.ts`
+**Web:** `dep/apps/web/src/fonts/google-fonts.ts`, `dep/apps/web/src/fonts/system-fonts.ts`, `dep/apps/web/src/fonts/use-font-atlas.ts`, `dep/apps/web/src/fonts/types.ts`
 **Browser deps:** `Google Fonts CDN (fonts.googleapis.com/css2) network fetch`, `document.fonts (FontFaceSet) load()/ready`, `<link rel=stylesheet> injection`, `Image() preloading of AVIF chunk sheets`, `fetch('/fonts/font-atlas.json')`
 **Depends on:** —
 
@@ -1807,7 +1807,7 @@ _Risks:_
 ---
 
 #### transcription-subtitles  `1-2 months`
-**Web:** `apps/web/src/services/transcription/service.ts`, `apps/web/src/services/transcription/worker.ts`, `apps/web/src/transcription/models.ts`, `apps/web/src/transcription/audio.ts`, `apps/web/src/transcription/caption.ts`, `apps/web/src/transcription/types.ts`, `apps/web/src/subtitles/components/assets-view.tsx`
+**Web:** `dep/apps/web/src/services/transcription/service.ts`, `dep/apps/web/src/services/transcription/worker.ts`, `dep/apps/web/src/transcription/models.ts`, `dep/apps/web/src/transcription/audio.ts`, `dep/apps/web/src/transcription/caption.ts`, `dep/apps/web/src/transcription/types.ts`, `dep/apps/web/src/subtitles/components/assets-view.tsx`
 **Browser deps:** `@huggingface/transformers (ONNX Runtime Web, WASM/WebGPU backends)`, `Web Worker + postMessage`, `WebGPU/WASM SIMD for inference`, `HF Hub model download + browser cache`, `transferable Float32Array`
 **Depends on:** audio-mix-export, audio-decode-resample
 
@@ -1841,9 +1841,9 @@ _Risks:_
 ## Persistence, project model & MCP
 SCOPE-WIDE FINDINGS (read before the per-subsystem entries):
 
-1. STORAGE TOPOLOGY (real). Everything editor-side lives client-side; server (apps/web/src/db/schema.ts, Drizzle/Postgres) holds ONLY auth+feedback, so there is NOTHING to port there. The client split is: (a) IndexedDB DB `video-editor-projects` store `projects` (whole SerializedProject per key = project id); (b) per-project IndexedDB DB `video-editor-media-{projectId}` store `media-metadata` (MediaAssetData); (c) OPFS directory `media-files-{projectId}` (one File per mediaId = the actual bytes); (d) IndexedDB `video-editor-saved-sounds` store `saved-sounds` (single record key `user-sounds`); (e) IndexedDB `video-editor-motion-presets` store `motion-presets` (single record key `user-presets`). All five map cleanly onto one SQLite DB + a media/ blob directory tree.
+1. STORAGE TOPOLOGY (real). Everything editor-side lives client-side; server (dep/apps/web/src/db/schema.ts, Drizzle/Postgres) holds ONLY auth+feedback, so there is NOTHING to port there. The client split is: (a) IndexedDB DB `video-editor-projects` store `projects` (whole SerializedProject per key = project id); (b) per-project IndexedDB DB `video-editor-media-{projectId}` store `media-metadata` (MediaAssetData); (c) OPFS directory `media-files-{projectId}` (one File per mediaId = the actual bytes); (d) IndexedDB `video-editor-saved-sounds` store `saved-sounds` (single record key `user-sounds`); (e) IndexedDB `video-editor-motion-presets` store `motion-presets` (single record key `user-presets`). All five map cleanly onto one SQLite DB + a media/ blob directory tree.
 
-2. MediaTime IS THE INVARIANT. Every time field (startTime/duration/trimStart/trimEnd, bookmark time, playheadTime, keyframe time, metadata.duration) is a branded integer-tick `MediaTime` (apps/web/src/wasm/media-time.ts) already backed by the Rust `time` crate. Native persistence must round/serialize as i64 ticks, never f64 seconds. `roundMediaTime` is applied on load in service.ts (lines 47, 221, 278) — the native loader must replicate that rounding or golden output diverges.
+2. MediaTime IS THE INVARIANT. Every time field (startTime/duration/trimStart/trimEnd, bookmark time, playheadTime, keyframe time, metadata.duration) is a branded integer-tick `MediaTime` (dep/apps/web/src/wasm/media-time.ts) already backed by the Rust `time` crate. Native persistence must round/serialize as i64 ticks, never f64 seconds. `roundMediaTime` is applied on load in service.ts (lines 47, 221, 278) — the native loader must replicate that rounding or golden output diverges.
 
 3. LATENT WEB BUG worth knowing when porting: migrations/runner.ts:41 constructs `new IndexedDBAdapter("video-editor-projects","projects",1)` with POSITIONAL args, but IndexedDBAdapter's ctor destructures an OBJECT `{dbName,storeName,version}` (indexeddb-adapter.ts:8). So the runner's adapter currently opens `dbName=undefined`. Tests call the pure `transformProjectVNToVN1` fns directly and pass, masking it. The native port should drive migrations off the SAME store the loader reads — do not replicate this bug.
 
@@ -1858,7 +1858,7 @@ SCOPE-WIDE FINDINGS (read before the per-subsystem entries):
 CRATE SUMMARY (researched on crates.io, Aug 2026): serde/serde_json (model + JSON compat with the web SerializedProject wire shape), rusqlite 0.38 (single-file SQLite, best fit for a desktop single-file store; no async overhead), rmcp + rmcp-macros (MCP server), tokio (rmcp runtime), palette (exact sRGB<->linear for the v21->v22 color migration, replacing culori), chrono or time (ISO-8601 date (de)serialization matching `.toISOString()`), uuid (ids), directories/dirs (per-OS app data dir for the SQLite file + media/ tree), thiserror (error types), insta (snapshot/golden testing), proptest (round-trip/property), criterion (perf), tempfile (isolated store per test).
 
 #### Project & timeline domain model (opencut-core types)  `1-2 weeks`
-**Web:** `apps/web/src/project/types.ts`, `apps/web/src/timeline/types.ts`, `apps/web/src/media/types.ts`, `apps/web/src/animation/types.ts`, `apps/web/src/effects/types.ts`, `apps/web/src/masks/types.ts`, `apps/web/src/params/index.ts`
+**Web:** `dep/apps/web/src/project/types.ts`, `dep/apps/web/src/timeline/types.ts`, `dep/apps/web/src/media/types.ts`, `dep/apps/web/src/animation/types.ts`, `dep/apps/web/src/effects/types.ts`, `dep/apps/web/src/masks/types.ts`, `dep/apps/web/src/params/index.ts`
 **Browser deps:** `TypeScript structural/union types (no runtime); discriminated unions on string literal 'type'`, `MediaTime is a branded number (number & {__mediaTime}) from the WASM time module`, `Date objects (in-memory) distinct from their ISO-string serialized form`, `AudioBuffer (Web Audio) referenced by BaseAudioElement.buffer — a runtime-only, non-persisted field`
 **Depends on:** opencut-core::time (existing rust/crates/time)
 
@@ -1893,7 +1893,7 @@ _Risks:_
 ---
 
 #### Project (de)serialization layer (SerializedProject wire format)  `1-2 weeks`
-**Web:** `apps/web/src/services/storage/types.ts`, `apps/web/src/services/storage/service.ts`, `apps/web/src/timeline/scenes.ts`
+**Web:** `dep/apps/web/src/services/storage/types.ts`, `dep/apps/web/src/services/storage/service.ts`, `dep/apps/web/src/timeline/scenes.ts`
 **Browser deps:** `Date.prototype.toISOString() / new Date(string) for date (de)serialization`, `structuredClone-free plain-object serialization (IndexedDB stores structured clones; here the value is a plain JSON-compatible object)`, `roundMediaTime from the WASM time module applied at load boundaries`
 **Depends on:** Project & timeline domain model (opencut-core types)
 
@@ -1924,7 +1924,7 @@ _Risks:_
 ---
 
 #### Structured store (IndexedDB -> SQLite)  `1-2 weeks`
-**Web:** `apps/web/src/services/storage/indexeddb-adapter.ts`, `apps/web/src/services/storage/service.ts`, `apps/web/src/services/storage/types.ts`, `apps/web/src/sounds/types.ts`, `apps/web/src/motion-presets/types.ts`
+**Web:** `dep/apps/web/src/services/storage/indexeddb-adapter.ts`, `dep/apps/web/src/services/storage/service.ts`, `dep/apps/web/src/services/storage/types.ts`, `dep/apps/web/src/sounds/types.ts`, `dep/apps/web/src/motion-presets/types.ts`
 **Browser deps:** `IndexedDB (indexedDB.open, object stores, transactions, onupgradeneeded creates store with keyPath 'id', getAllKeys/getAll)`, `One physical IndexedDB database per (projects | media-per-project | saved-sounds | motion-presets)`, `Structured clone semantics of stored values (plain JSON-compatible objects here)`
 **Depends on:** Project (de)serialization layer (SerializedProject wire format)
 
@@ -1958,7 +1958,7 @@ _Risks:_
 ---
 
 #### Media blob store (OPFS -> native filesystem)  `days`
-**Web:** `apps/web/src/services/storage/opfs-adapter.ts`, `apps/web/src/services/storage/service.ts`
+**Web:** `dep/apps/web/src/services/storage/opfs-adapter.ts`, `dep/apps/web/src/services/storage/service.ts`
 **Browser deps:** `OPFS: navigator.storage.getDirectory(), getDirectoryHandle({create}), getFileHandle, createWritable, directory.keys() async iterator, removeEntry`, `File / Blob objects and URL.createObjectURL for handing bytes to the decoder/renderer`, `File.type / File.text() for the SVG sniff and MIME handling`
 **Depends on:** Structured store (IndexedDB -> SQLite)
 
@@ -1990,7 +1990,7 @@ _Risks:_
 ---
 
 #### 31-version migration chain (port + golden strategy)  `1-2 months`
-**Web:** `apps/web/src/services/storage/migrations/index.ts`, `apps/web/src/services/storage/migrations/runner.ts`, `apps/web/src/services/storage/migrations/base.ts`, `apps/web/src/services/storage/migrations/transformers/ (v0-to-v1 .. v30-to-v31, types.ts, utils.ts)`, `apps/web/src/services/storage/migrations/transformers/v1-to-v2.ts`, `apps/web/src/services/storage/migrations/transformers/v21-to-v22.ts`, `apps/web/src/services/storage/migrations/transformers/v30-to-v31.ts`, `apps/web/src/services/storage/migrations/__tests__/ (fixtures/, helpers.ts, v*.test.ts)`
+**Web:** `dep/apps/web/src/services/storage/migrations/index.ts`, `dep/apps/web/src/services/storage/migrations/runner.ts`, `dep/apps/web/src/services/storage/migrations/base.ts`, `dep/apps/web/src/services/storage/migrations/transformers/ (v0-to-v1 .. v30-to-v31, types.ts, utils.ts)`, `dep/apps/web/src/services/storage/migrations/transformers/v1-to-v2.ts`, `dep/apps/web/src/services/storage/migrations/transformers/v21-to-v22.ts`, `dep/apps/web/src/services/storage/migrations/transformers/v30-to-v31.ts`, `dep/apps/web/src/services/storage/migrations/__tests__/ (fixtures/, helpers.ts, v*.test.ts)`
 **Browser deps:** `IndexedDB (runner reads/writes the projects store between steps)`, `culori npm package (v21->v22 colour parsing + sRGB conversion)`, `Plain-object JSON manipulation (no schema); setTimeout for the min-display delay; console for progress`
 **Depends on:** Structured store (IndexedDB -> SQLite), Project (de)serialization layer (SerializedProject wire format)
 
@@ -2027,7 +2027,7 @@ _Risks:_
 ---
 
 #### Storage quota / capacity gate  `days`
-**Web:** `apps/web/src/services/storage/quota.ts`, `apps/web/src/services/storage/use-storage-persistence.ts`, `apps/web/src/services/storage/components/storage-persistence-dialog.tsx`, `apps/web/src/services/storage/service.ts`
+**Web:** `dep/apps/web/src/services/storage/quota.ts`, `dep/apps/web/src/services/storage/use-storage-persistence.ts`, `dep/apps/web/src/services/storage/components/storage-persistence-dialog.tsx`, `dep/apps/web/src/services/storage/service.ts`
 **Browser deps:** `navigator.storage.estimate() and navigator.storage.persist() (StorageManager API)`, `DOMException names QuotaExceededError / NS_ERROR_DOM_QUOTA_REACHED`, `React dialog component (UI-only)`
 **Depends on:** Media blob store (OPFS -> native filesystem)
 
@@ -2057,7 +2057,7 @@ _Risks:_
 ---
 
 #### Native MCP server (rmcp over opencut-core)  `2-4 weeks`
-**Web:** `apps/web/src/services/storage/service.ts`, `apps/web/src/core/managers/project-manager.ts`, `apps/web/src/core/managers/save-manager.ts`, `apps/web/src/project/types.ts`, `AGENTS.md (architecture: logic in rust/, UI shells replaceable)`
+**Web:** `dep/apps/web/src/services/storage/service.ts`, `dep/apps/web/src/core/managers/project-manager.ts`, `dep/apps/web/src/core/managers/save-manager.ts`, `dep/apps/web/src/project/types.ts`, `AGENTS.md (architecture: logic in rust/, UI shells replaceable)`
 **Browser deps:** `None — this subsystem does not exist on the web; it is the native surface that replaces the browser's implicit 'the app IS the API' by exposing opencut-core to agents/tools`
 **Depends on:** Structured store (IndexedDB -> SQLite), Media blob store (OPFS -> native filesystem), 31-version migration chain (port + golden strategy), Project & timeline domain model (opencut-core types)
 
@@ -2068,7 +2068,7 @@ _Risks:_
 - Shares a single opencut-core instance + persistence with the desktop shell (per AGENTS.md: logic lives in the core, shells are replaceable)
 
 **Native approach** — crates: `rmcp`, `rmcp-macros`, `tokio`, `serde`, `serde_json`, `schemars (tool input schemas)`, `thiserror`, `tracing`
-Build a thin `opencut-mcp` crate (workspace member alongside apps/desktop and rust/crates/*) that depends on opencut-core and exposes NO domain logic of its own. Use rmcp (official SDK, tokio-based, MCP 2026-07-28) with the #[tool_router]/#[tool] macros: each tool is a small async handler that locks a shared core handle (Arc<Mutex<EditorCore>> or a core actor/mpsc command channel) and calls the SAME command/timeline/project API the GPUI shell uses, so persistence, migrations, undo, and autosave all go through subsystems 1-6 unchanged. Expose projects as MCP resources (uri opencut://project/{id}) whose contents are the SerializedProject JSON (subsystem 2), and media as opencut://project/{id}/media/{mediaId}. Serve stateless over the 2026-07-28 spec (rmcp default) via stdio for a local desktop connector and optionally streamable-HTTP. Because the core owns a single SQLite connection (subsystem 3), route all core access through one actor to serialize writes and avoid SQLITE_BUSY between the MCP server and the shell. Tool input/output types are #[derive(Serialize,Deserialize,JsonSchema)] structs derived from the domain model so the tool schemas stay in lockstep with the persisted model.
+Build a thin `opencut-mcp` crate (workspace member alongside rust/desktop and rust/crates/*) that depends on opencut-core and exposes NO domain logic of its own. Use rmcp (official SDK, tokio-based, MCP 2026-07-28) with the #[tool_router]/#[tool] macros: each tool is a small async handler that locks a shared core handle (Arc<Mutex<EditorCore>> or a core actor/mpsc command channel) and calls the SAME command/timeline/project API the GPUI shell uses, so persistence, migrations, undo, and autosave all go through subsystems 1-6 unchanged. Expose projects as MCP resources (uri opencut://project/{id}) whose contents are the SerializedProject JSON (subsystem 2), and media as opencut://project/{id}/media/{mediaId}. Serve stateless over the 2026-07-28 spec (rmcp default) via stdio for a local desktop connector and optionally streamable-HTTP. Because the core owns a single SQLite connection (subsystem 3), route all core access through one actor to serialize writes and avoid SQLITE_BUSY between the MCP server and the shell. Tool input/output types are #[derive(Serialize,Deserialize,JsonSchema)] structs derived from the domain model so the tool schemas stay in lockstep with the persisted model.
 
 _Data structures:_ `struct OpencutMcp { core: CoreHandle } where CoreHandle is an mpsc/actor front to the single EditorCore + store`, `#[tool] async fn list_projects() -> Vec<ProjectMetadata>; open_project{id}; create_project{name}; delete_project{id}`, `#[tool] async fn set_background{project_id, background: Background}; add_element{...}; move_element{...}; upsert_keyframe{...} — each returns a CommandResult summary`, `MCP Resource provider mapping opencut://project/{id} -> SerializedProject JSON, opencut://project/{id}/timeline -> scenes/tracks view`, `enum McpError (thiserror) mapping core/persistence/quota errors to JSON-RPC error responses`
 

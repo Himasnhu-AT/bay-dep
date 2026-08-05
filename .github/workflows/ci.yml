@@ -49,11 +49,12 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
 
       - name: Build WASM
         run: wasm-pack build rust/wasm --target bundler --out-dir pkg
+        # (rust/ is the Rust workspace root; the web stack lives in dep/)
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -66,12 +67,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        working-directory: dep
 
       - name: Test
         run: pnpm --filter @opencut/web test
+        working-directory: dep
 
       - name: Build
         run: pnpm --filter @opencut/web build
+        working-directory: dep
 
   # The native editor's home platform: Metal and the ffmpeg CLI are both really present, so
   # VII_REQUIRE_* turns a missing capability into a loud failure instead of a silent skip.
@@ -101,12 +105,15 @@ jobs:
 
       - name: Format
         run: cargo fmt --all --check
+        working-directory: rust
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: rust
 
       - name: Test
         run: cargo test --workspace
+        working-directory: rust
 
   # Deliberately no VII_REQUIRE_* here. This runner has no GPU and no ffmpeg, so a green run
   # is the proof that every capability-gated test still skips gracefully instead of failing.
@@ -140,3 +147,4 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+        working-directory: rust

@@ -29,11 +29,11 @@ import { transformProjectV1ToV2 } from "@/services/storage/migrations/transforme
 const CAPTURE = Boolean(process.env.CAPTURE_GOLDEN);
 const FIXED_TIME = new Date("2020-01-01T00:00:00.000Z");
 
-/** Walk up from this file until we find the repo root (holds both Cargo.toml and apps/). */
+/** Walk up until we find the JS workspace root (dep/: holds pnpm-workspace.yaml + fixtures/). */
 function repoRoot(): string {
 	let dir = dirname(fileURLToPath(import.meta.url));
 	for (let i = 0; i < 12; i += 1) {
-		if (existsSync(resolve(dir, "Cargo.toml")) && existsSync(resolve(dir, "apps"))) {
+		if (existsSync(resolve(dir, "pnpm-workspace.yaml")) && existsSync(resolve(dir, "fixtures"))) {
 			return dir;
 		}
 		dir = dirname(dir);

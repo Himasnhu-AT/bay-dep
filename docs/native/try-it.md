@@ -1,7 +1,7 @@
 # Try it — the native `vii` editor
 
 A hands-on guide to running and exercising the native GPUI desktop editor
-(`apps/desktop`). Everything here is on branch `phase-0/native-gpu-foundation`.
+(`rust/desktop`). Everything here is on branch `phase-0/native-gpu-foundation`.
 
 ---
 
@@ -22,14 +22,17 @@ and text still work but video/audio decode, waveforms, and MP4 export are skippe
 
 ```bash
 # from the repo root
-cargo run -p opencut-desktop --release
+RELEASE=1 ./run.sh
 ```
+
+(equivalently: `cd rust && cargo run --release -p opencut-desktop` — the Rust workspace lives in
+`rust/`, so bare `cargo` commands must be run from there.)
 
 - **`--release` is recommended** — playback and decode are much smoother than a debug build.
 - First build takes a few minutes (wgpu + GPUI compile once, then it's cached).
 - The window is titled `vii — <project name>`.
 
-> The binary is named `opencut`; `cargo run -p opencut-desktop` is the simplest way to launch it.
+> The binary is named `opencut`; `./run.sh` is the simplest way to launch it.
 
 ---
 
@@ -140,7 +143,8 @@ The one deferred item is **true zero-copy preview** — see the "remaining item"
 ## 7. Run the tests
 
 ```bash
-cargo test --workspace
+./test.sh            # fmt + clippy + tests
+# or: cd rust && cargo test --workspace
 ```
 
 **66 tests, all passing** — model round-trips, every engine command + reversible undo/redo,
@@ -152,7 +156,7 @@ audio mixer. GPU/ffmpeg-dependent tests **skip gracefully** (not fail) when no a
 Test a single crate, e.g. the mixer:
 
 ```bash
-cargo test -p opencut-audio
+cd rust && cargo test -p opencut-audio
 ```
 
 ---

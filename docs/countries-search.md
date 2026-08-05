@@ -2,7 +2,7 @@
 
 ## Structure
 
-Each country entry in `apps/web/public/countries.json` follows this shape:
+Each country entry in `dep/apps/web/public/countries.json` follows this shape:
 
 ```json
 {

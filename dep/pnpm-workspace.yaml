@@ -3,10 +3,10 @@ packages:
   - 'packages/*'
 
 # Use the locally-built Rust/WASM core (adds the `brightness` effect pipeline) instead
-# of the published npm package. Requires `wasm-pack build rust/wasm --out-dir pkg` first.
+# of the published npm package. Requires `wasm-pack build ../rust/wasm --out-dir pkg` first.
 # Remove this override to fall back to the published opencut-wasm.
 overrides:
-  opencut-wasm: link:./rust/wasm/pkg
+  opencut-wasm: link:../rust/wasm/pkg
 
 # Native packages allowed to run install/build scripts (migrated from bun's trustedDependencies).
 allowBuilds:

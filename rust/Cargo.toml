@@ -1,21 +1,21 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/desktop",
-    "rust/crates/time",
-    "rust/crates/bridge",
-    "rust/crates/effects",
-    "rust/crates/gpu",
-    "rust/crates/masks",
-    "rust/wasm", "rust/crates/compositor",
-    "rust/crates/native-preview",
-    "rust/crates/opencut-core",
-    "rust/crates/opencut-project",
-    "rust/crates/opencut-audio",
-    "rust/crates/opencut-preview",
-    "rust/crates/opencut-text",
-    "rust/crates/opencut-ui",
-    "rust/crates/test-support",
+    "desktop",
+    "crates/time",
+    "crates/bridge",
+    "crates/effects",
+    "crates/gpu",
+    "crates/masks",
+    "wasm", "crates/compositor",
+    "crates/native-preview",
+    "crates/opencut-core",
+    "crates/opencut-project",
+    "crates/opencut-audio",
+    "crates/opencut-preview",
+    "crates/opencut-text",
+    "crates/opencut-ui",
+    "crates/test-support",
 ]
 
 # P0-GPU-01 — single frozen wgpu major for the whole native workspace.

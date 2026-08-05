@@ -3,26 +3,23 @@
 # asdf version management
 .tool-versions
 
+# --- Rust (workspace lives in rust/) ---
+target/
+.cargo-tools/
+
+# --- JS / web stack (lives in dep/) ---
 node_modules
-.cursorignore
 .turbo
-
-.env*
-!*.env.example
-
-# cursor
+.content-collections
+.open-next
 bun.lockb
 
-# content-collections
-.content-collections
-
-# Twiggy
+# --- editors / tooling ---
+.cursorignore
 .cursor/
 
-.open-next
-
-target/
-
-.cargo-tools/
+# --- env ---
+.env*
+!*.env.example
 
 rust-migration-notes.md

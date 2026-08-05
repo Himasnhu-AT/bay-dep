@@ -2,7 +2,7 @@
 
 The codebase has a recurring smell: **primitive value types defined inside
 domain folders**. The clearest current example is `Transform`, which lives in
-`apps/web/src/rendering/index.ts`. Rendering happens to consume it — but so do
+`dep/apps/web/src/rendering/index.ts`. Rendering happens to consume it — but so do
 `@/timeline`, `@/preview`, `@/animation`, `@/text`, and anything else that
 positions things on a 2D canvas. It's not "of" rendering; rendering just owns
 the file.
@@ -36,7 +36,7 @@ move freely become anchored to the wrong layer.
 ## The refactor
 
 Move primitives out of domain folders into a primitives location (somewhere
-like `apps/web/src/primitives/`, or split by concern — `geometry/`, `time/`,
+like `dep/apps/web/src/primitives/`, or split by concern — `geometry/`, `time/`,
 `color/`, etc.). Whatever the bucket, the rule is "no product concepts, no
 behavior, no upward dependencies".
 
@@ -46,9 +46,9 @@ what other primitives already exist and what naming convention has emerged.
 ## Side effects to watch for
 
 Files often end up parked next to misplaced primitives because they had nowhere
-better to live. Example: `apps/web/src/rendering/animation-values.ts` exists
+better to live. Example: `dep/apps/web/src/rendering/animation-values.ts` exists
 only because `Transform` lives next door. Once `Transform` moves to a primitive
-location, that file collapses back into `apps/web/src/animation/values.ts`
+location, that file collapses back into `dep/apps/web/src/animation/values.ts`
 alongside the other resolve-at-time helpers — there's no remaining reason to
 split them.
 
