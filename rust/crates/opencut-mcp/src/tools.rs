@@ -83,6 +83,25 @@ fn visual_properties() -> Value {
     })
 }
 
+/// Schema fragment for caption styling, shared by every tool that puts captions on screen.
+fn caption_properties() -> Value {
+    json!({
+        "captionFontSize": { "type": "number", "default": 46,
+            "description": "Caption size against a 1080-tall canvas; scaled automatically for other heights." },
+        "captionColor": { "type": "string", "default": "#EDECE6" },
+        "captionFontFamily": { "type": "string", "description": "Installed family name. Check with fonts_check first." },
+        "captionFontWeight": { "type": "integer", "default": 600 },
+        "captionY": { "type": "number", "default": 0.70,
+            "description": "Top of the caption box as a fraction of canvas height. 0.70 clears the platform caption band." },
+        "captionLayer": { "type": "integer", "default": 9, "description": "Layer captions draw on; high so they sit above the artwork." },
+        "captionFade": { "type": "number", "default": 0.12, "description": "Fade in/out seconds per caption." },
+        "maxWords": { "type": "integer", "default": 4, "description": "Words per caption. 3-5 reads well at thumb size." },
+        "minCaptionSeconds": { "type": "number", "default": 0.7, "description": "Never show a caption for less than this." },
+        "maxCaptionSeconds": { "type": "number", "default": 3.0 },
+        "gapSeconds": { "type": "number", "default": 0.45, "description": "A silence at least this long forces a caption break." }
+    })
+}
+
 fn merge(base: Value, extra: Value) -> Value {
     let mut out = base;
     if let (Some(target), Some(source)) = (out.as_object_mut(), extra.as_object()) {
@@ -299,6 +318,82 @@ pub fn definitions() -> Vec<Value> {
             &["path"],
         ),
         tool(
+            "speech_status",
+            "Whether Kokoro text-to-speech is available on this machine, and which voices it \
+             can speak. Call this before narrate.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "narrate",
+            "Speak text with Kokoro, put the audio on the timeline, and place word-synced \
+             captions for it. Audio and captions come from the same synthesis, so they cannot \
+             drift apart. Returns the cues it produced and the narration's end time.",
+            merge(
+                json!({
+                    "text": { "type": "string", "description": "What to say. Punctuation drives the phrasing." },
+                    "start": { "type": "number", "default": 0.0, "description": "Where the narration begins on the timeline, in seconds." },
+                    "voice": { "type": "string", "default": "af_heart",
+                        "description": "A Kokoro voice, e.g. af_heart, af_bella, am_michael, bf_emma. See speech_status." },
+                    "speed": { "type": "number", "default": 1.0, "description": "0.1 to 5.0. Around 1.0-1.15 suits a reel." },
+                    "langCode": { "type": "string", "default": "a",
+                        "description": "a = American English, b = British, e Spanish, f French, h Hindi, i Italian, j Japanese, p Portuguese, z Mandarin." },
+                    "volume": { "type": "number", "default": 1.0,
+                        "description": "Mix gain for the narration clip. With peakDb normalization, 1.0 is already a full-strength voice." },
+                    "peakDb": { "type": "number", "default": -2.0,
+                        "description": "Normalize each utterance to this peak in dBFS. Kokoro's raw level swings ~5 dB line to line; leaving this on keeps delivery even. Pass null for Kokoro's untouched output." },
+                    "audioPath": { "type": "string", "description": "Where to write the WAV. Defaults to a temp file." },
+                    "captions": { "type": "boolean", "default": true, "description": "Place captions as well as audio." }
+                }),
+                caption_properties(),
+            ),
+            &["text"],
+        ),
+        tool(
+            "subtitles_add",
+            "Read an SRT or WebVTT file and place every cue on the timeline as a caption.",
+            merge(
+                json!({
+                    "path": { "type": "string", "description": "Path to a .srt or .vtt file." },
+                    "offset": { "type": "number", "default": 0.0, "description": "Shift every cue later by this many seconds." }
+                }),
+                caption_properties(),
+            ),
+            &["path"],
+        ),
+        tool(
+            "subtitles_export",
+            "Write the timeline's captions out as an SRT or WebVTT file.",
+            json!({
+                "path": { "type": "string" },
+                "format": { "type": "string", "enum": ["srt", "vtt"], "default": "srt" }
+            }),
+            &["path"],
+        ),
+        tool(
+            "subtitles_to_video",
+            "Turn a subtitle file straight into a video: create a project, place every cue as \
+             a caption, optionally narrate each cue with Kokoro, and render an MP4. The one \
+             call that takes an .srt and gives back a playable file.",
+            merge(
+                json!({
+                    "path": { "type": "string", "description": "Path to a .srt or .vtt file." },
+                    "output": { "type": "string", "description": "Output .mp4 path." },
+                    "width": { "type": "integer", "default": 1080 },
+                    "height": { "type": "integer", "default": 1920 },
+                    "fps": { "type": "integer", "default": 30 },
+                    "background": { "type": "string", "default": "#0E0E12" },
+                    "narrate": { "type": "boolean", "default": false,
+                        "description": "Speak each cue with Kokoro, starting at that cue's own time." },
+                    "voice": { "type": "string", "default": "af_heart" },
+                    "speed": { "type": "number", "default": 1.0 },
+                    "langCode": { "type": "string", "default": "a" }
+                }),
+                caption_properties(),
+            ),
+            &["path", "output"],
+        ),
+        tool(
             "project_save",
             "Write the project to a JSON file (the same format the vii desktop app opens).",
             json!({ "path": { "type": "string" } }),
@@ -414,8 +509,162 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             &required_text(args, "path")?,
             args.get("duration").and_then(|v| v.as_f64()),
         ),
+        "speech_status" => studio.speech_status(),
+        "narrate" => studio.narrate(
+            &required_text(args, "text")?,
+            &text(args, "voice").unwrap_or_else(|| "af_heart".into()),
+            number(args, "speed", 1.0) as f32,
+            &text(args, "langCode").unwrap_or_else(|| "a".into()),
+            number(args, "start", 0.0),
+            number(args, "volume", 1.0) as f32,
+            text(args, "audioPath"),
+            match args.get("peakDb") {
+                Some(Value::Null) => None,
+                Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
+                None => Some(-2.0),
+            },
+            cue_style(args),
+            if args
+                .get("captions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+            {
+                Some(caption_style(args))
+            } else {
+                None
+            },
+        ),
+        "subtitles_add" => studio.subtitles_add(
+            &required_text(args, "path")?,
+            number(args, "offset", 0.0),
+            &caption_style(args),
+        ),
+        "subtitles_export" => studio.subtitles_export(
+            &required_text(args, "path")?,
+            &text(args, "format").unwrap_or_else(|| "srt".into()),
+        ),
+        "subtitles_to_video" => subtitles_to_video(studio, args),
         "project_save" => studio.project_save(&required_text(args, "path")?),
         "project_load" => studio.project_load(&required_text(args, "path")?),
         other => Err(err(format!("unknown tool {other:?}"))),
     }
+}
+
+/// Caption grouping parameters, parsed from the shared caption schema fragment.
+fn cue_style(args: &Value) -> opencut_speech::CueStyle {
+    let default = opencut_speech::CueStyle::default();
+    opencut_speech::CueStyle {
+        max_words: number(args, "maxWords", default.max_words as f64).max(1.0) as usize,
+        min_seconds: number(args, "minCaptionSeconds", default.min_seconds),
+        max_seconds: number(args, "maxCaptionSeconds", default.max_seconds),
+        gap_seconds: number(args, "gapSeconds", default.gap_seconds),
+    }
+}
+
+/// Caption appearance, parsed from the shared caption schema fragment.
+fn caption_style(args: &Value) -> crate::narration::CaptionStyle {
+    let default = crate::narration::CaptionStyle::default();
+    crate::narration::CaptionStyle {
+        font_size: number(args, "captionFontSize", default.font_size as f64) as f32,
+        color: text(args, "captionColor").unwrap_or(default.color),
+        font_family: text(args, "captionFontFamily"),
+        font_weight: number(args, "captionFontWeight", default.font_weight as f64) as u16,
+        y: number(args, "captionY", default.y as f64) as f32,
+        layer: number(args, "captionLayer", default.layer as f64).max(0.0) as usize,
+        fade: number(args, "captionFade", default.fade),
+    }
+}
+
+/// `subtitles_to_video`: an .srt in, a playable .mp4 out.
+///
+/// Deliberately a single tool rather than a documented four-call recipe — "turn these
+/// subtitles into a video" is one intent, and splitting it would make the caller responsible
+/// for choosing a canvas, sizing the timeline to the last cue, and remembering to render.
+fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
+    let path = required_text(args, "path")?;
+    let output = required_text(args, "output")?;
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| err(format!("could not read {path}: {e}")))?;
+    let cues = opencut_speech::parse(&source).map_err(err)?;
+
+    studio.project_create(
+        "Subtitles",
+        number(args, "width", 1080.0) as u32,
+        number(args, "height", 1920.0) as u32,
+        number(args, "fps", 30.0) as u32,
+        &text(args, "background").unwrap_or_else(|| "#0E0E12".into()),
+    )?;
+
+    let style = caption_style(args);
+    let placed = studio.place_cues(&cues, &style)?;
+
+    // Narrating each cue at its own start keeps the voice aligned to the caption it belongs
+    // to; a single pass over the joined text would drift from the file's timings immediately.
+    let mut spoken = 0usize;
+    let mut overruns = Vec::new();
+    if args
+        .get("narrate")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let voice = text(args, "voice").unwrap_or_else(|| "af_heart".into());
+        let speed = number(args, "speed", 1.0) as f32;
+        let lang = text(args, "langCode").unwrap_or_else(|| "a".into());
+        for (index, cue) in cues.iter().enumerate() {
+            let spoken_line = cue.text.replace('\n', " ");
+            if spoken_line.trim().is_empty() {
+                continue;
+            }
+            let result = studio.narrate(
+                &spoken_line,
+                &voice,
+                speed,
+                &lang,
+                cue.start,
+                number(args, "volume", 1.0) as f32,
+                None,
+                Some(-2.0),
+                cue_style(args),
+                // Captions are already on the timeline from the file; narrating them again
+                // would stack a second set on top.
+                None,
+            )?;
+            spoken += 1;
+            // Speech does not have to fit the cue window the subtitle author chose. Report
+            // the overlaps rather than silently truncating or letting lines talk over
+            // each other unannounced.
+            if let Some(end) = result.get("endSeconds").and_then(|v| v.as_f64())
+                && let Some(next) = cues.get(index + 1)
+                && end > next.start + 0.05
+            {
+                overruns.push(serde_json::json!({
+                    "cue": index + 1,
+                    "text": cue.text,
+                    "spokenEnd": (end * 1000.0).round() / 1000.0,
+                    "nextCueStart": next.start,
+                }));
+            }
+        }
+    }
+
+    let last = cues.last().map(|cue| cue.end).unwrap_or(0.0);
+    let duration = last.max(
+        studio
+            .project_info()?
+            .get("durationSeconds")
+            .and_then(|d| d.as_f64())
+            .unwrap_or(last),
+    );
+    let render = studio.render_video(&output, Some(duration))?;
+
+    Ok(serde_json::json!({
+        "source": path,
+        "output": render.get("path").cloned().unwrap_or(Value::String(output)),
+        "cues": placed,
+        "narrated": spoken,
+        "durationSeconds": duration,
+        "bytes": render.get("bytes").cloned().unwrap_or(Value::Null),
+        "encodeSeconds": render.get("encodeSeconds").cloned().unwrap_or(Value::Null),
+        "overruns": overruns,
+    }))
 }

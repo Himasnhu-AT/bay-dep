@@ -4530,6 +4530,7 @@ dependencies = [
  "opencut-core",
  "opencut-preview",
  "opencut-project",
+ "opencut-speech",
  "opencut-text",
  "pollster 0.4.0",
  "serde",
@@ -4556,6 +4557,15 @@ name = "opencut-project"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "opencut-speech"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "time",

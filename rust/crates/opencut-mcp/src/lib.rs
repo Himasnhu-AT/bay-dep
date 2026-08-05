@@ -12,6 +12,7 @@
 //! Two transports, same tool surface: [`server::serve_stdio`] for clients that spawn a
 //! subprocess, and [`server::serve_http`] for clients that connect to a URL.
 
+pub mod narration;
 pub mod server;
 pub mod studio;
 pub mod tools;

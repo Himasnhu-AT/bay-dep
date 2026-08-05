@@ -250,10 +250,15 @@ fn respond(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_support {
     use super::*;
+    use serde_json::{Value, json};
 
-    fn call(studio: &mut Studio, name: &str, args: Value) -> Value {
+    pub fn new_studio() -> Studio {
+        Studio::new()
+    }
+
+    pub fn call(studio: &mut Studio, name: &str, args: Value) -> Value {
         let request = json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": { "name": name, "arguments": args }
@@ -262,13 +267,19 @@ mod tests {
     }
 
     /// The text of a tool result, and whether it reported an error.
-    fn unwrap_call(response: &Value) -> (bool, String) {
+    pub fn unwrap_call(response: &Value) -> (bool, String) {
         let result = &response["result"];
         (
             result["isError"].as_bool().unwrap_or(false),
             result["content"][0]["text"].as_str().unwrap_or("").into(),
         )
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tests_support::{call, unwrap_call};
 
     #[test]
     fn initialize_advertises_tools() {
@@ -450,5 +461,199 @@ mod tests {
         assert_eq!(layers.len(), 4, "layer 3 implies layers 1 and 2 exist");
         assert_eq!(layers[0]["elements"][0]["id"], "s0");
         assert_eq!(layers[3]["elements"][0]["id"], "s3");
+    }
+}
+
+#[cfg(test)]
+mod narration_tests {
+    use super::tests_support::*;
+    use serde_json::{Value, json};
+
+    fn srt_fixture(dir: &std::path::Path) -> String {
+        let path = dir.join("fixture.srt");
+        std::fs::write(
+            &path,
+            "1\n00:00:00,000 --> 00:00:02,000\nAverages add.\n\n\
+             2\n00:00:02,500 --> 00:00:05,000\nMoney compounds.\n\n",
+        )
+        .expect("write fixture");
+        path.to_string_lossy().to_string()
+    }
+
+    fn tmpdir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn subtitles_add_places_one_caption_per_cue() {
+        let mut studio = new_studio();
+        let dir = tmpdir("vii-mcp-subs");
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_add",
+            json!({ "path": srt_fixture(&dir) }),
+        ));
+        assert!(!is_error, "{body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["cues"], 2);
+        assert!((body["lastSeconds"].as_f64().unwrap() - 5.0).abs() < 1e-6);
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).unwrap();
+        // Captions default to layer 9, above every artwork layer.
+        let captions: Vec<&Value> = timeline["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|layer| layer["elements"].as_array().unwrap())
+            .filter(|e| e["id"].as_str().unwrap_or("").starts_with("caption-"))
+            .collect();
+        assert_eq!(captions.len(), 2, "both cues should be on the timeline");
+        assert_eq!(captions[0]["content"], "Averages add.");
+        assert_eq!(
+            captions[0]["animated"][0], "opacity",
+            "captions should fade rather than hard-cut"
+        );
+    }
+
+    #[test]
+    fn subtitles_round_trip_through_the_timeline() {
+        let mut studio = new_studio();
+        let dir = tmpdir("vii-mcp-subs-rt");
+        call(&mut studio, "project_create", json!({}));
+        call(
+            &mut studio,
+            "subtitles_add",
+            json!({ "path": srt_fixture(&dir) }),
+        );
+        let out = dir.join("exported.srt").to_string_lossy().to_string();
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_export",
+            json!({ "path": out, "format": "srt" }),
+        ));
+        assert!(!is_error, "{body}");
+        let written = std::fs::read_to_string(&out).expect("the export should exist");
+        assert!(written.contains("Averages add."), "{written}");
+        assert!(written.contains("Money compounds."), "{written}");
+        assert!(
+            written.contains("00:00:02,500 --> 00:00:05,000"),
+            "{written}"
+        );
+    }
+
+    #[test]
+    fn exporting_with_no_captions_says_so() {
+        let mut studio = new_studio();
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_export",
+            json!({ "path": "/tmp/vii-never.srt" }),
+        ));
+        assert!(is_error);
+        assert!(message.contains("no captions"), "{message}");
+    }
+
+    #[test]
+    fn a_subtitle_file_that_is_not_one_is_rejected() {
+        let mut studio = new_studio();
+        let dir = tmpdir("vii-mcp-badsubs");
+        let path = dir.join("prose.txt");
+        std::fs::write(&path, "this is just prose\nno timings here").unwrap();
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_add",
+            json!({ "path": path.to_string_lossy() }),
+        ));
+        assert!(is_error);
+        assert!(message.contains("no cues"), "{message}");
+    }
+
+    #[test]
+    fn an_offset_shifts_every_caption() {
+        let mut studio = new_studio();
+        let dir = tmpdir("vii-mcp-offset");
+        call(&mut studio, "project_create", json!({}));
+        let (_, body) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_add",
+            json!({ "path": srt_fixture(&dir), "offset": 10.0 }),
+        ));
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert!((body["firstSeconds"].as_f64().unwrap() - 10.0).abs() < 1e-6);
+        assert!((body["lastSeconds"].as_f64().unwrap() - 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn speech_status_answers_without_throwing_however_the_machine_is_set_up() {
+        let mut studio = new_studio();
+        let (is_error, body) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
+        assert!(!is_error, "speech_status should report, not fail: {body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert!(body["available"].is_boolean());
+        if body["available"] == Value::Bool(true) {
+            assert!(
+                body["voices"]["a"].is_array(),
+                "an available engine should list American English voices"
+            );
+        } else {
+            assert!(
+                body.get("hint").is_some() || body.get("error").is_some(),
+                "an unavailable engine must say why: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn narrating_reuses_one_hot_sidecar_across_calls() {
+        let mut studio = new_studio();
+        let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
+        let status: Value = serde_json::from_str(&status).unwrap();
+        if status["available"] != Value::Bool(true) {
+            eprintln!("skipping: Kokoro is not available here");
+            return;
+        }
+        call(&mut studio, "project_create", json!({}));
+
+        let first = std::time::Instant::now();
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "narrate",
+            json!({ "text": "Averages add.", "start": 0.0 }),
+        ));
+        assert!(!is_error, "{body}");
+        let cold = first.elapsed();
+
+        let second = std::time::Instant::now();
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "narrate",
+            json!({ "text": "Money compounds.", "start": 4.0 }),
+        ));
+        assert!(!is_error, "{body}");
+        let warm = second.elapsed();
+        let body: Value = serde_json::from_str(&body).unwrap();
+
+        assert!(body["words"].as_u64().unwrap() >= 2, "{body}");
+        assert!(
+            body["cues"].as_array().unwrap()[0]["start"]
+                .as_f64()
+                .unwrap()
+                >= 4.0,
+            "cues must be shifted to the narration's start: {body}"
+        );
+        assert!(
+            body["captionsPlaced"].as_u64().unwrap() >= 1,
+            "narrate should place captions by default: {body}"
+        );
+        // The Studio holds one engine for its lifetime; building one per call would reload the
+        // model every time, which is the cost the whole sidecar design exists to avoid.
+        assert!(
+            warm < cold,
+            "the second narration ({warm:?}) should beat the first ({cold:?})"
+        );
     }
 }

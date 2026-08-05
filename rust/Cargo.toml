@@ -11,6 +11,7 @@ members = [
     "crates/native-preview",
     "crates/opencut-core",
     "crates/opencut-mcp",
+    "crates/opencut-speech",
     "crates/opencut-project",
     "crates/opencut-audio",
     "crates/opencut-preview",

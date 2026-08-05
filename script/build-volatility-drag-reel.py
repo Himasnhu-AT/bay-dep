@@ -5,6 +5,7 @@ Every visual decision is a vii MCP tool call over http://127.0.0.1:7333/mcp — 
 only the client. Nothing else touches a pixel.
 """
 import json
+import os
 import sys
 import urllib.request
 
@@ -193,7 +194,9 @@ music = call("media_import",
              path="/Users/himanshu/codes/qubitquant/website/brag/_build/_template/"
                   "assets/music/bed-112bpm.mp3")
 print(f"  music: {music['name']} {music.get('durationSeconds', 0):.3f}s")
-call("add_audio", mediaId=music["mediaId"], start=0.0, duration=TOTAL, volume=0.9)
+# Ducked when a voice is on top of it: a 0.9 bed buries narration.
+MUSIC_VOLUME = float(os.environ.get("VII_MUSIC_VOLUME", "0.9"))  # 0.12 under narration
+call("add_audio", mediaId=music["mediaId"], start=0.0, duration=TOTAL, volume=MUSIC_VOLUME)
 
 # A persistent hairline rail at the gutter — the one element that survives every cut, so the
 # piece reads as one document rather than six unrelated cards.
@@ -394,3 +397,54 @@ info = call("project_info")
 print(f"built: {info['visualElements']} visual elements, {info['audioElements']} audio, "
       f"{info['layers']} layers, {info['durationSeconds']:.3f}s")
 call("project_save", path="/Users/himanshu/.claude/jobs/5fdf9528/tmp/volatility-drag.json")
+
+
+# ============================================================ narration (opt-in)
+# VII_NARRATE=1 speaks the reel with Kokoro and lays word-synced captions under it. One line
+# per scene, each starting just inside its own clip so a line never steps on the one before.
+if os.environ.get("VII_NARRATE") == "1":
+    VOICE = os.environ.get("VII_VOICE", "af_heart")
+    # Kokoro comes out quiet: mean around -26 dB against a -16.7 dB music bed, so at equal
+    # nominal volume the bed masks the voice completely. 1.4x lifts the worst-case narration
+    # peak to -1.1 dB (measured, so it cannot clip) and puts the voice 11.5 dB over the ducked
+    # bed — the separation broadcast voice-over aims for.
+    VOICE_VOLUME = float(os.environ.get("VII_VOICE_VOLUME", "1.4"))
+    SPEED = float(os.environ.get("VII_SPEED", "1.06"))
+    # Captions sit at 0.79 — inside the platform caption band. This reel was composed as a
+    # silent piece whose own type fills the frame down to y=1490, so there is nowhere higher
+    # for a caption to go without covering the artwork. Noted rather than hidden.
+    CAPTION_Y = float(os.environ.get("VII_CAPTION_Y", "0.79"))
+
+    LINES = [
+        (0.10,  "Plus fifty percent. Then minus fifty percent."),
+        (4.40,  "The average says zero."),
+        (8.70,  "Your account disagrees."),
+        (10.85, "A hundred becomes one fifty, then seventy five."),
+        (15.10, "To recover a fifty percent loss you need a hundred percent gain."),
+        # Only the payoff clause: the full thought is already on screen, and speaking both
+        # sentences ran 0.62s past the end of the 21.429s music bed.
+        (19.55, "Money compounds."),
+    ]
+
+    print("narrating…")
+    overruns = []
+    for index, (at, line) in enumerate(LINES):
+        result = call("narrate", text=line, start=at, voice=VOICE, speed=SPEED,
+                      volume=VOICE_VOLUME, captions=True,
+                      captionY=CAPTION_Y, captionFontSize=42, captionFontFamily="Helvetica Neue",
+                      captionFontWeight=600, captionColor="#EDECE6", captionLayer=12,
+                      maxWords=5, minCaptionSeconds=0.6, maxCaptionSeconds=2.6)
+        end = result["endSeconds"]
+        nxt = LINES[index + 1][0] if index + 1 < len(LINES) else TOTAL
+        flag = "" if end <= nxt + 0.02 else f"  OVERRUNS next line by {end - nxt:.2f}s"
+        if flag:
+            overruns.append((index + 1, round(end - nxt, 2)))
+        print(f"  {at:6.2f}s -> {end:6.2f}s  {result['words']:2d} words, "
+              f"{len(result['cues'])} cues{flag}")
+    if overruns:
+        print(f"  !! {len(overruns)} line(s) overrun: {overruns}")
+    else:
+        print("  every line fits inside its own scene")
+
+    call("subtitles_export",
+         path="/Users/himanshu/codes/synthai/vii-reels/volatility-drag.srt", format="srt")

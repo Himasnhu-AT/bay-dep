@@ -66,7 +66,12 @@ pub struct Studio {
     /// instead of retrying the adapter request on every single frame.
     renderer_unavailable: Option<String>,
     text_probe: opencut_text::TextRaster,
+    /// The Kokoro sidecar, owned for the studio's whole lifetime. Building one per call would
+    /// spawn and kill the model on every line of narration — the exact cost the sidecar exists
+    /// to avoid.
+    speech: opencut_speech::SpeechEngine,
     next_id: u64,
+    next_caption: u64,
 }
 
 impl Default for Studio {
@@ -82,7 +87,9 @@ impl Studio {
             renderer: None,
             renderer_unavailable: None,
             text_probe: opencut_text::TextRaster::new(),
+            speech: opencut_speech::SpeechEngine::new(opencut_speech::SpeechConfig::default()),
             next_id: 1,
+            next_caption: 0,
         }
     }
 
@@ -94,6 +101,90 @@ impl Studio {
         let id = format!("{prefix}-{}", self.next_id);
         self.next_id += 1;
         id
+    }
+
+    /// Sequence number for the next narration WAV, so repeated calls do not overwrite one
+    /// another's audio on disk.
+    pub(crate) fn next_narration_id(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    /// Sequence number for the next caption element. Caption ids are prefixed `caption-`,
+    /// which is also how `caption_cues` recognises them for export.
+    pub(crate) fn next_caption_id(&mut self) -> u64 {
+        self.next_caption += 1;
+        self.next_caption
+    }
+
+    pub(crate) fn has_font_family(&mut self, family: &str) -> bool {
+        self.text_probe.has_family(family)
+    }
+
+    pub(crate) fn speech(&mut self) -> &mut opencut_speech::SpeechEngine {
+        &mut self.speech
+    }
+
+    /// Place one caption: centred text across the content width, fading in and out so a cut
+    /// between neighbouring captions does not read as a flicker.
+    pub(crate) fn add_caption_element(
+        &mut self,
+        id: &str,
+        cue: &opencut_speech::Cue,
+        style: &crate::narration::CaptionStyle,
+        duration: f64,
+    ) -> Result<(), ToolError> {
+        let element = Element::Text(TextElement {
+            id: id.to_string(),
+            name: cue.text.chars().take(24).collect(),
+            start: secs(cue.start)?,
+            duration: secs(duration)?,
+            content: cue.text.clone(),
+            font_size: style.font_size,
+            color: style.color.clone(),
+            transform: Transform {
+                x: 0.08,
+                y: style.y,
+                scale: 0.84,
+                anchor_x: 0.0,
+                anchor_y: 0.0,
+                ..Transform::default()
+            },
+            effects: Vec::new(),
+            animations: BTreeMap::new(),
+            blend_mode: BlendMode::Normal,
+            font_family: style.font_family.clone(),
+            font_weight: style.font_weight,
+            align: TextAlign::Center,
+            letter_spacing: 0.0,
+            line_height: 1.2,
+        });
+        let track_id = self.track_for_layer(style.layer);
+        if !self.editor.execute(Command::AddElement {
+            track_id,
+            element,
+            select: false,
+        }) {
+            return Err(err("could not add the caption to the timeline"));
+        }
+
+        // Fade the caption in and out inside its own window. Clamped so a very short cue does
+        // not end up with a fade longer than the caption itself.
+        let fade = style.fade.min(duration / 3.0).max(0.0);
+        if fade > 0.0 {
+            self.animate(
+                id,
+                "opacity",
+                vec![
+                    (0.0, 0.0),
+                    (fade, 1.0),
+                    (duration - fade, 1.0),
+                    (duration, 0.0),
+                ],
+                Easing::EaseOut,
+            )?;
+        }
+        Ok(())
     }
 
     /// The compositor, built on first use. Held open afterwards because adapter acquisition
@@ -248,7 +339,7 @@ impl Studio {
 
     /// The track id for `layer`, creating overlay lanes as needed so an author can address
     /// layer 4 without having created layers 1–3 by hand.
-    fn track_for_layer(&mut self, layer: usize) -> String {
+    pub(crate) fn track_for_layer(&mut self, layer: usize) -> String {
         if layer == 0 {
             return self.editor.active_scene().tracks.main.id.clone();
         }
