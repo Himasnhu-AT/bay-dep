@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  opencut-wasm: link:./rust/wasm/pkg
+  opencut-wasm: link:../rust/wasm/pkg
 
 importers:
 
@@ -24,8 +24,8 @@ importers:
         specifier: ^16.1.3
         version: 16.1.3(@babel/core@7.29.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       opencut-wasm:
-        specifier: link:rust/wasm/pkg
-        version: link:rust/wasm/pkg
+        specifier: link:../rust/wasm/pkg
+        version: link:../rust/wasm/pkg
     devDependencies:
       '@eslint/js':
         specifier: ^9.39.4
@@ -169,8 +169,8 @@ importers:
         specifier: ^0.4.4
         version: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       opencut-wasm:
-        specifier: link:../../rust/wasm/pkg
-        version: link:../../rust/wasm/pkg
+        specifier: link:../../../rust/wasm/pkg
+        version: link:../../../rust/wasm/pkg
       pg:
         specifier: ^8.16.2
         version: 8.22.0
