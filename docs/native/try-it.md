@@ -1,7 +1,8 @@
 # Try it — the native `vii` editor
 
-A hands-on guide to running and exercising the native GPUI desktop editor
-(`rust/desktop`). Everything here is on branch `phase-0/native-gpu-foundation`.
+A hands-on guide to running and exercising the native GPUI desktop editor (`rust/desktop`).
+The parity work lives on `main`; `phase-0/native-gpu-foundation` is the earlier, already-pushed
+branch behind PR #1.
 
 ---
 
@@ -134,8 +135,15 @@ effects list (toggle / remove / ± amount) · **◇ keyframe** row · **PRESETS*
 | **Cached text rasters** | Put a big static caption on screen and hit Play — text is no longer re-shaped every frame. |
 | **Native-order readback** | Invisible, but playback does less per-frame work (no redundant channel swizzle). |
 | **Multi-clip audio mixing** | Stack two overlapping audio clips on the audio lane and Play — you hear both, summed. |
+| **17 blend modes** | Select a clip → inspector **BLEND** button cycles all 17; overlap two clips to see it. |
+| **Sources are no longer stretched** | Import a portrait/phone clip — it letterboxes instead of distorting to the canvas. |
+| **Real durations on import** | Import a 3-minute clip; it arrives 3 minutes long, not the old hardcoded 4s. |
+| **Long clips don't freeze the app** | Import a 10-minute clip — decode runs on a worker; you get a placeholder, not a ~33s hang. |
+| **Failures are visible** | Export with `ffmpeg` absent, or import without `ffprobe` — the toolbar says so instead of failing silently. |
 
-The one deferred item is **true zero-copy preview** — see the "remaining item" section of
+For the full picture of what landed, what is still broken, and what was deliberately deferred,
+read [`parity-status.md`](parity-status.md). The one deferred *optimization* is **true zero-copy
+preview** — see the "remaining item" section of
 [`desktop-architecture.md`](desktop-architecture.md) for exactly why (a wgpu-29 Metal-hal limitation).
 
 ---
@@ -147,10 +155,10 @@ The one deferred item is **true zero-copy preview** — see the "remaining item"
 # or: cd rust && cargo test --workspace
 ```
 
-**66 tests, all passing** — model round-trips, every engine command + reversible undo/redo,
+**134 tests, all passing** — model round-trips, every engine command + reversible undo/redo,
 the view-model mapping, GPU compositor render/readback, real image/video decode, MP4 export,
-effect uniform packing + on-GPU effect render, text rasterization, audio PCM/peaks, and the
-audio mixer. GPU/ffmpeg-dependent tests **skip gracefully** (not fail) when no adapter or
+effect uniform packing + on-GPU effect render, text rasterization, audio PCM/peaks, the audio
+mixer, ffprobe parsing, decode budgeting, all 17 blend modes, and the render path's panic guards. GPU/ffmpeg-dependent tests **skip gracefully** (not fail) when no adapter or
 `ffmpeg` is present.
 
 Test a single crate, e.g. the mixer:
