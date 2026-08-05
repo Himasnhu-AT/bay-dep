@@ -968,6 +968,11 @@ impl EditorView {
                             effects: Vec::new(),
                             animations: Default::default(),
                             blend_mode: Default::default(),
+                            font_family: None,
+                            font_weight: 400,
+                            align: Default::default(),
+                            letter_spacing: 0.0,
+                            line_height: 1.2,
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),

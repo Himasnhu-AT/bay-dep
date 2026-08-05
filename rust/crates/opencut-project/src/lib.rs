@@ -11,7 +11,7 @@
 //! └─ scenes: [Scene]
 //!    └─ tracks: { overlay: [Track], main: Track, audio: [Track] }
 //!       └─ Track → elements: [Element]
-//!          └─ Element = Video | Image | Text | Audio
+//!          └─ Element = Video | Image | Text | Audio | Shape
 //! ```
 //!
 //! Time is [`time::MediaTime`] (i64 ticks, 120 000/s) — the one time type shared with the
@@ -25,8 +25,8 @@ mod settings;
 mod track;
 
 pub use element::{
-    AnimationChannel, AudioElement, BlendMode, Effect, Element, ElementKind, ImageElement,
-    Keyframe, TextElement, Transform, VideoElement,
+    AnimationChannel, AudioElement, BlendMode, Easing, Effect, Element, ElementKind, ImageElement,
+    Keyframe, ShapeElement, ShapeKind, TextAlign, TextElement, Transform, VideoElement,
 };
 pub use project::{MediaAsset, Project, ProjectMetadata};
 pub use refs::ElementRef;

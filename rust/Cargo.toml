@@ -10,6 +10,7 @@ members = [
     "wasm", "crates/compositor",
     "crates/native-preview",
     "crates/opencut-core",
+    "crates/opencut-mcp",
     "crates/opencut-project",
     "crates/opencut-audio",
     "crates/opencut-preview",

@@ -100,6 +100,7 @@ impl EditorViewModel {
                             opencut_core::Element::Image(i) => Some(i.media_id.clone()),
                             opencut_core::Element::Audio(a) => Some(a.media_id.clone()),
                             opencut_core::Element::Text(_) => None,
+                            opencut_core::Element::Shape(_) => None,
                         };
                         ElementBlock {
                             selected: editor.is_selected(&reference),

@@ -1,0 +1,14 @@
+vii-mcp — the vii video editor as an MCP server
+
+USAGE
+  vii-mcp                  serve HTTP on 127.0.0.1:7333
+  vii-mcp --port <PORT>    serve HTTP on that port (0 = OS picks a free one)
+  vii-mcp --stdio          serve newline-delimited JSON-RPC on stdin/stdout
+
+REGISTER WITH CLAUDE CODE
+  claude mcp add --transport http vii http://127.0.0.1:7333/mcp
+
+The HTTP listener binds loopback only: these tools read and write files on this
+machine, so the port is deliberately not reachable from the network.
+
+Rendering needs ffmpeg on PATH and a GPU adapter for the compositor.

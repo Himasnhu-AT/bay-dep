@@ -10,4 +10,4 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
-cosmic-text = "0.12"
+cosmic-text = "0.14"

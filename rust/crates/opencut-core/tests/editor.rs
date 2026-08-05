@@ -19,6 +19,11 @@ fn text(id: &str, name: &str) -> Element {
         effects: Vec::new(),
         animations: Default::default(),
         blend_mode: Default::default(),
+        font_family: None,
+        font_weight: 400,
+        align: Default::default(),
+        letter_spacing: 0.0,
+        line_height: 1.2,
     })
 }
 
@@ -229,6 +234,7 @@ fn set_transform_applies_to_visuals_and_reverses() {
         scale: 0.5,
         rotation: 15.0,
         opacity: 0.4,
+        ..Transform::default()
     };
     assert!(editor.execute(Command::SetTransform {
         reference: reference.clone(),
@@ -628,6 +634,7 @@ fn apply_motion_preset_adds_effects_and_animations_reversibly() {
                 time: MediaTime::ZERO,
                 value: 0.2,
             }],
+            easing: Default::default(),
         },
     );
     assert!(editor.execute(Command::ApplyMotionPreset {

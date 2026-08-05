@@ -97,10 +97,16 @@ impl Project {
                         scale: 0.8,
                         rotation: 0.0,
                         opacity: 1.0,
+                        ..Transform::default()
                     },
                     effects: Vec::new(),
                     animations: Default::default(),
                     blend_mode: Default::default(),
+                    font_family: None,
+                    font_weight: 400,
+                    align: Default::default(),
+                    letter_spacing: 0.0,
+                    line_height: 1.2,
                 }),
                 Element::Image(ImageElement {
                     id: "el-logo".into(),
@@ -114,6 +120,7 @@ impl Project {
                         scale: 0.35,
                         rotation: 0.0,
                         opacity: 1.0,
+                        ..Transform::default()
                     },
                     effects: Vec::new(),
                     animations: Default::default(),
@@ -142,10 +149,16 @@ impl Project {
                     scale: 0.5,
                     rotation: 0.0,
                     opacity: 0.85,
+                    ..Transform::default()
                 },
                 effects: Vec::new(),
                 animations: Default::default(),
                 blend_mode: Default::default(),
+                font_family: None,
+                font_weight: 400,
+                align: Default::default(),
+                letter_spacing: 0.0,
+                line_height: 1.2,
             })],
         }];
 

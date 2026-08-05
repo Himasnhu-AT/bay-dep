@@ -61,6 +61,20 @@ impl Editor {
         &self.state.project
     }
 
+    /// Direct, unrecorded access to the project, for structural edits that have no `Command`
+    /// (adding a track lane, attaching an animation channel wholesale).
+    ///
+    /// Changes made through this handle are **not undoable**. Taking the handle therefore
+    /// *clears* the history rather than leaving it stale: a retained entry could otherwise
+    /// replay its inverse patch against a structure that no longer matches, silently
+    /// corrupting the project. Clearing makes undo unavailable, which is honest; leaving it
+    /// would make undo wrong, which is not.
+    pub fn project_mut(&mut self) -> &mut Project {
+        self.history.clear();
+        self.redo_stack.clear();
+        &mut self.state.project
+    }
+
     pub fn active_scene(&self) -> &Scene {
         self.state.project.active_scene()
     }

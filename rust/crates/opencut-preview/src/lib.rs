@@ -122,7 +122,121 @@ fn sanitise_transform(t: opencut_project::Transform) -> opencut_project::Transfo
         scale: finite(t.scale, 1.0).max(0.0),
         rotation: finite(t.rotation, 0.0),
         opacity: finite(t.opacity, 1.0),
+        // Axis scales are allowed to be 0 (a bar at the start of its grow animation) but not
+        // negative — a negative extent would flip the quad rather than hide it.
+        scale_x: finite(t.scale_x, 1.0).max(0.0),
+        scale_y: finite(t.scale_y, 1.0).max(0.0),
+        anchor_x: finite(t.anchor_x, 0.5).clamp(0.0, 1.0),
+        anchor_y: finite(t.anchor_y, 0.5).clamp(0.0, 1.0),
     }
+}
+
+/// Texel dimensions for a shape raster of a given on-screen aspect ratio (`width / height`).
+///
+/// The raster is drawn at the layer's aspect and then stretched 1:1 by the quad. Drawing every
+/// shape into a SQUARE buffer instead was a real rendering bug: a `radius 0.5` rect is a circle
+/// in a square buffer, so a 390x24 bar came out a pointed lens rather than a pill.
+///
+/// The long side is quantized to a step so a bar animating its width reuses a handful of
+/// rasters instead of demanding a new one every frame.
+fn shape_raster_dimensions(aspect: f32) -> (u32, u32) {
+    const SHORT: u32 = 64;
+    const STEP: u32 = 16;
+    const LONG_MAX: u32 = 512;
+
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        aspect
+    } else {
+        1.0
+    };
+    // How many times longer the long side is than the short one.
+    let ratio = if aspect >= 1.0 { aspect } else { 1.0 / aspect };
+    let long = (SHORT as f32 * ratio).round() as u32;
+    let long = long.div_ceil(STEP).max(1) * STEP;
+    let long = long.clamp(SHORT, LONG_MAX);
+    if aspect >= 1.0 {
+        (long, SHORT)
+    } else {
+        (SHORT, long)
+    }
+}
+
+/// Rasterize a shape into a tightly-packed RGBA8 image with antialiased edges.
+///
+/// Coverage comes from a signed distance field, so edges stay smooth however far the quad
+/// stretches the result. `radius` is a fraction of the shape's SHORTER side, matching the CSS
+/// intuition that `0.5` gives a pill with fully round ends.
+fn rasterize_shape(
+    shape: &opencut_project::ShapeKind,
+    color: &str,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    use opencut_project::ShapeKind;
+
+    let [r, g, b] = hex_to_rgb8(color);
+    let (width, height) = (width.max(2), height.max(2));
+    let mut rgba = vec![0u8; (width * height * 4) as usize];
+
+    let (half_w, half_h) = (width as f32 / 2.0, height as f32 / 2.0);
+    let short = half_w.min(half_h);
+    let radius_px = match shape {
+        ShapeKind::Rect { radius } => (radius.clamp(0.0, 0.5) * short * 2.0).max(0.0),
+        ShapeKind::Ellipse => 0.0,
+    };
+
+    for py in 0..height {
+        for px in 0..width {
+            // Sample at the texel centre, relative to the shape's centre.
+            let dx = (px as f32 + 0.5) - half_w;
+            let dy = (py as f32 + 0.5) - half_h;
+            // Signed distance to the shape boundary: negative inside, positive outside.
+            let distance = match shape {
+                ShapeKind::Rect { .. } => {
+                    // Rounded-box SDF: pull the corner arc centres inward by `radius_px` on
+                    // BOTH axes independently, which is what keeps the corners circular at a
+                    // non-square aspect.
+                    let qx = dx.abs() - (half_w - radius_px);
+                    let qy = dy.abs() - (half_h - radius_px);
+                    let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+                    outside + qx.max(qy).min(0.0) - radius_px
+                }
+                ShapeKind::Ellipse => {
+                    // Exact ellipse SDF needs iteration; scaling the unit-circle distance by
+                    // the smaller radius is accurate to well under a texel at these sizes.
+                    let k = ((dx / half_w).powi(2) + (dy / half_h).powi(2)).sqrt();
+                    (k - 1.0) * short
+                }
+            };
+            // One-texel-wide linear ramp across the boundary.
+            let coverage = (0.5 - distance).clamp(0.0, 1.0);
+            if coverage <= 0.0 {
+                continue;
+            }
+            let alpha = (coverage * 255.0).round() as u8;
+            let index = ((py * width + px) * 4) as usize;
+            rgba[index] = r;
+            rgba[index + 1] = g;
+            rgba[index + 2] = b;
+            rgba[index + 3] = alpha;
+        }
+    }
+    rgba
+}
+
+/// Test hook for [`rasterize_shape`] — the coverage maths is pure and worth asserting directly.
+pub fn rasterize_shape_for_test(
+    shape: &opencut_project::ShapeKind,
+    color: &str,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    rasterize_shape(shape, color, width, height)
+}
+
+/// Test hook for [`shape_raster_dimensions`].
+pub fn shape_raster_dimensions_for_test(aspect: f32) -> (u32, u32) {
+    shape_raster_dimensions(aspect)
 }
 
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
@@ -259,8 +373,8 @@ pub struct PreviewRenderer {
     video_lru: std::collections::VecDeque<String>,
     /// Content+style keys of text textures already rasterised and uploaded, so unchanged text
     /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
-    text_keys: HashSet<String>,
-    text_order: std::collections::VecDeque<String>,
+    raster_keys: HashSet<String>,
+    raster_order: std::collections::VecDeque<String>,
 }
 
 impl PreviewRenderer {
@@ -276,8 +390,8 @@ impl PreviewRenderer {
             uploaded_media: std::collections::HashMap::new(),
             video_cache: std::collections::HashMap::new(),
             video_lru: std::collections::VecDeque::new(),
-            text_keys: HashSet::new(),
-            text_order: std::collections::VecDeque::new(),
+            raster_keys: HashSet::new(),
+            raster_order: std::collections::VecDeque::new(),
         })
     }
 
@@ -291,33 +405,106 @@ impl PreviewRenderer {
         color: &str,
         tw: u32,
         th: u32,
+        style: &opencut_text::TextStyle<'_>,
     ) -> String {
         let key = format!(
-            "text:{color}:{font}:{tw}x{th}:{content}",
-            font = font_px.to_bits()
+            "text:{color}:{font}:{tw}x{th}:{style_key}:{content}",
+            font = font_px.to_bits(),
+            style_key = style.cache_key(),
         );
-        if self.text_keys.contains(&key) {
+        if self.raster_keys.contains(&key) {
             return key;
         }
-        let image = self.text.render(content, font_px, color, tw, th);
+        let image = self
+            .text
+            .render_styled(content, font_px, color, tw, th, style);
         let texture =
             self.ctx
                 .upload_rgba_texture(&image.rgba, image.width, image.height, "preview-text");
         self.compositor.upsert_texture(key.clone(), texture);
-        self.text_keys.insert(key.clone());
-        self.text_order.push_back(key.clone());
-        while self.text_order.len() > TEXT_CACHE_CAP {
-            if let Some(evicted) = self.text_order.pop_front() {
-                self.text_keys.remove(&evicted);
-                self.compositor.release_texture(&evicted);
-            }
-        }
+        self.remember_raster(key.clone());
         key
+    }
+
+    /// Upload (once) the RGBA raster for a shape+colour pair, returning its texture key.
+    ///
+    /// Shares the text raster LRU: both are CPU-rasterized, content-addressed textures, and a
+    /// shape key can never collide with a text key because of the `shape:`/`text:` prefixes.
+    /// The raster is square and gets stretched by the layer quad, so one texture serves a bar
+    /// at any width.
+    fn ensure_shape_texture(
+        &mut self,
+        shape: &opencut_project::ShapeKind,
+        color: &str,
+        aspect: f32,
+    ) -> String {
+        use opencut_project::ShapeKind;
+        // A square-cornered rect has no curvature at all, so one tiny tile serves every size
+        // and aspect. Anything curved must be rasterized at the layer's own aspect or the
+        // quad's non-uniform stretch turns its round corners into ellipses.
+        let (raster_w, raster_h) = match shape {
+            ShapeKind::Rect { radius } if *radius <= 0.0 => (8, 8),
+            _ => shape_raster_dimensions(aspect),
+        };
+        let key = match shape {
+            ShapeKind::Rect { radius } => {
+                format!(
+                    "shape:rect:{}:{color}:{raster_w}x{raster_h}",
+                    radius.to_bits()
+                )
+            }
+            ShapeKind::Ellipse => format!("shape:ellipse:{color}:{raster_w}x{raster_h}"),
+        };
+        if self.raster_keys.contains(&key) {
+            return key;
+        }
+        let rgba = rasterize_shape(shape, color, raster_w, raster_h);
+        let texture = self
+            .ctx
+            .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape");
+        self.compositor.upsert_texture(key.clone(), texture);
+        self.remember_raster(key.clone());
+        key
+    }
+
+    /// Record a freshly uploaded CPU raster in the LRU.
+    ///
+    /// Deliberately does NOT evict. Evicting here released textures that the frame currently
+    /// being assembled still referenced: once a single frame needed more than the cap's worth
+    /// of distinct rasters, the earliest layers' textures were freed before the draw, and the
+    /// compositor died with `MissingTexture`. Eviction now happens in [`Self::evict_rasters`]
+    /// after the frame is submitted, and never touches a key that frame used.
+    fn remember_raster(&mut self, key: String) {
+        self.raster_keys.insert(key.clone());
+        self.raster_order.push_back(key);
+    }
+
+    /// Trim the raster cache back to [`TEXT_CACHE_CAP`], skipping anything the frame just
+    /// rendered still referenced. A key that is in use is rotated to the back rather than
+    /// released, so a frame that legitimately needs more rasters than the cap simply keeps
+    /// them all rather than failing.
+    fn evict_rasters(&mut self, in_use: &HashSet<String>) {
+        // Bounded by one full pass over the queue: every rotation increments `skipped`, and
+        // any successful eviction resets it, so this cannot spin.
+        let mut skipped = 0;
+        while self.raster_order.len() > TEXT_CACHE_CAP && skipped < self.raster_order.len() {
+            let Some(candidate) = self.raster_order.pop_front() else {
+                break;
+            };
+            if in_use.contains(&candidate) {
+                self.raster_order.push_back(candidate);
+                skipped += 1;
+                continue;
+            }
+            self.raster_keys.remove(&candidate);
+            self.compositor.release_texture(&candidate);
+            skipped = 0;
+        }
     }
 
     /// Number of distinct text rasters currently resident in the cache (for tests/diagnostics).
     pub fn text_cache_len(&self) -> usize {
-        self.text_keys.len()
+        self.raster_keys.len()
     }
 
     /// True while any clip is still decoding. The UI polls this to keep requesting frames so a
@@ -466,6 +653,9 @@ impl PreviewRenderer {
 
     /// Encoding needs the whole frame description; bundling these into a struct would add
     /// indirection at the single call site without clarifying anything.
+    ///
+    /// Renders every frame of the timeline and encodes an MP4 at `out_path`, mixing the audio
+    /// lanes onto the picture. Returns whether ffmpeg exited successfully.
     #[allow(clippy::too_many_arguments)]
     pub fn export_video(
         &mut self,
@@ -480,26 +670,79 @@ impl PreviewRenderer {
     ) -> bool {
         use std::io::Write;
 
+        // Every audible clip on the audio lanes, resolved to a file on disk. Until this
+        // existed, `export_video` piped a single rawvideo input and never read `tracks.audio`
+        // at all — every export was silent, which made the editor unable to produce the one
+        // thing a social reel is: picture cut to music.
+        let audio_clips = audible_clips(scene, media);
+
+        let mut args: Vec<String> = vec![
+            "-nostdin".into(),
+            "-loglevel".into(),
+            "error".into(),
+            "-y".into(),
+            // Input 0: the composited frames, piped in below.
+            "-f".into(),
+            "rawvideo".into(),
+            "-pix_fmt".into(),
+            "rgba".into(),
+            "-s".into(),
+            format!("{width}x{height}"),
+            "-r".into(),
+            format!("{fps}"),
+            "-i".into(),
+            "pipe:0".into(),
+        ];
+        // Inputs 1..n: one per audio clip, each seeked to its own trim point.
+        for clip in &audio_clips {
+            args.push("-i".into());
+            args.push(clip.path.clone());
+        }
+
+        if !audio_clips.is_empty() {
+            // Delay each clip to its timeline start, trim it to its own duration, apply its
+            // gain, then sum them. `adelay` wants milliseconds per channel; `all=1` applies
+            // the same delay to every channel rather than only the first.
+            let mut filters = String::new();
+            for (index, clip) in audio_clips.iter().enumerate() {
+                filters.push_str(&format!(
+                    "[{input}:a]atrim=start={start:.4}:duration={duration:.4},asetpts=PTS-STARTPTS,\
+                     volume={volume:.4},adelay={delay_ms}:all=1[a{index}];",
+                    input = index + 1,
+                    start = clip.trim_start_seconds,
+                    duration = clip.duration_seconds,
+                    volume = clip.volume,
+                    delay_ms = (clip.start_seconds * 1000.0).round() as i64,
+                ));
+            }
+            for index in 0..audio_clips.len() {
+                filters.push_str(&format!("[a{index}]"));
+            }
+            filters.push_str(&format!(
+                "amix=inputs={count}:normalize=0:dropout_transition=0[aout]",
+                count = audio_clips.len()
+            ));
+
+            args.push("-filter_complex".into());
+            args.push(filters);
+            args.push("-map".into());
+            args.push("0:v".into());
+            args.push("-map".into());
+            args.push("[aout]".into());
+            args.push("-c:a".into());
+            args.push("aac".into());
+            args.push("-b:a".into());
+            args.push("192k".into());
+            // The mixed bed can outlast the picture; the video track defines the duration.
+            args.push("-shortest".into());
+        }
+
+        args.push("-pix_fmt".into());
+        args.push("yuv420p".into());
+        args.push(out_path.into());
+
         let Ok(mut child) = std::process::Command::new("ffmpeg")
-            .args([
-                "-nostdin",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgba",
-                "-s",
-                &format!("{width}x{height}"),
-                "-r",
-                &format!("{fps}"),
-                "-i",
-                "pipe:0",
-                "-pix_fmt",
-                "yuv420p",
-                out_path,
-            ])
+            .args(&args)
             .stdin(std::process::Stdio::piped())
             .spawn()
         else {
@@ -568,18 +811,54 @@ impl PreviewRenderer {
                 // Text → real glyphs; Image → decoded file (cached); others → solid placeholder.
                 let (texture_id, natural_size) = match element {
                     Element::Text(text) => {
+                        // The raster box comes from the element's BASE scale, never the sampled
+                        // one. Sizing it from the animated value made `scale` a text *wrap box*
+                        // rather than a visual scale: a scale keyframe reflowed the paragraph
+                        // and re-shaped every glyph each frame. Rasterizing once at the base box
+                        // and reporting that as the layer's natural size lets `fit_contain`
+                        // scale the finished raster, so a scale-punch is a real scale-punch.
+                        //
                         // `clamp(16.0, w)` panics when w < 16 (a tiny or zero-sized canvas),
                         // so clamp against the canvas first and only then apply the floor.
-                        let tw = (transform.scale * width as f32).min(width as f32).max(1.0) as u32;
-                        let th = (transform.scale * height as f32)
-                            .min(height as f32)
-                            .max(1.0) as u32;
+                        let base_scale = text.transform.scale.max(0.01);
+                        let tw = (base_scale * width as f32).min(width as f32).max(1.0) as u32;
+                        let th = (base_scale * height as f32).min(height as f32).max(1.0) as u32;
                         let (tw, th) = (tw.max(1), th.max(1));
                         let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
                         // Cached by content/style, so static captions aren't re-shaped per frame.
-                        // The raster is already box-shaped, so it has no intrinsic aspect to fit.
+                        let style = opencut_text::TextStyle {
+                            family: text.font_family.as_deref(),
+                            weight: text.font_weight,
+                            align: match text.align {
+                                opencut_project::TextAlign::Left => opencut_text::TextAlign::Left,
+                                opencut_project::TextAlign::Center => {
+                                    opencut_text::TextAlign::Center
+                                }
+                                opencut_project::TextAlign::Right => opencut_text::TextAlign::Right,
+                            },
+                            letter_spacing: text.letter_spacing,
+                            line_height: text.line_height,
+                        };
                         (
-                            self.ensure_text_texture(&text.content, font_px, &text.color, tw, th),
+                            self.ensure_text_texture(
+                                &text.content,
+                                font_px,
+                                &text.color,
+                                tw,
+                                th,
+                                &style,
+                            ),
+                            Some((tw, th)),
+                        )
+                    }
+                    Element::Shape(shape) => {
+                        // A shape has no natural size, so its final on-screen extent is known
+                        // without consulting the texture — and the texture needs that aspect
+                        // in order to keep its corners round under a non-uniform stretch.
+                        let aspect = (transform.scale_x * width as f32)
+                            / (transform.scale_y * height as f32).max(f32::EPSILON);
+                        (
+                            self.ensure_shape_texture(&shape.shape, &shape.color, aspect),
                             None,
                         )
                     }
@@ -639,13 +918,29 @@ impl PreviewRenderer {
                     (transform.scale * width as f32).max(1.0),
                     (transform.scale * height as f32).max(1.0),
                 );
-                let (layer_w, layer_h) = fit_contain(natural_size, box_w, box_h);
+                let (fit_w, fit_h) = fit_contain(natural_size, box_w, box_h);
+                // Per-axis scale multiplies the *fitted* size, so it composes with `contain`
+                // rather than fighting it: at (1, 1) the geometry is bit-identical to before,
+                // and a bar animating `scaleX` stretches from its fitted width.
+                let (layer_w, layer_h) = (fit_w * transform.scale_x, fit_h * transform.scale_y);
+                // A zero-extent quad has no pixels but still costs a full compositor pass, and
+                // is exactly what frame 0 of every grow animation looks like.
+                if layer_w <= 0.0 || layer_h <= 0.0 {
+                    continue;
+                }
+
+                // `(x, y)` positions the element's ANCHOR, not necessarily its centre. The
+                // compositor takes a centre, so offset by how far the anchor sits from it.
+                // Note the anchor governs placement only: rotation is still about the quad's
+                // centre, which is what every existing project expects.
+                let center_x = transform.x * width as f32 + (0.5 - transform.anchor_x) * layer_w;
+                let center_y = transform.y * height as f32 + (0.5 - transform.anchor_y) * layer_h;
 
                 items.push(FrameItemDescriptor::Layer(LayerDescriptor {
                     texture_id,
                     transform: QuadTransformDescriptor {
-                        center_x: transform.x * width as f32,
-                        center_y: transform.y * height as f32,
+                        center_x,
+                        center_y,
                         width: layer_w,
                         height: layer_h,
                         rotation_degrees: transform.rotation,
@@ -659,6 +954,16 @@ impl PreviewRenderer {
                 }));
             }
         }
+
+        // Every CPU raster this frame depends on. Held until after the draw so the cache
+        // cannot free a texture the compositor is about to sample.
+        let in_use: HashSet<String> = items
+            .iter()
+            .filter_map(|item| match item {
+                FrameItemDescriptor::Layer(layer) => Some(layer.texture_id.clone()),
+                _ => None,
+            })
+            .collect();
 
         let frame = FrameDescriptor {
             width,
@@ -674,6 +979,8 @@ impl PreviewRenderer {
         // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
         // native order, so there is no per-frame channel swizzle on the hot path.
         let bgra = self.ctx.read_texture_bgra(&texture, width, height);
+
+        self.evict_rasters(&in_use);
 
         PreviewFrame {
             width,
@@ -746,13 +1053,85 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
     })
 }
 
+/// One audio clip resolved for the export mixer: where its file is, where it sits on the
+/// timeline, and how loud it plays.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudibleClip {
+    pub path: String,
+    /// Timeline position of the clip's first sample, in seconds.
+    pub start_seconds: f64,
+    /// How much of the source to skip, in seconds.
+    pub trim_start_seconds: f64,
+    pub duration_seconds: f64,
+    /// Linear gain. 1.0 is unity.
+    pub volume: f32,
+}
+
+/// Collect every audible clip on the scene's audio lanes, in timeline order.
+///
+/// Skips muted tracks, muted clips, silent clips (`volume <= 0`), zero-length clips, and any
+/// clip whose `media_id` does not resolve to a file — each of those would otherwise become an
+/// ffmpeg input that contributes nothing, and an unresolvable path would fail the whole encode.
+fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
+    let mut clips = Vec::new();
+    for track in &scene.tracks.audio {
+        if track.muted || track.hidden {
+            continue;
+        }
+        for element in &track.elements {
+            let Element::Audio(audio) = element else {
+                continue;
+            };
+            if audio.muted || audio.volume <= 0.0 {
+                continue;
+            }
+            let duration_seconds = audio.duration.to_seconds_f64();
+            if duration_seconds <= 0.0 {
+                continue;
+            }
+            let Some(asset) = media.iter().find(|m| m.id == audio.media_id) else {
+                continue;
+            };
+            clips.push(AudibleClip {
+                path: asset.path.clone(),
+                start_seconds: audio.start.to_seconds_f64().max(0.0),
+                // `AudioElement` has no trim field yet, so a clip always plays from its head.
+                // Kept explicit so adding trim later is a one-line change here.
+                trim_start_seconds: 0.0,
+                duration_seconds,
+                volume: audio.volume,
+            });
+        }
+    }
+    clips
+}
+
+/// Test hook for [`audible_clips`] — the selection rules are pure and worth asserting without
+/// spawning ffmpeg.
+pub fn audible_clips_for_test(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
+    audible_clips(scene, media)
+}
+
 fn kind_color(kind: ElementKind) -> [u8; 4] {
     match kind {
         ElementKind::Video => [0x33, 0x62, 0x8f, 0xff],
         ElementKind::Image => [0x7a, 0x4f, 0x95, 0xff],
         ElementKind::Text => [0xff, 0xff, 0xff, 0xff],
         ElementKind::Audio => [0x2f, 0x8f, 0x63, 0xff],
+        // Shapes rasterize their own fill, so this is only reached if that ever fails.
+        ElementKind::Shape => [0xa0, 0xa0, 0xa8, 0xff],
     }
+}
+
+/// Parse `#rrggbb` (or bare `rrggbb`) into 8-bit channels. Unparseable input falls back to
+/// white, which is visible — a silently invisible shape would be much harder to debug.
+fn hex_to_rgb8(hex: &str) -> [u8; 3] {
+    let value = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(0xff_ff_ff);
+    [
+        ((value >> 16) & 0xff) as u8,
+        ((value >> 8) & 0xff) as u8,
+        (value & 0xff) as u8,
+    ]
 }
 
 fn solid_rgba(color: [u8; 4]) -> Vec<u8> {
