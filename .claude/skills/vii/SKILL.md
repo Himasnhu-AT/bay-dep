@@ -13,9 +13,13 @@ screenshot loop.
 
 ---
 
-## Before anything else: is the server up?
+## How you call it
 
-Tools appear as `mcp__vii__*`. If they are not in your tool list, start the server:
+vii is an MCP server. **Call its tools directly** — `mcp__vii__project_create`,
+`mcp__vii__add_text`, `mcp__vii__snapshot`, `mcp__vii__render`. That is the whole interface;
+there is nothing to shell out to.
+
+If those tools are not in your tool list, the server is not registered yet:
 
 ```bash
 cd <vii-repo>/rust && cargo build --release -p opencut-mcp
@@ -23,12 +27,12 @@ cd <vii-repo>/rust && cargo build --release -p opencut-mcp
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
 
-MCP servers load at session start, so a newly registered server is available **next**
-session. To drive it in the current one, call the same endpoint over HTTP —
-`scripts/vii.py <tool> '<json>'` does exactly that.
+MCP servers load at session start, so a server registered *now* is available **next** session.
+That one bootstrap gap is the only reason `scripts/vii.py` exists — see
+[Scripts](#scripts). Once the tools are listed, ignore it.
 
 Rendering needs a GPU adapter and `ffmpeg` on PATH. Narration additionally needs Kokoro;
-`speech_status` tells you whether it is there and what to do if not.
+`mcp__vii__speech_status` tells you whether it is there and what to do if not.
 
 ---
 
@@ -95,12 +99,22 @@ Detail lives in the references below. Read the one you need — don't read them 
 
 ## Scripts
 
-| Script | Use |
-|---|---|
-| `scripts/vii.py <tool> '<json>'` | call one MCP tool over HTTP; prints the result |
-| `scripts/inkcheck.py` | sweep the timeline for blank/near-blank frames |
+You do not need these to use vii. Both exist for jobs a tool call cannot do.
 
-Both assume the server is on `127.0.0.1:7333`; override with `VII_MCP_URL`.
+**`scripts/inkcheck.py`** — sweeps ~70 frames and measures how much ink is on each one. This
+is arithmetic over a batch of renders, not something you can do by looking at images one at a
+time, which is why it is a script. Run it before shipping.
+
+**`scripts/vii.py`** — a fallback for one situation only: you started the server *this*
+session, so `mcp__vii__*` is not in your tool list until the next one. It speaks the same
+JSON-RPC to the same endpoint. If the MCP tools are listed, do not use this.
+
+```bash
+./scripts/vii.py tools                       # list tools + required args
+./scripts/vii.py snapshot at=2.5 path=/tmp/f.png scale=0.5
+```
+
+Both default to `127.0.0.1:7333`; override with `VII_MCP_URL`.
 
 ---
 

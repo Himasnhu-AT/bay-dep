@@ -2,8 +2,8 @@
 
 Worked patterns. Copy the shape, change the content.
 
-Calls are shown as `tool { args }`; drive them with `mcp__vii__*` tools, or
-`scripts/vii.py <tool> '<json>'` when the server was registered this session.
+Calls are written `tool { args }` for brevity — each one is a direct
+`mcp__vii__<tool>` tool call with that argument object.
 
 ---
 
@@ -129,20 +129,31 @@ Check the returned `overruns` — spoken lines that ran past the next cue's star
 
 ## 6. Verifying before you ship
 
+**Step 1 — look at one frame per scene.** One `snapshot` call each, then Read each PNG. This
+is the step that catches real defects, and there is no substitute for it.
+
+```jsonc
+snapshot { "at": 2.6,  "path": "/tmp/f1.png", "scale": 0.5 }
+snapshot { "at": 6.9,  "path": "/tmp/f2.png", "scale": 0.5 }
+snapshot { "at": 14.2, "path": "/tmp/f3.png", "scale": 0.5 }
+// …then Read every one of them.
+```
+
+**Step 2 — sweep for dead air.** Measuring ink across ~70 frames is arithmetic over a batch,
+so this one is a script:
+
 ```bash
-# 1. look at one frame per scene
-for t in 2.6 6.9 9.9 14.2 18.3 20.8; do
-  scripts/vii.py snapshot "{\"at\":$t,\"path\":\"/tmp/f$t.png\",\"scale\":0.5}"
-done
-# ...then Read each PNG. This is the step that catches real defects.
+python3 scripts/inkcheck.py --at 4.286 8.571 10.714 15.0 19.286
+```
 
-# 2. sweep for dead air
-python3 scripts/inkcheck.py
+**Step 3 — confirm the encoded file is what you think it is.**
 
-# 3. confirm the output is what you think it is
+```bash
 ffprobe -v error -show_entries stream=codec_type,codec_name -of default=nw=1 out.mp4
 ffmpeg -nostdin -i out.mp4 -af volumedetect -f null /dev/null 2>&1 | grep volume
+ffmpeg -nostdin -v error -y -ss 12 -i out.mp4 -frames:v 1 /tmp/encoded.png   # then Read it
 ```
 
 Never report a render as verified on the strength of the `render` tool's own JSON. It tells
-you ffmpeg exited zero, not that the file contains what you intended.
+you ffmpeg exited zero, not that the file contains what you intended. Pulling a frame out of
+the *encoded file* is what proves the export path matches the preview path.

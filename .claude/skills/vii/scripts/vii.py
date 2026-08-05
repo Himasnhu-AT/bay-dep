@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Call one vii MCP tool over HTTP and print the result.
 
+YOU PROBABLY DO NOT NEED THIS. vii is an MCP server: call `mcp__vii__<tool>` directly as a
+tool call. This script exists for exactly one situation — the server was registered during
+the current session, so its tools do not appear in the tool list until the next one. It
+speaks the same JSON-RPC to the same endpoint, as a stopgap.
+
     ./vii.py tools                          list every tool and its required arguments
     ./vii.py <tool>                         call with no arguments
     ./vii.py <tool> '<json>'                call with arguments
     ./vii.py <tool> key=value key=value     call with arguments, shell-friendly
-
-Use this when the vii MCP server is running but was registered after the session started, so
-the mcp__vii__* tools are not in the tool list yet. It speaks the same JSON-RPC an MCP client
-would, against the same server.
 
 Endpoint: VII_MCP_URL, default http://127.0.0.1:7333/mcp
 Exits non-zero on a tool error, so it composes in shell pipelines.
