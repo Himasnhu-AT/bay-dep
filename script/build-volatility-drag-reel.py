@@ -415,15 +415,19 @@ if os.environ.get("VII_NARRATE") == "1":
     # for a caption to go without covering the artwork. Noted rather than hidden.
     CAPTION_Y = float(os.environ.get("VII_CAPTION_Y", "0.79"))
 
+    # The screen already carries every number. Narration that repeats them teaches nothing and
+    # gives a viewer two copies of one message to read at once — so the voice carries only what
+    # the picture cannot: the reasoning, and why it matters. Read end to end the narration is a
+    # complete explanation that never says a single on-screen figure.
     LINES = [
-        (0.10,  "Plus fifty percent. Then minus fifty percent."),
-        (4.40,  "The average says zero."),
-        (8.70,  "Your account disagrees."),
-        (10.85, "A hundred becomes one fifty, then seventy five."),
-        (15.10, "To recover a fifty percent loss you need a hundred percent gain."),
-        # Only the payoff clause: the full thought is already on screen, and speaking both
-        # sentences ran 0.62s past the end of the 21.429s music bed.
-        (19.55, "Money compounds."),
+        (0.10,  "A gain, then an equal loss. Feels like a wash."),
+        (4.40,  "The arithmetic agrees. Add them, divide by two, you get nothing."),
+        (8.70,  "But nobody trades an average."),
+        (10.85, "The loss lands on a bigger balance than the gain did."),
+        (15.10, "And climbing back always starts from a smaller base."),
+        # Started at 19.30 rather than 19.55: the closer needs 2.07s and the bed ends
+        # at 21.429, so a later start clipped the last word.
+        (19.30, "Volatility is the cost."),
     ]
 
     print("narrating…")
@@ -431,9 +435,12 @@ if os.environ.get("VII_NARRATE") == "1":
     for index, (at, line) in enumerate(LINES):
         result = call("narrate", text=line, start=at, voice=VOICE, speed=SPEED,
                       volume=VOICE_VOLUME, captions=True,
-                      captionY=CAPTION_Y, captionFontSize=42, captionFontFamily="Helvetica Neue",
+                      captionY=CAPTION_Y, captionFontSize=38, captionFontFamily="Helvetica Neue",
                       captionFontWeight=600, captionColor="#EDECE6", captionLayer=12,
-                      maxWords=5, minCaptionSeconds=0.6, maxCaptionSeconds=2.6)
+                      # 4 words at 38px fits the 907px caption box on one line. At 5 words /
+                      # 42px a caption like "bigger balance than the gain" wrapped and
+                      # orphaned its last word onto a second line.
+                      maxWords=4, minCaptionSeconds=0.6, maxCaptionSeconds=2.6)
         end = result["endSeconds"]
         nxt = LINES[index + 1][0] if index + 1 < len(LINES) else TOTAL
         flag = "" if end <= nxt + 0.02 else f"  OVERRUNS next line by {end - nxt:.2f}s"
