@@ -155,6 +155,9 @@ pub struct EditorView {
     /// save, an unavailable ffprobe) was swallowed with `let _ =`, so the app looked broken
     /// with no explanation.
     status: Option<String>,
+    /// What an AI agent last did, and when — drives the "Claude is editing" chip. The chip
+    /// clears itself on the animation-frame loop that already runs for playback and decodes.
+    agent_activity: Option<(String, std::time::Instant)>,
     /// The library file this project is being edited in. Saves go here, so the launcher's list
     /// reflects the work; `None` only if the library could not be opened at all.
     project_path: Option<PathBuf>,
@@ -193,6 +196,7 @@ impl EditorView {
             audio_cache: std::collections::HashMap::new(),
             editing_text: None,
             status: None,
+            agent_activity: None,
         }
     }
 
@@ -229,6 +233,67 @@ impl EditorView {
         library::write_project(&path, self.editor.project())
             .map(|()| path)
             .map_err(|error| error.to_string())
+    }
+
+    /// Apply one agent tool call to this editor, on the main thread.
+    ///
+    /// This is the single-writer point: an agent never touches the project, it hands over
+    /// `Command`s that are applied here exactly as a human's would be. So the edit shows up in
+    /// the timeline immediately, and `⌘Z` undoes it.
+    pub fn apply_agent_call(
+        &mut self,
+        call: &vii_agent::ToolCall,
+        cx: &mut Context<Self>,
+    ) -> vii_agent::AgentResponse {
+        use vii_agent::{AgentResponse, Planned};
+
+        let planned = match vii_agent::plan(&call.name, &call.arguments, self.editor.project()) {
+            Ok(planned) => planned,
+            Err(message) => return AgentResponse::Err(message),
+        };
+
+        match planned {
+            // A read changes nothing, so it must not light the indicator or repaint.
+            Planned::Read(value) => AgentResponse::Ok(value),
+            Planned::Tx {
+                label,
+                commands,
+                scene_id,
+                new_ids,
+            } => {
+                // The plan was made against a snapshot of one scene. `ProjectPatch` applies to
+                // whichever scene is active now, and `ElementRef` carries no scene — so if the
+                // user switched scenes while the agent was thinking, applying would silently
+                // edit the wrong timeline.
+                if scene_id != self.editor.active_scene_id() {
+                    return AgentResponse::Err(format!(
+                        "the editor moved to a different scene while this was being planned \
+                         (planned against {scene_id:?}); read the timeline again and retry"
+                    ));
+                }
+
+                let mut applied = 0usize;
+                for command in commands {
+                    if self.editor.execute(command) {
+                        applied += 1;
+                    }
+                }
+                if applied == 0 {
+                    return AgentResponse::Err(
+                        "the editor accepted the plan but nothing changed".into(),
+                    );
+                }
+
+                self.agent_activity = Some((label.clone(), std::time::Instant::now()));
+                cx.notify();
+                AgentResponse::Ok(serde_json::json!({
+                    "applied": applied,
+                    "tool": label,
+                    "ids": new_ids,
+                    "durationSeconds": self.editor.duration().to_seconds_f64(),
+                }))
+            }
+        }
     }
 
     /// Handle a keystroke while editing a text clip's content. Commits on Enter, cancels on Escape.
@@ -916,6 +981,20 @@ impl EditorView {
         }
     }
 
+    /// How long the "Claude is editing" chip stays up after the last agent edit.
+    ///
+    /// Long enough to notice a burst of quick edits as one continuous activity, short enough
+    /// that it is gone before the user wonders whether it is stuck.
+    const AGENT_CHIP: std::time::Duration = std::time::Duration::from_millis(2500);
+
+    /// Whether an agent has touched the project recently enough to still be worth showing.
+    fn agent_chip(&self) -> Option<String> {
+        self.agent_activity
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < Self::AGENT_CHIP)
+            .map(|(label, _)| format!("● Claude · {label}"))
+    }
+
     fn toolbar(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
         let title = format!("vii — {}", vm.project_name);
         let clipboard = format!("clipboard: {}", vm.clipboard_len);
@@ -948,6 +1027,18 @@ impl EditorView {
                         }
                     }))
                     .child(Self::shared(title))
+                    .children(self.agent_chip().map(|label| {
+                        div()
+                            .px_2()
+                            .py(px(2.0))
+                            .rounded_sm()
+                            .bg(rgb(theme::SELECTED))
+                            .border_1()
+                            .border_color(rgb(theme::SELECTED_BORDER))
+                            .text_color(rgb(theme::TEXT))
+                            .text_size(px(11.0))
+                            .child(label)
+                    }))
                     .child(
                         div()
                             .text_xs()
@@ -2214,6 +2305,11 @@ impl Render for EditorView {
             if self.playing {
                 window.request_animation_frame();
             }
+        }
+        // The agent chip expires on a timer, so keep frames coming until it does — otherwise
+        // it lingers until something unrelated repaints.
+        if self.agent_chip().is_some() {
+            window.request_animation_frame();
         }
         // Video decodes run on worker threads. Keep asking for frames while any are in flight so
         // the finished clip actually appears, even when playback is paused.

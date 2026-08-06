@@ -7165,6 +7165,8 @@ dependencies = [
 name = "vii-desktop"
 version = "0.1.0"
 dependencies = [
+ "vii-agent",
+ "vii-mcp",
  "vii-ui",
 ]
 
@@ -7177,6 +7179,7 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+ "vii-agent",
  "vii-core",
  "vii-preview",
  "vii-project",
@@ -7233,6 +7236,7 @@ dependencies = [
  "rfd",
  "rodio",
  "serde_json",
+ "vii-agent",
  "vii-audio",
  "vii-core",
  "vii-preview",

@@ -5,6 +5,7 @@ edition = "2024"
 description = "Model Context Protocol server exposing the vii editor engine as agent tools."
 
 [dependencies]
+vii-agent = { path = "../vii-agent" }
 vii-core = { path = "../vii-core" }
 vii-project = { path = "../vii-project" }
 vii-preview = { path = "../vii-preview" }

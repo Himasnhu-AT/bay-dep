@@ -33,15 +33,7 @@ fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
     let id = request.get("id").cloned()?;
 
     let result = match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": { "tools": { "listChanged": false } },
-            "serverInfo": {
-                "name": SERVER_NAME,
-                "version": env!("CARGO_PKG_VERSION"),
-            },
-            "instructions": INSTRUCTIONS,
-        })),
+        "initialize" => Ok(initialize_result()),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools::definitions() })),
         "tools/call" => {
@@ -74,6 +66,20 @@ fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
             "jsonrpc": "2.0", "id": id,
             "error": { "code": code, "message": message }
         }),
+    })
+}
+
+/// The `initialize` reply. Shared so attached and headless modes cannot describe the server
+/// differently.
+fn initialize_result() -> Value {
+    json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": { "tools": { "listChanged": false } },
+        "serverInfo": {
+            "name": SERVER_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+        },
+        "instructions": INSTRUCTIONS,
     })
 }
 
@@ -113,33 +119,136 @@ pub fn serve_stdio() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Serve MCP over HTTP on `127.0.0.1:port`. Pass port 0 to let the OS pick one; the chosen
-/// port is printed and returned.
+/// Serve MCP over HTTP on `127.0.0.1:port`. Pass port 0 to let the OS pick one.
 ///
-/// Single-threaded on purpose: the studio owns one GPU device and one project, so concurrent
-/// tool calls would need a lock around everything anyway. Requests are handled in order.
-pub fn serve_http(port: u16) -> std::io::Result<()> {
+/// Two modes, and which one you get depends on whether the desktop app is running:
+///
+/// - **Attached** (`bridge` is `Some`) — the editor owns the document. Every tool call is
+///   forwarded to it and applied on the main thread, so the user watches the edit land and can
+///   undo it. One thread per connection, because each one blocks on its own reply and must not
+///   hold up the accept loop.
+/// - **Headless** (`bridge` is `None`) — no app, so the server owns a `Studio` and does the
+///   work itself. This is the original behaviour and stays single-threaded: one GPU device and
+///   one project mean concurrent calls would need a lock around everything anyway.
+pub fn serve_http(port: u16, bridge: Option<vii_agent::AgentBridge>) -> std::io::Result<()> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
     let bound = listener.local_addr()?;
-    println!("vii MCP server listening on http://{bound}/mcp");
-    println!("  claude mcp add --transport http vii http://{bound}/mcp");
+    let mode = if bridge.is_some() {
+        "attached to the open editor"
+    } else {
+        "headless"
+    };
+    println!("vii MCP server listening on http://{bound}/mcp ({mode})");
+    if bridge.is_none() {
+        println!("  claude mcp add --transport http vii http://{bound}/mcp");
+    }
     std::io::stdout().flush()?;
 
-    let mut studio = Studio::new();
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                if let Err(e) = serve_connection(&mut studio, stream) {
-                    eprintln!("vii-mcp: connection error: {e}");
+    match bridge {
+        Some(bridge) => {
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => {
+                        let bridge = bridge.clone();
+                        // Thread per connection: the handler blocks waiting for the editor to
+                        // answer, and blocking the accept loop would stall every other client.
+                        std::thread::spawn(move || {
+                            if let Err(e) = serve_attached_connection(&bridge, stream) {
+                                eprintln!("vii-mcp: connection error: {e}");
+                            }
+                        });
+                    }
+                    Err(e) => eprintln!("vii-mcp: accept failed: {e}"),
                 }
             }
-            Err(e) => eprintln!("vii-mcp: accept failed: {e}"),
+        }
+        None => {
+            let mut studio = Studio::new();
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => {
+                        if let Err(e) = serve_connection(&mut studio, stream) {
+                            eprintln!("vii-mcp: connection error: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("vii-mcp: accept failed: {e}"),
+                }
+            }
         }
     }
     Ok(())
 }
 
-fn serve_connection(studio: &mut Studio, mut stream: TcpStream) -> std::io::Result<()> {
+/// How long a tool call waits for the editor before giving up.
+///
+/// Generous, because the one main-thread stall we cannot engineer away is a native file dialog
+/// — and short enough that an agent gets a message it can act on rather than hanging forever.
+const ATTACHED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Handle one connection in attached mode: `initialize` and `tools/list` are answered here,
+/// and everything else is forwarded to the editor.
+fn serve_attached_connection(
+    bridge: &vii_agent::AgentBridge,
+    stream: TcpStream,
+) -> std::io::Result<()> {
+    serve_with(stream, |request| handle_attached(bridge, request))
+}
+
+fn handle_attached(bridge: &vii_agent::AgentBridge, request: &Value) -> Option<Value> {
+    let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let id = request.get("id").cloned()?;
+
+    // These need no document, so answering locally keeps them off the editor's thread.
+    let result = match method {
+        "initialize" => Ok(initialize_result()),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+        "tools/call" => {
+            let params = request.get("params").cloned().unwrap_or(json!({}));
+            let call = vii_agent::ToolCall {
+                name: params
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                arguments: params.get("arguments").cloned().unwrap_or(json!({})),
+            };
+            let (text, is_error) = match bridge.call(call, ATTACHED_TIMEOUT) {
+                vii_agent::AgentResponse::Ok(value) => (
+                    serde_json::to_string(&value).unwrap_or_else(|_| "{}".into()),
+                    false,
+                ),
+                vii_agent::AgentResponse::Err(message) => (message, true),
+            };
+            Ok(json!({
+                "content": [{ "type": "text", "text": text }],
+                "isError": is_error,
+            }))
+        }
+        other => Err((-32601, format!("method not found: {other}"))),
+    };
+
+    Some(match result {
+        Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
+        Err((code, message)) => json!({
+            "jsonrpc": "2.0", "id": id,
+            "error": { "code": code, "message": message }
+        }),
+    })
+}
+
+fn serve_connection(studio: &mut Studio, stream: TcpStream) -> std::io::Result<()> {
+    serve_with(stream, |request| handle(studio, request))
+}
+
+/// The HTTP half of the transport, shared by both modes.
+///
+/// `dispatch` turns one JSON-RPC message into an optional reply; everything about reading the
+/// request and writing the response lives here so the two modes cannot drift apart.
+fn serve_with(
+    mut stream: TcpStream,
+    mut dispatch: impl FnMut(&Value) -> Option<Value>,
+) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
 
     // Request line.
@@ -198,17 +307,14 @@ fn serve_connection(studio: &mut Studio, mut stream: TcpStream) -> std::io::Resu
     // A batch is a JSON array of requests; a single call is an object.
     let response = match &request {
         Value::Array(items) => {
-            let replies: Vec<Value> = items
-                .iter()
-                .filter_map(|item| handle(studio, item))
-                .collect();
+            let replies: Vec<Value> = items.iter().filter_map(&mut dispatch).collect();
             if replies.is_empty() {
                 None
             } else {
                 Some(Value::Array(replies))
             }
         }
-        other => handle(studio, other),
+        other => dispatch(other),
     };
 
     match response {

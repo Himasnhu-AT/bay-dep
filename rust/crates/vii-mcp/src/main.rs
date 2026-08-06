@@ -38,5 +38,6 @@ fn main() -> std::io::Result<()> {
             }
         }
     }
-    server::serve_http(port)
+    // Standalone: no editor to attach to, so the server owns the document.
+    server::serve_http(port, None)
 }

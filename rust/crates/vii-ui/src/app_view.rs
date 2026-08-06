@@ -60,7 +60,63 @@ impl gpui::Focusable for ViiApp {
 }
 
 impl ViiApp {
-    pub fn new(focus_handle: FocusHandle, preview: Option<PreviewRenderer>) -> Self {
+    /// Drain agent tool calls forever, on the foreground executor.
+    ///
+    /// A foreground task is the only legal way in: GPUI's `ForegroundExecutor` is `!Send`, so
+    /// the MCP thread can never touch a view directly. It sends owned data down a `Send`
+    /// channel; this task — which lives on the main thread — is what actually applies it.
+    ///
+    /// Detached rather than stored: it should live exactly as long as the app does, and there
+    /// is nothing meaningful to do with the handle.
+    fn drain_agent_calls(pump: vii_agent::AgentPump, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            while let Some(request) = pump.next().await {
+                let call = request.call.clone();
+                let response = this
+                    .update(cx, |app, cx| app.route_agent_call(&call, cx))
+                    .unwrap_or_else(|_| {
+                        vii_agent::AgentResponse::Err("the editor window has closed".into())
+                    });
+                request.respond(response);
+            }
+        })
+        .detach();
+    }
+
+    /// Send a tool call to whichever project is open.
+    ///
+    /// "Which project?" needs no argument from the agent: the one on screen is the one it
+    /// edits, which is what makes watching the edit land meaningful. With nothing open there
+    /// is no document to edit, and saying so beats inventing one the user cannot see.
+    fn route_agent_call(
+        &mut self,
+        call: &vii_agent::ToolCall,
+        cx: &mut Context<Self>,
+    ) -> vii_agent::AgentResponse {
+        let Some(editor) = self.editor.clone() else {
+            return vii_agent::AgentResponse::Err(
+                "no project is open in vii — open one from the project list, or quit the app to \
+                 work headlessly"
+                    .into(),
+            );
+        };
+        if !self.showing_editor {
+            return vii_agent::AgentResponse::Err(
+                "vii is showing the project list — open a project to edit it".into(),
+            );
+        }
+        editor.update(cx, |view, cx| view.apply_agent_call(call, cx))
+    }
+
+    pub fn new(
+        focus_handle: FocusHandle,
+        preview: Option<PreviewRenderer>,
+        pump: Option<vii_agent::AgentPump>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        if let Some(pump) = pump {
+            Self::drain_agent_calls(pump, cx);
+        }
         let (library, library_error) = match ProjectLibrary::open_default() {
             Ok(library) => (Some(library), None),
             Err(error) => (None, Some(error.to_string())),
@@ -69,6 +125,19 @@ impl ViiApp {
         app.library_error = library_error;
         app.adopt_legacy_project();
         app.refresh();
+        // Open a project straight away when asked. Useful for picking up where you left off,
+        // and it is what makes the agent path testable without a human clicking the launcher.
+        let wanted = std::env::var("VII_OPEN_PROJECT").unwrap_or_default();
+        if !wanted.is_empty() {
+            let target = if wanted == "first" {
+                app.projects.first().map(|p| p.id.clone())
+            } else {
+                Some(wanted)
+            };
+            if let Some(id) = target {
+                app.open_project(&id, cx);
+            }
+        }
         app
     }
 

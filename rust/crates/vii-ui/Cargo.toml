@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 gpui = "0.2.2"
 image = "0.25"
+vii-agent = { version = "0.1.0", path = "../vii-agent" }
 vii-audio = { version = "0.1.0", path = "../vii-audio" }
 vii-core = { version = "0.1.0", path = "../vii-core" }
 vii-preview = { version = "0.1.0", path = "../vii-preview" }

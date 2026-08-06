@@ -19,6 +19,15 @@ use gpui::{px, size, App, Application, Bounds, WindowBounds, WindowOptions};
 
 /// Launch the app: a window on the project library, from which a project opens into the editor.
 pub fn run() {
+    run_with_agent(None)
+}
+
+/// Launch the app, optionally draining agent tool calls from `pump`.
+///
+/// The pump is handed in rather than created here so `rust/desktop` owns the wiring: `vii-ui`
+/// must not depend on `vii-mcp`, or the dependency graph gains a cycle the moment the server
+/// wants to read editor state.
+pub fn run_with_agent(pump: Option<vii_agent::AgentPump>) {
     // Build the GPU compositor preview up front (None if no adapter → layout-rect fallback).
     let preview = vii_preview::PreviewRenderer::new();
 
@@ -32,7 +41,7 @@ pub fn run() {
             },
             move |_, cx| {
                 let focus_handle = cx.focus_handle();
-                cx.new(|_| ViiApp::new(focus_handle, preview))
+                cx.new(|cx| ViiApp::new(focus_handle, preview, pump, cx))
             },
         )
         .expect("failed to open editor window");
