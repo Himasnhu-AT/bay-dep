@@ -56,6 +56,22 @@ watching it happen depends on there being no ambiguity about which one.
 opens it in the window. If something is already on the timeline, `project_info` first and ask
 before replacing it.
 
+**A tool list is fixed when the session starts.** Registering a server — or starting one — part
+way through does nothing for the session you are in, even though `claude mcp list` will happily
+report it connected, because that is a fresh probe rather than the binding your tools came
+from. So an HTTP registration silently yields no tools whenever vii was not already listening
+at launch, which is most of the time, since the app only holds the port while it is open.
+
+Registering it over stdio avoids that entirely — Claude Code spawns the process itself, so it
+is connected every session with nothing to remember:
+
+```bash
+claude mcp add -s user vii-headless -- /Applications/vii.app/Contents/MacOS/vii --stdio
+```
+
+That gets all 22 tools and no window. Keep the HTTP entry as well for when you want the live
+editor; they are different trade-offs, not competing answers.
+
 MCP servers load at session start, so a server registered *now* is available **next** session.
 That one bootstrap gap is the only reason `scripts/vii.py` exists — see
 [Scripts](#scripts). Once the tools are listed, ignore it.
