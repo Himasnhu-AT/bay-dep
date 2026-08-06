@@ -96,6 +96,17 @@ impl ViiApp {
         call: &vii_agent::ToolCall,
         cx: &mut Context<Self>,
     ) -> vii_agent::AgentResponse {
+        // Window-level calls are answered here: they are about the window, not the document,
+        // and must work even with nothing open. `window_focus` is what a second launch sends
+        // instead of starting a rival instance.
+        if call.name == "window_focus" {
+            cx.activate(true);
+            return vii_agent::AgentResponse::Ok(serde_json::json!({
+                "focused": true,
+                "showingEditor": self.showing_editor,
+            }));
+        }
+
         let Some(editor) = self.editor.clone() else {
             return vii_agent::AgentResponse::Err(
                 "no project is open in vii — open one from the project list, or quit the app to \

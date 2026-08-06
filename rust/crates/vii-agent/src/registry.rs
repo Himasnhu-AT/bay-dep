@@ -12,9 +12,12 @@
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
 
-/// Ports a vii window may claim. The first is the documented default so a single window — the
-/// common case — is always reachable at the address in the README.
-pub const PORT_RANGE: std::ops::RangeInclusive<u16> = 7333..=7342;
+/// The port a vii window serves agent calls on.
+///
+/// One port, because vii is deliberately single-window for now: a second launch focuses the
+/// window that is already open rather than starting a rival. That keeps "which document is the
+/// agent editing?" answerable without the user having to think about it.
+pub const DEFAULT_PORT: u16 = 7333;
 
 /// A vii window that is accepting agent calls.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,12 +35,10 @@ impl Instance {
 
     /// The exact command that points an MCP client at this window.
     pub fn mcp_add_command(&self) -> String {
-        let name = if self.port == *PORT_RANGE.start() {
-            "vii".to_string()
-        } else {
-            format!("vii-{}", self.port)
-        };
-        format!("claude mcp add --transport http {name} {}", self.url())
+        format!(
+            "claude mcp add --transport http vii http://127.0.0.1:{}/mcp",
+            self.port
+        )
     }
 }
 
@@ -65,17 +66,13 @@ fn port_free(port: u16) -> bool {
     TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
 }
 
-/// Claim a port for this window, returning its bound listener.
+/// Claim the agent port for this window, returning its bound listener.
 ///
-/// Takes the listener rather than just the number so there is no window between checking and
-/// binding for a second instance to slip through.
-pub fn claim() -> Option<(TcpListener, u16)> {
-    for port in PORT_RANGE {
-        if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, port)) {
-            return Some((listener, port));
-        }
-    }
-    None
+/// Returns the bound listener rather than just the number so there is no gap between "this
+/// port was free" and "we are listening on it" for a second launch to slip through — the OS
+/// bind is the lock.
+pub fn claim() -> Option<TcpListener> {
+    TcpListener::bind((Ipv4Addr::LOCALHOST, DEFAULT_PORT)).ok()
 }
 
 /// Record that this window is serving on `port`.
@@ -173,14 +170,17 @@ mod tests {
     }
 
     #[test]
-    fn a_claimed_port_is_reported_and_a_released_one_is_reaped() {
+    fn a_claimed_window_is_reported_and_a_closed_one_is_reaped() {
         let _scratch = Scratch::new("claim");
-        let (listener, port) = claim().expect("a port should be free");
-        register(port, Some("Demo")).expect("register");
+        let Some(listener) = claim() else {
+            eprintln!("skipping: port {DEFAULT_PORT} is in use on this machine");
+            return;
+        };
+        register(DEFAULT_PORT, Some("Demo")).expect("register");
 
         let listed = live();
-        assert_eq!(listed.len(), 1, "the claimed window should be listed");
-        assert_eq!(listed[0].port, port);
+        assert_eq!(listed.len(), 1, "the open window should be listed");
+        assert_eq!(listed[0].port, DEFAULT_PORT);
         assert_eq!(listed[0].project.as_deref(), Some("Demo"));
 
         // Dropping the listener frees the port; the note is now a lie and must be reaped.
@@ -190,67 +190,43 @@ mod tests {
             "a window that stopped listening must not stay in the list"
         );
         assert!(
-            !note_path(port).exists(),
+            !note_path(DEFAULT_PORT).exists(),
             "the stale note should have been removed"
         );
     }
 
+    /// Only one window may hold the port. That IS the single-instance lock — a second launch
+    /// finding it taken is how it knows to focus the existing window instead of opening a
+    /// rival with its own separate document.
     #[test]
-    fn two_windows_get_different_ports() {
-        let _scratch = Scratch::new("two");
-        let (first_listener, first) = claim().expect("first port");
-        let (second_listener, second) = claim().expect("second port");
-        assert_ne!(first, second, "each window needs its own endpoint");
-        register(first, Some("A")).unwrap();
-        register(second, Some("B")).unwrap();
-
-        let listed = live();
-        assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0].port, first);
-        assert_eq!(listed[1].port, second);
-        drop(first_listener);
-        drop(second_listener);
-    }
-
-    /// The first window must land on the documented default, or the README's `claude mcp add`
-    /// line is wrong for the overwhelmingly common single-window case.
-    #[test]
-    fn the_first_window_takes_the_documented_port() {
-        let _scratch = Scratch::new("default");
-        let Some((listener, port)) = claim() else {
-            eprintln!("skipping: no port in range is free on this machine");
+    fn a_second_claim_is_refused_while_the_first_holds_the_port() {
+        let _scratch = Scratch::new("single");
+        let Some(first) = claim() else {
+            eprintln!("skipping: port {DEFAULT_PORT} is in use on this machine");
             return;
         };
-        if port != *PORT_RANGE.start() {
-            eprintln!(
-                "skipping: {} is already in use by something else",
-                PORT_RANGE.start()
-            );
-            return;
-        }
+        assert!(
+            claim().is_none(),
+            "a second window must not be able to claim the port"
+        );
+        drop(first);
+        // Once the first releases it, a new window can take over.
+        assert!(
+            claim().is_some(),
+            "the port must be reusable after the window closes"
+        );
+    }
+
+    #[test]
+    fn the_add_command_names_the_documented_port() {
         let instance = Instance {
-            port,
+            port: DEFAULT_PORT,
             pid: 0,
             project: None,
         };
         assert_eq!(
             instance.mcp_add_command(),
             "claude mcp add --transport http vii http://127.0.0.1:7333/mcp"
-        );
-        drop(listener);
-    }
-
-    #[test]
-    fn a_second_window_is_named_so_both_can_be_registered() {
-        let instance = Instance {
-            port: 7334,
-            pid: 0,
-            project: None,
-        };
-        assert!(
-            instance.mcp_add_command().contains("vii-7334"),
-            "a second window needs a distinct MCP server name: {}",
-            instance.mcp_add_command()
         );
     }
 

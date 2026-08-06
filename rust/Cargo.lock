@@ -7165,6 +7165,7 @@ dependencies = [
 name = "vii-desktop"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "vii-agent",
  "vii-mcp",
  "vii-ui",

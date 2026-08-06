@@ -8,6 +8,7 @@ name = "vii"
 path = "src/main.rs"
 
 [dependencies]
+serde_json = "1"
 vii-mcp = { version = "0.1.0", path = "../crates/vii-mcp" }
 vii-agent = { version = "0.1.0", path = "../crates/vii-agent" }
 vii-ui = { version = "0.1.0", path = "../crates/vii-ui" }

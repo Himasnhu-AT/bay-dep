@@ -43,16 +43,15 @@ rust/
 **With the app open** — edits land in the window you are looking at, and undo works on them:
 
 ```bash
-./rust/target/release/vii          # prints the exact command for THIS window
-vii --agents                       # which windows are open, and how to reach each
-```
-
-Each window claims its own port (7333 upward), so a second window is agent-driveable too
-rather than losing its agent to the first. Register whichever one you want to drive:
-
-```bash
+./rust/target/release/vii          # opens the editor and its agent endpoint
+vii --agents                       # is a window open, and how to reach it
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
+
+vii is **single-window for now**: a second launch raises the window that is already open
+rather than starting a rival with its own timeline, so "which document is the agent editing?"
+never needs asking. The bound port is the lock — if a window is killed, the next launch takes
+over cleanly.
 
 **With the app closed** — headless, for rendering:
 

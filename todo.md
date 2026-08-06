@@ -121,9 +121,11 @@ thread, so an agent's edit appears in the timeline immediately and undoes with �
 against the running app: reads p99 **0.31 ms**, writes p99 **0.86 ms** — the budget was one
 frame (16 ms).
 
-Each window claims its own port from 7333 upward and registers what project it has open, so
-multiple windows each get an agent endpoint. `vii --agents` lists them. Liveness is decided by
-trying to bind the port, not by pid — a pid can be recycled, a free port cannot lie.
+**Single-window on purpose, for now.** A second launch raises the open window instead of
+starting a rival, so there is never ambiguity about which document the agent is editing. The
+bound port is the lock; liveness is decided by trying to bind it, not by pid — a pid can be
+recycled, a free port cannot lie, so a killed window never locks the next launch out.
+`vii --agents` says what is open.
 
 **Still open:**
 
@@ -133,9 +135,10 @@ trying to bind the port, not by pid — a pid can be recycled, a free port canno
   app and run them headlessly.
 - **Stage 3 — conflict.** No leases yet. If you are dragging a clip and the agent edits the
   same one, last write wins with no "keep mine / use the agent's" card.
-- **No router.** Two windows means two MCP servers to register. A router on a fixed port that
-  forwards to a chosen window would mean one registration — worth it only once multi-window is
-  a normal workflow.
+- **Multiple windows.** Deliberately not supported yet. When it matters, the shape is: each
+  window claims its own port, and a router on the fixed port forwards to a chosen one so there
+  is still a single `claude mcp add`. The registry (`vii-agent::registry`) already lists
+  windows, so the groundwork is there.
 
 ---
 
