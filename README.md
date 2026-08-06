@@ -40,6 +40,22 @@ rust/
 
 ## Driving it from an agent
 
+**With the app open** — edits land in the window you are looking at, and undo works on them:
+
+```bash
+./rust/target/release/vii          # prints the exact command for THIS window
+vii --agents                       # which windows are open, and how to reach each
+```
+
+Each window claims its own port (7333 upward), so a second window is agent-driveable too
+rather than losing its agent to the first. Register whichever one you want to drive:
+
+```bash
+claude mcp add --transport http vii http://127.0.0.1:7333/mcp
+```
+
+**With the app closed** — headless, for rendering:
+
 ```bash
 ./rust/target/release/vii-mcp --port 7333
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp

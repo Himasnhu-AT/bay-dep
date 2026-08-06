@@ -114,6 +114,31 @@ No `opencut` in crate names, binaries, identifiers, docs, scripts or CI. Crates 
 
 ---
 
+## 5b. Live agent editing — Stage 1 **DONE**, Stages 2–3 open
+
+The app hosts the MCP server; tool calls cross a channel and are applied on the GPUI main
+thread, so an agent's edit appears in the timeline immediately and undoes with ⌘Z. Measured
+against the running app: reads p99 **0.31 ms**, writes p99 **0.86 ms** — the budget was one
+frame (16 ms).
+
+Each window claims its own port from 7333 upward and registers what project it has open, so
+multiple windows each get an agent endpoint. `vii --agents` lists them. Liveness is decided by
+trying to bind the port, not by pid — a pid can be recycled, a free port cannot lie.
+
+**Still open:**
+
+- **Stage 2 — slow tools.** `render`, `narrate` and `snapshot` are refused while the app is
+  open, because running them on the main thread would freeze the editor for seconds. They need
+  an export worker thread with its own wgpu device, progress and cancel. Until then: close the
+  app and run them headlessly.
+- **Stage 3 — conflict.** No leases yet. If you are dragging a clip and the agent edits the
+  same one, last write wins with no "keep mine / use the agent's" card.
+- **No router.** Two windows means two MCP servers to register. A router on a fixed port that
+  forwards to a chosen window would mean one registration — worth it only once multi-window is
+  a normal workflow.
+
+---
+
 ## 6. Bug: a sidecar can outlive its parent · **S**
 
 The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.

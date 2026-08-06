@@ -132,6 +132,18 @@ pub fn serve_stdio() -> std::io::Result<()> {
 ///   one project mean concurrent calls would need a lock around everything anyway.
 pub fn serve_http(port: u16, bridge: Option<vii_agent::AgentBridge>) -> std::io::Result<()> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
+    serve_listener(listener, bridge)
+}
+
+/// Serve on a listener the caller already bound.
+///
+/// The desktop app claims its port and serves on that exact listener, so there is no window
+/// between "this port was free" and "we are listening on it" for a second window to slip
+/// through and steal it.
+pub fn serve_listener(
+    listener: TcpListener,
+    bridge: Option<vii_agent::AgentBridge>,
+) -> std::io::Result<()> {
     let bound = listener.local_addr()?;
     let mode = if bridge.is_some() {
         "attached to the open editor"

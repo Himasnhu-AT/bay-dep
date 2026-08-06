@@ -51,6 +51,9 @@ pub struct ViiApp {
     status: Option<String>,
     focus_handle: FocusHandle,
     needs_focus: bool,
+    /// The port this window serves agent calls on, so the registry note can name the project
+    /// it has open — which is how a human tells two windows apart in `vii --agents`.
+    agent_port: Option<u16>,
 }
 
 impl gpui::Focusable for ViiApp {
@@ -112,6 +115,7 @@ impl ViiApp {
         focus_handle: FocusHandle,
         preview: Option<PreviewRenderer>,
         pump: Option<vii_agent::AgentPump>,
+        agent_port: Option<u16>,
         cx: &mut Context<Self>,
     ) -> Self {
         if let Some(pump) = pump {
@@ -122,6 +126,7 @@ impl ViiApp {
             Err(error) => (None, Some(error.to_string())),
         };
         let mut app = Self::over(library, preview, focus_handle);
+        app.agent_port = agent_port;
         app.library_error = library_error;
         app.adopt_legacy_project();
         app.refresh();
@@ -162,6 +167,7 @@ impl ViiApp {
             status: None,
             focus_handle,
             needs_focus: true,
+            agent_port: None,
         };
         // No legacy adoption here — that reads a file in the real home directory, which is
         // exactly what a test handed its own library must not do. `new` does it.
@@ -278,6 +284,7 @@ impl ViiApp {
         path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        let project_name = project.metadata.name.clone();
         match self.editor.clone() {
             Some(editor) => editor.update(cx, |editor, cx| {
                 editor.open_project(project, path);
@@ -298,6 +305,11 @@ impl ViiApp {
             }
         }
         self.showing_editor = true;
+        // Tell the registry which project this window is showing, so `vii --agents` can name
+        // it. Best effort — a failed note is not worth interrupting the user for.
+        if let Some(port) = self.agent_port {
+            let _ = vii_agent::registry::register(port, Some(project_name.as_str()));
+        }
         self.status = None;
         cx.notify();
     }

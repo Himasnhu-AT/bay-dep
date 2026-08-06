@@ -23,8 +23,10 @@
 //! other.
 
 mod plan;
+pub mod registry;
 
 pub use plan::{Planned, plan, planned_tools};
+pub use registry::Instance;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
