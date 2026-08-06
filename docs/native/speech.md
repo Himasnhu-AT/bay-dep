@@ -50,12 +50,28 @@ is 180s rather than a few seconds.
 
 ## Setup
 
+`./build.sh` provisions it. The step is idempotent — a machine that already has it pays one
+interpreter start (~20 ms), not a dependency resolve — so it is safe on every build.
+
+```bash
+./build.sh                       # desktop + mcp + speech sidecar
+SKIP_SPEECH=1 ./build.sh         # skip it; everything but narration still works
+
+./script/setup-speech.sh          # provision on its own
+./script/setup-speech.sh --check  # report status, install nothing (exit 1 if absent)
+./script/setup-speech.sh --force  # rebuild the venv from scratch
+```
+
+A speech-provisioning failure does not fail the build. An editor that cannot speak is still an
+editor, and the narration tools report the real reason at call time.
+
+Under the hood that is:
+
 ```bash
 uv venv --python 3.12 ~/.local/share/vii/kokoro-venv
-uv pip install --python ~/.local/share/vii/kokoro-venv/bin/python kokoro soundfile
-# misaki's English G2P uses spaCy; pre-install it so the sidecar never shells out at runtime
-uv pip install --python ~/.local/share/vii/kokoro-venv/bin/python \
-  "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+uv pip install --python …/bin/python kokoro soundfile
+# misaki's English G2P uses spaCy; pre-installed so the sidecar never shells out at runtime
+uv pip install --python …/bin/python "en_core_web_sm @ <spacy-models release wheel>"
 ```
 
 Optional: `brew install espeak-ng` for out-of-dictionary English words and some non-English
