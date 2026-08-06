@@ -107,28 +107,146 @@ impl ViiApp {
             }));
         }
 
-        // Machine-level questions ("is narration installed?") have an answer before any
-        // project exists, so they must not be gated behind opening one.
-        if let Some(answer) = vii_agent::plan_without_document(&call.name) {
+        // Machine-level questions ("is narration installed?", "is this font here?") have an
+        // answer before any project exists, so they must not be gated behind opening one.
+        if let Some(answer) = vii_agent::plan_without_document(&call.name, &call.arguments) {
             return match answer {
                 Ok(value) => vii_agent::AgentResponse::Ok(value),
                 Err(message) => vii_agent::AgentResponse::Err(message),
             };
         }
 
+        // Library calls create, list and open the document the rest of the tools edit, so they
+        // are answered by the window and must work with nothing open. Without this an agent
+        // that finds an empty vii is deadlocked: it cannot create a project because no project
+        // is open.
+        if vii_agent::window_tools().contains(&call.name.as_str()) {
+            return self.route_library_call(call, cx);
+        }
+
         let Some(editor) = self.editor.clone() else {
-            return vii_agent::AgentResponse::Err(
-                "no project is open in vii — open one from the project list, or quit the app to \
-                 work headlessly"
-                    .into(),
-            );
+            return vii_agent::AgentResponse::Err(format!(
+                "no project is open in vii — call project_create to make one (it opens in the \
+                 window), or project_list then project_load to reopen an existing one. \
+                 Available now: {}",
+                vii_agent::available_tools().join(", ")
+            ));
         };
         if !self.showing_editor {
             return vii_agent::AgentResponse::Err(
-                "vii is showing the project list — open a project to edit it".into(),
+                "vii is showing the project list — call project_load with an id from \
+                 project_list, or project_create to start a new one"
+                    .into(),
             );
         }
         editor.update(cx, |view, cx| view.apply_agent_call(call, cx))
+    }
+
+    /// `project_create` / `project_list` / `project_load`, answered against the app's library.
+    ///
+    /// Creating opens the project in the window, because the point of an agent editing a live
+    /// vii is that the human watches it happen — a project made but not shown would be the
+    /// headless behaviour wearing the editor's clothes.
+    fn route_library_call(
+        &mut self,
+        call: &vii_agent::ToolCall,
+        cx: &mut Context<Self>,
+    ) -> vii_agent::AgentResponse {
+        let Some(library) = self.library.clone() else {
+            return vii_agent::AgentResponse::Err(
+                "no project library on this machine — vii could not find a home directory".into(),
+            );
+        };
+        let args = &call.arguments;
+        let text = |key: &str| {
+            args.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .filter(|s| !s.trim().is_empty())
+        };
+
+        match call.name.as_str() {
+            "project_create" => {
+                let name = text("name").unwrap_or_else(|| "Untitled".into());
+                let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(1080) as u32;
+                let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(1920) as u32;
+                let fps = args.get("fps").and_then(|v| v.as_u64()).unwrap_or(30) as u32;
+                if width == 0 || height == 0 || fps == 0 {
+                    return vii_agent::AgentResponse::Err(
+                        "width, height and fps must all be greater than zero".into(),
+                    );
+                }
+                match library.create(
+                    name.trim(),
+                    CanvasSize { width, height },
+                    Fps {
+                        numerator: fps,
+                        denominator: 1,
+                    },
+                ) {
+                    Ok(project) => {
+                        let id = project.metadata.id.clone();
+                        let path = library.path_for(&id);
+                        self.new_name = None;
+                        self.refresh();
+                        self.show_editor(project, Some(path), cx);
+                        self.status = Some(format!("Claude created “{}”", name.trim()));
+                        cx.notify();
+                        vii_agent::AgentResponse::Ok(serde_json::json!({
+                            "projectId": id,
+                            "name": name.trim(),
+                            "width": width,
+                            "height": height,
+                            "fps": fps,
+                            "opened": true,
+                        }))
+                    }
+                    Err(error) => vii_agent::AgentResponse::Err(format!(
+                        "could not create the project: {error}"
+                    )),
+                }
+            }
+            "project_list" => match library.list() {
+                Ok(projects) => vii_agent::AgentResponse::Ok(serde_json::json!({
+                    "root": library.root().to_string_lossy(),
+                    "projects": projects
+                        .iter()
+                        .map(|entry| serde_json::json!({
+                            "id": entry.id,
+                            "name": entry.name,
+                        }))
+                        .collect::<Vec<_>>(),
+                })),
+                Err(error) => {
+                    vii_agent::AgentResponse::Err(format!("could not read the library: {error}"))
+                }
+            },
+            "project_load" => {
+                let Some(id) = text("id") else {
+                    return vii_agent::AgentResponse::Err(
+                        "project_load needs an id — call project_list to see them".into(),
+                    );
+                };
+                match library.load(&id) {
+                    Ok(project) => {
+                        let name = project.metadata.name.clone();
+                        let path = library.path_for(&id);
+                        self.show_editor(project, Some(path), cx);
+                        self.status = Some(format!("Claude opened “{name}”"));
+                        cx.notify();
+                        vii_agent::AgentResponse::Ok(serde_json::json!({
+                            "projectId": id,
+                            "name": name,
+                            "opened": true,
+                        }))
+                    }
+                    Err(error) => {
+                        vii_agent::AgentResponse::Err(format!("could not open {id}: {error}"))
+                    }
+                }
+            }
+            other => vii_agent::AgentResponse::Err(format!("{other} is not a library tool")),
+        }
     }
 
     pub fn new(
@@ -688,7 +806,7 @@ mod tests {
     use vii_core::project::CanvasSize;
 
     /// A library of its own for each test — never the developer's real one.
-    fn library(tag: &str) -> ProjectLibrary {
+    pub(super) fn library(tag: &str) -> ProjectLibrary {
         let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -697,11 +815,25 @@ mod tests {
             .unwrap()
     }
 
-    fn app(cx: &mut TestAppContext, library: ProjectLibrary) -> Entity<ViiApp> {
+    pub(super) fn app(cx: &mut TestAppContext, library: ProjectLibrary) -> Entity<ViiApp> {
         cx.update(|cx| {
             let focus = cx.focus_handle();
             cx.new(|_| ViiApp::over(Some(library), None, focus))
         })
+    }
+
+    /// Same, but with a real GPU compositor attached — `PreviewRenderer::new()` needs no
+    /// window, which is how the headless MCP server renders too. `None` where there is no
+    /// adapter, so the caller can skip instead of asserting against nothing.
+    pub(super) fn app_with_gpu(
+        cx: &mut TestAppContext,
+        library: ProjectLibrary,
+    ) -> Option<Entity<ViiApp>> {
+        let preview = PreviewRenderer::new()?;
+        Some(cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| ViiApp::over(Some(library), Some(preview), focus))
+        }))
     }
 
     #[gpui::test]
@@ -840,5 +972,267 @@ mod tests {
         let app = app(cx, library.clone());
         app.update(cx, |app, cx| app.create_project("   ", cx));
         assert_eq!(library.list().unwrap()[0].name, "Untitled");
+    }
+}
+
+/// Agent routing when nothing is open — the deadlock this fixes, and the guards around it.
+#[cfg(test)]
+mod agent_routing_tests {
+    use super::tests::*;
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn call(name: &str, args: serde_json::Value) -> vii_agent::ToolCall {
+        vii_agent::ToolCall {
+            name: name.to_string(),
+            arguments: args,
+        }
+    }
+
+    /// The reported bug: vii open, nothing loaded, and an agent could not get started —
+    /// project_create was refused because no project was open, which is a deadlock.
+    #[gpui::test]
+    fn an_agent_can_create_a_project_with_nothing_open(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-create"));
+        app.update(cx, |app, cx| {
+            assert!(app.editor.is_none(), "precondition: nothing is open");
+
+            let response = app.route_agent_call(
+                &call(
+                    "project_create",
+                    serde_json::json!({"name": "Reel", "width": 1080, "height": 1920, "fps": 30}),
+                ),
+                cx,
+            );
+            let vii_agent::AgentResponse::Ok(value) = response else {
+                panic!("project_create was refused with nothing open: {response:?}");
+            };
+            assert_eq!(
+                value["opened"], true,
+                "the new project must open in the window"
+            );
+            assert_eq!(value["width"], 1080);
+            assert!(
+                value["projectId"].as_str().is_some_and(|id| !id.is_empty()),
+                "the agent needs the id back to reopen it"
+            );
+
+            assert!(app.editor.is_some(), "the editor should now exist");
+            assert!(
+                app.showing_editor,
+                "and be on screen — the human is watching"
+            );
+        });
+    }
+
+    /// Creating must leave the agent able to edit immediately; a project that opened but did
+    /// not accept edits would just move the deadlock one call later.
+    #[gpui::test]
+    fn editing_works_immediately_after_the_agent_creates_a_project(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-then-edit"));
+        app.update(cx, |app, cx| {
+            app.route_agent_call(
+                &call("project_create", serde_json::json!({"name": "Reel"})),
+                cx,
+            );
+            let response = app.route_agent_call(
+                &call(
+                    "add_text",
+                    serde_json::json!({"content": "hello", "start": 0, "duration": 2}),
+                ),
+                cx,
+            );
+            assert!(
+                matches!(response, vii_agent::AgentResponse::Ok(_)),
+                "add_text straight after project_create should work: {response:?}"
+            );
+        });
+    }
+
+    /// fonts_check is what the skill tells an agent to call first, and it asks about the
+    /// machine, not the document. Gating it behind an open project made the recommended first
+    /// step the one that failed.
+    #[gpui::test]
+    fn fonts_check_answers_with_no_project_open(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-fonts"));
+        app.update(cx, |app, cx| {
+            let response = app.route_agent_call(
+                &call(
+                    "fonts_check",
+                    serde_json::json!({"families": ["Helvetica", "Definitely Not A Typeface 9000"]}),
+                ),
+                cx,
+            );
+            let vii_agent::AgentResponse::Ok(value) = response else {
+                panic!("fonts_check needs no document: {response:?}");
+            };
+            assert!(
+                value["missing"]
+                    .as_array()
+                    .is_some_and(|m| m.iter().any(|v| v == "Definitely Not A Typeface 9000")),
+                "an invented family must come back as missing: {value}"
+            );
+        });
+    }
+
+    /// A refusal has to say what to do instead. The old message named neither the tool that
+    /// resolves it nor anything else that works.
+    #[gpui::test]
+    fn refusing_an_edit_names_the_way_out(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-refusal"));
+        app.update(cx, |app, cx| {
+            let response = app.route_agent_call(
+                &call(
+                    "add_text",
+                    serde_json::json!({"content": "hi", "start": 0, "duration": 1}),
+                ),
+                cx,
+            );
+            let vii_agent::AgentResponse::Err(message) = response else {
+                panic!("editing with nothing open must be refused");
+            };
+            assert!(
+                message.contains("project_create"),
+                "the refusal must name the tool that fixes it: {message}"
+            );
+            assert!(
+                message.contains("fonts_check"),
+                "and list what does work right now: {message}"
+            );
+        });
+    }
+
+    /// An agent reconnecting to a window mid-session needs to find and reopen existing work.
+    #[gpui::test]
+    fn the_agent_can_list_and_reopen_an_existing_project(cx: &mut TestAppContext) {
+        let library = library("agent-reopen");
+        let existing = library
+            .create("Earlier", CanvasSize::default(), Fps::default())
+            .expect("seed a project");
+        let app = app(cx, library);
+
+        app.update(cx, |app, cx| {
+            let vii_agent::AgentResponse::Ok(listed) =
+                app.route_agent_call(&call("project_list", serde_json::json!({})), cx)
+            else {
+                panic!("project_list must work with nothing open");
+            };
+            let ids: Vec<&str> = listed["projects"]
+                .as_array()
+                .expect("projects array")
+                .iter()
+                .filter_map(|p| p["id"].as_str())
+                .collect();
+            assert!(ids.contains(&existing.metadata.id.as_str()));
+
+            let response = app.route_agent_call(
+                &call(
+                    "project_load",
+                    serde_json::json!({"id": existing.metadata.id}),
+                ),
+                cx,
+            );
+            let vii_agent::AgentResponse::Ok(value) = response else {
+                panic!("project_load was refused: {response:?}");
+            };
+            assert_eq!(value["name"], "Earlier");
+            assert!(
+                app.showing_editor,
+                "loading shows it — the human is watching"
+            );
+        });
+    }
+
+    /// snapshot is the call the whole workflow rests on — an agent that cannot see a frame is
+    /// guessing. Without a GPU it must say so rather than return a path to nothing.
+    #[gpui::test]
+    fn snapshot_writes_a_png_or_says_why_not(cx: &mut TestAppContext) {
+        let Some(app) = app_with_gpu(cx, library("agent-snapshot")) else {
+            eprintln!("skipping: no GPU adapter on this machine");
+            return;
+        };
+        let out = std::env::temp_dir().join(format!("vii-agent-snap-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+
+        app.update(cx, |app, cx| {
+            app.route_agent_call(
+                &call("project_create", serde_json::json!({"name": "Snap"})),
+                cx,
+            );
+            app.route_agent_call(
+                &call(
+                    "add_text",
+                    serde_json::json!({"content": "frame", "start": 0, "duration": 2}),
+                ),
+                cx,
+            );
+            match app.route_agent_call(
+                &call(
+                    "snapshot",
+                    serde_json::json!({"at": 1.0, "path": out.to_string_lossy()}),
+                ),
+                cx,
+            ) {
+                vii_agent::AgentResponse::Ok(value) => {
+                    assert!(out.is_file(), "reported success but wrote no file: {value}");
+                    let bytes = std::fs::read(&out).expect("read the png");
+                    assert_eq!(
+                        &bytes[..8],
+                        b"\x89PNG\r\n\x1a\n",
+                        "the file it wrote is not a PNG"
+                    );
+                    eprintln!(
+                        "rendered {} bytes, {}x{}",
+                        bytes.len(),
+                        value["width"],
+                        value["height"]
+                    );
+                }
+                vii_agent::AgentResponse::Err(message) => {
+                    assert!(
+                        message.contains("GPU"),
+                        "the only acceptable failure here is a missing GPU, got: {message}"
+                    );
+                    eprintln!("skipping: {message}");
+                }
+            }
+        });
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// Snapshot must reject a time it cannot render rather than writing a misleading frame.
+    #[gpui::test]
+    fn snapshot_refuses_a_nonsense_time(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-snap-bad"));
+        app.update(cx, |app, cx| {
+            app.route_agent_call(&call("project_create", serde_json::json!({})), cx);
+            let response = app.route_agent_call(
+                &call(
+                    "snapshot",
+                    serde_json::json!({"at": -1.0, "path": "/tmp/nope.png"}),
+                ),
+                cx,
+            );
+            assert!(
+                matches!(response, vii_agent::AgentResponse::Err(_)),
+                "a negative time must be refused: {response:?}"
+            );
+        });
+    }
+
+    /// A bad id must come back as a message the agent can act on, not a panic or a silent Ok.
+    #[gpui::test]
+    fn loading_a_project_that_is_not_there_says_so(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-missing"));
+        app.update(cx, |app, cx| {
+            let response = app.route_agent_call(
+                &call("project_load", serde_json::json!({"id": "no-such-project"})),
+                cx,
+            );
+            assert!(
+                matches!(response, vii_agent::AgentResponse::Err(_)),
+                "a missing project must be an error: {response:?}"
+            );
+        });
     }
 }

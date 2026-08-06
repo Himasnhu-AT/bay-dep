@@ -27,19 +27,34 @@ cd <vii-repo>/rust && cargo build --release -p vii-desktop
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
 
-**Two ways to serve, same tools, same port.**
+**Two ways to serve, same port — but NOT the same tools.**
 
-- **`vii` (the editor)** — the window serves agents on 7333 as well. Your edits land in the
-  timeline the user is looking at, one command at a time, and undo with the same keystroke as
-  theirs. Use this when someone wants to *watch* you work.
-- **`vii --mcp`** — no window. Use this for batch rendering, or on a machine with no display.
+- **`vii --mcp`** — no window, **all 22 tools**. This is what you want for making a video end
+  to end, because `render` and `narrate` only exist here.
+- **`vii` (the editor)** — the window serves agents on 7333 too, so your edits land in the
+  timeline the user is watching and undo with the same keystroke as theirs. **13 of 22 tools**:
 
-They cannot both hold 7333, and that is deliberate: an agent edits *a* document, and the value
-of watching it happen depends on there being no ambiguity about which one. If the editor is
-open, connect to it rather than starting a rival with its own timeline.
+  ```
+  project_create  project_list  project_load  project_info  timeline  project_save
+  add_text  add_shape  animate  element_delete  snapshot  fonts_check  speech_status
+  ```
 
-A window that is already open is where your edits go. Don't `project_create` over someone's
-work without saying so — `project_info` first, and ask if there is something on the timeline.
+  Missing: `render`, `narrate`, `media_import`, `add_image`, `add_video`, `add_audio`, and the
+  three `subtitles_*` tools. They are slow — seconds to minutes — and the bridge applies calls
+  on the UI thread, so running them there would freeze the editor mid-edit. A refusal lists
+  what does work.
+
+**If the request needs narration or an MP4 and the editor is open, say so before you start.**
+Offer to build what you can in the window (layout, type, shapes, animation, snapshots) and
+render after they close it — or to work headlessly from the start. Discovering it at the
+`render` call, after twenty tool calls, wastes their time.
+
+They cannot both hold 7333, deliberately: an agent edits *a* document, and the value of
+watching it happen depends on there being no ambiguity about which one.
+
+**With the editor open and nothing loaded, call `project_create`** — it makes the project and
+opens it in the window. If something is already on the timeline, `project_info` first and ask
+before replacing it.
 
 MCP servers load at session start, so a server registered *now* is available **next** session.
 That one bootstrap gap is the only reason `scripts/vii.py` exists — see

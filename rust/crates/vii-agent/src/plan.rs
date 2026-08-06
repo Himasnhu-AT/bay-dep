@@ -52,10 +52,41 @@ pub fn planned_tools() -> &'static [&'static str] {
     ]
 }
 
-/// Tools that are about the machine or the window rather than the document, and so must work
-/// even with no project open.
+/// Tools the editor answers itself because they produce a file rather than a command —
+/// listed here only so [`available_tools`] can name them.
+pub fn editor_tools() -> &'static [&'static str] {
+    &["snapshot", "project_save"]
+}
+
+/// Tools that are about the machine rather than the document, and so must work even with no
+/// project open.
 pub fn machine_tools() -> &'static [&'static str] {
-    &["speech_status"]
+    &["speech_status", "fonts_check"]
+}
+
+/// Tools the *window* answers rather than a document: they create, list or open the thing the
+/// other tools then edit.
+///
+/// These have to work with nothing open, or an agent that finds an empty vii is stuck — it
+/// cannot create a project because no project is open, which is a deadlock with a polite error
+/// message. Kept separate from [`machine_tools`] because these need the app's project library,
+/// which this crate cannot see.
+pub fn window_tools() -> &'static [&'static str] {
+    &["project_create", "project_list", "project_load"]
+}
+
+/// Every tool that works while the editor is open, for an error message that tells an agent
+/// what to do instead of only what it cannot.
+pub fn available_tools() -> Vec<&'static str> {
+    let mut all: Vec<&'static str> = planned_tools()
+        .iter()
+        .chain(machine_tools())
+        .chain(window_tools())
+        .chain(editor_tools())
+        .copied()
+        .collect();
+    all.sort_unstable();
+    all
 }
 
 /// Answer a tool that needs no document. `None` if this is not one.
@@ -63,8 +94,35 @@ pub fn machine_tools() -> &'static [&'static str] {
 /// Separate from [`plan`] because [`plan`] takes a `&Project` it would have nothing to do
 /// with: "is narration installed on this machine?" has an answer before any project exists,
 /// and refusing it until one is open would be an odd thing to explain.
-pub fn plan_without_document(name: &str) -> Option<Result<Value, String>> {
+pub fn plan_without_document(name: &str, args: &Value) -> Option<Result<Value, String>> {
     match name {
+        // Which fonts this machine has is not a property of any document, and it is the call
+        // an agent makes *first* — the skill says to check families before using them. Gating
+        // it behind an open project made the recommended first step the one that failed.
+        "fonts_check" => {
+            let families: Vec<String> = args
+                .get("families")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if families.is_empty() {
+                return Some(Err(
+                    "families must be a non-empty array of family names".into()
+                ));
+            }
+            let mut raster = vii_text::TextRaster::new();
+            let (available, missing): (Vec<_>, Vec<_>) = families
+                .into_iter()
+                .partition(|family| raster.has_family(family));
+            Some(Ok(serde_json::json!({
+                "available": available,
+                "missing": missing,
+            })))
+        }
         "speech_status" => {
             let engine = vii_speech::SpeechEngine::new(vii_speech::SpeechConfig::default());
             let installed = engine.is_installed();

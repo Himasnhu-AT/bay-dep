@@ -250,6 +250,15 @@ impl EditorView {
     ) -> vii_agent::AgentResponse {
         use vii_agent::{AgentResponse, Planned};
 
+        // Tools that need the GPU or the file system rather than the project model. They stay
+        // here rather than in the planner because the planner is pure — it returns commands,
+        // and these produce a file.
+        match call.name.as_str() {
+            "snapshot" => return self.agent_snapshot(&call.arguments),
+            "project_save" => return self.agent_save(),
+            _ => {}
+        }
+
         let planned = match vii_agent::plan(&call.name, &call.arguments, self.editor.project()) {
             Ok(planned) => planned,
             Err(message) => return AgentResponse::Err(message),
@@ -860,6 +869,88 @@ impl EditorView {
         } else {
             "Video export failed (is ffmpeg installed?)".to_string()
         });
+    }
+
+    /// `snapshot` — render one frame to a PNG so an agent can look at what it built.
+    ///
+    /// On the main thread deliberately: this is a single frame, the same work the preview does
+    /// every time the playhead moves, and it is the call the whole workflow rests on — an agent
+    /// that cannot see a frame is guessing. A full `render` is minutes and does NOT belong
+    /// here; that is the worker-thread work in todo.md.
+    fn agent_snapshot(&mut self, args: &serde_json::Value) -> vii_agent::AgentResponse {
+        use vii_agent::AgentResponse;
+
+        let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+            return AgentResponse::Err("snapshot needs a path to write the PNG to".into());
+        };
+        let Some(at) = args.get("at").and_then(|v| v.as_f64()) else {
+            return AgentResponse::Err("snapshot needs `at`, the time in seconds".into());
+        };
+        if !at.is_finite() || at < 0.0 {
+            return AgentResponse::Err(format!("`at` must be a time in seconds, got {at}"));
+        }
+        if self.preview.is_none() {
+            return AgentResponse::Err(
+                "no GPU preview on this machine, so a frame cannot be rendered".into(),
+            );
+        }
+
+        let scale = args
+            .get("scale")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0)
+            .clamp(0.05, 1.0);
+        let canvas = self.editor.project().settings.canvas;
+        let width = ((canvas.width as f64 * scale) as u32).max(1);
+        let height = ((canvas.height as f64 * scale) as u32).max(1);
+        let background = self.editor.project().settings.background.clone();
+        let Some(time) = MediaTime::from_seconds_f64(at) else {
+            return AgentResponse::Err(format!("{at}s is outside the representable time range"));
+        };
+
+        let renderer = self.preview.as_mut().expect("checked above");
+        let frame = renderer.render(
+            self.editor.active_scene(),
+            time,
+            width,
+            height,
+            &background,
+            self.editor.media(),
+        );
+
+        let mut rgba = frame.bgra;
+        for texel in rgba.chunks_exact_mut(4) {
+            texel.swap(0, 2); // BGRA → RGBA for PNG
+        }
+        let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, rgba) else {
+            return AgentResponse::Err("the rendered frame had an unexpected size".into());
+        };
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        match buffer.save(path) {
+            Ok(()) => {
+                self.status = Some(format!("Claude snapshotted {at:.2}s"));
+                AgentResponse::Ok(serde_json::json!({
+                    "path": path,
+                    "atSeconds": at,
+                    "width": frame.width,
+                    "height": frame.height,
+                }))
+            }
+            Err(error) => AgentResponse::Err(format!("could not write {path}: {error}")),
+        }
+    }
+
+    /// `project_save` — flush to the library file this project came from.
+    fn agent_save(&mut self) -> vii_agent::AgentResponse {
+        use vii_agent::AgentResponse;
+        match self.save_project() {
+            Ok(path) => AgentResponse::Ok(serde_json::json!({ "path": path })),
+            Err(message) => AgentResponse::Err(message),
+        }
     }
 
     /// Split the selected element at the playhead into two clips.

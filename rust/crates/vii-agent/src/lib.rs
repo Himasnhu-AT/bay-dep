@@ -25,7 +25,10 @@
 mod plan;
 pub mod registry;
 
-pub use plan::{Planned, machine_tools, plan, plan_without_document, planned_tools};
+pub use plan::{
+    Planned, available_tools, editor_tools, machine_tools, plan, plan_without_document,
+    planned_tools, window_tools,
+};
 pub use registry::Instance;
 
 use std::sync::Arc;

@@ -6612,6 +6612,7 @@ dependencies = [
  "vii-paths",
  "vii-project",
  "vii-speech",
+ "vii-text",
  "vii-time",
 ]
 
