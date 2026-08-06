@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Build vii.app for macOS, and optionally a signed, notarized .dmg.
+#
+#   ./script/bundle-mac                 universal .app in target/release/bundle/osx
+#   ./script/bundle-mac --dmg           …and a .dmg next to it
+#   ./script/bundle-mac --arch aarch64  this machine's arch only (much faster, for testing)
+#
+# Signing and notarization are opt-in and need Apple credentials; without them you still get a
+# working .app, which macOS will gate behind right-click → Open the first time. Set:
+#
+#   MACOS_SIGN_IDENTITY        e.g. "Developer ID Application: You (TEAMID)"
+#   APPLE_NOTARIZE_PROFILE     a `xcrun notarytool store-credentials` profile name
+#
+# Shape follows Zed's script/bundle-mac (same GPUI stack): build, assemble Contents/, codesign
+# --options runtime, hdiutil for the dmg, notarytool to staple. The difference is that this
+# builds a universal binary with lipo rather than one .app per architecture, because vii is one
+# small binary and a single download is friendlier than asking which Mac someone has.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+APP_NAME="vii"
+BUNDLE_ID="dev.vii.editor"
+VERSION="$(grep -m1 '^version' rust/desktop/Cargo.toml | cut -d'"' -f2)"
+OUT="$ROOT/rust/target/release/bundle/osx"
+APP="$OUT/$APP_NAME.app"
+
+MAKE_DMG=0
+ARCHS=(aarch64-apple-darwin x86_64-apple-darwin)
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dmg) MAKE_DMG=1 ;;
+    --arch)
+      shift
+      case "$1" in
+        aarch64|arm64) ARCHS=(aarch64-apple-darwin) ;;
+        x86_64|intel)  ARCHS=(x86_64-apple-darwin) ;;
+        *) echo "unknown --arch $1 (aarch64 or x86_64)" >&2; exit 2 ;;
+      esac
+      ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+echo "── building $APP_NAME $VERSION for ${ARCHS[*]} ──"
+for target in "${ARCHS[@]}"; do
+  rustup target add "$target" >/dev/null 2>&1 || true
+  (cd rust && cargo build --release --target "$target" -p vii-desktop -p vii-mcp)
+done
+
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+# One fat binary rather than one .app per arch: vii is a single small executable, and a
+# universal download means nobody has to know which Mac they have.
+if [ ${#ARCHS[@]} -gt 1 ]; then
+  echo "── lipo → universal ──"
+  for binary in vii vii-mcp; do
+    lipo -create -output "$APP/Contents/MacOS/$binary" \
+      "rust/target/aarch64-apple-darwin/release/$binary" \
+      "rust/target/x86_64-apple-darwin/release/$binary"
+  done
+else
+  for binary in vii vii-mcp; do
+    cp "rust/target/${ARCHS[0]}/release/$binary" "$APP/Contents/MacOS/$binary"
+  done
+fi
+
+# The speech sidecar ships inside the bundle; vii-speech looks in Contents/Resources at
+# runtime, because a compiled-in source path is meaningless on someone else's machine.
+cp "$ROOT/script/vii-kokoro.py" "$APP/Contents/Resources/vii-kokoro.py"
+
+if [ -f "$ROOT/assets/vii.icns" ]; then
+  cp "$ROOT/assets/vii.icns" "$APP/Contents/Resources/vii.icns"
+  ICON_ENTRY='<key>CFBundleIconFile</key><string>vii.icns</string>'
+else
+  echo "  (no assets/vii.icns — run ./script/make-icon to generate one)"
+  ICON_ENTRY=''
+fi
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>vii</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleExecutable</key><string>vii</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  $ICON_ENTRY
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- vii reads and writes project files and media the user picks. -->
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>vii opens and saves your video projects and media.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>vii opens and saves your video projects and media.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>vii opens and saves your video projects and media.</string>
+</dict>
+</plist>
+PLIST
+
+# Entitlements: the JIT/unsigned-memory pair is what GPUI's renderer needs, and vii spawns
+# ffmpeg and the Python speech sidecar as child processes.
+cat > "$OUT/vii.entitlements" <<'ENT'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
+  <key>com.apple.security.automation.apple-events</key><true/>
+</dict>
+</plist>
+ENT
+
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  echo "── signing as $MACOS_SIGN_IDENTITY ──"
+  # --options runtime is required for notarization; without it the upload is rejected.
+  codesign --deep --force --timestamp --options runtime \
+    --entitlements "$OUT/vii.entitlements" \
+    --sign "$MACOS_SIGN_IDENTITY" "$APP" -v
+  codesign --verify --deep --strict --verbose=2 "$APP"
+else
+  # Ad-hoc so the bundle at least has a stable identity; macOS will still gate it on first run.
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+  echo "  (unsigned — set MACOS_SIGN_IDENTITY to sign; users will need right-click → Open)"
+fi
+
+echo "── $APP ──"
+du -sh "$APP" | sed 's/^/  /'
+
+if [ "$MAKE_DMG" = "1" ]; then
+  DMG="$OUT/$APP_NAME-$VERSION.dmg"
+  STAGE="$OUT/dmg"
+  rm -rf "$STAGE" "$DMG"
+  mkdir -p "$STAGE"
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+  rm -rf "$STAGE"
+  echo "── $DMG ──"
+  du -sh "$DMG" | sed 's/^/  /'
+
+  if [ -n "${APPLE_NOTARIZE_PROFILE:-}" ]; then
+    echo "── notarizing (this takes a few minutes) ──"
+    xcrun notarytool submit --wait --keychain-profile "$APPLE_NOTARIZE_PROFILE" "$DMG"
+    xcrun stapler staple "$DMG"
+    echo "  stapled — this .dmg opens without warnings on any Mac"
+  else
+    echo "  (not notarized — set APPLE_NOTARIZE_PROFILE; Gatekeeper will warn on other Macs)"
+  fi
+fi
+
+echo
+echo "Run it:  open $APP"

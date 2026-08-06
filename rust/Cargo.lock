@@ -7141,6 +7141,7 @@ dependencies = [
  "time",
  "vii-core",
  "vii-project",
+ "vii-speech",
 ]
 
 [[package]]

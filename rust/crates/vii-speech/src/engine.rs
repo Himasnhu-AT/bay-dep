@@ -73,14 +73,57 @@ impl Default for SpeechConfig {
 
 /// `script/vii-kokoro.py` relative to the workspace, resolved from this file's location so a
 /// `cargo run` from anywhere in the repo still finds it.
+/// Where `vii-kokoro.py` lives, searched in the order that gets the right answer for each way
+/// vii can be running.
+///
+/// `CARGO_MANIFEST_DIR` alone is wrong for anything shipped: it is baked in at compile time and
+/// points at the *build machine's* source tree, so a distributed .app would look for the
+/// sidecar in a directory that exists only on the machine that built it, and narration would
+/// report "not installed" with a path the user has never seen.
 fn default_script_path() -> String {
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    std::path::Path::new(manifest)
-        .ancestors()
-        .nth(3)
-        .map(|root| root.join("script").join("vii-kokoro.py"))
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| "script/vii-kokoro.py".to_string())
+    const SCRIPT: &str = "vii-kokoro.py";
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        // Alongside the binary — a zip/portable layout, and Windows.
+        candidates.push(dir.join(SCRIPT));
+        // macOS bundle: Contents/MacOS/vii -> Contents/Resources/vii-kokoro.py
+        candidates.push(dir.join("../Resources").join(SCRIPT));
+        // A plain `cargo run` puts the binary in target/<profile>/, so the repo root is three
+        // levels up from there.
+        candidates.push(dir.join("../../../script").join(SCRIPT));
+    }
+    // The source tree this was compiled from — correct for `cargo test` and a dev checkout.
+    candidates.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .map(|root| root.join("script").join(SCRIPT))
+            .unwrap_or_else(|| std::path::PathBuf::from("script").join(SCRIPT)),
+    );
+
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        // Canonicalize so the reported path is readable: the bundle candidate is built as
+        // `Contents/MacOS/../Resources/…`, which is correct but reads like a mistake in an
+        // error message.
+        .map(|path| {
+            std::fs::canonicalize(path)
+                .unwrap_or_else(|_| path.to_path_buf())
+                .to_string_lossy()
+                .to_string()
+        })
+        // Nothing found: report the most useful guess so the error names a plausible location
+        // rather than an empty string.
+        .unwrap_or_else(|| {
+            candidates
+                .first()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| SCRIPT.to_string())
+        })
 }
 
 pub struct SpeechEngine {

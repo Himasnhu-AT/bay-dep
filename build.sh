@@ -36,3 +36,7 @@ echo "              sidecar script: $ROOT/script/vii-kokoro.py"
 echo
 echo "Register the MCP server with:"
 echo "  claude mcp add --transport http vii http://127.0.0.1:7333/mcp"
+echo
+echo "To make something distributable:"
+echo "  ./script/bundle-mac --dmg          universal vii.app + a .dmg"
+echo "  .\\script\\bundle-windows.ps1 -Zip   (on Windows) a zip"

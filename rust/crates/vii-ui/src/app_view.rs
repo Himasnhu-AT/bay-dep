@@ -107,6 +107,15 @@ impl ViiApp {
             }));
         }
 
+        // Machine-level questions ("is narration installed?") have an answer before any
+        // project exists, so they must not be gated behind opening one.
+        if let Some(answer) = vii_agent::plan_without_document(&call.name) {
+            return match answer {
+                Ok(value) => vii_agent::AgentResponse::Ok(value),
+                Err(message) => vii_agent::AgentResponse::Err(message),
+            };
+        }
+
         let Some(editor) = self.editor.clone() else {
             return vii_agent::AgentResponse::Err(
                 "no project is open in vii — open one from the project list, or quit the app to \

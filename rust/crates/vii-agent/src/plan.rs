@@ -52,6 +52,43 @@ pub fn planned_tools() -> &'static [&'static str] {
     ]
 }
 
+/// Tools that are about the machine or the window rather than the document, and so must work
+/// even with no project open.
+pub fn machine_tools() -> &'static [&'static str] {
+    &["speech_status"]
+}
+
+/// Answer a tool that needs no document. `None` if this is not one.
+///
+/// Separate from [`plan`] because [`plan`] takes a `&Project` it would have nothing to do
+/// with: "is narration installed on this machine?" has an answer before any project exists,
+/// and refusing it until one is open would be an odd thing to explain.
+pub fn plan_without_document(name: &str) -> Option<Result<Value, String>> {
+    match name {
+        "speech_status" => {
+            let engine = vii_speech::SpeechEngine::new(vii_speech::SpeechConfig::default());
+            let installed = engine.is_installed();
+            let config = engine.config();
+            Some(Ok(serde_json::json!({
+                "available": installed,
+                "python": config.python,
+                "script": config.script,
+                // Deliberately not started: loading Kokoro takes seconds and this is answered
+                // on the UI thread. Availability is the fast, useful part.
+                "voicesListed": false,
+                "note": "vii is open, so the model is not started just to answer this — close \
+                         the app and query headlessly for the full voice catalogue",
+                "hint": if installed {
+                    Value::Null
+                } else {
+                    serde_json::json!("run ./script/setup-speech.sh, or set VII_KOKORO_PYTHON")
+                },
+            })))
+        }
+        _ => None,
+    }
+}
+
 fn number(args: &Value, key: &str, fallback: f64) -> f64 {
     args.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
 }

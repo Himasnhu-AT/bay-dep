@@ -71,6 +71,25 @@ it well — including the things that are not obvious from the schemas.
 - [`docs/native/speech.md`](docs/native/speech.md) — narration and subtitles
 - [`docs/native/reel-recipe.md`](docs/native/reel-recipe.md) — a worked build, and what it broke
 
+## Building something distributable
+
+```bash
+./script/make-icon                 # assets/vii.icns + vii.ico (placeholder, or pass your own PNG)
+./script/bundle-mac --dmg          # universal vii.app and a .dmg
+.\script\bundle-windows.ps1 -Zip   # on Windows: a zip you can unpack and run
+```
+
+Both are unsigned by default and still work; the OS warns once on first run. To sign:
+
+| | |
+|---|---|
+| macOS | `MACOS_SIGN_IDENTITY="Developer ID Application: …"`, and `APPLE_NOTARIZE_PROFILE` to notarize |
+| Windows | `-SignThumbprint <sha1>` of a code-signing certificate |
+
+Tagging `v*` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds
+both and attaches them to a GitHub release. Windows must build on a Windows runner — GPUI's
+backend needs the Windows SDK, so there is no cross-compile path.
+
 ## Requirements
 
 | | |
