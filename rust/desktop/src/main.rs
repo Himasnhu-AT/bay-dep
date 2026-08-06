@@ -9,6 +9,13 @@
 //! it happen depends on there being no ambiguity about which one. A second launch therefore
 //! raises the window that is already open instead of starting a rival with its own timeline.
 
+// Windows decides whether to hand a process a console from the PE subsystem field, not from
+// what the program does. Left as `console`, double-clicking vii.exe opened a black terminal
+// behind the editor — an app the user cannot close without also killing the editor. GUI
+// subsystem means no console is created; [`attach_console`] borrows the parent's when vii is
+// invoked from one, so `--help` and `--mcp` still print where they were typed.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -75,14 +82,38 @@ is what you want for rendering.
 Needs ffmpeg on PATH for decode and export, and a GPU for the compositor. Narration needs the
 Kokoro sidecar; vii reports what is missing rather than failing silently.";
 
+/// Borrow the console vii was launched from, if there is one.
+///
+/// A GUI-subsystem binary gets no console of its own, which is the point — but it means
+/// `vii --help` run from PowerShell would print into nothing. Attaching to the parent gets the
+/// output back without ever creating a window. No-op when there is no parent console (a
+/// double-click), which is exactly when we want no console at all.
+#[cfg(windows)]
+fn attach_console() {
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
+
 fn main() {
     let mode = match parse_mode() {
         Ok(mode) => mode,
         Err(message) => {
+            attach_console();
             eprintln!("vii: {message}");
             std::process::exit(2);
         }
     };
+
+    // Every mode but the editor talks to a terminal.
+    if !matches!(mode, Mode::Editor) {
+        attach_console();
+    }
 
     match mode {
         Mode::Help => return println!("{USAGE}"),

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "desktop",
+    "crates/vii-paths",
     "crates/vii-time",
     "crates/vii-effects",
     "crates/vii-gpu",

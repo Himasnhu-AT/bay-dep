@@ -48,10 +48,8 @@ pub struct SpeechConfig {
 
 impl Default for SpeechConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_default();
         Self {
-            python: std::env::var("VII_KOKORO_PYTHON")
-                .unwrap_or_else(|_| format!("{home}/.local/share/vii/kokoro-venv/bin/python")),
+            python: std::env::var("VII_KOKORO_PYTHON").unwrap_or_else(|_| default_python()),
             script: std::env::var("VII_KOKORO_SCRIPT").unwrap_or_else(|_| default_script_path()),
             port: std::env::var("VII_KOKORO_PORT")
                 .ok()
@@ -69,6 +67,22 @@ impl Default for SpeechConfig {
             ),
         }
     }
+}
+
+/// The interpreter `script/setup-speech.sh` provisions.
+///
+/// Windows puts a venv's interpreter in `Scripts\python.exe`, not `bin/python` — getting this
+/// wrong reports "speech unavailable" on a machine where the venv is sitting right there.
+fn default_python() -> String {
+    let venv = vii_paths::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("kokoro-venv");
+    let interpreter = if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    };
+    interpreter.to_string_lossy().to_string()
 }
 
 /// Where `vii-kokoro.py` lives, searched in the order that gets the right answer for each way
@@ -163,30 +177,13 @@ fn unpack_script() -> std::io::Result<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
-/// Where vii keeps things it generated for itself, per user.
+/// Where the unpacked sidecar goes. `VII_STATE_DIR` stays supported so a test can redirect it
+/// without touching the real one.
 fn state_dir() -> std::path::PathBuf {
     if let Ok(explicit) = std::env::var("VII_STATE_DIR") {
         return std::path::PathBuf::from(explicit);
     }
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        std::path::PathBuf::from(home).join("Library/Application Support/vii")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // LOCALAPPDATA rather than APPDATA: this is a rebuildable cache, and roaming it onto a
-        // domain profile would copy it between machines for no reason.
-        std::env::var("LOCALAPPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::env::temp_dir())
-            .join("vii")
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        std::path::PathBuf::from(home).join(".local/share/vii")
-    }
+    vii_paths::data_dir().unwrap_or_else(std::env::temp_dir)
 }
 
 pub struct SpeechEngine {

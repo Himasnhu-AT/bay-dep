@@ -127,21 +127,14 @@ impl ProjectLibrary {
         Ok(Self { root })
     }
 
-    /// Where projects live by default: `$VII_PROJECTS_DIR`, else the macOS application-support
-    /// directory, else `~/.vii/projects` on other platforms.
+    /// Where projects live by default: `$VII_PROJECTS_DIR`, else vii's per-user data directory.
     pub fn default_root() -> Result<PathBuf> {
         if let Some(dir) = std::env::var_os(LIBRARY_DIR_ENV).filter(|v| !v.is_empty()) {
             return Ok(PathBuf::from(dir));
         }
-        let home = std::env::var_os("HOME")
-            .filter(|v| !v.is_empty())
-            .ok_or(LibraryError::NoHome)?;
-        let home = PathBuf::from(home);
-        if cfg!(target_os = "macos") {
-            Ok(home.join("Library/Application Support/vii/projects"))
-        } else {
-            Ok(home.join(".vii/projects"))
-        }
+        vii_paths::data_dir()
+            .map(|dir| dir.join("projects"))
+            .ok_or(LibraryError::NoHome)
     }
 
     pub fn root(&self) -> &Path {

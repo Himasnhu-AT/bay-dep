@@ -47,6 +47,17 @@ jobs:
           # and the download instructions are quietly wrong.
           $exes = Get-ChildItem "rust\target\release\bundle\windows\vii" -Filter *.exe
           if ($exes.Count -ne 1) { throw "expected exactly one .exe, found: $($exes.Name -join ', ')" }
+
+          # A console-subsystem binary makes Windows open a black terminal behind the editor.
+          # Only the PE header says which it is, and only a Windows machine can be asked — so
+          # this is checked here rather than trusted to a cfg_attr nobody can see the effect of.
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
+          if ($subsystem -ne 2) {
+            throw "vii.exe is subsystem $subsystem (2=GUI, 3=console) — it will spawn a console window"
+          }
+          Write-Host "  subsystem: GUI (no console window)"
         shell: pwsh
 
       - uses: actions/upload-artifact@v5

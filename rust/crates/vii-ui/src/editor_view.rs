@@ -109,21 +109,24 @@ const TICKS_PER_SECOND: i64 = 120_000;
 /// The single project file that predates the project library. Still read once at startup so a
 /// project made before the library existed is adopted rather than lost.
 pub fn legacy_project_path() -> std::path::PathBuf {
-    home_dir().join("vii-project.json")
+    vii_paths::home()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("vii-project.json")
 }
 
 /// Where "Export Frame" writes the composited still.
 fn export_frame_path() -> std::path::PathBuf {
-    home_dir().join("vii-frame.png")
+    vii_paths::output_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("vii-frame.png")
 }
 
-/// Where "Export Video" writes the encoded timeline.
+/// Where "Export Video" writes the encoded timeline — somewhere the user will actually find
+/// it, not the current working directory (which on a double-clicked app is anyone's guess).
 fn export_video_path() -> std::path::PathBuf {
-    home_dir().join("vii-export.mp4")
-}
-
-fn home_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+    vii_paths::output_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("vii-export.mp4")
 }
 /// Inspector nudge step (0.5s) and minimum element duration (0.1s), in ticks.
 const NUDGE_TICKS: i64 = TICKS_PER_SECOND / 2;

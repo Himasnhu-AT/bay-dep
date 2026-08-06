@@ -5,6 +5,7 @@ edition = "2024"
 description = "The bridge an AI agent's edits cross to reach the live editor: pure planning, and a Send channel."
 
 [dependencies]
+vii-paths = { path = "../vii-paths" }
 vii-core = { path = "../vii-core" }
 vii-speech = { path = "../vii-speech" }
 vii-project = { path = "../vii-project" }

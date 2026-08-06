@@ -10,6 +10,7 @@ edition = "2021"
 path = "src/lib.rs"
 
 [dependencies]
+vii-paths = { path = "../vii-paths" }
 gpui = "0.2.2"
 image = "0.25"
 vii-agent = { version = "0.1.0", path = "../vii-agent" }

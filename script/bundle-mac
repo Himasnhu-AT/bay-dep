@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build vii.app for macOS, and optionally a signed, notarized .dmg.
 #
-#   ./script/bundle-mac                 universal .app in target/release/bundle/osx
+#   ./script/bundle-mac                 universal .app in dist/macos
 #   ./script/bundle-mac --dmg           …and a .dmg next to it
 #   ./script/bundle-mac --arch aarch64  this machine's arch only (much faster, for testing)
 #
@@ -23,7 +23,9 @@ cd "$ROOT"
 APP_NAME="vii"
 BUNDLE_ID="dev.vii.editor"
 VERSION="$(grep -m1 '^version' rust/desktop/Cargo.toml | cut -d'"' -f2)"
-OUT="$ROOT/rust/target/release/bundle/osx"
+# Alongside dist/windows, so both platforms' downloads land in one place a person can find.
+# dist/ is gitignored; build products do not belong in history.
+OUT="$ROOT/dist/macos"
 APP="$OUT/$APP_NAME.app"
 
 MAKE_DMG=0

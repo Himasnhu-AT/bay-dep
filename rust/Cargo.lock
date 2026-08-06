@@ -6609,6 +6609,7 @@ dependencies = [
  "async-channel 2.5.0",
  "serde_json",
  "vii-core",
+ "vii-paths",
  "vii-project",
  "vii-speech",
  "vii-time",
@@ -6703,6 +6704,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vii-paths"
+version = "0.1.0"
+
+[[package]]
 name = "vii-preview"
 version = "0.1.0"
 dependencies = [
@@ -6723,6 +6728,7 @@ dependencies = [
  "criterion",
  "serde",
  "serde_json",
+ "vii-paths",
  "vii-time",
 ]
 
@@ -6732,6 +6738,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "vii-paths",
  "vii-time",
 ]
 
@@ -6770,6 +6777,7 @@ dependencies = [
  "vii-agent",
  "vii-audio",
  "vii-core",
+ "vii-paths",
  "vii-preview",
 ]
 
