@@ -668,3 +668,105 @@ mod narration_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod undo_tests {
+    use super::tests_support::{call, unwrap_call};
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn timeline_ids(studio: &mut Studio) -> Vec<String> {
+        let (_, text) = unwrap_call(&call(studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&text).expect("timeline is JSON");
+        timeline["layers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|layer| layer["elements"].as_array().cloned().unwrap_or_default())
+            .filter_map(|e| e["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// Every mutating tool must leave an undoable history entry.
+    ///
+    /// Four of them wrote through `Editor::project_mut`, which CLEARS the undo stack by
+    /// design. So an agent adding a caption on layer 9, animating anything, or deleting an
+    /// element silently destroyed the user's undo history — fatal for an assistant editing the
+    /// same document a human is working in.
+    #[test]
+    fn agent_edits_are_undoable() {
+        let mut studio = Studio::new();
+        call(&mut studio, "project_create", json!({}));
+
+        // layer > 0 forces overlay-track creation, which used to clear history.
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "add_shape",
+            json!({ "id": "bar", "start": 0, "duration": 2, "layer": 3, "color": "#ff0000" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "animate",
+            json!({ "elementId": "bar", "property": "scaleX", "easing": "power-out",
+                    "keys": [{ "t": 0, "value": 0 }, { "t": 0.8, "value": 0.6 }] }),
+        ));
+        assert!(!is_error, "{body}");
+        assert!(
+            studio.editor_for_test().can_undo(),
+            "animating must leave something to undo"
+        );
+        assert!(timeline_ids(&mut studio).contains(&"bar".to_string()));
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "element_delete",
+            json!({ "elementId": "bar" }),
+        ));
+        assert!(!is_error, "{body}");
+        assert!(
+            !timeline_ids(&mut studio).contains(&"bar".to_string()),
+            "the shape should be gone"
+        );
+
+        // The whole point: the delete is reversible.
+        assert!(
+            studio.editor_for_test().can_undo(),
+            "delete must be undoable"
+        );
+        assert!(studio.editor_for_test_mut().undo(), "undo should succeed");
+        assert!(
+            timeline_ids(&mut studio).contains(&"bar".to_string()),
+            "undo should bring the shape back"
+        );
+    }
+
+    #[test]
+    fn creating_a_lane_does_not_wipe_earlier_history() {
+        let mut studio = Studio::new();
+        call(&mut studio, "project_create", json!({}));
+        call(
+            &mut studio,
+            "add_text",
+            json!({ "id": "t", "start": 0, "duration": 2, "content": "before" }),
+        );
+        assert!(studio.editor_for_test().can_undo());
+
+        // An overlay lane high enough to force creation.
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "id": "s", "start": 0, "duration": 1, "layer": 5 }),
+        );
+        assert!(
+            studio.editor_for_test().can_undo(),
+            "the text element's history must survive creating overlay lanes"
+        );
+        // And undo still walks back through both.
+        assert!(studio.editor_for_test_mut().undo());
+        assert!(!timeline_ids(&mut studio).contains(&"s".to_string()));
+        assert!(timeline_ids(&mut studio).contains(&"t".to_string()));
+    }
+}

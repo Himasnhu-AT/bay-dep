@@ -9,6 +9,7 @@ members = [
     "crates/masks",
     "wasm", "crates/compositor",
     "crates/native-preview",
+    "crates/vii-agent",
     "crates/vii-core",
     "crates/vii-mcp",
     "crates/vii-speech",

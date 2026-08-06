@@ -12,12 +12,12 @@
 
 use std::collections::BTreeMap;
 
-use vii_core::{Command, Editor};
+use vii_core::{Command, Editor, ElementRef, TrackLane};
 use vii_preview::PreviewRenderer;
 use vii_project::{
     AnimationChannel, AudioElement, BlendMode, CanvasSize, Easing, Element, Fps, ImageElement,
-    MediaAsset, MediaTime, Project, ShapeElement, ShapeKind, TextAlign, TextElement, Track,
-    TrackKind, Transform, VideoElement,
+    MediaAsset, MediaTime, Project, ShapeElement, ShapeKind, TextAlign, TextElement, TrackKind,
+    Transform, VideoElement,
 };
 
 /// Anything a tool can refuse to do. Surfaces to the caller as an MCP tool error, which the
@@ -112,6 +112,17 @@ impl Studio {
 
     pub fn project(&self) -> &Project {
         self.editor.project()
+    }
+
+    /// Editor access for tests that assert on history. Not part of the tool surface.
+    #[cfg(test)]
+    pub(crate) fn editor_for_test(&self) -> &Editor {
+        &self.editor
+    }
+
+    #[cfg(test)]
+    pub(crate) fn editor_for_test_mut(&mut self) -> &mut Editor {
+        &mut self.editor
     }
 
     fn fresh_id(&mut self, prefix: &str) -> String {
@@ -399,39 +410,30 @@ impl Studio {
         if layer == 0 {
             return self.editor.active_scene().tracks.main.id.clone();
         }
-        let scene_id = self.editor.active_scene_id().to_string();
-        let project = self.editor.project_mut();
-        let scene = project
-            .scenes
-            .iter_mut()
-            .find(|s| s.id == scene_id)
-            .expect("active scene exists");
-        while scene.tracks.overlay.len() < layer {
-            let index = scene.tracks.overlay.len() + 1;
-            scene.tracks.overlay.push(Track::new(
-                format!("track-overlay-{index}"),
-                format!("Overlay {index}"),
-                TrackKind::Overlay,
-            ));
+        // Through AddTrack, not project_mut: creating a lane used to clear the undo history,
+        // so an agent adding a caption on layer 9 silently destroyed the user's undo stack.
+        while self.editor.active_scene().tracks.overlay.len() < layer {
+            let index = self.editor.active_scene().tracks.overlay.len() + 1;
+            self.editor.execute(Command::AddTrack {
+                lane: TrackLane::Overlay,
+                id: format!("track-overlay-{index}"),
+                name: format!("Overlay {index}"),
+            });
         }
-        scene.tracks.overlay[layer - 1].id.clone()
+        self.editor.active_scene().tracks.overlay[layer - 1]
+            .id
+            .clone()
     }
 
     fn audio_track(&mut self) -> String {
-        let scene_id = self.editor.active_scene_id().to_string();
-        let project = self.editor.project_mut();
-        let scene = project
-            .scenes
-            .iter_mut()
-            .find(|s| s.id == scene_id)
-            .expect("active scene exists");
-        if scene.tracks.audio.is_empty() {
-            scene
-                .tracks
-                .audio
-                .push(Track::new("track-audio", "Audio", TrackKind::Audio));
+        if self.editor.active_scene().tracks.audio.is_empty() {
+            self.editor.execute(Command::AddTrack {
+                lane: TrackLane::Audio,
+                id: "track-audio".to_string(),
+                name: "Audio".to_string(),
+            });
         }
-        scene.tracks.audio[0].id.clone()
+        self.editor.active_scene().tracks.audio[0].id.clone()
     }
 
     fn add(&mut self, layer: usize, element: Element) -> ToolResult {
@@ -671,16 +673,32 @@ impl Studio {
             channel.upsert(secs(t)?, value);
         }
 
-        let element = self
-            .find_element_mut(element_id)
+        // ApplyMotionPreset carries the whole effect+animation set and is reversible, so an
+        // animation an agent attaches is undoable. Writing through project_mut used to clear
+        // the history instead.
+        let reference = self
+            .find_element_ref(element_id)
             .ok_or_else(|| err(format!("no element {element_id:?} on the timeline")))?;
-        let animations = element.animations_mut().ok_or_else(|| {
+        let element = self
+            .editor
+            .active_scene()
+            .element(&reference)
+            .ok_or_else(|| err(format!("no element {element_id:?} on the timeline")))?;
+        let mut animations = element.animations().cloned().ok_or_else(|| {
             err(format!(
                 "{element_id:?} is an audio clip and has no transform"
             ))
         })?;
+        let effects = element.effects().to_vec();
         let count = channel.keys.len();
         animations.insert(property.to_string(), channel);
+        if !self.editor.execute(Command::ApplyMotionPreset {
+            reference,
+            effects,
+            animations,
+        }) {
+            return Err(err(format!("could not animate {element_id:?}")));
+        }
         Ok(serde_json::json!({
             "elementId": element_id,
             "property": property,
@@ -688,32 +706,28 @@ impl Studio {
         }))
     }
 
-    fn find_element_mut(&mut self, element_id: &str) -> Option<&mut Element> {
-        let scene_id = self.editor.active_scene_id().to_string();
-        let project = self.editor.project_mut();
-        let scene = project.scenes.iter_mut().find(|s| s.id == scene_id)?;
-        scene
-            .tracks
-            .iter_mut()
-            .flat_map(|track| track.elements.iter_mut())
-            .find(|element| element.id() == element_id)
+    /// Locate an element by id, as a track-qualified reference. A reference rather than a
+    /// `&mut` because every mutation now goes through a `Command`.
+    fn find_element_ref(&self, element_id: &str) -> Option<ElementRef> {
+        let scene = self.editor.active_scene();
+        scene.tracks.iter().find_map(|track| {
+            track
+                .elements
+                .iter()
+                .any(|element| element.id() == element_id)
+                .then(|| ElementRef::new(track.id.clone(), element_id.to_string()))
+        })
     }
 
     pub fn element_delete(&mut self, element_id: &str) -> ToolResult {
-        let scene_id = self.editor.active_scene_id().to_string();
-        let project = self.editor.project_mut();
-        let scene = project
-            .scenes
-            .iter_mut()
-            .find(|s| s.id == scene_id)
-            .expect("active scene exists");
-        for track in scene.tracks.iter_mut() {
-            if let Some(index) = track.elements.iter().position(|e| e.id() == element_id) {
-                track.elements.remove(index);
-                return Ok(serde_json::json!({ "deleted": element_id }));
-            }
+        let reference = self
+            .find_element_ref(element_id)
+            .ok_or_else(|| err(format!("no element {element_id:?} on the timeline")))?;
+        // RemoveElement is reversible; the old raw removal cleared the undo history.
+        if !self.editor.execute(Command::RemoveElement { reference }) {
+            return Err(err(format!("could not delete {element_id:?}")));
         }
-        Err(err(format!("no element {element_id:?} on the timeline")))
+        Ok(serde_json::json!({ "deleted": element_id }))
     }
 
     /// The whole timeline as data: what is on each layer, when, and where. This is how an

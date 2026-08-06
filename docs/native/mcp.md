@@ -64,7 +64,9 @@ silently.
 | `timeline` | Dump every layer, element, timing, transform and animation. |
 | `snapshot` | **Render one frame to a PNG so you can look at it.** |
 | `render` | Encode the whole timeline to MP4, picture and sound. |
-| `project_save` / `project_load` | The same JSON the desktop app opens. |
+| `project_save` | Save to the user's project library (no `path`), so it appears in the desktop app's launcher — or to an explicit `path`. |
+| `project_list` | The projects in the library: id, name, canvas, duration, path. |
+| `project_load` | Reopen one by `id` from the library, or by `path`. |
 
 ### Coordinates
 

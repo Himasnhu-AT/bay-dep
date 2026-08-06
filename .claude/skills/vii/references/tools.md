@@ -1,6 +1,6 @@
 # vii tool reference
 
-21 tools. Every one returns JSON; a failure comes back as a tool error with a message naming
+22 tools. Every one returns JSON; a failure comes back as a tool error with a message naming
 the offending value, so read it and correct the call rather than guessing.
 
 ---
@@ -20,8 +20,20 @@ Start an empty project. **Call this first** — it clears the timeline.
 ### `project_info`
 Canvas, fps, timeline duration, element counts, layer count.
 
-### `project_save` / `project_load`
-`{ "path": "…json" }`. The same wire format the vii desktop app opens.
+### `project_save`
+`{ "path"?: "…json" }` → `{ id, name, path }`
+
+**Call this when the project is worth keeping.** With no `path` it saves into the user's project
+library — the list the desktop app opens on — so they can pick the project up in the GUI. Pass a
+`path` only to drop a copy somewhere specific.
+
+### `project_list`
+`{}` → `{ root, projects: [{ id, name, path, canvas, fps, durationSeconds, elements }] }`
+
+What is already in the user's library, newest first.
+
+### `project_load`
+`{ "id": "…" }` from `project_list`, or `{ "path": "…json" }` for a loose file. Give exactly one.
 
 ---
 
