@@ -18,6 +18,7 @@
 //! compositor and the web/wasm core.
 
 mod element;
+pub mod library;
 mod project;
 mod refs;
 mod scene;
@@ -28,6 +29,7 @@ pub use element::{
     AnimationChannel, AudioElement, BlendMode, Easing, Effect, Element, ElementKind, ImageElement,
     Keyframe, ShapeElement, ShapeKind, TextAlign, TextElement, Transform, VideoElement,
 };
+pub use library::{ProjectLibrary, ProjectSummary};
 pub use project::{MediaAsset, Project, ProjectMetadata};
 pub use refs::ElementRef;
 pub use scene::Scene;

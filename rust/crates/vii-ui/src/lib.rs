@@ -4,19 +4,20 @@
 //! testable presentation mapping lives in [`view_model`]; the GPUI views live in
 //! [`editor_view`]. [`run`] opens the editor window.
 
+pub mod app_view;
 pub mod editor_view;
 pub mod geometry;
 pub mod theme;
 pub mod view_model;
 
+pub use app_view::ViiApp;
 pub use editor_view::{key_bindings, EditorView};
-pub use view_model::EditorViewModel;
+pub use view_model::{EditorViewModel, HomeViewModel};
 
 use gpui::prelude::*;
 use gpui::{px, size, App, Application, Bounds, WindowBounds, WindowOptions};
-use vii_core::Editor;
 
-/// Launch the native editor window over the starter project.
+/// Launch the app: a window on the project library, from which a project opens into the editor.
 pub fn run() {
     // Build the GPU compositor preview up front (None if no adapter → layout-rect fallback).
     let preview = vii_preview::PreviewRenderer::new();
@@ -31,7 +32,7 @@ pub fn run() {
             },
             move |_, cx| {
                 let focus_handle = cx.focus_handle();
-                cx.new(|_| EditorView::new(Editor::starter(), focus_handle, preview))
+                cx.new(|_| ViiApp::new(focus_handle, preview))
             },
         )
         .expect("failed to open editor window");

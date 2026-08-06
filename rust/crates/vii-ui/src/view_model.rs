@@ -1,7 +1,96 @@
 //! Pure presentation model: a snapshot of exactly what the editor UI needs to draw, derived
 //! from `vii_core::Editor`. GPUI-free, so it is unit-testable without a window.
+//!
+//! [`HomeViewModel`] does the same job for the project launcher — the screen that opens before
+//! any project does.
 
+use std::time::SystemTime;
+
+use vii_core::project::ProjectSummary;
 use vii_core::{Background, Editor, Element, ElementRef};
+
+/// What the launcher screen draws: one card per project in the library, newest first.
+pub struct HomeViewModel {
+    pub projects: Vec<ProjectCard>,
+}
+
+pub struct ProjectCard {
+    pub id: String,
+    pub name: String,
+    /// "1080 × 1920 · 30 fps · 12 clips"
+    pub detail: String,
+    /// Timeline length as "m:ss".
+    pub duration: String,
+    /// How long ago it was last written, in words.
+    pub modified: String,
+}
+
+impl HomeViewModel {
+    pub fn build(summaries: &[ProjectSummary], now: SystemTime) -> Self {
+        Self {
+            projects: summaries
+                .iter()
+                .map(|summary| ProjectCard {
+                    id: summary.id.clone(),
+                    name: if summary.name.trim().is_empty() {
+                        "Untitled".to_string()
+                    } else {
+                        summary.name.clone()
+                    },
+                    detail: format!(
+                        "{} × {} · {} fps · {}",
+                        summary.canvas.width,
+                        summary.canvas.height,
+                        format_fps(summary.fps),
+                        plural(summary.element_count, "clip"),
+                    ),
+                    duration: format_duration(summary.duration_seconds),
+                    modified: summary
+                        .modified
+                        .map(|at| format_since(at, now))
+                        .unwrap_or_else(|| "—".to_string()),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// "30" rather than "30.00", but "29.97" when the rate really is fractional.
+fn format_fps(fps: f64) -> String {
+    if (fps - fps.round()).abs() < 0.01 {
+        format!("{}", fps.round() as i64)
+    } else {
+        format!("{fps:.2}")
+    }
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+fn format_duration(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as i64;
+    format!("{}:{:02}", total / 60, total % 60)
+}
+
+/// Relative time in words. Absolute dates would need a calendar dependency for something the
+/// launcher only uses to sort recent work by feel.
+fn format_since(at: SystemTime, now: SystemTime) -> String {
+    let Ok(elapsed) = now.duration_since(at) else {
+        return "just now".to_string(); // clock skew, or a file written "in the future"
+    };
+    let secs = elapsed.as_secs();
+    match secs {
+        0..=59 => "just now".to_string(),
+        60..=3599 => plural((secs / 60) as usize, "minute") + " ago",
+        3600..=86_399 => plural((secs / 3600) as usize, "hour") + " ago",
+        _ => plural((secs / 86_400) as usize, "day") + " ago",
+    }
+}
 
 /// A flattened view of the editor for one render pass.
 pub struct EditorViewModel {
@@ -280,6 +369,68 @@ mod tests {
                 .unwrap()
                 .active
         );
+    }
+
+    fn summary(name: &str, seconds_ago: u64) -> ProjectSummary {
+        ProjectSummary {
+            id: format!("id-{name}"),
+            name: name.into(),
+            path: std::path::PathBuf::from("/tmp").join(name),
+            modified: Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000))
+                .map(|t| t - std::time::Duration::from_secs(seconds_ago)),
+            canvas: vii_core::CanvasSize {
+                width: 1080,
+                height: 1920,
+            },
+            fps: 30.0,
+            duration_seconds: 92.0,
+            scene_count: 1,
+            element_count: 3,
+        }
+    }
+
+    fn now() -> SystemTime {
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)
+    }
+
+    #[test]
+    fn home_cards_describe_each_project() {
+        let vm = HomeViewModel::build(&[summary("Reel", 0)], now());
+        let card = &vm.projects[0];
+        assert_eq!(card.name, "Reel");
+        assert_eq!(card.detail, "1080 × 1920 · 30 fps · 3 clips");
+        assert_eq!(card.duration, "1:32");
+        assert_eq!(card.modified, "just now");
+    }
+
+    #[test]
+    fn home_cards_report_age_in_words() {
+        let ages = [
+            (90, "1 minute ago"),
+            (7200, "2 hours ago"),
+            (172_800, "2 days ago"),
+        ];
+        for (seconds, expected) in ages {
+            let vm = HomeViewModel::build(&[summary("P", seconds)], now());
+            assert_eq!(vm.projects[0].modified, expected, "at {seconds}s");
+        }
+    }
+
+    #[test]
+    fn an_unnamed_project_still_shows_a_name() {
+        let mut blank = summary("Reel", 0);
+        blank.name = "   ".into();
+        let vm = HomeViewModel::build(&[blank], now());
+        assert_eq!(vm.projects[0].name, "Untitled");
+    }
+
+    #[test]
+    fn a_fractional_frame_rate_keeps_its_decimals() {
+        let mut ntsc = summary("Reel", 0);
+        ntsc.fps = 30000.0 / 1001.0;
+        ntsc.element_count = 1;
+        let vm = HomeViewModel::build(&[ntsc], now());
+        assert_eq!(vm.projects[0].detail, "1080 × 1920 · 29.97 fps · 1 clip");
     }
 
     #[test]

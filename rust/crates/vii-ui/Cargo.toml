@@ -18,3 +18,8 @@ vii-preview = { version = "0.1.0", path = "../vii-preview" }
 rfd = "0.15"
 rodio = "0.19"
 serde_json = "1"
+
+[dev-dependencies]
+# GPUI's headless test context, so the shell's routing (list → editor → back) is verified
+# without a display — the launcher is the one part of the UI that owns real state transitions.
+gpui = { version = "0.2.2", features = ["test-support"] }

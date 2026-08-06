@@ -2,19 +2,29 @@
 //! `vii_core::Editor` directly, so an interaction mutates it and calls `cx.notify()` to
 //! re-render. All editing goes through `Command`s (undoable); clicks use direct selection.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, img, px, rgb, App, Context, Div, FocusHandle, ImageSource, KeyBinding, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
+    div, img, px, rgb, App, Context, Div, EventEmitter, FocusHandle, ImageSource, KeyBinding,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
 };
 
+use vii_core::project::library;
 use vii_core::{
     AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaTime,
-    TextElement, Transform, VideoElement,
+    Project, TextElement, Transform, VideoElement,
 };
 use vii_preview::PreviewRenderer;
+
+/// What the editor tells the shell around it. Only one thing so far: the user wants to go back
+/// to the project list, which is the shell's business, not the editor's.
+pub enum EditorViewEvent {
+    CloseRequested,
+}
+
+impl EventEmitter<EditorViewEvent> for EditorView {}
 
 /// Resolution the compositor preview is rendered + read back at (16:9).
 const PREVIEW_RENDER_W: u32 = 640;
@@ -96,8 +106,9 @@ const TRACK_LABEL_WIDTH: f32 = 132.0;
 const LANE_HEIGHT: f32 = 40.0;
 const TICKS_PER_SECOND: i64 = 120_000;
 
-/// Where "Save"/"Load" read and write the project JSON.
-fn project_path() -> std::path::PathBuf {
+/// The single project file that predates the project library. Still read once at startup so a
+/// project made before the library existed is adopted rather than lost.
+pub fn legacy_project_path() -> std::path::PathBuf {
     home_dir().join("vii-project.json")
 }
 
@@ -144,6 +155,9 @@ pub struct EditorView {
     /// save, an unavailable ffprobe) was swallowed with `let _ =`, so the app looked broken
     /// with no explanation.
     status: Option<String>,
+    /// The library file this project is being edited in. Saves go here, so the launcher's list
+    /// reflects the work; `None` only if the library could not be opened at all.
+    project_path: Option<PathBuf>,
 }
 
 impl gpui::Focusable for EditorView {
@@ -157,8 +171,10 @@ impl EditorView {
         editor: Editor,
         focus_handle: FocusHandle,
         preview: Option<PreviewRenderer>,
+        project_path: Option<PathBuf>,
     ) -> Self {
         Self {
+            project_path,
             editor,
             add_counter: 0,
             playing: false,
@@ -178,6 +194,41 @@ impl EditorView {
             editing_text: None,
             status: None,
         }
+    }
+
+    /// Switch the editor to another project from the library. Per-project caches (waveforms,
+    /// decoded audio, the selection, the transport) are dropped — keeping them would show the
+    /// previous project's audio under the new one's clips whenever media ids collide.
+    pub fn open_project(&mut self, project: Project, path: Option<PathBuf>) {
+        self.stop_audio();
+        self.editor.load_project(project);
+        self.project_path = path;
+        self.playing = false;
+        self.last_frame = None;
+        self.dragging = None;
+        self.editing_text = None;
+        self.waveforms.clear();
+        self.audio_cache.clear();
+        self.preview_image = None;
+        self.preview_sig = None;
+        self.status = None;
+        self.needs_focus = true;
+    }
+
+    pub fn project_name(&self) -> &str {
+        &self.editor.project().metadata.name
+    }
+
+    /// Write the project back to its library slot. Returns the error text on failure so callers
+    /// can decide whether to show it or (when closing) refuse to leave.
+    fn save_project(&mut self) -> Result<PathBuf, String> {
+        let path = self
+            .project_path
+            .clone()
+            .unwrap_or_else(legacy_project_path);
+        library::write_project(&path, self.editor.project())
+            .map(|()| path)
+            .map_err(|error| error.to_string())
     }
 
     /// Handle a keystroke while editing a text clip's content. Commits on Enter, cancels on Escape.
@@ -886,6 +937,16 @@ impl EditorView {
                     .items_center()
                     .gap_2()
                     .text_color(rgb(theme::TEXT))
+                    // Leaving saves first: an editor that drops work on the way out teaches
+                    // people never to use the back button.
+                    .child(self.button("projects", "‹ Projects", true, cx, |this, cx| {
+                        match this.save_project() {
+                            Ok(_) => cx.emit(EditorViewEvent::CloseRequested),
+                            Err(error) => {
+                                this.status = Some(format!("Not closing — save failed: {error}"))
+                            }
+                        }
+                    }))
                     .child(Self::shared(title))
                     .child(
                         div()
@@ -910,23 +971,10 @@ impl EditorView {
                             }))
                     }))
                     .child(self.button("save", "Save", true, cx, |this, _cx| {
-                        match serde_json::to_string_pretty(this.editor.project())
-                            .map_err(|e| e.to_string())
-                            .and_then(|json| {
-                                std::fs::write(project_path(), json).map_err(|e| e.to_string())
-                            }) {
-                            Ok(()) => {
-                                this.status = Some(format!("Saved to {}", project_path().display()))
-                            }
-                            Err(error) => this.status = Some(format!("Save failed: {error}")),
-                        }
-                    }))
-                    .child(self.button("load", "Load", true, cx, |this, _cx| {
-                        if let Ok(json) = std::fs::read_to_string(project_path()) {
-                            if let Ok(project) = serde_json::from_str::<vii_core::Project>(&json) {
-                                this.editor.load_project(project);
-                            }
-                        }
+                        this.status = Some(match this.save_project() {
+                            Ok(path) => format!("Saved to {}", path.display()),
+                            Err(error) => format!("Save failed: {error}"),
+                        });
                     }))
                     .child(self.button(
                         "export-frame",

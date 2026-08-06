@@ -15,10 +15,9 @@ use std::collections::BTreeMap;
 use vii_core::{Command, Editor};
 use vii_preview::PreviewRenderer;
 use vii_project::{
-    AnimationChannel, AudioElement, Background, BlendMode, CanvasSize, Easing, Element, Fps,
-    ImageElement, MediaAsset, MediaTime, Project, ProjectMetadata, ProjectSettings, Scene,
-    ShapeElement, ShapeKind, TextAlign, TextElement, Track, TrackKind, Tracks, Transform,
-    VideoElement,
+    AnimationChannel, AudioElement, BlendMode, CanvasSize, Easing, Element, Fps, ImageElement,
+    MediaAsset, MediaTime, Project, ShapeElement, ShapeKind, TextAlign, TextElement, Track,
+    TrackKind, Transform, VideoElement,
 };
 
 /// Anything a tool can refuse to do. Surfaces to the caller as an MCP tool error, which the
@@ -72,6 +71,9 @@ pub struct Studio {
     speech: vii_speech::SpeechEngine,
     next_id: u64,
     next_caption: u64,
+    /// Where pathless saves go. `None` means the user's real project library — which is why
+    /// tests always set this: a test run must never deposit projects in someone's library.
+    library_root: Option<std::path::PathBuf>,
 }
 
 impl Default for Studio {
@@ -82,6 +84,11 @@ impl Default for Studio {
 
 impl Studio {
     pub fn new() -> Self {
+        Self::with_library_root(None)
+    }
+
+    /// A studio whose pathless saves land in `root` instead of the user's project library.
+    pub fn with_library_root(library_root: Option<std::path::PathBuf>) -> Self {
         Self {
             editor: Editor::new(empty_project("Untitled", 1080, 1920, 30, "#000000")),
             renderer: None,
@@ -90,7 +97,17 @@ impl Studio {
             speech: vii_speech::SpeechEngine::new(vii_speech::SpeechConfig::default()),
             next_id: 1,
             next_caption: 0,
+            library_root,
         }
+    }
+
+    /// The project library this studio saves into.
+    fn library(&self) -> Result<vii_project::ProjectLibrary, ToolError> {
+        match &self.library_root {
+            Some(root) => vii_project::ProjectLibrary::with_root(root),
+            None => vii_project::ProjectLibrary::open_default(),
+        }
+        .map_err(|e| err(format!("could not open the project library: {e}")))
     }
 
     pub fn project(&self) -> &Project {
@@ -261,18 +278,57 @@ impl Studio {
         }))
     }
 
-    pub fn project_save(&self, path: &str) -> ToolResult {
-        let json = serde_json::to_string_pretty(self.editor.project())
-            .map_err(|e| err(format!("could not serialize project: {e}")))?;
-        std::fs::write(path, json).map_err(|e| err(format!("could not write {path}: {e}")))?;
-        Ok(serde_json::json!({ "path": path }))
+    /// Save to an explicit path, or — the normal case — into the user's project library, where
+    /// the desktop app's launcher will list it.
+    pub fn project_save(&self, path: Option<&str>) -> ToolResult {
+        let target = match path {
+            Some(path) => std::path::PathBuf::from(path),
+            None => self.library()?.path_for(&self.editor.project().metadata.id),
+        };
+        vii_project::library::write_project(&target, self.editor.project())
+            .map_err(|e| err(format!("could not save the project: {e}")))?;
+        Ok(serde_json::json!({
+            "path": target.to_string_lossy(),
+            "id": self.editor.project().metadata.id,
+            "name": self.editor.project().metadata.name,
+        }))
     }
 
-    pub fn project_load(&mut self, path: &str) -> ToolResult {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| err(format!("could not read {path}: {e}")))?;
-        let project: Project = serde_json::from_str(&text)
-            .map_err(|e| err(format!("{path} is not a valid vii project: {e}")))?;
+    pub fn project_list(&self) -> ToolResult {
+        let library = self.library()?;
+        let projects: Vec<_> = library
+            .list()
+            .map_err(|e| err(format!("could not read the project library: {e}")))?
+            .into_iter()
+            .map(|summary| {
+                serde_json::json!({
+                    "id": summary.id,
+                    "name": summary.name,
+                    "path": summary.path.to_string_lossy(),
+                    "canvas": { "width": summary.canvas.width, "height": summary.canvas.height },
+                    "fps": summary.fps,
+                    "durationSeconds": summary.duration_seconds,
+                    "elements": summary.element_count,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "root": library.root().to_string_lossy(),
+            "projects": projects,
+        }))
+    }
+
+    pub fn project_load(&mut self, id: Option<&str>, path: Option<&str>) -> ToolResult {
+        let project: Project = match (id, path) {
+            (Some(id), None) => self
+                .library()?
+                .load(id)
+                .map_err(|e| err(format!("could not load project {id}: {e}")))?,
+            (None, Some(path)) => vii_project::library::read_project(std::path::Path::new(path))
+                .map_err(|e| err(format!("could not load {path}: {e}")))?,
+            (Some(_), Some(_)) => return Err(err("give either id or path, not both")),
+            (None, None) => return Err(err("give a project id (see project_list) or a path")),
+        };
         self.editor.load_project(project);
         self.project_info()
     }
@@ -806,34 +862,32 @@ fn describe_element(element: &Element) -> serde_json::Value {
 /// A project with one empty scene — the starting point every reel is built up from. The
 /// `Project::starter()` demo scene would otherwise leave placeholder blocks in the render.
 fn empty_project(name: &str, width: u32, height: u32, fps: u32, background: &str) -> Project {
-    Project {
-        metadata: ProjectMetadata {
-            id: "project-mcp".into(),
-            name: name.into(),
+    Project::empty(
+        &fresh_project_id(),
+        name,
+        CanvasSize { width, height },
+        Fps {
+            numerator: fps,
+            denominator: 1,
         },
-        settings: ProjectSettings {
-            fps: Fps {
-                numerator: fps,
-                denominator: 1,
-            },
-            canvas: CanvasSize { width, height },
-            background: Background::Color {
-                color: background.into(),
-            },
-        },
-        scenes: vec![Scene {
-            id: "scene-main".into(),
-            name: "Main".into(),
-            is_main: true,
-            tracks: Tracks {
-                overlay: Vec::new(),
-                main: Track::new("track-main", "Main", TrackKind::Video),
-                audio: Vec::new(),
-            },
-        }],
-        current_scene_id: "scene-main".into(),
-        media: Vec::new(),
-    }
+        background,
+    )
+}
+
+/// A distinct id per created project. Every MCP project used to be born as `project-mcp`, which
+/// was harmless while projects only went to explicit paths — but the library keys files by id,
+/// so a shared id would mean each new project silently overwriting the last one.
+fn fresh_project_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!(
+        "project-{stamp}-{}",
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Parse a keyframe list. Shared by `animate` so the error messages stay in one place.

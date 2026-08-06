@@ -395,15 +395,29 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "project_save",
-            "Write the project to a JSON file (the same format the vii desktop app opens).",
-            json!({ "path": { "type": "string" } }),
-            &["path"],
+            "Save the project. With no path it goes into the user's vii project library, so it \
+             shows up in the desktop app's project list — that is what you normally want. Pass \
+             a path only to write a copy somewhere specific.",
+            json!({ "path": { "type": "string",
+                "description": "Optional explicit file to write instead of the library slot." } }),
+            &[],
+        ),
+        tool(
+            "project_list",
+            "List the projects in the user's vii library — the same list the desktop app opens \
+             on. Returns each project's id, name, canvas, duration and file path.",
+            json!({}),
+            &[],
         ),
         tool(
             "project_load",
-            "Replace the current project with one read from a JSON file.",
-            json!({ "path": { "type": "string" } }),
-            &["path"],
+            "Replace the current project with one from the library (by id) or from a JSON file \
+             (by path). Give exactly one of them.",
+            json!({
+                "id": { "type": "string", "description": "Project id from project_list." },
+                "path": { "type": "string", "description": "Path to a project JSON file." }
+            }),
+            &[],
         ),
     ]
 }
@@ -544,8 +558,11 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             &text(args, "format").unwrap_or_else(|| "srt".into()),
         ),
         "subtitles_to_video" => subtitles_to_video(studio, args),
-        "project_save" => studio.project_save(&required_text(args, "path")?),
-        "project_load" => studio.project_load(&required_text(args, "path")?),
+        "project_save" => studio.project_save(text(args, "path").as_deref()),
+        "project_list" => studio.project_list(),
+        "project_load" => {
+            studio.project_load(text(args, "id").as_deref(), text(args, "path").as_deref())
+        }
         other => Err(err(format!("unknown tool {other:?}"))),
     }
 }

@@ -254,8 +254,19 @@ pub(crate) mod tests_support {
     use super::*;
     use serde_json::{Value, json};
 
+    /// A studio whose project library is a throwaway directory. `project_save` with no path
+    /// writes to the library, and the dispatch-every-tool test calls exactly that — pointed at
+    /// the default root it would litter the developer's own project list.
     pub fn new_studio() -> Studio {
-        Studio::new()
+        Studio::with_library_root(Some(test_library_root()))
+    }
+
+    pub fn test_library_root() -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("vii-mcp-test-library-{stamp}"))
     }
 
     pub fn call(studio: &mut Studio, name: &str, args: Value) -> Value {
@@ -279,11 +290,11 @@ pub(crate) mod tests_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tests_support::{call, unwrap_call};
+    use tests_support::{call, new_studio, unwrap_call};
 
     #[test]
     fn initialize_advertises_tools() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         let response = handle(
             &mut studio,
             &json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }),
@@ -295,7 +306,7 @@ mod tests {
 
     #[test]
     fn notifications_get_no_response() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         let response = handle(
             &mut studio,
             &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
@@ -305,7 +316,7 @@ mod tests {
 
     #[test]
     fn every_advertised_tool_has_a_schema_and_dispatches() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         for definition in tools::definitions() {
             let name = definition["name"].as_str().expect("tool has a name");
             assert!(
@@ -327,7 +338,7 @@ mod tests {
 
     #[test]
     fn tool_errors_come_back_as_results_not_protocol_errors() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         let response = call(&mut studio, "add_text", json!({ "start": 0 }));
         assert!(
             response.get("error").is_none(),
@@ -340,7 +351,7 @@ mod tests {
 
     #[test]
     fn unknown_method_is_a_protocol_error() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         let response = handle(
             &mut studio,
             &json!({ "jsonrpc": "2.0", "id": 7, "method": "nope" }),
@@ -351,7 +362,7 @@ mod tests {
 
     #[test]
     fn building_a_timeline_reports_what_was_built() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(
             &mut studio,
             "project_create",
@@ -383,7 +394,7 @@ mod tests {
 
     #[test]
     fn animating_an_unknown_property_names_the_valid_ones() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(
             &mut studio,
             "add_shape",
@@ -404,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_single_keyframe_is_rejected() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(
             &mut studio,
             "add_shape",
@@ -421,7 +432,7 @@ mod tests {
 
     #[test]
     fn placing_unimported_media_is_refused() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
             "add_audio",
@@ -433,7 +444,7 @@ mod tests {
 
     #[test]
     fn an_uninstalled_font_family_is_refused_rather_than_silently_substituted() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
             "add_text",
@@ -446,7 +457,7 @@ mod tests {
 
     #[test]
     fn layers_stack_upward_and_are_created_on_demand() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         for layer in [0, 3] {
             call(
                 &mut studio,
