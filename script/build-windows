@@ -3,6 +3,7 @@
 #
 #   ./script/build-windows            trigger a build, wait for it, unpack it here
 #   ./script/build-windows --latest   skip the build; fetch the most recent successful one
+#   ./script/build-windows --run ID   attach to a run already in flight
 #   ./script/build-windows --open     …and reveal it in Finder when done
 #
 # Windows is the one target that cannot be built locally on a Mac: Windows containers need a
@@ -22,13 +23,16 @@ DEST="$ROOT/dist/windows"
 
 LATEST_ONLY=0
 REVEAL=0
-for arg in "$@"; do
-  case "$arg" in
+ATTACH=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --latest) LATEST_ONLY=1 ;;
     --open) REVEAL=1 ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown flag: $arg" >&2; exit 2 ;;
+    --run) shift; ATTACH="${1:-}"; [ -n "$ATTACH" ] || { echo "--run needs a run id" >&2; exit 2; } ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 command -v gh >/dev/null || {
@@ -56,7 +60,17 @@ MSG
   exit 1
 fi
 
-if [ "$LATEST_ONLY" = "0" ]; then
+if [ -n "$ATTACH" ]; then
+  # A run that is already going — after a network drop, or when the trigger and the download
+  # got separated.
+  RUN_ID="$ATTACH"
+  echo "── run $RUN_ID — watching ──"
+  gh run watch "$RUN_ID" --exit-status || {
+    echo
+    echo "the build failed. Logs:  gh run view $RUN_ID --log-failed" >&2
+    exit 1
+  }
+elif [ "$LATEST_ONLY" = "0" ]; then
   BRANCH="$(git rev-parse --abbrev-ref HEAD)"
   # The runner builds whatever is PUSHED, not what is in the working tree — a local-only commit
   # would silently build the previous revision, which is a confusing way to lose an afternoon.
@@ -67,25 +81,42 @@ if [ "$LATEST_ONLY" = "0" ]; then
     echo "⚠ $BRANCH has commits that are not pushed — push them first or the build is stale"
   fi
 
-  echo "── triggering the Windows build on $BRANCH ──"
+  # Remember the newest run BEFORE triggering. `gh run list` is sorted newest-first, so polling
+  # for "a run exists" returns the PREVIOUS one instantly — which then gets watched (already
+  # complete), and its stale artifact downloaded, reporting success for a build that never ran.
+  PREVIOUS="$(gh run list --workflow "$WORKFLOW" --limit 1 \
+    --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")"
+
+  echo "── triggering the Windows build on $BRANCH ($(git rev-parse --short HEAD)) ──"
   gh workflow run "$WORKFLOW" --ref "$BRANCH"
 
-  # `gh workflow run` returns before the run exists, so poll briefly for its id rather than
-  # sleeping a guess and hoping.
+  # `gh workflow run` returns before the run exists, so wait for one that is not $PREVIOUS.
   echo -n "   waiting for the run to appear"
   RUN_ID=""
-  for _ in $(seq 1 30); do
-    RUN_ID="$(gh run list --workflow "$WORKFLOW" --branch "$BRANCH" --limit 1 \
+  for _ in $(seq 1 45); do
+    CANDIDATE="$(gh run list --workflow "$WORKFLOW" --limit 1 \
       --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
-    [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] && break
+    if [ -n "$CANDIDATE" ] && [ "$CANDIDATE" != "null" ] && [ "$CANDIDATE" != "$PREVIOUS" ]; then
+      RUN_ID="$CANDIDATE"
+      break
+    fi
     echo -n "."
     sleep 2
   done
   echo
-  [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || {
-    echo "the run never appeared — check: gh run list --workflow $WORKFLOW" >&2
+  [ -n "$RUN_ID" ] || {
+    echo "no new run appeared within 90s — check: gh run list --workflow $WORKFLOW" >&2
     exit 1
   }
+
+  # The run must be building the commit that was just pushed. If it is not, something else
+  # triggered it, and silently shipping that build is exactly the failure this script exists
+  # to avoid.
+  RUN_SHA="$(gh run view "$RUN_ID" --json headSha --jq '.headSha' 2>/dev/null || echo "")"
+  LOCAL_SHA="$(git rev-parse HEAD)"
+  if [ -n "$RUN_SHA" ] && [ "$RUN_SHA" != "$LOCAL_SHA" ]; then
+    echo "⚠ run $RUN_ID is building ${RUN_SHA:0:7}, but HEAD is ${LOCAL_SHA:0:7}"
+  fi
 
   echo "── run $RUN_ID — watching (a cold cache takes ~10 minutes) ──"
   # `gh run watch` exits non-zero if the run fails, which is what we want to propagate.
