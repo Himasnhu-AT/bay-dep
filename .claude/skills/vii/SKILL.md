@@ -27,6 +27,20 @@ cd <vii-repo>/rust && cargo build --release -p vii-desktop
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
 
+**Two ways to serve, same tools, same port.**
+
+- **`vii` (the editor)** — the window serves agents on 7333 as well. Your edits land in the
+  timeline the user is looking at, one command at a time, and undo with the same keystroke as
+  theirs. Use this when someone wants to *watch* you work.
+- **`vii --mcp`** — no window. Use this for batch rendering, or on a machine with no display.
+
+They cannot both hold 7333, and that is deliberate: an agent edits *a* document, and the value
+of watching it happen depends on there being no ambiguity about which one. If the editor is
+open, connect to it rather than starting a rival with its own timeline.
+
+A window that is already open is where your edits go. Don't `project_create` over someone's
+work without saying so — `project_info` first, and ask if there is something on the timeline.
+
 MCP servers load at session start, so a server registered *now* is available **next** session.
 That one bootstrap gap is the only reason `scripts/vii.py` exists — see
 [Scripts](#scripts). Once the tools are listed, ignore it.
