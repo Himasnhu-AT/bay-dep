@@ -46,11 +46,19 @@ fn registry_dir() -> PathBuf {
     if let Ok(explicit) = std::env::var("VII_AGENT_DIR") {
         return PathBuf::from(explicit);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     #[cfg(target_os = "macos")]
-    let base = PathBuf::from(home).join("Library/Application Support/vii");
-    #[cfg(not(target_os = "macos"))]
-    let base = PathBuf::from(home).join(".local/share/vii");
+    let base = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+        .join("Library/Application Support/vii");
+    // Windows has no HOME, so the old fallback wrote the registry into the current directory —
+    // wherever the user happened to launch vii from.
+    #[cfg(target_os = "windows")]
+    let base = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("vii");
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let base = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+        .join(".local/share/vii");
     base.join("agents")
 }
 

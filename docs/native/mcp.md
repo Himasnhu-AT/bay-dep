@@ -1,6 +1,6 @@
 # vii as an MCP server
 
-`vii-mcp` exposes the editor engine as [Model Context Protocol](https://modelcontextprotocol.io)
+vii exposes its editor engine as [Model Context Protocol](https://modelcontextprotocol.io)
 tools, so an agent can build a timeline and render it to MP4 with no GUI.
 
 ```
@@ -18,10 +18,10 @@ lines of `std::net`.
 
 ```bash
 cd rust
-cargo build --release -p vii-mcp
-./target/release/vii-mcp                 # HTTP on 127.0.0.1:7333
-./target/release/vii-mcp --port 8080     # a specific port (0 = OS picks)
-./target/release/vii-mcp --stdio         # JSON-RPC on stdin/stdout instead
+cargo build --release -p vii-desktop
+./target/release/vii --mcp               # HTTP on 127.0.0.1:7333
+./target/release/vii --mcp --port 8080   # a specific port (0 = OS picks)
+./target/release/vii --stdio             # JSON-RPC on stdin/stdout instead
 ```
 
 Register with Claude Code:

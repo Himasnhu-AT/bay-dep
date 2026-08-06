@@ -32,7 +32,7 @@ rust/
 │   ├── vii-text      text rasterization (cosmic-text)
 │   ├── vii-audio     PCM, peaks, mixing
 │   ├── vii-speech    Kokoro text-to-speech + subtitle cues
-│   ├── vii-mcp       the engine as an MCP server
+│   ├── vii-mcp       the engine as an MCP server (`vii --mcp`)
 │   ├── compositor, gpu, effects, masks    the wgpu render path
 │   └── time          MediaTime tick math
 └── wasm/             bindings consumed by the legacy web app
@@ -56,7 +56,7 @@ over cleanly.
 **With the app closed** — headless, for rendering:
 
 ```bash
-./rust/target/release/vii-mcp --port 7333
+./rust/target/release/vii --mcp --port 7333
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
 

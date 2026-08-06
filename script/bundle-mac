@@ -48,7 +48,7 @@ done
 echo "── building $APP_NAME $VERSION for ${ARCHS[*]} ──"
 for target in "${ARCHS[@]}"; do
   rustup target add "$target" >/dev/null 2>&1 || true
-  (cd rust && cargo build --release --target "$target" -p vii-desktop -p vii-mcp)
+  (cd rust && cargo build --release --target "$target" -p vii-desktop)
 done
 
 rm -rf "$APP"
@@ -56,22 +56,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # One fat binary rather than one .app per arch: vii is a single small executable, and a
 # universal download means nobody has to know which Mac they have.
+# One executable, not two: `vii --mcp` is the headless server, so there is no separate
+# vii-mcp to keep in step. The Kokoro sidecar is compiled into it as well.
 if [ ${#ARCHS[@]} -gt 1 ]; then
   echo "── lipo → universal ──"
-  for binary in vii vii-mcp; do
-    lipo -create -output "$APP/Contents/MacOS/$binary" \
-      "rust/target/aarch64-apple-darwin/release/$binary" \
-      "rust/target/x86_64-apple-darwin/release/$binary"
-  done
+  lipo -create -output "$APP/Contents/MacOS/vii" \
+    "rust/target/aarch64-apple-darwin/release/vii" \
+    "rust/target/x86_64-apple-darwin/release/vii"
 else
-  for binary in vii vii-mcp; do
-    cp "rust/target/${ARCHS[0]}/release/$binary" "$APP/Contents/MacOS/$binary"
-  done
+  cp "rust/target/${ARCHS[0]}/release/vii" "$APP/Contents/MacOS/vii"
 fi
-
-# The speech sidecar ships inside the bundle; vii-speech looks in Contents/Resources at
-# runtime, because a compiled-in source path is meaningless on someone else's machine.
-cp "$ROOT/script/vii-kokoro.py" "$APP/Contents/Resources/vii-kokoro.py"
 
 if [ -f "$ROOT/assets/vii.icns" ]; then
   cp "$ROOT/assets/vii.icns" "$APP/Contents/Resources/vii.icns"

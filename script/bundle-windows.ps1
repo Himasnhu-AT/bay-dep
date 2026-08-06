@@ -8,9 +8,11 @@
 # cross-compiling from macOS or Linux does not work — the release workflow uses a windows
 # runner for exactly this reason.
 #
-# There is no installer here on purpose: a folder you can unzip and run has no failure modes,
-# and an MSI is worth building only once there is something to install *into* (file
-# associations, a per-user update channel). See todo.md.
+# The output is a single vii.exe. The MCP server is the same binary (`vii --mcp`) and the
+# Kokoro sidecar is compiled into it, so there is nothing to keep alongside it and nothing to
+# lose in a copy. No installer on purpose: an .exe you can run has no failure modes, and an MSI
+# is worth building only once there is something to install *into* (file associations, a
+# per-user update channel). See todo.md.
 param(
     [switch]$Zip,
     [string]$SignThumbprint = ""
@@ -27,25 +29,20 @@ $Stage = Join-Path $Out "vii"
 
 Write-Host "-- building vii $Version for x86_64-pc-windows-msvc --"
 Push-Location rust
-cargo build --release --target x86_64-pc-windows-msvc -p vii-desktop -p vii-mcp
+cargo build --release --target x86_64-pc-windows-msvc -p vii-desktop
 Pop-Location
 
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 
 Copy-Item "rust\target\x86_64-pc-windows-msvc\release\vii.exe" $Stage
-Copy-Item "rust\target\x86_64-pc-windows-msvc\release\vii-mcp.exe" $Stage
-
-# The speech sidecar sits next to the executable; vii-speech looks there at runtime, because a
-# path compiled in from the build machine means nothing on someone else's computer.
-Copy-Item "script\vii-kokoro.py" $Stage
 
 @"
 vii — a native video editor, and the same engine as an MCP server.
 
-  vii.exe          the editor
-  vii-mcp.exe      the engine headless, for agents (see README)
-  vii-kokoro.py    the text-to-speech sidecar
+  vii.exe              the editor
+  vii.exe --mcp        the same engine headless, for agents
+  vii.exe --help       every flag
 
 REQUIREMENTS
   ffmpeg on PATH   decode, probing, MP4 export.  https://ffmpeg.org/download.html
@@ -60,11 +57,9 @@ Version $Version
 if ($SignThumbprint) {
     Write-Host "-- signing --"
     # Timestamped so the signature stays valid after the certificate expires.
-    foreach ($exe in @("vii.exe", "vii-mcp.exe")) {
-        & signtool sign /sha1 $SignThumbprint /fd SHA256 /tr http://timestamp.digicert.com `
-            /td SHA256 (Join-Path $Stage $exe)
-        if ($LASTEXITCODE -ne 0) { throw "signtool failed for $exe" }
-    }
+    & signtool sign /sha1 $SignThumbprint /fd SHA256 /tr http://timestamp.digicert.com `
+        /td SHA256 (Join-Path $Stage "vii.exe")
+    if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
 } else {
     Write-Host "  (unsigned - SmartScreen will warn on first run; pass -SignThumbprint to sign)"
 }

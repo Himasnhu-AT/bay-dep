@@ -101,7 +101,8 @@ embedding every Nth frame gives redundant, noisy results. That may be a prerequi
 
 No `opencut` in crate names, binaries, identifiers, docs, scripts or CI. Crates are
 `vii-core`, `vii-project`, `vii-preview`, `vii-ui`, `vii-text`, `vii-audio`, `vii-speech`,
-`vii-mcp`, `vii-desktop`, `vii-wasm`; the binary is `vii`.
+`vii-mcp`, `vii-agent`, `vii-desktop`; there is exactly one binary, `vii`, and `vii --mcp`
+serves the same engine headlessly.
 
 **Two deliberate exceptions, both flagged rather than decided silently:**
 

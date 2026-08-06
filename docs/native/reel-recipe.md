@@ -4,7 +4,7 @@ A record of making one 21.4s vertical reel end to end through the MCP server —
 before it was possible, what the build turned up, and what is still missing.
 
 The reel: **"Volatility Drag"**, 1080×1920 · 30fps · 21.429s · h264 + AAC.
-Build script: driven entirely by `vii-mcp` tool calls (see [`mcp.md`](mcp.md)).
+Build script: driven entirely by vii's MCP tool calls (see [`mcp.md`](mcp.md)).
 
 ---
 
@@ -21,7 +21,7 @@ half. Five gaps, all now closed:
 | **Linear keyframes only** | Everything moved at constant speed, which reads as mechanical. | `Easing` on `AnimationChannel` (8 curves) |
 | **Text was size + colour** | No family, weight, alignment, tracking or line height — no house typography. | All five on `TextElement`, honoured by `vii-text` |
 
-Plus the surface to drive it: `vii-mcp`, 16 tools over HTTP or stdio.
+Plus the surface to drive it: `vii --mcp`, 16 tools over HTTP or stdio.
 
 ---
 

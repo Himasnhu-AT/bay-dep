@@ -34,12 +34,19 @@ jobs:
         shell: pwsh
 
       # A GUI cannot be launched on a headless runner, but a link error or a missing DLL shows
-      # up here rather than on someone's desktop.
-      - name: Smoke test vii-mcp
+      # up here rather than on someone's desktop. This runs the shipped binary, not a target/
+      # path, so it also catches a bundle that assembled the wrong file.
+      - name: Smoke test
         run: |
-          $exe = "rust\target\release\bundle\windows\vii\vii-mcp.exe"
+          $exe = "rust\target\release\bundle\windows\vii\vii.exe"
+          if (-not (Test-Path $exe)) { throw "the bundle produced no vii.exe" }
           & $exe --help
-          if ($LASTEXITCODE -ne 0) { throw "vii-mcp.exe --help failed" }
+          if ($LASTEXITCODE -ne 0) { throw "vii.exe --help failed" }
+
+          # One executable is the point of this layout — if a second one reappears, the README
+          # and the download instructions are quietly wrong.
+          $exes = Get-ChildItem "rust\target\release\bundle\windows\vii" -Filter *.exe
+          if ($exes.Count -ne 1) { throw "expected exactly one .exe, found: $($exes.Name -join ', ')" }
         shell: pwsh
 
       - uses: actions/upload-artifact@v4

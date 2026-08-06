@@ -16,7 +16,7 @@ Two things distinguish it:
 
 - **Everything is local.** Projects and media stay on the machine; there is no server that holds
   project data.
-- **The engine is agent-addressable.** `vii-mcp` exposes the editor as a Model Context Protocol
+- **The engine is agent-addressable.** `vii --mcp` serves the editor as a Model Context Protocol
   server, so an agent can build a timeline and render it to MP4 with no GUI at all.
 
 ## Why (inherited from OpenCut, still true)
@@ -52,7 +52,7 @@ vii/
 | `compositor` · `gpu` · `effects` · `masks` | the wgpu render path, 17 blend modes, JFA SDF mask feathering |
 | `vii-audio` · `vii-text` · `vii-speech` | audio, text/glyph rendering, speech |
 | `time` | `MediaTime` tick math |
-| `vii-mcp` | the editor engine as an MCP server (`vii-mcp`) |
+| `vii-mcp` | the editor engine as an MCP server (`vii --mcp`) |
 | `native-preview` · `bridge` · `test-support` | platform glue and test harness |
 
 ## Quick start

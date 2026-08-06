@@ -44,7 +44,7 @@ rust/
 │   ├── compositor, gpu, effects, masks    the wgpu render path
 │   ├── vii-audio, vii-text, vii-speech
 │   ├── time              MediaTime tick math
-│   ├── vii-mcp       the engine as an MCP server (JSON-RPC over std::net)
+│   ├── vii-mcp       the engine as an MCP server (`vii --mcp`; JSON-RPC over std::net)
 │   └── native-preview, bridge, test-support
 └── wasm/             bindings consumed by the legacy web app
 ```

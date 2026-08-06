@@ -71,10 +71,8 @@ impl Default for SpeechConfig {
     }
 }
 
-/// `script/vii-kokoro.py` relative to the workspace, resolved from this file's location so a
-/// `cargo run` from anywhere in the repo still finds it.
 /// Where `vii-kokoro.py` lives, searched in the order that gets the right answer for each way
-/// vii can be running.
+/// vii can be running, ending at the copy compiled into the binary.
 ///
 /// `CARGO_MANIFEST_DIR` alone is wrong for anything shipped: it is baked in at compile time and
 /// points at the *build machine's* source tree, so a distributed .app would look for the
@@ -116,14 +114,79 @@ fn default_script_path() -> String {
                 .to_string_lossy()
                 .to_string()
         })
-        // Nothing found: report the most useful guess so the error names a plausible location
-        // rather than an empty string.
+        // Nothing on disk: vii ships as a single executable, so fall back to the copy compiled
+        // into it.
         .unwrap_or_else(|| {
-            candidates
-                .first()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| SCRIPT.to_string())
+            unpack_script().unwrap_or_else(|_| {
+                candidates
+                    .first()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| SCRIPT.to_string())
+            })
         })
+}
+
+/// The sidecar, compiled into the binary.
+///
+/// vii is distributed as one executable — a loose `.py` next to it is one more thing to lose in
+/// a copy, and a version skew between the two is silent and baffling. Python needs a *file* to
+/// run, so the embedded copy is written out on first use.
+const EMBEDDED_SCRIPT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../script/vii-kokoro.py"
+));
+
+/// Write the embedded sidecar somewhere Python can run it, and return that path.
+///
+/// The filename carries a hash of the contents, so upgrading vii writes a new file rather than
+/// silently reusing the previous version's script — which would be a genuinely awful bug to
+/// track down, the symptom being an old sidecar behaviour in a new build.
+fn unpack_script() -> std::io::Result<String> {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in EMBEDDED_SCRIPT.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+
+    let dir = state_dir().join("sidecar");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("vii-kokoro-{hash:016x}.py"));
+
+    // Content-addressed, so an existing file of the right name is already the right script.
+    if !path.is_file() {
+        // Write-then-rename: two vii processes starting at once must not have one of them read
+        // a half-written script.
+        let staging = dir.join(format!("vii-kokoro-{hash:016x}.{}.tmp", std::process::id()));
+        std::fs::write(&staging, EMBEDDED_SCRIPT)?;
+        std::fs::rename(&staging, &path)?;
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Where vii keeps things it generated for itself, per user.
+fn state_dir() -> std::path::PathBuf {
+    if let Ok(explicit) = std::env::var("VII_STATE_DIR") {
+        return std::path::PathBuf::from(explicit);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        std::path::PathBuf::from(home).join("Library/Application Support/vii")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // LOCALAPPDATA rather than APPDATA: this is a rebuildable cache, and roaming it onto a
+        // domain profile would copy it between machines for no reason.
+        std::env::var("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join("vii")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        std::path::PathBuf::from(home).join(".local/share/vii")
+    }
 }
 
 pub struct SpeechEngine {
@@ -490,4 +553,84 @@ pub fn speak_once(
 ) -> SpeechResult<Utterance> {
     let mut engine = SpeechEngine::new(SpeechConfig::default());
     engine.speak(text, voice, speed, lang_code, out_path)
+}
+
+#[cfg(test)]
+mod embedded_script_tests {
+    use super::*;
+
+    /// The whole point of embedding is that a lone `vii.exe` still has a sidecar. If the
+    /// `include_str!` path ever drifts this fails to compile; if the script is truncated or
+    /// swapped for something else, this catches it.
+    #[test]
+    fn the_embedded_script_is_the_real_sidecar() {
+        assert!(
+            EMBEDDED_SCRIPT.contains("kokoro"),
+            "embedded script does not mention kokoro — wrong file?"
+        );
+        assert!(
+            EMBEDDED_SCRIPT.contains("def "),
+            "embedded script has no function definitions — truncated?"
+        );
+    }
+
+    #[test]
+    fn unpacking_writes_a_runnable_file_and_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!("vii-unpack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // SAFETY: single-threaded test scope; the variable is read once inside unpack_script.
+        unsafe { std::env::set_var("VII_STATE_DIR", &dir) };
+
+        let first = unpack_script().expect("unpack");
+        assert_eq!(
+            std::fs::read_to_string(&first).expect("read back"),
+            EMBEDDED_SCRIPT,
+            "unpacked file differs from what is compiled in"
+        );
+
+        // Twice must not duplicate or rewrite — a second vii process starting is the normal case.
+        let second = unpack_script().expect("unpack again");
+        assert_eq!(
+            first, second,
+            "the path is content-addressed, so it is stable"
+        );
+        let stray: Vec<_> = std::fs::read_dir(dir.join("sidecar"))
+            .expect("listing")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|e| e == "tmp"))
+            .collect();
+        assert!(stray.is_empty(), "left staging files behind: {stray:?}");
+
+        unsafe { std::env::remove_var("VII_STATE_DIR") };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Python must be able to parse it. A syntax error in the sidecar would otherwise only show
+    /// up as narration failing at runtime, on a user's machine.
+    #[test]
+    fn the_embedded_script_is_valid_python() {
+        let Ok(check) = Command::new("python3")
+            .args(["-c", "import ast,sys; ast.parse(sys.stdin.read())"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        else {
+            eprintln!("skipping: no python3 on PATH");
+            return;
+        };
+        let mut check = check;
+        check
+            .stdin
+            .as_mut()
+            .expect("stdin")
+            .write_all(EMBEDDED_SCRIPT.as_bytes())
+            .expect("write script");
+        let out = check.wait_with_output().expect("wait");
+        assert!(
+            out.status.success(),
+            "embedded sidecar is not valid Python:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }

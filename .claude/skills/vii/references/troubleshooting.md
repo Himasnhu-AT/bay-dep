@@ -35,7 +35,7 @@ Default `anchorX` is 0.5. Set `anchorX: 0` (grow right) or `anchorY: 1` (grow up
 
 ### A rounded bar looks like a pointed lens
 Fixed in the engine — shape rasters now match the layer aspect. If you see it, you are on an
-old build; rebuild `vii-mcp`.
+old build; rebuild with `cargo build --release -p vii-desktop`.
 
 ### Text reflows instead of scaling when I animate `scale`
 Fixed — the raster is built at the element's **base** scale and scaled as an image. Old builds

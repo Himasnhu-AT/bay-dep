@@ -138,6 +138,7 @@ echo
 echo "── $DEST ──"
 find "$DEST" -type f | sed "s|$ROOT/|  |"
 echo
-echo "Copy that folder to a Windows machine and run vii.exe."
+echo "Copy vii.exe to a Windows machine and run it. That one file is the whole editor —"
+echo "\`vii.exe --mcp\` serves the same engine to agents, and the speech sidecar is inside it."
 [ "$REVEAL" = "1" ] && open "$DEST"
 exit 0

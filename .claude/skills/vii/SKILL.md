@@ -22,8 +22,8 @@ there is nothing to shell out to.
 If those tools are not in your tool list, the server is not registered yet:
 
 ```bash
-cd <vii-repo>/rust && cargo build --release -p vii-mcp
-./target/release/vii-mcp --port 7333          # loopback only
+cd <vii-repo>/rust && cargo build --release -p vii-desktop
+./target/release/vii --mcp --port 7333        # loopback only, no window
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
 

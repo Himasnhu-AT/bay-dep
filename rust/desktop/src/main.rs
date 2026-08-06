@@ -13,9 +13,94 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
+/// What was asked for on the command line.
+enum Mode {
+    /// Open the editor. The default.
+    Editor,
+    /// Serve MCP with no window, for rendering on a machine with no display or for an agent
+    /// working without a human watching.
+    Headless {
+        port: u16,
+        stdio: bool,
+    },
+    /// Report whether a window is open and how to reach it.
+    Agents,
+    Help,
+}
+
+fn parse_mode() -> Result<Mode, String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return Ok(Mode::Help);
+    }
+    if args.iter().any(|a| a == "--agents") {
+        return Ok(Mode::Agents);
+    }
+    if !args.iter().any(|a| a == "--mcp" || a == "--stdio") {
+        return Ok(Mode::Editor);
+    }
+
+    let mut port = vii_agent::registry::DEFAULT_PORT;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--port" {
+            let value = iter.next().ok_or("--port needs a number")?;
+            port = value
+                .parse()
+                .map_err(|_| format!("--port takes a number, got {value:?}"))?;
+        }
+    }
+    Ok(Mode::Headless {
+        port,
+        stdio: args.iter().any(|a| a == "--stdio"),
+    })
+}
+
+const USAGE: &str = "\
+vii — a native video editor, and the same engine as an MCP server
+
+USAGE
+  vii                    open the editor
+  vii --mcp              serve MCP with no window, on 127.0.0.1:7333
+  vii --mcp --port N     …on another port (0 lets the OS choose)
+  vii --stdio            serve MCP over stdin/stdout instead
+  vii --agents           is a window open, and how does an agent reach it?
+
+With the editor open, an agent's edits land in the window you are looking at and undo with
+the same keystroke as your own. With it closed, --mcp gives the same tools headlessly, which
+is what you want for rendering.
+
+  claude mcp add --transport http vii http://127.0.0.1:7333/mcp
+
+Needs ffmpeg on PATH for decode and export, and a GPU for the compositor. Narration needs the
+Kokoro sidecar; vii reports what is missing rather than failing silently.";
+
 fn main() {
-    if std::env::args().any(|arg| arg == "--agents") {
-        return print_agents();
+    let mode = match parse_mode() {
+        Ok(mode) => mode,
+        Err(message) => {
+            eprintln!("vii: {message}");
+            std::process::exit(2);
+        }
+    };
+
+    match mode {
+        Mode::Help => return println!("{USAGE}"),
+        Mode::Agents => return print_agents(),
+        Mode::Headless { port, stdio } => {
+            // No window, so nothing to attach to: the server owns the document itself.
+            let result = if stdio {
+                vii_mcp::server::serve_stdio()
+            } else {
+                vii_mcp::server::serve_http(port, None)
+            };
+            if let Err(error) = result {
+                eprintln!("vii: {error}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        Mode::Editor => {}
     }
 
     // A window already open? Raise it and stop. The bound port is the single-instance lock —
