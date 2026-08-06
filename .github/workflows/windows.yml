@@ -1,21 +1,20 @@
 name: windows
 
-# Windows is the ONLY thing this repo needs a runner for.
+# The only thing this repo uses a runner for, and only when asked.
 #
-# macOS is built locally (`./script/bundle-mac --dmg`) because the maintainer has a Mac, and a
-# macOS runner bills at 10x on a private repo. Windows genuinely cannot be built anywhere else:
-# Windows containers need a Windows kernel, and gpui 0.2.2's build.rs gates its HLSL shader
-# compilation on the HOST being Windows, so cargo-xwin cross-compiling from macOS fails on a
-# missing shaders_bytes.rs. See todo.md.
+# macOS is built locally (`./script/bundle-mac --dmg`) and tested locally (`./test.sh`), so
+# there is no push- or PR-triggered CI at all: on a private repo a macOS runner bills at 10x,
+# and duplicating checks that already run on the maintainer's machine is paying for an echo.
 #
-# Trigger it from your Mac and get the zip back with:  ./script/build-windows
+# Windows genuinely cannot be built locally on a Mac. Windows containers need a Windows kernel,
+# and cross-compiling with cargo-xwin dies inside gpui, whose build.rs gates HLSL shader
+# compilation on the HOST being Windows — so `shaders_bytes.rs` is never generated. See todo.md.
+#
+# Manual only. Trigger it and get the zip back on your Mac with:
+#
+#   ./script/build-windows
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -34,9 +33,8 @@ jobs:
         run: .\script\bundle-windows.ps1 -Zip
         shell: pwsh
 
-      # A quick smoke test: the binary must at least start and print its usage. It cannot be
-      # launched as a GUI on a headless runner, but a link error or a missing DLL shows up here
-      # rather than on someone's desktop.
+      # A GUI cannot be launched on a headless runner, but a link error or a missing DLL shows
+      # up here rather than on someone's desktop.
       - name: Smoke test vii-mcp
         run: |
           $exe = "rust\target\release\bundle\windows\vii\vii-mcp.exe"
@@ -50,38 +48,3 @@ jobs:
           path: rust/target/release/bundle/windows/*.zip
           # Long enough to be useful, short enough not to accumulate storage cost.
           retention-days: 30
-
-  publish:
-    needs: build
-    # Only a tag publishes. A manual run just leaves the artifact to download, which is the
-    # normal case: build Windows, fetch it, ship it alongside the Mac build made locally.
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: vii-windows
-          path: artifacts
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          generate_release_notes: true
-          # The macOS .dmg is built locally and attached by hand, so the release starts as a
-          # draft rather than announcing a half-complete set of downloads.
-          draft: true
-          body: |
-            ## Installing
-
-            **macOS** — open the `.dmg` and drag vii to Applications.
-            If it is not notarized, macOS blocks it on first run: right-click → Open, once.
-
-            **Windows** — unzip and run `vii.exe`.
-            If it is not signed, SmartScreen warns once: More info → Run anyway.
-
-            ### Both platforms need
-            - **ffmpeg** on `PATH` — decode, probing, MP4 export
-            - **a GPU** for the compositor
-
-            Narration additionally needs the Kokoro sidecar; vii says what is missing rather
-            than failing silently.
