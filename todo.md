@@ -142,6 +142,32 @@ recycled, a free port cannot lie, so a killed window never locks the next launch
 
 ---
 
+## 5c. Windows builds must happen on Windows — not a choice
+
+Tried and ruled out, so nobody re-tries it:
+
+- **Windows containers on macOS: impossible.** Docker Desktop runs a Linux VM; Windows
+  containers need a Windows kernel. No image fixes this.
+- **`cargo-xwin` cross-compile from macOS: blocked by gpui 0.2.2.** It gets all the way to
+  gpui itself and then fails on `shaders_bytes.rs: No such file`. The cause is in gpui's
+  `build.rs`:
+
+  ```rust
+  Ok("windows") => {
+      #[cfg(target_os = "windows")]   // <- HOST os, not target
+      windows::build();               //    compiles the HLSL shaders
+  }
+  ```
+
+  The branch matches on the *target*, but its body is `cfg`'d on the *host*, so the shader
+  compilation is silently omitted when cross-compiling and the include fails later. Fixing it
+  means patching gpui.
+
+**So the options are:** a Windows runner in CI (what `release.yml` does), a local Windows VM,
+or a gpui fork. CI is the cheap one — the Windows runner bills at 2x and only runs on a tag.
+
+---
+
 ## 6. Bug: a sidecar can outlive its parent · **S**
 
 The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.

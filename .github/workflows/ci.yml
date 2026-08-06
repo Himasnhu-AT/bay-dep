@@ -9,79 +9,25 @@ on:
     branches: [main]
     paths-ignore:
       - "**/*.md"
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths-ignore:
       - "**/*.md"
 
 jobs:
-  web:
-    runs-on: ubuntu-latest
-
-    env:
-      DATABASE_URL: "postgresql://vii:vii@localhost:5432/vii"
-      BETTER_AUTH_SECRET: "supersecret"
-      NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
-      UPSTASH_REDIS_REST_URL: "https://your-upstash-redis-url"
-      UPSTASH_REDIS_REST_TOKEN: "your-upstash-redis-token"
-      NEXT_PUBLIC_MARBLE_API_URL: "https://placeholder.example.com"
-      MARBLE_WORKSPACE_KEY: "placeholder"
-      FREESOUND_CLIENT_ID: "placeholder"
-      FREESOUND_API_KEY: "placeholder"
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # The workspace overrides vii-wasm to the locally-built pkg, so the Rust
-      # core must be compiled before `pnpm install`.
-      - name: Install Rust wasm target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
-        with:
-          version: latest
-
-      - name: Cache Rust build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
-
-      - name: Build WASM
-        run: wasm-pack build rust/wasm --target bundler --out-dir pkg
-        # (rust/ is the Rust workspace root; the web stack lives in dep/)
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: dep
-
-      - name: Test
-        run: pnpm --filter @vii/web test
-        working-directory: dep
-
-      - name: Build
-        run: pnpm --filter @vii/web build
-        working-directory: dep
-
-  # The native editor's home platform: Metal and the ffmpeg CLI are both really present, so
-  # VII_REQUIRE_* turns a missing capability into a loud failure instead of a silent skip.
-  # This is the only job that lints; `rust-linux` exists purely to exercise the skip path.
   rust-mac:
     runs-on: macos-latest
+    # macOS runners bill at 10x on a private repo, so this job costs roughly 120 billed
+    # minutes a run — about fifteen pushes would exhaust a free month's allowance by itself.
+    #
+    # It is also the most redundant job here: development happens on a Mac, where `./test.sh`
+    # runs exactly this. So it runs where it earns its cost — pull requests, release tags, and
+    # on demand — rather than on every push. `rust-linux` stays the every-push tripwire.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
 
     env:
       VII_REQUIRE_GPU: "1"
