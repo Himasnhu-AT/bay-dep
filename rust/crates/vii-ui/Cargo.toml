@@ -10,6 +10,7 @@ edition = "2021"
 path = "src/lib.rs"
 
 [dependencies]
+vii-speech = { path = "../vii-speech" }
 vii-paths = { path = "../vii-paths" }
 gpui = "0.2.2"
 image = "0.25"

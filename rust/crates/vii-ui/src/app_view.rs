@@ -75,6 +75,21 @@ impl ViiApp {
         cx.spawn(async move |this, cx| {
             while let Some(request) = pump.next().await {
                 let call = request.call.clone();
+
+                // Rendering and narration take seconds to minutes. Answering them here would
+                // hold the main thread for that whole time, so the editor would stop drawing —
+                // and the loop would stop draining, so every later call would queue behind it.
+                // They are handed to a worker and answered when it finishes; meanwhile this
+                // loop goes straight back to serving fast calls.
+                if vii_agent::slow::slow_tools().contains(&call.name.as_str()) {
+                    let started = this.update(cx, |app, cx| app.start_slow_tool(request, cx));
+                    match started {
+                        // The window went away between the call arriving and being routed.
+                        Err(_) => continue,
+                        Ok(()) => continue,
+                    }
+                }
+
                 let response = this
                     .update(cx, |app, cx| app.route_agent_call(&call, cx))
                     .unwrap_or_else(|_| {
@@ -84,6 +99,66 @@ impl ViiApp {
             }
         })
         .detach();
+    }
+
+    /// Run a slow tool off the main thread, then apply whatever it implies back on it.
+    ///
+    /// Takes ownership of the request: nobody else may answer it, and the worker responds when
+    /// it is done. The snapshot is taken here, synchronously, so the worker never holds a
+    /// reference into a project the user is still editing.
+    fn start_slow_tool(&mut self, request: vii_agent::AgentRequest, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.clone() else {
+            request.respond(vii_agent::AgentResponse::Err(format!(
+                "no project is open in vii — call project_create to make one. Available now: {}",
+                vii_agent::available_tools().join(", ")
+            )));
+            return;
+        };
+
+        let call = request.call.clone();
+        let context = editor.update(cx, |view, _| view.slow_context());
+        self.status = Some(format!("Claude is running {}…", call.name));
+        cx.notify();
+
+        // The background executor is Send+Sync — unlike the foreground one, which is !Send and
+        // is exactly why an agent's work cannot simply be done wherever it arrives.
+        let job = cx
+            .background_executor()
+            .spawn(async move { vii_agent::slow::run(&call.name, &call.arguments, &context) });
+
+        cx.spawn(async move |this, cx| {
+            let outcome = job.await;
+            let response = match outcome {
+                Err(message) => vii_agent::AgentResponse::Err(message),
+                Ok(result) => this
+                    .update(cx, |app, cx| app.finish_slow_tool(result, cx))
+                    .unwrap_or_else(|_| {
+                        vii_agent::AgentResponse::Err(
+                            "the work finished but the editor window had closed".into(),
+                        )
+                    }),
+            };
+            request.respond(response);
+        })
+        .detach();
+    }
+
+    /// Apply a finished job's result on the main thread, where the single writer lives.
+    fn finish_slow_tool(
+        &mut self,
+        result: vii_agent::slow::SlowResult,
+        cx: &mut Context<Self>,
+    ) -> vii_agent::AgentResponse {
+        let Some(editor) = self.editor.clone() else {
+            return vii_agent::AgentResponse::Err(
+                "the work finished but the project had been closed".into(),
+            );
+        };
+        self.status = None;
+        let value = result.value.clone();
+        editor.update(cx, |view, cx| view.apply_slow_result(result, cx));
+        cx.notify();
+        vii_agent::AgentResponse::Ok(value)
     }
 
     /// Send a tool call to whichever project is open.
@@ -1326,6 +1401,139 @@ mod agent_routing_tests {
             assert!(
                 matches!(response, vii_agent::AgentResponse::Err(_)),
                 "a negative time must be refused: {response:?}"
+            );
+        });
+    }
+
+    /// The whole point of this change: a slow tool must not be answered by telling the user to
+    /// quit. This drives the real path — worker, then apply on the main thread — and checks the
+    /// MP4 exists rather than trusting the response.
+    #[gpui::test]
+    async fn render_works_with_the_editor_open(cx: &mut TestAppContext) {
+        let Some(app) = app_with_gpu(cx, library("agent-render")) else {
+            eprintln!("skipping: no GPU adapter on this machine");
+            return;
+        };
+        let out = std::env::temp_dir().join(format!("vii-agent-render-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+
+        app.update(cx, |app, cx| {
+            app.route_agent_call(
+                &call(
+                    "project_create",
+                    serde_json::json!({"name": "R", "fps": 12}),
+                ),
+                cx,
+            );
+            app.route_agent_call(
+                &call(
+                    "add_text",
+                    serde_json::json!({"content": "render", "start": 0, "duration": 0.5}),
+                ),
+                cx,
+            );
+        });
+
+        let context = app.update(cx, |app, cx| {
+            app.editor
+                .as_ref()
+                .expect("editor")
+                .update(cx, |view, _| view.slow_context())
+        });
+        // Exactly what start_slow_tool hands the worker.
+        let result = vii_agent::slow::run(
+            "render",
+            &serde_json::json!({"path": out.to_string_lossy()}),
+            &context,
+        );
+        match result {
+            Ok(result) => {
+                let response = app.update(cx, |app, cx| app.finish_slow_tool(result, cx));
+                assert!(
+                    matches!(response, vii_agent::AgentResponse::Ok(_)),
+                    "render should succeed: {response:?}"
+                );
+                assert!(out.is_file(), "reported success but wrote no MP4");
+                assert!(
+                    std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0) > 0,
+                    "the MP4 is empty"
+                );
+            }
+            Err(message) => {
+                assert!(
+                    message.contains("ffmpeg") || message.contains("GPU"),
+                    "the only acceptable failures are a missing ffmpeg or GPU, got: {message}"
+                );
+                eprintln!("skipping: {message}");
+            }
+        }
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// A finished narration must land as commands on the main thread — audio on its lane and
+    /// captions above it — so it undoes with the same Cmd+Z as a human edit.
+    #[gpui::test]
+    fn a_finished_narration_lands_as_undoable_commands(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-narrate-apply"));
+        app.update(cx, |app, cx| {
+            app.route_agent_call(&call("project_create", serde_json::json!({})), cx);
+
+            // Stand in for the worker's output, so this tests the APPLY half without needing
+            // Kokoro installed on the machine running the suite.
+            let utterance = vii_speech::Utterance {
+                path: "/tmp/vii-fake-narration.wav".into(),
+                duration_seconds: 2.0,
+                sample_rate: 24000,
+                voice: "af_heart".into(),
+                words: vec![
+                    vii_speech::WordSpan {
+                        text: "local".into(),
+                        start: 0.0,
+                        end: 0.9,
+                    },
+                    vii_speech::WordSpan {
+                        text: "first".into(),
+                        start: 0.9,
+                        end: 2.0,
+                    },
+                ],
+            };
+            let result = vii_agent::slow::SlowResult {
+                value: serde_json::json!({"durationSeconds": 2.0}),
+                follow_up: vii_agent::slow::FollowUp::PlaceNarration {
+                    asset: Box::new(vii_core::project::MediaAsset {
+                        id: "media-1".into(),
+                        name: "narration.wav".into(),
+                        path: "/tmp/vii-fake-narration.wav".into(),
+                    }),
+                    utterance: Box::new(utterance),
+                    start: 1.0,
+                    volume: 1.0,
+                    cue_style: vii_speech::CueStyle::default(),
+                    captions: Some(vii_agent::plan::CaptionStyle::default()),
+                },
+            };
+            app.finish_slow_tool(result, cx);
+
+            let vii_agent::AgentResponse::Ok(timeline) =
+                app.route_agent_call(&call("timeline", serde_json::json!({})), cx)
+            else {
+                panic!("timeline should read back");
+            };
+            let dump = timeline.to_string();
+            assert!(
+                dump.contains("Audio"),
+                "the narration audio is missing: {dump}"
+            );
+            assert!(
+                dump.contains("caption-"),
+                "the captions are missing: {dump}"
+            );
+            // Placed where the caller asked, not at zero — cues come back relative to the
+            // utterance and must be shifted by `start`.
+            assert!(
+                dump.contains("1.0"),
+                "narration should start at 1s, not 0: {dump}"
             );
         });
     }

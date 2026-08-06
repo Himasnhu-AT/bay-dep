@@ -871,6 +871,55 @@ impl EditorView {
         });
     }
 
+    /// Everything a background job needs, copied out here on the main thread.
+    pub fn slow_context(&self) -> vii_agent::slow::SlowContext {
+        vii_agent::slow::SlowContext {
+            project: self.editor.project().clone(),
+            timeline_duration: self.editor.duration().to_seconds_f64(),
+            // Seeded past anything the editor has handed out, so a worker and the editor cannot
+            // mint the same id while the job runs.
+            next_id: (self.add_counter + 1) as usize,
+        }
+    }
+
+    /// Apply a finished background job: register its media, then run its commands as one undo
+    /// entry — so an agent's narration is undone with the same Cmd+Z as a human's edit.
+    pub fn apply_slow_result(
+        &mut self,
+        result: vii_agent::slow::SlowResult,
+        cx: &mut Context<Self>,
+    ) {
+        let applied = match vii_agent::slow::plan_follow_up(result.follow_up, self.editor.project())
+        {
+            Ok(applied) => applied,
+            Err(_) => return,
+        };
+        if let Some(project) = applied.replacement {
+            // The tool's job WAS to build a document, so it replaces rather than patches —
+            // matching what it does headlessly. The path stays as it was: this is still the
+            // same library entry the window had open.
+            let path = self.project_path.clone();
+            self.open_project(*project, path);
+            self.agent_activity = Some(("subtitles_to_video".into(), std::time::Instant::now()));
+            cx.notify();
+            return;
+        }
+        for asset in applied.media {
+            self.editor.add_media(asset);
+        }
+        if let Some(vii_agent::Planned::Tx {
+            label, commands, ..
+        }) = applied.planned
+        {
+            for command in commands {
+                self.editor.execute(command);
+            }
+            self.agent_activity = Some((label, std::time::Instant::now()));
+        }
+        self.add_counter += 1;
+        cx.notify();
+    }
+
     /// `snapshot` — render one frame to a PNG so an agent can look at what it built.
     ///
     /// On the main thread deliberately: this is a single frame, the same work the preview does

@@ -47,8 +47,13 @@ pub fn planned_tools() -> &'static [&'static str] {
         "timeline",
         "add_text",
         "add_shape",
+        "add_image",
+        "add_video",
+        "add_audio",
         "animate",
         "element_delete",
+        "subtitles_add",
+        "subtitles_export",
     ]
 }
 
@@ -83,6 +88,7 @@ pub fn available_tools() -> Vec<&'static str> {
         .chain(machine_tools())
         .chain(window_tools())
         .chain(editor_tools())
+        .chain(crate::slow::slow_tools())
         .copied()
         .collect();
     all.sort_unstable();
@@ -531,10 +537,177 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
             })
         }
 
+        "add_image" | "add_video" => {
+            let start = required_number(args, "start")?;
+            let duration = required_number(args, "duration")?;
+            if duration <= 0.0 {
+                return Err("duration must be greater than zero".into());
+            }
+            let media_id = text(args, "mediaId")
+                .ok_or_else(|| "missing required string field \"mediaId\"".to_string())?;
+            let asset = project
+                .media
+                .iter()
+                .find(|m| m.id == media_id)
+                .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+
+            let layer = number(args, "layer", 0.0).max(0.0) as usize;
+            let (track_id, mut commands) = track_for_layer(project, layer);
+            let prefix = if name == "add_image" {
+                "image"
+            } else {
+                "video"
+            };
+            let id = text(args, "id").unwrap_or_else(|| mint_id(project, prefix));
+            if find_ref(project, &id).is_some() {
+                return Err(format!("an element with id {id:?} already exists"));
+            }
+
+            let element = if name == "add_image" {
+                Element::Image(vii_project::ImageElement {
+                    id: id.clone(),
+                    name: asset.name.clone(),
+                    start: secs(start)?,
+                    duration: secs(duration)?,
+                    media_id,
+                    transform: transform_from(args),
+                    effects: Vec::new(),
+                    animations: BTreeMap::new(),
+                    blend_mode: Default::default(),
+                })
+            } else {
+                let trim_start = number(args, "trimStart", 0.0);
+                Element::Video(vii_project::VideoElement {
+                    id: id.clone(),
+                    name: asset.name.clone(),
+                    start: secs(start)?,
+                    duration: secs(duration)?,
+                    media_id,
+                    trim_start: secs(trim_start)?,
+                    trim_end: secs(trim_start + duration)?,
+                    transform: transform_from(args),
+                    effects: Vec::new(),
+                    animations: BTreeMap::new(),
+                    blend_mode: Default::default(),
+                })
+            };
+            commands.push(Command::AddElement {
+                track_id,
+                element,
+                select: false,
+            });
+            Ok(Planned::Tx {
+                label: name.to_string(),
+                commands,
+                scene_id,
+                new_ids: vec![id],
+            })
+        }
+
+        "add_audio" => {
+            let start = required_number(args, "start")?;
+            let duration = required_number(args, "duration")?;
+            if duration <= 0.0 {
+                return Err("duration must be greater than zero".into());
+            }
+            let media_id = text(args, "mediaId")
+                .ok_or_else(|| "missing required string field \"mediaId\"".to_string())?;
+            let asset = project
+                .media
+                .iter()
+                .find(|m| m.id == media_id)
+                .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+
+            let (track_id, mut commands) = audio_track(project);
+            let id = text(args, "id").unwrap_or_else(|| mint_id(project, "audio"));
+            if find_ref(project, &id).is_some() {
+                return Err(format!("an element with id {id:?} already exists"));
+            }
+            commands.push(Command::AddElement {
+                track_id,
+                element: Element::Audio(vii_project::AudioElement {
+                    id: id.clone(),
+                    name: asset.name.clone(),
+                    start: secs(start)?,
+                    duration: secs(duration)?,
+                    media_id,
+                    muted: false,
+                    volume: number(args, "volume", 1.0) as f32,
+                }),
+                select: false,
+            });
+            Ok(Planned::Tx {
+                label: "add_audio".into(),
+                commands,
+                scene_id,
+                new_ids: vec![id],
+            })
+        }
+
+        "subtitles_add" => {
+            let path = text(args, "path")
+                .ok_or_else(|| "missing required string field \"path\"".to_string())?;
+            let source = std::fs::read_to_string(&path)
+                .map_err(|error| format!("could not read {path}: {error}"))?;
+            let cues = vii_speech::parse(&source)?;
+            let offset = number(args, "offset", 0.0);
+            let cues = if offset != 0.0 {
+                vii_speech::shift(&cues, offset)
+            } else {
+                cues
+            };
+            let mut commands = Vec::new();
+            let mut new_ids = Vec::new();
+            caption_commands(
+                project,
+                &cues,
+                &caption_style_from(args),
+                &mut commands,
+                &mut new_ids,
+            )?;
+            Ok(Planned::Tx {
+                label: "subtitles_add".into(),
+                commands,
+                scene_id,
+                new_ids,
+            })
+        }
+
+        "subtitles_export" => {
+            let path = text(args, "path")
+                .ok_or_else(|| "missing required string field \"path\"".to_string())?;
+            let cues = caption_cues(project);
+            if cues.is_empty() {
+                return Err(
+                    "there are no captions on the timeline to export — add some with narrate \
+                     or subtitles_add first"
+                        .into(),
+                );
+            }
+            let format = text(args, "format").unwrap_or_else(|| {
+                if path.to_lowercase().ends_with(".vtt") {
+                    "vtt".into()
+                } else {
+                    "srt".into()
+                }
+            });
+            let body = match format.as_str() {
+                "vtt" => vii_speech::to_vtt(&cues),
+                "srt" => vii_speech::to_srt(&cues),
+                other => return Err(format!("unknown subtitle format {other:?} (srt or vtt)")),
+            };
+            std::fs::write(&path, body)
+                .map_err(|error| format!("could not write {path}: {error}"))?;
+            Ok(Planned::Read(serde_json::json!({
+                "path": path,
+                "format": format,
+                "cues": cues.len(),
+            })))
+        }
+
         other => Err(format!(
-            "{other:?} cannot run against the open editor yet — it needs the GPU or a sidecar. \
-             Close the app to use it headlessly, or use one of {:?}",
-            planned_tools()
+            "{other:?} is not a tool vii knows. Available: {:?}",
+            available_tools()
         )),
     }
 }
@@ -718,15 +891,36 @@ mod tests {
         }
     }
 
+    /// No answer may tell the user to close the editor. Rendering and narration run on a
+    /// worker now; suggesting someone quit the app to use their video editor gives up the
+    /// feature the editor exists for, and this test exists so that answer cannot come back.
     #[test]
-    fn a_tool_that_needs_the_gpu_says_so_instead_of_failing_obscurely() {
-        let error = plan(
-            "render",
-            &serde_json::json!({ "path": "/tmp/x.mp4" }),
-            &project(),
-        )
-        .expect_err("render cannot run against the attached editor yet");
-        assert!(error.contains("headlessly"), "{error}");
+    fn nothing_is_ever_refused_by_telling_the_user_to_work_headlessly() {
+        let project = project();
+        for name in available_tools() {
+            let Err(message) = plan(name, &serde_json::json!({}), &project) else {
+                continue;
+            };
+            for forbidden in ["headless", "close the app", "quit"] {
+                assert!(
+                    !message.to_lowercase().contains(forbidden),
+                    "{name} answers with {forbidden:?}: {message}"
+                );
+            }
+        }
+    }
+
+    /// The slow tools are dispatched to a worker rather than planned here, so `plan` must not
+    /// claim they are unknown — an agent reading "not a tool vii knows" would stop.
+    #[test]
+    fn the_slow_tools_are_advertised_as_available() {
+        let available = available_tools();
+        for name in crate::slow::slow_tools() {
+            assert!(
+                available.contains(name),
+                "{name} runs on the worker but is not advertised as available"
+            );
+        }
     }
 
     #[test]
@@ -743,4 +937,261 @@ mod tests {
             }
         }
     }
+}
+
+// ------------------------------------------------------------- captions and narration
+
+/// How captions are typed and placed.
+///
+/// Mirrors `vii_mcp::narration::CaptionStyle` because both paths must produce identical
+/// captions — a reel narrated with the editor open should be indistinguishable from one
+/// narrated headlessly.
+#[derive(Debug, Clone)]
+pub struct CaptionStyle {
+    pub font_size: f32,
+    pub color: String,
+    pub font_family: Option<String>,
+    pub font_weight: u16,
+    /// Top of the caption box, as a fraction of the canvas.
+    pub y: f32,
+    pub layer: usize,
+    /// Fade in/out seconds. A hard cut on every caption reads as a flicker.
+    pub fade: f64,
+}
+
+impl Default for CaptionStyle {
+    fn default() -> Self {
+        Self {
+            font_size: 46.0,
+            color: "#EDECE6".to_string(),
+            font_family: None,
+            font_weight: 600,
+            y: 0.70,
+            layer: 9,
+            fade: 0.12,
+        }
+    }
+}
+
+pub fn caption_style_from(args: &Value) -> CaptionStyle {
+    let base = CaptionStyle::default();
+    CaptionStyle {
+        font_size: number(args, "captionFontSize", base.font_size as f64) as f32,
+        color: text(args, "captionColor").unwrap_or(base.color),
+        font_family: text(args, "captionFontFamily"),
+        font_weight: number(args, "captionFontWeight", base.font_weight as f64) as u16,
+        y: number(args, "captionY", base.y as f64) as f32,
+        layer: number(args, "captionLayer", base.layer as f64).max(0.0) as usize,
+        fade: number(args, "captionFade", base.fade).max(0.0),
+    }
+}
+
+pub fn cue_style_from(args: &Value) -> vii_speech::CueStyle {
+    let base = vii_speech::CueStyle::default();
+    vii_speech::CueStyle {
+        max_words: number(args, "maxWords", base.max_words as f64).max(1.0) as usize,
+        min_seconds: number(args, "minCaptionSeconds", base.min_seconds),
+        max_seconds: number(args, "maxCaptionSeconds", base.max_seconds),
+        gap_seconds: number(args, "gapSeconds", base.gap_seconds),
+    }
+}
+
+/// The opacity channel that fades a caption in and out inside its own window.
+///
+/// Clamped to a third of the duration so a very short cue does not get a fade longer than the
+/// caption itself — which would leave it never reaching full opacity.
+fn caption_fade(fade: f64, duration: f64) -> Option<AnimationChannel> {
+    let fade = fade.min(duration / 3.0).max(0.0);
+    if fade <= 0.0 || duration <= 0.0 {
+        return None;
+    }
+    let mut keys = Vec::new();
+    for (t, value) in [
+        (0.0, 0.0f32),
+        (fade, 1.0),
+        (duration - fade, 1.0),
+        (duration, 0.0),
+    ] {
+        if let Ok(time) = secs(t) {
+            keys.push(vii_project::Keyframe { time, value });
+        }
+    }
+    Some(AnimationChannel {
+        keys,
+        easing: Easing::EaseOut,
+    })
+}
+
+/// Commands that put `cues` on the timeline as captions.
+fn caption_commands(
+    project: &Project,
+    cues: &[vii_speech::Cue],
+    style: &CaptionStyle,
+    commands: &mut Vec<Command>,
+    new_ids: &mut Vec<String>,
+) -> Result<(), String> {
+    if let Some(family) = &style.font_family
+        && !vii_text::TextRaster::new().has_family(family)
+    {
+        return Err(format!(
+            "caption font family {family:?} is not installed — call fonts_check first"
+        ));
+    }
+
+    let (track_id, mut track_commands) = track_for_layer(project, style.layer);
+    commands.append(&mut track_commands);
+
+    let mut counter = 0usize;
+    for cue in cues {
+        let id = loop {
+            counter += 1;
+            let candidate = format!("caption-{counter}");
+            if find_ref(project, &candidate).is_none() && !new_ids.contains(&candidate) {
+                break candidate;
+            }
+        };
+        let duration = cue.duration().max(0.05);
+        let mut animations = BTreeMap::new();
+        if let Some(channel) = caption_fade(style.fade, duration) {
+            animations.insert("opacity".to_string(), channel);
+        }
+        commands.push(Command::AddElement {
+            track_id: track_id.clone(),
+            element: Element::Text(TextElement {
+                id: id.clone(),
+                name: cue.text.chars().take(24).collect(),
+                start: secs(cue.start)?,
+                duration: secs(duration)?,
+                content: cue.text.clone(),
+                font_size: style.font_size,
+                color: style.color.clone(),
+                transform: Transform {
+                    x: 0.08,
+                    y: style.y,
+                    scale: 0.84,
+                    anchor_x: 0.0,
+                    anchor_y: 0.0,
+                    ..Transform::default()
+                },
+                effects: Vec::new(),
+                animations,
+                blend_mode: Default::default(),
+                font_family: style.font_family.clone(),
+                font_weight: style.font_weight,
+                align: TextAlign::Center,
+                letter_spacing: 0.0,
+                line_height: 1.2,
+            }),
+            select: false,
+        });
+        new_ids.push(id);
+    }
+    Ok(())
+}
+
+/// The audio lane, creating it if this project has none yet.
+///
+/// Returns any command needed to bring it into existence, so a caller assembling one
+/// transaction does not have to mutate first and plan second.
+fn audio_track(project: &Project) -> (String, Vec<Command>) {
+    if let Some(track) = project.active_scene().tracks.audio.first() {
+        return (track.id.clone(), Vec::new());
+    }
+    let id = "track-audio".to_string();
+    (
+        id.clone(),
+        vec![Command::AddTrack {
+            lane: TrackLane::Audio,
+            id,
+            name: "Audio".to_string(),
+        }],
+    )
+}
+
+/// Cues placed as captions, as one transaction.
+pub fn plan_captions(
+    project: &Project,
+    cues: &[vii_speech::Cue],
+    style: &CaptionStyle,
+) -> Result<Planned, String> {
+    let mut commands = Vec::new();
+    let mut new_ids = Vec::new();
+    caption_commands(project, cues, style, &mut commands, &mut new_ids)?;
+    Ok(Planned::Tx {
+        label: "captions".into(),
+        commands,
+        scene_id: project.active_scene().id.clone(),
+        new_ids,
+    })
+}
+
+/// A finished narration: its audio on the audio lane, and its captions above.
+///
+/// Media registration is NOT a command — `Editor::add_media` is a registry, not undo history —
+/// so the asset comes back separately for the applier to register before the transaction runs.
+pub fn place_narration(
+    project: &Project,
+    asset: vii_project::MediaAsset,
+    utterance: &vii_speech::Utterance,
+    start: f64,
+    volume: f32,
+    cue_style: &vii_speech::CueStyle,
+    captions: Option<CaptionStyle>,
+) -> Result<Planned, String> {
+    let media_id = asset.id.clone();
+    let (audio_track_id, mut commands) = audio_track(project);
+    let mut new_ids = Vec::new();
+
+    let audio_id = mint_id(project, "audio");
+    commands.push(Command::AddElement {
+        track_id: audio_track_id,
+        element: Element::Audio(vii_project::AudioElement {
+            id: audio_id.clone(),
+            name: "narration".into(),
+            start: secs(start)?,
+            duration: secs(utterance.duration_seconds)?,
+            media_id,
+            muted: false,
+            volume,
+        }),
+        select: false,
+    });
+    new_ids.push(audio_id);
+
+    if let Some(style) = captions {
+        // Shifted to where the audio actually starts: word timings come back relative to the
+        // utterance, so captions that ignore `start` drift by exactly that much.
+        let cues = vii_speech::shift(&utterance.cues(cue_style), start);
+        caption_commands(project, &cues, &style, &mut commands, &mut new_ids)?;
+    }
+
+    Ok(Planned::Tx {
+        label: "narrate".into(),
+        commands,
+        scene_id: project.active_scene().id.clone(),
+        new_ids,
+    })
+}
+
+/// Every caption currently on the timeline, earliest first.
+///
+/// Identified by the `caption-` id prefix, the same convention the headless path uses — so a
+/// subtitle file exported from the editor matches one exported headlessly.
+fn caption_cues(project: &Project) -> Vec<vii_speech::Cue> {
+    let mut cues: Vec<vii_speech::Cue> = project
+        .active_scene()
+        .tracks
+        .iter()
+        .flat_map(|track| track.elements.iter())
+        .filter_map(|element| match element {
+            Element::Text(text) if text.id.starts_with("caption-") => Some(vii_speech::Cue {
+                start: text.start.to_seconds_f64(),
+                end: (text.start + text.duration).to_seconds_f64(),
+                text: text.content.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    cues.sort_by(|a, b| a.start.total_cmp(&b.start));
+    cues
 }

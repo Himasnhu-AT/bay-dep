@@ -128,28 +128,13 @@ bound port is the lock; liveness is decided by trying to bind it, not by pid —
 recycled, a free port cannot lie, so a killed window never locks the next launch out.
 `vii --agents` says what is open.
 
-**The bridge serves 13 of the server's 22 tools.** With the app open:
-
-```
-project_create  project_list  project_load  project_info  timeline  project_save
-add_text  add_shape  animate  element_delete  snapshot  fonts_check  speech_status
-```
-
-`snapshot` is included because it is one frame — the same work the preview does on every
-playhead move — and the whole authoring discipline rests on looking at rendered frames.
+**The bridge serves all 22 tools with the window open.** `render`, `narrate`, `media_import`
+and `subtitles_to_video` run on GPUI's background executor with their own wgpu device; what
+they produce comes back as `Command`s applied on the main thread, so an agent's narration
+undoes with the same Cmd+Z as a human edit. Nothing suggests closing the app.
 
 **Still open:**
 
-- **Stage 2 — slow tools.** Nine tools are still refused while the app is open: `render`,
-  `narrate`, `media_import`, `add_image`, `add_video`, `add_audio`, `subtitles_add`,
-  `subtitles_export`, `subtitles_to_video`. `render` and `narrate` take seconds to minutes and
-  would freeze the editor; the media tools shell out to ffprobe and then need decode. They
-  need an export worker thread with its own wgpu device, progress and cancel. Until then:
-  close the app and run them headlessly.
-
-  A refusal now lists what *does* work, so an agent can route around it instead of stopping —
-  but an agent asked for a narrated reel still cannot finish one with the window open, which
-  is the gap that matters most.
 - **Stage 3 — conflict.** No leases yet. If you are dragging a clip and the agent edits the
   same one, last write wins with no "keep mine / use the agent's" card.
 - **Multiple windows.** Deliberately not supported yet. When it matters, the shape is: each

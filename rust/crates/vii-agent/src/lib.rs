@@ -22,8 +22,9 @@
 //! arrow pointing one way — `vii-ui` and `vii-mcp` both depend on this, and never on each
 //! other.
 
-mod plan;
+pub mod plan;
 pub mod registry;
+pub mod slow;
 
 pub use plan::{
     Planned, available_tools, editor_tools, machine_tools, plan, plan_without_document,

@@ -8,6 +8,7 @@ description = "The bridge an AI agent's edits cross to reach the live editor: pu
 vii-paths = { path = "../vii-paths" }
 vii-core = { path = "../vii-core" }
 vii-speech = { path = "../vii-speech" }
+vii-preview = { path = "../vii-preview" }
 vii-project = { path = "../vii-project" }
 vii-text = { path = "../vii-text" }
 vii-time = { path = "../vii-time" }

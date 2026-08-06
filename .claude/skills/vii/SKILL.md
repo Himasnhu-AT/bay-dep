@@ -27,27 +27,16 @@ cd <vii-repo>/rust && cargo build --release -p vii-desktop
 claude mcp add --transport http vii http://127.0.0.1:7333/mcp
 ```
 
-**Two ways to serve, same port — but NOT the same tools.**
+**Two ways to serve, same port, same 22 tools.**
 
-- **`vii --mcp`** — no window, **all 22 tools**. This is what you want for making a video end
-  to end, because `render` and `narrate` only exist here.
-- **`vii` (the editor)** — the window serves agents on 7333 too, so your edits land in the
-  timeline the user is watching and undo with the same keystroke as theirs. **13 of 22 tools**:
+- **`vii` (the editor)** — the window serves agents on 7333, so your edits land in the timeline
+  the user is watching and undo with the same keystroke as theirs.
+- **`vii --mcp`** — no window. For a machine with no display, or a batch job nobody is watching.
 
-  ```
-  project_create  project_list  project_load  project_info  timeline  project_save
-  add_text  add_shape  animate  element_delete  snapshot  fonts_check  speech_status
-  ```
-
-  Missing: `render`, `narrate`, `media_import`, `add_image`, `add_video`, `add_audio`, and the
-  three `subtitles_*` tools. They are slow — seconds to minutes — and the bridge applies calls
-  on the UI thread, so running them there would freeze the editor mid-edit. A refusal lists
-  what does work.
-
-**If the request needs narration or an MP4 and the editor is open, say so before you start.**
-Offer to build what you can in the window (layout, type, shapes, animation, snapshots) and
-render after they close it — or to work headlessly from the start. Discovering it at the
-`render` call, after twenty tool calls, wastes their time.
+**Never tell someone to quit vii to finish their video.** Rendering and narration run on a
+worker thread, so they work with the window open; the editor keeps drawing while an MP4
+encodes. If a tool ever answers with "close the app", that is a bug — report it rather than
+passing it on.
 
 They cannot both hold 7333, deliberately: an agent edits *a* document, and the value of
 watching it happen depends on there being no ambiguity about which one.

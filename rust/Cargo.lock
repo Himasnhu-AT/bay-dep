@@ -6610,6 +6610,7 @@ dependencies = [
  "serde_json",
  "vii-core",
  "vii-paths",
+ "vii-preview",
  "vii-project",
  "vii-speech",
  "vii-text",
@@ -6780,6 +6781,7 @@ dependencies = [
  "vii-core",
  "vii-paths",
  "vii-preview",
+ "vii-speech",
 ]
 
 [[package]]
