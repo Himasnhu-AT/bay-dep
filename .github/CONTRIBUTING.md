@@ -1,198 +1,69 @@
 # Contributing to vii
 
-⚠️ We are currently NOT accepting feature PRs while we build out the core editor.
+vii is a native macOS video editor written in Rust, plus the same engine exposed as an MCP
+server. There is no web app and no JavaScript.
 
-If you want to contribute:
+## Getting set up
 
-1. Open an issue first to discuss
-2. Wait for maintainer approval
-3. Only then start coding
+```bash
+./build.sh        # desktop app + MCP server, and provisions the speech sidecar
+./run.sh          # launch the editor (RELEASE=1 for smooth playback)
+./test.sh         # fmt --check, clippy -D warnings, and the test suite
+```
 
-Critical bug fixes may be accepted on a case-by-case basis.
+You need Rust (stable) and `ffmpeg` on `PATH`. A GPU is needed for the compositor; without one
+vii still runs and says so. `uv` is optional and only used to provision the Kokoro speech
+sidecar.
 
-Thank you for your interest in contributing to vii! This document provides guidelines and instructions for contributing.
+**Run `./test.sh` before opening a PR.** Clippy runs with `-D warnings`, so a warning is a
+failure.
 
-## Getting Started
+## The one architectural rule
 
-### Prerequisites
+**`rust/` owns all non-UI logic; a UI shell owns rendering, interaction and platform concerns
+but never owns logic.**
 
-- [Node.js](https://nodejs.org/en/) (v18 or later)
-- [Bun](https://bun.sh/docs/installation)
-  (for `npm` alternative)
-- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- Rust toolchain (only needed for `rust/desktop`)
+If the MCP server or a test cannot reach a piece of behaviour, it is in the wrong crate. That
+rule is why one engine drives the desktop app and the agent surface without the logic being
+written twice.
 
-> **Note:** Docker is optional, but it's essential for running the local database and Redis services. If you're planning to contribute to frontend features, you can skip the Docker setup. If you have followed the steps below in [Setup](#setup), you're all set to go!
+Read [`CLAUDE.md`](../CLAUDE.md) for the conventions that follow from it — decode never runs on
+the render path, cache budgets are global rather than per clip, the render path cannot panic on
+bad input, and missing GPU or ffmpeg degrades with a message rather than failing silently.
 
-### Setup
+## Where things live
 
-1. Fork the repository
-2. Clone your fork locally
-3. Navigate to the web app directory: `cd dep/apps/web`
-4. Copy `.env.example` to `.env.local`:
+| | |
+|---|---|
+| `rust/crates/vii-core` | editor model — `Command` → reversible `ProjectPatch` |
+| `rust/crates/vii-project` | the project format |
+| `rust/crates/vii-preview` | preview rendering, decode planning, caching |
+| `rust/crates/vii-compositor`, `vii-gpu`, `vii-effects`, `vii-masks` | the wgpu render path |
+| `rust/crates/vii-ui` | the GPUI shell |
+| `rust/crates/vii-mcp`, `vii-agent` | the agent surface |
+| `docs/native/` | design notes and guides |
+| `todo.md` | what is planned, sized, and why |
 
-   ```bash
-   # Unix/Linux/Mac
-   cp .env.example .env.local
+## Tests
 
-   # Windows Command Prompt
-   copy .env.example .env.local
+Tests that need a GPU or ffmpeg **skip** when the capability is absent, so a laptop without one
+still reports green honestly. `VII_REQUIRE_GPU=1` and `VII_REQUIRE_FFMPEG=1` turn a skip into a
+failure — use them when you want to be sure a test actually ran.
 
-   # Windows PowerShell
-   Copy-Item .env.example .env.local
-   ```
+A test that asserts nothing because its capability was missing is worse than no test, so if you
+add one, check it fails when the behaviour it covers is broken.
 
-5. Install dependencies: `bun install`
-6. Start the development server: `bun run dev`
+## Builds
 
-> **Note:** Web development uses the published `vii-wasm` package by default, so a fresh clone does not need a local WASM build.
->
-> If you are editing `rust/wasm`, run `bun run build:wasm`, then `cd rust/wasm/pkg && bun link`, then `cd ../../../dep/apps/web && bun link vii-wasm`.
+macOS is built locally; Windows is the only target that needs a runner, because gpui's build
+script compiles its HLSL shaders only when the *host* is Windows.
 
-### Desktop setup
+```bash
+./script/bundle-mac --dmg    # universal .app and a .dmg
+./script/build-windows       # trigger the runner, wait, unpack into dist/windows
+```
 
-Only needed if you're working on `rust/desktop`. See [`rust/desktop/README.md`](../rust/desktop/README.md) — it's a two-step process: Rust toolchain first via `script/setup-rust`, then desktop native dependencies via `rust/desktop/script/setup`.
+## Pull requests
 
-## What to Focus On
-
-**🎯 Good Areas to Contribute:**
-
-- Timeline functionality and UI improvements
-- Project management features
-- Performance optimizations
-- Bug fixes in existing functionality
-- UI/UX improvements
-- Documentation and testing
-
-**⚠️ Areas to Avoid:**
-
-- Preview panel enhancements (text fonts, stickers, effects)
-- Export functionality improvements
-- Preview rendering optimizations
-
-**Why?** We're currently planning a major refactor of the preview system. The current preview renders DOM elements (HTML), but we're moving to a binary rendering approach similar to CapCut. This new system will ensure consistency between preview and export, and provide much better performance and quality.
-
-The current HTML-based preview is essentially a prototype - the binary approach will be the "real deal." To avoid wasted effort, please focus on other areas of the application until this refactor is complete.
-
-If you're unsure whether your idea falls into the preview category, feel free to ask us [directly in discord](https://discord.gg/zmR9N35cjK) or create a GitHub issue!
-
-## Development Setup
-
-### Local Development
-
-1. Start the database and Redis services:
-
-   ```bash
-   # From project root
-   docker-compose up -d
-   ```
-
-2. Navigate to the web app directory:
-
-   ```bash
-   cd dep/apps/web
-   ```
-
-3. Copy `.env.example` to `.env.local`:
-
-   ```bash
-   # Unix/Linux/Mac
-   cp .env.example .env.local
-
-   # Windows Command Prompt
-   copy .env.example .env.local
-
-   # Windows PowerShell
-   Copy-Item .env.example .env.local
-   ```
-
-4. Configure required environment variables in `.env.local`:
-
-   **Required Variables:**
-
-   ```bash
-   # Database (matches docker-compose.yaml)
-   DATABASE_URL="postgresql://vii:vii@localhost:5432/vii"
-
-   # Generate a secure secret for Better Auth
-   BETTER_AUTH_SECRET="your-generated-secret-here"
-   NEXT_PUBLIC_SITE_URL="http://localhost:3000"
-
-   # Redis (matches docker-compose.yaml)
-   UPSTASH_REDIS_REST_URL="http://localhost:8079"
-   UPSTASH_REDIS_REST_TOKEN="example_token"
-
-   # Development
-   NODE_ENV="development"
-   ```
-
-   **Generate BETTER_AUTH_SECRET:**
-
-   ```bash
-   # Unix/Linux/Mac
-   openssl rand -base64 32
-
-   # Windows PowerShell (simple method)
-   [System.Web.Security.Membership]::GeneratePassword(32, 0)
-
-   # Cross-platform (using Node.js)
-   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-
-   # Or use an online generator: https://generate-secret.vercel.app/32
-   ```
-
-5. Run database migrations: `bun run db:migrate`
-6. Start the development server: `bun run dev`
-
-### Desktop
-
-Working on `rust/desktop`? See [`rust/desktop/README.md`](../rust/desktop/README.md) for setup. Web-only contributors can ignore this entirely.
-
-## How to Contribute
-
-### Reporting Bugs
-
-- Use the bug report template
-- Include steps to reproduce
-- Provide screenshots if applicable
-
-### Suggesting Features
-
-- Use the feature request template
-- Explain the use case
-- Consider implementation details
-
-### Code Contributions
-
-1. Create a new branch: `git checkout -b feature/your-feature-name`
-2. Make your changes
-3. Run the relevant checks for the area you touched:
-
-   - Web changes: from `dep/apps/web`, run `bun run lint` and `bun run format`
-   - Desktop changes: run `./rust/desktop/script/setup` if your environment isn't set up yet
-
-4. Commit your changes with a descriptive message
-5. Push to your fork and create a pull request
-
-## Code Style
-
-- We use ESLint for linting and Prettier for formatting
-- Run `bun run format` from the `dep/apps/web` directory to format code
-- Run `bun run lint` from the `dep/apps/web` directory to check for linting issues
-- Follow the existing code patterns
-
-## Pull Request Process
-
-1. Fill out the pull request template completely
-2. Link any related issues
-3. Ensure CI passes
-4. Request review from maintainers
-5. Address any feedback
-
-## Community
-
-- Be respectful and inclusive
-- Follow our Code of Conduct
-- Help others in discussions and issues
-
-Thank you for contributing!
+Say what changed and why. If you fixed something, say what would have gone wrong without the
+fix — a commit that explains the failure is worth more than one that explains the diff.
