@@ -103,27 +103,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Entitlements: the JIT/unsigned-memory pair is what GPUI's renderer needs, and vii spawns
-# ffmpeg and the Python speech sidecar as child processes.
-cat > "$OUT/vii.entitlements" <<'ENT'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>com.apple.security.cs.allow-jit</key><true/>
-  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
-  <key>com.apple.security.cs.disable-library-validation</key><true/>
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
-  <key>com.apple.security.automation.apple-events</key><true/>
-</dict>
-</plist>
-ENT
+# Entitlements live in resources/, not here: a security declaration generated at build time
+# is invisible in review. See that file for why each key is present.
+ENTITLEMENTS="$ROOT/resources/vii.entitlements"
+[ -f "$ENTITLEMENTS" ] || { echo "missing $ENTITLEMENTS" >&2; exit 1; }
+# Checked now rather than at the signing step: codesign rejects a malformed plist with a
+# generic error, after the build has already run.
+plutil -lint "$ENTITLEMENTS" >/dev/null || { echo "$ENTITLEMENTS is not a valid plist" >&2; exit 1; }
 
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   echo "── signing as $MACOS_SIGN_IDENTITY ──"
   # --options runtime is required for notarization; without it the upload is rejected.
   codesign --deep --force --timestamp --options runtime \
-    --entitlements "$OUT/vii.entitlements" \
+    --entitlements "$ENTITLEMENTS" \
     --sign "$MACOS_SIGN_IDENTITY" "$APP" -v
   codesign --verify --deep --strict --verbose=2 "$APP"
 else
@@ -159,3 +151,6 @@ fi
 
 echo
 echo "Run it:  open $APP"
+if [ "$MAKE_DMG" = "1" ]; then
+  echo "Ship it: $DMG  (the .app above is the same build, for running here)"
+fi
