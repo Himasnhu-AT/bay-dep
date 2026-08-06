@@ -95,7 +95,29 @@ fn main() {
                 vii_mcp::server::serve_http(port, None)
             };
             if let Err(error) = result {
-                eprintln!("vii: {error}");
+                // Now that the editor and the server are one binary, the overwhelmingly likely
+                // cause is that the editor is already open holding this port — and a bare
+                // "Address already in use (os error 48)" sends you hunting for a rogue process
+                // instead of the window on your screen.
+                if error.kind() == std::io::ErrorKind::AddrInUse {
+                    eprintln!("vii: port {port} is already in use.");
+                    match vii_agent::registry::live().first() {
+                        Some(existing) => eprintln!(
+                            "     A vii window is open and already serving agents there:\n\
+                             \x20      http://127.0.0.1:{}/mcp\n\
+                             \x20    Use that, or start this one on another port:\n\
+                             \x20      vii --mcp --port 0",
+                            existing.port
+                        ),
+                        None => eprintln!(
+                            "     Nothing registered as a vii window, so something else holds it.\n\
+                             \x20    Start on another port:\n\
+                             \x20      vii --mcp --port 0"
+                        ),
+                    }
+                } else {
+                    eprintln!("vii: {error}");
+                }
                 std::process::exit(1);
             }
             return;
