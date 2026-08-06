@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DATABASE_URL: "postgresql://opencut:opencut@localhost:5432/opencut"
+      DATABASE_URL: "postgresql://vii:vii@localhost:5432/vii"
       BETTER_AUTH_SECRET: "supersecret"
       NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
       UPSTASH_REDIS_REST_URL: "https://your-upstash-redis-url"
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # The workspace overrides opencut-wasm to the locally-built pkg, so the Rust
+      # The workspace overrides vii-wasm to the locally-built pkg, so the Rust
       # core must be compiled before `pnpm install`.
       - name: Install Rust wasm target
         run: rustup target add wasm32-unknown-unknown
@@ -70,11 +70,11 @@ jobs:
         working-directory: dep
 
       - name: Test
-        run: pnpm --filter @opencut/web test
+        run: pnpm --filter @vii/web test
         working-directory: dep
 
       - name: Build
-        run: pnpm --filter @opencut/web build
+        run: pnpm --filter @vii/web build
         working-directory: dep
 
   # The native editor's home platform: Metal and the ffmpeg CLI are both really present, so
@@ -99,7 +99,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # opencut-audio and opencut-preview shell out to `ffmpeg`; nothing links against it.
+      # vii-audio and vii-preview shell out to `ffmpeg`; nothing links against it.
       - name: Install ffmpeg
         run: brew install ffmpeg
 
@@ -130,7 +130,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # GPUI (opencut-ui) and rodio need these to build at all on Linux; they say nothing
+      # GPUI (vii-ui) and rodio need these to build at all on Linux; they say nothing
       # about what the tests can actually exercise here.
       - name: Install build dependencies
         run: |

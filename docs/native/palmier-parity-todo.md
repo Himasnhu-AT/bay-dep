@@ -101,13 +101,13 @@ outputs.
 
 - **Files:** new `rust/crates/gpu/src/test_support.rs` (or a small shared `rust/crates/test-support`
   crate), used from `rust/crates/compositor/tests/native_gpu.rs`,
-  `rust/crates/opencut-preview/tests/render.rs`, `rust/crates/opencut-audio/tests/*.rs`
+  `rust/crates/vii-preview/tests/render.rs`, `rust/crates/vii-audio/tests/*.rs`
 - **Do:**
   - Add `require_gpu() -> Option<GpuContext>` and `require_ffmpeg() -> bool`: if the capability is
     missing **and** `VII_REQUIRE_GPU` / `VII_REQUIRE_FFMPEG` is set, `panic!` with the reason;
     otherwise `eprintln!("skipping: …")` and return `None`.
   - Replace every existing `let Some(ctx) = try_context() else { … return }` with the helper.
-  - Add `#[test] fn capability_report()` in `compositor`, `opencut-preview` and `opencut-audio`
+  - Add `#[test] fn capability_report()` in `compositor`, `vii-preview` and `vii-audio`
     printing adapter name + backend and `ffmpeg -version`.
 - **Tests:** the helper itself; plus every migrated test still passes locally.
 - **Done when:** running the suite with `VII_REQUIRE_GPU=1` on a machine with the GPU disabled
@@ -135,8 +135,8 @@ outputs.
 
 ### [ ] T-004 — Theme token layer
 
-- **Files:** new `rust/crates/opencut-ui/src/theme/{mod.rs, palette.rs, tokens.rs, clip.rs}`,
-  replacing `rust/crates/opencut-ui/src/theme.rs`
+- **Files:** new `rust/crates/vii-ui/src/theme/{mod.rs, palette.rs, tokens.rs, clip.rs}`,
+  replacing `rust/crates/vii-ui/src/theme.rs`
 - **Do:**
   - `struct Colors` with the ~40 semantic roles from the visual system (surfaces `bg_app`/
     `bg_panel`/`bg_sunken`/`bg_raised`/`bg_elevated`; borders subtle/default/strong; text
@@ -150,18 +150,18 @@ outputs.
   - `ClipPalette::for_kind(ClipKind) -> ClipColors` deriving body/selected/waveform from one seed
     rail hue by formula. Delete `element_color(kind_label: &str)`; key off a `ClipKind` enum.
   - Delete `hex_to_rgb`'s silent grey fallback; return `Result`.
-- **Tests:** `rust/crates/opencut-ui/src/theme/tests.rs` —
+- **Tests:** `rust/crates/vii-ui/src/theme/tests.rs` —
   (a) `contrast()`: a declared table of (fg, bg, min_ratio) triples, ≥4.5:1 for text roles and
   ≥3:1 for focus/indicator roles, asserted for both appearances;
   (b) `role_parity()`: `dark()` and `light()` produce structurally identical role sets;
   (c) clip-palette derivation keeps label contrast ≥4.5:1 for any seed clamped to L∈[0.50,0.70],
   S∈[0.10,0.80].
-- **Done when:** `cargo test -p opencut-ui theme` passes and `theme.rs` no longer exists.
+- **Done when:** `cargo test -p vii-ui theme` passes and `theme.rs` no longer exists.
 
 ### [ ] T-005 — Migrate `editor_view.rs` to tokens and lock it with a lint test
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`, new
-  `rust/crates/opencut-ui/tests/no_raw_style_literals.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`, new
+  `rust/crates/vii-ui/tests/no_raw_style_literals.rs`
 - **Do:**
   - Mechanical sweep: every `rgb(0x…)` / `rgba(0x…)` becomes `cx.theme()` role lookup. Bind
     `let t = cx.theme().clone();` at the top of each render fn rather than holding a borrow.
@@ -178,7 +178,7 @@ outputs.
 
 ### [ ] T-006 — `ui/` primitive layer
 
-- **Files:** new `rust/crates/opencut-ui/src/ui/{mod.rs, button.rs, row.rs, panel.rs, badge.rs, tooltip.rs, segmented.rs, toggle.rs}`
+- **Files:** new `rust/crates/vii-ui/src/ui/{mod.rs, button.rs, row.rs, panel.rs, badge.rs, tooltip.rs, segmented.rs, toggle.rs}`
 - **Do:**
   - `button` variants: primary (`accent_fill` + white, at most one per dialog), secondary
     (`bg_raised` + border), **ghost** (transparent, the default for toolbars), danger, toggle-on
@@ -197,8 +197,8 @@ outputs.
 
 ### [ ] T-007 — Icons: embedded Lucide SVGs
 
-- **Files:** new `rust/crates/opencut-ui/assets/icons/*.svg`, new
-  `rust/crates/opencut-ui/src/ui/icon.rs`, `rust/crates/opencut-ui/src/lib.rs`
+- **Files:** new `rust/crates/vii-ui/assets/icons/*.svg`, new
+  `rust/crates/vii-ui/src/ui/icon.rs`, `rust/crates/vii-ui/src/lib.rs`
 - **Do:**
   - Add a `rust-embed`-backed `AssetSource`, wired with `Application::new().with_assets(...)`.
   - Bundle the Lucide set we need, rewritten to `stroke-width="1.75"`. Hand-draw the ~12
@@ -214,8 +214,8 @@ outputs.
 
 ### [ ] T-008 — `geometry.rs`: the one owner of px ↔ ticks ↔ frames
 
-- **Files:** new `rust/crates/opencut-ui/src/geometry.rs` (GPUI-free), used from
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** new `rust/crates/vii-ui/src/geometry.rs` (GPUI-free), used from
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - `ticks_to_px`, `px_to_ticks`, `quantize_to_frame(MediaTime, Fps)`, `frame_of`,
     `visible_window(scroll, pps, width) -> Range<MediaTime>`, `tick_ladder(pps) -> (major, minor, labels)`,
@@ -235,8 +235,8 @@ outputs.
 
 ### [ ] T-009 — Notifications: status bar + toast stack
 
-- **Files:** new `rust/crates/opencut-ui/src/notifications.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** new `rust/crates/vii-ui/src/notifications.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - `Notifications { toasts: Vec<Toast>, jobs: Vec<Job> }` on `EditorView`, one `fn notify(&mut self, Toast)`
     entry point, one `fn job(&mut self, Job)`.
@@ -254,8 +254,8 @@ outputs.
 
 ### [ ] T-010 — One command table driving keymap, menus, tooltips and help
 
-- **Files:** new `rust/crates/opencut-ui/src/actions.rs`, `rust/crates/opencut-ui/src/lib.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs` (replaces `key_bindings()`)
+- **Files:** new `rust/crates/vii-ui/src/actions.rs`, `rust/crates/vii-ui/src/lib.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs` (replaces `key_bindings()`)
 - **Do:**
   - `pub const ACTIONS: &[ActionDef]` with `{ id, label, group, chord, key_context, description }`.
     One loop produces `Vec<KeyBinding>`; the same slice renders the shortcuts help grid and feeds
@@ -272,7 +272,7 @@ outputs.
   - Two deliberate breaks, both recorded in the doc's "changed" section: `s` stops being Split and
     becomes Toggle Snapping (Split moves to Cmd-K); arrows step one **frame**, not one second.
   - Reserve for the menu bar and do **not** bind as `KeyBinding`s: ⌘N ⌘O ⌘S ⇧⌘S ⌘I ⌘E ⌘, ⌘W ⌘Q.
-- **Tests:** `rust/crates/opencut-ui/tests/actions.rs` — no duplicate chord within a `key_context`;
+- **Tests:** `rust/crates/vii-ui/tests/actions.rs` — no duplicate chord within a `key_context`;
   every action has a non-empty label and group; the table serializes to
   `dep/fixtures/golden/native/keybindings/default.json` and matches (drift guard, mirroring the
   existing `dep/fixtures/golden/keybindings/default.json` on the web side).
@@ -280,7 +280,7 @@ outputs.
 
 ### [ ] T-011 — Native macOS menu bar
 
-- **Files:** `rust/crates/opencut-ui/src/lib.rs`, `rust/desktop/src/main.rs`
+- **Files:** `rust/crates/vii-ui/src/lib.rs`, `rust/desktop/src/main.rs`
 - **Do:**
   - `cx.set_menus(vec![Menu{..}])` at app start for: vii / File / Edit / Clip / Sequence / View /
     Window / Help, built from `ACTIONS`' `menu_path`.
@@ -296,7 +296,7 @@ outputs.
 
 ### [ ] T-012 — `TextField`: the one real text input
 
-- **Files:** new `rust/crates/opencut-ui/src/ui/text_field.rs`
+- **Files:** new `rust/crates/vii-ui/src/ui/text_field.rs`
 - **Do:**
   - Adapt gpui's `examples/input.rs` (~250 lines of ours): `EntityInputHandler` on the entity plus
     `window.handle_input(&focus_handle, ElementInputHandler::new(bounds, entity), cx)` during
@@ -317,24 +317,24 @@ outputs.
 
 ### [ ] T-013 — Extract `scene_to_frame.rs` (GPU-free scene → `FrameDescriptor`)
 
-- **Files:** new `rust/crates/opencut-preview/src/scene_to_frame.rs`,
-  `rust/crates/opencut-preview/src/lib.rs`
+- **Files:** new `rust/crates/vii-preview/src/scene_to_frame.rs`,
+  `rust/crates/vii-preview/src/lib.rs`
 - **Do:**
   - Split descriptor building away from texture upload and decode: `fn scene_to_frame(&Scene, playhead, &ProjectSettings, &MediaIndex) -> FrameDescriptor`,
     where `FrameDescriptor` is a `Serialize` list of layers (id, kind, rect, opacity, blend, mask
     flag, ordered effect passes with resolved params, z-index) plus the canvas and background.
   - No GPU, no ffmpeg, no decode in this module.
   - `PreviewRenderer::render` becomes: build descriptor → resolve textures → composite.
-- **Tests:** the existing 7 tests in `rust/crates/opencut-preview/tests/render.rs` must be green
+- **Tests:** the existing 7 tests in `rust/crates/vii-preview/tests/render.rs` must be green
   before and after, unchanged.
 - **Done when:** `scene_to_frame` is callable with no `GpuContext` and no ffmpeg binary present.
 - **Sequencing note:** its own commit. Every descriptor golden in M3/M4 depends on it.
 
 ### [ ] T-014 — Golden harness: descriptor goldens + the two-part pixel metric
 
-- **Files:** new `rust/crates/opencut-preview/tests/golden_descriptor.rs`, new
-  `rust/crates/opencut-preview/tests/golden_frames.rs`, new
-  `rust/crates/opencut-preview/src/test_golden.rs`, `dep/fixtures/golden/native/`
+- **Files:** new `rust/crates/vii-preview/tests/golden_descriptor.rs`, new
+  `rust/crates/vii-preview/tests/golden_frames.rs`, new
+  `rust/crates/vii-preview/src/test_golden.rs`, `dep/fixtures/golden/native/`
 - **Do:**
   - **Tier C (default, no GPU):** serialize `FrameDescriptor` to
     `dep/fixtures/golden/native/descriptor/<case>.json`, assert byte-equality. Seed 6–8 curated scenes
@@ -346,7 +346,7 @@ outputs.
     write `target/frame-diffs/<case>.{actual,expected,diff}.png` and print the paths.
   - Each pixel golden gets a sidecar `<case>.json` recording `{adapter, backend, driver, wgpu_version, canvas, playhead_ticks}`;
     on an unrecognised adapter, log-and-skip rather than fail.
-  - Regeneration: `CAPTURE_GOLDEN=1 cargo test -p opencut-preview --test golden_frames`, matching
+  - Regeneration: `CAPTURE_GOLDEN=1 cargo test -p vii-preview --test golden_frames`, matching
     the convention already in `dep/fixtures/golden/README.md`.
   - Thresholds live as named `const`s in one module with a comment stating what each buys; changing
     one must be its own commit.
@@ -357,16 +357,16 @@ outputs.
 
 ### [ ] T-015 — `assert_timeline_valid` + the proptest scaffolding
 
-- **Files:** new `rust/crates/opencut-core/src/invariants.rs`, new
-  `rust/crates/opencut-core/tests/invariants.rs`; split
-  `rust/crates/opencut-core/tests/editor.rs` (592 lines, 23 tests) into
+- **Files:** new `rust/crates/vii-core/src/invariants.rs`, new
+  `rust/crates/vii-core/tests/invariants.rs`; split
+  `rust/crates/vii-core/tests/editor.rs` (592 lines, 23 tests) into
   `editor.rs` + `transactions.rs` + `invariants.rs`
 - **Do:**
   - `assert_timeline_valid(&Scene)`: no overlapping elements within a track; every duration > 0;
     `trim_start < trim_end` and both inside the media's source bounds (skip until M3 lands trims);
     every `start >= 0`; no duplicate element ids across tracks; keyframe times within
     `[0, duration]`.
-  - Add `proptest` as a dev-dependency of `opencut-core`. Build a **state-aware** generator: each
+  - Add `proptest` as a dev-dependency of `vii-core`. Build a **state-aware** generator: each
     command is constructed from live state (a real element ref, a real track, a start inside the
     timeline), never from thin air.
   - Harness floor: assert ≥60% of generated commands returned `true` from `execute`, so a
@@ -378,8 +378,8 @@ outputs.
 
 ### [ ] T-016 — The interaction reducer seam
 
-- **Files:** new `rust/crates/opencut-ui/src/interaction/mod.rs` (no `use gpui` anywhere),
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** new `rust/crates/vii-ui/src/interaction/mod.rs` (no `use gpui` anywhere),
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - `enum PointerEvent { Down{x,y,mods}, Move{x,y,mods}, Up{x,y,mods}, Key(Key), Cancel }` and
     `enum Outcome { None, Preview(PreviewState), Commit(Vec<Command>), Cancelled }`, with
@@ -388,7 +388,7 @@ outputs.
     reference or `WeakEntity` back into the view.
   - One `fn apply_outcome(&mut self, Outcome, cx)` (~15 lines) in the view is the only place a
     gesture touches GPUI; every `on_mouse_*`/`on_key_down` handler becomes translate-then-match.
-- **Tests:** new `rust/crates/opencut-ui/tests/no_logic_in_views.rs` — grep `editor_view.rs` for a
+- **Tests:** new `rust/crates/vii-ui/tests/no_logic_in_views.rs` — grep `editor_view.rs` for a
   deny-list (`fn .*_headroom`, `snap`, `ripple`, `overwrite`, `.clamp(` on tick math) and assert
   zero hits; grep `interaction/` for `use gpui` and assert zero hits.
 - **Done when:** the seam compiles with a trivial no-op reducer and the two grep tests pass. First
@@ -403,21 +403,21 @@ M2–M14 changes the model — which is exactly what the schema version protects
 
 ### [ ] T-101 — `Editor::transaction(name, |tx| …)` → exactly one history entry
 
-- **Files:** `rust/crates/opencut-core/src/editor.rs` (execute/apply_lowered ~L129-138),
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-core/src/editor.rs` (execute/apply_lowered ~L129-138),
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - Add a `Transaction` handle that collects N `ProjectPatch`es into one `Lowered.forward` and one
     reversed `backward`.
   - `Editor::transaction(name: &str, f: impl FnOnce(&mut Transaction))` pushes exactly one entry.
   - Patches must be reverted in **reverse** order; assert that explicitly in the undo path.
-- **Tests:** `rust/crates/opencut-core/tests/transactions.rs` — a 3-element move inside one
+- **Tests:** `rust/crates/vii-core/tests/transactions.rs` — a 3-element move inside one
   transaction yields `history.len() == 1`, and one `undo()` restores all three positions.
 - **Done when:** the 3-element test passes and the existing 23 core tests are unchanged.
 
 ### [ ] T-102 — Human-readable history labels
 
-- **Files:** `rust/crates/opencut-core/src/editor.rs`, `rust/crates/opencut-core/src/command.rs`
-  (`CommandKind` L152-178), `rust/crates/opencut-ui/src/view_model.rs`
+- **Files:** `rust/crates/vii-core/src/editor.rs`, `rust/crates/vii-core/src/command.rs`
+  (`CommandKind` L152-178), `rust/crates/vii-ui/src/view_model.rs`
 - **Do:**
   - History entries carry a `label: String` alongside `CommandKind`. Every existing `Command` gets
     a default label; `transaction()` takes its label from the caller.
@@ -429,7 +429,7 @@ M2–M14 changes the model — which is exactly what the schema version protects
 
 ### [ ] T-103 — `apply` / `revert` / `commit` triad, wired into EventBus coalescing
 
-- **Files:** `rust/crates/opencut-core/src/editor.rs`, `rust/crates/opencut-core/src/event.rs`
+- **Files:** `rust/crates/vii-core/src/editor.rs`, `rust/crates/vii-core/src/event.rs`
 - **Do:**
   - `apply(patches)` mutates with **no** history entry; `revert()` restores the exact pre-apply
     state; `commit(name)` records one labelled entry from the accumulated applies.
@@ -443,36 +443,36 @@ M2–M14 changes the model — which is exactly what the schema version protects
 
 ### [ ] T-104 — `Project.schema_version` + a versioned decode chain
 
-- **Files:** `rust/crates/opencut-project/src/project.rs`, new
-  `rust/crates/opencut-project/src/migrate.rs`
+- **Files:** `rust/crates/vii-project/src/project.rs`, new
+  `rust/crates/vii-project/src/migrate.rs`
 - **Do:**
   - Add `schema_version: u32` to `Project` (currently `ProjectMetadata {id, name}` only, project.rs:9-16).
   - `decode(json) -> Result<Project, LoadError>` walking vN→vN+1, mirroring the web app's v0..v31
     chain. A file with **no** version field is treated as v0 and still loads. A file with a version
     **newer** than current returns `LoadError::UnsupportedVersion` — never a partial parse.
-- **Tests:** `rust/crates/opencut-project/tests/model.rs` — legacy no-version fixture loads; a
+- **Tests:** `rust/crates/vii-project/tests/model.rs` — legacy no-version fixture loads; a
   `schemaVersion: 9999` fixture returns `UnsupportedVersion`; round-trip
   `Project → serde_json → Project` equality on a rich fixture.
 - **Done when:** both fixture tests pass.
 
 ### [ ] T-105 — Atomic save + a surfaced load error
 
-- **Files:** `rust/crates/opencut-project/src/lib.rs` (or a new `io.rs`),
-  `rust/crates/opencut-ui/src/editor_view.rs` (project_path L101, Save/Load L838-849)
+- **Files:** `rust/crates/vii-project/src/lib.rs` (or a new `io.rs`),
+  `rust/crates/vii-ui/src/editor_view.rs` (project_path L101, Save/Load L838-849)
 - **Do:**
   - Save writes `<path>.tmp` then `rename`s. Replace the bare `std::fs::write`.
   - Load surfaces failures through T-009's notification path: an error card naming the path and the
     parse error, plus a sticky toast with a `Show in Finder` action.
   - Delete the swallowing `if let Ok(project) = serde_json::from_str::<Project>(&json)` with no
     else branch.
-- **Tests:** `opencut-project` — a save whose rename is forced to fail leaves the original file
+- **Tests:** `vii-project` — a save whose rename is forced to fail leaves the original file
   byte-identical; a malformed-JSON load returns a typed error carrying the path.
-- **Done when:** `grep -n 'if let Ok(project) = serde_json::from_str' rust/crates/opencut-ui/src/editor_view.rs`
+- **Done when:** `grep -n 'if let Ok(project) = serde_json::from_str' rust/crates/vii-ui/src/editor_view.rs`
   returns nothing, and hand-corrupting `~/vii-project.json` then pressing Load shows an error card.
 
 ### [ ] T-106 — The golden project seed and per-version migration goldens
 
-- **Files:** new `rust/crates/opencut-project/tests/golden_migrations.rs`,
+- **Files:** new `rust/crates/vii-project/tests/golden_migrations.rs`,
   `dep/fixtures/golden/native/projects/v<N>.json`
 - **Do:**
   - Build one **rich** seed exercising every element kind, every effect, every animation channel,
@@ -489,7 +489,7 @@ M2–M14 changes the model — which is exactly what the schema version protects
 
 ### [ ] T-107 — proptest undo/redo round-trip
 
-- **Files:** `rust/crates/opencut-core/tests/invariants.rs`
+- **Files:** `rust/crates/vii-core/tests/invariants.rs`
 - **Do:**
   - Extend T-015's generator: execute 1..50 commands (weighted toward destructive ones), snapshot
     `serde_json::to_string(&state)` before and after.
@@ -501,7 +501,7 @@ M2–M14 changes the model — which is exactly what the schema version protects
 
 ### [ ] T-108 — `ScrubbableNumber`, the first consumer of apply/commit
 
-- **Files:** new `rust/crates/opencut-ui/src/ui/scrubbable_number.rs`
+- **Files:** new `rust/crates/vii-ui/src/ui/scrubbable_number.rs`
 - **Do:**
   - At rest it looks like **text**: transparent, no border, value right-aligned in 13px mono with
     the unit suffix in `text_muted`. Hover: `bg_sunken` + 1px border + a 1px accent underline +
@@ -515,7 +515,7 @@ M2–M14 changes the model — which is exactly what the schema version protects
     `−∞ dB`), `—` for mixed selections.
   - Live drag calls `editor.apply(...)`; release calls `editor.commit(name)` — **one** undo entry
     per gesture. This is why it lands here and not in M14.
-- **Tests:** `rust/crates/opencut-ui/src/interaction/scrub_field.rs` reducer tests — modifier
+- **Tests:** `rust/crates/vii-ui/src/interaction/scrub_field.rs` reducer tests — modifier
   precision (1×/10×/0.1×), the 3px click/drag threshold, unit stripping, clamping, mixed-state
   rendering, and that a 200-move drag emits exactly one `Outcome::Commit`.
 - **Done when:** a test-harness field can be dragged from 100 to 37 and back, and one `undo()`
@@ -529,7 +529,7 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
 
 ### [ ] T-201 — `parse_ffprobe_json` + `MediaMetadata` (pure)
 
-- **Files:** new `rust/crates/opencut-preview/src/probe.rs`,
+- **Files:** new `rust/crates/vii-preview/src/probe.rs`,
   `dep/fixtures/golden/native/ffprobe/*.json`
 - **Do:**
   - `parse_ffprobe_json(&str) -> Result<MediaMetadata, ProbeError>` with
@@ -540,14 +540,14 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
     lean on serde defaults to paper over it.
   - **Rotation is out of scope for rendering this milestone but must be recorded on the asset**, or
     M3's natural-size work will be wrong for phone footage.
-- **Tests:** `rust/crates/opencut-preview/tests/probe.rs` — one test per fixture; no ffmpeg needed.
+- **Tests:** `rust/crates/vii-preview/tests/probe.rs` — one test per fixture; no ffmpeg needed.
 - **Done when:** all seven fixtures parse to the expected struct and the corrupt one returns a
   typed error.
 
 ### [ ] T-202 — `MediaAsset` carries probed metadata, probed off-thread
 
-- **Files:** `rust/crates/opencut-project/src/project.rs` (MediaAsset L21-25),
-  `rust/crates/opencut-ui/src/editor_view.rs` (import_media ~L529-570)
+- **Files:** `rust/crates/vii-project/src/project.rs` (MediaAsset L21-25),
+  `rust/crates/vii-ui/src/editor_view.rs` (import_media ~L529-570)
 - **Do:**
   - `MediaAsset` gains `duration`, `width`, `height`, `fps: Fps`, `has_audio`, `rotation`,
     `probe_state: Pending | Ready | Failed(String)`.
@@ -561,8 +561,8 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
 
 ### [ ] T-203 — The media panel renders `editor.media()`
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (media_panel ~L976, hardcoded array
-  L979-981), `rust/crates/opencut-ui/src/view_model.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (media_panel ~L976, hardcoded array
+  L979-981), `rust/crates/vii-ui/src/view_model.rs`
 - **Do:**
   - `view_model` gains a media-list projection: `(id, name, duration_string, kind, offline, probe_state)`.
   - The panel renders it as a virtualized `uniform_list` where each **row** is a flex row of N
@@ -576,7 +576,7 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
 
 ### [ ] T-204 — Adding media to the timeline uses the real duration
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (L564, element creation L594 / L1010)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (L564, element creation L594 / L1010)
 - **Do:**
   - Replace `MediaTime::from_ticks(TICKS_PER_SECOND * 4)` with the asset's probed duration.
   - `trim_end` = source duration; `trim_start` = 0.
@@ -587,21 +587,21 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
 
 ### [ ] T-205 — `MediaSource::External | Project` + existence-checked resolution
 
-- **Files:** `rust/crates/opencut-project/src/project.rs` (`media_path` L41)
+- **Files:** `rust/crates/vii-project/src/project.rs` (`media_path` L41)
 - **Do:**
   - `enum MediaSource { External(PathBuf), Project(RelativePath) }` on `MediaAsset`; migrate
     existing absolute paths to `External` (schema bump, extend the T-106 seed).
   - `resolve(id) -> Result<PathBuf, MissingMedia>` does an existence check. Keep `expected_path(id)`
     separate from `resolve(id)`, as palmier does.
   - `missing_asset_ids(&Project) -> Vec<String>`.
-- **Tests:** `opencut-project` — resolution of a present file, a typed `MissingMedia` for an absent
+- **Tests:** `vii-project` — resolution of a present file, a typed `MissingMedia` for an absent
   one, and migration of a v(N-1) fixture full of absolute paths.
 - **Done when:** `media_path()`'s plain id lookup is gone.
 
 ### [ ] T-206 — Offline media is named on screen, not a coloured box
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs` (`upload_solid_placeholder` L176-186, call
-  sites L293-296, L328, L331), `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-preview/src/lib.rs` (`upload_solid_placeholder` L176-186, call
+  sites L293-296, L328, L331), `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - `PreviewRenderer::render` returns the set of unresolved media ids alongside `PreviewFrame`.
   - The viewer draws a `Media offline — <expected path>` card with a `Relink…` action button
@@ -609,27 +609,27 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
   - Offline clips in the timeline render per the visual spec: body replaced by `pattern_slash` in
     `danger` over `bg_sunken`, a filled danger triangle badge, filename in `danger` text.
   - `upload_solid_placeholder` is no longer reachable for a missing file.
-- **Tests:** `opencut-preview` — a descriptor golden for a scene with one missing asset asserts the
+- **Tests:** `vii-preview` — a descriptor golden for a scene with one missing asset asserts the
   offline id set; a unit test that the placeholder path is only reachable for genuinely unsupported
   element kinds.
 - **Done when:** moving a file on disk and reopening shows the path on the viewer, not a colour.
 
 ### [ ] T-207 — Relink
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`,
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`,
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - `Command::RelinkMedia { asset_id, new_path }` (reversible).
   - `Relink…` opens `rfd::pick_file()`, re-points the asset, then scans the chosen folder for other
     missing assets by filename and offers to relink them **in one transaction** (T-101).
-- **Tests:** `opencut-core` — relinking one asset in a fixture with three missing assets found in
+- **Tests:** `vii-core` — relinking one asset in a fixture with three missing assets found in
   the same folder produces exactly one history entry and clears all three from
   `missing_asset_ids()`.
 - **Done when:** the demo works: quit, move a file, reopen, Relink…, everything resolves.
 
 ### [ ] T-208 — Multi-file import + name filter (first `TextField` consumer)
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (import_media L529)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (import_media L529)
 - **Do:**
   - `rfd::pick_files()` imports N files from one dialog, probed concurrently behind a bounded
     semaphore (do **not** spawn one ffprobe per asset unbounded).
@@ -641,15 +641,15 @@ Depends on M1. Every ffprobe/ffmpeg test must skip cleanly when the binary is ab
 
 ### [ ] T-209 — Media manifest + self-contained project export
 
-- **Files:** `rust/crates/opencut-project/src/project.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-project/src/project.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Persist the manifest (versioned entries: id, name, source kind, probed metadata) as part of the
     project.
   - "Collect media": copy every resolvable `External` source into `<project>/media/`, dedupe by
     content hash, rewrite to `Project(relative)`, stage into a `.partial` directory then rename.
     Progress via T-009's job surface.
-- **Tests:** `opencut-project` — collect on a fixture with two assets pointing at the same file
+- **Tests:** `vii-project` — collect on a fixture with two assets pointing at the same file
   produces one copied file and two `Project` sources; a failed copy leaves no partial directory.
 - **Done when:** a collected project opens correctly after being moved to another directory.
 
@@ -663,22 +663,22 @@ slip/slide here.
 
 ### [ ] T-301 — `Transform { x, y, width, height, rotation, opacity }`
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (Transform L83-89),
-  `rust/crates/opencut-preview/src/lib.rs` (L334-344),
-  `rust/crates/opencut-core/src/command.rs` (SetTransform L78-81)
+- **Files:** `rust/crates/vii-project/src/element.rs` (Transform L83-89),
+  `rust/crates/vii-preview/src/lib.rs` (L334-344),
+  `rust/crates/vii-core/src/command.rs` (SetTransform L78-81)
 - **Do:**
   - Replace the uniform `scale` with independent `width`/`height`, normalized to the canvas.
   - Layer rects derive from `MediaAsset`'s probed natural size (M2) so a source whose aspect
     differs from the canvas letterboxes/pillarboxes instead of stretching.
-  - `Command::SetTransform` gains width/height; no `scale * canvas_w` remains in `opencut-preview`.
+  - `Command::SetTransform` gains width/height; no `scale * canvas_w` remains in `vii-preview`.
 - **Tests:** descriptor goldens (T-014) for a 16:9 source, a 9:16 source and a square PNG in a 16:9
   project.
-- **Done when:** `grep -n 'scale \* canvas' rust/crates/opencut-preview/src/lib.rs` returns nothing.
+- **Done when:** `grep -n 'scale \* canvas' rust/crates/vii-preview/src/lib.rs` returns nothing.
 
 ### [ ] T-302 — The migration: legacy `scale` → width/height, `"scale"` channel → `"width"` + `"height"`
 
-- **Files:** `rust/crates/opencut-project/src/migrate.rs`,
-  `rust/crates/opencut-project/tests/golden_migrations.rs`
+- **Files:** `rust/crates/vii-project/src/migrate.rs`,
+  `rust/crates/vii-project/tests/golden_migrations.rs`
 - **Do:**
   - One version step migrates both: the base transform, **and** every animation channel keyed
     `"scale"` splits into `"width"` + `"height"` channels with the same key times.
@@ -691,7 +691,7 @@ slip/slide here.
 
 ### [ ] T-303 — `element_bounds()` as a pure function
 
-- **Files:** `rust/crates/opencut-ui/src/view_model.rs`
+- **Files:** `rust/crates/vii-ui/src/view_model.rs`
 - **Do:**
   - `element_bounds(element, canvas, natural_size) -> Rect` including the rotated case, returning
     the un-rotated rect plus the rotation so callers can un-rotate a point into clip-local space.
@@ -700,19 +700,19 @@ slip/slide here.
 
 ### [ ] T-304 — `ProjectPatch::SetElementTrim` and a `TrimElement` that trims
 
-- **Files:** `rust/crates/opencut-core/src/command.rs` (TrimElement L68-72, lowering L663-683),
-  `rust/crates/opencut-project/src/element.rs` (VideoElement L105-119)
+- **Files:** `rust/crates/vii-core/src/command.rs` (TrimElement L68-72, lowering L663-683),
+  `rust/crates/vii-project/src/element.rs` (VideoElement L105-119)
 - **Do:**
   - Add `ProjectPatch::SetElementTrim { trim_start, trim_end }` (self-inverting).
   - `Command::TrimElement` lowers to start + duration + **trim**.
-- **Tests:** `opencut-core/tests/editor.rs` — a left-edge trim of 2s advances `trim_start` by
+- **Tests:** `vii-core/tests/editor.rs` — a left-edge trim of 2s advances `trim_start` by
   exactly 2s and leaves `trim_end` alone; undo restores all three fields.
 - **Done when:** a left trim changes which source frames play, not just where the clip sits.
 
 ### [ ] T-305 — `AudioElement` gains trim; `SplitElement` writes both halves
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (AudioElement L157-165),
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs` (AudioElement L157-165),
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - Add `trim_start`/`trim_end` to `AudioElement` (currently the only element with none).
   - `SplitElement` writes both halves' trims for video **and** audio.
@@ -723,45 +723,45 @@ slip/slide here.
 
 ### [ ] T-306 — Trims clamp to media headroom
 
-- **Files:** new `rust/crates/opencut-core/src/timeline/headroom.rs`,
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** new `rust/crates/vii-core/src/timeline/headroom.rs`,
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - `source_headroom(element, &MediaAsset) -> (left, right)` using `MediaAsset.duration` (M2).
   - Text, colour cards and generated elements take an explicit **no-source** branch and trim
     freely — not a zero-headroom default.
   - `TrimElement` clamps and reports the clamp reason (fed to T-009's status bar later).
-- **Tests:** `opencut-core` — clamping at both edges; a text element trims past any bound; a
+- **Tests:** `vii-core` — clamping at both edges; a text element trims past any bound; a
   clamped trim returns the limit reason.
 - **Done when:** dragging a clip's edge past the end of its source stops at the source end.
 
 ### [ ] T-307 — `TrimElement` rebases animation channels
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (AnimationChannel L29-68),
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs` (AnimationChannel L29-68),
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - On trim, shift key times so keys keep their **source-relative** position; synthesize a boundary
     key at offset 0 when the new left edge falls between two keys (palmier's `rebased(by:fallback:)`).
-- **Tests:** `opencut-core` — a left trim with two keys leaves both sampling the same values at the
+- **Tests:** `vii-core` — a left trim with two keys leaves both sampling the same values at the
   same source frames; a left trim past the first key synthesizes a boundary key.
 - **Done when:** trimming an animated clip no longer desyncs its animation.
 
 ### [ ] T-308 — Aspect presets, a `W:H` parser, and `SetProjectSettings`
 
-- **Files:** new `rust/crates/opencut-project/src/aspect.rs`,
-  `rust/crates/opencut-core/src/command.rs`, `rust/crates/opencut-ui/src/view_model.rs`
+- **Files:** new `rust/crates/vii-project/src/aspect.rs`,
+  `rust/crates/vii-core/src/command.rs`, `rust/crates/vii-ui/src/view_model.rs`
 - **Do:**
   - `AspectPreset` list: 16:9, 9:16, 1:1, 4:3, 2.4:1, with exact pixel sizes.
   - `parse_aspect("W:H") -> Result<CanvasSize, AspectError>`: even dimensions, clamp 2..8192,
     preserve the short edge, gcd-reduced label, typed errors.
   - `Command::SetProjectSettings { canvas, fps }` — reversible, so canvas/fps changes join undo.
-- **Tests:** `rust/crates/opencut-project/tests/model.rs` — the parser across valid, odd-dimension,
+- **Tests:** `rust/crates/vii-project/tests/model.rs` — the parser across valid, odd-dimension,
   too-small, too-large and malformed inputs; gcd label reduction; preset round-trip.
 - **Done when:** switching the project to 9:16 is undoable.
 
 ### [ ] T-309 — Preview render size follows the canvas aspect
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (PREVIEW_RENDER_W/H L20-21, preview div
-  L1084-1085), `rust/crates/opencut-preview/src/lib.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (PREVIEW_RENDER_W/H L20-21, preview div
+  L1084-1085), `rust/crates/vii-preview/src/lib.rs`
 - **Do:**
   - Render-target dimensions derive from `settings.canvas` aspect and the viewer's content rect
     (`fit_rect`, T-008), quantized **up** to the next multiple of 64 and capped at the project
@@ -781,14 +781,14 @@ line each. Demoable in thirty seconds after three model milestones.
 
 ### [ ] T-401 — `Element.blend_mode` + `Command::SetBlendMode`
 
-- **Files:** `rust/crates/opencut-project/src/element.rs`,
-  `rust/crates/opencut-core/src/command.rs`,
-  `rust/crates/opencut-preview/src/lib.rs` (L346),
+- **Files:** `rust/crates/vii-project/src/element.rs`,
+  `rust/crates/vii-core/src/command.rs`,
+  `rust/crates/vii-preview/src/lib.rs` (L346),
   `rust/crates/compositor/src/blend_mode.rs`
 - **Do:**
   - Add `blend_mode` to `Element`, covering all 17 `compositor::BlendMode` variants. Extend the
     T-106 golden seed.
-  - `opencut-preview` passes it through; the hardcoded `BlendMode::Normal` at lib.rs:346 is gone.
+  - `vii-preview` passes it through; the hardcoded `BlendMode::Normal` at lib.rs:346 is gone.
 - **Tests:** descriptor golden — a scene with each of the 17 modes serializes the right variant.
 - **Done when:** the hardcode is gone.
 
@@ -807,8 +807,8 @@ line each. Demoable in thirty seconds after three model milestones.
 
 ### [ ] T-403 — Activate the masks crate: edge rounding and softness
 
-- **Files:** `rust/crates/opencut-project/src/element.rs`,
-  `rust/crates/opencut-preview/src/lib.rs` (`mask: None` L348),
+- **Files:** `rust/crates/vii-project/src/element.rs`,
+  `rust/crates/vii-preview/src/lib.rs` (`mask: None` L348),
   `rust/crates/masks/src/{sdf.rs, feather.rs}`,
   `rust/crates/compositor/src/compositor.rs` (render_layer L439-478)
 - **Do:**
@@ -821,8 +821,8 @@ line each. Demoable in thirty seconds after three model milestones.
 
 ### [ ] T-404 — Colour-card / matte elements
 
-- **Files:** `rust/crates/opencut-project/src/element.rs`,
-  `rust/crates/opencut-core/src/command.rs`, `rust/crates/opencut-preview/src/lib.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs`,
+  `rust/crates/vii-core/src/command.rs`, `rust/crates/vii-preview/src/lib.rs`
 - **Do:**
   - A colour-card element created with a hex colour and an aspect preset (this is what palmier's
     `Matte.swift` actually is — a colour generator, **not** a track matte).
@@ -833,8 +833,8 @@ line each. Demoable in thirty seconds after three model milestones.
 
 ### [ ] T-405 — Inspector controls: blend dropdown + two edge sliders
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`,
-  `rust/crates/opencut-ui/src/view_model.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`,
+  `rust/crates/vii-ui/src/view_model.rs`
 - **Do:**
   - A blend-mode dropdown (`anchored()` + `deferred()` popover) and two edge sliders built on
     `ScrubbableNumber` (T-108). All three dispatch undoable commands.
@@ -864,8 +864,8 @@ Depends on M1 and M3.
 
 ### [ ] T-501 — The ruler
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (timeline L1749-1806),
-  `rust/crates/opencut-ui/src/geometry.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (timeline L1749-1806),
+  `rust/crates/vii-ui/src/geometry.rs`
 - **Do:**
   - A 26px ruler band above the lanes, scrolling in X with content (not in Y).
   - Ticks and monospaced timecode labels drawn in **one `canvas()`** via `window.paint_quad` and a
@@ -878,8 +878,8 @@ Depends on M1 and M3.
 
 ### [ ] T-502 — One overlay playhead + ruler scrub (first real reducer)
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (lane+playhead L1992-2010), new
-  `rust/crates/opencut-ui/src/interaction/scrub.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (lane+playhead L1992-2010), new
+  `rust/crates/vii-ui/src/interaction/scrub.rs`
 - **Do:**
   - Replace the per-lane 2px div with **one** absolutely-positioned overlay spanning the ruler and
     all lanes: a 2px line, an 11px invisible grab strip, a 12px triangular head in the ruler,
@@ -893,21 +893,21 @@ Depends on M1 and M3.
 
 ### [ ] T-503 — Frame quantization at every seek entry point
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (advance_playback L755-775, arrow keys
-  L2069-2076), `rust/crates/opencut-core/src/editor.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (advance_playback L755-775, arrow keys
+  L2069-2076), `rust/crates/vii-core/src/editor.rs`
 - **Do:**
   - Every playhead write goes through `quantize_to_frame(t, settings.fps)` (T-008). This is a new
     invariant — enforce it at **every** entry point (ruler, transport, keys, scrub bar, seek API),
     not just the ruler.
   - Arrow keys step ±1 **frame**; Shift+arrow ±1 second; Home/End jump to start/end. (This is one
     of the two deliberate keymap breaks; T-010 already records it.)
-- **Tests:** `opencut-core` — a seek to an arbitrary tick lands on a frame boundary at 30fps and at
+- **Tests:** `vii-core` — a seek to an arbitrary tick lands on a frame boundary at 30fps and at
   30000/1001; four right-arrows advance exactly four frames.
 - **Done when:** the frame counter advances by exactly one per arrow press.
 
 ### [ ] T-504 — Timecode readout
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (transport L1756)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (transport L1756)
 - **Do:**
   - Replace `format!("{:.2}s / {:.2}s")` with `format_timecode` current / total, in the mono face
     with tabular figures so digits do not jitter during playback.
@@ -916,7 +916,7 @@ Depends on M1 and M3.
 
 ### [ ] T-505 — Viewer scrub bar
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - A 14px scrub bar under the viewer mapping x → time across the **full** project duration (its
     own trivial mapping fn, not the timeline's zoomed mapping).
@@ -927,7 +927,7 @@ Depends on M1 and M3.
 
 ### [ ] T-506 — Scrub quality tier
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs`, `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-preview/src/lib.rs`, `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - A `quality: Full | Scrub` flag **threaded into** `PreviewRenderer::render` — not a forked
     render path. `Scrub` halves the render width and skips non-essential effect passes.
@@ -949,7 +949,7 @@ reusable (the keyframe lane in M14 consumes it).
 
 ### [ ] T-601 — Own the timeline scroll offset
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (track_row L1938-2011)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (track_row L1938-2011)
 - **Do:**
   - Add `scroll_x: f32`, `scroll_y: f32` to `EditorView` alongside `pixels_per_second`.
   - The lane area becomes an `overflow_hidden` viewport containing an absolutely-positioned content
@@ -966,7 +966,7 @@ reusable (the keyframe lane in M14 consumes it).
 
 ### [ ] T-602 — Scrollbars, culling and edge auto-scroll
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Draw our own 6px horizontal and vertical scrollbars as two handler-free divs.
   - Cull clip blocks outside `visible_window` before building divs.
@@ -979,7 +979,7 @@ reusable (the keyframe lane in M14 consumes it).
 
 ### [ ] T-603 — Cursor-anchored zoom
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Wire `zoom_at` (T-008) to: Opt+wheel (factor `exp(delta.y * 0.0025)`, **`delta.y` only** — a
     diagonal trackpad gesture must not zoom erratically), the +/− buttons and `=`/`-` (anchored on
@@ -996,7 +996,7 @@ reusable (the keyframe lane in M14 consumes it).
 
 ### [ ] T-604 — Split `track_row` into a pinned header column + a lane
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (track_row L1938-1991)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (track_row L1938-1991)
 - **Do:**
   - A 168px header column **outside** the horizontally-scrolled region, `overflow_hidden` with an
     inner content div at `.top(px(-scroll_y))` — the same translate trick as the lanes, so the two
@@ -1007,33 +1007,33 @@ reusable (the keyframe lane in M14 consumes it).
 
 ### [ ] T-605 — `Track` gains height, solo, sync_locked
 
-- **Files:** `rust/crates/opencut-project/src/track.rs` (Track L18-27),
-  `rust/crates/opencut-core/src/command.rs` (SetTrackHidden/Muted pattern L874-912)
+- **Files:** `rust/crates/vii-project/src/track.rs` (Track L18-27),
+  `rust/crates/vii-core/src/command.rs` (SetTrackHidden/Muted pattern L874-912)
 - **Do:**
   - Add `height: f32` (min 28, max 200, default 44), `solo: bool`, `sync_locked: bool`, each with
     its own reversible `ProjectPatch`. Extend the T-106 golden seed.
   - Sync-lock is **stored now** even though ripple (Wave 2) consumes it later.
   - Lane layout becomes a prefix sum: use `track_y_offsets` (T-008) for hit-testing, drop targeting
     **and** rendering, so the three cannot drift.
-- **Tests:** `opencut-core` — each patch round-trips; `track_y_offsets` over mixed heights.
+- **Tests:** `vii-core` — each patch round-trips; `track_y_offsets` over mixed heights.
 - **Done when:** `LANE_HEIGHT` is no longer a constant used for positioning.
 
 ### [ ] T-606 — Header controls and add/remove track
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Per track: a 3px kind-coloured strip, an editable name (`TextField`), and
     `[👁 visible][🔇 mute or 🔊 solo][🔗 sync-lock][⋮ menu]` as three-state icon buttons (off =
     `text_muted`, on = `text_primary`, actively suppressing = `warning` on `warning`-subtle).
   - `[+]` buttons at the top and bottom of the column dispatch the **existing**
-    `Command::AddTrack`/`RemoveTrack` — today nothing in `opencut-ui` ever dispatches them.
+    `Command::AddTrack`/`RemoveTrack` — today nothing in `vii-ui` ever dispatches them.
   - A 3px thicker divider between the video zone and the audio zone.
 - **Tests:** none new; existing AddTrack/RemoveTrack core tests cover the commands.
 - **Done when:** you can add an overlay track and solo the audio track from the app.
 
 ### [ ] T-607 — Per-track height resize
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - A 5px `cursor_row_resize` handle on the header's bottom edge; drag applies live via
     `editor.apply(...)` and commits **one** entry on release via `editor.commit("Resize track")`
@@ -1062,8 +1062,8 @@ Depends on M1, M5, M6.
 
 ### [ ] T-701 — Multi-select interactions
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (begin_drag L500-520), new
-  `rust/crates/opencut-core/src/selection_ops.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (begin_drag L500-520), new
+  `rust/crates/vii-core/src/selection_ops.rs`
 - **Do:**
   - Click replaces; **Shift-click and Cmd-click both toggle** (Shift matches Premiere/Resolve/FCP
     muscle memory; accepting Cmd as an alias costs one line and satisfies the platform reflex).
@@ -1084,23 +1084,23 @@ Depends on M1, M5, M6.
 
 ### [ ] T-702 — Kill every `selection().first()` call site
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (delete_selected L522, split_selected
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (delete_selected L522, split_selected
   L685, add_keyframe L700, apply_preset L350, Duplicate L907),
-  `rust/crates/opencut-ui/src/view_model.rs` (build L150)
+  `rust/crates/vii-ui/src/view_model.rs` (build L150)
 - **Do:**
   - Sweep all six sites to operate over the whole selection, each as **one** transaction (T-101).
   - `EditorViewModel::build` stops taking `selection().first()`.
-- **Tests:** `opencut-core` — deleting a 3-clip selection produces one history entry and one
+- **Tests:** `vii-core` — deleting a 3-clip selection produces one history entry and one
   `undo()` restores all three; splitting a 2-clip selection splits both.
-- **Done when:** `grep -rn 'selection().first()' rust/crates/opencut-ui/src` returns nothing.
+- **Done when:** `grep -rn 'selection().first()' rust/crates/vii-ui/src` returns nothing.
 - **Why now:** every one of these silently operates on one clip out of N the moment multi-select
   ships. Sweep them in the same milestone or multi-select is a lie.
 
 ### [ ] T-703 — Link groups
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (all four element structs, via the
-  existing `with_inner!` macro), `rust/crates/opencut-core/src/command.rs`,
-  `rust/crates/opencut-core/src/selection_ops.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs` (all four element structs, via the
+  existing `with_inner!` macro), `rust/crates/vii-core/src/command.rs`,
+  `rust/crates/vii-core/src/selection_ops.rs`
 - **Do:**
   - `link_group: Option<String>` on Video/Image/Text/Audio, `#[serde(default)]`. Extend the T-106
     seed.
@@ -1119,9 +1119,9 @@ Depends on M1, M5, M6.
   importing a video with sound stays **one** element. The model field and expansion still land now
   because retrofitting them after M8 means reworking M8.
 
-### [ ] T-704 — `opencut-core/src/snap.rs`
+### [ ] T-704 — `vii-core/src/snap.rs`
 
-- **Files:** new `rust/crates/opencut-core/src/timeline/snap.rs`; read
+- **Files:** new `rust/crates/vii-core/src/timeline/snap.rs`; read
   `dep/apps/web/src/timeline/snapping/{types,build,resolve,threshold}.ts` for the data shape only
 - **Do:**
   - Take `SnapPoint { time, kind, element_id, track_id }` and the source-registry idea from
@@ -1136,7 +1136,7 @@ Depends on M1, M5, M6.
   - Collect targets **once at drag start** into a sorted `Vec` and binary-search per frame — they
     cannot change during a drag.
   - Returns `{ snapped_time, indicator_px, target_kind }`.
-- **Tests:** `rust/crates/opencut-core/tests/planner_snap.rs` — no-target passthrough; single
+- **Tests:** `rust/crates/vii-core/tests/planner_snap.rs` — no-target passthrough; single
   target inside/outside threshold; multi-probe picks the smallest delta across 3 clips × 2 edges;
   sticky holds at 2.4× and releases at 2.6×; playhead's wider threshold wins a tie; threshold
   scales correctly at pps 8 and 400.
@@ -1144,7 +1144,7 @@ Depends on M1, M5, M6.
 
 ### [ ] T-705 — Snap indicator and the single drag-overlay layer
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - **One** handler-free, absolutely-positioned overlay div above the entire lane stack carries
     *all* transient drag feedback: the snap indicator (1px full-height line in a dedicated `SNAP`
@@ -1161,7 +1161,7 @@ Depends on M1, M5, M6.
 
 ### [ ] T-706 — Drag threshold and Esc-cancel
 
-- **Files:** `rust/crates/opencut-ui/src/interaction/timeline_drag.rs`
+- **Files:** `rust/crates/vii-ui/src/interaction/timeline_drag.rs`
 - **Do:**
   - 4px movement threshold before a move commits; below it, mouse-up is a pure selection change and
     commits nothing. (Today any click with 1px of hand tremor commits a `MoveElement` and pollutes
@@ -1184,21 +1184,21 @@ Depends on M7. The largest UI milestone and the one where a bug silently destroy
 
 ### [ ] T-801 — `Command::MoveElements` (the first real consumer of M1)
 
-- **Files:** `rust/crates/opencut-core/src/command.rs` (AddElement/MoveElement L552-602)
+- **Files:** `rust/crates/vii-core/src/command.rs` (AddElement/MoveElement L552-602)
 - **Do:**
   - `Command::MoveElements { moves: Vec<(ElementRef, track_id, MediaTime)> }`, lowering to
     remove+insert patches inside **one** labelled transaction. `Lowered.forward: Vec<ProjectPatch>`
     already supports many patches per entry; only the wrapper is missing.
   - This is what makes cross-track possible at all — `ElementRef` embeds the track id, so
     `MoveElement` can never relocate a clip.
-- **Tests:** `opencut-core/tests/editor.rs` — a 3-clip cross-track move is one history entry;
+- **Tests:** `vii-core/tests/editor.rs` — a 3-clip cross-track move is one history entry;
   `undo()` restores all three tracks and starts; `assert_timeline_valid` after each.
 - **Done when:** the 3-clip test passes.
 
 ### [ ] T-802 — `overwrite.rs` pure planner
 
-- **Files:** new `rust/crates/opencut-core/src/timeline/overwrite.rs`, new
-  `rust/crates/opencut-core/tests/planner_overwrite.rs`
+- **Files:** new `rust/crates/vii-core/src/timeline/overwrite.rs`, new
+  `rust/crates/vii-core/tests/planner_overwrite.rs`
 - **Do:**
   - `compute_overwrite(track, incoming_range) -> Vec<OverwriteAction>` where
     `OverwriteAction ∈ { Remove(ref), TrimEnd(ref, t), TrimStart(ref, t), Split(ref, t) }`.
@@ -1211,7 +1211,7 @@ Depends on M7. The largest UI milestone and the one where a bug silently destroy
 
 ### [ ] T-803 — Wire overwrite into add, move and widening trim
 
-- **Files:** `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - Run the planner on `AddElement`, `MoveElements` **and** a trim that widens a clip into a
     neighbour. Apply the actions inside the same transaction as the triggering edit.
@@ -1221,8 +1221,8 @@ Depends on M7. The largest UI milestone and the one where a bug silently destroy
 
 ### [ ] T-804 — `TrackDropTarget` resolution with kind clamping
 
-- **Files:** `rust/crates/opencut-ui/src/interaction/timeline_drag.rs`,
-  `rust/crates/opencut-project/src/track.rs`
+- **Files:** `rust/crates/vii-ui/src/interaction/timeline_drag.rs`,
+  `rust/crates/vii-project/src/track.rs`
 - **Do:**
   - Cursor Y → `TrackDropTarget::{ ExistingTrack(ix), NewTrackAt(ix) }`, where the inter-track
     insertion zone is the outer 6px of each lane boundary. Use `track_y_offsets` (T-605) — do not
@@ -1238,7 +1238,7 @@ Depends on M7. The largest UI milestone and the one where a bug silently destroy
 
 ### [ ] T-805 — Ghosts and insertion lines
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (the T-705 overlay layer)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (the T-705 overlay layer)
 - **Do:**
   - A ghost renders for **every** moving clip at its prospective position with correct duration and
     trim; source clips stay in place at 55% opacity.
@@ -1259,7 +1259,7 @@ Depends on M7. The largest UI milestone and the one where a bug silently destroy
 
 ### [ ] T-806 — Context menus
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - `context_menu: Option<(Point<Pixels>, MenuKind)>` set on `on_mouse_down(MouseButton::Right)`;
     rendered at the root as `deferred(anchored().position(pos).snap_to_window().child(menu))`;
@@ -1280,19 +1280,19 @@ Depends on M3 and M5. Independent of M6–M8; can run in parallel if two people 
 
 ### [ ] T-901 — `decode/window.rs`: the pure cache and eviction policy
 
-- **Files:** new `rust/crates/opencut-preview/src/decode/window.rs`
+- **Files:** new `rust/crates/vii-preview/src/decode/window.rs`
 - **Do:**
   - A `FrameSource` trait (`fn frame(&mut self, index: u64) -> Option<Frame>`) so the policy is
     testable against a fake that just returns its index.
   - A bounded ring buffer around the playhead with an explicit memory cap and an eviction rule.
-- **Tests:** `rust/crates/opencut-preview/tests/decode_window.rs` — which ranges get fetched, which
+- **Tests:** `rust/crates/vii-preview/tests/decode_window.rs` — which ranges get fetched, which
   get evicted, and that resident memory stays under the cap across a **random walk of 10,000
   seeks**. No ffmpeg involved.
 - **Done when:** the 10,000-seek stress test runs in milliseconds and never exceeds the cap.
 
 ### [ ] T-902 — Keyframe-aligned seek + forward decode to the exact frame
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs` (decode_video_clip L379-423)
+- **Files:** `rust/crates/vii-preview/src/lib.rs` (decode_video_clip L379-423)
 - **Do:**
   - Replace whole-clip pre-decode with `-ss` to the nearest preceding keyframe plus a forward
     decode to the exact requested frame, filling the T-901 window.
@@ -1302,7 +1302,7 @@ Depends on M3 and M5. Independent of M6–M8; can run in parallel if two people 
 
 ### [ ] T-903 — Decode resolution follows the preview render size
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs`
+- **Files:** `rust/crates/vii-preview/src/lib.rs`
 - **Do:**
   - Delete `VIDEO_MAX_FRAMES = 450` and the hardcoded 320×180/30fps.
   - Decode at the render size established in T-309, respecting the T-506 quality tier.
@@ -1311,7 +1311,7 @@ Depends on M3 and M5. Independent of M6–M8; can run in parallel if two people 
 
 ### [ ] T-904 — One GPU texture per element, re-uploaded
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs` (texture upload L320-329)
+- **Files:** `rust/crates/vii-preview/src/lib.rs` (texture upload L320-329)
 - **Do:**
   - Create the texture once per element and re-upload into it; delete the per-frame
     `create_texture`.
@@ -1321,8 +1321,8 @@ Depends on M3 and M5. Independent of M6–M8; can run in parallel if two people 
 
 ### [ ] T-905 — Decode off the GPUI thread
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs` (preview_signature L373-425)
+- **Files:** `rust/crates/vii-preview/src/lib.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs` (preview_signature L373-425)
 - **Do:**
   - Run decode on `cx.background_spawn`; while the window refills, the viewer holds the **previous
     frame** rather than flashing a placeholder.
@@ -1332,7 +1332,7 @@ Depends on M3 and M5. Independent of M6–M8; can run in parallel if two people 
 
 ### [ ] T-906 — The self-identifying-frame test
 
-- **Files:** new `rust/crates/opencut-preview/tests/decode_ffmpeg.rs`
+- **Files:** new `rust/crates/vii-preview/tests/decode_ffmpeg.rs`
 - **Do:**
   - Generate a 60s/30fps fixture in the temp dir (never committed) whose every frame encodes its
     own index as a **colour triplet in base 16 across R/G/B** — 4096 distinguishable frames with
@@ -1356,47 +1356,47 @@ callback.
 
 ### [ ] T-1001 — Video-clip audio is audible
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (VideoElement L105-119),
-  `rust/crates/opencut-ui/src/editor_view.rs` (start_audio L204-300),
-  `rust/crates/opencut-audio/src/lib.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs` (VideoElement L105-119),
+  `rust/crates/vii-ui/src/editor_view.rs` (start_audio L204-300),
+  `rust/crates/vii-audio/src/lib.rs`
 - **Do:**
   - `VideoElement` gains `volume: f32` and `muted: bool`. Extend the T-106 seed.
   - The mixer walks **video tracks too** — `start_audio` currently only iterates
     `scene.tracks.audio` matching `Element::Audio(..)`, so a video clip's audio is silent in both
     preview and export.
-- **Tests:** `rust/crates/opencut-audio/tests/mix.rs` — a scene with one video clip carrying audio
+- **Tests:** `rust/crates/vii-audio/tests/mix.rs` — a scene with one video clip carrying audio
   and no audio-track clips produces non-silent output.
 - **Done when:** dropping a video that has sound makes sound.
 
 ### [ ] T-1002 — Gain is settable, undoable and keyframable
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (AudioElement L157-165),
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs` (AudioElement L157-165),
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - `AudioElement` gains `animations` (it is uniquely missing it today, so volume cannot be
     keyframed by construction).
   - `Command::SetVolume`, `SetMuted`, `SetFades` — all reversible. Today gain is not settable at all.
   - Land the **sampling API** here: `sample_gain(element, at: MediaTime) -> f32`, on the same clock
     the mixer will run on, even though M11 replaces the transport underneath it.
-- **Tests:** `opencut-core` — each command round-trips through undo; `sample_gain` at keyframe
+- **Tests:** `vii-core` — each command round-trips through undo; `sample_gain` at keyframe
   boundaries.
 - **Done when:** pulling a clip to −6 dB in the inspector is one undoable edit.
 
 ### [ ] T-1003 — Fades
 
-- **Files:** `rust/crates/opencut-project/src/element.rs`,
-  `rust/crates/opencut-audio/src/lib.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs`,
+  `rust/crates/vii-audio/src/lib.rs`
 - **Do:**
   - Per-clip `fade_in` / `fade_out`, applied **equal-power** in the mixer.
   - A short default fade at every clip boundary so cuts stop clicking.
-- **Tests:** `rust/crates/opencut-audio/tests/mix.rs` — a 0.5s fade-in reaches exactly −6 dB at its
+- **Tests:** `rust/crates/vii-audio/tests/mix.rs` — a 0.5s fade-in reaches exactly −6 dB at its
   midpoint and 0.0 at frame 0, asserted at sample resolution.
 - **Done when:** a hard cut no longer clicks.
 
 ### [ ] T-1004 — Track volume/solo, master gain, one mix path
 
-- **Files:** `rust/crates/opencut-project/src/track.rs`,
-  `rust/crates/opencut-project/src/project.rs`, `rust/crates/opencut-audio/src/lib.rs`
+- **Files:** `rust/crates/vii-project/src/track.rs`,
+  `rust/crates/vii-project/src/project.rs`, `rust/crates/vii-audio/src/lib.rs`
 - **Do:**
   - `Track` gains `volume`; `solo` already landed in T-605. `Project` gains a master gain.
   - **ONE** pure mix path composes clip gain × fade × track gain × solo/mute × master, in that
@@ -1407,7 +1407,7 @@ callback.
 
 ### [ ] T-1005 — A −1 dBFS master limiter
 
-- **Files:** `rust/crates/opencut-audio/src/lib.rs` (hard clamp L90-93); port from
+- **Files:** `rust/crates/vii-audio/src/lib.rs` (hard clamp L90-93); port from
   `dep/apps/web/src/media/audio-mastering.ts`
 - **Do:**
   - Replace the hard ±1 clamp with the ported limiter plus `clampDb` / `dBToLinear` helpers.
@@ -1424,19 +1424,19 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1101 — `graph.rs`: the pure pull mixer
 
-- **Files:** new `rust/crates/opencut-audio/src/graph.rs`
+- **Files:** new `rust/crates/vii-audio/src/graph.rs`
 - **Do:**
   - `graph.fill(&mut [f32], start_frame: u64)` computes samples for an **arbitrary** frame range
     from (clips, per-clip gain automation, fades, track gain/mute/solo, master limiter), with no
     device, no thread, and **no interior state that survives across calls**.
-- **Tests:** `rust/crates/opencut-audio/tests/graph.rs` — deterministic output for a fixture
+- **Tests:** `rust/crates/vii-audio/tests/graph.rs` — deterministic output for a fixture
   timeline.
 - **Done when:** `fill()` is callable from a plain unit test with no device.
 
 ### [ ] T-1102 — Block-size invariance, the null test, and the real-time budget
 
-- **Files:** `rust/crates/opencut-audio/tests/graph.rs`, new
-  `rust/crates/opencut-audio/benches/fill.rs`
+- **Files:** `rust/crates/vii-audio/tests/graph.rs`, new
+  `rust/crates/vii-audio/benches/fill.rs`
 - **Do:**
   - **Block-size invariance:** filling `[0, 480_000)` as one call is byte-identical to 938 calls of
     512 frames. This is *the* test for a streaming-audio rewrite — every streaming mixer that ever
@@ -1450,9 +1450,9 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1103 — One streaming decode entry point
 
-- **Files:** `rust/crates/opencut-audio/src/lib.rs` (decode_pcm L14-38)
+- **Files:** `rust/crates/vii-audio/src/lib.rs` (decode_pcm L14-38)
 - **Do:**
-  - **ONE** streaming decode entry point in `opencut-audio` serving playback, waveforms and future
+  - **ONE** streaming decode entry point in `vii-audio` serving playback, waveforms and future
     analysis. The PCM cache becomes a bounded LRU of **windows**, not an unbounded map.
   - No whole-timeline `Vec<f32>` is ever allocated again.
 - **Tests:** LRU eviction and window boundaries, against a fake source.
@@ -1461,8 +1461,8 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1104 — A rodio/cpal `Source` pulling chunks on demand
 
-- **Files:** `rust/crates/opencut-audio/src/lib.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs` (start_audio L204-300, toggle_play L739-752)
+- **Files:** `rust/crates/vii-audio/src/lib.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs` (start_audio L204-300, toggle_play L739-752)
 - **Do:**
   - Implement the raw `Source` trait pulling mixed chunks with ~2s lookahead, fed by a decode/mix
     thread through a lock-free ring. Delete the decode-everything-then-mix-everything path.
@@ -1472,8 +1472,8 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1105 — The playhead runs on the audio clock
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (advance_playback L755-775),
-  new `rust/crates/opencut-audio/src/sync.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (advance_playback L755-775),
+  new `rust/crates/vii-audio/src/sync.rs`
 - **Do:**
   - The playhead advances from **samples consumed by the device**, not `Instant` deltas.
     `Transport` takes an injected clock source so it is testable.
@@ -1483,7 +1483,7 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1106 — Edits are audible while playing
 
-- **Files:** `rust/crates/opencut-audio/src/graph.rs`
+- **Files:** `rust/crates/vii-audio/src/graph.rs`
 - **Do:**
   - The mix graph reads the **live** project each chunk, so a volume/mute/move edit during playback
     becomes audible within one lookahead window without stop/start.
@@ -1493,19 +1493,19 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1107 — Zoom-aware, dB-companded waveform peaks, off-thread
 
-- **Files:** `rust/crates/opencut-audio/src/lib.rs` (waveform_peaks L100-137),
-  `rust/crates/opencut-ui/src/editor_view.rs` (ensure_waveforms L306-326, hardcoded 48 at L323)
+- **Files:** `rust/crates/vii-audio/src/lib.rs` (waveform_peaks L100-137),
+  `rust/crates/vii-ui/src/editor_view.rs` (ensure_waveforms L306-326, hardcoded 48 at L323)
 - **Do:**
   - Peaks/second adapts with zoom and **caps** for long media, replacing the hardcoded 48.
   - dB-companded against a −50 dB floor (linear peaks make dialogue look flat).
   - Computed off the UI thread — today the ffmpeg decode runs synchronously in the render path.
-- **Tests:** `rust/crates/opencut-audio/tests/peaks.rs` — bucket count adapts and caps; dB
+- **Tests:** `rust/crates/vii-audio/tests/peaks.rs` — bucket count adapts and caps; dB
   companding maps a −50 dB sample to 0 and full scale to 1.
 - **Done when:** zooming into an audio clip reveals new detail instead of stretching 48 bars.
 
 ### [ ] T-1108 — Waveform disk cache
 
-- **Files:** `rust/crates/opencut-audio/src/lib.rs`
+- **Files:** `rust/crates/vii-audio/src/lib.rs`
 - **Do:**
   - Persist peaks to a disk cache keyed by **path + size + mtime**, so relaunch does not re-decode.
   - Bounded size with LRU eviction; expose the cache size (a Clear Cache button lands in Wave 2's
@@ -1515,7 +1515,7 @@ no allocation, no blocking locks. Use a lock-free ring fed by a decode/mix threa
 
 ### [ ] T-1109 — Waveforms render through `canvas()`, not one div per peak
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (L1888-1893)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (L1888-1893)
 - **Do:**
   - Two-pass in **one** `canvas()` per clip: an RMS band at 55% alpha, then a peak envelope line at
     100% (`window.paint_path` with a `PathBuilder`), centred on a 1px zero line. Clipped columns
@@ -1535,19 +1535,19 @@ envelopes from diverging; resist writing a second export-only mixer even though 
 
 ### [ ] T-1201 — `export/options.rs`: `ExportOptions → argv` (pure)
 
-- **Files:** new `rust/crates/opencut-preview/src/export/options.rs`
+- **Files:** new `rust/crates/vii-preview/src/export/options.rs`
 - **Do:**
   - `ExportOptions { resolution, codec, quality_or_bitrate, range, audio: bool }` defaulting to the
     project resolution, lowering to `Vec<String>` — including pix_fmt, the second audio input with
     `-map` / `-c:a aac` / `-shortest`, and the staged `.partial` output path.
-- **Tests:** `rust/crates/opencut-preview/tests/export_options.rs` — one test per preset. Highest
+- **Tests:** `rust/crates/vii-preview/tests/export_options.rs` — one test per preset. Highest
   leverage in the whole export domain: "exports at 720p" and "exported MP4 is silent" are both
   argv bugs caught here in microseconds with no encoder involved.
 - **Done when:** every preset's argv is asserted.
 
 ### [ ] T-1202 — Real destination, real resolution
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (paths L105-112, export button L654-681,
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (paths L105-112, export button L654-681,
   1280 clamp L664-666)
 - **Do:**
   - `rfd::save_file()` picks the destination. Delete the `~/vii-export.mp4` and `~/vii-frame.png`
@@ -1559,8 +1559,8 @@ envelopes from diverging; resist writing a second export-only mixer even though 
 
 ### [ ] T-1203 — Audio muxed from the same mix graph
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs` (export_video L191-246),
-  `rust/crates/opencut-audio/src/graph.rs`
+- **Files:** `rust/crates/vii-preview/src/lib.rs` (export_video L191-246),
+  `rust/crates/vii-audio/src/graph.rs`
 - **Do:**
   - Fill the M11 graph for the export range into a temp WAV, pass it as a second ffmpeg input.
 - **Tests:** `graph.rs` — the same graph filled for `[t0,t1)` produces **byte-identical** output
@@ -1569,8 +1569,8 @@ envelopes from diverging; resist writing a second export-only mixer even though 
 
 ### [ ] T-1204 — Off-thread job with progress and cancel
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs`, `rust/crates/opencut-core/src/event.rs`
+- **Files:** `rust/crates/vii-preview/src/lib.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs`, `rust/crates/vii-core/src/event.rs`
 - **Do:**
   - `cx.background_spawn` the encode; parse ffmpeg's `-progress pipe:1` and publish on the
     EventBus; render a determinate bar with a working Cancel in the status bar (T-009).
@@ -1582,8 +1582,8 @@ envelopes from diverging; resist writing a second export-only mixer even though 
 
 ### [ ] T-1205 — Atomic staging and surfaced errors
 
-- **Files:** `rust/crates/opencut-preview/src/lib.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-preview/src/lib.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Write to `<dest>.partial` and rename on success. Cancel or failure leaves **no** file at the
     destination and does not touch a pre-existing file of the same name.
@@ -1595,17 +1595,17 @@ envelopes from diverging; resist writing a second export-only mixer even though 
 
 ### [ ] T-1206 — Offline media blocks or warns
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Before starting, check `missing_asset_ids()` (T-205). Block or warn with a **named list** rather
     than baking placeholders into the output.
-- **Tests:** `opencut-core` — the offline list is populated for a fixture with a missing asset.
+- **Tests:** `vii-core` — the offline list is populated for a fixture with a missing asset.
 - **Done when:** exporting a project with a missing file names the file instead of exporting a
   coloured box.
 
 ### [ ] T-1207 — Export integration test
 
-- **Files:** `rust/crates/opencut-preview/tests/export_ffmpeg.rs`
+- **Files:** `rust/crates/vii-preview/tests/export_ffmpeg.rs`
 - **Do:**
   - Encode 0.5s at 64×36 from a fixture timeline with audio; run `ffprobe` on the output and assert
     `{ width, height, nb_streams == 2, video codec, audio codec, duration within one frame }`.
@@ -1623,8 +1623,8 @@ pure function.
 
 ### [ ] T-1301 — The content rect **is** the img rect
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (preview L1076-1163),
-  `rust/crates/opencut-ui/src/geometry.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (preview L1076-1163),
+  `rust/crates/vii-ui/src/geometry.rs`
 - **Do:**
   - Size and absolutely position the `img()` to **exactly** `fit_rect(viewport, canvas_aspect, zoom, pan)`
     (T-008) inside the viewport div. Never `size_full()` with GPUI doing its own object-fit — that
@@ -1639,13 +1639,13 @@ pure function.
 
 ### [ ] T-1302 — `hit_test` (pure)
 
-- **Files:** `rust/crates/opencut-ui/src/view_model.rs` (or a sibling pure module); port
+- **Files:** `rust/crates/vii-ui/src/view_model.rs` (or a sibling pure module); port
   `dep/apps/web/src/preview/{hit-test.ts, element-bounds.ts, preview-coords.ts}`
 - **Do:**
   - Chain: window pt → −viewport.origin → −fit_rect.origin → ÷ fit_rect.size → × canvas → clip-local
     (translate by −centre, rotate by −θ) → `|x| ≤ w/2 && |y| ≤ h/2`.
   - Order: text clips first, then tracks in reverse **draw** order. **Our topmost element is the
-    LAST overlay element — the reverse of palmier's rule** (opencut-preview draws main first, then
+    LAST overlay element — the reverse of palmier's rule** (vii-preview draws main first, then
     overlay lanes). Encode that in the function and its tests.
   - Skip hidden tracks and opacity ≤ 0.01.
   - Port `screenPixelsToLogicalThreshold` — handle hit slop must be constant in **screen** px, so
@@ -1659,8 +1659,8 @@ pure function.
 
 ### [ ] T-1303 — Click to select, drag to move
 
-- **Files:** new `rust/crates/opencut-ui/src/interaction/canvas_drag.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** new `rust/crates/vii-ui/src/interaction/canvas_drag.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Click selects the hit element (expanded to its link group, T-703); clicking empty canvas
     clears. Drag moves in normalized canvas units.
@@ -1674,8 +1674,8 @@ pure function.
 
 ### [ ] T-1304 — Transform handles
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`,
-  `rust/crates/opencut-ui/src/interaction/canvas_drag.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`,
+  `rust/crates/vii-ui/src/interaction/canvas_drag.rs`
 - **Do:**
   - 4 corner + 4 edge handles as absolutely-positioned divs with their own `.id()` and
     `on_mouse_down`, so GPUI's innermost-first dispatch gives handle-over-body priority for free.
@@ -1690,7 +1690,7 @@ pure function.
 
 ### [ ] T-1305 — Canvas zoom, pan and fit
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:**
   - Cmd/Opt+wheel zooms to the cursor using the **same** pure `zoom_at` as the timeline, applied per
     axis, clamped 0.1..8.0 — do not let the viewer grow a second, divergent copy of the math.
@@ -1701,7 +1701,7 @@ pure function.
 
 ### [ ] T-1306 — Canvas snapping guides
 
-- **Files:** `rust/crates/opencut-ui/src/interaction/canvas_drag.rs`; port
+- **Files:** `rust/crates/vii-ui/src/interaction/canvas_drag.rs`; port
   `dep/apps/web/src/preview/preview-snap.ts`
 - **Do:**
   - Snap to canvas edges and centre with full-height / full-width guide lines in **magenta**
@@ -1722,22 +1722,22 @@ between T-1401..T-1403 (correctness + fields) and T-1404..T-1406 (lane + IA).
 
 ### [ ] T-1401 — `write_property`: edits at the playhead write a key
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (transform_row L1361-1384),
-  `rust/crates/opencut-core/src/command.rs`
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (transform_row L1361-1384),
+  `rust/crates/vii-core/src/command.rs`
 - **Do:**
   - Every inspector write routes through one `write_property` that **upserts a key at the playhead
     when that property's channel is active**, and sets the base value otherwise.
   - Today `transform_row` unconditionally executes `Command::SetTransform`, which overwrites a base
     value that `sampled_transform` then ignores — so once a property is animated, its stepper is
     silently inert.
-- **Tests:** `opencut-core` regression test reproducing the two-click bug: keyframe opacity, step
+- **Tests:** `vii-core` regression test reproducing the two-click bug: keyframe opacity, step
   opacity, assert `sampled_transform` **changes**. It does not today.
 - **Done when:** the regression test passes.
 
 ### [ ] T-1402 — Keyframe stamp and navigation
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (AnimationChannel L29-68),
-  `rust/crates/opencut-ui/src/editor_view.rs` (kf_button L1209-1224)
+- **Files:** `rust/crates/vii-project/src/element.rs` (AnimationChannel L29-68),
+  `rust/crates/vii-ui/src/editor_view.rs` (kf_button L1209-1224)
 - **Do:**
   - `AnimationChannel::has_key_at / prev_key / next_key`.
   - A `‹ ◇ ›` per-row control with four states: dim ◇ (not animated, click starts animating),
@@ -1745,13 +1745,13 @@ between T-1401..T-1403 (correctness + fields) and T-1404..T-1406 (lane + IA).
     filled white (key selected). Disabled with the tooltip "Move playhead inside the clip" when the
     playhead is outside the element.
   - Clicking ◇ also reveals that property's lane (T-1405) and scrolls it into view.
-- **Tests:** `opencut-project` — `has_key_at` / `prev_key` / `next_key` at boundaries, empty
+- **Tests:** `vii-project` — `has_key_at` / `prev_key` / `next_key` at boundaries, empty
   channels and exact matches.
 - **Done when:** the diamond state is correct as you step the playhead across keys.
 
 ### [ ] T-1403 — Replace every stepper with `ScrubbableNumber`
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (nudge_row L1253-1303, stepper_row
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (nudge_row L1253-1303, stepper_row
   L1307-1357, effect amount L1572-1616)
 - **Do:**
   - Swap all three ± pairs for `ScrubbableNumber` (T-108), wired through `write_property` (T-1401).
@@ -1763,22 +1763,22 @@ between T-1401..T-1403 (correctness + fields) and T-1404..T-1406 (lane + IA).
 
 ### [ ] T-1404 — Keyframe easing
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (Keyframe, `sample` L38-68); port
+- **Files:** `rust/crates/vii-project/src/element.rs` (Keyframe, `sample` L38-68); port
   `dep/apps/web/src/animation/{types.ts, bezier.ts, interpolation.ts}` and carry its solver tests over
 - **Do:**
   - `Keyframe` gains an `easing` field. `AnimationChannel::sample` supports `linear | hold | bezier`
     with `CurveHandle { dt, dv }`. Extend the T-106 seed and add a migration step defaulting
     existing keys to linear.
   - Port our own web model rather than palmier's three modes — it is strictly richer.
-- **Tests:** `opencut-project` — the ported bezier solver tests; hold holds; linear is unchanged
+- **Tests:** `vii-project` — the ported bezier solver tests; hold holds; linear is unchanged
   against the existing fixtures.
 - **Done when:** a Hold key produces a step, not a ramp.
 
 ### [ ] T-1405 — The keyframe lane, in the timeline
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`,
-  `rust/crates/opencut-ui/src/view_model.rs` (ElementInfo.animated_count),
-  `rust/crates/opencut-core/src/command.rs` (RemoveKeyframe L113)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`,
+  `rust/crates/vii-ui/src/view_model.rs` (ElementInfo.animated_count),
+  `rust/crates/vii-core/src/command.rs` (RemoveKeyframe L113)
 - **Do:**
   - Animated properties render as expandable 18px sub-lanes under their clip's track, sharing the
     timeline's ruler, `scroll_x`, zoom and snap engine (contradiction #4). Expansion state is
@@ -1801,8 +1801,8 @@ between T-1401..T-1403 (correctness + fields) and T-1404..T-1406 (lane + IA).
 
 ### [ ] T-1406 — `SelectionSummary` and inspector IA
 
-- **Files:** `rust/crates/opencut-ui/src/view_model.rs`,
-  `rust/crates/opencut-ui/src/editor_view.rs` (inspector L1386+)
+- **Files:** `rust/crates/vii-ui/src/view_model.rs`,
+  `rust/crates/vii-ui/src/editor_view.rs` (inspector L1386+)
 - **Do:**
   - Replace `selected: Option<ElementInfo>` with `selection: SelectionSummary` where every field is
     `Field<T> = Uniform(T) | Mixed | Absent`. `Mixed` renders `—` and writing it applies to **all**
@@ -1834,9 +1834,9 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 ### [ ] W2-01 — Declarative effect registry + richer params + multi-input pass graph
 
 - **Files:** `rust/crates/effects/src/pipeline.rs` (EffectUniformBuffer L53-58, bind layout L68+,
-  apply_with_encoder L218-296), `rust/crates/opencut-preview/src/lib.rs` (effect_groups L24-64),
-  `rust/crates/opencut-project/src/element.rs` (Effect L12-18),
-  `rust/crates/opencut-ui/src/view_model.rs` (L170)
+  apply_with_encoder L218-296), `rust/crates/vii-preview/src/lib.rs` (effect_groups L24-64),
+  `rust/crates/vii-project/src/element.rs` (Effect L12-18),
+  `rust/crates/vii-ui/src/view_model.rs` (L170)
 - **Do:** one descriptor table (id, category, param specs with key/label/range/default/unit, a
   `linearizes` flag, an optional resource key, `canonical_order`); lift the fixed 8-float uniform;
   bind more than one input texture; allow non-linear pass graphs; add a string param variant and
@@ -1860,8 +1860,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-03 — Ripple edits + sync-lock + refusal
 
-- **Files:** new `rust/crates/opencut-core/src/timeline/ripple.rs`,
-  `rust/crates/opencut-core/src/command.rs` (RemoveElement L575-590); port
+- **Files:** new `rust/crates/vii-core/src/timeline/ripple.rs`,
+  `rust/crates/vii-core/src/command.rs` (RemoveElement L575-590); port
   `dep/apps/web/src/ripple/{diff,shift,apply}.ts`
 - **Do:** `compute_shifts`, `compute_shifts_for_ranges`, `compute_push`, `merge_ranges`, and a
   `validate(...) -> Result<Plan, RippleRefusal>` pass. Ripple delete (Shift-Backspace), ripple trim,
@@ -1874,8 +1874,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-04 — Tool modes (V/C/T), slip/slide/roll, in/out ranges
 
-- **Files:** new `rust/crates/opencut-ui/src/tools.rs`, `rust/crates/opencut-core/src/state.rs`,
-  new `rust/crates/opencut-core/src/plan/{slip,slide,roll}.rs`
+- **Files:** new `rust/crates/vii-ui/src/tools.rs`, `rust/crates/vii-core/src/state.rs`,
+  new `rust/crates/vii-core/src/plan/{slip,slide,roll}.rs`
 - **Do:** exactly three modal tools, **spring-loaded** (press to enter; release within 250ms with no
   mouse-down while held = latch; otherwise revert to pointer; Esc always returns to pointer; revert
   on window blur). Communicate mode with a toolbar chip + a 4% lane tint + a live razor blade line
@@ -1890,8 +1890,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-05 — Real text: style model, font picker, colour picker, multi-line, alignment
 
-- **Files:** `rust/crates/opencut-project/src/element.rs` (TextElement),
-  `rust/crates/opencut-text/src/lib.rs`, `rust/crates/opencut-preview/src/lib.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs` (TextElement),
+  `rust/crates/vii-text/src/lib.rs`, `rust/crates/vii-preview/src/lib.rs`
   (`ensure_text_texture`); port `dep/apps/web/src/text/{typography,background,primitives,layout}.ts`
 - **Do:** font family/size/scale, tracking, line spacing, case, traits, RGBA colour (hardcoded
   `"#ffffff"` at creation today, never changeable), alignment, shadow, two-pass stroke outline,
@@ -1903,8 +1903,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-06 — Crop
 
-- **Files:** `rust/crates/opencut-project/src/element.rs`, `rust/crates/compositor/src/frame.rs`,
-  `rust/crates/opencut-preview/src/lib.rs`, `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs`, `rust/crates/compositor/src/frame.rs`,
+  `rust/crates/vii-preview/src/lib.rs`, `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:** a `Crop` struct + UV inset in the compositor quad + hit-test participation. **Crop is a
   separate viewer MODE (Shift-C), not more handles on the same rect** — transform handles hide, the
   outside dims to 45%, rule-of-thirds guides appear, inside-drag pans the crop window at fixed
@@ -1915,7 +1915,7 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-07 — Clip filmstrips + the shared disk-cache / concurrency-gate substrate
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs`, new shared cache module
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs`, new shared cache module
 - **Do:** the cross-cutting critic calls filmstrips "probably the most visible single difference
   between our timeline and a real NLE". Draw them in the same `canvas()` as the waveform, at
   **source aspect** (not stretched), under a 40% scrim so the label strip stays legible; head+tail
@@ -1939,8 +1939,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-09 — App shell: project package, Save As / Open / recents, home launcher, settings window
 
-- **Files:** `rust/crates/opencut-ui/src/lib.rs` (run L19-39), `rust/desktop/src/main.rs`,
-  `rust/crates/opencut-project/src/project.rs`
+- **Files:** `rust/crates/vii-ui/src/lib.rs` (run L19-39), `rust/desktop/src/main.rs`,
+  `rust/crates/vii-project/src/project.rs`
 - **Do:** the ergonomics half deferred out of M1 — a `.vii` directory package (project.json +
   media.json + thumbnail + media/), Save As / Open / Open Recent wired to the menu bar built in
   T-011, a project registry with register-on-open and update-URL-when-moved. Home launcher as a
@@ -1953,8 +1953,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-10 — Scrub audio, level meters, playback rate
 
-- **Files:** `rust/crates/opencut-audio/src/{lib.rs, meter.rs}`,
-  `rust/crates/opencut-ui/src/editor_view.rs`
+- **Files:** `rust/crates/vii-audio/src/{lib.rs, meter.rs}`,
+  `rust/crates/vii-ui/src/editor_view.rs`
 - **Do:** the three natural consumers of M11's mixer. Scrub grains (2400 frames, 144-frame edge
   fades, reversed for backward scrubs). `meter.rs` as a pure decaying state machine (−60 dB floor,
   24 dB/s level decay, 18 dB/s peak decay, 1.5s hold, sticky clip latch), at the right end of the
@@ -1967,8 +1967,8 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-11 — Clip speed / retiming
 
-- **Files:** `rust/crates/opencut-project/src/element.rs`, `rust/crates/opencut-core/src/command.rs`,
-  `rust/crates/opencut-audio/src/graph.rs`, `rust/crates/opencut-preview/src/lib.rs`
+- **Files:** `rust/crates/vii-project/src/element.rs`, `rust/crates/vii-core/src/command.rs`,
+  `rust/crates/vii-audio/src/graph.rs`, `rust/crates/vii-preview/src/lib.rs`
 - **Do:** flagged **table-stakes by the audit's cross-cutting critic and owned by no domain**.
   It is a model change, not a UI change: timeline duration, source-frame mapping, split math, audio
   resampling and export all route through it, and it gates freeze-frame and reverse.
@@ -1978,7 +1978,7 @@ cross-cutting critic rather than a domain table — they are table-stakes and ha
 
 ### [ ] W2-12 — Drag affordances for ripple: gap band, insert indicator, per-track badges
 
-- **Files:** `rust/crates/opencut-ui/src/editor_view.rs` (the T-705 overlay layer)
+- **Files:** `rust/crates/vii-ui/src/editor_view.rs` (the T-705 overlay layer)
 - **Do:** the ripple half of the drag feedback deliberately parked out of M8 — a green gap band on
   every affected sync-locked track, an insert indicator line, downstream clips visibly shifted, a
   count badge, plus the red diagonal hatch for overwrite. Disclosure after the fact: a transient
@@ -2031,8 +2031,8 @@ These are decisions, not backlog. Each has a reason; revisit only if the reason 
   adds is in the T-106 golden seed; any gesture it adds is a reducer with an event-sequence test;
   any ffmpeg invocation it adds has an argv test; if it changes the render path, its descriptor
   golden is updated in an isolated commit.
-- **Test budget.** Wave 1 takes the suite from 66 to roughly 200 tests: ~45 in `opencut-core`,
-  ~30 in `opencut-project`, ~25 in `opencut-ui`, ~20 in `opencut-preview`, ~15 in `opencut-audio`,
+- **Test budget.** Wave 1 takes the suite from 66 to roughly 200 tests: ~45 in `vii-core`,
+  ~30 in `vii-project`, ~25 in `vii-ui`, ~20 in `vii-preview`, ~15 in `vii-audio`,
   plus ~15 Tier-B pixel goldens and ~5 gated capability tests. If Wave 1 lands with 90, that gap is
   visible rather than arguable.
 - **Suite speed.** `cargo test --workspace` excluding the capability tiers stays under 30 seconds on

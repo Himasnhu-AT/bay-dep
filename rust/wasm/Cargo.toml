@@ -1,9 +1,9 @@
 [package]
-name = "opencut-wasm"
+name = "vii-wasm"
 version = "0.2.10"
 edition = "2024"
 description = "Shared video editor logic compiled to WebAssembly"
-repository = "https://github.com/opencut/opencut"
+repository = "https://github.com/vii/vii"
 license = "MIT"
 
 [lib]

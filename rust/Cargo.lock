@@ -4498,121 +4498,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opencut-audio"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "test-support",
-]
-
-[[package]]
-name = "opencut-core"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "opencut-project",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "opencut-desktop"
-version = "0.1.0"
-dependencies = [
- "opencut-ui",
-]
-
-[[package]]
-name = "opencut-mcp"
-version = "0.1.0"
-dependencies = [
- "image",
- "opencut-core",
- "opencut-preview",
- "opencut-project",
- "opencut-speech",
- "opencut-text",
- "pollster 0.4.0",
- "serde",
- "serde_json",
- "time",
-]
-
-[[package]]
-name = "opencut-preview"
-version = "0.1.0"
-dependencies = [
- "compositor",
- "gpu",
- "image",
- "opencut-project",
- "opencut-text",
- "pollster 0.4.0",
- "serde_json",
- "test-support",
-]
-
-[[package]]
-name = "opencut-project"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "serde",
- "serde_json",
- "time",
-]
-
-[[package]]
-name = "opencut-speech"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "time",
-]
-
-[[package]]
-name = "opencut-text"
-version = "0.1.0"
-dependencies = [
- "cosmic-text",
-]
-
-[[package]]
-name = "opencut-ui"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "image",
- "opencut-audio",
- "opencut-core",
- "opencut-preview",
- "rfd",
- "rodio",
- "serde_json",
-]
-
-[[package]]
-name = "opencut-wasm"
-version = "0.2.10"
-dependencies = [
- "bridge",
- "compositor",
- "console_error_panic_hook",
- "effects",
- "gpu",
- "js-sys",
- "masks",
- "num-traits",
- "serde",
- "serde-wasm-bindgen",
- "time",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7163,6 +7048,121 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vii-audio"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "test-support",
+]
+
+[[package]]
+name = "vii-core"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "serde",
+ "serde_json",
+ "vii-project",
+]
+
+[[package]]
+name = "vii-desktop"
+version = "0.1.0"
+dependencies = [
+ "vii-ui",
+]
+
+[[package]]
+name = "vii-mcp"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "pollster 0.4.0",
+ "serde",
+ "serde_json",
+ "time",
+ "vii-core",
+ "vii-preview",
+ "vii-project",
+ "vii-speech",
+ "vii-text",
+]
+
+[[package]]
+name = "vii-preview"
+version = "0.1.0"
+dependencies = [
+ "compositor",
+ "gpu",
+ "image",
+ "pollster 0.4.0",
+ "serde_json",
+ "test-support",
+ "vii-project",
+ "vii-text",
+]
+
+[[package]]
+name = "vii-project"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "vii-speech"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "vii-text"
+version = "0.1.0"
+dependencies = [
+ "cosmic-text",
+]
+
+[[package]]
+name = "vii-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "image",
+ "rfd",
+ "rodio",
+ "serde_json",
+ "vii-audio",
+ "vii-core",
+ "vii-preview",
+]
+
+[[package]]
+name = "vii-wasm"
+version = "0.2.10"
+dependencies = [
+ "bridge",
+ "compositor",
+ "console_error_panic_hook",
+ "effects",
+ "gpu",
+ "js-sys",
+ "masks",
+ "num-traits",
+ "serde",
+ "serde-wasm-bindgen",
+ "time",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
 
 [[package]]
 name = "vswhom"

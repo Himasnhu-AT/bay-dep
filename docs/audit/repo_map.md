@@ -1,19 +1,19 @@
-# OpenCut Repository Map (`/Users/himanshu/codes/synthai/vii`)
+# vii Repository Map (`/Users/himanshu/codes/synthai/vii`)
 
 > Raw output from the Explore agent. Orientation document for the audit team. Generated 2026-08-01.
 
-OpenCut is a browser-first, privacy-focused video editor. It is a **Turborepo/pnpm monorepo** with a Next.js web app (the real, working editor), a nascent GPUI desktop shell, and a Rust core (compiled to WASM) that is the "single source of truth for non-UI logic" per an active migration.
+vii is a browser-first, privacy-focused video editor. It is a **Turborepo/pnpm monorepo** with a Next.js web app (the real, working editor), a nascent GPUI desktop shell, and a Rust core (compiled to WASM) that is the "single source of truth for non-UI logic" per an active migration.
 
 ## 1. Top-level Layout
 
 ```
 /
 ├── apps/
-│   ├── web/            # @opencut/web — the working Next.js 16 editor (~91k LOC TS/TSX)
-│   └── desktop/        # opencut-desktop — GPUI native shell (41 LOC, skeleton only)
+│   ├── web/            # @vii/web — the working Next.js 16 editor (~91k LOC TS/TSX)
+│   └── desktop/        # vii-desktop — GPUI native shell (41 LOC, skeleton only)
 ├── rust/
 │   ├── crates/         # Platform-agnostic Rust core (compositor, effects, masks, gpu, time, bridge)
-│   └── wasm/           # opencut-wasm — wasm-bindgen glue crate published to npm
+│   └── wasm/           # vii-wasm — wasm-bindgen glue crate published to npm
 ├── docs/               # effects-renderer.md, keyframes.md, actions.md, countries-search.md, audit/
 ├── notes/              # primitives-vs-domains.md (design note)
 ├── script/             # setup-rust, setup-rust.ps1 (Rust toolchain bootstrap)
@@ -37,7 +37,7 @@ Note: `pnpm-workspace.yaml` references `packages/*` but **no `packages/` directo
 - **Next.js 16.1.3** (App Router, Turbopack dev, `output: "standalone"`), **React 19**, Tailwind CSS 4.
 - **Zustand 5** for UI stores; a custom class-based `EditorCore` manager layer for editor state (see §4).
 - **Drizzle ORM 0.44** + `postgres`/`pg` (Postgres), **better-auth 1.2** (auth), **Upstash Redis + Ratelimit** (rate limiting).
-- **opencut-wasm 0.2.10** (the Rust core), **mediabunny** (media demux/encode), **wavesurfer.js** + **soundtouchjs** (audio/waveforms), **@huggingface/transformers** (in-browser transcription/Whisper), **motion**, Radix UI, `@hello-pangea/dnd`.
+- **vii-wasm 0.2.10** (the Rust core), **mediabunny** (media demux/encode), **wavesurfer.js** + **soundtouchjs** (audio/waveforms), **@huggingface/transformers** (in-browser transcription/Whisper), **motion**, Radix UI, `@hello-pangea/dnd`.
 - Deploy target: **Cloudflare** via `@opennextjs/cloudflare` (`open-next.config.ts`, `wrangler.jsonc`); also a `Dockerfile`. Content via `@content-collections` (blog/changelog markdown).
 
 **Rust workspace (`Cargo.toml`, resolver 2):** members are `rust/desktop`, `rust/wasm`, and crates `time`, `bridge`, `effects`, `gpu`, `masks`, `compositor`. Core graphics use **wgpu 29** + **bytemuck**; WASM glue uses **wasm-bindgen 0.2**, **js-sys**, **web-sys**, **serde-wasm-bindgen**, **tsify-next** (generates TS types). Desktop uses **gpui 0.2.2**.
@@ -52,9 +52,9 @@ Note: `pnpm-workspace.yaml` references `packages/*` but **no `packages/` directo
 
 **Project load flow:** `components/providers/editor-provider.tsx` drives it — on mount it gets the `EditorCore` singleton, calls `initializeGpuRenderer()`, sets degraded mode if no GPU, then `editor.project.loadProject({ id: projectId })`. If not found it auto-creates "Untitled Project" and `router.replace`s. Loading/error/exiting states render spinners. Project data is read from IndexedDB via `storageService` (§7).
 
-**Desktop:** `rust/desktop/src/main.rs` (41 LOC) — a GPUI `Application` opening a 1280×720 window that renders a dark div with the centered text "OpenCut". No editor logic.
+**Desktop:** `rust/desktop/src/main.rs` (41 LOC) — a GPUI `Application` opening a 1280×720 window that renders a dark div with the centered text "vii". No editor logic.
 
-**WASM entry:** `rust/wasm/src/wasm.rs` is the crate lib root (`crate-type = ["cdylib","rlib"]`). It gates `compositor/effects/gpu/masks/perf` behind `target_arch = "wasm32"` and always re-exports `time::*`. Built via `wasm-pack build rust/wasm --target bundler` → published as npm `opencut-wasm`.
+**WASM entry:** `rust/wasm/src/wasm.rs` is the crate lib root (`crate-type = ["cdylib","rlib"]`). It gates `compositor/effects/gpu/masks/perf` behind `target_arch = "wasm32"` and always re-exports `time::*`. Built via `wasm-pack build rust/wasm --target bundler` → published as npm `vii-wasm`.
 
 ## 4. Editor Architecture (priority)
 
@@ -98,13 +98,13 @@ Core crates (LOC excludes tests; total Rust ~4.4k LOC):
 - **`time`** (~855 LOC) — `MediaTime` (i64 integer ticks), `FrameRate`, `TimeCode`. This is the tick math shared with TS. Has `wasm` feature exporting via tsify. Contains most Rust unit tests.
 - **`bridge`** (95 LOC) — proc-macro helper crate (`syn`/`quote`) used by `time` for codegen.
 
-**`rust/wasm`** (`opencut-wasm`, v0.2.10) — the wasm-bindgen boundary. Modules mirror crates: `compositor.rs` (exposes `initCompositor`, `resizeCompositor`, `getCompositorCanvas`, `uploadTexture`, `releaseTexture`, `renderFrame` — deserializes `FrameDescriptor` via serde-wasm-bindgen, chooses WebGPU surface vs WebGL texture path), `effects.rs`, `gpu.rs`, `masks.rs`, `perf.rs` (frame profiling). `time` is always exported.
+**`rust/wasm`** (`vii-wasm`, v0.2.10) — the wasm-bindgen boundary. Modules mirror crates: `compositor.rs` (exposes `initCompositor`, `resizeCompositor`, `getCompositorCanvas`, `uploadTexture`, `releaseTexture`, `renderFrame` — deserializes `FrameDescriptor` via serde-wasm-bindgen, chooses WebGPU surface vs WebGL texture path), `effects.rs`, `gpu.rs`, `masks.rs`, `perf.rs` (frame profiling). `time` is always exported.
 
-**How web calls WASM:** `dep/apps/web/src/wasm/` wraps `opencut-wasm` — `wasm/media-time.ts` brands `MediaTime` as `number & {__mediaTime}` and wraps every time function (`roundMediaTime`, `mediaTimeFromSeconds`, `roundFrameTime`, `snapSeekMediaTime`, `parseMediaTimecode`, etc.), asserting integer ticks at the boundary. GPU/compositor calls go through `services/renderer/compositor/wasm-compositor.ts` and `gpu-renderer.ts`. TS types come from the generated `opencut-wasm` `.d.ts`.
+**How web calls WASM:** `dep/apps/web/src/wasm/` wraps `vii-wasm` — `wasm/media-time.ts` brands `MediaTime` as `number & {__mediaTime}` and wraps every time function (`roundMediaTime`, `mediaTimeFromSeconds`, `roundFrameTime`, `snapSeekMediaTime`, `parseMediaTimecode`, etc.), asserting integer ticks at the boundary. GPU/compositor calls go through `services/renderer/compositor/wasm-compositor.ts` and `gpu-renderer.ts`. TS types come from the generated `vii-wasm` `.d.ts`.
 
 ## 6. Desktop App (`rust/desktop/`)
 
-**A skeleton, not a real editor.** Contents: `Cargo.toml` (binary `opencut`, single dep `gpui = "0.2.2"`), `src/main.rs` (**41 LOC** — opens one window showing centered "OpenCut" text, no editor logic, no WASM/crate wiring), `README.md` (build instructions for Linux/macOS/Windows/WSL), and `script/setup`(+`.ps1`) for native deps. Per `AGENTS.md`, the intent is for desktop to eventually call the same Rust core, but currently **~0% of editor functionality is implemented**.
+**A skeleton, not a real editor.** Contents: `Cargo.toml` (binary `vii`, single dep `gpui = "0.2.2"`), `src/main.rs` (**41 LOC** — opens one window showing centered "vii" text, no editor logic, no WASM/crate wiring), `README.md` (build instructions for Linux/macOS/Windows/WSL), and `script/setup`(+`.ps1`) for native deps. Per `AGENTS.md`, the intent is for desktop to eventually call the same Rust core, but currently **~0% of editor functionality is implemented**.
 
 ## 7. Data Model & Persistence
 

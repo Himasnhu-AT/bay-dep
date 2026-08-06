@@ -1,0 +1,25 @@
+[package]
+name = "vii-preview"
+version = "0.1.0"
+edition = "2024"
+
+# Renders a scene at a given playhead through the real wgpu Compositor and reads the result
+# back to a CPU BGRA buffer, ready to hand to the GPUI preview as an image. Single
+# responsibility: scene → composited pixels. This is the CPU-readback preview path (the
+# working answer to the P0-GPU-04 interop question; a zero-copy blade↔wgpu path can replace
+# the readback later without changing this crate's callers).
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+compositor = { version = "0.1.0", path = "../compositor" }
+gpu = { version = "0.1.0", path = "../gpu" }
+image = "0.25"
+vii-project = { version = "0.1.0", path = "../vii-project" }
+vii-text = { version = "0.1.0", path = "../vii-text" }
+pollster = "0.4"
+serde_json = "1"
+
+[dev-dependencies]
+# T-002 capability gate: skips on a GPU-less/ffmpeg-less box, panics under VII_REQUIRE_*.
+test-support = { version = "0.1.0", path = "../test-support", features = ["gpu"] }

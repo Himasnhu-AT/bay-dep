@@ -1,4 +1,4 @@
-# Contributing to OpenCut
+# Contributing to vii
 
 ⚠️ We are currently NOT accepting feature PRs while we build out the core editor.
 
@@ -10,7 +10,7 @@ If you want to contribute:
 
 Critical bug fixes may be accepted on a case-by-case basis.
 
-Thank you for your interest in contributing to OpenCut! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to vii! This document provides guidelines and instructions for contributing.
 
 ## Getting Started
 
@@ -45,9 +45,9 @@ Thank you for your interest in contributing to OpenCut! This document provides g
 5. Install dependencies: `bun install`
 6. Start the development server: `bun run dev`
 
-> **Note:** Web development uses the published `opencut-wasm` package by default, so a fresh clone does not need a local WASM build.
+> **Note:** Web development uses the published `vii-wasm` package by default, so a fresh clone does not need a local WASM build.
 >
-> If you are editing `rust/wasm`, run `bun run build:wasm`, then `cd rust/wasm/pkg && bun link`, then `cd ../../../dep/apps/web && bun link opencut-wasm`.
+> If you are editing `rust/wasm`, run `bun run build:wasm`, then `cd rust/wasm/pkg && bun link`, then `cd ../../../dep/apps/web && bun link vii-wasm`.
 
 ### Desktop setup
 
@@ -112,7 +112,7 @@ If you're unsure whether your idea falls into the preview category, feel free to
 
    ```bash
    # Database (matches docker-compose.yaml)
-   DATABASE_URL="postgresql://opencut:opencut@localhost:5432/opencut"
+   DATABASE_URL="postgresql://vii:vii@localhost:5432/vii"
 
    # Generate a secure secret for Better Auth
    BETTER_AUTH_SECRET="your-generated-secret-here"

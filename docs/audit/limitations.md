@@ -1,4 +1,4 @@
-# OpenCut — Limitations, Bottlenecks, Tech Debt & Test Coverage
+# vii — Limitations, Bottlenecks, Tech Debt & Test Coverage
 
 > Agent 2 audit artifact. Generated 2026-08-01. Every claim below is grounded in a real file path.
 > Severity is rated **High / Medium / Low**, and each item is framed as **"expected for this stage"**
@@ -122,7 +122,7 @@ package-manager field + the `bun:test` runner were left on Bun, so the migration
 ### 3.1 `rust/desktop` is a 41-LOC stub — **not a concern, but a scope reality (expected)**
 
 `rust/desktop/src/main.rs` is **41 lines** (confirmed via `wc -l`): a GPUI `Application` that opens one
-1280×720 window rendering centered "OpenCut" text. **No editor logic, no WASM/crate wiring, ~0% of editor
+1280×720 window rendering centered "vii" text. **No editor logic, no WASM/crate wiring, ~0% of editor
 functionality.** Per `AGENTS.md` the intent is for desktop to eventually call the same Rust core, but today
 it is a skeleton. For queued feature goal #6 ("Desktop version?") the honest answer is: **there is no desktop
 editor** — it is a window shell. This is **expected for the stage** and should be scoped as greenfield, not
@@ -230,7 +230,7 @@ the code's maturity — the debt here is structural (tests/tooling), not littere
 ### 7.2 Suppression comments are disciplined — **LOW, not a concern**
 
 The `eslint-disable`/`biome-ignore` usages found are all **justified with inline rationale** — e.g.
-`opencut/prefer-object-params` disabled for reducer/registry `(action, handler)` signatures
+`vii/prefer-object-params` disabled for reducer/registry `(action, handler)` signatures
 (`actions/registry.ts`, `use-action-handler.ts`, `subtitles/components/assets-view.tsx`), and
 `jsx-a11y` disables on spatial gesture surfaces (timeline track/keyframe-lane/box-select divs in
 `timeline/components/{timeline-track,index,timeline-element,audio-volume-line}.tsx`), each explaining the

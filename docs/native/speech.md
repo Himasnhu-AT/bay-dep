@@ -12,7 +12,7 @@ Kokoro is Python + torch — about 2 GB of runtime. Linking that into an editor 
 trade, so it runs as a separate process, exactly as ffmpeg already does.
 
 ```
-opencut-mcp ──▶ opencut-speech::SpeechEngine ──HTTP+token──▶ vii-kokoro.py ──▶ Kokoro (torch)
+vii-mcp ──▶ vii-speech::SpeechEngine ──HTTP+token──▶ vii-kokoro.py ──▶ Kokoro (torch)
                  lifecycle, wire protocol                     model held hot
 ```
 

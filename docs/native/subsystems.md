@@ -4,7 +4,7 @@
 > 6 clusters · 64 subsystems.
 
 ## Editor core & state model
-CROSS-CUTTING NATIVE ARCHITECTURE (opencut-core): (1) The Command enum IS the MCP surface. Every TS command class (~45 in dep/apps/web/src/commands/**) and every TimelineManager/ScenesManager/ProjectManager dispatch method becomes a serde-tagged Command or Query variant; Editor::execute(Command)->CommandResult and Editor::query(Query)->QueryResult are the two MCP entry points. This gives undo/redo, autosave-dirty, and MCP for free from one dispatch path. (2) Singleton -> owned Editor. Replace EditorCore.getInstance() (a process-global that commands reach into at execute() time) with a caller-owned Editor struct; commands become pure (&mut EditorState)->CommandResult. This is the single biggest porting risk: TS managers hold &-refs to each other and mutate inside each other's notify() cycle, which Rust's borrow checker forbids. Resolution: centralize ALL mutable state in one EditorState and make the 12 'managers' stateless modules/impls over &mut EditorState + a Ctx, NOT 12 independently-locked objects (Arc<RwLock<Manager>>-per-manager invites deadlocks given the dense cross-references). (3) imbl persistent Vectors for SceneTracks/element/scene lists: almost every TS command undoes by restoring a captured whole-SceneTracks 'savedState' snapshot, and the live-drag previewOverlay merges patches over committed tracks every frame — persistent structures make both O(1)-clone with structural sharing instead of deep copies. (imbl v7 is the maintained fork; im/im-rc and rpds are alternatives — imbl chosen for Arc thread-safety + active maintenance.) (4) Reactivity: the nine-manager useSyncExternalStore bridge (subscribe-all + shallow-array-equality selector memoization) collapses into a coalesced EventBus: per-domain version counters + a DomainFlags bitflags emitted ONCE per committed command over tokio::sync::broadcast. The shallow-equality memoization is a UI concern that moves into the GPUI shell; MCP consumes coalesced change-notifications. (5) Clock injection: PlaybackManager's RAF/performance.now() becomes an injectable Clock so headless/MCP mode steps deterministically while the GPUI shell (or, ideally, the audio device clock) drives real time. (6) Reuse rust/crates/time for all MediaTime math (roundFrameTime/mediaTimeFromSeconds/clampMediaTime) to guarantee bit-parity with the web.
+CROSS-CUTTING NATIVE ARCHITECTURE (vii-core): (1) The Command enum IS the MCP surface. Every TS command class (~45 in dep/apps/web/src/commands/**) and every TimelineManager/ScenesManager/ProjectManager dispatch method becomes a serde-tagged Command or Query variant; Editor::execute(Command)->CommandResult and Editor::query(Query)->QueryResult are the two MCP entry points. This gives undo/redo, autosave-dirty, and MCP for free from one dispatch path. (2) Singleton -> owned Editor. Replace EditorCore.getInstance() (a process-global that commands reach into at execute() time) with a caller-owned Editor struct; commands become pure (&mut EditorState)->CommandResult. This is the single biggest porting risk: TS managers hold &-refs to each other and mutate inside each other's notify() cycle, which Rust's borrow checker forbids. Resolution: centralize ALL mutable state in one EditorState and make the 12 'managers' stateless modules/impls over &mut EditorState + a Ctx, NOT 12 independently-locked objects (Arc<RwLock<Manager>>-per-manager invites deadlocks given the dense cross-references). (3) imbl persistent Vectors for SceneTracks/element/scene lists: almost every TS command undoes by restoring a captured whole-SceneTracks 'savedState' snapshot, and the live-drag previewOverlay merges patches over committed tracks every frame — persistent structures make both O(1)-clone with structural sharing instead of deep copies. (imbl v7 is the maintained fork; im/im-rc and rpds are alternatives — imbl chosen for Arc thread-safety + active maintenance.) (4) Reactivity: the nine-manager useSyncExternalStore bridge (subscribe-all + shallow-array-equality selector memoization) collapses into a coalesced EventBus: per-domain version counters + a DomainFlags bitflags emitted ONCE per committed command over tokio::sync::broadcast. The shallow-equality memoization is a UI concern that moves into the GPUI shell; MCP consumes coalesced change-notifications. (5) Clock injection: PlaybackManager's RAF/performance.now() becomes an injectable Clock so headless/MCP mode steps deterministically while the GPUI shell (or, ideally, the audio device clock) drives real time. (6) Reuse rust/crates/time for all MediaTime math (roundFrameTime/mediaTimeFromSeconds/clampMediaTime) to guarantee bit-parity with the web.
 
 CLUSTER BOUNDARIES: several managers are thin state/orchestration shells over work owned by OTHER clusters — flagged per-subsystem to avoid double-implementing. Persistence/IndexedDB/OPFS + the 31-step migration chain (SaveManager/ProjectManager/ScenesManager call into it) = persistence cluster. Compositor/render-tree build + encode (RendererManager, thumbnails) = compositor/export cluster. Media decode/thumbnail/waveform + Web Audio decode (MediaManager, AudioManager) = media cluster. Placement/snapping/ripple-diff engines (invoked by insert/move/paste commands) = timeline-editing cluster. Animation sampling (keyframe pre-sample on delete, gain automation) = animation cluster.
 
@@ -224,7 +224,7 @@ _Risks:_
 - Three listener channels: subscribe() (state), onUpdate(time) (tick), onSeek(time)
 - bindTimelineScope(): subscribes timeline + scenes and reconciles (re-clamp, auto-pause) whenever tracks/scenes change
 
-**Native approach** — crates: `opencut-time (existing rust/crates/time)`, `std::time::Instant`
+**Native approach** — crates: `vii-time (existing rust/crates/time)`, `std::time::Instant`
 PlaybackState holds is_playing/current_time/volume/muted. Replace RAF with an injectable Clock/tick driver so the core stays framework-agnostic: in MCP/headless mode a manual step-clock lets tools seek/step deterministically; in the GPUI shell the frame callback drives it; for real A/V sync the audio device clock (see AudioManager) should be the master and PlaybackManager reads it. Reuse rust/crates/time (MediaTime, mediaTimeFromSeconds, roundFrameTime, clampMediaTime) so tick math is bit-identical to the web. Preserve reconcile-on-timeline-change (clamp + auto-pause).
 
 _Data structures:_ `struct PlaybackState { is_playing: bool, current_time: MediaTime, volume: f32, muted: bool, previous_volume: f32, is_scrubbing: bool, start_wall: Instant, start_time: MediaTime }`, `trait Clock { fn now_elapsed(&self) -> Duration }`
@@ -356,7 +356,7 @@ _Risks:_
 
 #### RendererManager (render-tree state & export orchestration)  `1-2 weeks`
 **Web:** `dep/apps/web/src/core/managers/renderer-manager.ts`
-**Browser deps:** `CanvasRenderer / OffscreenCanvas, canvas.toBlob`, `ClipboardItem / navigator.clipboard.write`, `SceneExporter (WebCodecs / mediabunny)`, `downloadBlob, opencut-wasm formatTimecode`
+**Browser deps:** `CanvasRenderer / OffscreenCanvas, canvas.toBlob`, `ClipboardItem / navigator.clipboard.write`, `SceneExporter (WebCodecs / mediabunny)`, `downloadBlob, vii-wasm formatTimecode`
 **Depends on:** TimelineManager (mutation & query surface), ProjectManager, MediaManager (asset registry), Observable/subscription reactivity model
 
 **Features**
@@ -365,7 +365,7 @@ _Risks:_
 - saveSnapshot / copySnapshot: render a single frame at min(playhead,lastFrame) to PNG, download or copy to clipboard; filenames use formatTimecode
 - exportProject: build scene, optionally mix audio buffer, drive SceneExporter with progress adjustment + cancel polling
 
-**Native approach** — crates: `image`, `arboard`, `opencut-compositor (existing rust/crates/compositor)`, `opencut-time`
+**Native approach** — crates: `image`, `arboard`, `vii-compositor (existing rust/crates/compositor)`, `vii-time`
 RendererState holds the render-tree handle + degraded flag and is state/orchestration only — the actual compositing (compositor crate) and video encode (export cluster) live elsewhere. Snapshot: render one frame via the compositor to an RGBA buffer -> encode PNG with `image` -> write to disk or OS clipboard (arboard). Export: a progress/cancel state machine emitting EditorEvents; hand the scene to the export cluster's encoder. Reuse the time crate for timecode filenames.
 
 _Data structures:_ `struct RendererState { render_tree: Option<RootNode>, degraded: bool }`, `struct ExportJob { progress: f32, cancel: CancellationToken }`
@@ -442,9 +442,9 @@ _Risks:_
 ## Timeline system
 SCOPE NOTE: "ripple" and "retime/speed" physically live outside dep/apps/web/src/timeline (dep/apps/web/src/ripple/*, dep/apps/web/src/retime/*) but are timeline-domain logic and are included here per the cluster brief. The React components (*.tsx), hooks/* and controllers/* are the GPUI-interaction boundary; everything else in timeline/ is pure model/logic.
 
-FOUNDATION ALREADY NATIVE: The integer-tick time type MediaTime(i64), FrameRate, timecode parsing and TICKS_PER_SECOND=120000 already exist in rust/crates/time (media_time.rs, frame_rate.rs, timecode.rs) and are exported to the web app via opencut-wasm + the rust/crates/bridge `#[export]` macro. The TS side (dep/apps/web/src/wasm/media-time.ts) is a thin branded-number wrapper over these. This means the hardest correctness primitive (frame-exact tick arithmetic) is done — most timeline math is a mechanical port that becomes MORE correct in Rust because i64 replaces JS floats (the group-resize invariant trimStart+duration*rate+trimEnd==sourceDuration and the roundMediaTime -0 normalization are float hazards that vanish natively).
+FOUNDATION ALREADY NATIVE: The integer-tick time type MediaTime(i64), FrameRate, timecode parsing and TICKS_PER_SECOND=120000 already exist in rust/crates/time (media_time.rs, frame_rate.rs, timecode.rs) and are exported to the web app via vii-wasm + the rust/crates/bridge `#[export]` macro. The TS side (dep/apps/web/src/wasm/media-time.ts) is a thin branded-number wrapper over these. This means the hardest correctness primitive (frame-exact tick arithmetic) is done — most timeline math is a mechanical port that becomes MORE correct in Rust because i64 replaces JS floats (the group-resize invariant trimStart+duration*rate+trimEnd==sourceDuration and the roundMediaTime -0 normalization are float hazards that vanish natively).
 
-ARCHITECTURE RECOMMENDATION: Land the pure subsystems (core-model → placement → snapping → group-move/group-resize → ripple → update-pipeline) in opencut-core as a framework-agnostic crate with a pure `fn(state, input) -> new_state` shape. They already have this shape in TS (strategy/result records, no side effects, immutable SceneTracks spreads). MCP and GPUI then both drive the same kernels. Only the controllers/* and hooks/* and *.tsx are GPUI-specific and should be rewritten, not ported — but their inner decision kernels (pixelToTime, isClickGesture, snap resolution, buildMoveGroup/resolveGroupMove/computeGroupResize) are already extracted into the pure modules.
+ARCHITECTURE RECOMMENDATION: Land the pure subsystems (core-model → placement → snapping → group-move/group-resize → ripple → update-pipeline) in vii-core as a framework-agnostic crate with a pure `fn(state, input) -> new_state` shape. They already have this shape in TS (strategy/result records, no side effects, immutable SceneTracks spreads). MCP and GPUI then both drive the same kernels. Only the controllers/* and hooks/* and *.tsx are GPUI-specific and should be rewritten, not ported — but their inner decision kernels (pixelToTime, isClickGesture, snap resolution, buildMoveGroup/resolveGroupMove/computeGroupResize) are already extracted into the pure modules.
 
 IMMUTABILITY: The entire cluster is written in a persistent/COW style (findTrackInSceneTracks/updateTrackInSceneTracks return new trees via spreads). This maps cleanly to rpds/imbl persistent Vectors which give O(1) clone + structural sharing — valuable for the undo/redo command stack (dep/apps/web/src/core/managers/commands.ts) and for the ripple before/after diffing.
 
@@ -467,7 +467,7 @@ CROSS-CLUSTER DEPS (out of scope but load-bearing): animation (clampAnimationsTo
 - Element constructors (buildTextElement/buildEffectElement/buildStickerElement/buildGraphicElement/buildElementFromMedia/buildLibraryAudioElement) with default param seeding
 - Branded integer-tick MediaTime arithmetic (add/sub/max/min/clamp/round/roundFrame/snapSeek/lastFrame/parseTimecode) - already a wrapper over rust/crates/time
 
-**Native approach** — crates: `serde`, `serde_json`, `uuid`, `rpds or imbl (persistent Vector for COW SceneTracks)`, `opencut time crate (existing)`
+**Native approach** — crates: `serde`, `serde_json`, `uuid`, `rpds or imbl (persistent Vector for COW SceneTracks)`, `vii time crate (existing)`
 Model TimelineTrack and TimelineElement as Rust enums with struct variants; SceneTracks as a struct holding persistent Vectors (rpds::Vector / imbl::Vector) so clone-on-write matches the TS spread semantics with structural sharing. Derive serde for project persistence and MCP payloads. Reuse the existing MediaTime(i64) newtype instead of the branded-number shim. params (ParamValues) is an open Record<string, ParamValue> in TS - model as a typed enum ParamValue plus HashMap<String,ParamValue> (or IndexMap to preserve order). Provide the update helpers as free functions returning a new SceneTracks.
 
 _Data structures:_ `enum TrackType`, `enum TimelineTrack { Video{..}, Text{..}, Audio{..}, Graphic{..}, Effect{..} }`, `enum TimelineElement { Audio, Video, Image, Text, Sticker, Graphic, Effect }`, `struct SceneTracks { overlay: Vector<OverlayTrack>, main: VideoTrack, audio: Vector<AudioTrack> }`, `struct ElementRef { track_id, element_id }`, `struct TScene`, `struct Bookmark { time: MediaTime, note, color, duration }`
@@ -499,7 +499,7 @@ _Risks:_
 - Enforce rule 'startTime': main-track elements pin to ZERO when they would become the earliest element; non-negative clamp elsewhere
 - getSourceDuration fallback derivation from trim + retimed clip span when sourceDuration absent
 
-**Native approach** — crates: `opencut time crate`, `core-model + retime-speed crates (internal)`
+**Native approach** — crates: `vii time crate`, `core-model + retime-speed crates (internal)`
 Port as an ordered list of rules; each rule is a struct/closure implementing apply(element, original, patch, ctx) -> (element, changed_fields). A trigger set (Vec<FieldId>) gates each rule against the accumulated changedFields Set (HashSet<FieldId>). Keep the two phases (derive then enforce) explicit. FieldId can be a small enum rather than stringly-typed 'keyof' to avoid typos.
 
 _Data structures:_ `enum ElementField { Retime, Duration, StartTime, Params, ... }`, `struct ElementUpdateContext { tracks: &SceneTracks, track_id }`, `trait Rule { fn triggers(&self)->&[ElementField]; fn apply(..)->RuleResult }`, `struct RuleResult { element, changed_fields: Vec<ElementField> }`
@@ -562,7 +562,7 @@ _Risks:_
 - resolveTimelineSnap: nearest snap point within maxSnapDistance (linear scan, closest wins) -> {snappedTime, snapPoint, snapDistance}
 - getTimelineSnapThresholdInTicks: convert a pixel threshold (default 10px) to ticks given zoom (px/sec -> ticks)
 
-**Native approach** — crates: `opencut time crate`, `core-model crate (internal)`
+**Native approach** — crates: `vii time crate`, `core-model crate (internal)`
 Sources become closures/iterators (impl Fn() -> impl Iterator<Item=SnapPoint>) or a Vec collected eagerly. resolveTimelineSnap ports directly. For large timelines, replace the O(n) scan with a sorted Vec<MediaTime> + binary search or an interval/BTreeMap index (perf subsystem) since resolve runs every mousemove during drag/resize/scrub. SnapPoint is a small struct; SnapPointType an enum.
 
 _Data structures:_ `enum SnapPointType { ElementStart, ElementEnd, Playhead, Bookmark, Keyframe }`, `struct SnapPoint { time: MediaTime, kind, element_id: Option, track_id: Option }`, `struct SnapResult { snapped_time, snap_point: Option<SnapPoint>, snap_distance }`, `(perf) BTreeMap<MediaTime, SnapPoint> or sorted Vec for nearest-neighbor`
@@ -616,7 +616,7 @@ _Risks:_
 
 #### group-resize  `2-4 weeks`
 **Web:** `dep/apps/web/src/timeline/group-resize/compute-resize.ts`, `dep/apps/web/src/timeline/group-resize/types.ts`, `dep/apps/web/src/timeline/group-resize/index.ts`, `dep/apps/web/src/timeline/controllers/resize-controller.ts (buildResizeMembers, hasResizeChanges - pure helpers)`
-**Browser deps:** `FrameRate comes from opencut-wasm (already native in rust/crates/time)`
+**Browser deps:** `FrameRate comes from vii-wasm (already native in rust/crates/time)`
 **Depends on:** timeline-core-model, retime-speed
 
 **Features**
@@ -628,7 +628,7 @@ _Risks:_
 - buildResizeMembers: from selection, compute leftNeighborBound/rightNeighborBound per element (max end of left non-selected, min start of right non-selected)
 - -0 normalization to ZERO
 
-**Native approach** — crates: `opencut time crate (FrameRate, round_to_frame, ticks_per_frame)`, `core-model + retime crates (internal)`
+**Native approach** — crates: `vii time crate (FrameRate, round_to_frame, ticks_per_frame)`, `core-model + retime crates (internal)`
 Direct port; native i64 tick math makes the trim/span invariant EXACT by construction (the TS comment about per-field rounding not composing is a float artifact - integers compose). minDuration derived from fps.denominator/numerator. Bounds are Option<MediaTime> (rightNeighbor/source may be unbounded). The single-snap-then-reclamp sequence and the 'source-extent bound wins over frame alignment' rule must be preserved. -0 case disappears in Rust.
 
 _Data structures:_ `enum ResizeSide { Left, Right }`, `struct GroupResizeMember extends ElementRef { start_time, duration, trim_start, trim_end, source_duration: Option, retime: Option<RetimeConfig>, left_neighbor_bound: Option<MediaTime>, right_neighbor_bound: Option<MediaTime> }`, `struct GroupResizeUpdate { ..ElementRef, patch: {trim_start, trim_end, start_time, duration} }`, `struct GroupResizeResult { delta_time, updates }`
@@ -690,7 +690,7 @@ _Risks:_
 - buildConstantRetime preset
 - audio-stretch: renderRetimedBuffer - linear-resample path (speed change, pitch follows) and pitch-preserving path (soundtouchjs PitchShifter tempo=rate, plus a pre-resample to target sample rate)
 
-**Native approach** — crates: `signalsmith-stretch or ssstretch (pitch-preserving time-stretch, replaces soundtouchjs)`, `rubato (high-quality sample-rate conversion / linear-resample path)`, `symphonia (decode source media to PCM)`, `opencut time crate`
+**Native approach** — crates: `signalsmith-stretch or ssstretch (pitch-preserving time-stretch, replaces soundtouchjs)`, `rubato (high-quality sample-rate conversion / linear-resample path)`, `symphonia (decode source media to PCM)`, `vii time crate`
 Split cleanly: the rate math (rate.ts/resolve.ts/split.ts/presets.ts) is trivial pure arithmetic that ports in an afternoon and feeds update-pipeline/group-resize. The real work is audio-stretch: replace the WebAudio+soundtouchjs offline-render pipeline with a direct-buffer pipeline - decode with symphonia, resample with rubato, and for maintain-pitch run signalsmith-stretch (colinmarc/signalsmith-stretch-rs or bmisiak/ssstretch, both MIT wrappers of the same C++ lib that produce far higher quality than soundtouchjs). Offline render becomes plain buffer-in/buffer-out; no OfflineAudioContext.
 
 _Data structures:_ `struct RetimeConfig { rate: f64, maintain_pitch: bool }`, `PCM as Vec<Vec<f32>> or interleaved Vec<f32> with channel count + sample rate`, `resampler/stretcher instances (rubato::SincFixedIn, signalsmith Stretch)`
@@ -720,7 +720,7 @@ _Risks:_
 - getFrameTime (roundFrameTime), getBookmarkAtTime, getBookmarksActiveAtTime (time within [start, start+duration])
 - getBookmarkSnapPoints (feeds snapping, excludeBookmarkTime)
 
-**Native approach** — crates: `opencut time crate (roundFrameTime)`, `core-model crate (internal)`
+**Native approach** — crates: `vii time crate (roundFrameTime)`, `core-model crate (internal)`
 Trivial port over Vec<Bookmark> kept sorted by time. Exact-tick equality (integer) is the identity key - cleaner in Rust than the JS === on branded numbers. Snap source emits SnapPoint{kind: Bookmark}. The drag hook and components are GPUI-side.
 
 _Data structures:_ `struct Bookmark { time: MediaTime, note: Option<String>, color: Option<String>, duration: Option<MediaTime> }`, `Vec<Bookmark> (sorted invariant)`
@@ -778,7 +778,7 @@ _Risks:_
 - Zoom math: getTimelineZoomMin (fit-to-duration with padding ratio), getTimelinePaddingPx, getZoomPercent, exponential sliderToZoom/zoomToSlider
 - Ruler: getRulerConfig (CapCut-style label/tick interval selection by zoom+fps, ensuring ticks divide labels), shouldShowLabel, formatRulerLabel (MM:SS / H:MM:SS / Xf)
 
-**Native approach** — crates: `opencut time crate`, `gpui (supplies window scale factor + element bounds at the boundary)`
+**Native approach** — crates: `vii time crate`, `gpui (supplies window scale factor + element bounds at the boundary)`
 Pure numeric port; these are view-layer helpers so GPUI supplies the equivalents of devicePixelRatio (window scale factor) and DOMRect (element bounds). Keep the ruler interval heuristics identical for visual parity with the web editor. sliderToZoom/zoomToSlider are exact float formulas. formatRulerLabel string formatting ports directly.
 
 _Data structures:_ `struct RulerConfig { label_interval_seconds: f64, tick_interval_seconds: f64 }`, `const LABEL/TICK_FRAME_INTERVALS, SECOND_MULTIPLIERS arrays`
@@ -842,7 +842,7 @@ _Risks:_
 - Edge auto-scroll, scroll sync between ruler/tracks, box-selection hit-testing
 
 **Native approach** — crates: `gpui (event handling, focus, scroll, drag)`, `all pure timeline crates above (internal)`
-REWRITE, not port. The pure decision kernels are already extracted (pixelToTime, isClickGesture, resolveTimelineSnap, buildMoveGroup/resolveGroupMove, computeGroupResize, computeDropTarget) and move into opencut-core; the controllers themselves become thin GPUI event->kernel->dispatch adapters. Replace the configRef/getter indirection with GPUI Context reads (viewport scale, scroll offset, element bounds from GPUI layout). Session enums map directly to Rust enums held in the GPUI view Model. window listeners become GPUI mouse/drag event handlers; requestAnimationFrame becomes GPUI's frame scheduling; the debounced scroll-save becomes a GPUI timer. Because the kernels are headless, the MCP layer can drive the same move/resize/seek operations without GPUI at all.
+REWRITE, not port. The pure decision kernels are already extracted (pixelToTime, isClickGesture, resolveTimelineSnap, buildMoveGroup/resolveGroupMove, computeGroupResize, computeDropTarget) and move into vii-core; the controllers themselves become thin GPUI event->kernel->dispatch adapters. Replace the configRef/getter indirection with GPUI Context reads (viewport scale, scroll offset, element bounds from GPUI layout). Session enums map directly to Rust enums held in the GPUI view Model. window listeners become GPUI mouse/drag event handlers; requestAnimationFrame becomes GPUI's frame scheduling; the debounced scroll-save becomes a GPUI timer. Because the kernels are headless, the MCP layer can drive the same move/resize/seek operations without GPUI at all.
 
 _Data structures:_ `enum DragDropState/DragOverState`, `enum ElementInteraction Session { Idle, Pending{snapshot}, Dragging{group, progress} }`, `enum ResizeSession/ScrubSession/KeyframeDrag Session`, `GPUI view Model holding current session + a reference to the timeline document`
 
@@ -979,7 +979,7 @@ _Risks:_
 
 #### Frame-descriptor build + texture cache/bridge (serde boundary removal)  `1-2 weeks`
 **Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/frame-descriptor.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/wasm-compositor.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/compositor/types.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/canvas-renderer.ts`, `/Users/himanshu/codes/synthai/vii/rust/crates/compositor/src/frame.rs`
-**Browser deps:** `serde-wasm-bindgen: FrameDescriptor deserialized in rust/wasm/src/compositor.rs`, `opencut-wasm exports initCompositor/resizeCompositor/getCompositorCanvas/uploadTexture/releaseTexture/renderFrame/getLastFrameProfile`, `OffscreenCanvas backing store for rendered textures; uploadTexture does a GPU canvas import`, `WeakMap<object,number> for external identity; JSON.stringify for content hashes`, `HTMLCanvasElement mount (getCompositorCanvas)`
+**Browser deps:** `serde-wasm-bindgen: FrameDescriptor deserialized in rust/wasm/src/compositor.rs`, `vii-wasm exports initCompositor/resizeCompositor/getCompositorCanvas/uploadTexture/releaseTexture/renderFrame/getLastFrameProfile`, `OffscreenCanvas backing store for rendered textures; uploadTexture does a GPU canvas import`, `WeakMap<object,number> for external identity; JSON.stringify for content hashes`, `HTMLCanvasElement mount (getCompositorCanvas)`
 **Depends on:** Native compositor crate (exists), Media frame provider versioning, Raster subsystem (produces pixmaps)
 
 **Features**
@@ -1013,7 +1013,7 @@ _Risks:_
 
 #### wgpu compositor integration + GPU init (reuse native crate)  `2-4 weeks`
 **Web:** `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/gpu-renderer.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/mask-feather.ts`, `/Users/himanshu/codes/synthai/vii/dep/apps/web/src/services/renderer/effect-preview.ts`, `/Users/himanshu/codes/synthai/vii/rust/wasm/src/compositor.rs`, `/Users/himanshu/codes/synthai/vii/rust/wasm/src/gpu.rs`, `/Users/himanshu/codes/synthai/vii/rust/crates/compositor/src/compositor.rs`
-**Browser deps:** `opencut-wasm initializeGpu/applyEffectPasses/applyMaskFeather (wasm-bindgen)`, `wgpu surface bound to HtmlCanvasElement (SurfaceTarget::Canvas); WebGL vs WebGPU branch`, `OffscreenCanvas in/out of applyEffect/applyMaskFeather`, `compositor mounts getCompositorCanvas() into the DOM`
+**Browser deps:** `vii-wasm initializeGpu/applyEffectPasses/applyMaskFeather (wasm-bindgen)`, `wgpu surface bound to HtmlCanvasElement (SurfaceTarget::Canvas); WebGL vs WebGPU branch`, `OffscreenCanvas in/out of applyEffect/applyMaskFeather`, `compositor mounts getCompositorCanvas() into the DOM`
 **Depends on:** gpu/compositor/effects/masks crates (exist), GPUI/window surface handle, Effects registry
 
 **Features**
@@ -1091,7 +1091,7 @@ _Risks:_
 - zoom clamp, pan bounds
 
 **Native approach** — crates: `glam`, `(otherwise pure Rust)`
-Port straight into opencut-core as framework-agnostic geometry — high-value shared logic the GPUI shell reuses. point_in_rotated_rect, hit_test, resolve_preferred_hit, get_visible_elements_with_bounds, corner/edge positions, screen_to_canvas/canvas_to_overlay/position_to_overlay, and the snap fns port 1:1 (pure). Replace DOMRect with a Rect struct. The one dependency is text bounds: route measureTextElement to the native text-cluster measure (same as resolve), not a canvas. Keep the exact contain-scale + rotation math so handles land where the compositor draws pixels. Expose as a preview_geometry module used by both the renderer (overlays) and the GPUI interaction layer.
+Port straight into vii-core as framework-agnostic geometry — high-value shared logic the GPUI shell reuses. point_in_rotated_rect, hit_test, resolve_preferred_hit, get_visible_elements_with_bounds, corner/edge positions, screen_to_canvas/canvas_to_overlay/position_to_overlay, and the snap fns port 1:1 (pure). Replace DOMRect with a Rect struct. The one dependency is text bounds: route measureTextElement to the native text-cluster measure (same as resolve), not a canvas. Keep the exact contain-scale + rotation math so handles land where the compositor draws pixels. Expose as a preview_geometry module used by both the renderer (overlays) and the GPUI interaction layer.
 
 _Data structures:_ `struct ElementBounds { center:Vec2, size:Vec2, rotation_deg:f32 }`, `struct ElementWithBounds { track_id, element_id, element_ref, bounds }`, `struct ViewportGeometry { canvas:Vec2, center:Vec2, scale:f32, viewport:Vec2 }`, `struct SnapLine { axis:Axis, position:f32 } / struct SnapResult`
 
@@ -1132,7 +1132,7 @@ _Risks:_
 - Pointer capture + high-frequency move events must drive preview/commit without flooding undo (overlay preview is state-cluster-owned).
 - contentEditable WYSIWYG has no direct GPUI equivalent — needs a custom text input mirroring the raster layout exactly (ties to the text raster risk).
 - Mask handles (SDF param editing, 305 LOC) depend on the masks cluster param model.
-- This is UI, not core — keep it out of opencut-core; only controllers/geometry belong in core.
+- This is UI, not core — keep it out of vii-core; only controllers/geometry belong in core.
 
 **Test cases**
 - `controller-corner-scale` _(unit)_ — CornerScaleSession: down at a corner + move → previewElements gets expected scaleX/scaleY (distance ratio) and clears scale animation when keyframed; commit → single snapshot.
@@ -1851,16 +1851,16 @@ SCOPE-WIDE FINDINGS (read before the per-subsystem entries):
 
 5. GOLDEN FIXTURE STATE TODAY. __tests__/fixtures/{v0,v1,v2,v3,v5}.ts are hand-authored per-version project snapshots; tests use type-narrowing accessors (helpers.ts asRecord/asRecordArray) rather than deep-equality, and cover only ~19 of 31 steps. The native strategy should UPGRADE this to true golden JSON files captured from the running web app (one per version 0..31) + full-chain golden (v0 fixture migrated all the way to v31), which today does not exist and is the highest-value test asset for the port.
 
-6. MCP: no MCP code exists anywhere in rust/ today (greenfield). rmcp is the official SDK (crates.io `rmcp`, tokio-based, implements MCP 2026-07-28 spec). The MCP server is a THIN transport shell over opencut-core — the same crate the GPUI shell uses — so it must not embed any domain logic; it exposes tools/resources that call opencut-core's project/persistence API.
+6. MCP: no MCP code exists anywhere in rust/ today (greenfield). rmcp is the official SDK (crates.io `rmcp`, tokio-based, implements MCP 2026-07-28 spec). The MCP server is a THIN transport shell over vii-core — the same crate the GPUI shell uses — so it must not embed any domain logic; it exposes tools/resources that call vii-core's project/persistence API.
 
 7. DEPENDENCY DIRECTION. This cluster is FOUNDATIONAL: the domain-model structs (subsystem 1) are the shared vocabulary that the timeline engine, animation, effects, and renderer clusters all consume. Persistence (2-6) depends only on subsystem 1. MCP (7) depends on 1-6 plus the command/timeline engine cluster for mutating tools. Build order: 1 -> {2,4,6} -> 3 -> 5 -> 7.
 
 CRATE SUMMARY (researched on crates.io, Aug 2026): serde/serde_json (model + JSON compat with the web SerializedProject wire shape), rusqlite 0.38 (single-file SQLite, best fit for a desktop single-file store; no async overhead), rmcp + rmcp-macros (MCP server), tokio (rmcp runtime), palette (exact sRGB<->linear for the v21->v22 color migration, replacing culori), chrono or time (ISO-8601 date (de)serialization matching `.toISOString()`), uuid (ids), directories/dirs (per-OS app data dir for the SQLite file + media/ tree), thiserror (error types), insta (snapshot/golden testing), proptest (round-trip/property), criterion (perf), tempfile (isolated store per test).
 
-#### Project & timeline domain model (opencut-core types)  `1-2 weeks`
+#### Project & timeline domain model (vii-core types)  `1-2 weeks`
 **Web:** `dep/apps/web/src/project/types.ts`, `dep/apps/web/src/timeline/types.ts`, `dep/apps/web/src/media/types.ts`, `dep/apps/web/src/animation/types.ts`, `dep/apps/web/src/effects/types.ts`, `dep/apps/web/src/masks/types.ts`, `dep/apps/web/src/params/index.ts`
 **Browser deps:** `TypeScript structural/union types (no runtime); discriminated unions on string literal 'type'`, `MediaTime is a branded number (number & {__mediaTime}) from the WASM time module`, `Date objects (in-memory) distinct from their ISO-string serialized form`, `AudioBuffer (Web Audio) referenced by BaseAudioElement.buffer — a runtime-only, non-persisted field`
-**Depends on:** opencut-core::time (existing rust/crates/time)
+**Depends on:** vii-core::time (existing rust/crates/time)
 
 **Features**
 - TProject { metadata, scenes[], currentSceneId, settings, version, timelineViewState? } as the root persisted document
@@ -1874,8 +1874,8 @@ CRATE SUMMARY (researched on crates.io, Aug 2026): serde/serde_json (model + JSO
 - Untyped params bag (ParamValues) per element — the data-driven property system
 - Type-level element category sets (MASKABLE/RETIMABLE/VISUAL_ELEMENT_TYPES) used by validation and commands
 
-**Native approach** — crates: `serde`, `serde_derive`, `opencut-time (existing rust/crates/time)`, `uuid`
-Define the canonical model as Rust structs/enums in a new `opencut-core` crate module `model/` (project.rs, scene.rs, track.rs, element.rs, background.rs). Reuse the existing `time` crate's MediaTime as the tick type (add a non-wasm/serde path so ticks serialize as i64). Model TBackground and each element/track family as serde-tagged enums: #[serde(tag = "type")] to match the on-disk discriminant exactly. Keep `params` as a typed newtype over serde_json::Map (ParamValues) so unknown/forward-compatible keys survive round-trips (mirrors the untyped web bag). The AudioBuffer field becomes #[serde(skip)] runtime-only Option, matching stripAudioBuffers on the web side. This module is the shared vocabulary every other native cluster imports.
+**Native approach** — crates: `serde`, `serde_derive`, `vii-time (existing rust/crates/time)`, `uuid`
+Define the canonical model as Rust structs/enums in a new `vii-core` crate module `model/` (project.rs, scene.rs, track.rs, element.rs, background.rs). Reuse the existing `time` crate's MediaTime as the tick type (add a non-wasm/serde path so ticks serialize as i64). Model TBackground and each element/track family as serde-tagged enums: #[serde(tag = "type")] to match the on-disk discriminant exactly. Keep `params` as a typed newtype over serde_json::Map (ParamValues) so unknown/forward-compatible keys survive round-trips (mirrors the untyped web bag). The AudioBuffer field becomes #[serde(skip)] runtime-only Option, matching stripAudioBuffers on the web side. This module is the shared vocabulary every other native cluster imports.
 
 _Data structures:_ `struct Project { metadata: ProjectMetadata, scenes: Vec<Scene>, current_scene_id: String, settings: ProjectSettings, version: u32, timeline_view_state: Option<TimelineViewState> }`, `enum Background { Color { color: String }, Blur { blur_intensity: f64 } } with #[serde(tag="type", rename_all="lowercase")]`, `struct BaseElement { id, name, duration: MediaTime, start_time: MediaTime, trim_start, trim_end, source_duration: Option<MediaTime>, animations: Option<ElementAnimations>, params: ParamValues }`, `enum Track { Video(VideoTrack), Text(TextTrack), Audio(AudioTrack), Graphic(GraphicTrack), Effect(EffectTrack) } and struct SceneTracks { overlay: Vec<Track>, main: VideoTrack, audio: Vec<AudioTrack> }`, `newtype ParamValues(serde_json::Map<String, serde_json::Value>) to preserve arbitrary param keys`, `MediaTime(i64) reused from the time crate; serde as i64 ticks`
 
@@ -1895,7 +1895,7 @@ _Risks:_
 #### Project (de)serialization layer (SerializedProject wire format)  `1-2 weeks`
 **Web:** `dep/apps/web/src/services/storage/types.ts`, `dep/apps/web/src/services/storage/service.ts`, `dep/apps/web/src/timeline/scenes.ts`
 **Browser deps:** `Date.prototype.toISOString() / new Date(string) for date (de)serialization`, `structuredClone-free plain-object serialization (IndexedDB stores structured clones; here the value is a plain JSON-compatible object)`, `roundMediaTime from the WASM time module applied at load boundaries`
-**Depends on:** Project & timeline domain model (opencut-core types)
+**Depends on:** Project & timeline domain model (vii-core types)
 
 **Features**
 - saveProject: strips audio buffers (stripAudioBuffers), ISO-serializes createdAt/updatedAt on both metadata and every scene, computes metadata.duration via getProjectDurationFromScenes fallback, writes one SerializedProject record keyed by project id
@@ -1904,8 +1904,8 @@ _Risks:_
 - SerializedProject/SerializedScene/SerializedProjectMetadata types = TProject with Date fields replaced by ISO strings
 - MediaAssetData metadata shape (id,name,type,size,lastModified,width?,height?,duration?,fps?,hasAudio?,ephemeral?,thumbnailUrl?)
 
-**Native approach** — crates: `serde`, `serde_json`, `chrono`, `opencut-time`
-Provide a `persist/serde.rs` in opencut-core with two representations: the in-memory Project (Dates as chrono::DateTime<Utc>, MediaTime ticks) and an on-disk SerializedProject (dates as RFC3339 strings) — implement via serde with `#[serde(with = "chrono::serde::ts_...")]`-style or a custom module that emits exactly `.toISOString()` format (millisecond precision, 'Z' suffix). Port stripAudioBuffers (drop runtime AudioBuffer before write), normalizeBookmarks (accept both a JSON number and an object, round to ticks), the malformed-metadata skip, and the getProjectDurationFromScenes duration fallback as pure functions. Keep the SerializedProject as the canonical JSON both the SQLite store (subsystem 3) and any file export/import use, so the native format stays byte-compatible with the web export for interop.
+**Native approach** — crates: `serde`, `serde_json`, `chrono`, `vii-time`
+Provide a `persist/serde.rs` in vii-core with two representations: the in-memory Project (Dates as chrono::DateTime<Utc>, MediaTime ticks) and an on-disk SerializedProject (dates as RFC3339 strings) — implement via serde with `#[serde(with = "chrono::serde::ts_...")]`-style or a custom module that emits exactly `.toISOString()` format (millisecond precision, 'Z' suffix). Port stripAudioBuffers (drop runtime AudioBuffer before write), normalizeBookmarks (accept both a JSON number and an object, round to ticks), the malformed-metadata skip, and the getProjectDurationFromScenes duration fallback as pure functions. Keep the SerializedProject as the canonical JSON both the SQLite store (subsystem 3) and any file export/import use, so the native format stays byte-compatible with the web export for interop.
 
 _Data structures:_ `struct SerializedProject { metadata: SerializedMetadata (createdAt/updatedAt: String), scenes: Vec<SerializedScene>, current_scene_id, settings, version, timeline_view_state }`, `fn normalize_bookmarks(raw: &serde_json::Value) -> Vec<Bookmark> (mirrors number|object handling + tick rounding)`, `fn project_duration_from_scenes(scenes: &[Scene]) -> MediaTime`, `chrono::DateTime<Utc> <-> RFC3339 string conversion module reproducing JS toISOString (always UTC, 3-digit millis)`
 
@@ -1938,7 +1938,7 @@ _Risks:_
 - loadAllProjectsMetadata reads all rows and projects out just metadata (gallery view)
 
 **Native approach** — crates: `rusqlite`, `serde_json`, `directories`, `thiserror`, `r2d2 + r2d2_sqlite (optional pooling)`
-Replace the 4 IndexedDB DB families with ONE SQLite file (e.g. {app_data_dir}/opencut/store.db) holding tables: projects(id TEXT PRIMARY KEY, updated_at TEXT, doc TEXT/JSONB), media_metadata(project_id TEXT, media_id TEXT, meta JSON, PRIMARY KEY(project_id,media_id)), saved_sounds(id TEXT PK, doc JSON) with the single 'user-sounds' row, motion_presets(id TEXT PK, doc JSON) with the single 'user-presets' row, and schema_meta(k,v) for the store schema version. Model the web's generic StorageAdapter<T> as a `KvStore` trait so call sites port 1:1; back projects/media by dedicated tables (indexed on updated_at for the gallery sort that loadAllProjectsMetadata does). Use a WAL-mode connection; keep the whole SerializedProject as a JSON text column (no need to shred the timeline into rows — the document is the unit of save/load, exactly like IndexedDB). Store dates as the same ISO strings so the SQLite doc is byte-identical to the IndexedDB value, which lets a one-shot importer migrate an existing user's browser export.
+Replace the 4 IndexedDB DB families with ONE SQLite file (e.g. {app_data_dir}/vii/store.db) holding tables: projects(id TEXT PRIMARY KEY, updated_at TEXT, doc TEXT/JSONB), media_metadata(project_id TEXT, media_id TEXT, meta JSON, PRIMARY KEY(project_id,media_id)), saved_sounds(id TEXT PK, doc JSON) with the single 'user-sounds' row, motion_presets(id TEXT PK, doc JSON) with the single 'user-presets' row, and schema_meta(k,v) for the store schema version. Model the web's generic StorageAdapter<T> as a `KvStore` trait so call sites port 1:1; back projects/media by dedicated tables (indexed on updated_at for the gallery sort that loadAllProjectsMetadata does). Use a WAL-mode connection; keep the whole SerializedProject as a JSON text column (no need to shred the timeline into rows — the document is the unit of save/load, exactly like IndexedDB). Store dates as the same ISO strings so the SQLite doc is byte-identical to the IndexedDB value, which lets a one-shot importer migrate an existing user's browser export.
 
 _Data structures:_ `trait KvStore { fn get(&self,key)->Result<Option<Value>>; fn set(&self,key,&Value); fn remove; fn list()->Vec<String>; fn clear(); }`, `struct SqliteStore { conn: rusqlite::Connection } implementing KvStore per logical table`, `table projects(id PK, updated_at TEXT indexed, doc TEXT) — doc = SerializedProject JSON`, `table media_metadata(project_id, media_id, meta TEXT, PRIMARY KEY(project_id,media_id))`, `singleton-row tables saved_sounds / motion_presets keyed by literal 'user-sounds'/'user-presets'`, `PRAGMA journal_mode=WAL, foreign_keys=ON`
 
@@ -1970,7 +1970,7 @@ _Risks:_
 - OPFSAdapter.isSupported() capability gate
 
 **Native approach** — crates: `std::fs`, `directories`, `tokio::fs (if async)`, `infer or tree_magic_mini (MIME/SVG sniff)`, `thiserror`
-Replace OPFS with a plain on-disk tree: {app_data_dir}/opencut/media/{projectId}/{mediaId} storing raw bytes, mirroring the OPFS directory-per-project model exactly. Implement the same StorageAdapter surface (get->read file, set->atomic write via tempfile+rename, remove->tolerate NotFound, list->read_dir, clear->remove_dir_all+recreate). Native code hands the renderer a filesystem path or an mmap'd byte slice instead of an object URL — the decoder cluster consumes bytes/paths directly, so the object-URL indirection disappears. Port the SVG-as-image sniff (read first bytes, check for '<svg') and the write-blob-then-metadata ordering with rollback. Because files are real paths, the SQLite media_metadata row should store a relative path, letting the whole {app_data_dir}/opencut folder be copied/backed-up as a self-contained project bundle.
+Replace OPFS with a plain on-disk tree: {app_data_dir}/vii/media/{projectId}/{mediaId} storing raw bytes, mirroring the OPFS directory-per-project model exactly. Implement the same StorageAdapter surface (get->read file, set->atomic write via tempfile+rename, remove->tolerate NotFound, list->read_dir, clear->remove_dir_all+recreate). Native code hands the renderer a filesystem path or an mmap'd byte slice instead of an object URL — the decoder cluster consumes bytes/paths directly, so the object-URL indirection disappears. Port the SVG-as-image sniff (read first bytes, check for '<svg') and the write-blob-then-metadata ordering with rollback. Because files are real paths, the SQLite media_metadata row should store a relative path, letting the whole {app_data_dir}/vii folder be copied/backed-up as a self-contained project bundle.
 
 _Data structures:_ `struct FsBlobStore { root: PathBuf } with per-project subdir resolution project_dir(project_id) -> root.join(project_id)`, `atomic write: write to {mediaId}.tmp then fs::rename to {mediaId}`, `media path stored as relative 'media/{projectId}/{mediaId}' in the SQLite metadata row`
 
@@ -2003,7 +2003,7 @@ _Risks:_
 - Defensive handling of malformed/partial legacy data (all transformers operate on Record<string,unknown> with isRecord/getProjectId guards)
 
 **Native approach** — crates: `serde_json`, `palette`, `csscolorparser`, `thiserror`, `insta (test)`, `proptest (test)`
-Port the chain into opencut-core `migrations/` operating on serde_json::Value (the direct analog of Record<string,unknown> — keep it UNTYPED so defensive legacy handling ports 1:1; do NOT deserialize into the strong model until after v31). Each step becomes fn transform_vN_to_vN1(project: Value) -> MigrationOutcome { project, skipped, reason }. A `run_migrations` driver reproduces getProjectVersion inference and the from==current gating, persisting through subsystem 3 after each step. Replace culori in v21->v22 with `csscolorparser` (parse CSS colour strings) + `palette` (Srgb::into_linear) — and pin the exact sRGB transfer function the web used (the code inlines srgbToLinear with the 0.04045/12.92 and 1.055/2.4 constants, so implement that literal formula, NOT palette's default, to guarantee identical linear values). Drop the 1s min-display delay (UI concern). GOLDEN STRATEGY: capture one real project JSON per source version 0..30 from the running web app (script the web storageService to dump each fixture), commit them as fixtures/vN.json, and for each N assert transform_vN_to_vN1(vN.json) == vN1.json (per-step golden) PLUS a full-chain golden: v0.json migrated through all 31 steps equals a committed v31 golden. Use `insta` snapshots so regenerating goldens is one command. This is the single most valuable test asset and does not exist today (web tests cover ~19/31 steps and use narrowing accessors, not equality).
+Port the chain into vii-core `migrations/` operating on serde_json::Value (the direct analog of Record<string,unknown> — keep it UNTYPED so defensive legacy handling ports 1:1; do NOT deserialize into the strong model until after v31). Each step becomes fn transform_vN_to_vN1(project: Value) -> MigrationOutcome { project, skipped, reason }. A `run_migrations` driver reproduces getProjectVersion inference and the from==current gating, persisting through subsystem 3 after each step. Replace culori in v21->v22 with `csscolorparser` (parse CSS colour strings) + `palette` (Srgb::into_linear) — and pin the exact sRGB transfer function the web used (the code inlines srgbToLinear with the 0.04045/12.92 and 1.055/2.4 constants, so implement that literal formula, NOT palette's default, to guarantee identical linear values). Drop the 1s min-display delay (UI concern). GOLDEN STRATEGY: capture one real project JSON per source version 0..30 from the running web app (script the web storageService to dump each fixture), commit them as fixtures/vN.json, and for each N assert transform_vN_to_vN1(vN.json) == vN1.json (per-step golden) PLUS a full-chain golden: v0.json migrated through all 31 steps equals a committed v31 golden. Use `insta` snapshots so regenerating goldens is one command. This is the single most valuable test asset and does not exist today (web tests cover ~19/31 steps and use narrowing accessors, not equality).
 
 _Data structures:_ `type Project = serde_json::Value (untyped, matches ProjectRecord)`, `struct MigrationOutcome { project: Value, skipped: bool, reason: Option<String> }`, `trait Migration { fn from(&self)->u32; fn to(&self)->u32; fn run(&self, Value)->MigrationOutcome } + a static ordered Vec<Box<dyn Migration>>`, `fn infer_version(&Value)->u32 (explicit version | scenes[] => 1 | 0)`, `exact sRGB->linear: v <= 0.04045 ? v/12.92 : ((v+0.055)/1.055).powf(2.4) reproduced verbatim for v21->v22`
 
@@ -2039,7 +2039,7 @@ _Risks:_
 - Persistent-storage request UX (navigator.storage.persist) — the dialog
 
 **Native approach** — crates: `sysinfo`, `fs2 (or fs4)`, `thiserror`
-Replace navigator.storage.estimate with real free-disk-space on the volume holding {app_data_dir}/opencut, via fs4::available_space / sysinfo disks. Keep the SAME capacity model: available = free_space - 50MB reserve, and the same three-state result enum, so call sites port unchanged. Map ENOSPC io::Error to StorageQuotaExceededError. There is no 'persist' concept on desktop (data is already durable), so the persistence-request dialog and use-storage-persistence collapse to a no-op / capability-true. Keep formatStorageBytes as a pure port for the shell's storage UI.
+Replace navigator.storage.estimate with real free-disk-space on the volume holding {app_data_dir}/vii, via fs4::available_space / sysinfo disks. Keep the SAME capacity model: available = free_space - 50MB reserve, and the same three-state result enum, so call sites port unchanged. Map ENOSPC io::Error to StorageQuotaExceededError. There is no 'persist' concept on desktop (data is already durable), so the persistence-request dialog and use-storage-persistence collapse to a no-op / capability-true. Keep formatStorageBytes as a pure port for the shell's storage UI.
 
 _Data structures:_ `struct QuotaStatus { total: Option<u64>, used: Option<u64>, headroom: Option<u64>, available: Option<u64> }`, `enum CapacityCheck { EnoughSpace(u64), InsufficientSpace(u64), EstimateUnavailable }`, `const HEADROOM_RESERVE_BYTES: u64 = 50 * 1024 * 1024`
 
@@ -2056,25 +2056,25 @@ _Risks:_
 
 ---
 
-#### Native MCP server (rmcp over opencut-core)  `2-4 weeks`
+#### Native MCP server (rmcp over vii-core)  `2-4 weeks`
 **Web:** `dep/apps/web/src/services/storage/service.ts`, `dep/apps/web/src/core/managers/project-manager.ts`, `dep/apps/web/src/core/managers/save-manager.ts`, `dep/apps/web/src/project/types.ts`, `AGENTS.md (architecture: logic in rust/, UI shells replaceable)`
-**Browser deps:** `None — this subsystem does not exist on the web; it is the native surface that replaces the browser's implicit 'the app IS the API' by exposing opencut-core to agents/tools`
-**Depends on:** Structured store (IndexedDB -> SQLite), Media blob store (OPFS -> native filesystem), 31-version migration chain (port + golden strategy), Project & timeline domain model (opencut-core types)
+**Browser deps:** `None — this subsystem does not exist on the web; it is the native surface that replaces the browser's implicit 'the app IS the API' by exposing vii-core to agents/tools`
+**Depends on:** Structured store (IndexedDB -> SQLite), Media blob store (OPFS -> native filesystem), 31-version migration chain (port + golden strategy), Project & timeline domain model (vii-core types)
 
 **Features**
 - (New/greenfield) Programmatic access to the same project model the GPUI shell edits: list/open/create/delete projects, read project metadata + timeline, mutate the timeline (add/remove/move/trim elements, set background, edit keyframes) through the command layer, import/export media
 - Resources: expose each project (and its scenes/tracks) as an MCP resource; expose the media inventory
-- Tools mirror the editing verbs that exist on the web managers (project-manager.updateSettings, timeline-manager mutations) but routed through opencut-core's command/undo system
-- Shares a single opencut-core instance + persistence with the desktop shell (per AGENTS.md: logic lives in the core, shells are replaceable)
+- Tools mirror the editing verbs that exist on the web managers (project-manager.updateSettings, timeline-manager mutations) but routed through vii-core's command/undo system
+- Shares a single vii-core instance + persistence with the desktop shell (per AGENTS.md: logic lives in the core, shells are replaceable)
 
 **Native approach** — crates: `rmcp`, `rmcp-macros`, `tokio`, `serde`, `serde_json`, `schemars (tool input schemas)`, `thiserror`, `tracing`
-Build a thin `opencut-mcp` crate (workspace member alongside rust/desktop and rust/crates/*) that depends on opencut-core and exposes NO domain logic of its own. Use rmcp (official SDK, tokio-based, MCP 2026-07-28) with the #[tool_router]/#[tool] macros: each tool is a small async handler that locks a shared core handle (Arc<Mutex<EditorCore>> or a core actor/mpsc command channel) and calls the SAME command/timeline/project API the GPUI shell uses, so persistence, migrations, undo, and autosave all go through subsystems 1-6 unchanged. Expose projects as MCP resources (uri opencut://project/{id}) whose contents are the SerializedProject JSON (subsystem 2), and media as opencut://project/{id}/media/{mediaId}. Serve stateless over the 2026-07-28 spec (rmcp default) via stdio for a local desktop connector and optionally streamable-HTTP. Because the core owns a single SQLite connection (subsystem 3), route all core access through one actor to serialize writes and avoid SQLITE_BUSY between the MCP server and the shell. Tool input/output types are #[derive(Serialize,Deserialize,JsonSchema)] structs derived from the domain model so the tool schemas stay in lockstep with the persisted model.
+Build a thin `vii-mcp` crate (workspace member alongside rust/desktop and rust/crates/*) that depends on vii-core and exposes NO domain logic of its own. Use rmcp (official SDK, tokio-based, MCP 2026-07-28) with the #[tool_router]/#[tool] macros: each tool is a small async handler that locks a shared core handle (Arc<Mutex<EditorCore>> or a core actor/mpsc command channel) and calls the SAME command/timeline/project API the GPUI shell uses, so persistence, migrations, undo, and autosave all go through subsystems 1-6 unchanged. Expose projects as MCP resources (uri vii://project/{id}) whose contents are the SerializedProject JSON (subsystem 2), and media as vii://project/{id}/media/{mediaId}. Serve stateless over the 2026-07-28 spec (rmcp default) via stdio for a local desktop connector and optionally streamable-HTTP. Because the core owns a single SQLite connection (subsystem 3), route all core access through one actor to serialize writes and avoid SQLITE_BUSY between the MCP server and the shell. Tool input/output types are #[derive(Serialize,Deserialize,JsonSchema)] structs derived from the domain model so the tool schemas stay in lockstep with the persisted model.
 
-_Data structures:_ `struct OpencutMcp { core: CoreHandle } where CoreHandle is an mpsc/actor front to the single EditorCore + store`, `#[tool] async fn list_projects() -> Vec<ProjectMetadata>; open_project{id}; create_project{name}; delete_project{id}`, `#[tool] async fn set_background{project_id, background: Background}; add_element{...}; move_element{...}; upsert_keyframe{...} — each returns a CommandResult summary`, `MCP Resource provider mapping opencut://project/{id} -> SerializedProject JSON, opencut://project/{id}/timeline -> scenes/tracks view`, `enum McpError (thiserror) mapping core/persistence/quota errors to JSON-RPC error responses`
+_Data structures:_ `struct ViiMcp { core: CoreHandle } where CoreHandle is an mpsc/actor front to the single EditorCore + store`, `#[tool] async fn list_projects() -> Vec<ProjectMetadata>; open_project{id}; create_project{name}; delete_project{id}`, `#[tool] async fn set_background{project_id, background: Background}; add_element{...}; move_element{...}; upsert_keyframe{...} — each returns a CommandResult summary`, `MCP Resource provider mapping vii://project/{id} -> SerializedProject JSON, vii://project/{id}/timeline -> scenes/tracks view`, `enum McpError (thiserror) mapping core/persistence/quota errors to JSON-RPC error responses`
 
 _Risks:_
 - Shared mutable core: the MCP server and GPUI shell mutating the same project concurrently need a single serialization point (actor/command queue) or edits race and autosave clobbers — design the core handle as the single writer from day one
-- rmcp is young and the 2026-07-28 spec is recent; API churn is likely — pin the version and isolate rmcp behind the tool handlers so a bump doesn't ripple into opencut-core
+- rmcp is young and the 2026-07-28 spec is recent; API churn is likely — pin the version and isolate rmcp behind the tool handlers so a bump doesn't ripple into vii-core
 - Tool schema drift: if tool input structs are hand-written rather than derived from the domain model, they will drift from the persisted shape — derive JsonSchema from the model types
 - Undo/redo semantics over MCP: agents issuing many tool calls can flood history; decide batching (BatchCommand analog) and whether MCP edits are undoable in the shell's history
 - Auth/trust boundary: an MCP tool that imports media takes a file path/bytes — reuse the blob store's traversal guard and quota gate; do not let a tool write arbitrary paths
@@ -2082,7 +2082,7 @@ _Risks:_
 **Test cases**
 - `mcp-list-open-roundtrip` _(integration)_ — create_project -> list_projects shows it -> open_project returns its timeline; delete_project removes it; all changes are visible in the SQLite store.
 - `mcp-set-background-persists` _(integration)_ — set_background tool sets {type:color} on a project; reloading the project from the store (subsystem 3) reflects it and the change went through the command layer (undoable).
-- `mcp-resource-json` _(golden)_ — Reading opencut://project/{id} returns SerializedProject JSON equal to what the persistence layer would write for that project.
+- `mcp-resource-json` _(golden)_ — Reading vii://project/{id} returns SerializedProject JSON equal to what the persistence layer would write for that project.
 - `mcp-concurrent-writer` _(integration)_ — An MCP mutation and a shell-simulated mutation issued concurrently are serialized by the core actor with no lost update and no SQLITE_BUSY.
 - `mcp-tool-schema` _(unit)_ — Each tool's generated JSON schema deserializes a representative argument payload and rejects a malformed one (schema stays in sync with the domain model).
 - `mcp-media-guard` _(unit)_ — An import-media tool call with a traversal path or oversized file is rejected by the blob-store guard / quota gate, returning a structured McpError.

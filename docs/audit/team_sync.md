@@ -1,7 +1,7 @@
 # Team Sync — Editor Codebase Audit (classic → vii)
 
-**Context:** The scaffold was replaced with the real OpenCut editor codebase (cloned from
-`opencut-classic`). This audit maps the *actual, working* editor so we can implement requested
+**Context:** The scaffold was replaced with the real vii editor codebase (cloned from
+`vii-classic`). This audit maps the *actual, working* editor so we can implement requested
 features on solid ground. Coordination is file-system only, under `docs/audit/`.
 
 **Started:** 2026-08-01

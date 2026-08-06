@@ -1,4 +1,4 @@
-# Phase 1 — opencut-core — headless framework-agnostic engine
+# Phase 1 — vii-core — headless framework-agnostic engine
 
 [← Phase 0](phase-0.md) · [Plan](plan.md) · [Tasks](task.md) · [Phase 2 →](phase-2.md)
 
@@ -19,7 +19,7 @@ Build the entire editing engine as one headless crate with NO UI and NO framewor
 Land the pure days-scale slices first (Selection, Clipboard, bookmarks, fps, params, audio-gain, subtitle formats) to validate the owned-Editor+Command+EventBus+imbl architecture before the 1-2 month bulk (TimelineManager, resolve, raster, text, decode, audio). Every pure kernel gets property tests for its invariant (trim/span, undo/redo, interval algebra, snapshot roundtrip) plus goldens ported from the existing TS __tests__. Rendering uses the three-tier golden ladder; text goldens are regenerated natively (never shared with web). Migration + serde use provenance-correct web-captured fixtures. Perf benches (criterion) gate the hot paths at agreed budgets.
 
 ## Deliverables
-- opencut-core crate: domain model + params/color/fps foundations with i64-tick MediaTime parity
+- vii-core crate: domain model + params/color/fps foundations with i64-tick MediaTime parity
 - Single-file SQLite store + native blob store + both migration chains (project v0..31 and keybindings v2..7) with full-chain goldens + a browser-export importer
 - Owned Editor with the serde-tagged Command/Query dispatch surface: undo/redo, ripple, autosave, coalesced EventBus, and all 12 managers-as-modules over one EditorState
 - Full pure timeline kernel set (core-model, update-pipeline, placement, snapping, group-move/resize, ripple, retime, bookmarks, drop-target, ruler) backed by imbl
@@ -37,7 +37,7 @@ Add a non-wasm/serde path to rust/crates/time so MediaTime serializes as i64 tic
 
 > **Test gate:** Golden: add/sub/clamp/roundFrame/snapSeek match the TS media-time fixtures; MediaTime serde emits integer ticks, never floats.
 
-#### `P1-FND-01` — Domain model (opencut-core types)
+#### `P1-FND-01` — Domain model (vii-core types)
 Define Project/ProjectSettings/Background/Scene/Bookmark/SceneTracks and the 5 track + 7 element serde-tagged enums (matching TS discriminants exactly, incl. audio's double sourceType discriminant), with ParamValues as a typed newtype over serde_json::Map to preserve forward-compatible keys; AudioBuffer field is #[serde(skip)] runtime-only.
 
 > **Test gate:** Golden roundtrip: a captured real v31 project JSON deserializes and re-serializes to JSON-value equality (proves enum tags, optional-field elision, i64 ticks).

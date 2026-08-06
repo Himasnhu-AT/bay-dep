@@ -10,7 +10,7 @@ was deliberately deferred. Companion documents:
 - [`benchmarks.md`](benchmarks.md) — benchmark suite and measured baselines
 
 **State at time of writing:** 134 tests passing, `cargo clippy --workspace --all-targets
--D warnings` clean, `cargo fmt --all --check` clean, `cargo build -p opencut-desktop` clean.
+-D warnings` clean, `cargo fmt --all --check` clean, `cargo build -p vii-desktop` clean.
 
 ---
 

@@ -8,7 +8,7 @@ MCP client ──JSON-RPC──▶ server.rs ──▶ tools.rs ──▶ studio
                          transport      schemas       engine
 ```
 
-The crate is `rust/crates/opencut-mcp`. It has no async runtime and no MCP SDK — the protocol
+The crate is `rust/crates/vii-mcp`. It has no async runtime and no MCP SDK — the protocol
 we need is "read a JSON-RPC request, return a JSON-RPC response", and the transport is ~200
 lines of `std::net`.
 
@@ -18,7 +18,7 @@ lines of `std::net`.
 
 ```bash
 cd rust
-cargo build --release -p opencut-mcp
+cargo build --release -p vii-mcp
 ./target/release/vii-mcp                 # HTTP on 127.0.0.1:7333
 ./target/release/vii-mcp --port 8080     # a specific port (0 = OS picks)
 ./target/release/vii-mcp --stdio         # JSON-RPC on stdin/stdout instead

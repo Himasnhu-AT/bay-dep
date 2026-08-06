@@ -2,25 +2,25 @@
 
 [Plan](plan.md) · [Phase 0 progress](phase-0-progress.md)
 
-The native GPUI editor (`rust/desktop`, binary `opencut`) is built from small crates, each with a
+The native GPUI editor (`rust/desktop`, binary `vii`) is built from small crates, each with a
 single responsibility, so the domain model, the editing engine, and the UI evolve independently
 and stay testable.
 
 ## Crate graph
 
 ```
-rust/desktop (opencut-desktop)      thin binary — just `opencut_ui::run()`
+rust/desktop (vii-desktop)      thin binary — just `vii_ui::run()`
         │
         ▼
-opencut-ui        GPUI views: toolbar, media panel, preview, inspector, timeline.
+vii-ui        GPUI views: toolbar, media panel, preview, inspector, timeline.
         │         Renders state, turns interaction into Commands. Pure presentation
         │         mapping (view_model) is unit-tested without a window.
         ▼
-opencut-core      the headless engine: owned Editor over EditorState (Project +
+vii-core      the headless engine: owned Editor over EditorState (Project +
         │         selection + clipboard), serde-tagged Command enum, reversible
         │         ProjectPatch undo/redo, coalesced EventBus, Query API. No GPU/UI.
         ▼
-opencut-project   pure data model: Project → Scene → Tracks → Element (+ settings,
+vii-project   pure data model: Project → Scene → Tracks → Element (+ settings,
         │         refs). serde only, no behavior.
         ▼
 time              MediaTime (i64 ticks, 120 000/s) — shared with the compositor + wasm.
@@ -35,14 +35,14 @@ editor's preview pane is a placeholder.
 
 | Crate | Owns | Must not |
 |-------|------|----------|
-| `opencut-project` | data types + serde | no editing logic, no IO, no GPU |
-| `opencut-core` | commands, undo/redo, events, queries | no GPU, no UI, no `Arc<RwLock>`/`RefCell` |
-| `opencut-ui` | GPUI views + interaction → Command | no business rules (delegate to core) |
-| `opencut-desktop` | window/app entry | nothing else |
+| `vii-project` | data types + serde | no editing logic, no IO, no GPU |
+| `vii-core` | commands, undo/redo, events, queries | no GPU, no UI, no `Arc<RwLock>`/`RefCell` |
+| `vii-ui` | GPUI views + interaction → Command | no business rules (delegate to core) |
+| `vii-desktop` | window/app entry | nothing else |
 
 - The UI **never mutates the project directly** — it dispatches a `Command` (undoable) or a
   direct `select` (non-undoable), then `cx.notify()` re-renders from fresh state.
-- All presentation logic that doesn't need GPUI lives in `opencut-ui::view_model` (a pure
+- All presentation logic that doesn't need GPUI lives in `vii-ui::view_model` (a pure
   `EditorViewModel::build(&Editor)`), so it is unit-tested without opening a window.
 
 ## What works today
@@ -64,9 +64,9 @@ Done: shell, selection, undo/redo, playhead+transport+playback, drag-to-move, in
 media→timeline, split, multi-scene, save/load, keyboard shortcuts.
 
 Done: **compositor preview with real decoded media + export**.
-- `opencut-preview` renders the scene through the real wgpu `Compositor` and reads it back to BGRA,
+- `vii-preview` renders the scene through the real wgpu `Compositor` and reads it back to BGRA,
   displayed by GPUI as a `RenderImage` (the **`P0-GPU-04` GO decision, CPU-readback path**).
-- **Real textures:** text via `opencut-text` (cosmic-text), images via the `image` crate, video
+- **Real textures:** text via `vii-text` (cosmic-text), images via the `image` crate, video
   frames via the **ffmpeg CLI sidecar** (`-ss T -frames:v 1 -f rawvideo`). Effects (brightness) run
   on the layers. Media import (`rfd` file dialog) adds image/video clips.
 - **Export:** still frame → PNG, and the whole timeline → MP4 (render each frame → pipe raw RGBA to
@@ -74,7 +74,7 @@ Done: **compositor preview with real decoded media + export**.
 
 Also done: **keyframe animation** (transform/opacity over time, interpolated, live in the preview),
 **motion presets** (save/apply effects+animations), **audio waveforms** + **audio playback** (rodio,
-`opencut-audio` decodes via ffmpeg), **fast video playback** (whole-clip decode cached, indexed by
+`vii-audio` decodes via ffmpeg), **fast video playback** (whole-clip decode cached, indexed by
 time), and **inline text editing** (a "TextEdit" key-context suppresses shortcuts while typing).
 
 The native editor now covers the website's feature surface: import (image/video/audio), timeline
@@ -93,7 +93,7 @@ palmier-io/palmier-pro; the plan and execution list are
 - **Sources are fitted, not stretched** — `fit_contain` sizes a layer from its natural size, and
   video decode plans against the **display** size (ffmpeg autorotates, so a 90° phone clip was
   being squashed into a landscape buffer).
-- **Real media probing** — `opencut-preview::probe` parses `ffprobe` JSON for duration, size,
+- **Real media probing** — `vii-preview::probe` parses `ffprobe` JSON for duration, size,
   rational fps, audio presence and rotation. Import used to hardcode 4s for every file. Stills
   are never probed for duration (ffprobe reports ~0.04s for a JPEG).
 - **Decode is off the render path.** `PreviewRenderer` spawns a worker per clip and draws a
@@ -114,7 +114,7 @@ palmier-io/palmier-pro; the plan and execution list are
   aren't re-shaped through cosmic-text every frame; the readback now reads the compositor's
   **native BGRA** order directly (`read_texture_bgra`), dropping two cancelling full-buffer channel
   swizzles per frame on Metal.
-- **Multi-clip audio mixing** — `opencut_audio::mix_stereo` (pure, unit-tested) sums every non-muted
+- **Multi-clip audio mixing** — `vii_audio::mix_stereo` (pure, unit-tested) sums every non-muted
   audio clip sounding at/after the playhead into one buffer; playback was previously first-clip-only.
 
 ### The one remaining item: true zero-copy preview (`P0-GPU-04`)
@@ -130,8 +130,8 @@ cross-device (wgpu vs. GPUI/blade) synchronization hazard. It is a deliberate, s
 whose payoff is latency only, so it is deferred rather than half-built.
 
 ## Tests
-- `opencut-project`: model invariants + JSON round-trip (`tests/model.rs`).
-- `opencut-core`: every command, reversible undo/redo, paste, selectionOverride, one-event-per-command
+- `vii-project`: model invariants + JSON round-trip (`tests/model.rs`).
+- `vii-core`: every command, reversible undo/redo, paste, selectionOverride, one-event-per-command
   (`tests/editor.rs`).
-- `opencut-ui`: `view_model` mapping (selection → inspector, tracks → rows, undo availability).
+- `vii-ui`: `view_model` mapping (selection → inspector, tracks → rows, undo availability).
 - The binary is smoke-launched to confirm the window boots without panicking.

@@ -48,7 +48,7 @@ Wire platform IME into GPUI text inputs (inspector fields + the WYSIWYG text ove
 > **Test gate:** Manual: CJK/emoji composition works in inspector fields and the text-edit overlay.
 
 #### `P3-SHELL-05` — Tauri disjoint-surface fallback shell
-If the GPUI health gate fails: a Tauri shell on the SAME opencut-core, rendering the compositor output as a disjoint surface; parity target is the core editing loop, not pixel-embedded preview.
+If the GPUI health gate fails: a Tauri shell on the SAME vii-core, rendering the compositor output as a disjoint surface; parity target is the core editing loop, not pixel-embedded preview.
 
 > **Test gate:** Manual: Tauri shell drives core edits + shows composited frames; feature-parity checklist for the editing loop met.
 

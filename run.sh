@@ -21,7 +21,7 @@ echo
 
 cd "$ROOT/rust"
 if [ "${RELEASE:-0}" = "1" ]; then
-  exec cargo run --release -p opencut-desktop "$@"
+  exec cargo run --release -p vii-desktop "$@"
 else
-  exec cargo run -p opencut-desktop "$@"
+  exec cargo run -p vii-desktop "$@"
 fi

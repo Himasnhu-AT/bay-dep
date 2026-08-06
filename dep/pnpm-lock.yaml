@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  opencut-wasm: link:../rust/wasm/pkg
+  vii-wasm: link:../rust/wasm/pkg
 
 importers:
 
@@ -23,7 +23,7 @@ importers:
       next:
         specifier: ^16.1.3
         version: 16.1.3(@babel/core@7.29.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      opencut-wasm:
+      vii-wasm:
         specifier: link:../rust/wasm/pkg
         version: link:../rust/wasm/pkg
     devDependencies:
@@ -168,7 +168,7 @@ importers:
       next-themes:
         specifier: ^0.4.4
         version: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      opencut-wasm:
+      vii-wasm:
         specifier: link:../../../rust/wasm/pkg
         version: link:../../../rust/wasm/pkg
       pg:

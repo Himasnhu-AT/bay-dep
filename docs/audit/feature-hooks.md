@@ -106,7 +106,7 @@ Types: `dep/apps/web/src/effects/types.ts` (`Effect`, `EffectPass`, `EffectPassT
 3. Add `rust/crates/effects/src/shaders/brightness.wgsl` (entry `fragment_main`).
 4. `rust/crates/effects/src/pipeline.rs` — add a shader-id const + `include_str!`, build a `RenderPipeline` in `EffectPipeline::new`, insert into the `pipelines` HashMap (currently **only** `"gaussian-blur"` at ~line 134).
 5. **Extend `pack_effect_uniforms`** (`pipeline.rs` ~line 265) — it currently hard-accepts only `u_sigma`/`u_step`/`u_direction` and errors (`UnsupportedUniform`) on any other name; also `EffectUniformBuffer` struct (~line 47). Branch per-shader or generalize the packing to pass `u_amount`.
-6. Rebuild WASM (`opencut-wasm`) so the browser gets the new pipeline.
+6. Rebuild WASM (`vii-wasm`) so the browser gets the new pipeline.
 
 **Persistence:** effects are stored inline as `Effect[]` on visual elements (`VideoElement`/`ImageElement`/`TextElement`/`StickerElement`/`GraphicElement`) or as standalone `EffectElement` (`type:"effect"`, rendered by `EffectLayerNode`). New effects need **no migration** (absent effects just don't render; new params default via `buildDefaultParamValues`). Numeric effect params animate via `resolveEffectParamsAtTime` automatically (path `effects.<id>.params.<key>`).
 

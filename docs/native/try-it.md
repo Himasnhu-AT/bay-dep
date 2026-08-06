@@ -26,14 +26,14 @@ and text still work but video/audio decode, waveforms, and MP4 export are skippe
 RELEASE=1 ./run.sh
 ```
 
-(equivalently: `cd rust && cargo run --release -p opencut-desktop` — the Rust workspace lives in
+(equivalently: `cd rust && cargo run --release -p vii-desktop` — the Rust workspace lives in
 `rust/`, so bare `cargo` commands must be run from there.)
 
 - **`--release` is recommended** — playback and decode are much smoother than a debug build.
 - First build takes a few minutes (wgpu + GPUI compile once, then it's cached).
 - The window is titled `vii — <project name>`.
 
-> The binary is named `opencut`; `./run.sh` is the simplest way to launch it.
+> The binary is named `vii`; `./run.sh` is the simplest way to launch it.
 
 ---
 
@@ -164,7 +164,7 @@ mixer, ffprobe parsing, decode budgeting, all 17 blend modes, and the render pat
 Test a single crate, e.g. the mixer:
 
 ```bash
-cd rust && cargo test -p opencut-audio
+cd rust && cargo test -p vii-audio
 ```
 
 ---

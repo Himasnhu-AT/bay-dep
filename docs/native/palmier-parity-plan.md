@@ -44,11 +44,11 @@ half-built implementations of the same thing.
 
 ## 2. Where we stand
 
-Honestly: the engine is good and the layer above it is a demo. `opencut-core` has reversible
+Honestly: the engine is good and the layer above it is a demo. `vii-core` has reversible
 `ProjectPatch` undo with 23 tests and no UI dependency; `view_model.rs` is a pure, unit-tested
 presentation mapping; the wgpu stack has a **complete, GPU-tested 17-mode WGSL blend shader** and a
 **jump-flood SDF mask-feather pipeline that palmier has no equivalent of** — both of which are
-unreachable dead code because `opencut-preview` hardcodes `BlendMode::Normal` (lib.rs:346) and
+unreachable dead code because `vii-preview` hardcodes `BlendMode::Normal` (lib.rs:346) and
 `mask: None` (lib.rs:348). Our `MediaTime` (i64 ticks at 120 000/s) plus rational `Fps` is a better
 time model than palmier's `Int` frames, our patch-based undo is cleaner than their whole-timeline
 snapshot swap, and `dep/apps/web` gives us a second mature implementation to port from that palmier does
@@ -137,7 +137,7 @@ These are not gaps. They are places where the app is wrong today, with the evide
 
 | # | Bug (live today) | Evidence | Fixed in |
 |---|---|---|---|
-| 1 | Every source whose aspect differs from the canvas is **stretched**; no letterboxing, no natural size | `element.rs:83-89` is `{x,y,scale,rotation,opacity}`; `opencut-preview/src/lib.rs:334-344` emits `width: scale*canvas_w, height: scale*canvas_h` | M3 |
+| 1 | Every source whose aspect differs from the canvas is **stretched**; no letterboxing, no natural size | `element.rs:83-89` is `{x,y,scale,rotation,opacity}`; `vii-preview/src/lib.rs:334-344` emits `width: scale*canvas_w, height: scale*canvas_h` | M3 |
 | 2 | A trim **slides the clip without changing which frames play**; audio has no trim at all, so split-audio replays source 0 twice | `command.rs:68-72` sets start+duration only; `AudioElement` (`element.rs:157-165`) has no trim fields; renderer reads `trim_start` at `lib.rs:311` | M3 |
 | 3 | Importing a 3-minute file produces a **4-second clip** | `import_media` hardcodes `MediaTime::from_ticks(TICKS_PER_SECOND * 4)` at `editor_view.rs:564`; `MediaAsset` is `{id,name,path}` | M2 |
 | 4 | Imported assets are **invisible** — the media panel is a hardcoded 3-tuple array and never reads `editor.media()` | `editor_view.rs:979-981` | M2 |
@@ -150,7 +150,7 @@ These are not gaps. They are places where the app is wrong today, with the evide
 | 11 | Missing media becomes a **silent 8×8 coloured box**, and export bakes it in | `upload_solid_placeholder` (`lib.rs:176-186`) is the fallback at L293-296, L328, L331 | M2 |
 | 12 | **Zoom is a trap** — the lane has no scroll container, so anything past the viewport is unreachable | `editor_view.rs:1992-1999` `.relative().flex_1().overflow_hidden()` | M6 |
 | 13 | The playhead **cannot be clicked or dragged anywhere** (2px div redrawn per lane, no hit target, lane div has no mouse handler) | `editor_view.rs:2001-2010` | M5 |
-| 14 | Play **stalls for seconds**, the mix is **frozen at Play time**, scrubbing is **silent**, and A/V drift is **unbounded** (playhead on wall-clock `Instant`, rodio on the device clock) | `editor_view.rs:204-300`, `opencut-audio/src/lib.rs:14-38`, `advance_playback` at `editor_view.rs:754-775` | M11 |
+| 14 | Play **stalls for seconds**, the mix is **frozen at Play time**, scrubbing is **silent**, and A/V drift is **unbounded** (playhead on wall-clock `Instant`, rodio on the device clock) | `editor_view.rs:204-300`, `vii-audio/src/lib.rs:14-38`, `advance_playback` at `editor_view.rs:754-775` | M11 |
 | 15 | Setting opacity to **37 % is impossible** — every numeric control is a fixed ±0.1 stepper | `nudge_row` L1253-1303, `stepper_row` L1307-1357 | M1 (component) / M14a (sweep) |
 | 16 | `cargo test` **never runs in CI** — `.github/workflows/ci.yml` has one `web` job | — | M0 |
 
@@ -188,7 +188,7 @@ named targets are thinner than the audit implies. Honest verdicts:
 | Preview hit-test + element bounds | `dep/apps/web/src/preview/{hit-test,element-bounds}.ts` | **Port.** `pointInRotatedRect` is a ~20-line direct translation. **Invert the z-order rule** — our topmost is the *last* overlay element |
 | Preview coordinate mapping | `dep/apps/web/src/preview/preview-coords.ts` | **Port.** `screenPixelsToLogicalThreshold` is the piece people forget: handle hit slop must be constant in *screen* px |
 | Canvas snapping guides | `dep/apps/web/src/preview/preview-snap.ts` (539 lines) | **Port** |
-| Audio mastering (dB scale, −1 dBFS limiter) | `dep/apps/web/src/media/audio-mastering.ts` | **Port.** `clampDb`, `dBToLinear`, `VOLUME_DB_MIN/MAX`, the limiter. Replaces the hard ±1 clamp at `opencut-audio/src/lib.rs:90-93` |
+| Audio mastering (dB scale, −1 dBFS limiter) | `dep/apps/web/src/media/audio-mastering.ts` | **Port.** `clampDb`, `dBToLinear`, `VOLUME_DB_MIN/MAX`, the limiter. Replaces the hard ±1 clamp at `vii-audio/src/lib.rs:90-93` |
 | Audio scheduling model | `dep/apps/web/src/media/audio-manager.ts` | **Port the design** (chunks against the audio clock, 2 s lookahead), not the code — the runtime is cpal/rodio's `Source` trait |
 | SRT/ASS subtitles | `dep/apps/web/src/subtitles/` | **Port when captions land** — not this round |
 | Ripple range math | `dep/apps/web/src/ripple/{diff,shift,apply}.ts` (373 lines) | **Port the range math when ripple lands (next round).** It has **no tests**; palmier's real added value is the validate-then-refuse pass, which dep/apps/web lacks entirely |
@@ -284,9 +284,9 @@ the px↔time↔frame math exists once, pure and tested.
 - Rust CI job (§6.1) with capability gating.
 - `theme/` module: `palette.rs`, `tokens.rs`, `clip.rs` (§5.3). `Theme::light()` is a stub returning dark.
 - `Notifications` + status bar + toast stack (§5.1).
-- `opencut-ui/src/actions.rs`: `pub const ACTIONS: &[ActionDef]` producing `Vec<KeyBinding>`, the
+- `vii-ui/src/actions.rs`: `pub const ACTIONS: &[ActionDef]` producing `Vec<KeyBinding>`, the
   `cx.set_menus` menu tree, the shortcuts help grid, and every `.tooltip()`.
-- `opencut-ui/src/geometry.rs` (GPUI-free): `ticks_to_px`, `px_to_ticks`, `quantize_to_frame`,
+- `vii-ui/src/geometry.rs` (GPUI-free): `ticks_to_px`, `px_to_ticks`, `quantize_to_frame`,
   `frame_of`, `visible_window`, `tick_ladder`, `zoom_at`, `format_timecode`, `content_rect`.
 - `ui/` primitive layer: `TextField` (adapted from `gpui/examples/input.rs`), `button`, `icon_button`,
   `row`, `panel_header`, `badge`, `tooltip`, `segmented`, `toggle`, and the `deferred()` overlay layer
@@ -439,14 +439,14 @@ aspect-driven preview render size · project settings presets and `W:H` parser.
 
 **Acceptance criteria**
 - `Transform { x, y, width, height, rotation, opacity }`, normalized to the canvas. No
-  `scale * canvas_w` remains in `opencut-preview` (lib.rs:334-344).
+  `scale * canvas_w` remains in `vii-preview` (lib.rs:334-344).
 - ONE migration handles both changes: legacy `scale` → w/h derived from natural size, **and** the
   legacy animation channel key `"scale"` → `"width"` + `"height"`. A fixture test loads a
   pre-migration project and asserts the layer rect is unchanged for a 16:9 source and corrected for a
   non-16:9 one, and that a keyframed `scale` channel samples to the same rendered geometry at three
   playhead positions.
 - `element_bounds(element, canvas, natural_size)` is pure and unit-tested in `view_model.rs`,
-  including the rotated case. `fit_contain(natural, canvas)` lives in `opencut-project/src/transform.rs`.
+  including the rotated case. `fit_contain(natural, canvas)` lives in `vii-project/src/transform.rs`.
 - `ProjectPatch::SetElementTrim` exists; `Command::TrimElement` lowers to start + duration + trim. A
   left-edge trim of 2 s advances `trim_start` by exactly 2 s.
 - `AudioElement` gains `trim_start`/`trim_end`; `SplitElement` writes both halves' trims. Test:
@@ -456,12 +456,12 @@ aspect-driven preview render size · project settings presets and `W:H` parser.
 - `TrimElement` rebases animation channels so keys keep their source-relative position (test: left
   trim with two keys).
 - An `AspectPreset` list (16:9, 9:16, 1:1, 4:3, 2.4:1) plus a validated `W:H` parser lives in
-  `opencut-project/src/aspect.rs` as pure logic: even dimensions, 2..8192 clamp, gcd-reduced label,
+  `vii-project/src/aspect.rs` as pure logic: even dimensions, 2..8192 clamp, gcd-reduced label,
   typed errors, unit tests. A reversible `SetProjectSettings` command applies it.
 - The preview render target derives from `settings.canvas` aspect; `PREVIEW_RENDER_W/H`
   (`editor_view.rs:20-21`) are gone. Render size quantizes **up** to the next multiple of 64 and caps
   at the project canvas size, so a resize drag does not recreate wgpu textures every frame.
-- **`opencut-preview/src/scene_to_frame.rs` is extracted** (Scene + playhead → `FrameDescriptor`, no
+- **`vii-preview/src/scene_to_frame.rs` is extracted** (Scene + playhead → `FrameDescriptor`, no
   GPU, no decode) as its own commit, with the existing 7 `tests/render.rs` tests green before and
   after. Descriptor goldens (§6.3, Tier C) begin here.
 
@@ -491,14 +491,14 @@ Transform change.)*
 
 **Acceptance criteria**
 - `Element` gains `blend_mode` covering all 17 `compositor::BlendMode` variants, plus
-  `Command::SetBlendMode`. `opencut-preview` passes it through; the hardcoded `BlendMode::Normal` at
+  `Command::SetBlendMode`. `vii-preview` passes it through; the hardcoded `BlendMode::Normal` at
   `lib.rs:346` is gone.
 - For non-Normal modes, opacity fades the **blend result** against the backdrop rather than being
   baked into layer alpha (palmier's `FrameRenderer` semantics). A GPU test asserts Multiply at 50 %
   opacity equals a 50 % mix of backdrop and multiplied result; Normal keeps today's behaviour. Ship
   this **with** blend modes so we never ship the subtly-wrong version first.
 - `Element` gains `edge_rounding` and `edge_softness` (0..1). When either is non-zero,
-  `opencut-preview` emits a `LayerMaskDescriptor` and the JFA feather path in `masks/` actually runs;
+  `vii-preview` emits a `LayerMaskDescriptor` and the JFA feather path in `masks/` actually runs;
   the `mask: None` at `lib.rs:348` becomes conditional. A GPU test asserts a softened edge produces a
   monotone alpha ramp.
 - A colour-card element can be created with a hex colour and an aspect preset, and participates in
@@ -539,7 +539,7 @@ scrub quality tier · transport bar moved under the viewer (§5.1).
   redrawn per lane (which also desynchronizes when lanes have different origins).
 - All playhead positions quantize to frames via `settings.fps`. Arrow keys step **±1 frame** (not ±1
   second as at `editor_view.rs:2069-2076`); Shift+arrow steps ±1 second; Home/End jump to start/end.
-  `quantize(MediaTime, Fps)` is pure, in `opencut-project`.
+  `quantize(MediaTime, Fps)` is pure, in `vii-project`.
 - The transport reads HH:MM:SS:FF. `format_timecode(MediaTime, Fps)` is pure and unit-tested including
   non-integer fps (30000/1001) against the standard NTSC vectors.
 - The transport bar moves out of the timeline toolbar into a 34 px bar under the viewer, with a 14 px
@@ -590,7 +590,7 @@ solo, height resize, add/remove.
   editable name, and `[visible][mute or solo][sync-lock][menu]`. Sync-lock is stored now even though
   ripple consumes it later.
 - Add/remove track buttons dispatch the existing `Command::AddTrack`/`RemoveTrack` — today nothing in
-  `opencut-ui` ever dispatches them.
+  `vii-ui` ever dispatches them.
 - Per-track height resizes by dragging the header's bottom edge (5 px `cursor_row_resize` handle,
   min 28 / max 200), committed as **one** undo entry via M1's triad.
 - `fn track_y_offsets(&[TrackRow]) -> Vec<f32>` is a pure prefix-sum used by hit-testing, drop
@@ -636,7 +636,7 @@ snapping toggle · drag threshold and Esc-cancel.
   `delete_selected` (L522), `split_selected` (L685), `add_keyframe` (L700), `apply_preset` (L350),
   Duplicate (L907) and `EditorViewModel::build` (view_model.rs:150). Without the sweep, multi-select
   is a lie.
-- `opencut-core/src/timeline/snap.rs` is pure and unit-tested: collects non-dragged clip starts/ends
+- `vii-core/src/timeline/snap.rs` is pure and unit-tested: collects non-dragged clip starts/ends
   plus the playhead plus timeline zero **once at drag start** into a sorted `Vec` (binary-searched per
   frame); multi-probes every selected clip's start **and** end simultaneously; per-target-kind
   thresholds (playhead 1.5×); sticky until the **raw** cursor moves 2.5× the threshold away, with the
@@ -676,7 +676,7 @@ context menus, Esc-cancel.
 **Acceptance criteria**
 - `Command::MoveElements { moves: Vec<(ElementRef, track_id, MediaTime)> }` exists and applies as ONE
   labelled transaction — the first real consumer of M1.
-- `opencut-core/src/timeline/overwrite.rs` is a **pure planner returning `Vec<OverwriteAction>`**
+- `vii-core/src/timeline/overwrite.rs` is a **pure planner returning `Vec<OverwriteAction>`**
   (Remove / TrimEnd / TrimStart / Split), unit-tested over full-cover, left-overlap, right-overlap and
   interior-split cases, and it runs on add, move **and** widening trim. **Write and pass the planner
   tests before wiring any drag UI to it.**
@@ -724,7 +724,7 @@ resolution, with flat memory.
   the preview render size established in M3.
 - Decoding is a keyframe-aligned seek (`-ss`) plus forward decode to the exact frame, into a **bounded
   ring buffer** around the playhead.
-- `opencut-preview/src/decode/window.rs` (cache/eviction policy) is **pure over a `FrameSource`
+- `vii-preview/src/decode/window.rs` (cache/eviction policy) is **pure over a `FrameSource`
   trait** and tested against a fake that returns its own index: which ranges get fetched, which get
   evicted, and that memory stays bounded under a random walk of 10 000 seeks — no ffmpeg involved.
 - Frame-exactness is verified against a **self-identifying test clip** generated in a temp dir (never
@@ -734,7 +734,7 @@ resolution, with flat memory.
   59.9; then backward seeks 45 → 5 → 50; then window-boundary times; then repeated seeks to the same t
   returning identical bytes. Run with `-hwaccel auto` both on and off.
 - One GPU texture per element is created once and re-uploaded — the per-frame `create_texture` at
-  `opencut-preview/src/lib.rs:320-329` is gone. `renderer.video_texture_count()` stays constant across
+  `vii-preview/src/lib.rs:320-329` is gone. `renderer.video_texture_count()` stays constant across
   100 rendered frames of the same clip (mirroring the existing `text_cache_len()` accessor idiom).
 - Decode runs off the GPUI thread; while the window refills the viewer holds the previous frame rather
   than flashing a placeholder.
@@ -767,7 +767,7 @@ and fade.
 - `Track` gains `volume` and `solo`; `Project` gains a master gain. **ONE** pure mix path composes
   clip gain × fade × track gain × solo/mute × master — no second code path.
 - A −1 dBFS master limiter ported from `dep/apps/web/src/media/audio-mastering.ts` replaces the hard ±1
-  clamp at `opencut-audio/src/lib.rs:90-93`. Unit tests over synthetic buffers assert no output sample
+  clamp at `vii-audio/src/lib.rs:90-93`. Unit tests over synthetic buffers assert no output sample
   exceeds the ceiling and that `clampDb`/`dBToLinear` round-trip.
 - Keyframed gain is sampled on the **same clock the mixer runs on**. Land that sampling API here even
   though M11 replaces the transport underneath it.
@@ -808,7 +808,7 @@ locked to what you hear, and waveforms reveal detail as you zoom.
   audible within one lookahead window without stop/start.
 - The playhead advances from **samples consumed by the device**, not `Instant` deltas. `Transport`
   takes an injected clock; a simulated 5-minute playback asserts drift under one frame.
-- ONE streaming decode entry point in `opencut-audio` serves playback, waveforms and future analysis —
+- ONE streaming decode entry point in `vii-audio` serves playback, waveforms and future analysis —
   no third `Command::new("ffmpeg")` copy anywhere in the workspace.
 - Waveforms are zoom-aware (peaks/second adapts and caps for long media, replacing the hardcoded 48 at
   `editor_view.rs:323`), dB-companded against a −50 dB floor, computed off the UI thread, and persisted
@@ -1166,7 +1166,7 @@ timeline at 400 px/s would otherwise build tens of thousands of elements. Zoom i
 cursor-anchored:
 
 ```rust
-// opencut-ui/src/geometry.rs — pure, ~8 unit tests, drives wheel + buttons + keys + slider + canvas
+// vii-ui/src/geometry.rs — pure, ~8 unit tests, drives wheel + buttons + keys + slider + canvas
 pub fn zoom_at(scroll: f32, pps: f32, cursor_x: f32, factor: f32, min: f32, max: f32) -> (f32, f32) {
     let t = (scroll + cursor_x) / pps;
     let pps2 = (pps * factor).clamp(min, max);
@@ -1195,7 +1195,7 @@ Accepting Cmd-click as an alias costs one line.
 **Drag mechanics.** 4 px threshold separates a click from a drag (today any click with 1 px of hand
 tremor commits a `MoveElement` and pollutes the undo stack). During a move, origin ghosts at 55 %
 opacity stay in place while a solid snapped preview follows the pointer with a timecode badge. All
-planning is pure, in `opencut-core/src/plan/` — `plan_move`, `plan_trim` (and later `plan_slip`,
+planning is pure, in `vii-core/src/plan/` — `plan_move`, `plan_trim` (and later `plan_slip`,
 `plan_slide`, `plan_roll`) — each returning intended `(ref, track, start, trim_start, duration)` tuples
 plus a `Vec<Refusal>`. **The view renders the plan; mouse-up commits the same plan.** Preview and
 result cannot diverge, which is the classic NLE bug. Always render *why* a drag stopped — a red edge on
@@ -1234,7 +1234,7 @@ ripple-insert when ripple lands, sampled at mouse-**up** with a live preview fli
 over the doomed regions; ripple as a green gap band with downstream clips visibly shifted. Disclosure
 after the fact is three-layered: a toast, a **matching named undo label**, and one ⌘Z per gesture.
 
-**The keyboard map.** One table in `opencut-ui/src/actions.rs` produces `Vec<KeyBinding>`, the NSMenu
+**The keyboard map.** One table in `vii-ui/src/actions.rs` produces `Vec<KeyBinding>`, the NSMenu
 tree, the shortcuts help grid and every tooltip. Rows marked *(next round)* are in the table for the
 help grid but the action is unregistered until its milestone lands.
 
@@ -1429,7 +1429,7 @@ UI-scale lever for chrome — **but timeline geometry stays raw px**, or lane he
 bumps UI scale and clips no longer line up with the ruler.
 
 **Clip rendering — the tier model.** A pure `clip_layout(w, h, kind, flags) -> ClipLayout` in
-`opencut-ui/src/timeline/clip_layout.rs` decides which layers draw.
+`vii-ui/src/timeline/clip_layout.rs` decides which layers draw.
 
 ```
 T0 w<14        T1 14-43       T2 44-119            T3 w>=120
@@ -1566,7 +1566,7 @@ Written into `AGENTS.md` so it is enforceable in review.
 | Tier | What | Where |
 |---|---|---|
 | T1 | Pure unit | `#[cfg(test)] mod tests` inline (existing style: `view_model.rs`, `effects/src/pipeline.rs`) |
-| T2 | Pure integration / cross-module | `crates/<c>/tests/<topic>.rs` (existing style: `opencut-core/tests/editor.rs`) |
+| T2 | Pure integration / cross-module | `crates/<c>/tests/<topic>.rs` (existing style: `vii-core/tests/editor.rs`) |
 | T3 | Golden / snapshot | `crates/<c>/tests/golden_<topic>.rs`, data in `dep/fixtures/golden/native/<topic>/`, regenerated with `CAPTURE_GOLDEN=1` |
 | T4 | Capability (real GPU / real ffmpeg) | `crates/<c>/tests/<topic>_gpu.rs` or `_ffmpeg.rs`, gated skip helper |
 | T5 | Benchmarks | `crates/<c>/benches/` (criterion) and `rust/crates/bench` (`vii-bench`) — never in CI |
@@ -1574,9 +1574,9 @@ Written into `AGENTS.md` so it is enforceable in review.
 The boundary that matters is T2↔T4: the failure mode of this roadmap is logic quietly migrating
 somewhere that needs a GPU or an ffmpeg binary to exercise, at which point it stops being tested on
 every machine. Naming the file `_gpu.rs`/`_ffmpeg.rs` makes that migration visible in a PR diff. Split
-`opencut-core/tests/editor.rs` (592 lines, 23 tests) into `editor.rs`, `transactions.rs`,
+`vii-core/tests/editor.rs` (592 lines, 23 tests) into `editor.rs`, `transactions.rs`,
 `invariants.rs`, `planner_snap.rs`, `planner_overwrite.rs` as those land. A cheap meta-test
-(`opencut-ui/tests/no_logic_in_views.rs`) greps `editor_view.rs` for a deny-list of tokens that mean
+(`vii-ui/tests/no_logic_in_views.rs`) greps `editor_view.rs` for a deny-list of tokens that mean
 policy leaked into the view (`snap`, `ripple`, `overwrite`, `_headroom`, `.clamp(` on tick math) —
 crude, but it fails loudly the first time someone inlines a planner into a `cx.listener`.
 
@@ -1610,7 +1610,7 @@ assert_frame_matches_golden("blend/multiply_over_gradient", &frame)
   +- golden captured on: Apple M-series / Metal / wgpu 29.0.1 (adapter matches)
 ```
 
-`image` is already a dependency of `opencut-preview`, and the CPU readback that blade-vs-wgpu forces on
+`image` is already a dependency of `vii-preview`, and the CPU readback that blade-vs-wgpu forces on
 us is here an **asset**: `PreviewFrame{width, height, bgra}` is already a CPU buffer, so golden capture
 is a `Vec<u8>` away.
 
@@ -1625,7 +1625,7 @@ diff isolated from the diff that caused it.
 |---|---|
 | **Project model / schema** (highest consequence, currently unguarded) | `migrate.rs` chain (`decode(json) -> Result<Project, LoadError>` walking vN→vN+1), mirroring the web app's v0..v31 chain. (1) **Migration goldens**: `dep/fixtures/golden/native/projects/v<N>.json` per version, captured from a *rich* seed; a test loads every committed vN, migrates to current, and asserts a structural summary (element count, per-element start/duration/trim, sampled transform at 3 playhead positions). The capture test **asserts the seed is rich** — every `Element` variant, every registered effect, ≥1 animated channel per animatable property — failing with "add the new field to the golden seed". (2) Round-trip equality + "unknown future version → `LoadError::UnsupportedVersion`, not a silent no-op". (3) Atomic write: an interrupted save leaves the original byte-identical |
 | **Undo / transactions** | `assert_timeline_valid(&Scene)`: no overlaps within a track, every duration > 0, `trim_start < trim_end` and within source bounds, `start >= 0`, no duplicate ids, keyframe times within `[0, duration]` — asserted after **every** command in every timeline test. Plus a **proptest** harness: 1..50 random commands weighted toward destructive ones (ripple delete, overwrite move, cross-track drag, split, multi-select move), built from *live* state (real refs, real tracks, in-range starts); execute all, validate after each; undo all and assert the serialized state is byte-equal to the initial snapshot; redo all and assert equality with the post-execute snapshot. `EditorState` already derives `Serialize + Clone` and `serde_json` is already a dev-dep, so snapshot-by-serialization is free. Take proptest specifically for **shrinking** — a failing 47-command sequence with no shrinker is an unreadable artifact. The harness asserts a floor (≥60 % of generated commands returned `true` from `execute`) so a degenerate generator fails loudly instead of vacuously |
-| **Interactions GPUI cannot test** | Every gesture is a pure reducer in `opencut-ui/src/interaction/`: `enum PointerEvent { Down/Move/Up/Key/Cancel }`, `enum Outcome { None, Preview(PreviewState), Commit(Vec<Command>), Cancelled }`, `fn handle(&mut self, ev, geom: &TimelineGeometry, editor: &Editor) -> Outcome`. The view does exactly two things: translate the GPUI event, and match the `Outcome`. Tests drive whole gestures as event sequences against a real `Editor` and assert both the commands and the intermediate preview — no window, no GPU. `interaction/` contains **no `use gpui`**, enforced by the same grep meta-test. `TimelineGeometry` is a plain **value** constructed per frame and passed in — never a reference back into the view; if that slips and the reducer holds a `WeakEntity`, the seam is dead |
+| **Interactions GPUI cannot test** | Every gesture is a pure reducer in `vii-ui/src/interaction/`: `enum PointerEvent { Down/Move/Up/Key/Cancel }`, `enum Outcome { None, Preview(PreviewState), Commit(Vec<Command>), Cancelled }`, `fn handle(&mut self, ev, geom: &TimelineGeometry, editor: &Editor) -> Outcome`. The view does exactly two things: translate the GPUI event, and match the `Outcome`. Tests drive whole gestures as event sequences against a real `Editor` and assert both the commands and the intermediate preview — no window, no GPU. `interaction/` contains **no `use gpui`**, enforced by the same grep meta-test. `TimelineGeometry` is a plain **value** constructed per frame and passed in — never a reference back into the view; if that slips and the reducer holds a `WeakEntity`, the seam is dead |
 | **Audio** | Block-size invariance · null test · envelope correctness at sample resolution (a 0.5 s fade-in is exactly −6 dB at midpoint, gain composes clip × fade × track × master in that order) · preview == export byte-identical · injected-clock transport drift · meter ballistics as a pure state machine (−60 dB floor, 24 dB/s level decay, 18 dB/s peak decay, 1.5 s hold, sticky clip latch). Real-time constraint asserted, not hoped: a 512-frame block at 48 kHz with 8 clips has a hard p99 budget of 0.5 ms |
 | **Video decode** | Self-identifying frames (§M9) for correctness; a pure `FrameSource` fake for cache/eviction policy under 10 000 seeks; `video_texture_count()` constant across 100 frames |
 | **Export / probe** | **Test the argv, not the encoder.** `ExportOptions -> Vec<String>` and `parse_ffprobe_json` are pure with fixture coverage; one gated integration test encodes 0.5 s at 64×36 and ffprobes it; `ExportJob` state machine tested without spawning anything |
@@ -1732,10 +1732,10 @@ the machine, print "no baseline for this machine — recording a new one" rather
 ### 6.7 Test budget
 
 Stated so a shortfall is visible rather than arguable. M0–M14b takes the suite from **66 to roughly
-200** tests: ~45 in `opencut-core` (transactions, planners, invariants, proptest), ~30 in
-`opencut-project` (migrations, transform math, aspect parser), ~25 in `opencut-ui` (geometry, hit-test,
-reducers, action table), ~20 in `opencut-preview` (scene_to_frame + descriptor goldens, decode window
-policy, export argv, probe parsing), ~15 in `opencut-audio` (graph, block invariance, meter), plus ~15
+200** tests: ~45 in `vii-core` (transactions, planners, invariants, proptest), ~30 in
+`vii-project` (migrations, transform math, aspect parser), ~25 in `vii-ui` (geometry, hit-test,
+reducers, action table), ~20 in `vii-preview` (scene_to_frame + descriptor goldens, decode window
+policy, export argv, probe parsing), ~15 in `vii-audio` (graph, block invariance, meter), plus ~15
 Tier-B pixel goldens and ~5 gated capability tests.
 
 Budget explicitly for the fact that **dep/apps/web's ripple (373 lines) and snapping (93 lines) have no

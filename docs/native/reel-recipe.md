@@ -19,9 +19,9 @@ half. Five gaps, all now closed:
 | **No shape primitive** | `Element` was Video/Image/Text/Audio. Every bar, rule, dot and panel was unrepresentable. | `Element::Shape` — rect (with corner radius) or ellipse |
 | **Uniform scale only** | One `scale` field, always centred. A bar chart needs one axis to grow while the other holds, from a fixed edge. | `scale_x`/`scale_y` + `anchor_x`/`anchor_y` on `Transform` |
 | **Linear keyframes only** | Everything moved at constant speed, which reads as mechanical. | `Easing` on `AnimationChannel` (8 curves) |
-| **Text was size + colour** | No family, weight, alignment, tracking or line height — no house typography. | All five on `TextElement`, honoured by `opencut-text` |
+| **Text was size + colour** | No family, weight, alignment, tracking or line height — no house typography. | All five on `TextElement`, honoured by `vii-text` |
 
-Plus the surface to drive it: `opencut-mcp`, 16 tools over HTTP or stdio.
+Plus the surface to drive it: `vii-mcp`, 16 tools over HTTP or stdio.
 
 ---
 
@@ -88,13 +88,13 @@ and values below the axis: one grid, no collisions, same reading order for every
 
 | Gap | Consequence | Where it would go |
 |---|---|---|
-| **Masks** | The compositor has a JFA mask pipeline, but the preview passes `mask: None` unconditionally. No wipe reveals — entrances are rise + fade only. | `opencut-preview::render` |
+| **Masks** | The compositor has a JFA mask pipeline, but the preview passes `mask: None` unconditionally. No wipe reveals — entrances are rise + fade only. | `vii-preview::render` |
 | **Per-character / per-word animation** | A whole text element is one layer, so staggered word-by-word entrances need one element per word. | new element kind or a text-run animation channel |
 | **Stroke / outline shapes** | Fills only, so an outlined chart track or a ring chart is unrepresentable. | `ShapeKind` + the shape rasterizer |
 | **Path / polyline** | No line charts, no equity curves — the most natural trading graphic. | new `ShapeKind::Path` |
 | **Rotation about the anchor** | `anchor_x/y` govern placement only; rotation is still about the quad centre. | `QuadTransformDescriptor` |
-| **Audio trim** | `AudioElement` has no `trim_start`, so a clip always plays from its head. The mixer already threads the value through. | `opencut-project::AudioElement` |
-| **Text auto-fit** | Font sizes are chosen by hand and a too-long string silently wraps. A "shrink to fit this box" mode would remove a whole class of layout defect. | `opencut-text` |
+| **Audio trim** | `AudioElement` has no `trim_start`, so a clip always plays from its head. The mixer already threads the value through. | `vii-project::AudioElement` |
+| **Text auto-fit** | Font sizes are chosen by hand and a too-long string silently wraps. A "shrink to fit this box" mode would remove a whole class of layout defect. | `vii-text` |
 
 The reel worked around masks (fade + rise instead of wipes) and paths (columns instead of a
 curve). Nothing else was compromised.

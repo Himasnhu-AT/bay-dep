@@ -10,10 +10,10 @@ export default defineConfig({
 		include: ["src/**/*.test.{ts,tsx}"],
 		server: {
 			deps: {
-				// opencut-wasm ships `.wasm` via the ESM-integration proposal, which
+				// vii-wasm ships `.wasm` via the ESM-integration proposal, which
 				// Vite's transform can't handle. Externalise it so Node loads it
 				// directly (works for both the published package and a local link).
-				// The resolved files use underscores (opencut_wasm_bg.wasm), so match both.
+				// The resolved files use underscores (vii_wasm_bg.wasm), so match both.
 				external: [/opencut[-_]wasm/],
 			},
 		},

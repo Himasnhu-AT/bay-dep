@@ -1,0 +1,13 @@
+[package]
+name = "vii-text"
+version = "0.1.0"
+edition = "2024"
+
+# Rasterize a line of text to an RGBA buffer using cosmic-text (system fonts via fontdb, HarfBuzz
+# shaping, swash rendering). Single responsibility: string → pixels. Used by vii-preview to
+# turn text elements into compositor textures.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+cosmic-text = "0.14"

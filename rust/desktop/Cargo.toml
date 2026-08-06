@@ -1,11 +1,11 @@
 [package]
-name = "opencut-desktop"
+name = "vii-desktop"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "opencut"
+name = "vii"
 path = "src/main.rs"
 
 [dependencies]
-opencut-ui = { version = "0.1.0", path = "../crates/opencut-ui" }
+vii-ui = { version = "0.1.0", path = "../crates/vii-ui" }

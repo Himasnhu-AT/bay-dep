@@ -1,5 +1,5 @@
-//! The native vii desktop editor — a thin binary over the `opencut-ui` GPUI shell.
+//! The native vii desktop editor — a thin binary over the `vii-ui` GPUI shell.
 
 fn main() {
-    opencut_ui::run();
+    vii_ui::run();
 }

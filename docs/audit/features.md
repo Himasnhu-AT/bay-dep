@@ -1,4 +1,4 @@
-# OpenCut — Feature, Data-Flow & Mechanics Map (Agent 1)
+# vii — Feature, Data-Flow & Mechanics Map (Agent 1)
 
 > Source-grounded audit of how the *actual, working* editor behaves. Every claim below is
 > tied to a real file under `/Users/himanshu/codes/synthai/vii`. Generated 2026-08-01.
@@ -9,17 +9,17 @@
 
 ## 1. What the product is
 
-OpenCut is a **browser-first, privacy-focused, non-linear video editor** (`README.md`).
+vii is a **browser-first, privacy-focused, non-linear video editor** (`README.md`).
 All project/timeline/media content lives on the user's device (IndexedDB + OPFS); the server
 holds only auth/feedback. The web app (`dep/apps/web`, Next.js 16 + React 19) is the real editor;
 `rust/desktop` is a 41-LOC GPUI stub (empty window). Per `AGENTS.md` there is an **ongoing
 migration** to move all non-UI logic into `rust/` (compiled to WASM, published as
-`opencut-wasm`); today the migration has landed the **time math** (`rust/crates/time`) and the
+`vii-wasm`); today the migration has landed the **time math** (`rust/crates/time`) and the
 whole **GPU compositor / effects / masks pipeline** (`rust/crates/{compositor,effects,masks,gpu}`),
 while the editor's domain logic (timeline, commands, animation, scene building) still lives in TS.
 
-Note the repo's own README is the *legacy* OpenCut README ("archived… rewrite is happening
-at opencut-app/opencut") — so this codebase is a snapshot mid-rewrite. Contributor guidance in
+Note the repo's own README is the *legacy* vii README ("archived… rewrite is happening
+at vii-app/vii") — so this codebase is a snapshot mid-rewrite. Contributor guidance in
 README explicitly says the **preview panel (fonts, stickers, effects) and export are being
 refactored with a new binary rendering approach** — which is exactly the Rust/WASM compositor
 seen here. Treat preview/export internals as actively-moving targets.
@@ -144,7 +144,7 @@ but narrow; **Nascent** = scaffolding/one example only.
   (IndexedDB + OPFS). **31-version migration chain** (`services/storage/migrations/`).
 
 ### Desktop — Nascent (~0%)
-- `rust/desktop/src/main.rs` = 41 LOC GPUI window titled "OpenCut", no editor wiring. Answer to
+- `rust/desktop/src/main.rs` = 41 LOC GPUI window titled "vii", no editor wiring. Answer to
   the goal-6 question: today it is a placeholder shell, not an editor.
 
 ---

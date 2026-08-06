@@ -1,23 +1,23 @@
-# opencut-wasm
+# vii-wasm
 
-Shared video editor logic compiled to WebAssembly. Used by the [OpenCut](https://github.com/opencut/opencut) web app.
+Shared video editor logic compiled to WebAssembly. Used by the [vii](https://github.com/vii/vii) web app.
 
 ## Install
 
 ```bash
-npm install opencut-wasm
+npm install vii-wasm
 ```
 
 ## Usage
 
 ```ts
-import { formatTimecode, mediaTimeFromSeconds } from "opencut-wasm";
+import { formatTimecode, mediaTimeFromSeconds } from "vii-wasm";
 
 const ticks = mediaTimeFromSeconds(1.5);
 const label = formatTimecode({ ticks });
 ```
 
-All exports are documented in the [TypeScript definitions](./opencut_wasm.d.ts).
+All exports are documented in the [TypeScript definitions](./vii_wasm.d.ts).
 
 ## Source
 
@@ -25,7 +25,7 @@ Functions are implemented in Rust under [`rust/crates/`](../crates/). This packa
 
 ## Local development
 
-The web app depends on the published `opencut-wasm` package by default. If you are editing the WASM source in this repo and want `dep/apps/web` to use your local build instead:
+The web app depends on the published `vii-wasm` package by default. If you are editing the WASM source in this repo and want `dep/apps/web` to use your local build instead:
 
 ```bash
 # From the repo root
@@ -35,7 +35,7 @@ cd rust/wasm/pkg
 bun link
 
 cd ../../../dep/apps/web
-bun link opencut-wasm
+bun link vii-wasm
 ```
 
 While you work, rebuild on changes from the repo root:

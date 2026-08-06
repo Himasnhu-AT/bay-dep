@@ -27,5 +27,5 @@ if [ "${WEB:-0}" = "1" ]; then
   echo
   echo "── web (dep/) ──"
   cd "$ROOT/dep"
-  pnpm --filter @opencut/web test
+  pnpm --filter @vii/web test
 fi

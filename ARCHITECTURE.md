@@ -1,23 +1,30 @@
-# OpenCut — Architecture
+# Architecture of the archived web stack (`dep/`)
 
-> Synthesized 2026-08-01 from a file-system-coordinated audit of the real editor codebase:
-> `docs/audit/repo_map.md` (structure), `docs/audit/features.md` (mechanics),
-> `docs/audit/limitations.md` (risks), `docs/audit/feature-hooks.md` (implementation map).
-> This describes the code that **physically exists** in this repository.
+> **This documents `dep/` — the JS/web editor vii was forked from — as it stood on
+> 2026-08-01.** It is kept because `dep/` is the parity reference: when porting a behaviour
+> out of the web app, this is the map. It is **not** a description of vii.
+>
+> For vii itself see [`README.md`](README.md), [`docs/native/`](docs/native/) and
+> [`todo.md`](todo.md).
+>
+> Synthesized from a file-system-coordinated audit: `docs/audit/repo_map.md` (structure),
+> `docs/audit/features.md` (mechanics), `docs/audit/limitations.md` (risks),
+> `docs/audit/feature-hooks.md` (implementation map).
 
 ---
 
 ## 1. What this is
 
-**OpenCut** is a **browser-first, privacy-focused video editor**: all project and media data lives
+The archived web app is a **browser-first, privacy-focused video editor**: all project and media data lives
 on the client (IndexedDB + OPFS), never on a server. It is a **Turborepo monorepo** (migrated to
 pnpm) with three targets and a shared Rust core:
 
 - **`dep/apps/web`** — the real, working editor. Next.js 16 (App Router, Turbopack) + React 19 +
   Tailwind 4. ~91k LOC. This is where everything happens.
-- **`rust/desktop`** — a **41-LOC GPUI skeleton** (opens a window showing "OpenCut"). ~0% of the
-  editor. Not a functional desktop app.
-- **`rust/`** — a platform-agnostic Rust core compiled to WASM (`opencut-wasm`): a **wgpu GPU
+- **`rust/desktop`** — at the time of this audit, a 41-LOC GPUI skeleton. **Now stale:** the
+  native editor is the product and this document no longer tracks it. See
+  [`docs/native/`](docs/native/).
+- **`rust/`** — a platform-agnostic Rust core compiled to WASM (`vii-wasm`): a **wgpu GPU
   compositor**, effects, masks (JFA SDF feathering), and the `MediaTime` tick-math library. Per
   `AGENTS.md`, non-UI logic is actively migrating here so `apps/*` become thin, swappable shells.
 
@@ -40,7 +47,7 @@ Redis back **only** auth/feedback/rate-limiting — **no project data**. So the 
 │   ├── timeline/ · animation/ · effects/ · text/ · masks/ · media/         │
 │   └── services/renderer/ ── scene-builder → nodes → canvas-renderer ──┐    │
 │                                                                       │    │
-│   rust/  (compiled to WASM: opencut-wasm)                             ▼    │
+│   rust/  (compiled to WASM: vii-wasm)                             ▼    │
 │   crates: compositor · effects · masks · gpu (wgpu) · time      WASM GPU   │
 │                                                                 compositor │
 │   client persistence:  IndexedDB (projects/media meta) + OPFS (blobs)     │
