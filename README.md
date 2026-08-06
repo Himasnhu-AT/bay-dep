@@ -73,22 +73,35 @@ it well — including the things that are not obvious from the schemas.
 
 ## Building something distributable
 
+**macOS — locally**, in about a minute:
+
 ```bash
 ./script/make-icon                 # assets/vii.icns + vii.ico (placeholder, or pass your own PNG)
 ./script/bundle-mac --dmg          # universal vii.app and a .dmg
-.\script\bundle-windows.ps1 -Zip   # on Windows: a zip you can unpack and run
 ```
 
-Both are unsigned by default and still work; the OS warns once on first run. To sign:
+**Windows — on a runner, downloaded back to you:**
+
+```bash
+./script/build-windows             # trigger the build, wait, unpack into dist/windows
+./script/build-windows --latest    # just fetch the last successful build
+```
+
+Windows is the only target that needs CI, and it genuinely cannot be done here: Windows
+containers require a Windows kernel, and cross-compiling with `cargo-xwin` dies inside gpui,
+whose `build.rs` gates HLSL shader compilation on the *host* being Windows. See
+[`todo.md`](todo.md).
+
+Both bundles are unsigned by default and still work; the OS warns once on first run. To sign:
 
 | | |
 |---|---|
 | macOS | `MACOS_SIGN_IDENTITY="Developer ID Application: …"`, and `APPLE_NOTARIZE_PROFILE` to notarize |
-| Windows | `-SignThumbprint <sha1>` of a code-signing certificate |
+| Windows | `-SignThumbprint <sha1>` passed to `script/bundle-windows.ps1` |
 
-Tagging `v*` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds
-both and attaches them to a GitHub release. Windows must build on a Windows runner — GPUI's
-backend needs the Windows SDK, so there is no cross-compile path.
+Tagging `v*` also builds Windows and opens a **draft** release — draft because the macOS `.dmg`
+is built locally and attached by hand, and a release that announces half its downloads is
+worse than one that waits.
 
 ## Requirements
 

@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Build vii for Windows on a GitHub runner and download the result to this machine.
+#
+#   ./script/build-windows            trigger a build, wait for it, unpack it here
+#   ./script/build-windows --latest   skip the build; fetch the most recent successful one
+#   ./script/build-windows --open     …and reveal it in Finder when done
+#
+# Windows is the one target that cannot be built locally on a Mac: Windows containers need a
+# Windows kernel, and cross-compiling with cargo-xwin dies inside gpui, whose build.rs gates
+# HLSL shader compilation on the HOST being Windows. So a runner does it, and this fetches the
+# artifact back — no browser, no clicking through the Actions tab.
+#
+# Needs the GitHub CLI, authenticated: `brew install gh && gh auth login`.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+WORKFLOW="windows.yml"
+ARTIFACT="vii-windows"
+DEST="$ROOT/dist/windows"
+
+LATEST_ONLY=0
+REVEAL=0
+for arg in "$@"; do
+  case "$arg" in
+    --latest) LATEST_ONLY=1 ;;
+    --open) REVEAL=1 ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $arg" >&2; exit 2 ;;
+  esac
+done
+
+command -v gh >/dev/null || {
+  echo "the GitHub CLI is required: brew install gh && gh auth login" >&2
+  exit 1
+}
+gh auth status >/dev/null 2>&1 || {
+  echo "gh is not authenticated: gh auth login" >&2
+  exit 1
+}
+
+# GitHub only knows about workflows that exist on the remote's default branch. Without this
+# check the first thing anyone sees is a raw `HTTP 404: workflow windows.yml not found`, which
+# reads like a broken script rather than "you have not pushed it yet".
+if ! gh workflow view "$WORKFLOW" >/dev/null 2>&1; then
+  cat >&2 <<MSG
+GitHub does not know about $WORKFLOW yet.
+
+Workflows have to exist on the remote's default branch before they can be run. Push it:
+
+  git push origin HEAD
+
+then try again.
+MSG
+  exit 1
+fi
+
+if [ "$LATEST_ONLY" = "0" ]; then
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  # The runner builds whatever is PUSHED, not what is in the working tree — a local-only commit
+  # would silently build the previous revision, which is a confusing way to lose an afternoon.
+  if ! git diff --quiet HEAD 2>/dev/null; then
+    echo "⚠ you have uncommitted changes; the runner builds what is pushed, not your working tree"
+  fi
+  if [ -n "$(git log "origin/$BRANCH..$BRANCH" --oneline 2>/dev/null || true)" ]; then
+    echo "⚠ $BRANCH has commits that are not pushed — push them first or the build is stale"
+  fi
+
+  echo "── triggering the Windows build on $BRANCH ──"
+  gh workflow run "$WORKFLOW" --ref "$BRANCH"
+
+  # `gh workflow run` returns before the run exists, so poll briefly for its id rather than
+  # sleeping a guess and hoping.
+  echo -n "   waiting for the run to appear"
+  RUN_ID=""
+  for _ in $(seq 1 30); do
+    RUN_ID="$(gh run list --workflow "$WORKFLOW" --branch "$BRANCH" --limit 1 \
+      --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+    [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] && break
+    echo -n "."
+    sleep 2
+  done
+  echo
+  [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || {
+    echo "the run never appeared — check: gh run list --workflow $WORKFLOW" >&2
+    exit 1
+  }
+
+  echo "── run $RUN_ID — watching (a cold cache takes ~10 minutes) ──"
+  # `gh run watch` exits non-zero if the run fails, which is what we want to propagate.
+  gh run watch "$RUN_ID" --exit-status || {
+    echo
+    echo "the build failed. Logs:  gh run view $RUN_ID --log-failed" >&2
+    exit 1
+  }
+else
+  RUN_ID="$(gh run list --workflow "$WORKFLOW" --status success --limit 1 \
+    --json databaseId --jq '.[0].databaseId')"
+  [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || {
+    echo "no successful Windows build to download yet — run without --latest" >&2
+    exit 1
+  }
+  echo "── downloading the most recent successful run ($RUN_ID) ──"
+fi
+
+rm -rf "$DEST"
+mkdir -p "$DEST"
+gh run download "$RUN_ID" --name "$ARTIFACT" --dir "$DEST"
+
+# The artifact is itself a zip of the build's zip; unpack once so what lands is runnable.
+ZIP="$(find "$DEST" -name '*.zip' -maxdepth 1 | head -1)"
+if [ -n "$ZIP" ]; then
+  unzip -q -o "$ZIP" -d "$DEST"
+  rm -f "$ZIP"
+fi
+
+echo
+echo "── $DEST ──"
+find "$DEST" -type f | sed "s|$ROOT/|  |"
+echo
+echo "Copy that folder to a Windows machine and run vii.exe."
+[ "$REVEAL" = "1" ] && open "$DEST"
+exit 0
