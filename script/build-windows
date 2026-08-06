@@ -106,13 +106,32 @@ fi
 
 rm -rf "$DEST"
 mkdir -p "$DEST"
-gh run download "$RUN_ID" --name "$ARTIFACT" --dir "$DEST"
+# `gh run download` does not retry, and GitHub's artifact CDN resets connections often enough
+# that a 15 MB download fails routinely — it failed three times in a row while this script was
+# being written. curl with --retry-all-errors turns a transient reset into a pause instead of
+# a lost build.
+echo "── downloading ──"
+ARCHIVE_URL="$(gh api "repos/{owner}/{repo}/actions/runs/$RUN_ID/artifacts" \
+  --jq ".artifacts[] | select(.name == \"$ARTIFACT\") | .archive_download_url")"
+if [ -z "$ARCHIVE_URL" ]; then
+  echo "run $RUN_ID has no artifact named $ARTIFACT — artifacts expire after 30 days" >&2
+  exit 1
+fi
+curl -sSL --retry 5 --retry-all-errors --retry-delay 3 --max-time 600 \
+  -H "Authorization: Bearer $(gh auth token)" \
+  -H "Accept: application/vnd.github+json" \
+  -o "$DEST/artifact.zip" "$ARCHIVE_URL" || {
+    echo "download failed after 5 attempts — rerun with --latest, or grab it from the Actions tab" >&2
+    exit 1
+  }
 
-# The artifact is itself a zip of the build's zip; unpack once so what lands is runnable.
-ZIP="$(find "$DEST" -name '*.zip' -maxdepth 1 | head -1)"
-if [ -n "$ZIP" ]; then
-  unzip -q -o "$ZIP" -d "$DEST"
-  rm -f "$ZIP"
+# Two layers of zip: GitHub wraps every artifact in one, and this artifact IS the build's zip.
+unzip -q -o "$DEST/artifact.zip" -d "$DEST"
+rm -f "$DEST/artifact.zip"
+INNER="$(find "$DEST" -maxdepth 1 -name '*.zip' | head -1)"
+if [ -n "$INNER" ]; then
+  unzip -q -o "$INNER" -d "$DEST"
+  rm -f "$INNER"
 fi
 
 echo
