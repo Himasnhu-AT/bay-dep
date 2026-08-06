@@ -281,6 +281,9 @@ impl Studio {
                 "height": project.settings.canvas.height,
             },
             "fps": project.settings.fps.as_f64(),
+            // An agent choosing text colour needs to know what it is drawing on; without this
+            // it can set a background and never read one back.
+            "background": project.settings.background,
             "durationSeconds": self.editor.duration().to_seconds_f64(),
             "visualElements": visual,
             "audioElements": audio,

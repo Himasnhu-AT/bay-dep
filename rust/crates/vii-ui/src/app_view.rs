@@ -176,6 +176,7 @@ impl ViiApp {
                         "width, height and fps must all be greater than zero".into(),
                     );
                 }
+                let background = text("background").unwrap_or_else(|| "#000000".into());
                 match library.create(
                     name.trim(),
                     CanvasSize { width, height },
@@ -184,20 +185,37 @@ impl ViiApp {
                         denominator: 1,
                     },
                 ) {
-                    Ok(project) => {
+                    Ok(mut project) => {
+                        // `library.create` has no background parameter, so it is applied here.
+                        // Dropping it silently — which is what happened before — gives an agent
+                        // that asked for #0B0B0C a black canvas and no indication why, and it
+                        // will not find out until it looks at a rendered frame.
+                        project.settings.background = vii_core::Background::Color {
+                            color: background.clone(),
+                        };
                         let id = project.metadata.id.clone();
                         let path = library.path_for(&id);
+                        if let Err(error) =
+                            vii_core::project::library::write_project(&path, &project)
+                        {
+                            return vii_agent::AgentResponse::Err(format!(
+                                "created the project but could not save it: {error}"
+                            ));
+                        }
                         self.new_name = None;
                         self.refresh();
                         self.show_editor(project, Some(path), cx);
                         self.status = Some(format!("Claude created “{}”", name.trim()));
                         cx.notify();
+                        // Same shape the headless server returns, plus what only the window can
+                        // say. One tool must not describe its result two different ways
+                        // depending on which half of vii answered it.
                         vii_agent::AgentResponse::Ok(serde_json::json!({
-                            "projectId": id,
                             "name": name.trim(),
-                            "width": width,
-                            "height": height,
+                            "canvas": { "width": width, "height": height },
                             "fps": fps,
+                            "background": background,
+                            "projectId": id,
                             "opened": true,
                         }))
                     }
@@ -1011,7 +1029,7 @@ mod agent_routing_tests {
                 value["opened"], true,
                 "the new project must open in the window"
             );
-            assert_eq!(value["width"], 1080);
+            assert_eq!(value["canvas"]["width"], 1080);
             assert!(
                 value["projectId"].as_str().is_some_and(|id| !id.is_empty()),
                 "the agent needs the id back to reopen it"
@@ -1021,6 +1039,91 @@ mod agent_routing_tests {
             assert!(
                 app.showing_editor,
                 "and be on screen — the human is watching"
+            );
+        });
+    }
+
+    /// background was accepted by the tool schema and silently thrown away, so an agent that
+    /// asked for #0B0B0C got black and could only find out by looking at a rendered frame.
+    #[gpui::test]
+    fn project_create_keeps_the_background_it_was_given(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-bg"));
+        app.update(cx, |app, cx| {
+            let response = app.route_agent_call(
+                &call(
+                    "project_create",
+                    serde_json::json!({"name": "Dark", "background": "#0B0B0C"}),
+                ),
+                cx,
+            );
+            let vii_agent::AgentResponse::Ok(value) = response else {
+                panic!("project_create failed: {response:?}");
+            };
+            assert_eq!(
+                value["background"], "#0B0B0C",
+                "the response must report the background it was given"
+            );
+
+            // And it must actually be on the project, not just echoed back.
+            let info = app.route_agent_call(&call("project_info", serde_json::json!({})), cx);
+            let vii_agent::AgentResponse::Ok(info) = info else {
+                panic!("project_info failed: {info:?}");
+            };
+            assert!(
+                info.to_string().contains("0B0B0C"),
+                "the open project should carry the background: {info}"
+            );
+        });
+    }
+
+    /// One tool must not describe its result two different ways depending on which half of vii
+    /// answered it. The headless server returns canvas.width; this used to return width.
+    #[gpui::test]
+    fn project_create_answers_in_the_same_shape_as_the_headless_server(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-shape"));
+        app.update(cx, |app, cx| {
+            let vii_agent::AgentResponse::Ok(value) = app.route_agent_call(
+                &call(
+                    "project_create",
+                    serde_json::json!({"name": "Shape", "width": 1080, "height": 1920, "fps": 30}),
+                ),
+                cx,
+            ) else {
+                panic!("project_create failed");
+            };
+            assert_eq!(
+                value["canvas"]["width"], 1080,
+                "headless returns canvas.width"
+            );
+            assert_eq!(value["canvas"]["height"], 1920);
+            assert_eq!(value["fps"], 30);
+            assert_eq!(value["name"], "Shape");
+        });
+    }
+
+    /// Picking a voice needs the catalogue, and the catalogue is a constant — it must not
+    /// require starting a multi-gigabyte model, which is why this used to come back empty.
+    #[gpui::test]
+    fn speech_status_lists_voices_without_starting_anything(cx: &mut TestAppContext) {
+        let app = app(cx, library("agent-voices"));
+        app.update(cx, |app, cx| {
+            let vii_agent::AgentResponse::Ok(value) =
+                app.route_agent_call(&call("speech_status", serde_json::json!({})), cx)
+            else {
+                panic!("speech_status must always answer");
+            };
+            let total: usize = value["voices"]
+                .as_object()
+                .expect("voices should be an object keyed by language")
+                .values()
+                .map(|v| v.as_array().map(Vec::len).unwrap_or(0))
+                .sum();
+            assert_eq!(total, 54, "the whole catalogue, not a subset: {value}");
+            assert!(
+                value["voices"]["a"]
+                    .as_array()
+                    .is_some_and(|v| v.iter().any(|n| n == "af_heart")),
+                "af_heart is the default voice and must be listed"
             );
         });
     }

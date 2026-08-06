@@ -127,15 +127,16 @@ pub fn plan_without_document(name: &str, args: &Value) -> Option<Result<Value, S
             let engine = vii_speech::SpeechEngine::new(vii_speech::SpeechConfig::default());
             let installed = engine.is_installed();
             let config = engine.config();
+            // The catalogue is a constant, so it is answered from a table rather than by
+            // starting the sidecar. Asking the sidecar would load a multi-gigabyte torch
+            // runtime to read a hardcoded dictionary — which is why this used to refuse and
+            // tell agents to close the app, a strange thing to ask of someone picking a voice.
             Some(Ok(serde_json::json!({
                 "available": installed,
                 "python": config.python,
                 "script": config.script,
-                // Deliberately not started: loading Kokoro takes seconds and this is answered
-                // on the UI thread. Availability is the fast, useful part.
-                "voicesListed": false,
-                "note": "vii is open, so the model is not started just to answer this — close \
-                         the app and query headlessly for the full voice catalogue",
+                "sampleRate": 24000,
+                "voices": vii_speech::voices::catalogue(),
                 "hint": if installed {
                     Value::Null
                 } else {
@@ -309,6 +310,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
             Ok(Planned::Read(serde_json::json!({
                 "name": project.metadata.name,
                 "id": project.metadata.id,
+                "background": project.settings.background,
                 "canvas": {
                     "width": project.settings.canvas.width,
                     "height": project.settings.canvas.height,

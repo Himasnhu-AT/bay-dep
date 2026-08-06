@@ -12,6 +12,7 @@
 
 pub mod engine;
 pub mod subtitles;
+pub mod voices;
 
 pub use engine::{SpeechConfig, SpeechEngine, speak_once};
 pub use subtitles::{Cue, CueStyle, cues_from_words, parse, shift, to_srt, to_vtt};
