@@ -109,9 +109,8 @@ No `opencut` in crate names, binaries, identifiers, docs, scripts or CI. Crates 
   notice be retained in all copies. Removing it would make distribution non-compliant. This is
   a legal constraint, not branding — the product is still called vii everywhere a user can
   see.
-- **`dep/` is left as-is.** It is the archived upstream JS/web app, kept verbatim as the
-  parity reference. Renaming third-party code in place would misrepresent its provenance and
-  destroy its value for comparison.
+- **`dep/` has since been deleted entirely**, so the only remaining reference to the upstream
+  name is the licence notice above.
 
 ---
 

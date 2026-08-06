@@ -3,7 +3,6 @@
 #
 #   ./test.sh              cargo fmt --check, clippy -D warnings, cargo test
 #   STRICT=1 ./test.sh     also fail if the GPU or ffmpeg is unavailable instead of skipping
-#   WEB=1 ./test.sh        additionally run the web workspace tests in dep/
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -21,11 +20,4 @@ if [ "${STRICT:-0}" = "1" ]; then
   VII_REQUIRE_GPU=1 VII_REQUIRE_FFMPEG=1 cargo test --workspace "$@"
 else
   cargo test --workspace "$@"
-fi
-
-if [ "${WEB:-0}" = "1" ]; then
-  echo
-  echo "── web (dep/) ──"
-  cd "$ROOT/dep"
-  pnpm --filter @vii/web test
 fi

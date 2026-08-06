@@ -71,10 +71,12 @@ suite skips those cases rather than reporting a false pass.
 ## Repository layout
 
 - **`rust/`** — the product.
-- **`dep/`** — the archived JS/web stack this was forked from, kept verbatim as the parity
-  reference. Don't build product features there; port behaviour *out* of it into `rust/`.
-- **`docs/native/`** — the native editor's design notes, parity status and guides.
+- **`docs/native/`** — design notes, parity status and guides.
 - **`todo.md`** — what is planned, sized, and why.
+
+The JS/web stack vii was forked from used to live in `dep/` as a parity reference. It is gone;
+the behaviour worth keeping was ported into `rust/`, and what was not is recorded in
+[`docs/native/parity-status.md`](docs/native/parity-status.md).
 
 ## Licence
 
