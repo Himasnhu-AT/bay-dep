@@ -71,18 +71,42 @@ impl Default for SpeechConfig {
 
 /// The interpreter `script/setup-speech.sh` provisions.
 ///
-/// Windows puts a venv's interpreter in `Scripts\python.exe`, not `bin/python` — getting this
-/// wrong reports "speech unavailable" on a machine where the venv is sitting right there.
+/// **This must agree with that script**, and the agreement is not free: the script puts the
+/// venv in `~/.local/share/vii/kokoro-venv` on macOS too, which is not where macOS data
+/// otherwise lives. Resolving it "properly" through the platform data directory pointed at
+/// `~/Library/Application Support/vii` and reported narration as unavailable on a machine with
+/// an 858 MB venv sitting right there — a regression with no symptom except a wrong answer.
+///
+/// So: the script's location wins, and the platform directory is only a fallback for a machine
+/// the script never ran on. Windows also puts the interpreter in `Scripts\python.exe` rather
+/// than `bin/python`.
 fn default_python() -> String {
-    let venv = vii_paths::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("kokoro-venv");
-    let interpreter = if cfg!(windows) {
-        venv.join("Scripts").join("python.exe")
-    } else {
-        venv.join("bin").join("python")
+    let interpreter_in = |venv: std::path::PathBuf| {
+        if cfg!(windows) {
+            venv.join("Scripts").join("python.exe")
+        } else {
+            venv.join("bin").join("python")
+        }
     };
-    interpreter.to_string_lossy().to_string()
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    // Same override the script honours, so setting it once configures both.
+    if let Ok(explicit) = std::env::var("VII_SPEECH_VENV") {
+        candidates.push(interpreter_in(std::path::PathBuf::from(explicit)));
+    }
+    if let Some(home) = vii_paths::home() {
+        candidates.push(interpreter_in(home.join(".local/share/vii/kokoro-venv")));
+    }
+    if let Some(data) = vii_paths::data_dir() {
+        candidates.push(interpreter_in(data.join("kokoro-venv")));
+    }
+
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .or_else(|| candidates.first())
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "python3".to_string())
 }
 
 /// Where `vii-kokoro.py` lives, searched in the order that gets the right answer for each way
@@ -555,6 +579,42 @@ pub fn speak_once(
 #[cfg(test)]
 mod embedded_script_tests {
     use super::*;
+
+    /// The venv location is decided in TWO places — this crate and `script/setup-speech.sh` —
+    /// and nothing but this test ties them together. They drifted once already: resolving the
+    /// path through the platform data directory sent macOS to Application Support while the
+    /// script kept provisioning into `.local/share`, and narration reported "not installed"
+    /// on a machine that had it. The symptom was a wrong answer, not a crash.
+    #[test]
+    fn the_default_interpreter_matches_where_setup_speech_puts_it() {
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("repo root")
+            .join("script/setup-speech.sh");
+        let Ok(source) = std::fs::read_to_string(&script) else {
+            eprintln!("skipping: {} not found", script.display());
+            return;
+        };
+
+        let line = source
+            .lines()
+            .find(|line| line.trim_start().starts_with("VENV="))
+            .expect("setup-speech.sh must define VENV=");
+        // VENV="${VII_SPEECH_VENV:-$HOME/.local/share/vii/kokoro-venv}"
+        let provisioned = line
+            .split(":-")
+            .nth(1)
+            .expect("VENV= should carry a default")
+            .trim_end_matches(['}', '"'])
+            .replace("$HOME/", "");
+
+        let default = default_python();
+        assert!(
+            default.contains(&provisioned),
+            "vii looks for python in {default}, but setup-speech.sh provisions {provisioned}"
+        );
+    }
 
     /// The whole point of embedding is that a lone `vii.exe` still has a sidecar. If the
     /// `include_str!` path ever drifts this fails to compile; if the script is truncated or

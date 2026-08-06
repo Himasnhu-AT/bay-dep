@@ -895,10 +895,14 @@ impl EditorView {
             );
         }
 
+        // 0.5 to match the headless server and the tool schema's advertised default. The same
+        // tool must not render at a different size depending on which half of vii answered it:
+        // snapshot exists so an agent can judge whether type is legible, and that judgement is
+        // made against the pixels it gets back.
         let scale = args
             .get("scale")
             .and_then(|v| v.as_f64())
-            .unwrap_or(1.0)
+            .unwrap_or(0.5)
             .clamp(0.05, 1.0);
         let canvas = self.editor.project().settings.canvas;
         let width = ((canvas.width as f64 * scale) as u32).max(1);

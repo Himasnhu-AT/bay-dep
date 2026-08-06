@@ -1175,6 +1175,13 @@ mod agent_routing_tests {
             ) {
                 vii_agent::AgentResponse::Ok(value) => {
                     assert!(out.is_file(), "reported success but wrote no file: {value}");
+                    // Must match the headless server's default, or the same call renders at a
+                    // different size depending on whether a window happens to be open.
+                    assert_eq!(
+                        (value["width"].as_u64(), value["height"].as_u64()),
+                        (Some(540), Some(960)),
+                        "scale should default to 0.5, as the tool schema advertises"
+                    );
                     let bytes = std::fs::read(&out).expect("read the png");
                     assert_eq!(
                         &bytes[..8],
