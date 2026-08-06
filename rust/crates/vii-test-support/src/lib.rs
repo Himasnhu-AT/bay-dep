@@ -14,8 +14,6 @@
 //! process env is `unsafe` in edition 2024 and races the test harness's threads, so the tests
 //! inject the flag instead of setting it.
 
-use std::process::Command;
-
 /// A capability an integration test can depend on. Each maps to one `VII_REQUIRE_*` var.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
@@ -138,7 +136,13 @@ pub fn ffmpeg_available() -> bool {
 /// The first line of `ffmpeg -version` (the build banner), or `None` when ffmpeg is missing
 /// or unusable. Also the ffmpeg half of [`capability_report`].
 pub fn ffmpeg_version_line() -> Option<String> {
-    let output = Command::new("ffmpeg").arg("-version").output().ok()?;
+    // Resolved the same way the shipping code resolves it, so a capability gate can never
+    // report "ffmpeg available" for a binary the app itself would fail to find.
+    let output = vii_paths::tools::command(vii_paths::tools::Tool::Ffmpeg)
+        .ok()?
+        .arg("-version")
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }

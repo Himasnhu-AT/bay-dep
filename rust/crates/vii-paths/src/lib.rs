@@ -12,6 +12,8 @@
 
 use std::path::PathBuf;
 
+pub mod tools;
+
 /// Which set of conventions to follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {

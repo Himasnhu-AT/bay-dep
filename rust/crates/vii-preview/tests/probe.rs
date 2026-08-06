@@ -170,7 +170,7 @@ fn probes_a_real_generated_clip() {
             assert!(meta.has_video);
             assert_eq!(meta.fps.numerator, 25);
         }
-        Err(ProbeError::Unavailable) => eprintln!("skipping: ffprobe unavailable"),
+        Err(ProbeError::Unavailable(_)) => eprintln!("skipping: ffprobe unavailable"),
         Err(other) => panic!("probe failed: {other}"),
     }
     let _ = std::fs::remove_file(&path);

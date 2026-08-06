@@ -723,7 +723,7 @@ impl EditorView {
                 Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
                 // Do NOT pretend the fallback is the real length: without ffprobe every clip
                 // silently imports as 4s, which is the bug probing was added to fix.
-                Err(ProbeError::Unavailable) => {
+                Err(ProbeError::Unavailable(_)) => {
                     self.status = Some(
                         "ffprobe not found — clip length is a 4s guess. Install ffmpeg for real \
                          durations."

@@ -12,6 +12,7 @@ publish = false
 # VII_REQUIRE_GPU / VII_REQUIRE_FFMPEG turns it into a panic, and CI sets those.
 
 [dependencies]
+vii-paths = { path = "../vii-paths" }
 # Only needed to probe/hand out a real GpuContext. Crates that gate on ffmpeg alone can
 # depend on this crate without pulling wgpu in.
 vii-gpu = { version = "0.1.0", path = "../vii-gpu", optional = true }

@@ -741,7 +741,13 @@ impl PreviewRenderer {
         args.push("yuv420p".into());
         args.push(out_path.into());
 
-        let Ok(mut child) = std::process::Command::new("ffmpeg")
+        let Ok(ffmpeg) = vii_paths::tools::command(vii_paths::tools::Tool::Ffmpeg) else {
+            // Resolution failed, not the encode. The caller reports "is ffmpeg installed?",
+            // which is the right question — vii_paths has already looked everywhere it can.
+            return false;
+        };
+        let mut ffmpeg = ffmpeg;
+        let Ok(mut child) = ffmpeg
             .args(&args)
             .stdin(std::process::Stdio::piped())
             .spawn()
@@ -1006,7 +1012,8 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
     };
     let (decode_w, decode_h, fps, max_frames) = plan_decode(natural, rotation, duration_secs);
 
-    let output = std::process::Command::new("ffmpeg")
+    let output = vii_paths::tools::command(vii_paths::tools::Tool::Ffmpeg)
+        .ok()?
         .args([
             "-nostdin",
             "-loglevel",

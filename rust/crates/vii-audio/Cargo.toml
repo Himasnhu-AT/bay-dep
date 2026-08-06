@@ -11,6 +11,9 @@ path = "src/lib.rs"
 # criterion's CLI flags — `cargo bench -p vii-audio -- --measurement-time 2` would fail.
 bench = false
 
+[dependencies]
+vii-paths = { version = "0.1.0", path = "../vii-paths" }
+
 [dev-dependencies]
 # T-002 capability gate. `gpu` is on so this crate's capability_report can name the adapter
 # too — one report format across every gated crate.

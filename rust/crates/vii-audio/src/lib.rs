@@ -12,7 +12,8 @@ pub struct AudioPcm {
 /// Decode a file to interleaved stereo f32 PCM at `sample_rate` via the ffmpeg CLI. `None` if
 /// ffmpeg is unavailable, decode fails, or there is no audio.
 pub fn decode_pcm(path: &str, sample_rate: u32) -> Option<AudioPcm> {
-    let output = std::process::Command::new("ffmpeg")
+    let output = vii_paths::tools::command(vii_paths::tools::Tool::Ffmpeg)
+        .ok()?
         .args([
             "-nostdin",
             "-loglevel",
@@ -111,7 +112,8 @@ pub fn waveform_peaks(path: &str, buckets: usize) -> Option<Vec<f32>> {
     if buckets == 0 {
         return None;
     }
-    let output = std::process::Command::new("ffmpeg")
+    let output = vii_paths::tools::command(vii_paths::tools::Tool::Ffmpeg)
+        .ok()?
         .args([
             "-nostdin",
             "-loglevel",

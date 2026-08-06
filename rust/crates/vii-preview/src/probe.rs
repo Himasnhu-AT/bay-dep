@@ -27,8 +27,10 @@ pub enum ProbeError {
     Malformed(String),
     /// Valid JSON, but it described no usable audio or video stream.
     NoStreams,
-    /// `ffprobe` could not be run.
-    Unavailable,
+    /// `ffprobe` could not be run. Carries the reason, because "not available" alone sends
+    /// someone to reinstall an ffmpeg that was already installed — the usual cause is that a
+    /// Finder-launched app cannot see it, not that it is missing.
+    Unavailable(String),
 }
 
 impl std::fmt::Display for ProbeError {
@@ -36,7 +38,7 @@ impl std::fmt::Display for ProbeError {
         match self {
             ProbeError::Malformed(why) => write!(f, "malformed ffprobe output: {why}"),
             ProbeError::NoStreams => write!(f, "file contains no audio or video stream"),
-            ProbeError::Unavailable => write!(f, "ffprobe is not available"),
+            ProbeError::Unavailable(why) => write!(f, "{why}"),
         }
     }
 }
@@ -157,7 +159,8 @@ fn display_rotation(stream: &serde_json::Value) -> i32 {
 /// Run `ffprobe` on `path` and parse the result. Returns [`ProbeError::Unavailable`] when the
 /// binary is missing, so callers can degrade instead of failing the import.
 pub fn probe_media(path: &str) -> Result<MediaMetadata, ProbeError> {
-    let output = std::process::Command::new("ffprobe")
+    let output = vii_paths::tools::command(vii_paths::tools::Tool::Ffprobe)
+        .map_err(|missing| ProbeError::Unavailable(missing.detail()))?
         .args([
             "-v",
             "error",
@@ -168,7 +171,7 @@ pub fn probe_media(path: &str) -> Result<MediaMetadata, ProbeError> {
             path,
         ])
         .output()
-        .map_err(|_| ProbeError::Unavailable)?;
+        .map_err(|error| ProbeError::Unavailable(format!("could not run ffprobe: {error}")))?;
     if !output.status.success() {
         return Err(ProbeError::Malformed(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),

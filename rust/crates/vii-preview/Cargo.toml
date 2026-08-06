@@ -12,6 +12,7 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
+vii-paths = { path = "../vii-paths" }
 vii-compositor = { version = "0.1.0", path = "../vii-compositor" }
 vii-gpu = { version = "0.1.0", path = "../vii-gpu" }
 image = "0.25"

@@ -6622,6 +6622,7 @@ name = "vii-audio"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "vii-paths",
  "vii-test-support",
 ]
 
@@ -6718,6 +6719,7 @@ dependencies = [
  "serde_json",
  "vii-compositor",
  "vii-gpu",
+ "vii-paths",
  "vii-project",
  "vii-test-support",
  "vii-text",
@@ -6750,6 +6752,7 @@ version = "0.1.0"
 dependencies = [
  "pollster 0.4.0",
  "vii-gpu",
+ "vii-paths",
 ]
 
 [[package]]
