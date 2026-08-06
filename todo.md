@@ -25,23 +25,81 @@ toolbar? Palmier uses a 3-way icon rail (Media / Captions / Audio); we have a ha
 
 ---
 
-## 2. Button: download models · **M**
+## 2. Provision everything vii needs · **M–L**
 
-A models pane: what is installed, what it costs on disk, download / remove, with progress.
+Today `vii.app` is one binary, an icon and a plist. Everything it depends on, the user installs
+by hand — and `script/setup-speech.sh` is a *dev* script run by `./build.sh`, which someone who
+downloads the app never runs. The goal: **the user installs nothing.**
 
-Today Kokoro self-downloads into the HuggingFace cache on first `narrate`, which means the
-first narration silently blocks for minutes on a cold machine and there is no way to see or
-reclaim the space.
+| | shipped | today the user must |
+|---|---|---|
+| Rust | compiled away — one binary | nothing |
+| ffmpeg | no | `brew install ffmpeg` |
+| Python + Kokoro | no | install `uv`, then run a script they never see |
+| Kokoro weights | no | (self-downloads on first narrate) |
 
-- Needs a **model registry** — id, name, size, license, revision-pinned URL, SHA-256. The
-  meeting assistant's `speech_models.rs` is the reference: every artifact size- and
-  hash-verified before it can be selected.
-- Needs resumable download + progress events into the UI, and a disk-usage readout.
-- Should cover every model we add: Kokoro, the assistant LLM, the vision model.
+**Do not freeze Python.** Researched and rejected: PyInstaller with torch lands ~2.6 GB, and
+TorchScript needs `.py` source that a frozen app does not have (pyinstaller#5673, still open);
+Nuitka disables `torch.jit` in standalone mode (#2500); PyOxidizer is dead by its maintainer's
+own words (#741, "possibly dead"). All three also require signing dozens of nested dylibs under
+the hardened runtime. Freezing trades a solved problem for an unsolved one and does not even
+win on size.
 
-**Risk:** Kokoro fetches its own weights through the `huggingface_hub` Python client. Either
-we pre-fetch into the same cache path and let it find them, or we take over the download and
-point `HF_HOME` at our directory. The second is cleaner and testable.
+**Ship a real interpreter instead.** `uv` is one static binary — 17.7 MB per platform, and
+`otool -L` shows only macOS system libraries, nothing to install alongside it. It installs
+python-build-standalone (MPL-2.0), which is **relocatable — verified** by copying a tree to an
+arbitrary path and running it: `sys.prefix` resolves from the executable, every stdlib C
+extension imports, OpenSSL is statically linked. (One residual: `sysconfig.get_config_var
+("prefix")` stays stale, which only matters when compiling extensions from source.)
+
+Verified isolation — with `UV_PYTHON_INSTALL_DIR` set, `uv python list --only-installed`
+returned nothing despite five managed Pythons in HOME. It is a real redirect, not an extra
+search path. `--no-bin --no-registry` keep PATH and the Windows registry untouched.
+
+```
+uv python install 3.12 --install-dir <data>/python --no-bin --no-registry   # UV_CACHE_DIR=<data>/cache
+uv venv --python <data>/python/.../bin/python3.12 --no-project <data>/kokoro-venv
+uv pip install kokoro soundfile "en_core_web_sm @ <wheel url>"
+```
+
+The spaCy wheel must be explicit or `misaki` shells out to pip at *runtime* —
+`setup-speech.sh` already does this, and the reason is worth keeping when it moves into Rust.
+**espeak-ng needs no system install**: `espeakng-loader` ships the library inside its wheel.
+kokoro 0.9.4 requires Python `>=3.10,<3.13`, so **3.12 is the ceiling**; torch's macOS wheels
+are `macosx_14_0_arm64`, so **macOS 14+**.
+
+**Measured footprint** (this machine, and the HF API):
+
+| | |
+|---|---|
+| ffmpeg static, macOS | ~80 MB on disk (26 MB zip) |
+| `uv` | 17.7 MB download, 52 MB on disk |
+| CPython 3.12 (pbs, arm64) | 25 MB download, 73 MB on disk |
+| kokoro venv (torch etc.) | 858 MB |
+| Kokoro-82M weights | 327 MB + 0.5 MB per voice (Apache-2.0) |
+
+So **~80 MB to render**, **~1.2 GB more to narrate**. That split should be the UI: ffmpeg
+blocks the core product, speech is opt-in.
+
+**Provisioning must be user-initiated.** A first-run auto-download is vii making a network call
+on its own, which is exactly what the manifesto rules out. Detect → say what is missing and how
+big → the user chooses. `uv python install --mirror` exists if we would rather serve the
+tarballs ourselves than send users to github.com.
+
+**Integrity is not optional.** Every artifact is pinned by version + SHA-256 in a manifest in
+this repo, verified before install, never trusted from the network. `uv` publishes a `.sha256`
+per asset; python-build-standalone publishes one `SHA256SUMS` per release. A downloaded binary
+also needs its macOS quarantine attribute cleared or it will not execute.
+
+`vii_paths::tools` already has a "bundled beside the binary" tier that nothing uses yet — the
+managed directory slots in there with no call-site changes.
+
+**Done:** weights now go to `<data>/models` via `HF_HOME` on the child, with telemetry and
+implicit-token off. They were landing in the shared `~/.cache/huggingface` (11.5 GB on the
+dev machine) where vii could neither measure nor remove them.
+
+**Still to build:** the manifest + verified downloader, `runtime_status` / `runtime_install`
+MCP tools, the ffmpeg artifact, and the uv-driven speech provision.
 
 ---
 

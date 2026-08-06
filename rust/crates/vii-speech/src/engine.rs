@@ -69,6 +69,49 @@ impl Default for SpeechConfig {
     }
 }
 
+/// The environment the sidecar child is started with.
+///
+/// **Every one of these must be set on the child, not inside the Python.** `huggingface_hub`
+/// reads its configuration at *import* time, so a variable set after the import silently does
+/// nothing — which is the kind of bug that looks like it works until someone checks where the
+/// weights actually landed.
+fn sidecar_env(token: &str) -> Vec<(String, std::ffi::OsString)> {
+    vec![
+        ("VII_KOKORO_TOKEN".into(), token.into()),
+        // So a crashed editor cannot leave a multi-gigabyte model resident.
+        (
+            "VII_KOKORO_PARENT_PID".into(),
+            std::process::id().to_string().into(),
+        ),
+        // huggingface_hub reports usage on every download unless told not to. vii has no
+        // telemetry, and a dependency phoning home on the user's behalf is the same thing
+        // wearing a different name — so it is switched off explicitly rather than left to a
+        // default that could change.
+        ("HF_HUB_DISABLE_TELEMETRY".into(), "1".into()),
+        // Do not read the user's HuggingFace login. vii downloads one public model; sending
+        // someone's API token to do it is not something they asked for.
+        ("HF_HUB_DISABLE_IMPLICIT_TOKEN".into(), "1".into()),
+        // Kokoro's ~328 MB of weights belong to vii, so they go in vii's own directory rather
+        // than the shared ~/.cache/huggingface — where they are indistinguishable from every
+        // other tool's models, cannot be reported as vii's disk usage, and survive uninstall.
+        ("HF_HOME".into(), model_cache().into_os_string()),
+    ]
+}
+
+/// Where model weights live: vii's own directory, not the shared HuggingFace cache.
+///
+/// `HF_HOME` is the parent that moves the hub cache, the assets cache and the token in one
+/// go — `HF_HUB_CACHE` alone would leave the others behind. Overridable so a machine that
+/// already has the weights somewhere can point at them instead of downloading 328 MB again.
+pub fn model_cache() -> std::path::PathBuf {
+    if let Ok(explicit) = std::env::var("VII_MODEL_DIR") {
+        return std::path::PathBuf::from(explicit);
+    }
+    vii_paths::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("models")
+}
+
 /// The interpreter `script/setup-speech.sh` provisions.
 ///
 /// **This must agree with that script**, and the agreement is not free: the script puts the
@@ -288,9 +331,7 @@ impl SpeechEngine {
                 "--port",
                 &self.config.port.to_string(),
             ])
-            .env("VII_KOKORO_TOKEN", &self.config.token)
-            // So a crashed editor cannot leave the model resident.
-            .env("VII_KOKORO_PARENT_PID", std::process::id().to_string())
+            .envs(sidecar_env(&self.config.token))
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -689,5 +730,64 @@ mod embedded_script_tests {
             "embedded sidecar is not valid Python:\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+}
+
+#[cfg(test)]
+mod sidecar_env_tests {
+    use super::*;
+
+    fn value<'a>(
+        env: &'a [(String, std::ffi::OsString)],
+        key: &str,
+    ) -> Option<&'a std::ffi::OsStr> {
+        env.iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_os_str())
+    }
+
+    /// The manifesto says nothing leaves the Mac unless the user sends it on purpose.
+    /// huggingface_hub's default is to report usage, so silence has to be explicit.
+    #[test]
+    fn the_sidecar_never_phones_home() {
+        let env = sidecar_env("t");
+        assert_eq!(value(&env, "HF_HUB_DISABLE_TELEMETRY"), Some("1".as_ref()));
+        assert_eq!(
+            value(&env, "HF_HUB_DISABLE_IMPLICIT_TOKEN"),
+            Some("1".as_ref()),
+            "vii downloads one public model; it must not send the user's HF token to do it"
+        );
+    }
+
+    /// Weights are vii's, so they live in vii's directory — not mixed into a shared cache it
+    /// cannot measure, report or clean up.
+    #[test]
+    fn weights_land_in_viis_own_directory() {
+        let env = sidecar_env("t");
+        let home = value(&env, "HF_HOME").expect("HF_HOME must be set on the child");
+        let home = std::path::Path::new(home);
+        assert!(
+            home.ends_with("models"),
+            "HF_HOME should be vii's model directory, got {home:?}"
+        );
+        assert!(
+            !home.starts_with(
+                vii_paths::home()
+                    .unwrap_or_default()
+                    .join(".cache/huggingface")
+            ),
+            "the shared HuggingFace cache is exactly what this avoids: {home:?}"
+        );
+    }
+
+    #[test]
+    fn the_model_directory_can_be_redirected() {
+        // SAFETY: single-threaded test scope.
+        unsafe { std::env::set_var("VII_MODEL_DIR", "/tmp/vii-models-test") };
+        assert_eq!(
+            model_cache(),
+            std::path::PathBuf::from("/tmp/vii-models-test")
+        );
+        unsafe { std::env::remove_var("VII_MODEL_DIR") };
     }
 }
