@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use time::MediaTime;
+use vii_time::MediaTime;
 
 /// A GPU effect applied to a visual element (e.g. `brightness`), with named scalar params.
 /// `BTreeMap` keeps params in a deterministic order for stable serialization.
@@ -143,8 +143,8 @@ impl AnimationChannel {
 
 /// How a layer composites against everything beneath it. Mirrors the compositor's WGSL blend
 /// set (and the web app's wire format) but stays GPU-free so the data model has no render
-/// dependency; `vii-preview` maps these onto `compositor::BlendMode`.
-/// Wire format is **kebab-case** to match `compositor::BlendMode` and the web app's
+/// dependency; `vii-preview` maps these onto `vii_compositor::BlendMode`.
+/// Wire format is **kebab-case** to match `vii_compositor::BlendMode` and the web app's
 /// `BlendMode` union (`apps/web/src/rendering/index.ts`) — e.g. `"color-burn"`,
 /// `"plus-lighter"`. Using camelCase here would silently break project interchange.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

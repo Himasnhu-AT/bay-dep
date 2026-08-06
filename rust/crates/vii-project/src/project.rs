@@ -1,7 +1,7 @@
 //! The `Project` aggregate root and its starter/demo constructor.
 
 use serde::{Deserialize, Serialize};
-use time::MediaTime;
+use vii_time::MediaTime;
 
 use crate::element::{AudioElement, Element, ImageElement, TextElement, Transform};
 use crate::scene::Scene;

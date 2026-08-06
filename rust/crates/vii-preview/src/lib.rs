@@ -1,6 +1,6 @@
 //! Compositor-backed scene preview.
 //!
-//! [`PreviewRenderer`] owns a wgpu device + the real [`compositor::Compositor`]. Given a scene
+//! [`PreviewRenderer`] owns a wgpu device + the real [`vii_compositor::Compositor`]. Given a scene
 //! and a playhead it builds a [`FrameDescriptor`] (one layer per on-screen visual element,
 //! placed by its transform), renders it, and reads the pixels back as BGRA — the format GPUI's
 //! `RenderImage` expects. Clip textures are solid-color placeholders until native media decode
@@ -8,14 +8,14 @@
 
 pub mod probe;
 
-use compositor::{
+use std::collections::HashSet;
+use vii_compositor::{
     BlendMode, CanvasClearDescriptor, Compositor, EffectPassDescriptor,
     EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
     QuadTransformDescriptor,
 };
-use std::collections::HashSet;
 
-use gpu::GpuContext;
+use vii_gpu::GpuContext;
 use vii_project::{Background, Element, ElementKind, MediaAsset, MediaTime, Scene};
 use vii_text::TextRaster;
 

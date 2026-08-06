@@ -1,11 +1,11 @@
 //! The preview renderer composites scenes to non-empty BGRA frames on a real GPU (skips if
 //! none — set `VII_REQUIRE_GPU=1` / `VII_REQUIRE_FFMPEG=1` to turn those skips into failures).
 
-use test_support::{require_ffmpeg, require_ffmpeg_step, require_gpu_backed};
 use vii_preview::PreviewRenderer;
 use vii_project::{
     Effect, Element, ImageElement, MediaAsset, MediaTime, Project, Transform, VideoElement,
 };
+use vii_test_support::{require_ffmpeg, require_ffmpeg_step, require_gpu_backed};
 
 #[test]
 fn renders_starter_scene_to_a_nonempty_frame() {

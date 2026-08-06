@@ -2,13 +2,11 @@
 resolver = "2"
 members = [
     "desktop",
-    "crates/time",
-    "crates/bridge",
-    "crates/effects",
-    "crates/gpu",
-    "crates/masks",
-    "wasm", "crates/compositor",
-    "crates/native-preview",
+    "crates/vii-time",
+    "crates/vii-effects",
+    "crates/vii-gpu",
+    "crates/vii-masks",
+    "crates/vii-compositor",
     "crates/vii-agent",
     "crates/vii-core",
     "crates/vii-mcp",
@@ -18,7 +16,7 @@ members = [
     "crates/vii-preview",
     "crates/vii-text",
     "crates/vii-ui",
-    "crates/test-support",
+    "crates/vii-test-support",
 ]
 
 # P0-GPU-01 — single frozen wgpu major for the whole native workspace.

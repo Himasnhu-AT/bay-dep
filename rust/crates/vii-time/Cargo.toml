@@ -1,0 +1,13 @@
+[package]
+name = "vii-time"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/time.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+num-traits = "0.2.19"
+serde = { version = "1", features = ["derive"] }
+

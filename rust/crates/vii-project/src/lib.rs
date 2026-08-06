@@ -14,7 +14,7 @@
 //!          └─ Element = Video | Image | Text | Audio | Shape
 //! ```
 //!
-//! Time is [`time::MediaTime`] (i64 ticks, 120 000/s) — the one time type shared with the
+//! Time is [`vii_time::MediaTime`] (i64 ticks, 120 000/s) — the one time type shared with the
 //! compositor and the web/wasm core.
 
 mod element;
@@ -36,4 +36,4 @@ pub use scene::Scene;
 pub use settings::{Background, CanvasSize, Fps, ProjectSettings};
 pub use track::{Track, TrackKind, Tracks};
 
-pub use time::MediaTime;
+pub use vii_time::MediaTime;

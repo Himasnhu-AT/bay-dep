@@ -3,5 +3,5 @@
 
 #[test]
 fn capability_report() {
-    println!("{}", test_support::capability_report());
+    println!("{}", vii_test_support::capability_report());
 }

@@ -2,7 +2,7 @@
 //!
 //! Both tests need the ffmpeg CLI: without it they skip, unless `VII_REQUIRE_FFMPEG` is set.
 
-use test_support::require_ffmpeg_step;
+use vii_test_support::require_ffmpeg_step;
 
 /// A 1s 440Hz sine WAV at a unique temp path, or `None` once the ffmpeg gate has skipped.
 fn sine_tone(tag: &str) -> Option<std::path::PathBuf> {

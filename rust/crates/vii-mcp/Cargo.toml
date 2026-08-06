@@ -11,7 +11,7 @@ vii-project = { path = "../vii-project" }
 vii-preview = { path = "../vii-preview" }
 vii-text = { path = "../vii-text" }
 vii-speech = { path = "../vii-speech" }
-time = { path = "../time" }
+vii-time = { path = "../vii-time" }
 serde = { workspace = true }
 serde_json = "1"
 image = "0.25"

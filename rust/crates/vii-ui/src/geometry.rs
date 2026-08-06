@@ -28,7 +28,7 @@ use std::ops::Range;
 
 use vii_core::{Fps, MediaTime};
 
-/// Ticks per second in [`MediaTime`]. Mirrors `time::TICKS_PER_SECOND`, which is not re-exported
+/// Ticks per second in [`MediaTime`]. Mirrors `vii_time::TICKS_PER_SECOND`, which is not re-exported
 /// through `vii-project`; `ticks_per_second_matches_media_time` keeps the two honest.
 pub const TICKS_PER_SECOND: i64 = 120_000;
 
@@ -134,7 +134,7 @@ impl TimelineGeometry {
         ticks_per_frame(self.fps)
     }
 
-    /// Nearest frame index, ties toward `+∞` (matching `time::MediaTime::to_frame_round`).
+    /// Nearest frame index, ties toward `+∞` (matching `vii_time::MediaTime::to_frame_round`).
     pub fn frame_of(&self, time: MediaTime) -> i64 {
         frame_of(time, self.fps)
     }
@@ -486,7 +486,7 @@ fn rational(fps: Fps) -> (i128, i128) {
 }
 
 /// `floor(numerator / denominator)` with halves going toward `+∞`, matching
-/// `time::MediaTime::to_frame_round` so the UI and the engine agree on every tie.
+/// `vii_time::MediaTime::to_frame_round` so the UI and the engine agree on every tie.
 fn div_round_half_up(numerator: i128, denominator: i128) -> i128 {
     debug_assert!(denominator > 0);
     (2 * numerator + denominator).div_euclid(2 * denominator)

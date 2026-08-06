@@ -8,6 +8,6 @@ description = "The bridge an AI agent's edits cross to reach the live editor: pu
 vii-core = { path = "../vii-core" }
 vii-speech = { path = "../vii-speech" }
 vii-project = { path = "../vii-project" }
-time = { path = "../time" }
+vii-time = { path = "../vii-time" }
 serde_json = "1"
 async-channel = "2.5"

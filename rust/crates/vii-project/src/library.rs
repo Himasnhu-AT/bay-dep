@@ -101,7 +101,7 @@ impl ProjectSummary {
             modified,
             canvas: project.settings.canvas,
             fps: project.settings.fps.as_f64(),
-            duration_seconds: time::MediaTime::from_ticks(duration_ticks).to_seconds_f64(),
+            duration_seconds: vii_time::MediaTime::from_ticks(duration_ticks).to_seconds_f64(),
             scene_count: project.scenes.len(),
             element_count,
         }
