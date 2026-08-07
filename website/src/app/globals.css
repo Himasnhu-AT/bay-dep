@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@theme {
+  /* Palette. Paper and ink first, brass for the one accent per screen. */
+  --color-paper: #f5f1e8;
+  --color-ink: #16130d;
+  --color-ink-soft: #4a4438;
+  --color-muted: #6f6857;
+  /* Brass carries the accent at display sizes; brass-deep is the same hue taken
+     dark enough to pass WCAG AA as small text. See DESIGN.md. */
+  --color-brass: #9a7b3f;
+  --color-brass-deep: #806331;
+  --color-line: #d9d1bf;
+
+  /* The plate. These are not new brand colours; they are the app's own theme,
+     copied value for value from rust/crates/vii-ui/src/theme.rs so the plate is
+     a re-creation rather than an interpretation. If the app's theme changes,
+     these change with it. Measured against app-panel: text 14.6:1, muted 5.3:1,
+     accent 5.7:1, all passing AA. See DESIGN.md. */
+  --color-app-bg: #0f0f14;
+  --color-app-panel: #16161d;
+  --color-app-panel-alt: #1d1d26;
+  --color-app-lane: #121218;
+  --color-app-border: #2a2a36;
+  --color-app-text: #e7e7ee;
+  --color-app-muted: #8a8a9a;
+  --color-app-accent: #5b8cff;
+  --color-app-selected: #2d3a66;
+  --color-app-selected-border: #8fb0ff;
+
+  /* Clip fill per element kind, from theme.rs `element_color`. Named `elem-`
+     and not `clip-`: `--color-clip-text` would generate `bg-clip-text`, which
+     collides with Tailwind's own background-clip utility and silently wins,
+     leaving every Text clip unfilled. */
+  --color-elem-video: #33628f;
+  --color-elem-image: #7a4f95;
+  --color-elem-text: #8f6a33;
+  --color-elem-audio: #2f8f63;
+  --color-elem-shape: #444455;
+
+  /* The reel being built inside the plate carries its own measured ground and
+     track, from docs/native/reel-recipe.md. The track is used at full opacity:
+     the recipe measured #606070 at 3.12:1 and recorded that alpha defeats the
+     measurement, so a faded track would reproduce the exact defect it warns
+     about and leave the bars with no denominator. */
+  --color-reel-ground: #0e0e12;
+  --color-reel-track: #606070;
+
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-serif: var(--font-fraunces), Georgia, serif;
+  /* The plate renders in the system UI face, because that is what the app is
+     drawn in on the machine. It is deliberately not the site's face. */
+  --font-app: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    sans-serif;
+
+  /* Type scale. Every size on the site is one of these six. */
+  --text-eyebrow: 11px;
+  --text-eyebrow--line-height: 1.4;
+  --text-eyebrow--letter-spacing: 0.28em;
+
+  --text-display: clamp(44px, 7.4vw, 92px);
+  --text-display--line-height: 1.02;
+  --text-display--letter-spacing: -0.015em;
+
+  --text-title: clamp(40px, 6vw, 72px);
+  --text-title--line-height: 1.04;
+  --text-title--letter-spacing: -0.015em;
+
+  --text-lead: clamp(18px, 2.1vw, 23px);
+  --text-lead--line-height: 1.5;
+
+  --text-quote: clamp(20px, 2.6vw, 28px);
+  --text-quote--line-height: 1.4;
+
+  --text-section: 26px;
+  --text-section--line-height: 1.25;
+  --text-section--letter-spacing: 0.01em;
+
+  /* The page is 1080px wide with 32px gutters, everywhere. */
+  --container-page: 1080px;
+
+  /* Confident arrival, no bounce. Everything on the site uses this curve. */
+  --ease-paper: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-brass);
+  color: var(--color-paper);
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-brass);
+  outline-offset: 3px;
+}
+
+/*
+ * Reveals.
+ *
+ * The hidden pre-state is applied only where scripting is on, because only then
+ * can anything reveal it. With JavaScript off, or in a browser that does not
+ * know this query, none of the rules below apply and the page renders plainly
+ * visible. Nothing here can hide content permanently.
+ */
+@media (scripting: enabled) {
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(14px);
+    transition:
+      opacity 0.7s var(--ease-paper),
+      transform 0.7s var(--ease-paper),
+      filter 0.7s var(--ease-paper);
+  }
+
+  /* The home headline resolves out of a blur, like ink settling into paper. */
+  [data-reveal="settle"] {
+    transform: translateY(20px);
+    filter: blur(5px);
+    transition-duration: 0.9s;
+  }
+
+  [data-reveal][data-shown] {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  /* A rule is drawn, not faded, and lands just after its content. */
+  [data-rule] {
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.8s var(--ease-paper) 0.08s;
+  }
+
+  [data-reveal][data-shown] [data-rule],
+  [data-rule][data-shown] {
+    transform: none;
+  }
+}
+
+/* The scroll cue in the hero. It falls and resets, the way your eye does when
+   it drops down a page. Slow enough to read as an invitation. */
+@keyframes nudge {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(5px);
+    opacity: 1;
+  }
+}
+
+@media (scripting: enabled) {
+  [data-nudge] {
+    animation: nudge 2.1s var(--ease-paper) infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-nudge] {
+    animation: none;
+    opacity: 1;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+
+  [data-reveal],
+  [data-reveal="settle"],
+  [data-rule] {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+}
