@@ -489,6 +489,25 @@ Everything below works over MCP and is missing or wrong in the window:
 
 ---
 
+## 5h. One dependency advisory that needs upstream · **blocked**
+
+Dependabot flags four crates on the default branch. Three were a `cargo update` away and are
+fixed: `rustls-webpki` 0.103.10 → 0.103.13 (high — DoS via panic on a malformed CRL, and it sits
+in the TLS path the provisioning downloader uses), `quinn-proto` 0.11.14 → 0.11.16 (high), and
+`rand` 0.8.5/0.9.2 → 0.8.7/0.9.5 (low).
+
+**`grid` 0.18.0 cannot be fixed here** (medium — integer overflow in `Grid::expand_rows` reaching
+undefined behaviour through a safe API). The fix is `grid` 1.0.1, a major bump, and the path is
+`bay-ui → gpui 0.2.2 → taffy 0.9.0 → grid 0.18.0` — a real dependency, compiled into the shipped
+binary, not a dev-only one. It moves when taffy bumps and gpui picks that up.
+
+Not worth a `[patch]` override: taffy would have to compile against a major-version-changed API,
+and the reachable risk here is a layout engine overflowing on absurd row counts, which bay never
+supplies. Recheck when gpui is next updated — the gpui version is already pinned for the wgpu
+freeze, so this rides along with that decision rather than being its own.
+
+---
+
 ## 6. Bug: a sidecar can outlive its parent · **S**
 
 The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.
