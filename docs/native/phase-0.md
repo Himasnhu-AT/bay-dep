@@ -56,7 +56,7 @@ The pivotal gate: prove a wgpu texture produced by our Compositor (sharing the s
 #### `P0-GPU-05` — GPUI sourcing decision + Tauri fallback spike
 Decide GPUI source (crates.io 0.2.2 vs pinned Zed monorepo revision vs community fork) balancing wgpu/raw-window-handle compatibility and maintenance; spike a minimal Tauri shell rendering a compositor texture as the fallback surface on the same core.
 
-> **Test gate:** Pinned GPUI dependency committed and building on all three OSes; Tauri fallback demo renders one composited frame from vii-core.
+> **Test gate:** Pinned GPUI dependency committed and building on all three OSes; Tauri fallback demo renders one composited frame from bay-core.
 
 ### Workstream: Media, codec & licensing
 

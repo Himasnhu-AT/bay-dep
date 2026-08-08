@@ -1,6 +1,6 @@
 # Getting Help
 
-Thanks for using vii! If you need help, here are your options:
+Thanks for using bay! If you need help, here are your options:
 
 ## Documentation
 
@@ -24,4 +24,4 @@ Thanks for using vii! If you need help, here are your options:
 - Feature requests may take longer to evaluate
 - Security issues are handled with priority
 
-We appreciate your patience and contributions to making vii better!
+We appreciate your patience and contributions to making bay better!

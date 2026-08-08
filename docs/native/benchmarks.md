@@ -1,18 +1,18 @@
-# vii — benchmarks
+# bay — benchmarks
 
 Criterion benchmark suite for the pure-CPU parts of the editor, per
 [`palmier-parity-plan.md` §6.6](palmier-parity-plan.md). Three crates carry benches today:
 
 | Crate | Bench file | What it measures |
 |---|---|---|
-| `vii-audio` | `benches/mix_stereo.rs` | `mix_stereo` throughput — seconds of audio mixed per second of CPU |
-| `vii-core` | `benches/commands.rs` | command dispatch + undo/redo on an N-element project |
-| `vii-project` | `benches/project_serde.rs` | project JSON serialize / deserialize / round-trip at N elements |
+| `bay-audio` | `benches/mix_stereo.rs` | `mix_stereo` throughput — seconds of audio mixed per second of CPU |
+| `bay-core` | `benches/commands.rs` | command dispatch + undo/redo on an N-element project |
+| `bay-project` | `benches/project_serde.rs` | project JSON serialize / deserialize / round-trip at N elements |
 
 Everything here is **pure CPU**: no GPU, no ffmpeg, no file IO, no clock, no RNG. Every fixture is
 a deterministic synthetic project built in-process, so two runs on the same machine differ only by
 machine noise. Wall-clock pipeline numbers (preview frame time, decode, export, cold start) are
-*not* criterion's job — those belong to the `vii-bench` binary described in §6.6(B) of the plan,
+*not* criterion's job — those belong to the `bay-bench` binary described in §6.6(B) of the plan,
 which does not exist yet.
 
 ---
@@ -20,21 +20,21 @@ which does not exist yet.
 ## Running them
 
 ```sh
-cargo bench -p vii-audio
-cargo bench -p vii-core
-cargo bench -p vii-project
+cargo bench -p bay-audio
+cargo bench -p bay-core
+cargo bench -p bay-project
 ```
 
 A fast smoke run (useful when you only want to know the bench still executes):
 
 ```sh
-cargo bench -p vii-audio -- --warm-up-time 1 --measurement-time 2
+cargo bench -p bay-audio -- --warm-up-time 1 --measurement-time 2
 ```
 
 Filter to one case with a substring:
 
 ```sh
-cargo bench -p vii-core -- move_element/1000
+cargo bench -p bay-core -- move_element/1000
 ```
 
 **Benchmarks never run in CI** (plan §6.1). They are a cadence tool: run them at a milestone
@@ -46,9 +46,9 @@ Criterion's own baseline machinery is the regression machinery — do not build 
 
 ```sh
 # before your change
-cargo bench -p vii-core -- --save-baseline before
+cargo bench -p bay-core -- --save-baseline before
 # after your change
-cargo bench -p vii-core -- --baseline before
+cargo bench -p bay-core -- --baseline before
 ```
 
 Criterion then prints a signed percentage change and a p-value per case. Results live in
@@ -59,7 +59,7 @@ working tree, which is the point (see "what a regression means" below).
 
 ## What each benchmark measures
 
-### `vii-audio` — `mix_stereo`
+### `bay-audio` — `mix_stereo`
 
 `mix_stereo` sums N clips into one interleaved stereo buffer and soft-clamps the result. It is the
 whole of the audio mix path today: preview mixing and export mixing both go through it.
@@ -75,7 +75,7 @@ whole of the audio mix path today: preview mixing and export mixing both go thro
   the number the audio path cares about: **seconds of audio mixed per second of CPU**, i.e.
   `output_seconds / mean_time`.
 
-### `vii-core` — `commands`
+### `bay-core` — `commands`
 
 `Command::lower` resolves an `ElementRef` by scanning the track, and `ProjectPatch::apply` scans it
 again, so every command is O(elements-in-track). Sweeping N is the whole point: a timeline drag
@@ -96,7 +96,7 @@ dispatches one `MoveElement` per mouse-move, so the slope of this curve is what 
   the number. Every op asserts it was not a no-op — a fixture that silently stopped matching
   anything would otherwise benchmark the failure path.
 
-### `vii-project` — `project_serde`
+### `bay-project` — `project_serde`
 
 The cost of every open, every save, and every autosave. This is the number that decides whether
 autosave can run on the UI thread.
@@ -110,7 +110,7 @@ autosave can run on the UI thread.
 
 ### The synthetic project (shared design, duplicated per crate)
 
-`vii-core` and `vii-project` each build their fixture the same way, and deliberately
+`bay-core` and `bay-project` each build their fixture the same way, and deliberately
 **never use an `Element` struct literal**. Elements are cloned from `Project::starter()`'s
 text / image / audio elements and then mutated through the public setters (`set_id`, `set_name`,
 `set_start`, `set_duration`, `animations_mut`). That keeps the fixture describing the *current*
@@ -119,7 +119,7 @@ stale behind a literal somebody has to remember to update.
 
 Elements round-robin across the main, overlay, and audio lanes with per-lane cursors, so every lane
 is butt-joined and non-overlapping, which is the shape a real timeline has. Durations cycle through
-four values so starts are not a single arithmetic run. In the `vii-project` fixture every third
+four values so starts are not a single arithmetic run. In the `bay-project` fixture every third
 visual element carries a three-key `opacity` channel, so the JSON is not a trivially compressible
 run of identical records.
 
@@ -140,7 +140,7 @@ paths had changed).
 Every number below was measured on this machine by running the command in the header. Times are
 criterion's point estimate (the middle of the `[lower estimate upper]` triple).
 
-### `cargo bench -p vii-audio`
+### `cargo bench -p bay-audio`
 
 | Clips | Output | Time | Output frames/s | **s-audio / CPU-s** | Clip-seconds / CPU-s |
 |---:|---:|---:|---:|---:|---:|
@@ -163,7 +163,7 @@ sanity check only; the streaming `graph.fill()` path that budget actually govern
 yet, and it will pay costs `mix_stereo` does not (per-block envelope, resampling, no whole-buffer
 allocation).
 
-### `cargo bench -p vii-core`
+### `cargo bench -p bay-core`
 
 Reported time is for a batch of 64 operations; the per-op column is that divided by 64.
 
@@ -205,7 +205,7 @@ Reading it:
   1000-element project, dispatch is ~0.005 % of the frame. Command dispatch is not, and is not
   close to being, the timeline's bottleneck.
 
-### `cargo bench -p vii-project`
+### `cargo bench -p bay-project`
 
 Fixture sizes: **100 elements = 25 683 B · 500 = 126 874 B · 1000 = 253 415 B** of JSON
 (≈ 253 bytes/element).
@@ -228,7 +228,7 @@ time for serialize, 9.8× for deserialize) — no accidental quadratic in the sc
 and `BTreeMap` vs. writing bytes out).
 
 A 1000-element save is 217 µs. Autosave on the UI thread is affordable today at this size, and the
-plan's `vii-bench` target of *project open / save (500 clips) ≈ 84 ms / 61 ms* is dominated by file
+plan's `bay-bench` target of *project open / save (500 clips) ≈ 84 ms / 61 ms* is dominated by file
 IO and whatever wrapping the save path adds, not by serde: serde's share of a 500-element save is
 0.11 ms.
 

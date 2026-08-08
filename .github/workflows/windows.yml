@@ -38,14 +38,14 @@ jobs:
       # path, so it also catches a bundle that assembled the wrong file.
       - name: Smoke test
         run: |
-          $exe = "rust\target\release\bundle\windows\vii\vii.exe"
-          if (-not (Test-Path $exe)) { throw "the bundle produced no vii.exe" }
+          $exe = "rust\target\release\bundle\windows\bay\bay.exe"
+          if (-not (Test-Path $exe)) { throw "the bundle produced no bay.exe" }
           & $exe --help
-          if ($LASTEXITCODE -ne 0) { throw "vii.exe --help failed" }
+          if ($LASTEXITCODE -ne 0) { throw "bay.exe --help failed" }
 
           # One executable is the point of this layout — if a second one reappears, the README
           # and the download instructions are quietly wrong.
-          $exes = Get-ChildItem "rust\target\release\bundle\windows\vii" -Filter *.exe
+          $exes = Get-ChildItem "rust\target\release\bundle\windows\bay" -Filter *.exe
           if ($exes.Count -ne 1) { throw "expected exactly one .exe, found: $($exes.Name -join ', ')" }
 
           # A console-subsystem binary makes Windows open a black terminal behind the editor.
@@ -55,14 +55,14 @@ jobs:
           $pe = [BitConverter]::ToInt32($bytes, 0x3C)
           $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
           if ($subsystem -ne 2) {
-            throw "vii.exe is subsystem $subsystem (2=GUI, 3=console) — it will spawn a console window"
+            throw "bay.exe is subsystem $subsystem (2=GUI, 3=console) — it will spawn a console window"
           }
           Write-Host "  subsystem: GUI (no console window)"
         shell: pwsh
 
       - uses: actions/upload-artifact@v5
         with:
-          name: vii-windows
+          name: bay-windows
           path: rust/target/release/bundle/windows/*.zip
           # Long enough to be useful, short enough not to accumulate storage cost.
           retention-days: 30

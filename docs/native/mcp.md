@@ -1,6 +1,6 @@
-# vii as an MCP server
+# bay as an MCP server
 
-vii exposes its editor engine as [Model Context Protocol](https://modelcontextprotocol.io)
+bay exposes its editor engine as [Model Context Protocol](https://modelcontextprotocol.io)
 tools, so an agent can build a timeline and render it to MP4 with no GUI.
 
 ```
@@ -8,7 +8,7 @@ MCP client ──JSON-RPC──▶ server.rs ──▶ tools.rs ──▶ studio
                          transport      schemas       engine
 ```
 
-The crate is `rust/crates/vii-mcp`. It has no async runtime and no MCP SDK — the protocol
+The crate is `rust/crates/bay-mcp`. It has no async runtime and no MCP SDK — the protocol
 we need is "read a JSON-RPC request, return a JSON-RPC response", and the transport is ~200
 lines of `std::net`.
 
@@ -18,19 +18,27 @@ lines of `std::net`.
 
 ```bash
 cd rust
-cargo build --release -p vii-desktop
-./target/release/vii --mcp               # HTTP on 127.0.0.1:7333
-./target/release/vii --mcp --port 8080   # a specific port (0 = OS picks)
-./target/release/vii --stdio             # JSON-RPC on stdin/stdout instead
+cargo build --release -p bay-desktop
+./target/release/bay --mcp               # HTTP on 127.0.0.1:7333
+./target/release/bay --stdio             # JSON-RPC on stdin/stdout instead
+./target/release/bay --agents            # what is serving right now, and how to reach it
 ```
+
+**One owner, and the port never moves.** 7333 is the address `claude mcp add` writes into your
+client's configuration, so bay treats it as fixed: exactly one process may serve it, and if it
+is taken bay tells you *what* has it — an editor window (and which project), another headless
+bay (and its pid), or something that is not bay at all — rather than quietly starting somewhere
+else. A server on a different port is one your configured client cannot reach, which is why
+`--port` exists only for running a genuinely separate bay (a second checkout, CI) and is never
+the fix for a conflict.
 
 Register with Claude Code:
 
 ```bash
-claude mcp add --transport http vii http://127.0.0.1:7333/mcp
+claude mcp add --transport http bay http://127.0.0.1:7333/mcp
 ```
 
-MCP servers are loaded at session start, so the tools appear as `mcp__vii__*` in the **next**
+MCP servers are loaded at session start, so the tools appear as `mcp__bay__*` in the **next**
 session.
 
 **The listener binds loopback only.** These tools read and write arbitrary files on this
@@ -51,6 +59,8 @@ silently.
 
 | Tool | What it does |
 |---|---|
+| `runtime_status` | **What bay needs and whether this machine has it.** ffmpeg for render, Kokoro for narration. |
+| `runtime_install` | **Install what is missing** — bay fetches it, the user installs nothing. Returns a job id; poll `runtime_status` with it. |
 | `project_create` | Start an empty project. 1080×1920 @ 30 for a vertical reel. |
 | `project_info` | Canvas, fps, duration, element counts. |
 | `fonts_check` | **Which families are actually installed.** Call before `add_text`. |

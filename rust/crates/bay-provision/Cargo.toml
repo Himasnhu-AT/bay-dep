@@ -1,0 +1,23 @@
+[package]
+name = "bay-provision"
+version = "0.1.0"
+edition = "2024"
+description = "Installs the runtimes bay needs — ffmpeg, Python, Kokoro — from a pinned, hash-verified manifest."
+
+[dependencies]
+bay-paths = { path = "../bay-paths" }
+serde = { workspace = true }
+serde_json = "1"
+thiserror = { workspace = true }
+sha2 = "0.10"
+# rustls rather than the system TLS stack: one code path on every platform, and no OpenSSL to
+# find at build time. The digest in the manifest is the real trust anchor — TLS only keeps the
+# download from being tampered with in flight, which turns a hash mismatch into a clean error
+# rather than a wasted 1 GB.
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+flate2 = "1"
+tar = "0.4"
+zip = { version = "6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+bay-test-support = { path = "../bay-test-support" }

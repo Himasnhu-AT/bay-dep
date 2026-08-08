@@ -1,16 +1,16 @@
-# Building an infographic reel with vii
+# Building an infographic reel with bay
 
-A record of making one 21.4s vertical reel end to end through the MCP server — what vii needed
+A record of making one 21.4s vertical reel end to end through the MCP server — what bay needed
 before it was possible, what the build turned up, and what is still missing.
 
 The reel: **"Volatility Drag"**, 1080×1920 · 30fps · 21.429s · h264 + AAC.
-Build script: driven entirely by vii's MCP tool calls (see [`mcp.md`](mcp.md)).
+Build script: driven entirely by bay's MCP tool calls (see [`mcp.md`](mcp.md)).
 
 ---
 
-## What vii could not do before this
+## What bay could not do before this
 
-An infographic reel is picture cut to music, made of type and shapes. vii could do neither
+An infographic reel is picture cut to music, made of type and shapes. bay could do neither
 half. Five gaps, all now closed:
 
 | Gap | Why it blocked the reel | Fix |
@@ -19,9 +19,9 @@ half. Five gaps, all now closed:
 | **No shape primitive** | `Element` was Video/Image/Text/Audio. Every bar, rule, dot and panel was unrepresentable. | `Element::Shape` — rect (with corner radius) or ellipse |
 | **Uniform scale only** | One `scale` field, always centred. A bar chart needs one axis to grow while the other holds, from a fixed edge. | `scale_x`/`scale_y` + `anchor_x`/`anchor_y` on `Transform` |
 | **Linear keyframes only** | Everything moved at constant speed, which reads as mechanical. | `Easing` on `AnimationChannel` (8 curves) |
-| **Text was size + colour** | No family, weight, alignment, tracking or line height — no house typography. | All five on `TextElement`, honoured by `vii-text` |
+| **Text was size + colour** | No family, weight, alignment, tracking or line height — no house typography. | All five on `TextElement`, honoured by `bay-text` |
 
-Plus the surface to drive it: `vii --mcp`, 16 tools over HTTP or stdio.
+Plus the surface to drive it: `bay --mcp`, 16 tools over HTTP or stdio.
 
 ---
 
@@ -88,13 +88,13 @@ and values below the axis: one grid, no collisions, same reading order for every
 
 | Gap | Consequence | Where it would go |
 |---|---|---|
-| **Masks** | The compositor has a JFA mask pipeline, but the preview passes `mask: None` unconditionally. No wipe reveals — entrances are rise + fade only. | `vii-preview::render` |
+| **Masks** | The compositor has a JFA mask pipeline, but the preview passes `mask: None` unconditionally. No wipe reveals — entrances are rise + fade only. | `bay-preview::render` |
 | **Per-character / per-word animation** | A whole text element is one layer, so staggered word-by-word entrances need one element per word. | new element kind or a text-run animation channel |
 | **Stroke / outline shapes** | Fills only, so an outlined chart track or a ring chart is unrepresentable. | `ShapeKind` + the shape rasterizer |
 | **Path / polyline** | No line charts, no equity curves — the most natural trading graphic. | new `ShapeKind::Path` |
 | **Rotation about the anchor** | `anchor_x/y` govern placement only; rotation is still about the quad centre. | `QuadTransformDescriptor` |
-| **Audio trim** | `AudioElement` has no `trim_start`, so a clip always plays from its head. The mixer already threads the value through. | `vii-project::AudioElement` |
-| **Text auto-fit** | Font sizes are chosen by hand and a too-long string silently wraps. A "shrink to fit this box" mode would remove a whole class of layout defect. | `vii-text` |
+| **Audio trim** | `AudioElement` has no `trim_start`, so a clip always plays from its head. The mixer already threads the value through. | `bay-project::AudioElement` |
+| **Text auto-fit** | Font sizes are chosen by hand and a too-long string silently wraps. A "shrink to fit this box" mode would remove a whole class of layout defect. | `bay-text` |
 
 The reel worked around masks (fade + rise instead of wipes) and paths (columns instead of a
 curve). Nothing else was compromised.

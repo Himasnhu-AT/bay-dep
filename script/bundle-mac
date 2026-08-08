@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build vii.app for macOS, and optionally a signed, notarized .dmg.
+# Build bay.app for macOS, and optionally a signed, notarized .dmg.
 #
 #   ./script/bundle-mac                 universal .app in dist/macos
 #   ./script/bundle-mac --dmg           …and a .dmg next to it
@@ -13,15 +13,15 @@
 #
 # Shape follows Zed's script/bundle-mac (same GPUI stack): build, assemble Contents/, codesign
 # --options runtime, hdiutil for the dmg, notarytool to staple. The difference is that this
-# builds a universal binary with lipo rather than one .app per architecture, because vii is one
+# builds a universal binary with lipo rather than one .app per architecture, because bay is one
 # small binary and a single download is friendlier than asking which Mac someone has.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP_NAME="vii"
-BUNDLE_ID="dev.vii.editor"
+APP_NAME="bay"
+BUNDLE_ID="dev.bay.editor"
 VERSION="$(grep -m1 '^version' rust/desktop/Cargo.toml | cut -d'"' -f2)"
 # Alongside dist/windows, so both platforms' downloads land in one place a person can find.
 # dist/ is gitignored; build products do not belong in history.
@@ -50,30 +50,30 @@ done
 echo "── building $APP_NAME $VERSION for ${ARCHS[*]} ──"
 for target in "${ARCHS[@]}"; do
   rustup target add "$target" >/dev/null 2>&1 || true
-  (cd rust && cargo build --release --target "$target" -p vii-desktop)
+  (cd rust && cargo build --release --target "$target" -p bay-desktop)
 done
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# One fat binary rather than one .app per arch: vii is a single small executable, and a
+# One fat binary rather than one .app per arch: bay is a single small executable, and a
 # universal download means nobody has to know which Mac they have.
-# One executable, not two: `vii --mcp` is the headless server, so there is no separate
-# vii-mcp to keep in step. The Kokoro sidecar is compiled into it as well.
+# One executable, not two: `bay --mcp` is the headless server, so there is no separate
+# bay-mcp to keep in step. The Kokoro sidecar is compiled into it as well.
 if [ ${#ARCHS[@]} -gt 1 ]; then
   echo "── lipo → universal ──"
-  lipo -create -output "$APP/Contents/MacOS/vii" \
-    "rust/target/aarch64-apple-darwin/release/vii" \
-    "rust/target/x86_64-apple-darwin/release/vii"
+  lipo -create -output "$APP/Contents/MacOS/bay" \
+    "rust/target/aarch64-apple-darwin/release/bay" \
+    "rust/target/x86_64-apple-darwin/release/bay"
 else
-  cp "rust/target/${ARCHS[0]}/release/vii" "$APP/Contents/MacOS/vii"
+  cp "rust/target/${ARCHS[0]}/release/bay" "$APP/Contents/MacOS/bay"
 fi
 
-if [ -f "$ROOT/assets/vii.icns" ]; then
-  cp "$ROOT/assets/vii.icns" "$APP/Contents/Resources/vii.icns"
-  ICON_ENTRY='<key>CFBundleIconFile</key><string>vii.icns</string>'
+if [ -f "$ROOT/assets/bay.icns" ]; then
+  cp "$ROOT/assets/bay.icns" "$APP/Contents/Resources/bay.icns"
+  ICON_ENTRY='<key>CFBundleIconFile</key><string>bay.icns</string>'
 else
-  echo "  (no assets/vii.icns — run ./script/make-icon to generate one)"
+  echo "  (no assets/bay.icns — run ./script/make-icon to generate one)"
   ICON_ENTRY=''
 fi
 
@@ -83,29 +83,29 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>$APP_NAME</string>
-  <key>CFBundleDisplayName</key><string>vii</string>
+  <key>CFBundleDisplayName</key><string>bay</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleExecutable</key><string>vii</string>
+  <key>CFBundleExecutable</key><string>bay</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   $ICON_ENTRY
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <!-- vii reads and writes project files and media the user picks. -->
+  <!-- bay reads and writes project files and media the user picks. -->
   <key>NSDocumentsFolderUsageDescription</key>
-  <string>vii opens and saves your video projects and media.</string>
+  <string>bay opens and saves your video projects and media.</string>
   <key>NSDesktopFolderUsageDescription</key>
-  <string>vii opens and saves your video projects and media.</string>
+  <string>bay opens and saves your video projects and media.</string>
   <key>NSDownloadsFolderUsageDescription</key>
-  <string>vii opens and saves your video projects and media.</string>
+  <string>bay opens and saves your video projects and media.</string>
 </dict>
 </plist>
 PLIST
 
 # Entitlements live in resources/, not here: a security declaration generated at build time
 # is invisible in review. See that file for why each key is present.
-ENTITLEMENTS="$ROOT/resources/vii.entitlements"
+ENTITLEMENTS="$ROOT/resources/bay.entitlements"
 [ -f "$ENTITLEMENTS" ] || { echo "missing $ENTITLEMENTS" >&2; exit 1; }
 # Checked now rather than at the signing step: codesign rejects a malformed plist with a
 # generic error, after the build has already run.

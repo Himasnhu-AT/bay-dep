@@ -17,7 +17,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 echo "── test ──"
 if [ "${STRICT:-0}" = "1" ]; then
   # Turn the graceful GPU/ffmpeg skips into hard failures (what CI's mac job does).
-  VII_REQUIRE_GPU=1 VII_REQUIRE_FFMPEG=1 cargo test --workspace "$@"
+  BAY_REQUIRE_GPU=1 BAY_REQUIRE_FFMPEG=1 cargo test --workspace "$@"
 else
   cargo test --workspace "$@"
 fi

@@ -101,7 +101,7 @@ it: the editor decides how tall the figure is.
 
 Your own turn is not in the log. It sits on the page above the figure, in the paper voice,
 because the words you type are yours and the log is the machine's. It is a
-re-creation built from `../rust/crates/vii-ui/`, never a screen capture, and the caption
+re-creation built from `../rust/crates/bay-ui/`, never a screen capture, and the caption
 under it says so. That caption is not decoration: it is the only thing separating an
 honest demonstration from a claim the app is further along than it is.
 

@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\apps\desktop\script\setup.ps1
 **3. Run:**
 
 ```bash
-cargo run -p vii-desktop
+cargo run -p bay-desktop
 ```
 
 ## Platform notes

@@ -1,4 +1,4 @@
-# vii — roadmap
+# bay — roadmap
 
 Items are sized S/M/L/XL by build effort. **Risk** flags what could make the estimate wrong.
 Nothing here is started unless marked otherwise.
@@ -25,18 +25,67 @@ toolbar? Palmier uses a 3-way icon rail (Media / Captions / Audio); we have a ha
 
 ---
 
-## 2. Provision everything vii needs · **M–L**
+## 2. Provision everything bay needs · **DONE**
 
-Today `vii.app` is one binary, an icon and a plist. Everything it depends on, the user installs
-by hand — and `script/setup-speech.sh` is a *dev* script run by `./build.sh`, which someone who
-downloads the app never runs. The goal: **the user installs nothing.**
+The goal was **the user installs nothing**, and that is now true. `bay.app` is still one binary,
+an icon and a plist; what it depends on, it installs itself, on request.
 
-| | shipped | today the user must |
-|---|---|---|
-| Rust | compiled away — one binary | nothing |
-| ffmpeg | no | `brew install ffmpeg` |
-| Python + Kokoro | no | install `uv`, then run a script they never see |
-| Kokoro weights | no | (self-downloads on first narrate) |
+| | the user must |
+|---|---|
+| Rust | nothing — compiled away |
+| ffmpeg + ffprobe | nothing — "Install video tools (57 MB)", or `runtime_install` |
+| Python + Kokoro | nothing — "Install narration (1.2 GB)", or `runtime_install` |
+| Kokoro weights | nothing — fetched into `<data>/models` on first narrate |
+| A GPU adapter | this one bay cannot install |
+
+**What shipped.** A `bay-provision` crate: a manifest of every artifact pinned by version and
+SHA-256, a streaming downloader that hashes as it writes and discards anything that does not
+match, zip/tar.gz extraction that stages and renames so a half-install is never mistaken for a
+whole one, and the Kokoro venv built in Rust by driving the `uv` and CPython it just fetched.
+`bay_paths::tools` grew a Managed tier so a provisioned ffmpeg wins over a system one.
+`runtime_status` / `runtime_install` expose it to agents; a toolbar button exposes it to people.
+
+**Verified end to end**, not just unit-tested: `BAY_PROVISION_LIVE=1` provisions into a
+throwaway data directory and then *runs* the resulting `ffmpeg -version` (30s), and
+`BAY_PROVISION_LIVE_SPEECH=1` builds the venv and asserts `kokoro` imports (39s). Both are
+skipped by default and a skip is never reported as a pass.
+
+**Judgement calls worth keeping.**
+
+- **Provisioning stays user-initiated.** Detect → say what and how big → wait. A first-run
+  auto-download is bay making a network call on its own behalf.
+- **A machine that already works is offered nothing — if what it has is good enough.** Status
+  asks "can bay decode and speak", not "is it in bay's directory", so a current Homebrew ffmpeg
+  is used rather than downloading 57 MB on top of it. But "it exists" is not evidence it behaves
+  like the build bay was tested against, which is the one way a release still breaks after
+  pinning: ship, and a user's 2019 ffmpeg fails a feature that worked everywhere in testing. So
+  a copy bay did not install has to clear `minimumVersion` in the manifest, and a build that
+  will not say what version it is (a git master snapshot) does not clear it. Below the floor,
+  bay reports video as not installed and offers the build it was tested with. Above it, the copy
+  is used *and named* — `runtime_status` says "you are on 8.1.2; bay is tested against 9.0"
+  rather than implying they are the same thing. Verified against real binaries: 8.1.2 accepted,
+  a real 6.0 refused.
+- **What was installed is written down.** `<runtime>/installed.json` records each artifact's
+  name, pinned digest, source URL and the files it placed, so a bug report can name the exact
+  build without asking the user to run anything, and a later check can tell that a file was
+  replaced or truncated. The receipt never outranks the filesystem — deleting the runtime
+  directory must not leave bay insisting everything is fine.
+- **The digest is the trust anchor**, not the URL and not TLS. That is what makes it safe to
+  fetch macOS ffmpeg from a personal domain (`ffmpeg.martin-riedl.de`); all four macOS hashes
+  were checked against the publisher's own `.sha256` at pin time.
+- **Only redistributable builds.** The obvious ffmpeg source (`eugeneware/ffmpeg-static`) is
+  built `--enable-nonfree`, which nobody may redistribute; the pinned builds are GPL-3.0 with no
+  nonfree flag, and a test fails the build if a nonfree artifact is ever added.
+- **Pinned URLs must be immutable.** BtbN's `latest` tag is rebuilt in place daily and would
+  break the pin within a day, so a test rejects `latest`-shaped URLs.
+
+**Still open.** Linux is not covered — bay ships macOS and Windows, and an unsupported platform
+says so rather than pretending. The Windows path is pinned and unit-tested but has not been run
+on Windows. There is no "uninstall / reclaim disk" button yet, though everything lives under one
+directory specifically so there can be.
+
+<details>
+<summary>The research this was built on — kept because it is why the design is what it is.</summary>
 
 **Do not freeze Python.** Researched and rejected: PyInstaller with torch lands ~2.6 GB, and
 TorchScript needs `.py` source that a frozen app does not have (pyinstaller#5673, still open);
@@ -81,7 +130,7 @@ are `macosx_14_0_arm64`, so **macOS 14+**.
 So **~80 MB to render**, **~1.2 GB more to narrate**. That split should be the UI: ffmpeg
 blocks the core product, speech is opt-in.
 
-**Provisioning must be user-initiated.** A first-run auto-download is vii making a network call
+**Provisioning must be user-initiated.** A first-run auto-download is bay making a network call
 on its own, which is exactly what the manifesto rules out. Detect → say what is missing and how
 big → the user chooses. `uv python install --mirror` exists if we would rather serve the
 tarballs ourselves than send users to github.com.
@@ -91,12 +140,20 @@ this repo, verified before install, never trusted from the network. `uv` publish
 per asset; python-build-standalone publishes one `SHA256SUMS` per release. A downloaded binary
 also needs its macOS quarantine attribute cleared or it will not execute.
 
-`vii_paths::tools` already has a "bundled beside the binary" tier that nothing uses yet — the
+`bay_paths::tools` already has a "bundled beside the binary" tier that nothing uses yet — the
 managed directory slots in there with no call-site changes.
 
 **Done:** weights now go to `<data>/models` via `HF_HOME` on the child, with telemetry and
 implicit-token off. They were landing in the shared `~/.cache/huggingface` (11.5 GB on the
-dev machine) where vii could neither measure nor remove them.
+dev machine) where bay could neither measure nor remove them.
+
+*Two things the build corrected from the plan above.* bay fetches python-build-standalone
+directly rather than through `uv python install`, because the verified downloader already
+existed and one download path is easier to reason about than two — `uv` is kept for resolving
+wheels, which is what it is best at. And the measured ffmpeg figure was low: the pinned macOS
+build is a 28 MB zip per binary, ~57 MB to download for both and ~130 MB on disk.
+
+</details>
 
 **Still to build:** the manifest + verified downloader, `runtime_status` / `runtime_install`
 MCP tools, the ffmpeg artifact, and the uv-driven speech provision.
@@ -108,7 +165,7 @@ MCP tools, the ffmpeg artifact, and the uv-driven speech provision.
 A chat panel. Ask questions about the project, and ask for changes — "make the title bigger",
 "cut the dead air at the start", "move the captions up".
 
-**Why vii is well shaped for this:** every edit already goes through `Command` → reversible
+**Why bay is well shaped for this:** every edit already goes through `Command` → reversible
 `ProjectPatch`. If the model's tool calls lower into `Command`, its edits are undoable with
 the same Cmd+Z as a human's, and the history stays coherent. An assistant that mutated the
 project directly would be a second, unauditable edit path — worth refusing on principle.
@@ -141,7 +198,7 @@ SigLIP 2) is the right tool here; CLIP is the older equivalent.
 a face in it?", auto-generating alt text or a shot list. This needs a generative
 vision-language model — Gemma 3 4B/12B multimodal would cover it, reusing item 3's runtime.
 
-Both need frame extraction, which vii already does via the ffmpeg sidecar.
+Both need frame extraction, which bay already does via the ffmpeg sidecar.
 
 > **Premise check — do this first.** This was suggested on the basis that palmier has a vision
 > model. My gap audit found **no vision model there**: their ML surface is Apple
@@ -155,21 +212,38 @@ embedding every Nth frame gives redundant, noisy results. That may be a prerequi
 
 ---
 
-## 5. Rename to vii · **DONE**
+## 5. Naming — `opencut` → `vii` → `bay` · **DONE**
 
-No `opencut` in crate names, binaries, identifiers, docs, scripts or CI. Crates are
-`vii-core`, `vii-project`, `vii-preview`, `vii-ui`, `vii-text`, `vii-audio`, `vii-speech`,
-`vii-mcp`, `vii-agent`, `vii-desktop`; there is exactly one binary, `vii`, and `vii --mcp`
-serves the same engine headlessly.
+Two renames, both complete. No `opencut` and no `vii` in crate names, binaries, identifiers,
+docs, scripts or CI. Crates are `bay-core`, `bay-project`, `bay-preview`, `bay-ui`, `bay-text`,
+`bay-audio`, `bay-speech`, `bay-mcp`, `bay-agent`, `bay-provision`, `bay-desktop`; there is
+exactly one binary, `bay`, and `bay --mcp` serves the same engine headlessly. The bundle is
+`bay.app` / `dev.bay.editor`, the MCP server registers as `bay`, and environment overrides are
+`BAY_*`.
+
+**What the second rename had to protect.** A user's projects, agent registry and up to 1.2 GB of
+provisioned runtime live under `~/Library/Application Support/vii`. Moving that path without
+looking would have opened the app on an empty project library — working exactly as designed, and
+indistinguishable from having lost the work. So `bay_paths::data_dir` prefers the new directory
+but falls back to the old one when only the old one exists, and nothing is copied or moved: a
+`fs::rename` is one interrupted copy away from being a data-loss bug, and there is no version of
+that trade worth taking for a directory that works where it is. Same for the Kokoro venv, which
+the old setup script wrote to `~/.local/share/vii/kokoro-venv` — still searched, because dropping
+it would have reported narration as missing on every machine that had it, with a 1.2 GB
+re-download as the apparent fix. Both paths are covered by tests that inject the filesystem, so
+the migration is exercised on a machine that has neither directory.
 
 **Two deliberate exceptions, both flagged rather than decided silently:**
 
 - **`LICENSE` keeps "Copyright 2025-2026 OpenCut".** The licence is MIT and requires that
   notice be retained in all copies. Removing it would make distribution non-compliant. This is
-  a legal constraint, not branding — the product is still called vii everywhere a user can
-  see.
+  a legal constraint, not branding — the product is called bay everywhere a user can see.
 - **`dep/` has since been deleted entirely**, so the only remaining reference to the upstream
   name is the licence notice above.
+
+**Not done by the rename:** the checkout directory is still `synthai/vii`, and `dist/` still
+holds `vii.app` / `vii.exe` from an older build. Both are outside the source tree — `mv` and a
+rebuild — and neither affects what a user installs.
 
 ---
 
@@ -184,20 +258,44 @@ frame (16 ms).
 starting a rival, so there is never ambiguity about which document the agent is editing. The
 bound port is the lock; liveness is decided by trying to bind it, not by pid — a pid can be
 recycled, a free port cannot lie, so a killed window never locks the next launch out.
-`vii --agents` says what is open.
+`bay --agents` says what is open.
 
 **The bridge serves all 22 tools with the window open.** `render`, `narrate`, `media_import`
 and `subtitles_to_video` run on GPUI's background executor with their own wgpu device; what
 they produce comes back as `Command`s applied on the main thread, so an agent's narration
 undoes with the same Cmd+Z as a human edit. Nothing suggests closing the app.
 
+**The endpoint has exactly one owner, and it is always discoverable.** `claude mcp add` writes
+`http://127.0.0.1:7333/mcp` into the client's configuration and it stays there, so the port is
+treated as a contract: one process serves it, and a conflict is resolved by *naming the owner*,
+never by moving. Three things were wrong here and are now fixed:
+
+- **A headless `bay --mcp` never registered**, so `bay --agents` printed "No bay window is open.
+  Start one with: bay" while that server was answering the very endpoint being asked about —
+  and following the advice walked straight into the conflict. Everything that serves now
+  registers, with its kind and pid.
+- **The conflict advice was `bay --mcp --port 0`.** An OS-assigned port produces a server no
+  configured client can reach, so it looked like a fix and was not one. Every message now names
+  what holds the port — an editor window and its project, another headless bay and its pid, or
+  something that is not bay (with the `lsof` line to find it) — and a test asserts that no
+  advice, for any combination, ever mentions `--port`.
+- **An editor that lost the port degraded silently.** The reason went to stderr only, which
+  someone who launched from Finder never sees: agent tools quietly did nothing, indistinguishable
+  from a broken build. The window now carries the reason.
+
+`--port` survives for what it is actually for — a second checkout, or CI — and both `--help` and
+the startup line say that a non-default port is unreachable by a client registered for 7333.
+
 **Still open:**
 
 - **Stage 3 — conflict.** No leases yet. If you are dragging a clip and the agent edits the
   same one, last write wins with no "keep mine / use the agent's" card.
+- **Taking over an idle owner.** If a headless server is running but doing nothing, the only
+  answer today is the `kill <pid>` bay prints. A `--takeover` that asks the owner to stand down
+  over MCP would be friendlier, and is only safe once the owner can report whether it is mid-render.
 - **Multiple windows.** Deliberately not supported yet. When it matters, the shape is: each
   window claims its own port, and a router on the fixed port forwards to a chosen one so there
-  is still a single `claude mcp add`. The registry (`vii-agent::registry`) already lists
+  is still a single `claude mcp add`. The registry (`bay-agent::registry`) already lists
   windows, so the groundwork is there.
 
 ---
@@ -228,6 +326,74 @@ or a gpui fork. CI is the cheap one — the Windows runner bills at 2x and only 
 
 ---
 
+## 5d. Feeling like a Mac app — menus and lifecycle · **P0 DONE**, rest open
+
+Triggered by two symptoms — no Dock logo, and Cmd+Q doing nothing — and a question: should bay
+adopt Tauri to get native behaviour? **No.** Researched and rejected on three independent grounds,
+any one of which is sufficient:
+
+1. **Manifesto constraint #4** is literally "no web view pretending to be an app". Tauri is a
+   WKWebView.
+2. **Technically blocked.** A Tauri window's content view *is* the webview. Hosting a wgpu surface
+   under it is an open upstream problem ([tauri#8246], [#11944], [#9220]); the only shapes that
+   work are per-frame CPU readback — the exact copy this architecture forbids — or reimplementing
+   the compositor in WebGPU, which is the JS stack bay was forked from and **deleted**.
+3. **It would not have helped.** Tauri's menus are AppKit underneath, same as GPUI's. The cost
+   would have been rewriting ~5,900 LOC of `bay-ui` to reach a feature set that was a day's work
+   where we already were.
+
+**What was actually wrong.** Nothing framework-shaped. `cx.set_menus()` was never called, and
+GPUI invokes AppKit's `setMainMenu:` from that one place — so `NSApp.mainMenu` stayed nil and
+there was no menu bar *at all*: no Cmd+Q, Cmd+W, Cmd+M, Cmd+H, no Services, and no OS Edit menu
+(the thing that gives text fields standard Cut/Copy/Paste). `on_window_closed` was never
+registered either, so closing the last window left the process alive.
+
+**Shipped.** A `bay-ui/src/menus.rs`: bay / File / Edit / Timeline / Window / Help, with Edit
+built from `MenuItem::os_action` so AppKit gets the real selectors. Quit, Close, Minimize and
+Save are bound and handled; the rest dispatch actions the editor already defines, so there is no
+second implementation to drift. Closing the last window now quits, and `on_app_quit` writes the
+open project — Cmd+Q bypasses the "‹ Projects" button, which was the only path that used to save,
+so the menu bar would otherwise have *introduced* a way to lose work.
+
+**Two mistakes worth remembering**, both of which compiled and looked right:
+
+- A menu item gets its key equivalent from the *keymap*. `MenuItem::action("Quit bay", Quit)`
+  with no `cmd-q` binding renders a correct-looking item that does nothing — the menu bar
+  appeared and Cmd+Q still did not quit.
+- Window actions cannot be handled with `cx.on_action` at app level. A keystroke is dispatched
+  while the window is mid-update, so its slot in `cx.windows` is empty and `update_window`
+  returns "window not found"; with the `Result` discarded it fails in total silence. They belong
+  on the root element, where `Window` is already in scope. Cmd+W was wired and dead until this.
+
+Verified by driving the running app through the Accessibility API: menu bar reads
+`Apple, bay, File, Edit, Timeline, Window, Help`, the Edit menu carries macOS's own Writing
+Tools / Dictation items (proof it is a real OS Edit menu), Quit shows its ⌘Q, and both Cmd+Q and
+Cmd+W end the process.
+
+**The missing logo was never a bug.** `./run.sh` is `cargo run` — a bare Mach-O with no
+`Info.plist`, and macOS gives such a process no Dock icon and no app name. `script/bundle-mac`
+already produces the real thing. `BUNDLE=1 ./run.sh` now builds and launches `bay.app`, and the
+plain path prints a line saying what it is not, so nobody debugs this again.
+
+**Still open, in order:**
+
+- **`CFBundleDocumentTypes` + `UTExportedTypeDeclarations`** in `bundle-mac`, plus
+  `cx.on_open_urls`, so a project file gets bay's icon in Finder and opens on double-click. This
+  is most of what remains between "has a menu bar" and "feels like a Mac app".
+- **Open Recent** (`cx.add_recent_document`) — needs the document type above to be worth much.
+- **`NSMicrophoneUsageDescription` / `NSCameraUsageDescription`** *if* capture is ever in scope.
+  Cheap now; a signing scramble if added late.
+- **Dock menu** (`set_dock_menu`: New Project, Open Recent) and `on_reopen` (clicking the Dock
+  icon with no window should reopen one).
+- **`reveal_path`** after an export, so "where did it go?" is a click.
+- **System dark mode** via `window_appearance` — the theme is currently fixed.
+
+[tauri#8246]: https://github.com/tauri-apps/tauri/issues/8246
+[#11944]: https://github.com/tauri-apps/tauri/discussions/11944
+[#9220]: https://github.com/tauri-apps/tauri/issues/9220
+
+---
+
 ## 6. Bug: a sidecar can outlive its parent · **S**
 
 The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.
@@ -239,7 +405,7 @@ Two plausible causes, both worth closing:
 - **PID reuse.** If the OS recycles the parent's pid, `kill(pid, 0)` succeeds forever and the
   watchdog never fires. Recording the parent's *start time* alongside its pid, and comparing
   both, makes the check exact.
-- **The watchdog thread never started** — it is only spawned when `VII_KOKORO_PARENT_PID` is
+- **The watchdog thread never started** — it is only spawned when `BAY_KOKORO_PARENT_PID` is
   set and numeric, and nothing reports when it is not.
 
 Belt and braces: have the sidecar exit on an idle timeout of its own, so it cannot outlive
@@ -255,20 +421,26 @@ and third, the shared pieces are worth pulling out:
 
 - a **sidecar supervisor** — spawn, authenticated health probe, kill-and-replace when
   unhealthy, port-occupied refusal, bounded readiness poll, parent-PID watchdog, idle
-  eviction. All of this exists in `vii-speech::SpeechEngine` and is not speech-specific.
-- a **model registry + downloader** (item 2), shared by every model.
+  eviction. All of this exists in `bay-speech::SpeechEngine` and is not speech-specific.
+- a **model registry + downloader** — **done**, as `bay-provision`. A new model is a manifest
+  entry plus a component, and it inherits the digest verification, the resume-safe staging, the
+  background job and the progress UI for free. Items 3 and 4 should add entries, not plumbing.
 - a policy on **which runtime**: llama.cpp for GGUF text+vision, plus something for SigLIP
   embeddings (ONNX Runtime, or Candle if we want it in-process).
 
-Doing item 2 first, and generalising the speech sidecar while doing it, makes 3 and 4 much
-smaller.
+The downloader half of this is no longer in the way. Generalising the *sidecar supervisor* is
+still worth doing before a second and third model process exist.
 
 ---
 
 ## Suggested order
 
 1. **Text → audio button** (S) — small, immediately useful, proves the UI↔speech path.
-2. **Model download pane** (M) — and generalise the sidecar supervisor while building it.
+   Narration is now one button-press away from any machine, so this is no longer gated on the
+   user having set anything up.
+1b. **Document types + Open Recent** (S, item 5d) — the rest of "feels like a Mac app", now that
+   the menu bar and lifecycle are in. Small, and it is what makes a project file double-clickable.
+2. ~~Model download pane~~ — **done** (item 2). The sidecar supervisor still wants generalising.
 3. **Verify the palmier vision premise** — cheap, and it decides whether item 4 is real.
 4. **Assistant, read-only first** (L) — questions about the project, no edits.
 5. **Assistant edits behind a confirm step**, lowered into `Command` so undo works.
@@ -281,8 +453,9 @@ smaller.
 | | |
 |---|---|
 | Engine | shapes, per-axis scale + anchors, 8 easings, full text typography, audio in export |
-| MCP | 21 tools over HTTP/stdio; snapshot, render, timeline introspection |
+| MCP | 24 tools over HTTP/stdio; snapshot, render, timeline introspection |
 | Speech | Kokoro sidecar, word-level timestamps, SRT/VTT in and out, `subtitles_to_video` |
-| Build | `./build.sh` ships both binaries + provisions the speech venv, idempotently |
-| Skill | `.claude/skills/vii/` — an agent can drive the editor unassisted |
-| Tests | 195 passing |
+| Runtimes | bay installs its own ffmpeg and Kokoro from a pinned, hash-verified manifest |
+| Build | `./build.sh` builds the one binary, `bay`; runtimes are the app's job, not the build's |
+| Skill | `.claude/skills/bay/` — an agent can drive the editor unassisted |
+| Tests | 385 passing, and the suite is deterministic |

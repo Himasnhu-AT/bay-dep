@@ -20,10 +20,10 @@
 - [ ] **P0-ARCH-01** — Owned-Editor + Command-enum + EventBus borrow-model spike · _EditorCore singleton & lifecycle_ `spike`
 - [ ] **P0-ARCH-02** — Golden-fixture capture tooling from the running web app · _cross-cutting test infra_ `infra`
 
-## Phase 1 — vii-core — headless framework-agnostic engine  (67 tasks)
+## Phase 1 — bay-core — headless framework-agnostic engine  (67 tasks)
 
-- [ ] **P1-FND-04** — time crate serde/non-wasm extension · _vii-time_ `port`  ⟵ _depends: P0-ARCH-02_
-- [ ] **P1-FND-01** — Domain model (vii-core types) · _Project & timeline domain model_ `port`  ⟵ _depends: P1-FND-04_
+- [ ] **P1-FND-04** — time crate serde/non-wasm extension · _bay-time_ `port`  ⟵ _depends: P0-ARCH-02_
+- [ ] **P1-FND-01** — Domain model (bay-core types) · _Project & timeline domain model_ `port`  ⟵ _depends: P1-FND-04_
 - [ ] **P1-FND-02** — Params registry + color model (FOUNDATIONAL) · _params registry (completeness add)_ `port`  ⟵ _depends: P1-FND-04_
 - [ ] **P1-FND-03** — fps utils · _fps handling (completeness add)_ `port`  ⟵ _depends: P1-FND-04_
 - [ ] **P1-PER-01** — SerializedProject (de)serialization layer · _Project (de)serialization layer_ `port`  ⟵ _depends: P1-FND-01_
@@ -90,7 +90,7 @@
 - [ ] **P1-RND-06** — Canvas2D -> native 2D rasterization · _Canvas2D->native 2D rasterization_ `rewrite`  ⟵ _depends: P1-RND-05, P1-TXT-02, P1-GRAD-01, P1-MASK-01, P1-GFX-01_
 - [ ] **P1-RND-07** — Export pipeline + native muxing · _Export pipeline + native muxing_ `rewrite`  ⟵ _depends: P1-RND-04, P1-RND-06, P1-MED-05, P0-MED-01, P1-FND-03_
 
-## Phase 2 — Native MCP server (rmcp over vii-core)  (6 tasks)
+## Phase 2 — Native MCP server (rmcp over bay-core)  (6 tasks)
 
 - [ ] **P2-MCP-01** — Core actor / single-writer command-queue front · _Native MCP server_ `new`  ⟵ _depends: P1-CORE-01, P1-CORE-02, P1-PER-02_
 - [ ] **P2-MCP-02** — rmcp server shell + transport · _Native MCP server_ `new`  ⟵ _depends: P2-MCP-01_

@@ -1,4 +1,4 @@
-# Try it — the native `vii` editor
+# Try it — the native `bay` editor
 
 A hands-on guide to running and exercising the native GPUI desktop editor (`rust/desktop`).
 The parity work lives on `main`; `phase-0/native-gpu-foundation` is the earlier, already-pushed
@@ -26,14 +26,14 @@ and text still work but video/audio decode, waveforms, and MP4 export are skippe
 RELEASE=1 ./run.sh
 ```
 
-(equivalently: `cd rust && cargo run --release -p vii-desktop` — the Rust workspace lives in
+(equivalently: `cd rust && cargo run --release -p bay-desktop` — the Rust workspace lives in
 `rust/`, so bare `cargo` commands must be run from there.)
 
 - **`--release` is recommended** — playback and decode are much smoother than a debug build.
 - First build takes a few minutes (wgpu + GPUI compile once, then it's cached).
-- The window is titled `vii — <project name>`.
+- The window is titled `bay — <project name>`.
 
-> The binary is named `vii`; `./run.sh` is the simplest way to launch it.
+> The binary is named `bay`; `./run.sh` is the simplest way to launch it.
 
 ---
 
@@ -41,7 +41,7 @@ RELEASE=1 ./run.sh
 
 The starter project is a **skeleton scene**, intentionally shipping with no media files:
 
-- A live **"Hello, vii" text title** — this renders for real (cosmic-text).
+- A live **"Hello, bay" text title** — this renders for real (cosmic-text).
 - **Colored placeholder blocks** for the demo logo/clip — they have no file on disk yet,
   so the compositor draws solid-color stand-ins.
 
@@ -118,11 +118,11 @@ effects list (toggle / remove / ± amount) · **◇ keyframe** row · **PRESETS*
 ### Where files land (your home directory)
 | File | Written by |
 |------|-----------|
-| `~/vii-project.json` | **Save** (same JSON wire format as the web app) |
-| `~/vii-frame.png` | **Export Frame** |
-| `~/vii-export.mp4` | **Export Video** |
+| `~/bay-project.json` | **Save** (same JSON wire format as the web app) |
+| `~/bay-frame.png` | **Export Frame** |
+| `~/bay-export.mp4` | **Export Video** |
 
-**Load** reads `~/vii-project.json` back.
+**Load** reads `~/bay-project.json` back.
 
 ---
 
@@ -164,7 +164,7 @@ mixer, ffprobe parsing, decode budgeting, all 17 blend modes, and the render pat
 Test a single crate, e.g. the mixer:
 
 ```bash
-cd rust && cargo test -p vii-audio
+cd rust && cargo test -p bay-audio
 ```
 
 ---

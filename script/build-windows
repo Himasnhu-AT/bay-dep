@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build vii for Windows on a GitHub runner and download the result to this machine.
+# Build bay for Windows on a GitHub runner and download the result to this machine.
 #
 #   ./script/build-windows            trigger a build, wait for it, unpack it here
 #   ./script/build-windows --latest   skip the build; fetch the most recent successful one
@@ -18,7 +18,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 WORKFLOW="windows.yml"
-ARTIFACT="vii-windows"
+ARTIFACT="bay-windows"
 DEST="$ROOT/dist/windows"
 
 LATEST_ONLY=0
@@ -169,7 +169,7 @@ echo
 echo "── $DEST ──"
 find "$DEST" -type f | sed "s|$ROOT/|  |"
 echo
-echo "Copy vii.exe to a Windows machine and run it. That one file is the whole editor —"
-echo "\`vii.exe --mcp\` serves the same engine to agents, and the speech sidecar is inside it."
+echo "Copy bay.exe to a Windows machine and run it. That one file is the whole editor —"
+echo "\`bay.exe --mcp\` serves the same engine to agents, and the speech sidecar is inside it."
 [ "$REVEAL" = "1" ] && open "$DEST"
 exit 0

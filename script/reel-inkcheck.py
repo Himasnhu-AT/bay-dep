@@ -1,4 +1,4 @@
-"""Sweep the timeline through vii's snapshot tool and measure how much ink is on each frame.
+"""Sweep the timeline through bay's snapshot tool and measure how much ink is on each frame.
 
 The failure this catches is the one no structural check can: a cut that lands on an empty
 screen. A previous house reel spent 15% of its runtime blank and passed every lint.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provision the Kokoro text-to-speech sidecar vii shells out to for narration.
+# Provision the Kokoro text-to-speech sidecar bay shells out to for narration.
 #
 #   ./script/setup-speech.sh           create the venv if it is missing, else do nothing
 #   ./script/setup-speech.sh --check   report status only, never install (exit 1 if absent)
@@ -8,12 +8,12 @@
 # Idempotent by design: build.sh calls it on every build, so the common case must cost a
 # single interpreter start rather than re-resolving a ~2 GB dependency tree.
 #
-# Location is overridable with VII_KOKORO_PYTHON (the Rust side reads the same variable), so a
+# Location is overridable with BAY_KOKORO_PYTHON (the Rust side reads the same variable), so a
 # machine that keeps its virtualenvs elsewhere does not have to patch anything.
 set -euo pipefail
 
-VENV="${VII_SPEECH_VENV:-$HOME/.local/share/vii/kokoro-venv}"
-PYTHON="${VII_KOKORO_PYTHON:-$VENV/bin/python}"
+VENV="${BAY_SPEECH_VENV:-$HOME/.local/share/bay/kokoro-venv}"
+PYTHON="${BAY_KOKORO_PYTHON:-$VENV/bin/python}"
 SPACY_MODEL="https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 
 MODE="install"
@@ -54,10 +54,10 @@ if ! command -v uv >/dev/null 2>&1; then
 ✗ uv is required to provision the speech sidecar.
 
   Install it:  curl -LsSf https://astral.sh/uv/install.sh | sh
-  Or point vii at an existing interpreter that has kokoro:
-               export VII_KOKORO_PYTHON=/path/to/python
+  Or point bay at an existing interpreter that has kokoro:
+               export BAY_KOKORO_PYTHON=/path/to/python
 
-Narration is optional — everything else in vii works without it.
+Narration is optional — everything else in bay works without it.
 EOF
   exit 1
 fi

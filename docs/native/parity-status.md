@@ -1,4 +1,4 @@
-# Parity status — vii native editor vs. palmier-pro
+# Parity status — bay native editor vs. palmier-pro
 
 Snapshot of what has landed in the palmier-pro parity effort, what is still broken, and what
 was deliberately deferred. Companion documents:
@@ -9,8 +9,10 @@ was deliberately deferred. Companion documents:
 - [`desktop-architecture.md`](desktop-architecture.md) — crate graph and responsibilities
 - [`benchmarks.md`](benchmarks.md) — benchmark suite and measured baselines
 
-**State at time of writing:** 134 tests passing, `cargo clippy --workspace --all-targets
--D warnings` clean, `cargo fmt --all --check` clean, `cargo build -p vii-desktop` clean.
+**State at time of writing:** 383 tests passing, `cargo clippy --workspace --all-targets
+-D warnings` clean, `cargo fmt --all --check` clean, `cargo build -p bay-desktop` clean.
+Provisioning additionally has two network-backed tests that are skipped unless
+`BAY_PROVISION_LIVE=1` — a skip there is a skip, never a pass.
 
 ---
 
@@ -34,6 +36,11 @@ was deliberately deferred. Companion documents:
 | 14 | **Global cache budget** | 192MB budget was *per clip*; N clips = N budgets | LRU byte budget asserted under ceiling |
 | 15 | **Render path cannot panic** on bad input | NaN transform and sub-16px canvas both crashed | NaN/±inf test; 1×1, 8×4, 2×16 canvas test |
 | 16 | **Status line** surfaces failures | export/save/probe all swallowed by `let _ =` | wired at 4 sites; click to dismiss |
+| 17 | **bay installs its own runtimes** | a downloaded `bay.app` could not render — ffmpeg was the user's problem, and the speech setup was a dev script they never ran | live end-to-end: provisions into a scratch data dir, then *runs* `ffmpeg -version` (30s) and imports `kokoro` (39s); 51 unit tests incl. digest-mismatch and zip-slip refusal |
+| 18 | **Only a tested ffmpeg is used** | any ffmpeg on the machine was accepted, so a user's older build could fail a feature that passed everywhere in testing | version floor in the manifest; real 8.1.2 accepted and a real 6.0 refused; every banner shape parsed from real output |
+| 19 | **An install leaves a receipt** | nothing recorded which build was in use, so a bug report could not name it | `installed.json` round-trip, drift detection, corrupt-receipt tolerance |
+| 20 | **The suite stopped failing at random** | three causes, found one at a time: the registry tests claimed the real port 7333, so any running `bay --mcp` failed them; moving to a private port picked from the ephemeral range, which the OS also hands out; and `live()` reaps by rebinding, but macOS returns `EADDRINUSE` for ~5 ms after a socket closes, so a just-closed window briefly still looks open | port resolved rather than hardcoded, tests take a private one below 49152, and reaping is asserted with a bounded retry instead of on the first call; 30 consecutive `bay-agent` runs and 10 consecutive full gates clean, including with 7333 held by another process |
+| 21 | **One discoverable owner for the MCP endpoint** | `bay --agents` said "no bay window is open" while a headless `bay --mcp` served that exact endpoint, and the conflict advice was `--port 0` — a random port no configured client can reach; an editor that lost the port degraded silently to stderr | headless servers register with kind+pid; every conflict names the owner; a test asserts no advice ever mentions `--port`; all four ownership cases exercised against a live server and a foreign holder |
 
 ---
 

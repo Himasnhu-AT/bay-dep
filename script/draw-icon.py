@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Draw vii's placeholder app icon as a 1024x1024 PNG, using only the standard library.
+"""Draw bay's placeholder app icon as a 1024x1024 PNG, using only the standard library.
 
 No ffmpeg `drawtext` (this machine's build has no freetype), no Pillow, no ImageMagick — a PNG
 is a handful of zlib-compressed scanlines, and depending on an image library to draw three
 rectangles would be a poor trade.
 
-The mark is three ascending bars: "vii" as three strokes, and a timeline read at a glance.
-Replace assets/vii-icon.png with real artwork whenever there is some.
+The mark is three ascending bars: "bay" as three strokes, and a timeline read at a glance.
+Replace assets/bay-icon.png with real artwork whenever there is some.
 """
 import math
 import struct
@@ -24,7 +24,7 @@ def rounded_rect_coverage(x, y, left, top, right, bottom, radius):
     cx = min(max(x, left + radius), right - radius)
     cy = min(max(y, top + radius), bottom - radius)
     distance = math.hypot(x - cx, y - cy)
-    # One-pixel linear ramp across the edge, same idea as the shape rasterizer in vii-preview.
+    # One-pixel linear ramp across the edge, same idea as the shape rasterizer in bay-preview.
     return max(0.0, min(1.0, radius + 0.5 - distance)) if radius > 0 else (
         1.0 if left <= x <= right and top <= y <= bottom else 0.0
     )
@@ -42,7 +42,7 @@ def draw() -> bytes:
     right, bottom = SIZE - margin, SIZE - margin
     corner = SIZE * 0.22
 
-    # Three bars, ascending — "vii" as strokes, and a rising timeline.
+    # Three bars, ascending — "bay" as strokes, and a rising timeline.
     bar_w = SIZE * 0.115
     gap = SIZE * 0.075
     heights = [0.26, 0.40, 0.54]
@@ -93,7 +93,7 @@ def draw() -> bytes:
 
 
 if __name__ == "__main__":
-    out = sys.argv[1] if len(sys.argv) > 1 else "assets/vii-icon.png"
+    out = sys.argv[1] if len(sys.argv) > 1 else "assets/bay-icon.png"
     data = draw()
     with open(out, "wb") as handle:
         handle.write(data)
