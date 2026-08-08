@@ -81,8 +81,18 @@ skipped by default and a skip is never reported as a pass.
 
 **Still open.** Linux is not covered — bay ships macOS and Windows, and an unsupported platform
 says so rather than pretending. The Windows path is pinned and unit-tested but has not been run
-on Windows. There is no "uninstall / reclaim disk" button yet, though everything lives under one
-directory specifically so there can be.
+on Windows.
+
+**And two things an audit found that this section used to claim wrongly:**
+
+- **There is no way to see or reclaim the disk.** `Report::to_json` reports components and tools
+  but never a size actually measured, and there is no `runtime_remove` tool and no UI.
+  `receipt.rs` already knows every installed file *and its byte size* and is simply never
+  surfaced. `diskBytes` is the manifest's static estimate, and it is still reported as 1.2 GB
+  even when speech turned out to be satisfied by a venv somebody else installed.
+- **It is not one directory.** The Kokoro weights go to `data_dir()/models` (`HF_HOME`), which is
+  *outside* `runtime_dir()` — so "delete the one directory bay downloaded into" leaves ~330 MB
+  behind, uncounted. Either move the weights under `runtime/` or teach the reporting about both.
 
 <details>
 <summary>The research this was built on — kept because it is why the design is what it is.</summary>
@@ -391,6 +401,94 @@ plain path prints a line saying what it is not, so nobody debugs this again.
 
 ---
 
+## 5e. Kokoro weights download with no progress · **S–M**
+
+The gap in the zero-install promise. `runtime_install speech` shows a progress bar for the
+~1.2 GB it fetches, but the **~330 MB of model weights are not part of that** — they are pulled
+by `huggingface_hub` inside the Python sidecar the first time `narrate` runs, into `<data>/models`
+via `HF_HOME`. bay sees none of it, and an audit corrected my first reading of *where* the cost
+lands: the sidecar is spawned with only `--host`/`--port`, never `--preload`, so
+`script/bay-kokoro.py` builds the `KPipeline` lazily *inside* `POST /speak`. `/health` therefore
+answers in about a second and `READY_TIMEOUT` (180s) is never the constraint — the download sits
+under `SPEAK_TIMEOUT` (300s), inside one blocking tool call. The comment on `engine.rs:29-31`
+still says otherwise and is stale.
+
+Nothing escapes either: the child is spawned `.stdout(Stdio::null())` and its stderr is only read
+if the process *dies*, so HuggingFace's own progress bars go straight to a discarded pipe.
+
+So the first narration on a clean machine is a multi-minute wait with no bar, no byte count and
+no explanation — and on a slow connection it fails with a timeout that looks like a bug.
+
+Options, roughly in order of preference:
+
+- **Fetch the weights in `bay-provision` like everything else.** They are a pinned artifact on
+  HuggingFace with a known digest, so they fit the existing manifest, downloader and progress UI
+  exactly, and `speech` stops having a hidden second phase. Then set `HF_HUB_OFFLINE=1` on the
+  sidecar so it can only use what was fetched, which also makes the "no surprise network calls"
+  claim true rather than nearly true.
+- Or have the sidecar report download progress back over its existing HTTP channel, and surface
+  that in the same job UI.
+
+Either way the readiness timeout should drop back to something that means "the model failed to
+load" rather than doubling as a download budget.
+
+**Related, smaller:** the "Install …" button lives only in the *editor* toolbar
+(`editor_view.rs:runtime_offers`), not on the project launcher. Someone who opens bay and looks
+at the project list is told nothing about what is missing until they open a project. Not fatal —
+you have to open a project to do anything — but the launcher is where a first run actually
+starts, and it is the natural place to say "video tools are not installed yet".
+
+---
+
+## 5f. Slow tools time out against the open editor at 20s · **S–M, blocker**
+
+`serve_attached_connection` sends **every** `tools/call` through
+`bridge.call(call, ATTACHED_TIMEOUT)`, and `ATTACHED_TIMEOUT` is a flat 20 seconds
+(`bay-mcp/src/server.rs:198,228`). Slow tools answer only when their worker finishes
+(`bay-ui/src/app_view.rs`), so any `render`, `narrate`, `media_import` or `subtitles_to_video`
+that takes longer than 20 seconds returns:
+
+> the editor did not answer in time — it may be showing a modal dialog
+
+which is false, unactionable, and arrives while the work carries on invisibly. `slow.rs` itself
+documents these as taking "seconds to minutes", and item 5b claims the bridge serves all tools
+with the window open — it does, but only if they finish inside 20s. A first `narrate` on a clean
+machine cannot: the model download alone exceeds it.
+
+The timeout's own doc comment explains it as covering a native file dialog stalling the main
+thread, which is a fast-tool concern. Options:
+
+- Give slow tools their own budget, or none — they are already answered asynchronously, so the
+  timeout is protecting against a hang that the async path has already ruled out.
+- Better: hand slow tools a job id immediately and let the caller poll, the same shape
+  `runtime_install` already uses. That also fixes "no progress for a 4-minute render".
+
+**Not caught by any test** — the bridge tests all use fast tools. A test that runs a deliberately
+slow tool through the attached path would have caught it.
+
+---
+
+## 5g. The parts of the promise a GUI-only user still cannot reach · **S each**
+
+Everything below works over MCP and is missing or wrong in the window:
+
+- **The install button understates narration.** *Fixed* — it labelled with `download_bytes`
+  (the two pinned archives, 43 MB) in front of a ~1.2 GB operation, because the ~1 GB of wheels
+  uv resolves and the ~330 MB of weights are not pinned artifacts and so are not counted. It now
+  labels with the disk figure; the progress bar still uses the download total, where that is the
+  honest number.
+- **The progress bar reads "100% of 43 MB" for the whole multi-minute venv build**, because
+  `jobs.rs` parks `done_bytes = total_bytes` during a `Progress::Step`. The test that was meant
+  to cover this builds a state with `total_bytes: 0`, which never happens in a real job — so only
+  the reassuring branch is tested. uv also runs under `UV_NO_PROGRESS=1` with `.output()`, so the
+  four step messages are the only signal there is.
+- **There is no narrate affordance at all in the UI.** A GUI-only user can install narration and
+  then has no way to use it — narration is MCP-only. That is what item 1 is for, and it is a
+  stronger reason to do item 1 than "it would be nice".
+- **While an install runs, every offer is hidden**, so the second component cannot be queued.
+
+---
+
 ## 6. Bug: a sidecar can outlive its parent · **S**
 
 The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.
@@ -469,16 +567,23 @@ Read this first; the sections above are the detail.
 the deterministic suite. A user gets one binary, installs nothing, and the app fetches ffmpeg
 (~57 MB) and narration (~1.2 GB) on request with a progress bar.
 
+**But an audit of that claim found three things it does not cover yet**, all recorded below and
+all on the list: a render or narration longer than 20 seconds reports a false timeout (5f), the
+model weights download with no progress at all (5e), and there is no way to see or reclaim the
+disk any of it uses (item 2). None of them stop a user installing and running — they are what
+happens *after* that.
+
 **Next, in the order I would take them:**
 
 | | Item | Size | Why now |
 |---|---|---|---|
 | 1 | Windows build, actually run | S | Pinned and unit-tested, never executed on Windows. `.github/workflows/windows.yml` is `workflow_dispatch`; `./script/build-windows` triggers it and downloads the zip. Nothing else can be trusted on that platform until this passes once. |
-| 2 | Kokoro weight download progress (5e) | S–M | The one place the "no silent waits" promise still breaks — see below. |
-| 3 | Text → audio button (1) | S | Narration is one press away from any machine now, so this is no longer gated on setup. |
-| 4 | Document types + Open Recent (5d) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
-| 5 | Sidecar outliving its parent (6) | S | A real leak, cheap to close. |
-| 6 | Assistant, read-only first (3) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+| 2 | Slow tools time out at 20s (5f) | S–M | **Blocker.** Any render or narration over 20 seconds returns "the editor did not answer in time" while the work carries on invisibly. A first narrate cannot possibly fit. |
+| 3 | Kokoro weight download progress (5e) | S–M | The other place the "no silent waits" promise breaks, and it compounds 5f. |
+| 4 | Text → audio button (1) | S | Narration is one press away from any machine now, so this is no longer gated on setup. |
+| 5 | Document types + Open Recent (5d) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
+| 6 | Sidecar outliving its parent (6) | S | A real leak, cheap to close. |
+| 7 | Assistant, read-only first (3) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
 
 **Deliberately not doing yet:** Linux (macOS and Windows only, and an unsupported platform says
 so), multi-window, Stage 3 edit conflict leases, and vision (item 4) until the palmier premise is
@@ -486,33 +591,3 @@ verified.
 
 ---
 
-## 5e. Kokoro weights download with no progress · **S–M**
-
-The gap in the zero-install promise. `runtime_install speech` shows a progress bar for the
-~1.2 GB it fetches, but the **~330 MB of model weights are not part of that** — they are pulled
-by `huggingface_hub` inside the Python sidecar the first time `narrate` runs, into `<data>/models`
-via `HF_HOME`. bay sees none of it: `SpeechEngine::ensure` just waits on a readiness poll with a
-180-second budget, and the only reason that timeout is 180s rather than a few seconds is that it
-has to cover this download.
-
-So the first narration on a clean machine is a multi-minute wait with no bar, no byte count and
-no explanation — and on a slow connection it fails with a timeout that looks like a bug.
-
-Options, roughly in order of preference:
-
-- **Fetch the weights in `bay-provision` like everything else.** They are a pinned artifact on
-  HuggingFace with a known digest, so they fit the existing manifest, downloader and progress UI
-  exactly, and `speech` stops having a hidden second phase. Then set `HF_HUB_OFFLINE=1` on the
-  sidecar so it can only use what was fetched, which also makes the "no surprise network calls"
-  claim true rather than nearly true.
-- Or have the sidecar report download progress back over its existing HTTP channel, and surface
-  that in the same job UI.
-
-Either way the readiness timeout should drop back to something that means "the model failed to
-load" rather than doubling as a download budget.
-
-**Related, smaller:** the "Install …" button lives only in the *editor* toolbar
-(`editor_view.rs:runtime_offers`), not on the project launcher. Someone who opens bay and looks
-at the project list is told nothing about what is missing until they open a project. Not fatal —
-you have to open a project to do anything — but the launcher is where a first run actually
-starts, and it is the natural place to say "video tools are not installed yet".

@@ -44,12 +44,19 @@ bay — a native video editor, and the same engine as an MCP server.
   bay.exe --mcp        the same engine headless, for agents
   bay.exe --help       every flag
 
-REQUIREMENTS
-  ffmpeg on PATH   decode, probing, MP4 export.  https://ffmpeg.org/download.html
-  a GPU            the compositor (Direct3D 12)
+YOU DO NOT NEED TO INSTALL ANYTHING ELSE.
+  bay fetches what it needs itself, when you ask it to, from builds pinned and
+  hash-verified inside the exe:
 
-Narration additionally needs Python 3.12 with the `kokoro` package. bay reports what is
-missing rather than failing silently, so start it and see what it says.
+    video tools (ffmpeg, ~57 MB)   needed to decode, probe and export
+    narration (Python + Kokoro)    optional, ~1.2 GB, only for spoken narration
+
+  Start bay and it will tell you what is missing and offer to install it. Nothing
+  downloads unless you ask. If you already have a recent ffmpeg on PATH, bay uses
+  that instead and offers nothing.
+
+REQUIREMENTS
+  a GPU            the compositor (Direct3D 12). The one thing bay cannot install.
 
 Version $Version
 "@ | Set-Content -Path (Join-Path $Stage "README.txt") -Encoding UTF8

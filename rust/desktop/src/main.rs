@@ -86,8 +86,10 @@ rather than moving elsewhere — `bay --agents` answers the same question at any
 the way to resolve a conflict: the URL above is registered in your MCP client, so a bay on a
 different port is one that client cannot reach.
 
-Needs ffmpeg on PATH for decode and export, and a GPU for the compositor. Narration needs the
-Kokoro sidecar; bay reports what is missing rather than failing silently.";
+You do not need to install anything else. bay fetches ffmpeg (~57 MB) and, if you want spoken
+narration, a Python runtime with Kokoro (~1.2 GB) — from builds pinned and hash-verified inside
+this binary, and only when you ask. `bay --agents` and the runtime_status tool say what is
+missing. A GPU for the compositor is the one thing bay cannot install.";
 
 /// Borrow the console bay was launched from, if there is one.
 ///

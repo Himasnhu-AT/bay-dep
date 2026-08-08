@@ -91,3 +91,48 @@ impl std::fmt::Display for SpeechError {
 impl std::error::Error for SpeechError {}
 
 pub type SpeechResult<T> = Result<T, SpeechError>;
+
+#[cfg(test)]
+mod promise_tests {
+    /// bay installs its own runtimes. No error a user can reach may tell them to do it by hand.
+    ///
+    /// This exists because the guard that was supposed to cover it only checked one function in
+    /// `bay-provision`, so two strings walked straight past it: the `NotInstalled` error from
+    /// `SpeechEngine::ensure` — the exact thing a user hits the first time they ask for
+    /// narration — told them to run `uv venv` and `uv pip install`, and `speech_status` in
+    /// `bay-mcp` said the same. Both named tools the user does not have.
+    ///
+    /// Scanned as source text rather than by calling each site, because the point is that no
+    /// *new* message reintroduces the advice, and a test that only knows today's call sites
+    /// cannot catch tomorrow's.
+    #[test]
+    fn no_user_facing_message_tells_someone_to_install_a_toolchain() {
+        let sources = [
+            ("bay-speech/engine.rs", include_str!("engine.rs")),
+            ("bay-speech/lib.rs", include_str!("lib.rs")),
+        ];
+        // `brew install ffmpeg` is deliberately allowed in one place: the ffmpeg-missing message
+        // offers bay's own install first and lists it only as "use one you already have".
+        let forbidden = ["uv venv", "uv pip install", "pip install", "astral.sh"];
+
+        for (name, source) in sources {
+            // Only the code above this test module — otherwise the test trips on its own list.
+            let source = source.split("mod promise_tests").next().unwrap_or(source);
+            for line in source.lines() {
+                let code = line.trim_start();
+                // Doc comments and explanatory comments may name the tools; user-facing strings
+                // may not. This test's own list is skipped for the same reason.
+                if code.starts_with("//") || code.starts_with("///") {
+                    continue;
+                }
+                for phrase in forbidden {
+                    assert!(
+                        !line.contains(phrase),
+                        "{name}: a message a user can reach mentions {phrase:?} — \
+                         bay installs this itself, so point at runtime_install instead:\n  {line}"
+                    );
+                }
+            }
+        }
+    }
+}

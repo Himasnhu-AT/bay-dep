@@ -139,11 +139,22 @@ fn runtime_offers() -> Vec<RuntimeOffer> {
         .iter()
         .filter(|plan| !plan.satisfied && !plan.unsupported)
         .map(|plan| RuntimeOffer {
+            element_id: match plan.component.as_str() {
+                "video" => "install-video",
+                "speech" => "install-speech",
+                _ => "install-runtime",
+            },
             id: plan.component.clone(),
+            // `disk_bytes`, not `download_bytes`. For narration those differ by ~28x: the two
+            // pinned archives are 43 MB, but uv then resolves ~1 GB of wheels and the model
+            // pulls ~330 MB more — none of which is a pinned artifact, so none of it is counted
+            // in the download figure. A button reading "Install narration (43 MB)" in front of
+            // a 1.2 GB operation is not a rounding error, it is the wrong number. The download
+            // total still drives the progress bar, where it is the honest one.
             label: format!(
                 "Install {} ({})",
                 plan.title.to_lowercase(),
-                bay_provision::human_bytes(plan.download_bytes)
+                bay_provision::human_bytes(plan.disk_bytes.max(plan.download_bytes))
             ),
         })
         .collect()
@@ -221,6 +232,9 @@ pub struct EditorView {
 #[derive(Debug, Clone)]
 struct RuntimeOffer {
     id: String,
+    /// A stable, distinct gpui element id. `button` takes `&'static str`, and the component ids
+    /// are known at compile time, so this maps the two rather than leaking a String.
+    element_id: &'static str,
     /// "Install narration (1.2 GB)" — the size belongs in the label, not behind a dialog. It is
     /// the only fact that changes the decision.
     label: String,
@@ -1326,8 +1340,12 @@ impl EditorView {
                             .filter(|_| self.provision_job.is_none())
                             .map(|offer| {
                                 let component = offer.id.clone();
+                                // A distinct element id per offer. On a clean machine both
+                                // video and speech are offered at once, and two sibling
+                                // stateful elements sharing one id share interactive state —
+                                // hover and click tracking that belongs to whichever drew last.
                                 self.button(
-                                    "install-runtime",
+                                    offer.element_id,
                                     &offer.label,
                                     true,
                                     cx,

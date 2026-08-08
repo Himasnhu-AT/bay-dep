@@ -48,8 +48,14 @@ impl Studio {
                 "available": false,
                 "python": engine.config().python,
                 "script": engine.config().script,
-                "hint": "create the venv with `uv venv --python 3.12 ~/.local/share/bay/kokoro-venv` \
-                         then `uv pip install kokoro soundfile`; see docs/native/speech.md",
+                // bay installs this itself. The old hint told the user to run `uv` commands —
+                // a tool they do not have, referencing docs that do not ship with the binary.
+                // This is the headless (`bay --mcp`) copy of a hint that was already fixed on
+                // the in-app bridge path; the two being separate is how one of them stayed wrong.
+                "hint": "narration is not installed. Call runtime_install with component \
+                         \"speech\" and bay will fetch it (~1.2 GB); nothing needs to be \
+                         installed first. To use an interpreter you already have, set \
+                         BAY_KOKORO_PYTHON.",
             }));
         }
         let python = engine.config().python.clone();

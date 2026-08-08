@@ -293,10 +293,17 @@ impl SpeechEngine {
         }
 
         if !std::path::Path::new(&self.config.python).is_file() {
+            // This is the message an end user actually hits the first time they ask for
+            // narration on a clean machine, and it used to tell them to run `uv venv` and
+            // `uv pip install` — tools they do not have and should never need. bay installs
+            // this itself; the error has to say so, or the whole "install nothing" promise
+            // fails at the one moment the user is looking.
             return Err(SpeechError::NotInstalled(format!(
-                "no Python interpreter at {} — create one with \
-                 `uv venv --python 3.12 ~/.local/share/bay/kokoro-venv` and \
-                 `uv pip install kokoro soundfile`, or set BAY_KOKORO_PYTHON",
+                "narration is not installed yet. bay can install it for you (~1.2 GB): call \
+                 runtime_install with component \"speech\", or press \"Install narration\" in \
+                 the toolbar. Nothing needs to be installed first.\n\
+                 Looked for an interpreter at {}.\n\
+                 To use one you already have instead, set BAY_KOKORO_PYTHON.",
                 self.config.python
             )));
         }
