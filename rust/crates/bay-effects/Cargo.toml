@@ -1,0 +1,14 @@
+[package]
+name = "bay-effects"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/effects.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+bytemuck = { workspace = true }
+bay-gpu = { version = "0.1.0", path = "../bay-gpu" }
+thiserror = { workspace = true }
+wgpu = { workspace = true }

@@ -11,7 +11,7 @@
  * MCP tool surface. Every tool name below appears in ../../docs/native/mcp.md.
  *
  * The plate is a re-creation of the interface built from
- * ../../rust/crates/vii-ui/, not a screen capture, and the page says so.
+ * ../../rust/crates/bay-ui/, not a screen capture, and the page says so.
  */
 
 /** The reel's own length, from the recipe. Every time below is in seconds. */

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**vii** — a native macOS video editor. A Rust workspace under `rust/`: a GPUI desktop shell
-(`vii-ui`, reached by a 5-line `rust/desktop/src/main.rs`) over a platform-agnostic engine (wgpu
-compositor, effects, masks, audio, text, project model, tick math), plus `vii-mcp`, which exposes
+**bay** — a native macOS video editor. A Rust workspace under `rust/`: a GPUI desktop shell
+(`bay-ui`, reached by a 5-line `rust/desktop/src/main.rs`) over a platform-agnostic engine (wgpu
+compositor, effects, masks, audio, text, project model, tick math), plus `bay-mcp`, which exposes
 the same engine as an MCP server.
 
 **`rust/` is the product.** The JS/web stack this was forked from used to live in `dep/` as a
@@ -26,7 +26,8 @@ STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures (what CI's mac 
 cd rust && cargo test --workspace     # cargo runs from rust/, never the repo root
 ```
 
-`ffmpeg` on `PATH` is required for decode, probing, waveforms, and MP4 export. Without it, text and
+ffmpeg is required for decode, probing, waveforms, and MP4 export. bay installs its own when
+asked (`bay-provision`) and otherwise uses whatever is on the machine; without either, text and
 images still work and the rest must degrade with a message — never fail silently.
 
 Before claiming anything passes, run `./test.sh`. Clippy is `-D warnings`; a warning is a failure.
@@ -35,16 +36,18 @@ Before claiming anything passes, run `./test.sh`. Clippy is `-D warnings`; a war
 
 ```
 rust/
-├── desktop/          the binary — thin; calls vii_ui::run()
+├── desktop/          the binary — thin; calls bay_ui::run()
 ├── crates/
-│   ├── vii-ui        GPUI application shell (the editor UI)
-│   ├── vii-core      editor model + orchestration
-│   ├── vii-project   project format, serialization, web↔native interop
-│   ├── vii-preview   preview rendering, decode planning, caching
+│   ├── bay-ui        GPUI application shell (the editor UI)
+│   ├── bay-core      editor model + orchestration
+│   ├── bay-project   project format, serialization, web↔native interop
+│   ├── bay-preview   preview rendering, decode planning, caching
 │   ├── compositor, gpu, effects, masks    the wgpu render path
-│   ├── vii-audio, vii-text, vii-speech
+│   ├── bay-audio, bay-text, bay-speech
+│   ├── bay-provision installs bay's own runtimes (ffmpeg, Python, Kokoro) from a
+│   │                  pinned, SHA-256-verified manifest — the user installs nothing
 │   ├── time              MediaTime tick math
-│   ├── vii-mcp       the engine as an MCP server (`vii --mcp`; JSON-RPC over std::net)
+│   ├── bay-mcp       the engine as an MCP server (`bay --mcp`; JSON-RPC over std::net)
 │   └── native-preview, bridge, test-support
 └── wasm/             bindings consumed by the legacy web app
 ```
@@ -66,9 +69,19 @@ the MCP server. Logic is never duplicated between front ends.
   tested; keep them tested.
 - **Project wire format is kebab-case** and pinned by serde round-trip tests — it is the web↔native
   interop contract. Don't change a field name without updating both sides.
-- **Missing GPU or ffmpeg skips gracefully by default** (`VII_REQUIRE_GPU` / `VII_REQUIRE_FFMPEG`
+- **Missing GPU or ffmpeg skips gracefully by default** (`BAY_REQUIRE_GPU` / `BAY_REQUIRE_FFMPEG`
   turn skips into failures). Don't remove the graceful path, and don't let a skip masquerade as a pass
-  when reporting results.
+  when reporting results. Provisioning follows the same rule under `BAY_PROVISION_LIVE`.
+- **Nothing downloads unless the user asks.** `bay-provision` detects and offers; it never fetches
+  on its own initiative, and every artifact is verified against a pinned SHA-256 before install.
+  A new artifact needs an immutable URL and a redistributable licence — both are enforced by tests.
+- **Never run a toolchain build that was not tested.** A copy of ffmpeg bay did not install must
+  clear the manifest's `minimumVersion`, and one that will not report a version does not clear it.
+  Raising that floor makes bay download onto machines that were working — do it for a real
+  incompatibility, and say which one in the manifest.
+- **A test must never depend on a shared machine resource.** The registry tests took the real
+  agent port and failed whenever a `bay --mcp` was running; a test that fails for reasons outside
+  the repository teaches people to re-run until green, which is how a real failure gets ignored.
 - Every substantive fix in the parity effort is recorded with what it was and what verifies it —
   follow that pattern in [`docs/native/parity-status.md`](docs/native/parity-status.md).
 

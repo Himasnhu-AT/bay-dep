@@ -1,6 +1,6 @@
 # rust/
 
-Shared Rust crates that power vii across platforms (web via WASM, desktop natively).
+Shared Rust crates that power bay across platforms (web via WASM, desktop natively).
 
 ## Adding a new crate
 

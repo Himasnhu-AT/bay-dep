@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build the "Volatility Drag" reel entirely through the vii MCP server.
+"""Build the "Volatility Drag" reel entirely through the bay MCP server.
 
-Every visual decision is a vii MCP tool call over http://127.0.0.1:7333/mcp — this script is
+Every visual decision is a bay MCP tool call over http://127.0.0.1:7333/mcp — this script is
 only the client. Nothing else touches a pixel.
 """
 import json
@@ -54,12 +54,12 @@ CONTENT_W = 804            # to x=900; the right 180px is the action rail keep-o
 BOX = CONTENT_W / W        # text box scale that wraps at the content width
 HERO = 0.95                # wider box for display figures, which must never wrap
 
-# Font sizes are quoted against a 1080-tall canvas and vii scales them by H/1080 = 1.778.
+# Font sizes are quoted against a 1080-tall canvas and bay scales them by H/1080 = 1.778.
 PX = H / 1080
 
 
 def fs(on_screen_px):
-    """Convert a wanted on-screen pixel size into vii's fontSize."""
+    """Convert a wanted on-screen pixel size into bay's fontSize."""
     return round(on_screen_px / PX, 1)
 
 
@@ -195,7 +195,7 @@ music = call("media_import",
                   "assets/music/bed-112bpm.mp3")
 print(f"  music: {music['name']} {music.get('durationSeconds', 0):.3f}s")
 # Ducked when a voice is on top of it: a 0.9 bed buries narration.
-MUSIC_VOLUME = float(os.environ.get("VII_MUSIC_VOLUME", "0.9"))  # 0.12 under narration
+MUSIC_VOLUME = float(os.environ.get("BAY_MUSIC_VOLUME", "0.9"))  # 0.12 under narration
 call("add_audio", mediaId=music["mediaId"], start=0.0, duration=TOTAL, volume=MUSIC_VOLUME)
 
 # A persistent hairline rail at the gutter — the one element that survives every cut, so the
@@ -400,20 +400,20 @@ call("project_save", path="/Users/himanshu/.claude/jobs/5fdf9528/tmp/volatility-
 
 
 # ============================================================ narration (opt-in)
-# VII_NARRATE=1 speaks the reel with Kokoro and lays word-synced captions under it. One line
+# BAY_NARRATE=1 speaks the reel with Kokoro and lays word-synced captions under it. One line
 # per scene, each starting just inside its own clip so a line never steps on the one before.
-if os.environ.get("VII_NARRATE") == "1":
-    VOICE = os.environ.get("VII_VOICE", "af_heart")
+if os.environ.get("BAY_NARRATE") == "1":
+    VOICE = os.environ.get("BAY_VOICE", "af_heart")
     # Kokoro comes out quiet: mean around -26 dB against a -16.7 dB music bed, so at equal
     # nominal volume the bed masks the voice completely. 1.4x lifts the worst-case narration
     # peak to -1.1 dB (measured, so it cannot clip) and puts the voice 11.5 dB over the ducked
     # bed — the separation broadcast voice-over aims for.
-    VOICE_VOLUME = float(os.environ.get("VII_VOICE_VOLUME", "1.4"))
-    SPEED = float(os.environ.get("VII_SPEED", "1.06"))
+    VOICE_VOLUME = float(os.environ.get("BAY_VOICE_VOLUME", "1.4"))
+    SPEED = float(os.environ.get("BAY_SPEED", "1.06"))
     # Captions sit at 0.79 — inside the platform caption band. This reel was composed as a
     # silent piece whose own type fills the frame down to y=1490, so there is nowhere higher
     # for a caption to go without covering the artwork. Noted rather than hidden.
-    CAPTION_Y = float(os.environ.get("VII_CAPTION_Y", "0.79"))
+    CAPTION_Y = float(os.environ.get("BAY_CAPTION_Y", "0.79"))
 
     # The screen already carries every number. Narration that repeats them teaches nothing and
     # gives a viewer two copies of one message to read at once — so the voice carries only what
@@ -454,4 +454,4 @@ if os.environ.get("VII_NARRATE") == "1":
         print("  every line fits inside its own scene")
 
     call("subtitles_export",
-         path="/Users/himanshu/codes/synthai/vii-reels/volatility-drag.srt", format="srt")
+         path="/Users/himanshu/codes/synthai/bay-reels/volatility-drag.srt", format="srt")

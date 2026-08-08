@@ -1,0 +1,29 @@
+[package]
+name = "bay-ui"
+version = "0.1.0"
+edition = "2021"
+
+# The GPUI view layer for the native editor. Single responsibility: render the editor's
+# state and translate user interaction into bay-core Commands. Presentation logic that
+# doesn't need GPUI lives in the pure, unit-tested `view_model` module.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bay-speech = { path = "../bay-speech" }
+bay-provision = { path = "../bay-provision" }
+bay-paths = { path = "../bay-paths" }
+gpui = "0.2.2"
+image = "0.25"
+bay-agent = { version = "0.1.0", path = "../bay-agent" }
+bay-audio = { version = "0.1.0", path = "../bay-audio" }
+bay-core = { version = "0.1.0", path = "../bay-core" }
+bay-preview = { version = "0.1.0", path = "../bay-preview" }
+rfd = "0.15"
+rodio = "0.19"
+serde_json = "1"
+
+[dev-dependencies]
+# GPUI's headless test context, so the shell's routing (list → editor → back) is verified
+# without a display — the launcher is the one part of the UI that owns real state transitions.
+gpui = { version = "0.2.2", features = ["test-support"] }

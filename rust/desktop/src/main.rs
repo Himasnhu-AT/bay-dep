@@ -1,18 +1,18 @@
-//! The native vii desktop editor.
+//! The native bay desktop editor.
 //!
 //! Thin by design, but this is where the two halves are wired together, because neither half
-//! may depend on the other: `vii-ui` must not reach into `vii-mcp` (that would put the GPU view
-//! layer under the server), and `vii-mcp` must not reach into `vii-ui` (GPUI views are `!Send`
-//! and cannot cross to a server thread). They meet here, through `vii-agent`'s channel.
+//! may depend on the other: `bay-ui` must not reach into `bay-mcp` (that would put the GPU view
+//! layer under the server), and `bay-mcp` must not reach into `bay-ui` (GPUI views are `!Send`
+//! and cannot cross to a server thread). They meet here, through `bay-agent`'s channel.
 //!
-//! **vii is single-window on purpose.** An agent edits *a* document, and the value of watching
+//! **bay is single-window on purpose.** An agent edits *a* document, and the value of watching
 //! it happen depends on there being no ambiguity about which one. A second launch therefore
 //! raises the window that is already open instead of starting a rival with its own timeline.
 
 // Windows decides whether to hand a process a console from the PE subsystem field, not from
-// what the program does. Left as `console`, double-clicking vii.exe opened a black terminal
+// what the program does. Left as `console`, double-clicking bay.exe opened a black terminal
 // behind the editor — an app the user cannot close without also killing the editor. GUI
-// subsystem means no console is created; [`attach_console`] borrows the parent's when vii is
+// subsystem means no console is created; [`attach_console`] borrows the parent's when bay is
 // invoked from one, so `--help` and `--mcp` still print where they were typed.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -47,7 +47,7 @@ fn parse_mode() -> Result<Mode, String> {
         return Ok(Mode::Editor);
     }
 
-    let mut port = vii_agent::registry::DEFAULT_PORT;
+    let mut port = bay_agent::registry::DEFAULT_PORT;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--port" {
@@ -64,28 +64,37 @@ fn parse_mode() -> Result<Mode, String> {
 }
 
 const USAGE: &str = "\
-vii — a native video editor, and the same engine as an MCP server
+bay — a native video editor, and the same engine as an MCP server
 
 USAGE
-  vii                    open the editor
-  vii --mcp              serve MCP with no window, on 127.0.0.1:7333
-  vii --mcp --port N     …on another port (0 lets the OS choose)
-  vii --stdio            serve MCP over stdin/stdout instead
-  vii --agents           is a window open, and how does an agent reach it?
+  bay                    open the editor
+  bay --mcp              serve MCP with no window, on 127.0.0.1:7333
+  bay --stdio            serve MCP over stdin/stdout instead
+  bay --agents           what is serving agents right now, and how to reach it
+  bay --mcp --port N     serve on another port — see the warning below
 
 With the editor open, an agent's edits land in the window you are looking at and undo with
 the same keystroke as your own. With it closed, --mcp gives the same tools headlessly, which
 is what you want for rendering.
 
-  claude mcp add --transport http vii http://127.0.0.1:7333/mcp
+  claude mcp add --transport http bay http://127.0.0.1:7333/mcp
 
-Needs ffmpeg on PATH for decode and export, and a GPU for the compositor. Narration needs the
-Kokoro sidecar; vii reports what is missing rather than failing silently.";
+Only one process can serve that endpoint at a time. If it is taken, bay tells you what has it
+rather than moving elsewhere — `bay --agents` answers the same question at any time.
 
-/// Borrow the console vii was launched from, if there is one.
+--port is for running a second, separately configured bay (another checkout, or CI). It is not
+the way to resolve a conflict: the URL above is registered in your MCP client, so a bay on a
+different port is one that client cannot reach.
+
+You do not need to install anything else. bay fetches ffmpeg (~57 MB) and, if you want spoken
+narration, a Python runtime with Kokoro (~1.2 GB) — from builds pinned and hash-verified inside
+this binary, and only when you ask. `bay --agents` and the runtime_status tool say what is
+missing. A GPU for the compositor is the one thing bay cannot install.";
+
+/// Borrow the console bay was launched from, if there is one.
 ///
 /// A GUI-subsystem binary gets no console of its own, which is the point — but it means
-/// `vii --help` run from PowerShell would print into nothing. Attaching to the parent gets the
+/// `bay --help` run from PowerShell would print into nothing. Attaching to the parent gets the
 /// output back without ever creating a window. No-op when there is no parent console (a
 /// double-click), which is exactly when we want no console at all.
 #[cfg(windows)]
@@ -105,7 +114,7 @@ fn main() {
         Ok(mode) => mode,
         Err(message) => {
             attach_console();
-            eprintln!("vii: {message}");
+            eprintln!("bay: {message}");
             std::process::exit(2);
         }
     };
@@ -120,35 +129,58 @@ fn main() {
         Mode::Agents => return print_agents(),
         Mode::Headless { port, stdio } => {
             // No window, so nothing to attach to: the server owns the document itself.
-            let result = if stdio {
-                vii_mcp::server::serve_stdio()
-            } else {
-                vii_mcp::server::serve_http(port, None)
-            };
-            if let Err(error) = result {
-                // Now that the editor and the server are one binary, the overwhelmingly likely
-                // cause is that the editor is already open holding this port — and a bare
-                // "Address already in use (os error 48)" sends you hunting for a rogue process
-                // instead of the window on your screen.
-                if error.kind() == std::io::ErrorKind::AddrInUse {
-                    eprintln!("vii: port {port} is already in use.");
-                    match vii_agent::registry::live().first() {
-                        Some(existing) => eprintln!(
-                            "     A vii window is open and already serving agents there:\n\
-                             \x20      http://127.0.0.1:{}/mcp\n\
-                             \x20    Use that, or start this one on another port:\n\
-                             \x20      vii --mcp --port 0",
-                            existing.port
-                        ),
-                        None => eprintln!(
-                            "     Nothing registered as a vii window, so something else holds it.\n\
-                             \x20    Start on another port:\n\
-                             \x20      vii --mcp --port 0"
-                        ),
-                    }
-                } else {
-                    eprintln!("vii: {error}");
+            if stdio {
+                // Nothing to register: stdio has no port, so it cannot collide with anything
+                // and nobody can discover it by address either. It is reached by being spawned.
+                if let Err(error) = bay_mcp::server::serve_stdio() {
+                    eprintln!("bay: {error}");
+                    std::process::exit(1);
                 }
+                return;
+            }
+
+            // Bound here rather than inside the server so this process can register *before* it
+            // starts serving. Registering is not bookkeeping: it is what makes `bay --agents`
+            // able to say a headless server is running, and what lets the next process print
+            // "bay is already serving headlessly (pid N)" instead of guessing that some unknown
+            // program holds the port. Without it a headless bay is invisible to bay itself.
+            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+            {
+                Ok(listener) => listener,
+                Err(error) => {
+                    if error.kind() == std::io::ErrorKind::AddrInUse {
+                        eprintln!(
+                            "bay: {}",
+                            bay_agent::registry::conflict_advice(
+                                port,
+                                bay_agent::registry::Wanted::Headless,
+                                &bay_agent::registry::owner(port),
+                            )
+                        );
+                    } else {
+                        eprintln!("bay: {error}");
+                    }
+                    std::process::exit(1);
+                }
+            };
+            // `--port 0` asks the OS to choose, so the number to print is the one it gave us,
+            // not the zero that was asked for.
+            let bound = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+            let _ = bay_agent::registry::register(bound, bay_agent::registry::Kind::Headless, None);
+            println!("bay: serving MCP on http://127.0.0.1:{bound}/mcp");
+            if bound != bay_agent::registry::DEFAULT_PORT {
+                println!(
+                    "     This is not the default port, so a client registered with\n\
+                     \x20    `claude mcp add` for {} will not reach it.",
+                    bay_agent::registry::DEFAULT_PORT
+                );
+            }
+            let result = bay_mcp::server::serve_listener(listener, None);
+            bay_agent::registry::deregister(bound);
+            // The port conflict was decided at bind time above, so anything reaching here is the
+            // server itself stopping — a genuine fault, with nothing to advise about ports.
+            if let Err(error) = result {
+                eprintln!("bay: the agent server stopped: {error}");
                 std::process::exit(1);
             }
             return;
@@ -158,15 +190,15 @@ fn main() {
 
     // A window already open? Raise it and stop. The bound port is the single-instance lock —
     // no pid files, no races: whoever holds the socket is the app.
-    if let Some(existing) = vii_agent::registry::live().into_iter().next() {
+    if let Some(existing) = bay_agent::registry::live().into_iter().next() {
         match focus_existing(&existing) {
             Ok(()) => {
-                println!("vii is already running — brought that window to the front.");
+                println!("bay is already running — brought that window to the front.");
                 println!("Close it first if you want to start fresh.");
             }
             Err(error) => {
                 eprintln!(
-                    "vii seems to be running on port {} but did not respond ({error}).\n\
+                    "bay seems to be running on port {} but did not respond ({error}).\n\
                      If it is wedged, quit it and try again.",
                     existing.port
                 );
@@ -175,45 +207,48 @@ fn main() {
         return;
     }
 
-    let (pump, agent_port) = match vii_agent::registry::claim() {
+    let (pump, agent_port, agent_note) = match bay_agent::registry::claim() {
         Some(listener) => {
-            let port = vii_agent::registry::DEFAULT_PORT;
-            let (bridge, pump) = vii_agent::bridge();
-            let _ = vii_agent::registry::register(port, None);
+            let port = bay_agent::registry::agent_port();
+            let (bridge, pump) = bay_agent::bridge();
+            let _ = bay_agent::registry::register(port, bay_agent::registry::Kind::Editor, None);
             std::thread::spawn(move || {
-                if let Err(error) = vii_mcp::server::serve_listener(listener, Some(bridge)) {
-                    eprintln!("vii: the agent server stopped: {error}");
+                if let Err(error) = bay_mcp::server::serve_listener(listener, Some(bridge)) {
+                    eprintln!("bay: the agent server stopped: {error}");
                 }
                 // Best effort — a crash skips this, which is why `live()` reaps by testing the
                 // port rather than trusting the notes it finds.
-                vii_agent::registry::deregister(port);
+                bay_agent::registry::deregister(port);
             });
-            println!("vii: this window accepts agent edits at http://127.0.0.1:{port}/mcp");
-            println!("     claude mcp add --transport http vii http://127.0.0.1:{port}/mcp");
-            (Some(pump), Some(port))
+            println!("bay: this window accepts agent edits at http://127.0.0.1:{port}/mcp");
+            println!("     claude mcp add --transport http bay http://127.0.0.1:{port}/mcp");
+            (Some(pump), Some(port), None)
         }
         None => {
-            // The port is taken but nothing registered as a window: a standalone `vii-mcp` is
-            // running headlessly. Start anyway — the editor is still useful — but say plainly
-            // that an agent cannot reach this window.
-            eprintln!(
-                "vii: port {} is held by something that is not a vii window (a standalone \
-                 vii-mcp?), so this window cannot accept agent edits. Stop it and restart vii \
-                 to enable them.",
-                vii_agent::registry::DEFAULT_PORT
+            // Something else holds the endpoint — in practice a headless `bay --mcp` left
+            // running. The editor is still worth opening, so it opens; what must not happen is
+            // it opening *silently* degraded. This went to stderr alone, which a user who
+            // double-clicked the app never sees: they get a window where agent edits quietly do
+            // nothing and no way to find out why. The reason now goes to the window as well.
+            let port = bay_agent::registry::agent_port();
+            let advice = bay_agent::registry::conflict_advice(
+                port,
+                bay_agent::registry::Wanted::Editor,
+                &bay_agent::registry::owner(port),
             );
-            (None, None)
+            eprintln!("bay: {advice}");
+            (None, None, Some(advice))
         }
     };
 
-    vii_ui::run_with_agent(pump, agent_port);
+    bay_ui::run_with_agent(pump, agent_port, agent_note);
 }
 
 /// Ask the running window to come to the front.
 ///
 /// Deliberately speaks the same MCP endpoint rather than inventing a second IPC channel: the
 /// window already serves it, and `window_focus` is a tool an agent may usefully call too.
-fn focus_existing(instance: &vii_agent::Instance) -> std::io::Result<()> {
+fn focus_existing(instance: &bay_agent::Instance) -> std::io::Result<()> {
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": { "name": "window_focus", "arguments": {} }
@@ -255,18 +290,46 @@ fn focus_existing(instance: &vii_agent::Instance) -> std::io::Result<()> {
     }
 }
 
-/// `vii --agents` — is a window open, and how does an agent reach it?
+/// `bay --agents` — is a window open, and how does an agent reach it?
 ///
 /// Exists because the failure it replaces was "port 7333 is busy" with no way to find out what
 /// was holding it.
 fn print_agents() {
-    let live = vii_agent::registry::live();
+    let live = bay_agent::registry::live();
     let Some(instance) = live.first() else {
-        println!("No vii window is open.");
-        println!("Start one with: vii");
+        // "Nothing is running" has to be the truth, not "no *window* is running". This said
+        // "No bay window is open. Start one with: bay" while a headless `bay --mcp` was serving
+        // the very endpoint the user was asking about — and following that advice landed them
+        // in the port conflict instead.
+        let port = bay_agent::registry::agent_port();
+        if let bay_agent::registry::Owner::Foreign = bay_agent::registry::owner(port) {
+            println!("No bay is serving agents, but 127.0.0.1:{port} is held by something else.");
+            println!("  Find it with: lsof -nP -iTCP:{port} -sTCP:LISTEN");
+            return;
+        }
+        println!("No bay is serving agents.");
+        println!("  bay          open the editor; agent edits land in the window");
+        println!("  bay --mcp    serve the same tools with no window");
         return;
     };
-    let project = instance.project.as_deref().unwrap_or("(no project open)");
-    println!("vii is running — pid {}, showing {project}", instance.pid);
+
+    match instance.kind {
+        bay_agent::registry::Kind::Editor => {
+            let project = instance.project.as_deref().unwrap_or("(no project open)");
+            println!(
+                "bay is running as an editor window — pid {}, showing {project}",
+                instance.pid
+            );
+            println!("  Agent edits appear in that window and undo with Cmd+Z.");
+        }
+        bay_agent::registry::Kind::Headless => {
+            println!(
+                "bay is serving MCP headlessly — pid {}, no window.",
+                instance.pid
+            );
+            println!("  Agent edits apply to its own document; there is nothing to watch.");
+            println!("  Stop it with: kill {}", instance.pid);
+        }
+    }
     println!("  {}", instance.mcp_add_command());
 }

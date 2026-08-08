@@ -13,7 +13,7 @@
   --color-line: #d9d1bf;
 
   /* The plate. These are not new brand colours; they are the app's own theme,
-     copied value for value from rust/crates/vii-ui/src/theme.rs so the plate is
+     copied value for value from rust/crates/bay-ui/src/theme.rs so the plate is
      a re-creation rather than an interpretation. If the app's theme changes,
      these change with it. Measured against app-panel: text 14.6:1, muted 5.3:1,
      accent 5.7:1, all passing AA. See DESIGN.md. */

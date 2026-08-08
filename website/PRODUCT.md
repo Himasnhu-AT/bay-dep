@@ -96,7 +96,7 @@ download, and the site must not imply one exists.
   entirely through MCP tool calls. It also records the four defects the build exposed, each
   found by looking at a rendered frame and each now covered by a test. This is the
   demonstration the homepage is built on.
-- **The real interface**, in `../rust/crates/vii-ui/`: `theme.rs` carries the exact palette
+- **The real interface**, in `../rust/crates/bay-ui/`: `theme.rs` carries the exact palette
   (ground `#0f0f14`, panel `#16161d`, lane `#121218`, border `#2a2a36`, text `#e7e7ee`,
   muted `#8a8a9a`, accent `#5b8cff`, selection `#2d3a66`) and the per-kind clip colours
   (video `#33628f`, image `#7a4f95`, text `#8f6a33`, audio `#2f8f63`). `editor_view.rs`

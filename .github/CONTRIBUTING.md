@@ -1,6 +1,6 @@
-# Contributing to vii
+# Contributing to bay
 
-vii is a native macOS video editor written in Rust, plus the same engine exposed as an MCP
+bay is a native macOS video editor written in Rust, plus the same engine exposed as an MCP
 server. There is no web app and no JavaScript.
 
 ## Getting set up
@@ -12,7 +12,7 @@ server. There is no web app and no JavaScript.
 ```
 
 You need Rust (stable) and `ffmpeg` on `PATH`. A GPU is needed for the compositor; without one
-vii still runs and says so. `uv` is optional and only used to provision the Kokoro speech
+bay still runs and says so. `uv` is optional and only used to provision the Kokoro speech
 sidecar.
 
 **Run `./test.sh` before opening a PR.** Clippy runs with `-D warnings`, so a warning is a
@@ -35,19 +35,19 @@ bad input, and missing GPU or ffmpeg degrades with a message rather than failing
 
 | | |
 |---|---|
-| `rust/crates/vii-core` | editor model — `Command` → reversible `ProjectPatch` |
-| `rust/crates/vii-project` | the project format |
-| `rust/crates/vii-preview` | preview rendering, decode planning, caching |
-| `rust/crates/vii-compositor`, `vii-gpu`, `vii-effects`, `vii-masks` | the wgpu render path |
-| `rust/crates/vii-ui` | the GPUI shell |
-| `rust/crates/vii-mcp`, `vii-agent` | the agent surface |
+| `rust/crates/bay-core` | editor model — `Command` → reversible `ProjectPatch` |
+| `rust/crates/bay-project` | the project format |
+| `rust/crates/bay-preview` | preview rendering, decode planning, caching |
+| `rust/crates/bay-compositor`, `bay-gpu`, `bay-effects`, `bay-masks` | the wgpu render path |
+| `rust/crates/bay-ui` | the GPUI shell |
+| `rust/crates/bay-mcp`, `bay-agent` | the agent surface |
 | `docs/native/` | design notes and guides |
 | `todo.md` | what is planned, sized, and why |
 
 ## Tests
 
 Tests that need a GPU or ffmpeg **skip** when the capability is absent, so a laptop without one
-still reports green honestly. `VII_REQUIRE_GPU=1` and `VII_REQUIRE_FFMPEG=1` turn a skip into a
+still reports green honestly. `BAY_REQUIRE_GPU=1` and `BAY_REQUIRE_FFMPEG=1` turn a skip into a
 failure — use them when you want to be sure a test actually ran.
 
 A test that asserts nothing because its capability was missing is worse than no test, so if you

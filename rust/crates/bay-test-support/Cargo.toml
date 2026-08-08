@@ -1,0 +1,23 @@
+[package]
+name = "bay-test-support"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# T-002 — the workspace's one capability gate for integration tests.
+#
+# Every GPU/ffmpeg test used to hand-roll `eprintln!("skipping: …"); return`. That keeps a
+# GPU-less laptop green, but it also means a runner that was *provisioned* with a GPU can
+# lose it and still exit 0 — nine skip lines and a passing build. The skip stays the default;
+# BAY_REQUIRE_GPU / BAY_REQUIRE_FFMPEG turns it into a panic, and CI sets those.
+
+[dependencies]
+bay-paths = { path = "../bay-paths" }
+# Only needed to probe/hand out a real GpuContext. Crates that gate on ffmpeg alone can
+# depend on this crate without pulling wgpu in.
+bay-gpu = { version = "0.1.0", path = "../bay-gpu", optional = true }
+pollster = { version = "0.4", optional = true }
+
+[features]
+default = []
+gpu = ["dep:bay-gpu", "dep:pollster"]

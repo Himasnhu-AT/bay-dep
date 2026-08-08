@@ -1,6 +1,6 @@
 # Narration and subtitles
 
-vii speaks with [Kokoro](https://github.com/hexgrad/kokoro) (82M params, Apache-2.0) and turns
+bay speaks with [Kokoro](https://github.com/hexgrad/kokoro) (82M params, Apache-2.0) and turns
 what it said into captions. Because Kokoro reports **per-word timestamps**, captions are
 synchronised to the audio rather than estimated from character counts.
 
@@ -12,7 +12,7 @@ Kokoro is Python + torch — about 2 GB of runtime. Linking that into an editor 
 trade, so it runs as a separate process, exactly as ffmpeg already does.
 
 ```
-vii-mcp ──▶ vii-speech::SpeechEngine ──HTTP+token──▶ vii-kokoro.py ──▶ Kokoro (torch)
+bay-mcp ──▶ bay-speech::SpeechEngine ──HTTP+token──▶ bay-kokoro.py ──▶ Kokoro (torch)
                  lifecycle, wire protocol                     model held hot
 ```
 
@@ -28,11 +28,11 @@ The lifecycle is lifted from the transcription sidecar in the meeting assistant
 
 Two things guard the process boundary:
 
-- **A bearer token** in `VII_KOKORO_TOKEN`, checked on every request. Binding to loopback is
+- **A bearer token** in `BAY_KOKORO_TOKEN`, checked on every request. Binding to loopback is
   not treated as authentication — any local process could otherwise drive it. The token is
-  per-vii-process, which is why a sidecar left over from an earlier run is reported as
+  per-bay-process, which is why a sidecar left over from an earlier run is reported as
   `PortBusy` rather than silently reused.
-- **`VII_KOKORO_PARENT_PID`**, so a crashed editor cannot leave a multi-gigabyte model
+- **`BAY_KOKORO_PARENT_PID`**, so a crashed editor cannot leave a multi-gigabyte model
   resident. The sidecar polls and exits when its parent is gone.
 
 `Studio` owns **one** `SpeechEngine` for its whole lifetime. Constructing one per call would
@@ -50,25 +50,36 @@ is 180s rather than a few seconds.
 
 ## Setup
 
-`./build.sh` provisions it. The step is idempotent — a machine that already has it pays one
-interpreter start (~20 ms), not a dependency resolve — so it is safe on every build.
+**The app installs this itself.** Press "Install narration (1.2 GB)" in the toolbar, or call the
+`runtime_install` MCP tool with `component: "speech"`. bay downloads `uv` and a CPython 3.12,
+both pinned by SHA-256, builds the venv under `<data>/runtime/kokoro-venv`, and installs kokoro
+into it. Nothing has to be on the machine first — not `uv`, not a Python, not Homebrew. See
+[`bay-provision`](../../rust/crates/bay-provision/) for how that is verified.
+
+Setting it up by hand is a *development* convenience, not a requirement for anyone else:
 
 ```bash
-./build.sh                       # desktop + mcp + speech sidecar
+./build.sh                       # also provisions the dev venv, idempotently
 SKIP_SPEECH=1 ./build.sh         # skip it; everything but narration still works
 
-./script/setup-speech.sh          # provision on its own
+./script/setup-speech.sh          # provision on its own (needs uv on PATH)
 ./script/setup-speech.sh --check  # report status, install nothing (exit 1 if absent)
 ./script/setup-speech.sh --force  # rebuild the venv from scratch
 ```
 
+bay looks for a usable interpreter in `BAY_SPEECH_VENV`, then its own provisioned venv, then
+`~/.local/share/bay/kokoro-venv` (where the script above puts it), then the platform data
+directory. That list has exactly one definition, in `bay_provision::speech`, because when the
+"where do I run it" and "is it installed" answers drifted apart the symptom was narration
+reporting *not installed* beside a working 858 MB environment.
+
 A speech-provisioning failure does not fail the build. An editor that cannot speak is still an
 editor, and the narration tools report the real reason at call time.
 
-Under the hood that is:
+Either way, what gets built is:
 
 ```bash
-uv venv --python 3.12 ~/.local/share/vii/kokoro-venv
+uv venv --python <pinned CPython 3.12> --no-project <venv>
 uv pip install --python …/bin/python kokoro soundfile
 # misaki's English G2P uses spaCy; pre-installed so the sidecar never shells out at runtime
 uv pip install --python …/bin/python "en_core_web_sm @ <spacy-models release wheel>"
@@ -77,7 +88,7 @@ uv pip install --python …/bin/python "en_core_web_sm @ <spacy-models release w
 Optional: `brew install espeak-ng` for out-of-dictionary English words and some non-English
 languages.
 
-Overrides: `VII_KOKORO_PYTHON`, `VII_KOKORO_SCRIPT`, `VII_KOKORO_PORT`.
+Overrides: `BAY_KOKORO_PYTHON`, `BAY_KOKORO_SCRIPT`, `BAY_KOKORO_PORT`.
 
 Check it: the `speech_status` MCP tool reports availability and the voice catalogue, and says
 what to do when it is missing rather than just failing.
@@ -153,8 +164,8 @@ Two defects the build surfaced, both now covered by tests:
   the `speed` parameter only.
 - **`AudioElement` has no trim**, so a narration clip always plays from its head. The export
   mixer already threads a `trim_start` through; the field is what is missing.
-- **Captions are text elements**, so they inherit vii's text rendering: no per-word highlight
+- **Captions are text elements**, so they inherit bay's text rendering: no per-word highlight
   within a caption, and no outline or drop shadow behind the type. On a busy frame that means
   choosing a clear band rather than relying on a scrim.
-- **No ducking automation.** The music bed's level is set once; vii cannot yet dip it under
+- **No ducking automation.** The music bed's level is set once; bay cannot yet dip it under
   speech automatically.
