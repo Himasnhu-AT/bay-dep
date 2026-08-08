@@ -96,7 +96,7 @@ it well — including the things that are not obvious from the schemas.
 Windows is the only target that needs CI, and it genuinely cannot be done here: Windows
 containers require a Windows kernel, and cross-compiling with `cargo-xwin` dies inside gpui,
 whose `build.rs` gates HLSL shader compilation on the *host* being Windows. See
-[`todo.md`](todo.md).
+[`todo.completed.md`](todo.completed.md).
 
 Both bundles are unsigned by default and still work; the OS warns once on first run. To sign:
 
@@ -137,7 +137,8 @@ suite skips those cases rather than reporting a false pass.
 
 - **`rust/`** — the product.
 - **`docs/native/`** — design notes, parity status and guides.
-- **`todo.md`** — what is planned, sized, and why.
+- **`todo.md`** — the roadmap index; splits into `todo.completed.md` (shipped, with evidence),
+  `todo.pending.md` (not built) and `todo.testing.md` (built but never run).
 
 The JS/web stack bay was forked from used to live in `dep/` as a parity reference. It is gone;
 the behaviour worth keeping was ported into `rust/`, and what was not is recorded in

@@ -1048,7 +1048,7 @@ impl EditorView {
     /// On the main thread deliberately: this is a single frame, the same work the preview does
     /// every time the playhead moves, and it is the call the whole workflow rests on — an agent
     /// that cannot see a frame is guessing. A full `render` is minutes and does NOT belong
-    /// here; that is the worker-thread work in todo.md.
+    /// here; that is the worker-thread work in todo.pending.md.
     fn agent_snapshot(&mut self, args: &serde_json::Value) -> bay_agent::AgentResponse {
         use bay_agent::AgentResponse;
 

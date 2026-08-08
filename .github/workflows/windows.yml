@@ -8,7 +8,9 @@ name: windows
 #
 # Windows genuinely cannot be built locally on a Mac. Windows containers need a Windows kernel,
 # and cross-compiling with cargo-xwin dies inside gpui, whose build.rs gates HLSL shader
-# compilation on the HOST being Windows — so `shaders_bytes.rs` is never generated. See todo.md.
+# compilation on the HOST being Windows — so `shaders_bytes.rs` is never generated.
+# See todo.completed.md ("Windows builds must happen on Windows") and todo.testing.md for what
+# this job does and does not prove.
 #
 # Manual only. Trigger it and get the zip back on your Mac with:
 #

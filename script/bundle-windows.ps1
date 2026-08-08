@@ -12,7 +12,7 @@
 # Kokoro sidecar is compiled into it, so there is nothing to keep alongside it and nothing to
 # lose in a copy. No installer on purpose: an .exe you can run has no failure modes, and an MSI
 # is worth building only once there is something to install *into* (file associations, a
-# per-user update channel). See todo.md.
+# per-user update channel). See todo.pending.md.
 param(
     [switch]$Zip,
     [string]$SignThumbprint = ""

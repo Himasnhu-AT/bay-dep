@@ -12,7 +12,9 @@ the same engine as an MCP server.
 **`rust/` is the product.** The JS/web stack this was forked from used to live in `dep/` as a
 parity reference; it has been deleted.
 
-See [`README.md`](./README.md), [`todo.md`](./todo.md) and `docs/native/`.
+See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
+[`todo.completed.md`](./todo.completed.md), [`todo.pending.md`](./todo.pending.md) and
+[`todo.testing.md`](./todo.testing.md) — and `docs/native/`.
 
 ## Commands
 

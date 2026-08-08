@@ -42,7 +42,7 @@ bad input, and missing GPU or ffmpeg degrades with a message rather than failing
 | `rust/crates/bay-ui` | the GPUI shell |
 | `rust/crates/bay-mcp`, `bay-agent` | the agent surface |
 | `docs/native/` | design notes and guides |
-| `todo.md` | what is planned, sized, and why |
+| `todo.md` | roadmap index → `todo.completed.md`, `todo.pending.md`, `todo.testing.md` |
 
 ## Tests
 
