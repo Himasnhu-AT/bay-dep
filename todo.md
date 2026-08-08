@@ -155,9 +155,6 @@ build is a 28 MB zip per binary, ~57 MB to download for both and ~130 MB on disk
 
 </details>
 
-**Still to build:** the manifest + verified downloader, `runtime_status` / `runtime_install`
-MCP tools, the ffmpeg artifact, and the uv-driven speech provision.
-
 ---
 
 ## 3. Assistant: a local LLM that can edit the project · **L**
@@ -456,6 +453,66 @@ still worth doing before a second and third model process exist.
 | MCP | 24 tools over HTTP/stdio; snapshot, render, timeline introspection |
 | Speech | Kokoro sidecar, word-level timestamps, SRT/VTT in and out, `subtitles_to_video` |
 | Runtimes | bay installs its own ffmpeg and Kokoro from a pinned, hash-verified manifest |
+| Platform | menu bar, Cmd+Q/W/M/S, quit saves the open project, `BUNDLE=1 ./run.sh` for the real .app |
+| Agents | one owner of `:7333`, discoverable via `bay --agents`; conflicts name what holds it |
 | Build | `./build.sh` builds the one binary, `bay`; runtimes are the app's job, not the build's |
 | Skill | `.claude/skills/bay/` — an agent can drive the editor unassisted |
 | Tests | 385 passing, and the suite is deterministic |
+
+---
+
+## Where this actually stands
+
+Read this first; the sections above are the detail.
+
+**Shipped and verified end to end** — items 2, 5, 5b (Stage 1), 5d (P0), plus the naming and
+the deterministic suite. A user gets one binary, installs nothing, and the app fetches ffmpeg
+(~57 MB) and narration (~1.2 GB) on request with a progress bar.
+
+**Next, in the order I would take them:**
+
+| | Item | Size | Why now |
+|---|---|---|---|
+| 1 | Windows build, actually run | S | Pinned and unit-tested, never executed on Windows. `.github/workflows/windows.yml` is `workflow_dispatch`; `./script/build-windows` triggers it and downloads the zip. Nothing else can be trusted on that platform until this passes once. |
+| 2 | Kokoro weight download progress (5e) | S–M | The one place the "no silent waits" promise still breaks — see below. |
+| 3 | Text → audio button (1) | S | Narration is one press away from any machine now, so this is no longer gated on setup. |
+| 4 | Document types + Open Recent (5d) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
+| 5 | Sidecar outliving its parent (6) | S | A real leak, cheap to close. |
+| 6 | Assistant, read-only first (3) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+
+**Deliberately not doing yet:** Linux (macOS and Windows only, and an unsupported platform says
+so), multi-window, Stage 3 edit conflict leases, and vision (item 4) until the palmier premise is
+verified.
+
+---
+
+## 5e. Kokoro weights download with no progress · **S–M**
+
+The gap in the zero-install promise. `runtime_install speech` shows a progress bar for the
+~1.2 GB it fetches, but the **~330 MB of model weights are not part of that** — they are pulled
+by `huggingface_hub` inside the Python sidecar the first time `narrate` runs, into `<data>/models`
+via `HF_HOME`. bay sees none of it: `SpeechEngine::ensure` just waits on a readiness poll with a
+180-second budget, and the only reason that timeout is 180s rather than a few seconds is that it
+has to cover this download.
+
+So the first narration on a clean machine is a multi-minute wait with no bar, no byte count and
+no explanation — and on a slow connection it fails with a timeout that looks like a bug.
+
+Options, roughly in order of preference:
+
+- **Fetch the weights in `bay-provision` like everything else.** They are a pinned artifact on
+  HuggingFace with a known digest, so they fit the existing manifest, downloader and progress UI
+  exactly, and `speech` stops having a hidden second phase. Then set `HF_HUB_OFFLINE=1` on the
+  sidecar so it can only use what was fetched, which also makes the "no surprise network calls"
+  claim true rather than nearly true.
+- Or have the sidecar report download progress back over its existing HTTP channel, and surface
+  that in the same job UI.
+
+Either way the readiness timeout should drop back to something that means "the model failed to
+load" rather than doubling as a download budget.
+
+**Related, smaller:** the "Install …" button lives only in the *editor* toolbar
+(`editor_view.rs:runtime_offers`), not on the project launcher. Someone who opens bay and looks
+at the project list is told nothing about what is missing until they open a project. Not fatal —
+you have to open a project to do anything — but the launcher is where a first run actually
+starts, and it is the natural place to say "video tools are not installed yet".
