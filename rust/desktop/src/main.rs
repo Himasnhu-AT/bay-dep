@@ -109,6 +109,25 @@ fn attach_console() {
 #[cfg(not(windows))]
 fn attach_console() {}
 
+/// Print without panicking if stdout cannot be written.
+///
+/// `println!` panics on a failed write. On macOS that is close to theoretical; on Windows it is
+/// not, because bay is a GUI-subsystem binary with no console of its own, so whether `stdout` is
+/// a usable handle depends on how it was launched and on whether [`attach_console`] found a
+/// parent to borrow. `--help` exiting 101 because it could not print help is a worse outcome
+/// than help going nowhere.
+///
+/// Used for `--help` specifically because that is the path CI runs and found failing on Windows.
+/// The other call sites still use `println!`; whether they need this too is a question the
+/// instrumented smoke test answers, and guessing at 26 call sites without that evidence would
+/// be changing code to fit a theory.
+fn say(text: &str) {
+    use std::io::Write;
+    let mut handle = std::io::stdout().lock();
+    let _ = writeln!(handle, "{text}");
+    let _ = handle.flush();
+}
+
 fn main() {
     let mode = match parse_mode() {
         Ok(mode) => mode,
@@ -125,7 +144,7 @@ fn main() {
     }
 
     match mode {
-        Mode::Help => return println!("{USAGE}"),
+        Mode::Help => return say(USAGE),
         Mode::Agents => return print_agents(),
         Mode::Headless { port, stdio } => {
             // No window, so nothing to attach to: the server owns the document itself.

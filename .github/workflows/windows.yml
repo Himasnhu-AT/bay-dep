@@ -40,13 +40,19 @@ jobs:
         run: |
           $exe = "rust\target\release\bundle\windows\bay\bay.exe"
           if (-not (Test-Path $exe)) { throw "the bundle produced no bay.exe" }
-          & $exe --help
-          if ($LASTEXITCODE -ne 0) { throw "bay.exe --help failed" }
+
+          # Everything that can be checked without running the binary goes FIRST, and every
+          # check records its verdict rather than throwing immediately. The previous version
+          # threw on the first failure, so a `--help` that exited non-zero told us only that —
+          # not the exit code, not the output, and not whether the rest of the bundle was sound.
+          # A CI job that can only be debugged by editing CI and waiting 20 minutes is worth
+          # ten lines to avoid.
+          $failures = @()
 
           # One executable is the point of this layout — if a second one reappears, the README
           # and the download instructions are quietly wrong.
           $exes = Get-ChildItem "rust\target\release\bundle\windows\bay" -Filter *.exe
-          if ($exes.Count -ne 1) { throw "expected exactly one .exe, found: $($exes.Name -join ', ')" }
+          if ($exes.Count -ne 1) { $failures += "expected exactly one .exe, found: $($exes.Name -join ', ')" }
 
           # A console-subsystem binary makes Windows open a black terminal behind the editor.
           # Only the PE header says which it is, and only a Windows machine can be asked — so
@@ -55,9 +61,33 @@ jobs:
           $pe = [BitConverter]::ToInt32($bytes, 0x3C)
           $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
           if ($subsystem -ne 2) {
-            throw "bay.exe is subsystem $subsystem (2=GUI, 3=console) — it will spawn a console window"
+            $failures += "bay.exe is subsystem $subsystem (2=GUI, 3=console) — it will spawn a console window"
+          } else {
+            Write-Host "  subsystem: GUI (no console window)"
           }
-          Write-Host "  subsystem: GUI (no console window)"
+
+          # Now actually run it. Output is captured and echoed whatever happens: a GUI-subsystem
+          # binary writes through AttachConsole, so "no output" is itself a finding.
+          Write-Host "-- bay.exe --help --"
+          $out = & $exe --help 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host "exit code: $code"
+          Write-Host "output length: $($out.Length) chars"
+          if ($out.Trim().Length -gt 0) { Write-Host $out }
+          if ($code -ne 0) { $failures += "bay.exe --help exited $code" }
+          elseif ($out -notmatch 'USAGE') { $failures += "bay.exe --help exited 0 but printed no usage text" }
+
+          # --agents must also answer on a machine where nothing is running.
+          Write-Host "-- bay.exe --agents --"
+          $agents = & $exe --agents 2>&1 | Out-String
+          $agentsCode = $LASTEXITCODE
+          Write-Host "exit code: $agentsCode"
+          if ($agents.Trim().Length -gt 0) { Write-Host $agents }
+          if ($agentsCode -ne 0) { $failures += "bay.exe --agents exited $agentsCode" }
+
+          if ($failures.Count -gt 0) {
+            throw "smoke test failed:`n  - $($failures -join "`n  - ")"
+          }
         shell: pwsh
 
       - uses: actions/upload-artifact@v5
