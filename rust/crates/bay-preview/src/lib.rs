@@ -272,13 +272,42 @@ const VIDEO_MEMORY_BUDGET: usize = 192 * 1024 * 1024;
 const VIDEO_FALLBACK_W: u32 = 320;
 const VIDEO_FALLBACK_H: u32 = 180;
 
+/// What a decode is *for*. Preview and export want opposite things from the same source, and
+/// for a long time they shared one plan — so every export was composited from a ≤480px,
+/// possibly 2 fps cache and then upscaled to the export size. A 4K export was not 4K.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DecodeIntent {
+    /// Interactive preview: the whole clip decoded once, small, and indexed by time so scrubbing
+    /// is instant. Bounded by [`VIDEO_MEMORY_BUDGET`] because it lives in RAM.
+    Preview,
+    /// Export: source resolution at the delivered frame rate, **streamed**. No memory budget
+    /// applies because no whole clip is ever resident — a 4K clip cannot fit one and must not try.
+    Export { fps: f32 },
+}
+
+/// The outcome of [`plan_decode`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DecodePlan {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f32,
+    /// How many frames to ask ffmpeg for. `None` under [`DecodeIntent::Export`]: the stream is
+    /// bounded by the clip itself, not by a memory ceiling.
+    pub max_frames: Option<u32>,
+}
+
 /// Choose decode dimensions, sample rate and frame count for a clip.
 ///
 /// `natural` is the source's **coded** size and `rotation` its display-matrix rotation. ffmpeg
 /// autorotates on decode, so a 90°/270° clip arrives transposed — planning against the coded
 /// size would squash it into a landscape buffer, which is exactly the stretch bug this whole
 /// change set is about. Pure so the budget policy is unit-testable.
-fn plan_decode(natural: (u32, u32), rotation: i32, duration_secs: f64) -> (u32, u32, f32, u32) {
+fn plan_decode(
+    natural: (u32, u32),
+    rotation: i32,
+    duration_secs: f64,
+    intent: DecodeIntent,
+) -> DecodePlan {
     let (nw, nh) = natural;
     let (nw, nh) = if nw == 0 || nh == 0 {
         (VIDEO_FALLBACK_W, VIDEO_FALLBACK_H)
@@ -293,6 +322,22 @@ fn plan_decode(natural: (u32, u32), rotation: i32, duration_secs: f64) -> (u32, 
     };
 
     let even = |v: f32| ((v.round() as u32).max(2) / 2) * 2;
+
+    // Export takes the source as it is. There is no downscale to undo later and no frame-rate
+    // floor to smear frames across, because nothing is being held in memory to justify either.
+    if let DecodeIntent::Export { fps } = intent {
+        return DecodePlan {
+            width: even(nw as f32),
+            height: even(nh as f32),
+            fps: if fps.is_finite() && fps > 0.0 {
+                fps
+            } else {
+                VIDEO_MAX_FPS
+            },
+            max_frames: None,
+        };
+    }
+
     // Downscale to the preview budget, keeping aspect; ffmpeg wants even dimensions.
     let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32).min(1.0);
     let (mut w, mut h) = (even(nw as f32 * scale), even(nh as f32 * scale));
@@ -331,16 +376,287 @@ fn plan_decode(natural: (u32, u32), rotation: i32, duration_secs: f64) -> (u32, 
         };
     }
 
-    (w, h, fps, frames)
+    DecodePlan {
+        width: w,
+        height: h,
+        fps,
+        max_frames: Some(frames),
+    }
 }
 
-/// Test hook for [`plan_decode`].
+/// Test hook for the **preview** plan. Deliberately keeps its original tuple shape and
+/// arguments so the budget-policy tests that pin today's behaviour need no edit at all: if
+/// adding an export intent changed a single preview number, that is a regression, and a test
+/// that had to be adjusted to keep passing would have hidden it.
 pub fn plan_decode_for_test(
     natural: (u32, u32),
     rotation: i32,
     duration_secs: f64,
 ) -> (u32, u32, f32, u32) {
-    plan_decode(natural, rotation, duration_secs)
+    let plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    (
+        plan.width,
+        plan.height,
+        plan.fps,
+        plan.max_frames.unwrap_or(0),
+    )
+}
+
+/// Test hook for the **export** plan.
+pub fn plan_export_decode_for_test(
+    natural: (u32, u32),
+    rotation: i32,
+    duration_secs: f64,
+    fps: f32,
+) -> DecodePlan {
+    plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Export { fps },
+    )
+}
+
+/// The ffmpeg arguments shared by both decode paths.
+///
+/// One builder because the whole-clip decode and the export stream differ *only* in size, rate
+/// and seek — everything else (hwaccel, pixel format, loglevel) must stay identical or the two
+/// paths quietly drift into producing different pixels from the same source.
+///
+/// # Seeking, and why it is a plain input seek
+///
+/// This matters more than it looks. The cached preview path applies `trim_start` by *indexing
+/// into decoded frames*, which is exact. A streamed export seeks instead, so a seek that landed
+/// on the nearest keyframe rather than the requested frame would shift every trimmed clip in
+/// every export — a quieter bug than the upscaling this replaced, and a worse one.
+///
+/// The classic workaround is a two-stage seek: a coarse input seek to a keyframe a little early,
+/// then an exact output seek for the remainder. It is unnecessary. `-accurate_seek` is ffmpeg's
+/// default when transcoding and decodes-and-discards from the keyframe to the requested position
+/// already. Measured against a source with keyframes 3s apart and scene-cut detection off, a
+/// plain `-ss 2.5` returns the frame at 2.5s, not the keyframe at 0s.
+///
+/// So the two-stage version was written, measured, and deleted: it bought no accuracy and cost a
+/// redundant decode-and-discard on every stream open. `-accurate_seek` is passed explicitly
+/// rather than relied on as a default.
+///
+/// `a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to` is the executable form of this.
+fn decode_args(path: &str, plan: &DecodePlan, seek_to: Option<f64>) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-nostdin".into(),
+        "-loglevel".into(),
+        "error".into(),
+        // Offload decode to the GPU when possible (VideoToolbox on macOS); ffmpeg falls back to
+        // software automatically if no hardware decoder fits the input.
+        "-hwaccel".into(),
+        "auto".into(),
+    ];
+
+    // An accurate input seek — see the seeking note above.
+    if let Some(target) = seek_to.filter(|t| *t > 0.0) {
+        args.push("-accurate_seek".into());
+        args.push("-ss".into());
+        args.push(format!("{target}"));
+    }
+
+    args.push("-i".into());
+    args.push(path.into());
+
+    args.push("-r".into());
+    args.push(format!("{}", plan.fps));
+    // Export decodes at source resolution, so it passes no -s at all rather than a no-op scale.
+    if (plan.width, plan.height) != (0, 0) {
+        args.push("-s".into());
+        args.push(format!("{}x{}", plan.width, plan.height));
+    }
+    if let Some(max_frames) = plan.max_frames {
+        args.push("-frames:v".into());
+        args.push(max_frames.to_string());
+    }
+    args.push("-f".into());
+    args.push("rawvideo".into());
+    args.push("-pix_fmt".into());
+    args.push("rgba".into());
+    args.push("pipe:1".into());
+    args
+}
+
+/// One video clip's frames, streamed at source resolution for an export.
+///
+/// Holds exactly **one** frame, not the clip: a 4K RGBA frame is 33 MB, so a whole 60s clip
+/// would be ~200 GB. That is precisely why the cached path caps itself at 480px, and why export
+/// streams instead of asking for a bigger budget.
+///
+/// Export walks the timeline forward, so `frame_at` is a forward scan; a backward request
+/// respawns ffmpeg at the new position rather than pretending it cannot happen.
+struct ClipStream {
+    path: String,
+    plan: DecodePlan,
+    child: std::process::Child,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    /// Source time of the stream's first frame.
+    origin_seconds: f64,
+    /// Index (from `origin_seconds`) of the frame `buffer` currently holds, once `primed`.
+    index: u64,
+    buffer: Vec<u8>,
+    primed: bool,
+    /// The source ran out. Hold the last frame rather than dropping to a placeholder mid-export.
+    exhausted: bool,
+}
+
+impl ClipStream {
+    /// Spawn a decoder positioned at `start_seconds` of the source.
+    fn open(path: &str, plan: DecodePlan, start_seconds: f64) -> Option<Self> {
+        let seek = (start_seconds > 0.0).then_some(start_seconds);
+        let mut child = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+            .ok()?
+            .args(decode_args(path, &plan, seek))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let stdout = child.stdout.take()?;
+        let frame_bytes = (plan.width as usize) * (plan.height as usize) * 4;
+        Some(Self {
+            path: path.to_string(),
+            plan,
+            child,
+            // One frame of buffering, so a 33 MB frame is one read rather than thousands of
+            // small ones.
+            stdout: std::io::BufReader::with_capacity(frame_bytes.clamp(64 << 10, 8 << 20), stdout),
+            origin_seconds: start_seconds.max(0.0),
+            index: 0,
+            buffer: vec![0u8; frame_bytes],
+            primed: false,
+            exhausted: false,
+        })
+    }
+
+    /// Pull the next frame off the pipe into `buffer`. `false` once the source is exhausted.
+    fn advance(&mut self) -> bool {
+        if self.exhausted {
+            return false;
+        }
+        match std::io::Read::read_exact(&mut self.stdout, &mut self.buffer) {
+            Ok(()) => {
+                if self.primed {
+                    self.index += 1;
+                }
+                self.primed = true;
+                true
+            }
+            // A short final read is a truncated frame, not a usable one.
+            Err(_) => {
+                self.exhausted = true;
+                false
+            }
+        }
+    }
+
+    /// The frame covering `source_seconds`, decoded at source resolution.
+    fn frame_at(&mut self, source_seconds: f64) -> Option<(u32, u32, &[u8])> {
+        let wanted = (((source_seconds - self.origin_seconds) * self.plan.fps as f64).floor())
+            .max(0.0) as u64;
+
+        // Backward seek: respawn rather than rewinding a pipe that cannot be rewound.
+        if self.primed && wanted < self.index {
+            let restarted = Self::open(&self.path, self.plan, source_seconds)?;
+            *self = restarted;
+        }
+
+        while !self.primed || self.index < wanted {
+            if !self.advance() {
+                break;
+            }
+        }
+        if !self.primed {
+            return None;
+        }
+        Some((self.plan.width, self.plan.height, &self.buffer))
+    }
+}
+
+impl Drop for ClipStream {
+    /// An export with eight video clips runs eight decoders plus the encoder. Without this they
+    /// outlive a cancelled or failed export — the same leak class as a sidecar that outlives its
+    /// parent, and just as easy to close.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The decoders an export has open, one per video element, opened on first use and closed once
+/// the timeline has moved past the element that needed them.
+#[derive(Default)]
+struct ExportStreams {
+    open: std::collections::HashMap<String, ClipStream>,
+    /// Elements whose decoder could not be started. Remembered so a broken path costs one failed
+    /// spawn rather than one per exported frame.
+    failed: HashSet<String>,
+    fps: f32,
+}
+
+impl ExportStreams {
+    fn new(fps: f32) -> Self {
+        Self {
+            fps,
+            ..Default::default()
+        }
+    }
+
+    /// Frame for `element_id` at `source_seconds`, opening its decoder if this is the first ask.
+    fn frame_at(
+        &mut self,
+        element_id: &str,
+        path: &str,
+        source_seconds: f64,
+    ) -> Option<(u32, u32, &[u8])> {
+        if self.failed.contains(element_id) {
+            return None;
+        }
+        if !self.open.contains_key(element_id) {
+            let (natural, rotation, duration) = match probe::probe_media(path) {
+                Ok(meta) => (
+                    (meta.width, meta.height),
+                    meta.rotation,
+                    meta.duration.to_seconds_f64(),
+                ),
+                Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
+            };
+            let plan = plan_decode(
+                natural,
+                rotation,
+                duration,
+                DecodeIntent::Export { fps: self.fps },
+            );
+            match ClipStream::open(path, plan, source_seconds) {
+                Some(stream) => {
+                    self.open.insert(element_id.to_string(), stream);
+                }
+                None => {
+                    self.failed.insert(element_id.to_string());
+                    return None;
+                }
+            }
+        }
+        self.open.get_mut(element_id)?.frame_at(source_seconds)
+    }
+
+    /// Close decoders for elements that are no longer on screen, so a long timeline does not
+    /// accumulate one ffmpeg process per clip it has ever shown.
+    fn retain_only(&mut self, live: &HashSet<String>) {
+        self.open.retain(|id, _| live.contains(id));
+    }
+}
+
+/// Where [`PreviewRenderer::render_inner`] gets video pixels from. Named rather than a bare
+/// `Option` because the two are a real policy choice, not a present/absent flag.
+enum FrameSource<'a> {
+    /// Preview: the whole clip, decoded once at preview size, indexed by time.
+    Cache,
+    /// Export: source-resolution frames streamed in timeline order.
+    Streams(&'a mut ExportStreams),
 }
 
 /// Max distinct text rasters kept resident in the compositor store before the least-recently
@@ -793,17 +1109,30 @@ impl PreviewRenderer {
             return Err("could not open a pipe to ffmpeg".to_string());
         };
 
-        // Placeholders must never be baked into an export, so wait for every decode first.
-        self.await_decodes(scene, media);
+        // Export does NOT call await_decodes. That barrier exists so the *interactive* render
+        // path never blocks on a decode; export instead streams every clip at source resolution,
+        // and calling it here would kick off preview-intent decodes of clips export never reads.
+        let mut streams = ExportStreams::new(fps as f32);
 
         let total_frames = (duration_seconds * fps).ceil().max(1.0) as u64;
         let mut failure: Option<String> = None;
         for index in 0..total_frames {
             let seconds = index as f64 / fps;
             let playhead = MediaTime::from_seconds_f64(seconds).unwrap_or(MediaTime::ZERO);
+            // Close decoders for clips the playhead has left behind, so a long timeline does not
+            // end up holding one ffmpeg process per clip it has ever shown.
+            streams.retain_only(&live_video_elements(scene, playhead));
             // A frame the GPU could not produce must not be silently skipped: doing so would
             // shorten the output and shift every later frame's timing.
-            let Some(frame) = self.render(scene, playhead, width, height, background, media) else {
+            let Some(frame) = self.render_inner(
+                scene,
+                playhead,
+                width,
+                height,
+                background,
+                media,
+                FrameSource::Streams(&mut streams),
+            ) else {
                 failure = Some(format!(
                     "the GPU could not render frame {index} of {total_frames}"
                 ));
@@ -870,6 +1199,34 @@ impl PreviewRenderer {
         height: u32,
         background: &Background,
         media: &[MediaAsset],
+    ) -> Option<PreviewFrame> {
+        self.render_inner(
+            scene,
+            playhead,
+            width,
+            height,
+            background,
+            media,
+            FrameSource::Cache,
+        )
+    }
+
+    /// The one compositing implementation, shared by the preview and the export.
+    ///
+    /// Only where **video pixels** come from differs between the two, so that is the only thing
+    /// `source` selects. Everything else — layer order, transforms, effects, masks, the readback
+    /// — is common by construction rather than by discipline, which is what keeps an export from
+    /// quietly diverging from what the preview showed.
+    #[allow(clippy::too_many_arguments)]
+    fn render_inner(
+        &mut self,
+        scene: &Scene,
+        playhead: MediaTime,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+        mut source: FrameSource<'_>,
     ) -> Option<PreviewFrame> {
         let clear = match background {
             Background::Color { color } => hex_to_rgba(color),
@@ -956,44 +1313,63 @@ impl PreviewRenderer {
                     }
                     Element::Video(video) => {
                         let media_id = video.media_id.clone();
-                        // Decode the clip once on a WORKER THREAD, then index frames by time.
-                        // Doing this inline used to block the render path for the whole decode
-                        // (~33s of frozen UI for a 10-minute clip).
                         let path = media
                             .iter()
                             .find(|m| m.id == media_id)
                             .map(|m| m.path.clone());
-                        self.poll_decode(&media_id, path.as_deref());
+                        // How far into the SOURCE this timeline moment is.
+                        let source_seconds = video.trim_start.to_seconds_f64()
+                            + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
+                                / 120_000.0;
 
-                        let frame = self
-                            .video_cache
-                            .get(&media_id)
-                            .and_then(|state| match state {
-                                ClipState::Ready(clip) => Some(clip),
-                                _ => None,
-                            })
-                            .and_then(|clip| {
-                                let seconds = video.trim_start.to_seconds_f64()
-                                    + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
-                                        / 120_000.0;
-                                let index = ((seconds * clip.fps as f64).floor() as usize)
-                                    .min(clip.frames.len().saturating_sub(1));
-                                clip.frames
-                                    .get(index)
-                                    .map(|rgba| (clip.width, clip.height, rgba.clone()))
-                            });
-                        match frame {
-                            // A decoded frame whose byte count disagrees with its own dimensions
-                            // falls back to the placeholder — the same degrade as "not ready yet".
-                            Some((w, h, rgba)) => {
-                                match self.ctx.upload_rgba_texture(&rgba, w, h, "preview-video") {
-                                    Some(texture) => {
-                                        self.compositor
-                                            .upsert_texture(element.id().to_string(), texture);
-                                        (Some(element.id().to_string()), Some((w, h)))
-                                    }
-                                    None => (self.upload_solid_placeholder(element), None),
-                                }
+                        let uploaded = match &mut source {
+                            // Decode the clip once on a WORKER THREAD, then index frames by time.
+                            // Doing this inline used to block the render path for the whole
+                            // decode (~33s of frozen UI for a 10-minute clip).
+                            FrameSource::Cache => {
+                                self.poll_decode(&media_id, path.as_deref());
+                                let frame = self
+                                    .video_cache
+                                    .get(&media_id)
+                                    .and_then(|state| match state {
+                                        ClipState::Ready(clip) => Some(clip),
+                                        _ => None,
+                                    })
+                                    .and_then(|clip| {
+                                        let index = ((source_seconds * clip.fps as f64).floor()
+                                            as usize)
+                                            .min(clip.frames.len().saturating_sub(1));
+                                        clip.frames
+                                            .get(index)
+                                            .map(|rgba| (clip.width, clip.height, rgba.clone()))
+                                    });
+                                frame.and_then(|(w, h, rgba)| {
+                                    self.ctx
+                                        .upload_rgba_texture(&rgba, w, h, "preview-video")
+                                        .map(|texture| (texture, w, h))
+                                })
+                            }
+                            // Source-resolution frames, streamed. No clone: the frame is read
+                            // straight out of the stream's single buffer into the texture.
+                            FrameSource::Streams(streams) => path
+                                .as_deref()
+                                .and_then(|path| {
+                                    streams.frame_at(element.id(), path, source_seconds)
+                                })
+                                .and_then(|(w, h, rgba)| {
+                                    self.ctx
+                                        .upload_rgba_texture(rgba, w, h, "export-video")
+                                        .map(|texture| (texture, w, h))
+                                }),
+                        };
+
+                        // A frame that is not ready, cannot be decoded, or whose byte count
+                        // disagrees with its own dimensions all degrade the same way.
+                        match uploaded {
+                            Some((texture, w, h)) => {
+                                self.compositor
+                                    .upsert_texture(element.id().to_string(), texture);
+                                (Some(element.id().to_string()), Some((w, h)))
                             }
                             None => (self.upload_solid_placeholder(element), None),
                         }
@@ -1103,32 +1479,12 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
         ),
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
     };
-    let (decode_w, decode_h, fps, max_frames) = plan_decode(natural, rotation, duration_secs);
+    let plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    let (decode_w, decode_h, fps) = (plan.width, plan.height, plan.fps);
 
     let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
         .ok()?
-        .args([
-            "-nostdin",
-            "-loglevel",
-            "error",
-            // Offload decode to the GPU when possible (VideoToolbox on macOS); ffmpeg falls
-            // back to software automatically if no hardware decoder fits the input.
-            "-hwaccel",
-            "auto",
-            "-i",
-            path,
-            "-r",
-            &format!("{fps}"),
-            "-s",
-            &format!("{decode_w}x{decode_h}"),
-            "-frames:v",
-            &max_frames.to_string(),
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "pipe:1",
-        ])
+        .args(decode_args(path, &plan, None))
         .output()
         .ok()?;
     if !output.status.success() {
@@ -1234,6 +1590,28 @@ fn hex_to_rgb8(hex: &str) -> [u8; 3] {
 
 fn solid_rgba(color: [u8; 4]) -> Vec<u8> {
     color.iter().copied().cycle().take(8 * 8 * 4).collect()
+}
+
+/// Ids of the video elements on screen at `playhead`.
+///
+/// Export uses this to close decoders it has finished with. Hidden tracks count as not on
+/// screen, matching what the compositor draws.
+fn live_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
+    let mut live = HashSet::new();
+    for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+        if track.hidden {
+            continue;
+        }
+        for element in &track.elements {
+            if matches!(element, Element::Video(_))
+                && element.start() <= playhead
+                && playhead < element.end()
+            {
+                live.insert(element.id().to_string());
+            }
+        }
+    }
+    live
 }
 
 /// Where an export is encoded before it is renamed into place.

@@ -63,10 +63,19 @@ the MCP server. Logic is never duplicated between front ends.
 
 - **Never put logic in the UI crate that a headless client would need.** If the MCP server or a test
   can't reach it, it's in the wrong crate.
-- **Decode never runs on the render path.** A long clip must not freeze `render()`; decodes are
-  planned and awaited explicitly (export calls `await_decodes()` before encoding).
+- **Decode never runs on the *interactive* render path.** A long clip must not freeze `render()`;
+  preview decodes are planned on a worker and awaited explicitly. **Export is the exception, by
+  design:** it streams each clip at source resolution through `ClipStream` and decodes inside its
+  own frame loop. It does *not* call `await_decodes` — that would start preview-intent decodes of
+  clips the export will never read. Export is not interactive, and a 4K clip cannot be
+  pre-decoded into a memory budget at all.
+- **Preview and export plan decode differently, on purpose** (`DecodeIntent`). Preview is a
+  ≤480px, budget-bounded cache so scrubbing is instant; export is source resolution at the
+  delivered frame rate, streamed. Collapsing them is how a 4K export came to be a 480px cache
+  upscaled 8×.
 - **Cache budgets are global, not per clip.** An LRU byte budget across all clips — regressing this
-  means N clips get N budgets.
+  means N clips get N budgets. The budget applies to the *preview* cache; export holds one frame
+  per on-screen clip and nothing more.
 - **The render path cannot panic on bad input.** NaN/±inf transforms and tiny canvases (1×1, 8×4) are
   tested; keep them tested.
 - **Project wire format is kebab-case** and pinned by serde round-trip tests — it is the web↔native

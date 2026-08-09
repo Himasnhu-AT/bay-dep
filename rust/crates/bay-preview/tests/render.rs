@@ -1491,3 +1491,434 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
         "raster cache grew to {cached} entries; eviction is not running at all"
     );
 }
+
+// --------------------------------------------------------------------------------------
+// Export decodes at source resolution — the fix for "a 4K export is a 480px cache upscaled".
+// --------------------------------------------------------------------------------------
+
+/// Decode the first frame of `path` as 8-bit luma at its own size.
+fn first_frame_luma(path: &std::path::Path) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            path.to_str()?,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "pipe:1",
+        ])
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// Population standard deviation of a luma plane. A picture that still has its detail scores
+/// high; one that has been averaged into flat grey scores near zero.
+fn luma_stddev(luma: &[u8]) -> f64 {
+    if luma.is_empty() {
+        return 0.0;
+    }
+    let n = luma.len() as f64;
+    let mean = luma.iter().map(|&v| v as f64).sum::<f64>() / n;
+    (luma.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n).sqrt()
+}
+
+/// **The export-quality regression test.**
+///
+/// The source is 1-pixel-wide vertical stripes at 960x540, exported onto a 960x540 canvas — so
+/// the clip maps 1:1 and nothing about the geometry can excuse a loss of detail.
+///
+/// 1px stripes have a period of 2, so an exact 2:1 downscale to the preview budget's 480px puts
+/// them below Nyquist and averages them into flat grey. Upscaling back to 960 cannot undo that.
+/// The width matters: 2px stripes land *exactly* on Nyquist and survive the downscale as 1px
+/// stripes, so a coarser pattern would have made this test pass against the very bug it exists
+/// to catch — it was written that way first, and measured.
+///
+/// Measured on this path: source 127.5, old behaviour 1.5, streamed source-resolution 126.2.
+/// The threshold sits far from both, so this is not a judgement call about sharpness.
+#[test]
+fn an_export_keeps_detail_the_preview_budget_would_have_destroyed() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("bay-export-detail-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let stripes_png = dir.join("stripes.png");
+    let source_mp4 = dir.join("stripes.mp4");
+    let out_mp4 = dir.join("exported.mp4");
+
+    // 2px vertical stripes: the finest pattern that survives a 960-wide frame and is annihilated
+    // by a 2:1 downscale.
+    let (sw, sh) = (960u32, 540u32);
+    let stripes = image::RgbaImage::from_fn(sw, sh, |x, _| {
+        if x % 2 == 0 {
+            image::Rgba([255, 255, 255, 255])
+        } else {
+            image::Rgba([0, 0, 0, 255])
+        }
+    });
+    stripes.save(&stripes_png).expect("write the stripe source");
+
+    // Lossless h264 so the SOURCE is not what loses the detail.
+    let encoded = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            stripes_png.to_str().unwrap(),
+            "-t",
+            "1",
+            "-r",
+            "10",
+            "-c:v",
+            "libx264",
+            "-qp",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            source_mp4.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(encoded, "encode the lossless stripe source") {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    // Sanity: the source itself must actually carry the detail we are about to look for.
+    let source_detail = first_frame_luma(&source_mp4)
+        .map(|luma| luma_stddev(&luma))
+        .unwrap_or(0.0);
+    assert!(
+        source_detail > 90.0,
+        "precondition: the stripe source should be high-contrast, scored {source_detail:.1}"
+    );
+
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize {
+        width: sw,
+        height: sh,
+    };
+    project.media.push(MediaAsset {
+        id: "stripes".into(),
+        name: "Stripes".into(),
+        path: source_mp4.to_string_lossy().into_owned(),
+    });
+    let scene = project.active_scene_mut();
+    scene.tracks.main.elements = vec![Element::Video(VideoElement {
+        id: "clip1".into(),
+        name: "Stripes".into(),
+        start: MediaTime::ZERO,
+        duration: MediaTime::from_ticks(120_000),
+        media_id: "stripes".into(),
+        trim_start: MediaTime::ZERO,
+        transform: Transform::default(),
+        effects: Vec::new(),
+        animations: Default::default(),
+        blend_mode: Default::default(),
+        trim_end: MediaTime::ZERO,
+    })];
+
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.3,
+        10.0,
+        sw,
+        sh,
+        &project.settings.background,
+        &project.media,
+        out_mp4.to_str().unwrap(),
+    );
+    assert!(result.is_ok(), "export should succeed: {result:?}");
+
+    let exported = first_frame_luma(&out_mp4).expect("the exported file should decode");
+    let detail = luma_stddev(&exported);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        detail > 40.0,
+        "the exported frame lost the source's detail (stddev {detail:.1}, source \
+         {source_detail:.1}). Decoding at the preview budget's 480px averages 1px stripes into \
+         flat grey and scores ~1.5; decoding at source resolution scores ~126."
+    );
+}
+
+/// `trim_start` must land on the frame the author trimmed to.
+///
+/// The cached path applies trim by *indexing into decoded frames*, which is exact. A streamed
+/// export seeks instead, and `-ss` before `-i` is an input seek that lands on the nearest
+/// keyframe — up to a whole GOP away. That would shift every trimmed clip in every export by a
+/// fraction of a second: a quieter bug than the one being fixed, and a worse one.
+///
+/// The source is a counter: each second is a solid, distinct grey. Trimming to 2.5s must
+/// therefore export the third band, and reading the exported frame's luma says plainly which
+/// band arrived. Keyframes are forced 3s apart, so the keyframe before a 2.5s target is at 0s:
+/// a naive input-only seek lands on luma 20 instead of 120. Verified by trying it.
+#[test]
+fn a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("bay-export-trim-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let source = dir.join("bands.mp4");
+    let out = dir.join("trimmed.mp4");
+
+    // Five one-second bands: luma 20, 70, 120, 170, 220. Distinct enough that an off-by-a-second
+    // seek is unmistakable, and flat so the encode reproduces them faithfully.
+    const BANDS: [u8; 5] = [20, 70, 120, 170, 220];
+    let frames_dir = dir.join("frames");
+    let _ = std::fs::create_dir_all(&frames_dir);
+    for (second, level) in BANDS.iter().enumerate() {
+        for frame in 0..10 {
+            let index = second * 10 + frame;
+            let img =
+                image::RgbaImage::from_pixel(320, 180, image::Rgba([*level, *level, *level, 255]));
+            img.save(frames_dir.join(format!("f{index:04}.png")))
+                .unwrap();
+        }
+    }
+    let encoded = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-framerate",
+            "10",
+            "-i",
+            frames_dir.join("f%04d.png").to_str().unwrap(),
+            "-c:v",
+            "libx264",
+            "-qp",
+            "0",
+            // Keyframes only every 30 frames (3s), so the keyframe preceding a 2.5s target is
+            // at 0s — a whole two bands away. -sc_threshold 0 is load-bearing: without it x264
+            // inserts an IDR at every band change, which puts a keyframe at the start of the
+            // band containing the target and lets an inaccurate seek land correctly by luck.
+            "-g",
+            "30",
+            "-keyint_min",
+            "30",
+            "-sc_threshold",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            source.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(encoded, "encode the banded trim source") {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize {
+        width: 320,
+        height: 180,
+    };
+    project.media.push(MediaAsset {
+        id: "bands".into(),
+        name: "Bands".into(),
+        path: source.to_string_lossy().into_owned(),
+    });
+    // Trim to 2.5s — the middle of the third band (luma 120), and deliberately not on a keyframe.
+    let scene = project.active_scene_mut();
+    scene.tracks.main.elements = vec![Element::Video(VideoElement {
+        id: "clip1".into(),
+        name: "Bands".into(),
+        start: MediaTime::ZERO,
+        duration: MediaTime::from_ticks(120_000),
+        media_id: "bands".into(),
+        trim_start: MediaTime::from_seconds_f64(2.5).unwrap(),
+        trim_end: MediaTime::ZERO,
+        transform: Transform::default(),
+        effects: Vec::new(),
+        animations: Default::default(),
+        blend_mode: Default::default(),
+    })];
+
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.2,
+        10.0,
+        320,
+        180,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+    );
+    assert!(result.is_ok(), "export should succeed: {result:?}");
+
+    let luma = first_frame_luma(&out).expect("the exported file should decode");
+    let mean = luma.iter().map(|&v| v as f64).sum::<f64>() / luma.len().max(1) as f64;
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let expected = BANDS[2] as f64; // 2.5s falls in the third band
+    assert!(
+        (mean - expected).abs() < 12.0,
+        "trimming to 2.5s should export the band at luma {expected}, got {mean:.1}. \
+         A nearby band means the seek landed on a keyframe instead of the trimmed frame."
+    );
+}
+
+/// Two video clips on screen at once, each streamed independently.
+///
+/// A single shared decoder would be a plausible-looking implementation that works fine on every
+/// one-clip timeline and produces the wrong picture the moment a project overlays two. Each clip
+/// here is a distinct flat colour, so a frame containing both proves two decoders ran with their
+/// own positions.
+#[test]
+fn overlapping_clips_each_get_their_own_stream() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("bay-export-two-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let out = dir.join("both.mp4");
+
+    // Two solid sources: pure red and pure blue.
+    let mut made = true;
+    for (name, colour) in [("red", "red"), ("blue", "blue")] {
+        made &= std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color=c={colour}:s=160x90:d=2:r=10"),
+                "-c:v",
+                "libx264",
+                "-qp",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+                dir.join(format!("{name}.mp4")).to_str().unwrap(),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+    if !require_ffmpeg_step(made, "encode the two overlapping sources") {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize {
+        width: 160,
+        height: 90,
+    };
+    for name in ["red", "blue"] {
+        project.media.push(MediaAsset {
+            id: name.into(),
+            name: name.into(),
+            path: dir
+                .join(format!("{name}.mp4"))
+                .to_string_lossy()
+                .into_owned(),
+        });
+    }
+
+    let clip = |id: &str, media: &str, scale: f32, x: f32| {
+        Element::Video(VideoElement {
+            id: id.into(),
+            name: media.into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            media_id: media.into(),
+            trim_start: MediaTime::ZERO,
+            trim_end: MediaTime::ZERO,
+            transform: Transform {
+                x,
+                scale,
+                ..Transform::default()
+            },
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+        })
+    };
+    // Side by side, each at a quarter width, so both survive into the same frame.
+    let scene = project.active_scene_mut();
+    scene.tracks.main.elements = vec![
+        clip("red-clip", "red", 0.4, 0.25),
+        clip("blue-clip", "blue", 0.4, 0.75),
+    ];
+
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.2,
+        10.0,
+        160,
+        90,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+    );
+    assert!(result.is_ok(), "export should succeed: {result:?}");
+
+    // Decode the exported frame as RGB and look at one pixel inside each clip.
+    let decoded = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            out.to_str().unwrap(),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ])
+        .output()
+        .expect("decode the exported frame");
+    let rgb = decoded.stdout;
+    let at = |x: u32, y: u32| {
+        let i = ((y * 160 + x) * 3) as usize;
+        (rgb[i] as i32, rgb[i + 1] as i32, rgb[i + 2] as i32)
+    };
+    let left = at(40, 45);
+    let right = at(120, 45);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        left.0 > 120 && left.2 < 90,
+        "the left clip should be red, got {left:?}"
+    );
+    assert!(
+        right.2 > 120 && right.0 < 90,
+        "the right clip should be blue, got {right:?}"
+    );
+}
