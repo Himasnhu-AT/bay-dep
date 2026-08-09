@@ -34,6 +34,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SAMPLE_RATE = 24_000
 
+# How long the sidecar sits with no requests before exiting. Half an hour keeps a hot model
+# around across a working session while bounding how long an orphan can hold the port.
+DEFAULT_IDLE_TIMEOUT = 1800
+
 # Kokoro's published voice set, grouped by the lang_code that can speak them. Weights are
 # fetched from the Hub on first use, so this is a catalogue, not a list of what is cached.
 VOICES = {
@@ -164,6 +168,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):  # noqa: D102 - silence per-request stderr noise
         pass
 
+    def handle_one_request(self):
+        # Every request, authorized or not, counts as the sidecar being wanted. Recording it
+        # here rather than in each verb means a handler added later cannot forget to.
+        touch_activity()
+        return super().handle_one_request()
+
     def _authorized(self) -> bool:
         return self.headers.get("Authorization", "") == f"Bearer {self.token}"
 
@@ -232,13 +242,72 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": f"{type(error).__name__}: {error}"})
 
 
+_last_activity = time.monotonic()
+_activity_lock = threading.Lock()
+
+
+def touch_activity():
+    """Record that someone is still using this sidecar."""
+    global _last_activity
+    with _activity_lock:
+        _last_activity = time.monotonic()
+
+
+def seconds_idle() -> float:
+    with _activity_lock:
+        return time.monotonic() - _last_activity
+
+
+def watch_parent_pipe():
+    """Exit when the parent closes our stdin.
+
+    The exact one. The OS closes the pipe however the parent goes away — a clean exit, a crash,
+    or `kill -9` — so this cannot be defeated by pid reuse the way `os.kill(ppid, 0)` can: if the
+    OS recycles the parent's pid, that check succeeds forever and the watchdog never fires. It
+    also needs no per-platform pid introspection, so it behaves the same on Windows.
+
+    Only armed when bay says it has given us a pipe. A hand-run sidecar usually has stdin on a
+    tty (read blocks, which is right) but under `< /dev/null` it would read EOF immediately and
+    exit before serving anything.
+    """
+    try:
+        while sys.stdin.buffer.read(1):
+            pass
+    except Exception:
+        pass
+    os._exit(0)
+
+
 def watch_parent(parent_pid: int):
-    """Exit once the parent is gone, so a crashed editor leaves no resident model behind."""
+    """Exit once the parent is gone, so a crashed editor leaves no resident model behind.
+
+    Kept as a second belt behind the pipe watchdog. Defeated by pid reuse on its own, which is
+    one of the two ways a sidecar was observed still holding its port long after every test
+    process had exited.
+    """
     while True:
         time.sleep(2.0)
         try:
             os.kill(parent_pid, 0)
         except OSError:
+            os._exit(0)
+
+
+def watch_idle(timeout_seconds: float):
+    """Exit after `timeout_seconds` with no requests.
+
+    The backstop. Whatever happened to the parent and whichever watchdog failed to fire, a
+    sidecar cannot sit on its port indefinitely — which is the failure that was actually
+    observed, and which then failed an unrelated test with PortBusy.
+    """
+    while True:
+        time.sleep(min(5.0, max(0.5, timeout_seconds / 4)))
+        if seconds_idle() >= timeout_seconds:
+            print(
+                f"bay-kokoro: exiting after {timeout_seconds:.0f}s idle",
+                file=sys.stderr,
+                flush=True,
+            )
             os._exit(0)
 
 
@@ -255,9 +324,41 @@ def main() -> int:
         return 2
     Handler.token = token
 
+    # Three layers, most exact first. Each is independent, so one failing to arm does not leave
+    # the sidecar unsupervised — which is exactly how one came to outlive every process that
+    # could have stopped it.
+    supervised = []
+
+    if os.environ.get("BAY_KOKORO_PARENT_PIPE") == "1":
+        threading.Thread(target=watch_parent_pipe, daemon=True).start()
+        supervised.append("parent pipe")
+
     parent = os.environ.get("BAY_KOKORO_PARENT_PID")
     if parent and parent.isdigit():
         threading.Thread(target=watch_parent, args=(int(parent),), daemon=True).start()
+        supervised.append(f"parent pid {parent}")
+
+    idle_timeout = os.environ.get("BAY_KOKORO_IDLE_TIMEOUT", str(DEFAULT_IDLE_TIMEOUT))
+    try:
+        idle_seconds = float(idle_timeout)
+    except ValueError:
+        idle_seconds = float(DEFAULT_IDLE_TIMEOUT)
+    if idle_seconds > 0:
+        touch_activity()
+        threading.Thread(target=watch_idle, args=(idle_seconds,), daemon=True).start()
+        supervised.append(f"idle {idle_seconds:.0f}s")
+
+    if not supervised:
+        # Used to be silent. A sidecar with nothing watching it runs until something kills it,
+        # and the whole point of the write-up was that nobody could tell that had happened.
+        print(
+            "bay-kokoro: WARNING — no parent pipe, no parent pid and no idle timeout. "
+            "This process will run until it is killed.",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(f"bay-kokoro: supervised by {', '.join(supervised)}", file=sys.stderr, flush=True)
 
     if args.preload:
         pipeline_for(args.preload)

@@ -116,6 +116,7 @@ pub struct Handle {
     id: JobId,
     state: Arc<Mutex<JobState>>,
     cancel: Arc<AtomicBool>,
+    finished_at: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 impl Handle {
@@ -148,6 +149,9 @@ impl Handle {
 struct Entry {
     state: Arc<Mutex<JobState>>,
     cancel: Arc<AtomicBool>,
+    /// When this job finished, for [`evictable`]. Registry bookkeeping, so it lives here rather
+    /// than on the state callers see.
+    finished_at: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 type Registry = Mutex<HashMap<JobId, Entry>>;
@@ -162,9 +166,49 @@ fn next_id() -> JobId {
     NEXT.fetch_add(1, Ordering::SeqCst)
 }
 
-/// How many finished jobs are kept. The old registry never evicted, so a long-lived editor
-/// accumulated one entry for every install it had ever run and reported them all forever.
-const FINISHED_KEPT: usize = 32;
+/// How long a finished job's result stays readable.
+///
+/// This is the number that matters. A job's whole purpose is to hold a result until its caller
+/// polls for it, so evicting on *count* alone is wrong: thirty-two quick renders finishing while
+/// an agent is still polling an earlier one would drop the answer it is waiting for, and it
+/// would get "no such job" instead. Evicting on age cannot do that — a caller that has not read
+/// its result within half an hour has stopped asking.
+const RESULT_RETENTION: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Backstop cap on finished jobs, for the pathological case of thousands inside the retention
+/// window. Far above any real session, so in practice age is what evicts.
+const FINISHED_CAP: usize = 256;
+
+/// Which finished jobs to drop. Pure, so the policy is testable without a global registry —
+/// and so testing it cannot evict another test's job, which is how the first version of this
+/// made the suite flaky.
+///
+/// `finished` is `(id, when it finished)`. Running jobs are never passed in and never evicted:
+/// losing one would lose the only handle to its result.
+fn evictable(
+    finished: &[(JobId, std::time::Instant)],
+    now: std::time::Instant,
+    retention: std::time::Duration,
+    cap: usize,
+) -> Vec<JobId> {
+    let mut aged: Vec<JobId> = finished
+        .iter()
+        .filter(|(_, at)| now.duration_since(*at) >= retention)
+        .map(|(id, _)| *id)
+        .collect();
+
+    // Still too many inside the window: drop oldest-finished first.
+    let remaining = finished.len().saturating_sub(aged.len());
+    if remaining > cap {
+        let mut fresh: Vec<&(JobId, std::time::Instant)> = finished
+            .iter()
+            .filter(|(id, _)| !aged.contains(id))
+            .collect();
+        fresh.sort_by_key(|(_, at)| *at);
+        aged.extend(fresh.iter().take(remaining - cap).map(|(id, _)| *id));
+    }
+    aged
+}
 
 /// Register a job and get the worker's handle to it.
 ///
@@ -187,6 +231,7 @@ pub fn start(kind: &str, label: &str, unit: Unit, total: u64) -> Handle {
         cancelled: false,
     }));
     let cancel = Arc::new(AtomicBool::new(false));
+    let finished_at = Arc::new(Mutex::new(None));
 
     if let Ok(mut jobs) = registry().lock() {
         jobs.insert(
@@ -194,12 +239,18 @@ pub fn start(kind: &str, label: &str, unit: Unit, total: u64) -> Handle {
             Entry {
                 state: Arc::clone(&state),
                 cancel: Arc::clone(&cancel),
+                finished_at: Arc::clone(&finished_at),
             },
         );
-        evict_finished(&mut jobs);
+        sweep(&mut jobs, std::time::Instant::now());
     }
 
-    Handle { id, state, cancel }
+    Handle {
+        id,
+        state,
+        cancel,
+        finished_at,
+    }
 }
 
 /// Record how a job ended. Idempotent, so a worker that finishes and then unwinds cannot
@@ -210,6 +261,9 @@ pub fn finish(handle: &Handle, outcome: Result<serde_json::Value, String>) {
             return;
         }
         state.finished = true;
+        if let Ok(mut at) = handle.finished_at.lock() {
+            *at = Some(std::time::Instant::now());
+        }
         match outcome {
             Ok(value) => {
                 if state.total > 0 {
@@ -287,26 +341,16 @@ pub fn running(kind: &str, label: &str) -> Option<JobId> {
         .map(|state| state.id)
 }
 
-/// Drop the oldest finished jobs once there are more than [`FINISHED_KEPT`]. Running jobs are
-/// never evicted, however many there are — losing one would lose the only handle to its result.
-fn evict_finished(jobs: &mut HashMap<JobId, Entry>) {
-    let mut finished: Vec<JobId> = jobs
+/// Apply [`evictable`] to the registry.
+fn sweep(jobs: &mut HashMap<JobId, Entry>, now: std::time::Instant) {
+    let finished: Vec<(JobId, std::time::Instant)> = jobs
         .iter()
-        .filter(|(_, entry)| {
-            entry
-                .state
-                .lock()
-                .map(|state| state.finished)
-                .unwrap_or(false)
+        .filter_map(|(id, entry)| {
+            let at = entry.finished_at.lock().ok()?;
+            (*at).map(|at| (*id, at))
         })
-        .map(|(id, _)| *id)
         .collect();
-    if finished.len() <= FINISHED_KEPT {
-        return;
-    }
-    finished.sort_unstable();
-    let drop_count = finished.len() - FINISHED_KEPT;
-    for id in finished.into_iter().take(drop_count) {
+    for id in evictable(&finished, now, RESULT_RETENTION, FINISHED_CAP) {
         jobs.remove(&id);
     }
 }
@@ -412,29 +456,89 @@ mod tests {
         );
     }
 
-    #[test]
-    fn finished_jobs_are_evicted_but_running_ones_never_are() {
-        // The old registry kept every job forever and reported them all.
-        let running_handle = start("render", "eviction-probe-running", Unit::Frames, 10);
-        for i in 0..FINISHED_KEPT * 2 {
-            let handle = start("render", &format!("eviction-probe-{i}"), Unit::Frames, 1);
-            finish(&handle, Ok(serde_json::json!({})));
-        }
-        // One more start to trigger the sweep after the last finish.
-        let trigger = start("render", "eviction-probe-trigger", Unit::Frames, 1);
-        finish(&trigger, Ok(serde_json::json!({})));
-        start("render", "eviction-probe-sweep", Unit::Frames, 1);
+    // Eviction policy. Tested as a pure function against a synthetic clock rather than by
+    // flooding the process-global registry: the first version of this test created 64 finished
+    // jobs, which evicted OTHER tests' jobs and made the suite fail intermittently. A test that
+    // fails for reasons outside the code it covers teaches people to re-run until green.
 
-        let kept = all();
-        let finished_kept = kept.iter().filter(|s| s.finished).count();
-        assert!(
-            finished_kept <= FINISHED_KEPT,
-            "finished jobs should be capped at {FINISHED_KEPT}, found {finished_kept}"
+    fn at(base: std::time::Instant, secs: u64) -> std::time::Instant {
+        base + std::time::Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn a_recent_result_is_never_evicted() {
+        // The bug this policy exists to prevent: an agent polling for its render's result gets
+        // "no such job" because other renders finished in the meantime.
+        let base = std::time::Instant::now();
+        let finished: Vec<(JobId, std::time::Instant)> =
+            (1..=50).map(|id| (id, at(base, id))).collect();
+
+        let dropped = evictable(
+            &finished,
+            at(base, 60),
+            std::time::Duration::from_secs(600),
+            256,
         );
         assert!(
-            state(running_handle.id()).is_some(),
-            "a running job must never be evicted — its result would be unreachable"
+            dropped.is_empty(),
+            "nothing inside the retention window may be evicted, dropped {dropped:?}"
         );
+    }
+
+    #[test]
+    fn a_result_nobody_collected_is_evicted_once_it_is_old() {
+        let base = std::time::Instant::now();
+        let finished = [(1, at(base, 0)), (2, at(base, 100)), (3, at(base, 700))];
+
+        let dropped = evictable(
+            &finished,
+            at(base, 800),
+            std::time::Duration::from_secs(600),
+            256,
+        );
+        assert!(dropped.contains(&1), "700s old, must go");
+        assert!(dropped.contains(&2), "700s old, must go");
+        assert!(!dropped.contains(&3), "100s old, still collectable");
+    }
+
+    #[test]
+    fn the_cap_drops_the_oldest_first_when_everything_is_recent() {
+        // The pathological case: more finished jobs inside the window than the cap allows. The
+        // ones most likely to still be wanted are the newest, so the oldest go.
+        let base = std::time::Instant::now();
+        let finished: Vec<(JobId, std::time::Instant)> =
+            (1..=10).map(|id| (id, at(base, id))).collect();
+
+        let dropped = evictable(
+            &finished,
+            at(base, 11),
+            std::time::Duration::from_secs(600),
+            4,
+        );
+        assert_eq!(dropped.len(), 6, "10 finished, cap 4 → 6 dropped");
+        assert!(dropped.contains(&1) && dropped.contains(&6), "{dropped:?}");
+        assert!(
+            !dropped.contains(&7) && !dropped.contains(&10),
+            "the newest four survive: {dropped:?}"
+        );
+    }
+
+    #[test]
+    fn a_running_job_is_never_offered_for_eviction() {
+        // Structural: `sweep` only collects entries with a finish timestamp, so a running job
+        // cannot reach `evictable` at all. Losing one would lose the only handle to its result.
+        let handle = start("render", "never-evicted-probe", Unit::Frames, 10);
+        let jobs = registry().lock().unwrap();
+        let running_has_no_timestamp = jobs
+            .get(&handle.id())
+            .map(|entry| entry.finished_at.lock().unwrap().is_none())
+            .unwrap_or(false);
+        assert!(
+            running_has_no_timestamp,
+            "a running job must have no finish time, so eviction cannot see it"
+        );
+        drop(jobs);
+        finish(&handle, Ok(serde_json::json!({})));
     }
 
     #[test]

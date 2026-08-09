@@ -596,6 +596,7 @@ mod tests {
 #[cfg(test)]
 mod narration_tests {
     use super::tests_support::*;
+    use crate::Studio;
     use serde_json::{Value, json};
 
     fn srt_fixture(dir: &std::path::Path) -> String {
@@ -811,7 +812,11 @@ mod narration_tests {
 
     #[test]
     fn narrating_reuses_one_hot_sidecar_across_calls() {
-        let mut studio = new_studio();
+        // A port of its own, never the product's 7334. Sharing it meant this test failed
+        // whenever anything else on the machine held that port — another test binary spawning a
+        // sidecar, or a `bay --mcp` someone left running — and a test that fails for reasons
+        // outside the repository is one people learn to re-run rather than read.
+        let mut studio = Studio::for_test(test_library_root(), 7451);
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
         let status: Value = serde_json::from_str(&status).unwrap();
         if status["available"] != Value::Bool(true) {

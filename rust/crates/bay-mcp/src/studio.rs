@@ -87,6 +87,22 @@ impl Studio {
         Self::with_library_root(None)
     }
 
+    /// A studio whose sidecar uses `port` instead of the product's fixed one.
+    ///
+    /// Tests only, and not a convenience: `CLAUDE.md` requires that a test never depend on a
+    /// shared machine resource. Driving the narration tests through the real port made them
+    /// fail whenever anything else on the machine — another test binary, a `bay --mcp` someone
+    /// left running — held it, which is precisely how a real failure gets dismissed as flake.
+    #[cfg(test)]
+    pub(crate) fn for_test(library_root: std::path::PathBuf, speech_port: u16) -> Self {
+        let mut studio = Self::with_library_root(Some(library_root));
+        studio.speech = bay_speech::SpeechEngine::new(bay_speech::SpeechConfig {
+            port: speech_port,
+            ..bay_speech::SpeechConfig::default()
+        });
+        studio
+    }
+
     /// A studio whose pathless saves land in `root` instead of the user's project library.
     pub fn with_library_root(library_root: Option<std::path::PathBuf>) -> Self {
         Self {

@@ -78,7 +78,11 @@ impl Default for SpeechConfig {
 fn sidecar_env(token: &str) -> Vec<(String, std::ffi::OsString)> {
     vec![
         ("BAY_KOKORO_TOKEN".into(), token.into()),
-        // So a crashed editor cannot leave a multi-gigabyte model resident.
+        // The exact watchdog: the child blocks reading the stdin pipe we give it and exits on
+        // EOF. The OS closes that pipe however this process goes away, including `kill -9`, so
+        // unlike a pid check it cannot be defeated by the OS recycling our pid.
+        ("BAY_KOKORO_PARENT_PIPE".into(), "1".into()),
+        // Second belt. Kept because it costs nothing and covers a pipe we somehow fail to give.
         (
             "BAY_KOKORO_PARENT_PID".into(),
             std::process::id().to_string().into(),
@@ -323,6 +327,9 @@ impl SpeechEngine {
                 &self.config.port.to_string(),
             ])
             .envs(sidecar_env(&self.config.token))
+            // The pipe IS the watchdog — see BAY_KOKORO_PARENT_PIPE. The handle is kept alive by
+            // `child`, so it closes exactly when this process does. Nothing is ever written to it.
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
