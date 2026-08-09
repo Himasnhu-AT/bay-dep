@@ -14,14 +14,16 @@ fn renders_starter_scene_to_a_nonempty_frame() {
     };
     let project = Project::starter();
     let (width, height) = (128, 72);
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        width,
-        height,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
 
     assert_eq!(frame.bgra.len() as u32, width * height * 4);
     let corner = &frame.bgra[0..4];
@@ -40,14 +42,16 @@ fn reuses_cached_text_rasters_across_frames() {
     let project = Project::starter();
     let (width, height) = (128, 72);
     let render_once = |renderer: &mut PreviewRenderer, at: MediaTime| {
-        renderer.render(
-            project.active_scene(),
-            at,
-            width,
-            height,
-            &project.settings.background,
-            &project.media,
-        );
+        renderer
+            .render(
+                project.active_scene(),
+                at,
+                width,
+                height,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
     };
 
     render_once(&mut renderer, MediaTime::ZERO);
@@ -81,14 +85,16 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
         });
     }
     let (width, height) = (128, 72);
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        width,
-        height,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
     assert_eq!(frame.bgra.len() as u32, width * height * 4);
 }
 
@@ -109,14 +115,16 @@ fn renders_contrast_saturation_and_blur_on_gpu() {
             });
         }
         let (width, height) = (128, 72);
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            width,
-            height,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                width,
+                height,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         assert_eq!(
             frame.bgra.len() as u32,
             width * height * 4,
@@ -160,14 +168,16 @@ fn renders_a_real_image_element_from_disk() {
             blend_mode: Default::default(),
         }));
 
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        64,
-        36,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            36,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
 
     let _ = std::fs::remove_file(&path);
@@ -241,24 +251,28 @@ fn renders_a_real_video_frame_via_ffmpeg() {
     // Decoding runs on a worker thread, so drive frames until it lands before asserting on
     // pixels (a single render would legitimately show the placeholder).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        64,
-        36,
-        &project.settings.background,
-        &project.media,
-    );
-    while renderer.has_pending_decodes() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        frame = renderer.render(
+    let mut frame = renderer
+        .render(
             project.active_scene(),
             MediaTime::ZERO,
             64,
             36,
             &project.settings.background,
             &project.media,
-        );
+        )
+        .expect("the GPU produced a frame");
+    while renderer.has_pending_decodes() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                64,
+                36,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
     }
     assert!(!renderer.has_pending_decodes(), "decode never completed");
 
@@ -293,12 +307,83 @@ fn exports_a_short_video_via_ffmpeg() {
         &project.media,
         out.to_str().unwrap(),
     );
-    if !require_ffmpeg_step(ok, "encode the exported mp4") {
+    if !require_ffmpeg_step(ok.is_ok(), "encode the exported mp4") {
         return;
     }
     let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
     assert!(size > 0, "exported video should be non-empty");
+
+    // A finished export leaves nothing behind. The `.part` staging file is the mechanism that
+    // keeps a half-written file off the destination path, so it must not survive success.
+    let leftovers = strays_beside(&out);
+    assert!(
+        leftovers.is_empty(),
+        "a successful export should leave no staging files, found {leftovers:?}"
+    );
     let _ = std::fs::remove_file(&out);
+}
+
+/// Any staging file sitting next to `out`. The suffix is infixed before the extension
+/// (`out.1234.part.mp4`), because ffmpeg picks its container from the filename.
+fn strays_beside(out: &std::path::Path) -> Vec<String> {
+    let Some(dir) = out.parent() else {
+        return Vec::new();
+    };
+    let stem = out.file_stem().and_then(|n| n.to_str()).unwrap_or_default();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|f| f.starts_with(stem) && f.contains(".part"))
+        .collect()
+}
+
+/// A failed export must leave **nothing** at the destination.
+///
+/// It used to `break` out of the frame loop on a broken pipe and return whatever ffmpeg had
+/// managed to write — a truncated MP4 sitting at the real output path, with nothing to
+/// distinguish it from a good one. The failure is forced with an unwritable directory, which
+/// makes ffmpeg exit non-zero without needing a corrupt input.
+#[test]
+fn a_failed_export_leaves_no_file_behind() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+    let project = Project::starter();
+    // A directory that does not exist: ffmpeg cannot create the output, so it fails after we
+    // have already started feeding it frames.
+    let missing = std::env::temp_dir()
+        .join(format!("bay-no-such-dir-{}", std::process::id()))
+        .join("out.mp4");
+
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.3,
+        10.0,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        missing.to_str().unwrap(),
+    );
+
+    assert!(
+        result.is_err(),
+        "an export that cannot be written must report failure, got Ok"
+    );
+    assert!(
+        !missing.exists(),
+        "a failed export must not leave a file at the destination"
+    );
+    assert!(
+        strays_beside(&missing).is_empty(),
+        "a failed export must clean up its staging file"
+    );
 }
 
 #[test]
@@ -330,6 +415,7 @@ fn blend_modes_actually_change_the_composited_frame() {
                 &backdrop,
                 &project.media,
             )
+            .expect("the GPU produced a frame")
             .bgra
     };
 
@@ -430,14 +516,16 @@ fn a_non_square_image_is_not_stretched_to_the_canvas() {
         }));
 
     let size = 64; // square canvas
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        size,
-        size,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            size,
+            size,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
 
     let row_has_red = |row: u32| {
         (0..size).any(|x| {
@@ -486,14 +574,16 @@ fn every_blend_mode_reaches_the_gpu_over_a_chromatic_backdrop() {
             title.blend_mode = mode;
             title.color = "#e0a020".into(); // saturated orange: differs in hue AND luma
         }
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            width,
-            height,
-            &backdrop,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                width,
+                height,
+                &backdrop,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         assert_eq!(frame.bgra.len(), (width * height * 4) as usize, "{mode:?}");
         rendered.push((mode, frame.bgra));
     }
@@ -586,6 +676,7 @@ fn decode_runs_off_the_render_path_and_is_cached() {
             &p.settings.background,
             &p.media,
         )
+        .expect("the GPU produced a frame")
     };
 
     // First render kicks off the worker and must NOT block for the decode.
@@ -660,14 +751,16 @@ fn a_missing_media_file_fails_once_and_does_not_crash() {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            32,
-            32,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                32,
+                32,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         assert_eq!(
             frame.bgra.len(),
             32 * 32 * 4,
@@ -709,14 +802,16 @@ fn a_non_finite_transform_does_not_panic_the_renderer() {
             anchor_y: f32::NEG_INFINITY,
         };
     }
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        64,
-        36,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            36,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
 }
 
@@ -728,14 +823,16 @@ fn a_tiny_canvas_does_not_panic() {
     };
     let project = Project::starter();
     for (w, h) in [(1u32, 1u32), (8, 4), (2, 16)] {
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            w,
-            h,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                w,
+                h,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         assert_eq!(frame.bgra.len() as u32, w * h * 4, "{w}x{h} canvas");
     }
 }
@@ -796,14 +893,16 @@ fn a_shape_renders_its_own_fill_colour() {
         return;
     };
     let project = shape_scene(bar(1.0, 0.5));
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        200,
-        200,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            200,
+            200,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
     // Dead centre is inside a full-width bar 10% of the canvas tall.
     assert_eq!(
         pixel(&frame, 100, 100),
@@ -830,14 +929,16 @@ fn anchor_x_zero_grows_a_bar_rightward_from_a_fixed_origin() {
         let mut shape = bar(scale_x, 0.0);
         shape.transform.x = 0.25;
         let project = shape_scene(shape);
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            200,
-            200,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                200,
+                200,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         let row: Vec<u32> = (0..200)
             .filter(|x| pixel(&frame, *x, 100)[0] > 128)
             .collect();
@@ -878,14 +979,16 @@ fn anchor_y_one_grows_a_column_upward_from_its_baseline() {
         shape.transform.y = 0.9;
         shape.transform.anchor_y = 1.0;
         let project = shape_scene(shape);
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            200,
-            200,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                200,
+                200,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         let column: Vec<u32> = (0..200)
             .filter(|y| pixel(&frame, 100, *y)[0] > 128)
             .collect();
@@ -912,14 +1015,16 @@ fn scale_x_of_zero_draws_nothing_rather_than_a_stray_line() {
         return;
     };
     let project = shape_scene(bar(0.0, 0.0));
-    let frame = renderer.render(
-        project.active_scene(),
-        MediaTime::ZERO,
-        64,
-        64,
-        &project.settings.background,
-        &project.media,
-    );
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            64,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
     assert!(
         frame
             .bgra
@@ -1128,14 +1233,16 @@ fn an_animated_scale_actually_changes_a_texts_rendered_size() {
     }
 
     let ink = |renderer: &mut PreviewRenderer, at: i64| {
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::from_ticks(at),
-            300,
-            300,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::from_ticks(at),
+                300,
+                300,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         frame
             .bgra
             .chunks_exact(4)
@@ -1260,7 +1367,10 @@ fn an_exported_video_carries_its_soundtrack() {
         &project.media,
         out.to_str().unwrap(),
     );
-    assert!(ok, "export_video should succeed with an audio bed");
+    assert!(
+        ok.is_ok(),
+        "export_video should succeed with an audio bed: {ok:?}"
+    );
 
     // The whole point: ffprobe must find an audio stream in the output. Before the mux
     // existed, export_video piped one rawvideo input and this file was silent.
@@ -1355,14 +1465,16 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
 
     // Render twice: the second pass exercises the cache in its post-eviction steady state.
     for pass in 0..2 {
-        let frame = renderer.render(
-            project.active_scene(),
-            MediaTime::ZERO,
-            240,
-            420,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                240,
+                420,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
         let lit = frame
             .bgra
             .chunks_exact(4)

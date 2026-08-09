@@ -722,6 +722,12 @@ impl EditorView {
             media,
         );
 
+        // A frame the GPU could not produce (device loss on a laptop that slept) leaves the last
+        // good one on screen. Showing nothing, or a black rectangle, would look like the project
+        // is empty rather than like the GPU hiccuped.
+        let Some(frame) = frame else {
+            return;
+        };
         if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra) {
             let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
             self.preview_image = Some(Arc::new(render_image));
@@ -945,6 +951,10 @@ impl EditorView {
             media,
         );
 
+        let Some(frame) = frame else {
+            self.status = Some("Frame export failed: the GPU could not render a frame".to_string());
+            return;
+        };
         let mut rgba = frame.bgra;
         for texel in rgba.chunks_exact_mut(4) {
             texel.swap(0, 2); // BGRA → RGBA for PNG
@@ -977,7 +987,7 @@ impl EditorView {
         let scene = self.editor.active_scene();
         let media = self.editor.media();
         let out = export_video_path();
-        let ok = renderer.export_video(
+        let result = renderer.export_video(
             scene,
             duration,
             fps,
@@ -987,10 +997,11 @@ impl EditorView {
             media,
             &out.to_string_lossy(),
         );
-        self.status = Some(if ok {
-            format!("Exported video to {}", out.display())
-        } else {
-            "Video export failed (is ffmpeg installed?)".to_string()
+        self.status = Some(match result {
+            Ok(()) => format!("Exported video to {}", out.display()),
+            // The old text asked "is ffmpeg installed?" for every failure, including the ones
+            // where ffmpeg ran fine and said exactly what was wrong.
+            Err(reason) => format!("Video export failed: {reason}"),
         });
     }
 
@@ -1094,6 +1105,11 @@ impl EditorView {
             self.editor.media(),
         );
 
+        let Some(frame) = frame else {
+            return AgentResponse::Err(
+                "the GPU could not produce a frame — the device may have been lost".into(),
+            );
+        };
         let mut rgba = frame.bgra;
         for texel in rgba.chunks_exact_mut(4) {
             texel.swap(0, 2); // BGRA → RGBA for PNG

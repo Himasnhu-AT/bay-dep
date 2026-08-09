@@ -774,14 +774,18 @@ impl Studio {
         let height = ((canvas.height as f32 * scale) as u32).max(16);
         let playhead = secs(at)?;
         let renderer = self.renderer()?;
-        let frame = renderer.render(
-            project.active_scene(),
-            playhead,
-            width,
-            height,
-            &project.settings.background,
-            &project.media,
-        );
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                playhead,
+                width,
+                height,
+                &project.settings.background,
+                &project.media,
+            )
+            .ok_or_else(|| {
+                err("the GPU could not produce a frame — the device may have been lost")
+            })?;
 
         // The compositor hands back BGRA; PNG wants RGBA.
         let mut rgba = frame.bgra;
@@ -816,22 +820,18 @@ impl Studio {
         let canvas = project.settings.canvas;
         let renderer = self.renderer()?;
         let started = std::time::Instant::now();
-        let ok = renderer.export_video(
-            project.active_scene(),
-            duration,
-            fps,
-            canvas.width,
-            canvas.height,
-            &project.settings.background,
-            &project.media,
-            path,
-        );
-        if !ok {
-            return Err(err(format!(
-                "ffmpeg failed to encode {path} — check that ffmpeg is on PATH and that every \
-                 audio asset resolves"
-            )));
-        }
+        renderer
+            .export_video(
+                project.active_scene(),
+                duration,
+                fps,
+                canvas.width,
+                canvas.height,
+                &project.settings.background,
+                &project.media,
+                path,
+            )
+            .map_err(|reason| err(format!("could not encode {path}: {reason}")))?;
         let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         Ok(serde_json::json!({
             "path": path,

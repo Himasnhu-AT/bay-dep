@@ -398,6 +398,10 @@ impl PreviewRenderer {
     /// Rasterise + upload a text texture keyed by its content/style, reusing the cached texture
     /// when the exact same text was drawn before. Evicts the least-recently inserted entry (and
     /// releases its GPU texture) once the cache is full. Returns the texture id (the key).
+    ///
+    /// `None` when the rasterizer handed back a buffer that disagrees with its own dimensions.
+    /// The caller drops that one layer and still draws the frame — a bad raster must not take
+    /// the editor down with it.
     fn ensure_text_texture(
         &mut self,
         content: &str,
@@ -406,24 +410,24 @@ impl PreviewRenderer {
         tw: u32,
         th: u32,
         style: &bay_text::TextStyle<'_>,
-    ) -> String {
+    ) -> Option<String> {
         let key = format!(
             "text:{color}:{font}:{tw}x{th}:{style_key}:{content}",
             font = font_px.to_bits(),
             style_key = style.cache_key(),
         );
         if self.raster_keys.contains(&key) {
-            return key;
+            return Some(key);
         }
         let image = self
             .text
             .render_styled(content, font_px, color, tw, th, style);
         let texture =
             self.ctx
-                .upload_rgba_texture(&image.rgba, image.width, image.height, "preview-text");
+                .upload_rgba_texture(&image.rgba, image.width, image.height, "preview-text")?;
         self.compositor.upsert_texture(key.clone(), texture);
         self.remember_raster(key.clone());
-        key
+        Some(key)
     }
 
     /// Upload (once) the RGBA raster for a shape+colour pair, returning its texture key.
@@ -432,12 +436,14 @@ impl PreviewRenderer {
     /// shape key can never collide with a text key because of the `shape:`/`text:` prefixes.
     /// The raster is square and gets stretched by the layer quad, so one texture serves a bar
     /// at any width.
+    ///
+    /// `None` on a mis-sized raster, for the same reason as [`Self::ensure_text_texture`].
     fn ensure_shape_texture(
         &mut self,
         shape: &bay_project::ShapeKind,
         color: &str,
         aspect: f32,
-    ) -> String {
+    ) -> Option<String> {
         use bay_project::ShapeKind;
         // A square-cornered rect has no curvature at all, so one tiny tile serves every size
         // and aspect. Anything curved must be rasterized at the layer's own aspect or the
@@ -456,15 +462,15 @@ impl PreviewRenderer {
             ShapeKind::Ellipse => format!("shape:ellipse:{color}:{raster_w}x{raster_h}"),
         };
         if self.raster_keys.contains(&key) {
-            return key;
+            return Some(key);
         }
         let rgba = rasterize_shape(shape, color, raster_w, raster_h);
         let texture = self
             .ctx
-            .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape");
+            .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape")?;
         self.compositor.upsert_texture(key.clone(), texture);
         self.remember_raster(key.clone());
-        key
+        Some(key)
     }
 
     /// Record a freshly uploaded CPU raster in the LRU.
@@ -601,7 +607,7 @@ impl PreviewRenderer {
         let (width, height) = rgba.dimensions();
         let texture =
             self.ctx
-                .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image");
+                .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image")?;
         self.compositor
             .upsert_texture(media_id.to_string(), texture);
         self.uploaded_media
@@ -610,16 +616,19 @@ impl PreviewRenderer {
     }
 
     /// Upload an 8×8 solid placeholder for an element and return its texture id.
-    fn upload_solid_placeholder(&mut self, element: &Element) -> String {
+    ///
+    /// The buffer is built here at a fixed 8×8, so the upload cannot fail on size — but the
+    /// signature stays honest rather than unwrapping a value it happens to know is `Some`.
+    fn upload_solid_placeholder(&mut self, element: &Element) -> Option<String> {
         let texture = self.ctx.upload_rgba_texture(
             &solid_rgba(kind_color(element.kind())),
             8,
             8,
             "preview-solid",
-        );
+        )?;
         self.compositor
             .upsert_texture(element.id().to_string(), texture);
-        element.id().to_string()
+        Some(element.id().to_string())
     }
 
     /// Encode the timeline to a video file by rendering each frame and piping raw RGBA to the
@@ -655,7 +664,14 @@ impl PreviewRenderer {
     /// indirection at the single call site without clarifying anything.
     ///
     /// Renders every frame of the timeline and encodes an MP4 at `out_path`, mixing the audio
-    /// lanes onto the picture. Returns whether ffmpeg exited successfully.
+    /// lanes onto the picture.
+    ///
+    /// Encodes to a `.part` sibling and renames on success, so `out_path` either does not exist
+    /// or is a complete file. A partial write used to be left at the destination, where nothing
+    /// distinguished it from a good export.
+    ///
+    /// The `Err` carries ffmpeg's own stderr where there is any, because "is ffmpeg installed?"
+    /// is the wrong question for a codec failure.
     #[allow(clippy::too_many_arguments)]
     pub fn export_video(
         &mut self,
@@ -667,7 +683,7 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
         out_path: &str,
-    ) -> bool {
+    ) -> Result<(), String> {
         use std::io::Write;
 
         // Every audible clip on the audio lanes, resolved to a file on disk. Until this
@@ -739,47 +755,113 @@ impl PreviewRenderer {
 
         args.push("-pix_fmt".into());
         args.push("yuv420p".into());
-        args.push(out_path.into());
+        // Encode beside the destination, not at it. The pid keeps two concurrent exports of the
+        // same path from clobbering each other's staging file.
+        let part_path = staging_path(out_path);
+        args.push(part_path.clone());
 
-        let Ok(ffmpeg) = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg) else {
-            // Resolution failed, not the encode. The caller reports "is ffmpeg installed?",
-            // which is the right question — bay_paths has already looked everywhere it can.
-            return false;
-        };
+        let ffmpeg = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg).map_err(|_| {
+            // Resolution failed, not the encode. bay_paths has already looked everywhere it can.
+            "ffmpeg was not found. Install it, or let bay install it for you with \
+             runtime_install video."
+                .to_string()
+        })?;
         let mut ffmpeg = ffmpeg;
-        let Ok(mut child) = ffmpeg
+        let mut child = ffmpeg
             .args(&args)
             .stdin(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
-        else {
-            return false;
-        };
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&part_path);
+                format!("could not start ffmpeg: {e}")
+            })?;
+        // Drain stderr on its own thread. ffmpeg blocks once the pipe buffer fills, so reading it
+        // only after `wait()` would deadlock on a chatty failure — which is exactly the case the
+        // message matters for.
+        let stderr_reader = child.stderr.take().map(|mut stderr| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = std::io::Read::read_to_string(&mut stderr, &mut buf);
+                buf
+            })
+        });
         let Some(mut stdin) = child.stdin.take() else {
-            return false;
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&part_path);
+            return Err("could not open a pipe to ffmpeg".to_string());
         };
 
         // Placeholders must never be baked into an export, so wait for every decode first.
         self.await_decodes(scene, media);
 
         let total_frames = (duration_seconds * fps).ceil().max(1.0) as u64;
+        let mut failure: Option<String> = None;
         for index in 0..total_frames {
             let seconds = index as f64 / fps;
             let playhead = MediaTime::from_seconds_f64(seconds).unwrap_or(MediaTime::ZERO);
-            let frame = self.render(scene, playhead, width, height, background, media);
+            // A frame the GPU could not produce must not be silently skipped: doing so would
+            // shorten the output and shift every later frame's timing.
+            let Some(frame) = self.render(scene, playhead, width, height, background, media) else {
+                failure = Some(format!(
+                    "the GPU could not render frame {index} of {total_frames}"
+                ));
+                break;
+            };
             let mut rgba = frame.bgra;
             for texel in rgba.chunks_exact_mut(4) {
                 texel.swap(0, 2); // BGRA → RGBA for ffmpeg input
             }
-            if stdin.write_all(&rgba).is_err() {
+            if let Err(e) = stdin.write_all(&rgba) {
+                // Used to `break` and return whatever ffmpeg had written — a truncated MP4 at the
+                // destination path, indistinguishable from a good one.
+                failure = Some(format!("ffmpeg stopped accepting frames: {e}"));
                 break;
             }
         }
         drop(stdin);
-        child.wait().map(|s| s.success()).unwrap_or(false)
+
+        let status = child.wait();
+        let stderr = stderr_reader
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
+
+        if let Some(reason) = failure {
+            let _ = std::fs::remove_file(&part_path);
+            return Err(with_stderr(&reason, &stderr));
+        }
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                let _ = std::fs::remove_file(&part_path);
+                return Err(with_stderr(&format!("ffmpeg exited {status}"), &stderr));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&part_path);
+                return Err(with_stderr(
+                    &format!("ffmpeg could not be waited on: {e}"),
+                    &stderr,
+                ));
+            }
+        }
+
+        // Only now does the destination path come into existence, so a caller that finds a file
+        // there knows ffmpeg wrote all of it.
+        std::fs::rename(&part_path, out_path).map_err(|e| {
+            let _ = std::fs::remove_file(&part_path);
+            format!("could not move the finished export into place: {e}")
+        })?;
+        Ok(())
     }
 
     /// Composite `scene` at `playhead` into a `width × height` BGRA frame. `media` resolves image
     /// element `media_id`s to files on disk.
+    ///
+    /// `None` means **this frame could not be produced** — the compositor pass failed, or the
+    /// readback did (device loss). It does not mean a layer was missing: a layer whose texture
+    /// cannot be built is skipped and the rest of the frame still draws. Callers hold their last
+    /// good frame rather than showing a lie.
     pub fn render(
         &mut self,
         scene: &Scene,
@@ -788,7 +870,7 @@ impl PreviewRenderer {
         height: u32,
         background: &Background,
         media: &[MediaAsset],
-    ) -> PreviewFrame {
+    ) -> Option<PreviewFrame> {
         let clear = match background {
             Background::Color { color } => hex_to_rgba(color),
             Background::Blur { .. } => [0.06, 0.06, 0.08, 1.0],
@@ -868,7 +950,7 @@ impl PreviewRenderer {
                     }
                     Element::Image(image_element) => {
                         match self.ensure_image_texture(&image_element.media_id, media) {
-                            Some((texture_id, natural)) => (texture_id, Some(natural)),
+                            Some((texture_id, natural)) => (Some(texture_id), Some(natural)),
                             None => (self.upload_solid_placeholder(element), None),
                         }
                     }
@@ -901,17 +983,27 @@ impl PreviewRenderer {
                                     .map(|rgba| (clip.width, clip.height, rgba.clone()))
                             });
                         match frame {
+                            // A decoded frame whose byte count disagrees with its own dimensions
+                            // falls back to the placeholder — the same degrade as "not ready yet".
                             Some((w, h, rgba)) => {
-                                let texture =
-                                    self.ctx.upload_rgba_texture(&rgba, w, h, "preview-video");
-                                self.compositor
-                                    .upsert_texture(element.id().to_string(), texture);
-                                (element.id().to_string(), Some((w, h)))
+                                match self.ctx.upload_rgba_texture(&rgba, w, h, "preview-video") {
+                                    Some(texture) => {
+                                        self.compositor
+                                            .upsert_texture(element.id().to_string(), texture);
+                                        (Some(element.id().to_string()), Some((w, h)))
+                                    }
+                                    None => (self.upload_solid_placeholder(element), None),
+                                }
                             }
                             None => (self.upload_solid_placeholder(element), None),
                         }
                     }
                     _ => (self.upload_solid_placeholder(element), None),
+                };
+
+                // No texture means this layer could not be built. Drop the layer, keep the frame.
+                let Some(texture_id) = texture_id else {
+                    continue;
                 };
 
                 // `scale` defines a box as a fraction of the canvas; a source with a natural
@@ -976,21 +1068,22 @@ impl PreviewRenderer {
             items,
         };
 
-        let texture = self
-            .compositor
-            .render_frame_to_texture(&self.ctx, &frame)
-            .expect("compositor render_frame_to_texture failed");
         // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
         // native order, so there is no per-frame channel swizzle on the hot path.
-        let bgra = self.ctx.read_texture_bgra(&texture, width, height);
+        let bgra = match self.compositor.render_frame_to_texture(&self.ctx, &frame) {
+            Ok(texture) => self.ctx.read_texture_bgra(&texture, width, height),
+            Err(_) => None,
+        };
 
+        // Evict before the early return, so a failed frame cannot strand this frame's rasters
+        // in the cache and shrink the budget available to the next one.
         self.evict_rasters(&in_use);
 
-        PreviewFrame {
+        Some(PreviewFrame {
             width,
             height,
-            bgra,
-        }
+            bgra: bgra?,
+        })
     }
 }
 
@@ -1143,6 +1236,43 @@ fn solid_rgba(color: [u8; 4]) -> Vec<u8> {
     color.iter().copied().cycle().take(8 * 8 * 4).collect()
 }
 
+/// Where an export is encoded before it is renamed into place.
+///
+/// The staging suffix goes **before** the extension, not after it: ffmpeg infers the container
+/// from the output filename, so `out.mp4.1234.part` makes it refuse with "Unable to choose an
+/// output format". `out.1234.part.mp4` keeps the extension and stays obviously temporary.
+///
+/// The pid keeps two concurrent exports of the same destination off each other's staging file.
+pub(crate) fn staging_path(out_path: &str) -> String {
+    let pid = std::process::id();
+    let path = std::path::Path::new(out_path);
+    match (path.file_stem(), path.extension()) {
+        (Some(stem), Some(ext)) => {
+            let staged = format!(
+                "{}.{pid}.part.{}",
+                stem.to_string_lossy(),
+                ext.to_string_lossy()
+            );
+            path.with_file_name(staged).to_string_lossy().into_owned()
+        }
+        // No extension to protect, so the simple suffix is fine.
+        _ => format!("{out_path}.{pid}.part"),
+    }
+}
+
+/// Append ffmpeg's own diagnostics to an export failure when it produced any.
+///
+/// Without this every encode failure reached the user as "is ffmpeg installed?", which is the
+/// wrong question when ffmpeg ran fine and the codec, the path or the arguments were the problem.
+fn with_stderr(reason: &str, stderr: &str) -> String {
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        reason.to_string()
+    } else {
+        format!("{reason} — ffmpeg said: {stderr}")
+    }
+}
+
 fn hex_to_rgba(hex: &str) -> [f32; 4] {
     let value = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(0);
     [
@@ -1151,4 +1281,42 @@ fn hex_to_rgba(hex: &str) -> [f32; 4] {
         (value & 0xff) as f32 / 255.0,
         1.0,
     ]
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::staging_path;
+
+    /// ffmpeg chooses its container from the output filename. Appending the staging suffix
+    /// *after* the extension made every audio-bearing export fail with "Unable to choose an
+    /// output format" — the extension has to survive staging.
+    #[test]
+    fn the_staging_path_keeps_the_extension_ffmpeg_reads() {
+        let staged = staging_path("/tmp/clip.mp4");
+        assert!(
+            staged.ends_with(".mp4"),
+            "{staged} must still look like an mp4 to ffmpeg"
+        );
+        assert!(
+            staged.contains(".part."),
+            "{staged} must be recognisable as a staging file"
+        );
+        assert_ne!(
+            staged, "/tmp/clip.mp4",
+            "staging must not be the destination"
+        );
+        assert!(
+            staged.starts_with("/tmp/"),
+            "{staged} must stage beside the destination so the rename stays on one filesystem"
+        );
+    }
+
+    /// A destination with no extension has nothing to protect, and must still get a distinct
+    /// staging path rather than being written in place.
+    #[test]
+    fn a_destination_without_an_extension_still_stages() {
+        let staged = staging_path("/tmp/clip");
+        assert_ne!(staged, "/tmp/clip");
+        assert!(staged.contains(".part"), "{staged}");
+    }
 }

@@ -113,21 +113,18 @@ fn render(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
          encoding needs a compositor",
     )?;
 
-    let ok = renderer.export_video(
-        project.active_scene(),
-        duration,
-        fps,
-        width.max(2),
-        height.max(2),
-        &project.settings.background,
-        &project.media,
-        &path,
-    );
-    if !ok {
-        return Err(format!(
-            "the render failed writing {path} — is ffmpeg on PATH?"
-        ));
-    }
+    renderer
+        .export_video(
+            project.active_scene(),
+            duration,
+            fps,
+            width.max(2),
+            height.max(2),
+            &project.settings.background,
+            &project.media,
+            &path,
+        )
+        .map_err(|reason| format!("the render failed writing {path}: {reason}"))?;
 
     Ok(SlowResult {
         value: serde_json::json!({
