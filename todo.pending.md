@@ -10,17 +10,88 @@ Companions: [`todo.completed.md`](todo.completed.md) (done, with evidence) ·
 
 | | Item | Size | Why now |
 |---|---|---|---|
-| 1 | [Windows, actually exercised](todo.testing.md) | S | The build is green but nothing on that platform has been *run*. Not a build task — see the testing file. |
-| 2 | [Slow tools time out at 20s](#slow-tools-time-out-against-the-open-editor-at-20s) | S–M | **Blocker.** Any render or narration over 20s returns a false "the editor did not answer in time" while the work carries on invisibly. A first narrate cannot possibly fit. |
-| 3 | [Kokoro weight download has no progress](#kokoro-weights-download-with-no-progress) | S–M | The other place the "no silent waits" promise breaks, and it compounds the one above. |
-| 4 | [Text → audio button](#text--audio--timeline) | S | Narration is one press away from any machine now, so this is no longer gated on setup — and a GUI user currently has no way to narrate at all. |
-| 5 | [Document types + Open Recent](#feeling-like-a-mac-app--what-is-left) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
-| 6 | [Sidecar can outlive its parent](#a-sidecar-can-outlive-its-parent) | S | A real leak, cheap to close. |
-| 7 | [Assistant, read-only first](#assistant-a-local-llm-that-can-edit-the-project) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+| 1 | [Export renders from the preview cache](#export-renders-from-the-480px-preview-cache) | M | **Correctness.** Every video export is upscaled from a ≤480px cache, and on a long clip from as few as 2 fps. A 4K export is not 4K. Verified in the code, not a suspicion. |
+| 2 | [Windows, actually exercised](todo.testing.md) | S | The build is green but nothing on that platform has been *run*. Not a build task — see the testing file. |
+| 3 | [Slow tools time out at 20s](#slow-tools-time-out-against-the-open-editor-at-20s) | S–M | **Blocker.** Any render or narration over 20s returns a false "the editor did not answer in time" while the work carries on invisibly. A first narrate cannot possibly fit. |
+| 4 | [Kokoro weight download has no progress](#kokoro-weights-download-with-no-progress) | S–M | The other place the "no silent waits" promise breaks, and it compounds the one above. |
+| 5 | [The render path can still panic](#the-render-path-can-still-panic) | S | Two `expect`/`assert_eq!` on the live path contradict the rule that bad input must degrade, not abort. Cheap. |
+| 6 | [Text → audio button](#text--audio--timeline) | S | Narration is one press away from any machine now, so this is no longer gated on setup — and a GUI user currently has no way to narrate at all. |
+| 7 | [Document types + Open Recent](#feeling-like-a-mac-app--what-is-left) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
+| 8 | [Sidecar can outlive its parent](#a-sidecar-can-outlive-its-parent) | S | A real leak, cheap to close. |
+| 9 | [Two-stage seek](#two-stage-seek-for-windowed-decode) | M | The design piece windowed decode was missing. Wants the export fix (1) landed first, since both touch decode planning. |
+| 10 | [Assistant, read-only first](#assistant-a-local-llm-that-can-edit-the-project) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
 
 **Deliberately not doing yet:** Linux (macOS and Windows only, and an unsupported platform says
 so rather than pretending), multiple windows, Stage 3 edit-conflict leases, and vision until the
 palmier premise is verified.
+
+---
+
+## Export renders from the ≤480px preview cache
+
+**M · correctness**
+
+There is one decode plan and both preview and export use it. `plan_decode`
+(`bay-preview/src/lib.rs:279`) scales every video clip down to `VIDEO_MAX_WIDTH = 480`
+(`:267`) and, to keep a long clip inside `VIDEO_MEMORY_BUDGET`, lowers the sample rate as far as
+`VIDEO_MIN_FPS = 2.0` rather than truncating it. `export_video` then calls `self.render(...)` at
+the *export* width and height (`:768`), which composites those cached frames — so a 4K export is
+a ≤480px cache upscaled 8×, and on a long clip the same decoded frame is repeated for up to half
+a second at a time.
+
+The budget policy itself is right and was a deliberate fix (truncation used to freeze a clip past
+~15s on its last frame). The bug is that a memory ceiling written for a preview window silently
+became the ceiling for the delivered file.
+
+What it wants is a decode *intent*: preview keeps today's budget, export plans at source
+resolution and source frame rate and streams rather than caching a whole clip in RAM — a 4K
+export cannot hold its frames under a 192 MB budget and must not try.
+
+- `await_decodes` (`:631`) is already the explicit barrier export waits on (`:762`), so the
+  sequencing point exists; it is the *plan* that needs to differ, not the ordering.
+- Test: export a clip whose source is wider than 480, and assert the output frame is not a
+  scaled-up 480px image — a checkerboard or fine text source makes the difference measurable
+  rather than a matter of opinion.
+
+Found by reading Gausian, which plans decode per intent; the defect is ours and predates it.
+
+---
+
+## The render path can still panic
+
+**S**
+
+`CLAUDE.md` says the render path cannot panic on bad input, and two live-path sites do:
+
+- `bay-gpu/src/context.rs:719` — `upload_rgba_texture` asserts `rgba.len() == width*height*4`.
+  A short or mis-sized buffer aborts the process instead of dropping the frame.
+- `bay-gpu/src/context.rs:800` — `.expect("device.poll(Wait) failed during texture readback")`
+  turns a device loss during readback into a crash. Device loss is a thing that happens to
+  laptops that sleep, not bad input, and it should surface as a failed frame.
+
+(Two more at `:539`/`:543` are wasm-only canvas import; lower priority but the same shape.)
+
+Both want a fallible signature and a degrade policy — return `Option`/`Result` and let the caller
+show the last good frame. The NaN/±inf and tiny-canvas tests already establish the pattern to
+extend.
+
+---
+
+## Two-stage seek for windowed decode
+
+**M** — wants [export decode intent](#export-renders-from-the-480px-preview-cache) landed first
+
+The design piece M9 was missing. On a seek, return the nearest **keyframe** immediately, tagged
+inaccurate, and let the exact frame land behind it when its decode completes. Scrubbing then
+responds at keyframe latency instead of full-decode latency, and the UI knows which of the two it
+is holding — so an inaccurate frame can never be mistaken for a final one, and export (which
+awaits decodes) never sees one at all.
+
+The tag is the load-bearing part: without it this is just a race that occasionally shows the
+wrong frame.
+
+Both this and the export fix change decode planning, so doing them in the other order means
+writing the planner twice.
 
 ---
 
@@ -47,6 +118,14 @@ thread, which is a fast-tool concern. Options:
   timeout is protecting against a hang the async path has already ruled out.
 - Better: hand slow tools a job id immediately and let the caller poll, the same shape
   `runtime_install` already uses. That also fixes "no progress for a 4-minute render".
+
+The job-id shape is the better fix for a second reason: **export today has no progress, no cancel
+and no atomic finalize.** `export_video` (`bay-preview/src/lib.rs:762`) loops every frame writing
+into ffmpeg's stdin with no way to observe or stop it, and on a broken pipe it `break`s and
+returns whatever ffmpeg managed to write — a truncated MP4 at the destination path, indistinguishable
+from a good one. Routing export through the existing `bay-provision/src/jobs.rs` registry (the
+same one `runtime_install` uses) closes the timeout, the frozen window and the truncated file in
+one change: encode to a temp path, rename on success, delete on cancel or failure.
 
 **No test covers this** — the bridge tests all use fast tools. Whatever the fix, it wants a test
 that runs a deliberately slow tool through the attached path.
