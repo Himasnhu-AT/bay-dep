@@ -2012,3 +2012,79 @@ fn an_export_reports_progress_to_the_last_frame() {
     );
     let _ = std::fs::remove_file(&out);
 }
+
+/// Reading a stream backwards lands on the frame asked for, not one further on.
+///
+/// Export walks the timeline forward, so `ClipStream`'s backward-seek branch has no route
+/// through `export_video`. It was still wrong: after respawning ffmpeg at the new position the
+/// code kept the frame index it had computed against the *old* origin, so it skipped that many
+/// frames into the fresh stream and returned a frame from somewhere else entirely. An
+/// unreachable branch is still a branch — and this one would have become reachable the moment
+/// two-stage seek or a reversed clip landed.
+#[test]
+fn a_stream_read_backwards_returns_the_frame_asked_for() {
+    if !require_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("bay-stream-seek-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let frames_dir = dir.join("frames");
+    let _ = std::fs::create_dir_all(&frames_dir);
+    let source = dir.join("bands.mp4");
+
+    // Five one-second bands, distinct grey levels, at 10fps.
+    const BANDS: [u8; 5] = [20, 70, 120, 170, 220];
+    for (second, level) in BANDS.iter().enumerate() {
+        for frame in 0..10 {
+            let index = second * 10 + frame;
+            image::RgbaImage::from_pixel(160, 90, image::Rgba([*level, *level, *level, 255]))
+                .save(frames_dir.join(format!("f{index:04}.png")))
+                .unwrap();
+        }
+    }
+    let encoded = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-framerate",
+            "10",
+            "-i",
+            frames_dir.join("f%04d.png").to_str().unwrap(),
+            "-c:v",
+            "libx264",
+            "-qp",
+            "0",
+            "-g",
+            "30",
+            "-keyint_min",
+            "30",
+            "-sc_threshold",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            source.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(encoded, "encode the banded seek source") {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    // Forward to the fourth band, then BACK to the second — the branch under test.
+    let samples =
+        bay_preview::clip_stream_samples_for_test(source.to_str().unwrap(), 10.0, &[0.5, 3.5, 1.5]);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let expected = [BANDS[0] as f64, BANDS[3] as f64, BANDS[1] as f64];
+    for (index, (got, want)) in samples.iter().zip(expected.iter()).enumerate() {
+        let got = got.unwrap_or_else(|| panic!("no frame for request {index}"));
+        assert!(
+            (got - want).abs() < 12.0,
+            "request {index} should have landed on the band at luma {want}, got {got:.1}"
+        );
+    }
+}

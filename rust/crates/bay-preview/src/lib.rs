@@ -402,6 +402,40 @@ pub fn plan_decode_for_test(
     )
 }
 
+/// Test hook: read frames from an export stream at the given source times, in the order given.
+///
+/// `ClipStream` is private and export only ever walks forward, so the backward-seek branch has
+/// no route through `export_video` at all. That is exactly why it needs a hook: an unreachable
+/// branch is still a branch, and this one silently seeked to the wrong frame until it was
+/// driven directly.
+///
+/// Returns the mean luma of each frame, or `None` where no frame could be produced.
+pub fn clip_stream_samples_for_test(path: &str, fps: f32, at_seconds: &[f64]) -> Vec<Option<f64>> {
+    let (natural, rotation, duration) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
+    };
+    let plan = plan_decode(natural, rotation, duration, DecodeIntent::Export { fps });
+    let start = at_seconds.first().copied().unwrap_or(0.0);
+    let Some(mut stream) = ClipStream::open(path, plan, start) else {
+        return at_seconds.iter().map(|_| None).collect();
+    };
+    at_seconds
+        .iter()
+        .map(|seconds| {
+            stream.frame_at(*seconds).map(|(_, _, rgba)| {
+                // RGBA in, so step by 4 and average the red channel — the fixtures are grey.
+                let sum: f64 = rgba.iter().step_by(4).map(|v| *v as f64).sum();
+                sum / (rgba.len() as f64 / 4.0)
+            })
+        })
+        .collect()
+}
+
 /// Test hook for the **export** plan.
 pub fn plan_export_decode_for_test(
     natural: (u32, u32),
@@ -555,13 +589,18 @@ impl ClipStream {
 
     /// The frame covering `source_seconds`, decoded at source resolution.
     fn frame_at(&mut self, source_seconds: f64) -> Option<(u32, u32, &[u8])> {
-        let wanted = (((source_seconds - self.origin_seconds) * self.plan.fps as f64).floor())
+        let mut wanted = (((source_seconds - self.origin_seconds) * self.plan.fps as f64).floor())
             .max(0.0) as u64;
 
-        // Backward seek: respawn rather than rewinding a pipe that cannot be rewound.
+        // Backward seek: respawn rather than rewinding a pipe that cannot be rewound. Assigning
+        // through `*self` drops the old stream, which kills its ffmpeg child.
         if self.primed && wanted < self.index {
             let restarted = Self::open(&self.path, self.plan, source_seconds)?;
             *self = restarted;
+            // The replacement starts AT source_seconds, so what we want is its very first
+            // frame. Keeping the index computed against the OLD origin would skip that many
+            // frames into the new stream — a silent seek to the wrong place.
+            wanted = 0;
         }
 
         while !self.primed || self.index < wanted {
