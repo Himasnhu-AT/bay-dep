@@ -633,6 +633,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bay-jobs"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "bay-masks"
 version = "0.1.0"
 dependencies = [
