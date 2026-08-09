@@ -10,70 +10,20 @@ Companions: [`todo.completed.md`](todo.completed.md) (done, with evidence) ·
 
 | | Item | Size | Why now |
 |---|---|---|---|
-| 1 | [Export renders from the preview cache](#export-renders-from-the-480px-preview-cache) | M | **Correctness.** Every video export is upscaled from a ≤480px cache, and on a long clip from as few as 2 fps. A 4K export is not 4K. Verified in the code, not a suspicion. |
-| 2 | [Windows, actually exercised](todo.testing.md) | S | The build is green but nothing on that platform has been *run*. Not a build task — see the testing file. |
-| 3 | [Slow tools time out at 20s](#slow-tools-time-out-against-the-open-editor-at-20s) | S–M | **Blocker.** Any render or narration over 20s returns a false "the editor did not answer in time" while the work carries on invisibly. A first narrate cannot possibly fit. |
-| 4 | [Kokoro weight download has no progress](#kokoro-weights-download-with-no-progress) | S–M | The other place the "no silent waits" promise breaks, and it compounds the one above. |
-| 5 | [The render path can still panic](#the-render-path-can-still-panic) | S | Two `expect`/`assert_eq!` on the live path contradict the rule that bad input must degrade, not abort. Cheap. |
-| 6 | [Text → audio button](#text--audio--timeline) | S | Narration is one press away from any machine now, so this is no longer gated on setup — and a GUI user currently has no way to narrate at all. |
-| 7 | [Document types + Open Recent](#feeling-like-a-mac-app--what-is-left) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
-| 8 | [Sidecar can outlive its parent](#a-sidecar-can-outlive-its-parent) | S | A real leak, cheap to close. |
-| 9 | [Two-stage seek](#two-stage-seek-for-windowed-decode) | M | The design piece windowed decode was missing. Wants the export fix (1) landed first, since both touch decode planning. |
-| 10 | [Assistant, read-only first](#assistant-a-local-llm-that-can-edit-the-project) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+| 1 | [Windows, actually exercised](todo.testing.md) | S | The build is green but nothing on that platform has been *run*. Not a build task — see the testing file. |
+| 2 | [Text → audio button](#text--audio--timeline) | S | Narration is one press away from any machine now, so this is no longer gated on setup — and a GUI user currently has no way to narrate at all. |
+| 3 | [Two-stage seek](#two-stage-seek-for-windowed-decode) | M | The design piece windowed decode was missing. Its prerequisite — the export decode intent — has landed, so the planner is now the right shape to build on. |
+| 4 | [Document types + Open Recent](#feeling-like-a-mac-app--what-is-left) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
+| 5 | [Disk reporting + `runtime_remove`](#provisioning--what-is-still-open) | S–M | Now worth doing: the Kokoro weights moved under `runtime/`, so there is finally one directory to measure and reclaim. |
+| 6 | [Assistant, read-only first](#assistant-a-local-llm-that-can-edit-the-project) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+
+**Closed on `fix/pending-sweep`,** with evidence in [`todo.completed.md`](todo.completed.md):
+export decoding from the preview cache, the 20-second tool ceiling, the unpinned Kokoro weight
+download, the three render-path panics, and the sidecar that could outlive its parent.
 
 **Deliberately not doing yet:** Linux (macOS and Windows only, and an unsupported platform says
 so rather than pretending), multiple windows, Stage 3 edit-conflict leases, and vision until the
 palmier premise is verified.
-
----
-
-## Export renders from the ≤480px preview cache
-
-**M · correctness**
-
-There is one decode plan and both preview and export use it. `plan_decode`
-(`bay-preview/src/lib.rs:279`) scales every video clip down to `VIDEO_MAX_WIDTH = 480`
-(`:267`) and, to keep a long clip inside `VIDEO_MEMORY_BUDGET`, lowers the sample rate as far as
-`VIDEO_MIN_FPS = 2.0` rather than truncating it. `export_video` then calls `self.render(...)` at
-the *export* width and height (`:768`), which composites those cached frames — so a 4K export is
-a ≤480px cache upscaled 8×, and on a long clip the same decoded frame is repeated for up to half
-a second at a time.
-
-The budget policy itself is right and was a deliberate fix (truncation used to freeze a clip past
-~15s on its last frame). The bug is that a memory ceiling written for a preview window silently
-became the ceiling for the delivered file.
-
-What it wants is a decode *intent*: preview keeps today's budget, export plans at source
-resolution and source frame rate and streams rather than caching a whole clip in RAM — a 4K
-export cannot hold its frames under a 192 MB budget and must not try.
-
-- `await_decodes` (`:631`) is already the explicit barrier export waits on (`:762`), so the
-  sequencing point exists; it is the *plan* that needs to differ, not the ordering.
-- Test: export a clip whose source is wider than 480, and assert the output frame is not a
-  scaled-up 480px image — a checkerboard or fine text source makes the difference measurable
-  rather than a matter of opinion.
-
-Found by reading Gausian, which plans decode per intent; the defect is ours and predates it.
-
----
-
-## The render path can still panic
-
-**S**
-
-`CLAUDE.md` says the render path cannot panic on bad input, and two live-path sites do:
-
-- `bay-gpu/src/context.rs:719` — `upload_rgba_texture` asserts `rgba.len() == width*height*4`.
-  A short or mis-sized buffer aborts the process instead of dropping the frame.
-- `bay-gpu/src/context.rs:800` — `.expect("device.poll(Wait) failed during texture readback")`
-  turns a device loss during readback into a crash. Device loss is a thing that happens to
-  laptops that sleep, not bad input, and it should surface as a failed frame.
-
-(Two more at `:539`/`:543` are wasm-only canvas import; lower priority but the same shape.)
-
-Both want a fallible signature and a degrade policy — return `Option`/`Result` and let the caller
-show the last good frame. The NaN/±inf and tiny-canvas tests already establish the pattern to
-extend.
 
 ---
 
@@ -92,79 +42,6 @@ wrong frame.
 
 Both this and the export fix change decode planning, so doing them in the other order means
 writing the planner twice.
-
----
-
-## Slow tools time out against the open editor at 20s
-
-**S–M · blocker**
-
-`serve_attached_connection` sends **every** `tools/call` through
-`bridge.call(call, ATTACHED_TIMEOUT)`, and `ATTACHED_TIMEOUT` is a flat 20 seconds
-(`bay-mcp/src/server.rs:198,228`). Slow tools answer only when their worker finishes
-(`bay-ui/src/app_view.rs`), so any `render`, `narrate`, `media_import` or `subtitles_to_video`
-that takes longer than 20 seconds returns:
-
-> the editor did not answer in time — it may be showing a modal dialog
-
-which is false, unactionable, and arrives while the work carries on invisibly. `slow.rs` itself
-documents these as taking "seconds to minutes". A first `narrate` on a clean machine cannot fit:
-the model download alone exceeds it.
-
-The timeout's own doc comment explains it as covering a native file dialog stalling the main
-thread, which is a fast-tool concern. Options:
-
-- Give slow tools their own budget, or none — they are already answered asynchronously, so the
-  timeout is protecting against a hang the async path has already ruled out.
-- Better: hand slow tools a job id immediately and let the caller poll, the same shape
-  `runtime_install` already uses. That also fixes "no progress for a 4-minute render".
-
-The job-id shape is the better fix for a second reason: **export today has no progress, no cancel
-and no atomic finalize.** `export_video` (`bay-preview/src/lib.rs:762`) loops every frame writing
-into ffmpeg's stdin with no way to observe or stop it, and on a broken pipe it `break`s and
-returns whatever ffmpeg managed to write — a truncated MP4 at the destination path, indistinguishable
-from a good one. Routing export through the existing `bay-provision/src/jobs.rs` registry (the
-same one `runtime_install` uses) closes the timeout, the frozen window and the truncated file in
-one change: encode to a temp path, rename on success, delete on cancel or failure.
-
-**No test covers this** — the bridge tests all use fast tools. Whatever the fix, it wants a test
-that runs a deliberately slow tool through the attached path.
-
----
-
-## Kokoro weights download with no progress
-
-**S–M**
-
-The gap in the zero-install promise. `runtime_install speech` shows a progress bar for the
-~1.2 GB it fetches, but the **~330 MB of model weights are not part of that** — they are pulled
-by `huggingface_hub` inside the Python sidecar the first time `narrate` runs, into `<data>/models`
-via `HF_HOME`.
-
-An audit corrected the first reading of *where* the cost lands: the sidecar is spawned with only
-`--host`/`--port`, never `--preload`, so `script/bay-kokoro.py` builds the `KPipeline` lazily
-*inside* `POST /speak`. `/health` therefore answers in about a second and `READY_TIMEOUT` (180s)
-is never the constraint — the download sits under `SPEAK_TIMEOUT` (300s), inside one blocking
-tool call. The comment on `engine.rs:29-31` still says otherwise and is stale.
-
-Nothing escapes either: the child is spawned `.stdout(Stdio::null())` and its stderr is only read
-if the process *dies*, so HuggingFace's own progress bars go straight to a discarded pipe.
-
-So the first narration on a clean machine is a multi-minute wait with no bar, no byte count and
-no explanation — and on a slow connection it fails with a timeout that looks like a bug.
-
-Options, roughly in order of preference:
-
-- **Fetch the weights in `bay-provision` like everything else.** They are a pinned artifact on
-  HuggingFace with a known digest, so they fit the existing manifest, downloader and progress UI
-  exactly, and `speech` stops having a hidden second phase. Then set `HF_HUB_OFFLINE=1` on the
-  sidecar so it can only use what was fetched, which also makes the "no surprise network calls"
-  claim true rather than nearly true.
-- Or have the sidecar report download progress back over its existing HTTP channel, and surface
-  that in the same job UI.
-
-Either way `READY_TIMEOUT` should drop back to meaning "the model failed to load" rather than
-doubling as a download budget.
 
 ---
 
@@ -255,27 +132,6 @@ toolbar? Palmier uses a 3-way icon rail (Media / Captions / Audio); we have a ha
   window claims its own port, and a router on the fixed port forwards to a chosen one so there
   is still a single `claude mcp add`. The registry (`bay-agent::registry`) already lists windows,
   so the groundwork is there.
-
----
-
-## A sidecar can outlive its parent
-
-**S**
-
-The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.
-Observed a sidecar still holding port 7431 long after every test process was gone, which then
-failed an unrelated test with `PortBusy`.
-
-Two plausible causes, both worth closing:
-
-- **PID reuse.** If the OS recycles the parent's pid, `kill(pid, 0)` succeeds forever and the
-  watchdog never fires. Recording the parent's *start time* alongside its pid, and comparing
-  both, makes the check exact.
-- **The watchdog thread never started** — it is only spawned when `BAY_KOKORO_PARENT_PID` is
-  set and numeric, and nothing reports when it is not.
-
-Belt and braces: have the sidecar exit on an idle timeout of its own, so it cannot outlive
-anything indefinitely regardless of what happened to its parent.
 
 ---
 
