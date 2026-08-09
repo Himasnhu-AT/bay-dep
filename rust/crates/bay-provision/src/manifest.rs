@@ -119,6 +119,10 @@ pub enum Format {
     TarGz,
     /// Decide from the URL. uv ships `.tar.gz` for Unix and `.zip` for Windows under one id.
     Auto,
+    /// Not an archive: the download **is** the file. Model weights are published as loose files
+    /// rather than a bundle, and inventing an archive for them would mean hosting a repackaged
+    /// copy — which is exactly the kind of thing that goes stale and unverifiable.
+    Raw,
 }
 
 impl Format {
@@ -127,6 +131,7 @@ impl Format {
         match self {
             Format::Auto if url.ends_with(".zip") => Format::Zip,
             Format::Auto => Format::TarGz,
+            Format::Raw => Format::Raw,
             other => other,
         }
     }
@@ -579,17 +584,112 @@ mod tests {
     #[test]
     fn speech_still_needs_its_venv_after_every_download_lands() {
         let manifest = Manifest::embedded();
+        // Every download, which now includes the pinned Kokoro weights. Listing them by walking
+        // the manifest rather than writing paths out again means adding a voice cannot silently
+        // make this test assert something weaker than it says.
+        let mut landed: Vec<String> = vec![
+            "bin/uv".to_string(),
+            "python/3.12.13/bin/python3.12".to_string(),
+        ];
+        for artifact in &manifest.artifacts {
+            if !artifact.id.starts_with("kokoro-") {
+                continue;
+            }
+            if let Some(build) = artifact.build(Target::MACOS_ARM) {
+                landed.extend(build.files.iter().map(|file| file.install.clone()));
+            }
+        }
+        let landed: Vec<&str> = landed.iter().map(|s| s.as_str()).collect();
+
         let plan = plan(
             manifest,
             "speech",
             Some(Target::MACOS_ARM),
             Path::new("/runtime"),
-            &present(&["bin/uv", "python/3.12.13/bin/python3.12"]),
+            &present(&landed),
         )
         .unwrap();
         assert!(plan.needs.is_empty(), "{:?}", plan.needs);
         assert_eq!(plan.steps, vec!["kokoro-venv".to_string()]);
         assert!(!plan.satisfied, "the venv has not been built yet");
+    }
+
+    /// The weights have to be part of the speech component on every shipped target.
+    ///
+    /// `plan` skips an artifact with no build for the target *silently* — which is right, since
+    /// that is how a platform-specific artifact opts out. But it means an artifact whose builds
+    /// name no shipped target is invisible: it downloads nothing, breaks no test, and the first
+    /// symptom is a user's narration quietly reaching out to HuggingFace at speak time. That is
+    /// exactly what a `"target": "any"` wildcard did in the first draft of this.
+    #[test]
+    fn every_shipped_target_downloads_the_kokoro_weights() {
+        let manifest = Manifest::embedded();
+        for target in [Target::MACOS_ARM, Target::MACOS_INTEL, Target::WINDOWS] {
+            let plan = plan(
+                manifest,
+                "speech",
+                Some(target),
+                Path::new("/runtime"),
+                &nothing_exists,
+            )
+            .expect("speech exists");
+
+            let weights: Vec<&str> = plan
+                .needs
+                .iter()
+                .filter(|need| need.artifact.starts_with("kokoro-"))
+                .map(|need| need.artifact.as_str())
+                .collect();
+            assert!(
+                weights.contains(&"kokoro-model"),
+                "{target} must download the model itself"
+            );
+            assert!(
+                weights.contains(&"kokoro-config"),
+                "{target} must download the model config"
+            );
+            let voices = weights
+                .iter()
+                .filter(|id| id.starts_with("kokoro-voice-"))
+                .count();
+            assert_eq!(
+                voices, 54,
+                "{target} must download every voice the sidecar advertises, got {voices}"
+            );
+        }
+    }
+
+    /// The reported download has to cover the weights too.
+    ///
+    /// The whole defect this closes is that `runtime_install speech` showed a bar for ~1.2 GB
+    /// and then silently fetched another ~339 MB inside the first narrate. A total that
+    /// excluded them would be the same lie in a new place.
+    #[test]
+    fn the_speech_download_total_includes_the_weights() {
+        let manifest = Manifest::embedded();
+        let plan = plan(
+            manifest,
+            "speech",
+            Some(Target::MACOS_ARM),
+            Path::new("/runtime"),
+            &nothing_exists,
+        )
+        .expect("speech exists");
+
+        let weights: u64 = plan
+            .needs
+            .iter()
+            .filter(|need| need.artifact.starts_with("kokoro-"))
+            .map(|need| need.bytes)
+            .sum();
+        assert!(
+            weights > 300 * 1024 * 1024,
+            "the weights should be ~339 MB, got {weights} bytes"
+        );
+        assert!(
+            plan.download_bytes >= weights,
+            "the reported download must include the weights"
+        );
     }
 
     /// A platform bay pins nothing for must say so. Reporting "satisfied" would offer a render

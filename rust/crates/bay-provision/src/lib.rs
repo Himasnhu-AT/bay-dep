@@ -401,11 +401,17 @@ pub fn install_blocking(
             artifact: need.artifact.clone(),
         });
         let format = artifact.format.resolve(&need.url);
-        let placed = match artifact.install {
-            manifest::InstallKind::Files => {
+        let placed = match (format, artifact.install) {
+            // Not an archive: one download, one file, straight into place.
+            (manifest::Format::Raw, _) => build
+                .files
+                .iter()
+                .map(|file| archive::place_raw(&downloaded, file, &root))
+                .collect::<Result<Vec<_>, _>>()?,
+            (_, manifest::InstallKind::Files) => {
                 archive::extract_files(&downloaded, format, &build.files, &root)?
             }
-            manifest::InstallKind::Tree => {
+            (_, manifest::InstallKind::Tree) => {
                 let tree = artifact.tree.as_ref().ok_or_else(|| {
                     ProvisionError::Archive(format!("{} has no tree rule", artifact.id))
                 })?;

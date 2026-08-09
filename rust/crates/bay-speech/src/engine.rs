@@ -26,9 +26,14 @@ use crate::{SpeechError, SpeechResult, Utterance, WordSpan};
 /// previous run is detectable (and reusable) instead of invisible.
 pub const DEFAULT_PORT: u16 = 7334;
 
-/// How long to wait for the model to load and the port to answer. Kokoro's first start also
-/// downloads weights, which dominates this.
-const READY_TIMEOUT: Duration = Duration::from_secs(180);
+/// How long to wait for the model to load and the port to answer.
+///
+/// It used to say the first start "also downloads weights, which dominates this", and that was
+/// wrong twice over. The sidecar is spawned without `--preload`, so it builds no pipeline at
+/// startup and `/health` answers in about a second; and the weights are now provisioned like
+/// every other artifact, so nothing is fetched at speak time either. This is a process-start
+/// budget again, which is what it should always have been.
+const READY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long a single synthesis may take before the caller is told it failed.
 const SPEAK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -75,8 +80,8 @@ impl Default for SpeechConfig {
 /// reads its configuration at *import* time, so a variable set after the import silently does
 /// nothing — which is the kind of bug that looks like it works until someone checks where the
 /// weights actually landed.
-fn sidecar_env(token: &str) -> Vec<(String, std::ffi::OsString)> {
-    vec![
+fn sidecar_env(token: &str, weights_provisioned: bool) -> Vec<(String, std::ffi::OsString)> {
+    let mut env = vec![
         ("BAY_KOKORO_TOKEN".into(), token.into()),
         // The exact watchdog: the child blocks reading the stdin pipe we give it and exits on
         // EOF. The OS closes that pipe however this process goes away, including `kill -9`, so
@@ -99,7 +104,31 @@ fn sidecar_env(token: &str) -> Vec<(String, std::ffi::OsString)> {
         // than the shared ~/.cache/huggingface — where they are indistinguishable from every
         // other tool's models, cannot be reported as bay's disk usage, and survive uninstall.
         ("HF_HOME".into(), model_cache().into_os_string()),
-    ]
+    ];
+
+    // Only once the weights are actually on disk. Setting this unconditionally would break an
+    // install that predates the pin, whose fallback is precisely the Hub fetch it forbids.
+    //
+    // Where it does apply it is what makes "nothing leaves the Mac unless you send it" true
+    // rather than nearly true: a missing file now fails loudly instead of quietly pulling a few
+    // hundred megabytes over the user's connection with no progress and no consent.
+    if weights_provisioned {
+        env.push(("HF_HUB_OFFLINE".into(), "1".into()));
+    }
+    env
+}
+
+/// Where bay's *provisioned* Kokoro weights live.
+///
+/// Under `runtime_dir()`, alongside every other artifact bay installs — not `data_dir()/models`,
+/// which is outside it. That mattered: "delete the one directory bay downloaded into" used to
+/// leave ~339 MB behind, uncounted, because the weights were the one thing living somewhere else.
+///
+/// `None` when there is no runtime directory, in which case the sidecar falls back to fetching
+/// from the Hub exactly as it did before.
+pub fn provisioned_model_dir() -> Option<std::path::PathBuf> {
+    let dir = bay_paths::runtime_dir()?.join("models").join("kokoro");
+    dir.join("kokoro-v1_0.pth").is_file().then_some(dir)
 }
 
 /// Where model weights live: bay's own directory, not the shared HuggingFace cache.
@@ -318,15 +347,21 @@ impl SpeechEngine {
             )));
         }
 
-        let child = Command::new(&self.config.python)
-            .arg(&self.config.script)
-            .args([
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &self.config.port.to_string(),
-            ])
-            .envs(sidecar_env(&self.config.token))
+        let mut command = Command::new(&self.config.python);
+        command.arg(&self.config.script).args([
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &self.config.port.to_string(),
+        ]);
+        // Only when the weights are actually there. An install that predates the pin keeps
+        // working off its HuggingFace cache rather than failing on a directory bay never filled.
+        let models = provisioned_model_dir();
+        if let Some(models) = &models {
+            command.arg("--model-dir").arg(models);
+        }
+        let child = command
+            .envs(sidecar_env(&self.config.token, models.is_some()))
             // The pipe IS the watchdog — see BAY_KOKORO_PARENT_PIPE. The handle is kept alive by
             // `child`, so it closes exactly when this process does. Nothing is ever written to it.
             .stdin(Stdio::piped())
@@ -778,12 +813,27 @@ mod sidecar_env_tests {
     #[test]
     fn the_sidecar_never_phones_home() {
         let _serial = serially();
-        let env = sidecar_env("t");
+        let env = sidecar_env("t", false);
         assert_eq!(value(&env, "HF_HUB_DISABLE_TELEMETRY"), Some("1".as_ref()));
         assert_eq!(
             value(&env, "HF_HUB_DISABLE_IMPLICIT_TOKEN"),
             Some("1".as_ref()),
             "bay downloads one public model; it must not send the user's HF token to do it"
+        );
+        assert!(
+            value(&env, "HF_HUB_OFFLINE").is_none(),
+            "an install predating the pin still needs the Hub fallback, so offline must not be \
+             forced on it"
+        );
+
+        // Once bay has provisioned the weights there is nothing left to fetch, and saying so is
+        // what turns "no surprise network calls" from nearly true into true: a missing file
+        // fails loudly instead of quietly pulling a few hundred megabytes.
+        let provisioned = sidecar_env("t", true);
+        assert_eq!(
+            value(&provisioned, "HF_HUB_OFFLINE"),
+            Some("1".as_ref()),
+            "with the weights on disk the sidecar must not be able to reach the network"
         );
     }
 
@@ -803,7 +853,7 @@ mod sidecar_env_tests {
     #[test]
     fn weights_land_in_bays_own_directory() {
         let _serial = serially();
-        let env = sidecar_env("t");
+        let env = sidecar_env("t", false);
         let home = value(&env, "HF_HOME").expect("HF_HOME must be set on the child");
         let home = std::path::Path::new(home);
         assert!(

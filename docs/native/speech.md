@@ -41,10 +41,20 @@ spawn and kill the model on every line — the exact cost the sidecar exists to 
 
 ### What differs from the Whisper integration
 
-The meeting assistant ships a revision-pinned, SHA-256-verified model catalogue. Kokoro fetches
-its own weights into the HuggingFace cache on first use, so there is no catalogue here — the
-first `narrate` call on a cold machine downloads the model, which is why the readiness timeout
-is 180s rather than a few seconds.
+Nothing, now. The meeting assistant ships a revision-pinned, SHA-256-verified model catalogue,
+and so does bay: the Kokoro weights are 56 pinned artifacts in `manifest.json`, fetched at
+commit `f3ff357` with a digest each, installed under `runtime/models/kokoro/` and handed to the
+sidecar with `--model-dir`.
+
+Kokoro *used* to fetch its own weights into the HuggingFace cache on first use, which is why the
+readiness timeout was once 180s. That was the gap in the zero-install promise: `runtime_install
+speech` showed a bar for ~1.2 GB and then the first `narrate` on a cold machine silently pulled
+another ~339 MB inside one blocking call, with no bar, no byte count and stdout discarded. The
+install total now covers everything it will fetch, and `HF_HUB_OFFLINE=1` is set on the sidecar
+once the weights are on disk, so a missing file fails loudly rather than quietly downloading.
+
+An install that predates the pin keeps working: `--model-dir` is only passed when the weights
+are actually there, and offline mode is only set alongside it.
 
 ---
 

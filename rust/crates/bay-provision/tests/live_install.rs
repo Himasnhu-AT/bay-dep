@@ -127,6 +127,27 @@ fn speech_provisions_a_python_that_can_import_kokoro() {
         "the venv must import kokoro, not merely exist"
     );
 
+    // The weights, which used to be the hidden second phase: the progress bar finished and then
+    // the first narrate silently pulled ~339 MB inside one blocking call. Asserting the venv
+    // imports kokoro says nothing about whether they arrived, which is why this test could pass
+    // for months while that download was completely unreported.
+    let models = scratch.join("runtime").join("models").join("kokoro");
+    assert!(
+        models.join("kokoro-v1_0.pth").is_file(),
+        "the model itself must be on disk after installing speech, not fetched at speak time"
+    );
+    assert!(
+        models.join("config.json").is_file(),
+        "the model config must be on disk"
+    );
+    let voices = std::fs::read_dir(models.join("voices"))
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0);
+    assert_eq!(
+        voices, 54,
+        "every voice the sidecar advertises must be installed, found {voices}"
+    );
+
     let after = bay_provision::report();
     assert!(
         after.component("speech").is_some_and(|plan| plan.satisfied),

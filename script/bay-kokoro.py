@@ -15,8 +15,12 @@ once, holds it hot, and answers loopback HTTP; bay spawns it on demand and talks
 Auth: every request must carry `Authorization: Bearer $BAY_KOKORO_TOKEN`. Binding to loopback
 is not treated as authentication — any local process could otherwise drive it.
 
-Lifecycle: if `BAY_KOKORO_PARENT_PID` is set, the server exits once that process is gone, so a
-crashed editor cannot leave a multi-gigabyte model resident.
+Lifecycle: supervised three ways, most exact first — the parent pipe (`BAY_KOKORO_PARENT_PIPE`),
+the parent pid (`BAY_KOKORO_PARENT_PID`), and an idle timeout (`BAY_KOKORO_IDLE_TIMEOUT`). A
+crashed editor cannot leave a multi-gigabyte model resident, and a sidecar with none of them
+armed says so on stderr rather than running silently forever.
+
+Weights: `--model-dir` points at the files bay provisioned, so nothing is fetched at speak time.
 
 Usage:
     BAY_KOKORO_TOKEN=secret bay-kokoro.py --port 7334 [--host 127.0.0.1]
@@ -38,8 +42,8 @@ SAMPLE_RATE = 24_000
 # around across a working session while bounding how long an orphan can hold the port.
 DEFAULT_IDLE_TIMEOUT = 1800
 
-# Kokoro's published voice set, grouped by the lang_code that can speak them. Weights are
-# fetched from the Hub on first use, so this is a catalogue, not a list of what is cached.
+# Kokoro's published voice set, grouped by the lang_code that can speak them. bay pins and
+# downloads every one of these, so with --model-dir this is also exactly what is on disk.
 VOICES = {
     "a": ["af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore",
           "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky", "am_adam",
@@ -59,15 +63,55 @@ VOICES = {
 
 _pipelines: dict[str, object] = {}
 _lock = threading.Lock()
+_model = None
+# Set from --model-dir. When present, weights are read from disk and nothing is fetched.
+MODEL_DIR: str | None = None
+
+
+def _local_model():
+    """Build the KModel once from the weights bay provisioned."""
+    global _model
+    if _model is None:
+        from kokoro import KModel
+
+        _model = KModel(
+            config=os.path.join(MODEL_DIR, "config.json"),
+            model=os.path.join(MODEL_DIR, "kokoro-v1_0.pth"),
+        )
+    return _model
+
+
+def voice_path(voice: str) -> str | None:
+    """Where a voice's tensor lives on disk, if bay provisioned it.
+
+    kokoro's `load_single_voice` takes a path directly when it ends in `.pt`, so handing it one
+    is all it takes to keep it off the Hub.
+    """
+    if not MODEL_DIR:
+        return None
+    path = os.path.join(MODEL_DIR, "voices", f"{voice}.pt")
+    return path if os.path.isfile(path) else None
 
 
 def pipeline_for(lang_code: str):
-    """Build (once) and return the KPipeline for a language code."""
+    """Build (once) and return the KPipeline for a language code.
+
+    With `--model-dir` the weights come from disk: bay pins and downloads them like every other
+    artifact, so `runtime_install speech` reports one number that covers everything and the
+    first narration does not silently fetch ~339 MB with no progress bar. Without it, the old
+    behaviour — fetch from the Hub on first use — still works, which is what keeps an existing
+    install running.
+    """
     with _lock:
         if lang_code not in _pipelines:
             from kokoro import KPipeline
 
-            _pipelines[lang_code] = KPipeline(lang_code=lang_code, repo_id="hexgrad/Kokoro-82M")
+            if MODEL_DIR:
+                _pipelines[lang_code] = KPipeline(lang_code=lang_code, model=_local_model())
+            else:
+                _pipelines[lang_code] = KPipeline(
+                    lang_code=lang_code, repo_id="hexgrad/Kokoro-82M"
+                )
         return _pipelines[lang_code]
 
 
@@ -118,7 +162,11 @@ def synthesize(
     words: list[dict] = []
     offset = 0.0  # Kokoro restarts timestamps at 0 for every chunk it splits the text into.
 
-    for result in pipeline(text, voice=voice, speed=speed):
+    # Hand kokoro the voice FILE when bay provisioned it: load_single_voice takes a path
+    # directly when it ends in .pt, which is what keeps a provisioned install off the Hub.
+    voice_arg = voice_path(voice) or voice
+
+    for result in pipeline(text, voice=voice_arg, speed=speed):
         audio = result.audio
         if audio is None:
             continue
@@ -316,7 +364,16 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7334)
     parser.add_argument("--preload", default="", help="lang_code to load at startup")
+    parser.add_argument(
+        "--model-dir",
+        default="",
+        help="directory holding config.json, kokoro-v1_0.pth and voices/*.pt",
+    )
     args = parser.parse_args()
+
+    global MODEL_DIR
+    if args.model_dir and os.path.isdir(args.model_dir):
+        MODEL_DIR = args.model_dir
 
     token = os.environ.get("BAY_KOKORO_TOKEN", "")
     if not token:
