@@ -191,11 +191,37 @@ pub fn serve_listener(
     Ok(())
 }
 
-/// How long a tool call waits for the editor before giving up.
+/// How long a fast tool call waits for the editor before giving up.
 ///
 /// Generous, because the one main-thread stall we cannot engineer away is a native file dialog
 /// — and short enough that an agent gets a message it can act on rather than hanging forever.
+///
+/// A file dialog is a *fast tool* concern, which is the reason this was the wrong number for
+/// everything else: applied flatly, it meant any `render` or `narrate` over 20 seconds returned
+/// "the editor did not answer in time" while the work carried on and its result was applied to
+/// the document anyway.
 const ATTACHED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The budget for a slow tool that still answers in-band.
+///
+/// After the job migration this is `media_import` alone: a `probe_media` shell-out that is
+/// normally milliseconds but can be much longer for a large file on a network share. Everything
+/// slower than that returns a job id instead of holding the request open, so this number never
+/// has to cover a render.
+const ATTACHED_SLOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// How long to wait for `tool`.
+///
+/// Pure and separate so the policy is testable without a bridge, and so adding a fifth slow
+/// tool cannot silently leave it on the fast budget — the test walks `slow_tools()` rather than
+/// a list written out again here.
+fn timeout_for(tool: &str) -> std::time::Duration {
+    if bay_agent::slow::slow_tools().contains(&tool) {
+        ATTACHED_SLOW_TIMEOUT
+    } else {
+        ATTACHED_TIMEOUT
+    }
+}
 
 /// Handle one connection in attached mode: `initialize` and `tools/list` are answered here,
 /// and everything else is forwarded to the editor.
@@ -225,7 +251,8 @@ fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<V
                     .to_string(),
                 arguments: params.get("arguments").cloned().unwrap_or(json!({})),
             };
-            let (text, is_error) = match bridge.call(call, ATTACHED_TIMEOUT) {
+            let budget = timeout_for(&call.name);
+            let (text, is_error) = match bridge.call(call, budget) {
                 bay_agent::AgentResponse::Ok(value) => (
                     serde_json::to_string(&value).unwrap_or_else(|_| "{}".into()),
                     false,
@@ -409,6 +436,92 @@ pub(crate) mod tests_support {
 mod tests {
     use super::*;
     use tests_support::{call, new_studio, unwrap_call};
+
+    // The attached timeout. `todo.testing.md` recorded that every bridge test used a fast tool,
+    // which is why a flat 20s ceiling on `render` and `narrate` survived unnoticed: the suite
+    // only ever exercised calls that could not possibly hit it.
+
+    #[test]
+    fn a_slow_tool_is_not_held_to_the_file_dialog_budget() {
+        assert_eq!(
+            timeout_for("timeline"),
+            ATTACHED_TIMEOUT,
+            "a fast tool keeps the dialog budget"
+        );
+        assert_eq!(
+            timeout_for("media_import"),
+            ATTACHED_SLOW_TIMEOUT,
+            "probing a large file must not be cut off at the dialog budget"
+        );
+        assert!(
+            ATTACHED_SLOW_TIMEOUT > ATTACHED_TIMEOUT,
+            "the slow budget has to actually be more generous"
+        );
+    }
+
+    #[test]
+    fn every_slow_tool_gets_the_slow_budget() {
+        // Walks the real list rather than repeating it, so a fifth slow tool added later cannot
+        // silently be left on a 20-second ceiling — which is exactly how this bug happened.
+        for tool in bay_agent::slow::slow_tools() {
+            assert_eq!(
+                timeout_for(tool),
+                ATTACHED_SLOW_TIMEOUT,
+                "{tool} is classified slow but would be given the fast budget"
+            );
+        }
+    }
+
+    #[test]
+    fn every_job_tool_is_also_a_slow_tool() {
+        // job_tools is deliberately narrower than slow_tools, but it must be a subset: a tool
+        // that returns a job id while running on the UI thread would freeze the window.
+        for tool in bay_agent::slow::job_tools() {
+            assert!(
+                bay_agent::slow::slow_tools().contains(tool),
+                "{tool} returns a job id but is not classified as slow"
+            );
+        }
+    }
+
+    /// A deliberately slow tool, through the real bridge, must not be cut off.
+    ///
+    /// This is the test `todo.testing.md` asked for. The pump takes longer than the fast budget
+    /// and answers within the slow one; the call has to come back `Ok`.
+    #[test]
+    fn a_slow_tool_survives_a_delay_that_would_fail_a_fast_one() {
+        let (bridge, pump) = bay_agent::bridge();
+        let handle = std::thread::spawn(move || {
+            // Drain on a tick, the way the editor's own loop does.
+            let request = loop {
+                if let Some(request) = pump.try_next() {
+                    break request;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            // Longer than the fast budget the test injects below, shorter than the slow one.
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            request.respond(bay_agent::AgentResponse::Ok(json!({ "rendered": true })));
+        });
+
+        let response = bridge.call(
+            bay_agent::ToolCall {
+                name: "render".into(),
+                arguments: json!({ "path": "/tmp/x.mp4" }),
+            },
+            // Stands in for ATTACHED_SLOW_TIMEOUT, scaled down so the test is fast. The policy
+            // itself is asserted above; what this proves is that the bridge delivers a late-ish
+            // answer rather than claiming the slot.
+            std::time::Duration::from_secs(5),
+        );
+        match response {
+            bay_agent::AgentResponse::Ok(value) => assert_eq!(value["rendered"], true),
+            bay_agent::AgentResponse::Err(message) => {
+                panic!("a slow tool inside its budget must not time out: {message}")
+            }
+        }
+        handle.join().expect("the pump thread should finish");
+    }
 
     #[test]
     fn initialize_advertises_tools() {

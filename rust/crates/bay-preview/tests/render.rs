@@ -1922,3 +1922,93 @@ fn overlapping_clips_each_get_their_own_stream() {
         "the right clip should be blue, got {right:?}"
     );
 }
+
+/// A cancelled export leaves nothing behind.
+///
+/// The staging file is what makes this possible: an export that stops halfway has written real
+/// bytes somewhere, and before staging existed those bytes were at the destination path with
+/// nothing to mark them as partial. Cancelling has to be as clean as failing.
+#[test]
+fn a_cancelled_export_leaves_no_file_behind() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("bay-export-cancel-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let out = dir.join("cancelled.mp4");
+
+    let project = Project::starter();
+    let mut seen = 0u64;
+    let result = renderer.export_video_observed(
+        project.active_scene(),
+        2.0,
+        30.0, // 60 frames
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        // Stop a few frames in, while ffmpeg definitely still has work to do.
+        &mut |done, _total| {
+            seen = done;
+            done < 5
+        },
+    );
+
+    assert!(
+        seen >= 5,
+        "the observer should have seen frames, saw {seen}"
+    );
+    assert!(
+        result.is_err(),
+        "a cancelled export must report that it did not finish"
+    );
+    assert!(
+        !out.exists(),
+        "a cancelled export must not leave a file at the destination"
+    );
+    assert!(
+        strays_beside(&out).is_empty(),
+        "a cancelled export must clean up its staging file"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Progress reaches the last frame on a successful export.
+#[test]
+fn an_export_reports_progress_to_the_last_frame() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    let out = std::env::temp_dir().join(format!("bay-progress-{}.mp4", std::process::id()));
+
+    let mut last = (0u64, 0u64);
+    let result = renderer.export_video_observed(
+        project.active_scene(),
+        0.5,
+        10.0, // 5 frames
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &mut |done, total| {
+            last = (done, total);
+            true
+        },
+    );
+    if !require_ffmpeg_step(result.is_ok(), "encode the progress-reporting export") {
+        let _ = std::fs::remove_file(&out);
+        return;
+    }
+    assert_eq!(
+        last,
+        (5, 5),
+        "a finished export should have reported every frame"
+    );
+    let _ = std::fs::remove_file(&out);
+}

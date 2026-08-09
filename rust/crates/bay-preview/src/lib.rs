@@ -1000,6 +1000,38 @@ impl PreviewRenderer {
         media: &[MediaAsset],
         out_path: &str,
     ) -> Result<(), String> {
+        self.export_video_observed(
+            scene,
+            duration_seconds,
+            fps,
+            width,
+            height,
+            background,
+            media,
+            out_path,
+            &mut |_, _| true,
+        )
+    }
+
+    /// [`Self::export_video`], reporting progress and able to stop.
+    ///
+    /// `on_frame(done, total)` is called once per encoded frame; returning `false` cancels the
+    /// export, which deletes the staging file rather than leaving a partial one behind. This is
+    /// what turns a four-minute render from an opaque wait into something with a bar and a stop
+    /// button — and it is a per-frame check because that is the only boundary an encode has.
+    #[allow(clippy::too_many_arguments)]
+    pub fn export_video_observed(
+        &mut self,
+        scene: &Scene,
+        duration_seconds: f64,
+        fps: f64,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+        out_path: &str,
+        on_frame: &mut dyn FnMut(u64, u64) -> bool,
+    ) -> Result<(), String> {
         use std::io::Write;
 
         // Every audible clip on the audio lanes, resolved to a file on disk. Until this
@@ -1146,6 +1178,10 @@ impl PreviewRenderer {
                 // Used to `break` and return whatever ffmpeg had written — a truncated MP4 at the
                 // destination path, indistinguishable from a good one.
                 failure = Some(format!("ffmpeg stopped accepting frames: {e}"));
+                break;
+            }
+            if !on_frame(index + 1, total_frames) {
+                failure = Some("cancelled".to_string());
                 break;
             }
         }

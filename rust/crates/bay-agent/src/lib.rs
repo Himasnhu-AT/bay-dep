@@ -112,6 +112,7 @@ impl AgentBridge {
     /// connection) and never blocks the UI (the pump's work per request is a plan plus an
     /// `execute_batch`).
     pub fn call(&self, call: ToolCall, timeout: std::time::Duration) -> AgentResponse {
+        let name = call.name.clone();
         let (reply, answers) = std::sync::mpsc::sync_channel(1);
         let claimed = Arc::new(AtomicBool::new(false));
         let request = AgentRequest {
@@ -130,10 +131,19 @@ impl AgentBridge {
                     .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
-                    AgentResponse::Err(
-                        "the editor did not answer in time — it may be showing a modal dialog"
-                            .into(),
-                    )
+                    // Names the tool and the actual budget. The old text asserted a modal
+                    // dialog, which it cannot know and which was usually wrong: the common case
+                    // was a render that simply took longer than the budget it was given.
+                    //
+                    // It also says plainly that the work is still running. It is — the timeout
+                    // only claims this reply slot; nothing is cancelled, and the result will
+                    // still be applied to the document.
+                    AgentResponse::Err(format!(
+                        "{name} did not answer within {}s. The editor may be blocked on a \
+                         dialog, or the work may simply be taking longer — it has NOT been \
+                         cancelled, and its result will still be applied.",
+                        timeout.as_secs(),
+                    ))
                 } else {
                     // The pump won the race after all; its answer is already on the way.
                     answers
@@ -233,7 +243,20 @@ mod tests {
             Duration::from_millis(50),
         );
         match response {
-            AgentResponse::Err(message) => assert!(message.contains("did not answer in time")),
+            AgentResponse::Err(message) => {
+                // The message has to be actionable. It used to assert a modal dialog, which it
+                // cannot know, and say nothing about the work still running — so an agent read
+                // "failed" and retried, while the first call was still going and about to apply
+                // its edit.
+                assert!(
+                    message.contains("timeline"),
+                    "should name the tool that timed out: {message}"
+                );
+                assert!(
+                    message.contains("NOT been cancelled"),
+                    "should say the work is still running: {message}"
+                );
+            }
             AgentResponse::Ok(value) => panic!("a late answer leaked through: {value}"),
         }
         handle.join().expect("the pump thread should finish");

@@ -31,6 +31,22 @@ pub fn slow_tools() -> &'static [&'static str] {
     &["render", "narrate", "media_import", "subtitles_to_video"]
 }
 
+/// Tools that answer with a **job id** instead of a result, for the caller to poll.
+///
+/// A narrower list than [`slow_tools`], because the two answer different questions.
+/// `slow_tools` means "must not run on the UI thread"; this means "takes long enough that
+/// holding a request open for it is the wrong shape". `media_import` is in the first and not
+/// the second: it is a `probe_media` shell-out measured in hundreds of milliseconds, and it is
+/// step 3 of the eight-step authoring loop. Making an agent poll for it would be a round trip
+/// bought for nothing.
+///
+/// The distinction is load-bearing for the timeout too — `media_import` still needs a budget
+/// larger than the 20s meant for a file dialog, because it is the one slow tool that still
+/// answers in-band.
+pub fn job_tools() -> &'static [&'static str] {
+    &["render", "narrate", "subtitles_to_video"]
+}
+
 /// What the main thread should do with a finished job.
 pub enum FollowUp {
     /// Nothing — the work produced a file and changed no document state.
