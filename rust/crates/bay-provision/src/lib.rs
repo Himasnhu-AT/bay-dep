@@ -358,6 +358,21 @@ pub fn install_blocking(
     fetch: &dyn Fetch,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<(), ProvisionError> {
+    install_blocking_until(component_id, fetch, on_progress, &|| false)
+}
+
+/// [`install_blocking`], stopping when `cancelled` says to.
+///
+/// Checked between artifacts, which is the only safe boundary: a half-extracted archive is not
+/// something to leave behind, and each artifact is atomic on its own. Without this, `job_cancel`
+/// on an install returned "asked the job to stop" and then nothing ever read the flag — the
+/// class of untrue status this repository exists to avoid.
+pub fn install_blocking_until(
+    component_id: &str,
+    fetch: &dyn Fetch,
+    on_progress: &mut dyn FnMut(Progress),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), ProvisionError> {
     let manifest = Manifest::embedded();
     let root = root()?;
     let exists = |path: &Path| path.exists();
@@ -373,6 +388,12 @@ pub fn install_blocking(
 
     let cache = cache_dir(&root);
     for need in &plan.needs {
+        if cancelled() {
+            return Err(ProvisionError::Step {
+                step: "install".into(),
+                detail: "cancelled".into(),
+            });
+        }
         let artifact = manifest
             .artifact(&need.artifact)
             .ok_or_else(|| ProvisionError::UnknownComponent(need.artifact.clone()))?;

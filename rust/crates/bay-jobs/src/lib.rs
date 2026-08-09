@@ -255,6 +255,34 @@ pub fn start(kind: &str, label: &str, unit: Unit, total: u64) -> Handle {
     }
 }
 
+/// Marks a job failed if its worker unwound without calling [`finish`].
+///
+/// A panicking worker used to leave an entry that says "running" forever: eviction structurally
+/// exempts running jobs, so `job_status` polls it indefinitely and `running()` makes
+/// `bay-provision::start` refuse to retry that component for the life of the process. Held by
+/// the worker and dropped when its stack unwinds.
+pub struct Guard {
+    handle: Handle,
+}
+
+impl Guard {
+    pub fn new(handle: &Handle) -> Self {
+        Self {
+            handle: handle.clone(),
+        }
+    }
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        // `finish` is idempotent, so this is a no-op on every ordinary path.
+        finish(
+            &self.handle,
+            Err("the work stopped unexpectedly and reported no result".into()),
+        );
+    }
+}
+
 /// Record how a job ended. Idempotent, so a worker that finishes and then unwinds cannot
 /// overwrite its own result with a spurious one.
 pub fn finish(handle: &Handle, outcome: Result<serde_json::Value, String>) {
@@ -271,8 +299,16 @@ pub fn finish(handle: &Handle, outcome: Result<serde_json::Value, String>) {
                 if state.total > 0 {
                     state.done = state.total;
                 }
-                state.message = if state.cancelled {
-                    "cancelled".into()
+                // A job that produced a result COMPLETED, whatever was asked of it in the
+                // meantime. Reporting `cancelled` here — which an earlier version did — meant a
+                // narration that finished and was applied to the open document came back as
+                // "cancelled" with a result attached, and an agent reading that flag would
+                // believe no file existed and no edit had landed. The cancel simply lost the
+                // race, and saying so is the only honest report.
+                let raced = state.cancelled;
+                state.cancelled = false;
+                state.message = if raced {
+                    "finished before the cancel took effect".into()
                 } else {
                     "done".into()
                 };
@@ -555,5 +591,53 @@ mod tests {
         assert_eq!(json["fraction"], 0.25);
         assert_eq!(json["finished"], false);
         assert!(json["result"].is_null());
+    }
+}
+
+#[cfg(test)]
+mod cancel_honesty_tests {
+    use super::*;
+
+    /// A job that succeeds despite a cancel request is **not** cancelled.
+    ///
+    /// The earlier version stamped `message: "cancelled"` on any job whose cancel flag was set,
+    /// including one that had already produced a result. For a narration that meant the agent
+    /// was told the work stopped while its audio and captions had in fact been applied to the
+    /// open document — the same class of lie as the timeout that reported a failure for a render
+    /// that succeeded.
+    #[test]
+    fn a_job_that_beat_its_cancel_reports_finished_not_cancelled() {
+        let handle = start("narrate", "raced", Unit::Steps, 0);
+        assert!(cancel(handle.id()));
+        // The worker did not notice in time and completed anyway.
+        finish(&handle, Ok(serde_json::json!({ "endSeconds": 4.2 })));
+
+        let state = state(handle.id()).unwrap();
+        assert!(state.finished);
+        assert!(
+            !state.cancelled,
+            "work that produced a result was not cancelled, whatever was asked"
+        );
+        assert!(state.error.is_none());
+        assert_eq!(state.result.as_ref().unwrap()["endSeconds"], 4.2);
+        assert!(
+            state.message.contains("before the cancel"),
+            "the race should be explained, got {:?}",
+            state.message
+        );
+    }
+
+    /// A cancel that *does* take effect still reports cancelled.
+    #[test]
+    fn a_job_that_stopped_on_request_reports_cancelled() {
+        let handle = start("render", "stopped", Unit::Frames, 100);
+        assert!(cancel(handle.id()));
+        finish(&handle, Err("cancelled after 12 of 100 frames".into()));
+
+        let state = state(handle.id()).unwrap();
+        assert!(state.cancelled, "this one really did stop");
+        assert_eq!(state.message, "cancelled");
+        assert!(state.result.is_none(), "nothing was produced");
+        assert!(state.error.is_some());
     }
 }

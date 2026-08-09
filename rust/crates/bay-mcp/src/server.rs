@@ -284,6 +284,28 @@ fn serve_connection(studio: &mut Studio, stream: TcpStream) -> std::io::Result<(
 ///
 /// `dispatch` turns one JSON-RPC message into an optional reply; everything about reading the
 /// request and writing the response lives here so the two modes cannot drift apart.
+/// Is this `Origin` this machine talking to itself?
+///
+/// Compared on the host only: a scheme and port vary legitimately between clients, and what
+/// matters is that the page is not remote.
+fn is_loopback_origin(origin: &str) -> bool {
+    // "null" is what a sandboxed iframe or a file:// page sends. It is not loopback, and
+    // treating it as such would reopen the hole for exactly the pages least worth trusting.
+    let without_scheme = origin
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(origin);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    // IPv6 literals are bracketed and full of colons, so the port cannot be split off by
+    // looking for the first one.
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
 fn serve_with(
     mut stream: TcpStream,
     mut dispatch: impl FnMut(&Value) -> Option<Value>,
@@ -299,8 +321,9 @@ fn serve_with(
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
 
-    // Headers — we only need the body length.
+    // Headers: the body length, and the Origin.
     let mut content_length = 0usize;
+    let mut origin: Option<String> = None;
     loop {
         let mut header = String::new();
         if reader.read_line(&mut header)? == 0 {
@@ -310,12 +333,33 @@ fn serve_with(
         if header.is_empty() {
             break;
         }
-        if let Some(value) = header
-            .strip_prefix("Content-Length:")
-            .or_else(|| header.strip_prefix("content-length:"))
-        {
+        let lower = header.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-length:") {
             content_length = value.trim().parse().unwrap_or(0);
         }
+        if let Some(value) = lower.strip_prefix("origin:") {
+            origin = Some(value.trim().to_string());
+        }
+    }
+
+    // Binding to loopback is not enough on its own. A browser on this machine can POST here
+    // from any page the user visits — `Content-Type: text/plain` makes it a CORS-simple request,
+    // so there is no preflight to refuse — and the call executes even though the reply is
+    // unreadable. That is enough to cancel someone's render, and with a DNS-rebinding step the
+    // reply becomes readable too, at which point a listing hands the page every render path and
+    // narration line this bay knows about.
+    //
+    // A real MCP client sends no Origin at all, so requiring loopback only when one IS present
+    // costs nothing and closes the drive-by.
+    if let Some(origin) = &origin
+        && !is_loopback_origin(origin)
+    {
+        return respond(
+            &mut stream,
+            403,
+            "text/plain",
+            b"cross-origin requests are refused; bay's MCP endpoint is for local clients",
+        );
     }
 
     // A GET on the MCP endpoint is the spec's "open an SSE stream" request. This server never
@@ -521,6 +565,38 @@ mod tests {
             }
         }
         handle.join().expect("the pump thread should finish");
+    }
+
+    #[test]
+    fn a_page_on_the_web_cannot_drive_this_server() {
+        // Loopback binding does not stop a browser: any page the user visits can POST here, and
+        // with Content-Type: text/plain there is no preflight to refuse. The call would execute
+        // even though the reply is unreadable — enough to cancel someone's render.
+        for origin in [
+            "https://evil.example",
+            "http://evil.example:7333",
+            "null",
+            "http://127.0.0.1.evil.example",
+            "http://notlocalhost",
+        ] {
+            assert!(
+                !is_loopback_origin(origin),
+                "{origin} must not be treated as this machine talking to itself"
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_client_is_still_allowed() {
+        for origin in [
+            "http://localhost",
+            "http://localhost:3000",
+            "http://127.0.0.1:7333",
+            "https://127.0.0.1",
+            "http://[::1]:7333",
+        ] {
+            assert!(is_loopback_origin(origin), "{origin} is local and allowed");
+        }
     }
 
     #[test]

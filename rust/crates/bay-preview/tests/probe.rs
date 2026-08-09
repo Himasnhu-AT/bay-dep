@@ -346,3 +346,45 @@ fn export_dimensions_stay_even_for_the_encoder() {
         assert!(plan.width >= 2 && plan.height >= 2, "{natural:?}");
     }
 }
+
+/// A corrupt file's *claimed* dimensions must not size a buffer.
+///
+/// Export deliberately plans at source resolution with no downscale, and those numbers come
+/// from ffprobe reading container metadata — a claim, not a measurement. A crafted file can
+/// declare 100000x100000, which sizes a ~40 GB frame buffer and aborts the process. That breaks
+/// the same rule the rest of this branch enforces: the render path degrades on bad input, it
+/// does not abort. The preview plan was never exposed because it clamped to 480 regardless.
+#[test]
+fn an_absurd_declared_size_is_clamped_rather_than_allocated() {
+    for natural in [(100_000u32, 100_000u32), (u32::MAX, u32::MAX), (65_536, 4)] {
+        let plan = bay_preview::plan_export_decode_for_test(natural, 0, 5.0, 30.0);
+        assert!(
+            plan.width <= 16_384 && plan.height <= 16_384,
+            "{natural:?} planned {}x{}, which is not a size any codec produces",
+            plan.width,
+            plan.height
+        );
+        // The buffer that would be allocated has to stay computable and sane.
+        let bytes = (plan.width as usize)
+            .checked_mul(plan.height as usize)
+            .and_then(|p| p.checked_mul(4))
+            .expect("a clamped frame size must not overflow");
+        assert!(
+            bytes <= 16_384 * 16_384 * 4,
+            "{natural:?} would allocate {bytes} bytes per frame"
+        );
+    }
+}
+
+/// An ordinary source is untouched by that ceiling.
+#[test]
+fn the_export_ceiling_does_not_touch_real_footage() {
+    for natural in [(1920u32, 1080u32), (3840, 2160), (1080, 1920)] {
+        let plan = bay_preview::plan_export_decode_for_test(natural, 0, 5.0, 30.0);
+        assert_eq!(
+            (plan.width, plan.height),
+            natural,
+            "real footage must still export at its own size"
+        );
+    }
+}

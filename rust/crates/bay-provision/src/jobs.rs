@@ -134,28 +134,37 @@ pub fn start(component_id: &str) -> Result<JobId, ProvisionError> {
             // downloaded in chunks.
             let mut done_by_artifact: HashMap<String, u64> = HashMap::new();
             let fetch = Http::new();
-            let outcome = crate::install_blocking(&component, &fetch, &mut |progress| {
-                match progress {
-                    Progress::Downloading { artifact, done, .. } => {
-                        done_by_artifact.insert(artifact.clone(), done);
-                        let label = names.get(&artifact).cloned().unwrap_or(artifact);
-                        handle.progress(
-                            done_by_artifact.values().sum(),
-                            total,
-                            format!("downloading {label}"),
-                        );
+            // If this thread unwinds, the job is marked failed rather than left "running"
+            // forever — which would also stop this component from ever being retried.
+            let _guard = bay_jobs::Guard::new(&handle);
+            let watch = handle.clone();
+            let outcome = crate::install_blocking_until(
+                &component,
+                &fetch,
+                &mut |progress| {
+                    match progress {
+                        Progress::Downloading { artifact, done, .. } => {
+                            done_by_artifact.insert(artifact.clone(), done);
+                            let label = names.get(&artifact).cloned().unwrap_or(artifact);
+                            handle.progress(
+                                done_by_artifact.values().sum(),
+                                total,
+                                format!("downloading {label}"),
+                            );
+                        }
+                        Progress::Unpacking { artifact } => {
+                            let label = names.get(&artifact).cloned().unwrap_or(artifact);
+                            handle.say(format!("unpacking {label}"));
+                        }
+                        Progress::Step { detail, .. } => {
+                            // The venv step has no byte count bay can see, so the bar is parked at
+                            // full and the message carries the news.
+                            handle.progress(total, total, detail);
+                        }
                     }
-                    Progress::Unpacking { artifact } => {
-                        let label = names.get(&artifact).cloned().unwrap_or(artifact);
-                        handle.say(format!("unpacking {label}"));
-                    }
-                    Progress::Step { detail, .. } => {
-                        // The venv step has no byte count bay can see, so the bar is parked at
-                        // full and the message carries the news.
-                        handle.progress(total, total, detail);
-                    }
-                }
-            });
+                },
+                &|| watch.cancelled(),
+            );
 
             match outcome {
                 Ok(()) => {

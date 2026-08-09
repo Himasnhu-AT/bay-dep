@@ -81,13 +81,22 @@ def _local_model():
     return _model
 
 
+def is_known_voice(voice: str) -> bool:
+    """Is this one of the voices bay actually ships?"""
+    return any(voice in names for names in VOICES.values())
+
+
 def voice_path(voice: str) -> str | None:
     """Where a voice's tensor lives on disk, if bay provisioned it.
 
     kokoro's `load_single_voice` takes a path directly when it ends in `.pt`, so handing it one
     is all it takes to keep it off the Hub.
+
+    The name is checked against the catalogue first. It arrives from the request body, and
+    joining it into a path unchecked made `../../..` reach outside MODEL_DIR — which is a
+    file-existence oracle and an arbitrary local tensor load, neither of which narration needs.
     """
-    if not MODEL_DIR:
+    if not MODEL_DIR or not is_known_voice(voice):
         return None
     path = os.path.join(MODEL_DIR, "voices", f"{voice}.pt")
     return path if os.path.isfile(path) else None
@@ -216,14 +225,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):  # noqa: D102 - silence per-request stderr noise
         pass
 
-    def handle_one_request(self):
-        # Every request, authorized or not, counts as the sidecar being wanted. Recording it
-        # here rather than in each verb means a handler added later cannot forget to.
-        touch_activity()
-        return super().handle_one_request()
-
     def _authorized(self) -> bool:
-        return self.headers.get("Authorization", "") == f"Bearer {self.token}"
+        ok = self.headers.get("Authorization", "") == f"Bearer {self.token}"
+        # Only a request we will actually serve counts as the sidecar being wanted. Counting
+        # every request meant any local process could hold an orphaned sidecar — and its ~1 GB
+        # of resident model — alive indefinitely with unauthenticated pings, which is precisely
+        # the failure the idle timeout exists to be the backstop for.
+        if ok:
+            touch_activity()
+        return ok
 
     def _send(self, status: int, payload: dict):
         body = json.dumps(payload).encode()

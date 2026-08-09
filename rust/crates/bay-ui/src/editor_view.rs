@@ -725,7 +725,12 @@ impl EditorView {
         // A frame the GPU could not produce (device loss on a laptop that slept) leaves the last
         // good one on screen. Showing nothing, or a black rectangle, would look like the project
         // is empty rather than like the GPU hiccuped.
+        //
+        // Clearing the signature is what makes that a hiccup rather than a permanent freeze: it
+        // was recorded before the render, so leaving it set means this scene is considered
+        // already drawn and the next tick returns early — forever, even after the GPU recovers.
         let Some(frame) = frame else {
+            self.preview_sig = None;
             return;
         };
         if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra) {

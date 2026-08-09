@@ -372,10 +372,12 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "job_cancel",
-            "Ask a running job to stop. Best-effort and cooperative: a render stops at its next \
-             frame and leaves no partial file, while narration cannot interrupt speech already \
-             being synthesised and stops at the next line. Poll job_status to see it land — a \
-             job that has already finished cannot be cancelled and says so.",
+            "Ask a running job to stop. Best-effort and cooperative, and the granularity \
+             differs: a render stops at its next frame and leaves no partial file; \
+             subtitles_to_video stops at the next cue; a single narrate is one uninterruptible \
+             call into the speech model, so cancelling only takes effect if it has not started. \
+             Poll job_status to see what actually happened — a job that finished before the \
+             cancel landed reports finished with its result, not cancelled.",
             json!({
                 "job": { "type": "integer", "description": "The job id to cancel." }
             }),

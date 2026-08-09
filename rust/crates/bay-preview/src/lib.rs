@@ -268,6 +268,13 @@ const VIDEO_MAX_WIDTH: u32 = 480;
 const VIDEO_MAX_FPS: f32 = 30.0;
 const VIDEO_MIN_FPS: f32 = 2.0;
 const VIDEO_MEMORY_BUDGET: usize = 192 * 1024 * 1024;
+/// Largest side an export will decode at.
+///
+/// 16384 is the ceiling real codec levels allow, so no genuine file is affected; it exists to
+/// bound what a *claimed* dimension can cost. One 16384x16384 RGBA frame is ~1 GB, which is
+/// survivable — the 100000x100000 a corrupt header can declare is not.
+const EXPORT_MAX_DIMENSION: u32 = 16384;
+
 /// Fallback decode size when the clip cannot be probed.
 const VIDEO_FALLBACK_W: u32 = 320;
 const VIDEO_FALLBACK_H: u32 = 180;
@@ -325,10 +332,17 @@ fn plan_decode(
 
     // Export takes the source as it is. There is no downscale to undo later and no frame-rate
     // floor to smear frames across, because nothing is being held in memory to justify either.
+    //
+    // "As it is" still needs a ceiling. These dimensions come from ffprobe reading container
+    // metadata, which is a claim rather than a measurement: a corrupt or crafted file can
+    // declare 100000x100000, and a stream buffer sized from that is a 40 GB allocation and an
+    // abort — on a path whose whole rule is that bad input must degrade, not abort. The preview
+    // plan never had this exposure because it clamped to 480 anyway.
     if let DecodeIntent::Export { fps } = intent {
+        let clamp = |v: u32| v.min(EXPORT_MAX_DIMENSION);
         return DecodePlan {
-            width: even(nw as f32),
-            height: even(nh as f32),
+            width: clamp(even(nw as f32)),
+            height: clamp(even(nh as f32)),
             fps: if fps.is_finite() && fps > 0.0 {
                 fps
             } else {
@@ -498,11 +512,11 @@ fn decode_args(path: &str, plan: &DecodePlan, seek_to: Option<f64>) -> Vec<Strin
 
     args.push("-r".into());
     args.push(format!("{}", plan.fps));
-    // Export decodes at source resolution, so it passes no -s at all rather than a no-op scale.
-    if (plan.width, plan.height) != (0, 0) {
-        args.push("-s".into());
-        args.push(format!("{}x{}", plan.width, plan.height));
-    }
+    // `-s` is always passed, including for export. For export it is the source's own size
+    // rounded to even (yuv420p cannot encode an odd side), so it is a no-op on ordinary
+    // footage and a 1-pixel adjustment on the rare odd-dimensioned source.
+    args.push("-s".into());
+    args.push(format!("{}x{}", plan.width, plan.height));
     if let Some(max_frames) = plan.max_frames {
         args.push("-frames:v".into());
         args.push(max_frames.to_string());
@@ -550,7 +564,12 @@ impl ClipStream {
             .spawn()
             .ok()?;
         let stdout = child.stdout.take()?;
-        let frame_bytes = (plan.width as usize) * (plan.height as usize) * 4;
+        // Checked, because a dimension pair that survived the clamp can still multiply past
+        // usize on a 32-bit target, and a wrapped length would desynchronise `read_exact`
+        // against the real frame size rather than failing.
+        let frame_bytes = (plan.width as usize)
+            .checked_mul(plan.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))?;
         Some(Self {
             path: path.to_string(),
             plan,
@@ -1695,9 +1714,14 @@ fn live_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
 /// from the output filename, so `out.mp4.1234.part` makes it refuse with "Unable to choose an
 /// output format". `out.1234.part.mp4` keeps the extension and stays obviously temporary.
 ///
-/// The pid keeps two concurrent exports of the same destination off each other's staging file.
+/// The pid and a per-export counter keep two concurrent exports of the same destination off
+/// each other's staging file. The pid alone was not enough: every export in a process shares it,
+/// and two renders to one path are reachable now that each job builds its own renderer — both
+/// ffmpegs would have opened the same `.part` with `-y` and interleaved their writes.
 pub(crate) fn staging_path(out_path: &str) -> String {
-    let pid = std::process::id();
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = format!("{}-{nonce}", std::process::id());
     let path = std::path::Path::new(out_path);
     match (path.file_stem(), path.extension()) {
         (Some(stem), Some(ext)) => {
@@ -1771,5 +1795,33 @@ mod staging_tests {
         let staged = staging_path("/tmp/clip");
         assert_ne!(staged, "/tmp/clip");
         assert!(staged.contains(".part"), "{staged}");
+    }
+}
+
+#[cfg(test)]
+mod staging_collision_tests {
+    use super::staging_path;
+
+    /// Two exports to the same destination must not share a staging file.
+    ///
+    /// The pid alone did not do this: every export in a process shares it, and two concurrent
+    /// renders are reachable because each job builds its own renderer. Both ffmpegs would have
+    /// opened the same `.part` with `-y` and interleaved their writes, so one call reported
+    /// success over a corrupt file.
+    #[test]
+    fn two_exports_of_one_path_get_separate_staging_files() {
+        let first = staging_path("/tmp/out.mp4");
+        let second = staging_path("/tmp/out.mp4");
+        assert_ne!(
+            first, second,
+            "concurrent exports of one destination must not share a staging file"
+        );
+        for path in [&first, &second] {
+            assert!(
+                path.ends_with(".mp4"),
+                "{path} must stay readable by ffmpeg"
+            );
+            assert!(path.contains(".part."), "{path} must look temporary");
+        }
     }
 }

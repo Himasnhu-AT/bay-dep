@@ -125,7 +125,14 @@ impl AgentBridge {
         }
         match answers.recv_timeout(timeout) {
             Ok(response) => response,
-            Err(_) => {
+            // A dropped sender is NOT a timeout. `drain_agent_calls` drops the request when the
+            // window has closed, and shutdown drops every request in flight — reporting those as
+            // "did not answer in time, and its result will still be applied" told the caller to
+            // wait for an edit that was never going to land.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => AgentResponse::Err(format!(
+                "the editor stopped handling {name} — the window was closed before it finished"
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // Claim the slot so the pump's answer is dropped rather than delivered late.
                 if claimed
                     .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)

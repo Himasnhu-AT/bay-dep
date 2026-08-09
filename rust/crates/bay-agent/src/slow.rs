@@ -89,6 +89,11 @@ pub struct SlowContext {
     pub next_id: usize,
 }
 
+/// Has this job been asked to stop? `false` when it is not a job at all.
+fn cancelled(job: Option<&bay_jobs::Handle>) -> bool {
+    job.is_some_and(|handle| handle.cancelled())
+}
+
 /// Run a slow tool. **Never call this on the main thread.**
 ///
 /// `job` is the registry handle when the caller has registered one — present for everything in
@@ -103,8 +108,8 @@ pub fn run(
     match name {
         "render" => render(args, context, job),
         "media_import" => media_import(args, context),
-        "narrate" => narrate(args, context),
-        "subtitles_to_video" => subtitles_to_video(args),
+        "narrate" => narrate(args, context, job),
+        "subtitles_to_video" => subtitles_to_video(args, job),
         other => Err(format!("{other} is not a background tool")),
     }
 }
@@ -224,7 +229,17 @@ fn media_import(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
     })
 }
 
-fn narrate(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+fn narrate(
+    args: &Value,
+    context: &SlowContext,
+    job: Option<&bay_jobs::Handle>,
+) -> Result<SlowResult, String> {
+    // One synthesis is a single call into the sidecar with no boundary inside it, so the only
+    // honest checkpoint is before it starts. `job_cancel`'s description says exactly that
+    // rather than implying a line can be cut off part-way through.
+    if cancelled(job) {
+        return Err("narration was cancelled before it started".into());
+    }
     let text = require_str(args, "text")?;
     let voice = args
         .get("voice")
@@ -371,7 +386,7 @@ pub fn plan_follow_up(follow_up: FollowUp, project: &Project) -> Result<Applied,
 /// One tool rather than a documented four-call recipe, because "turn these subtitles into a
 /// video" is one intent: splitting it would make the caller choose a canvas, size the timeline
 /// to the last cue, and remember to render.
-fn subtitles_to_video(args: &Value) -> Result<SlowResult, String> {
+fn subtitles_to_video(args: &Value, job: Option<&bay_jobs::Handle>) -> Result<SlowResult, String> {
     let path = require_str(args, "path")?;
     let output = require_str(args, "output")?;
     let source = std::fs::read_to_string(&path)
@@ -432,7 +447,20 @@ fn subtitles_to_video(args: &Value) -> Result<SlowResult, String> {
         let volume = args.get("volume").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
         let mut engine = bay_speech::SpeechEngine::new(bay_speech::SpeechConfig::default());
 
+        let total = cues.len() as u64;
         for (index, cue) in cues.iter().enumerate() {
+            // A cue boundary is the real checkpoint here: a script of forty lines should stop
+            // near where it was asked to, not forty synthesis calls later.
+            if cancelled(job) {
+                return Err(format!("cancelled after narrating {index} of {total} cues"));
+            }
+            if let Some(handle) = job {
+                handle.progress(
+                    index as u64,
+                    total,
+                    format!("narrating cue {} of {total}", index + 1),
+                );
+            }
             let line = cue.text.replace('\n', " ");
             if line.trim().is_empty() {
                 continue;

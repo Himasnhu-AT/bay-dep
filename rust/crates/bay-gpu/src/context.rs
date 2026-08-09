@@ -808,12 +808,22 @@ impl GpuContext {
         self.queue.submit([encoder.finish()]);
 
         let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
+        // The mapping result has to be captured, not discarded. `poll` can return Ok while the
+        // map itself failed, and `get_mapped_range` then panics — the exact abort-on-a-bad-frame
+        // behaviour this signature exists to remove.
+        let mapped_ok = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reported = std::sync::Arc::clone(&mapped_ok);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            reported.store(result.is_ok(), std::sync::atomic::Ordering::SeqCst);
+        });
         if self
             .device
             .poll(wgpu::wgt::PollType::wait_indefinitely())
             .is_err()
         {
+            return None;
+        }
+        if !mapped_ok.load(std::sync::atomic::Ordering::SeqCst) {
             return None;
         }
 

@@ -206,7 +206,14 @@ Returns a **job id**. Poll `job_status` with it: `fraction` moves per encoded fr
 | `message` | one line for a human: "encoding frame 240 of 900" |
 
 ### `job_cancel`
-`{ job }` → asks a job to stop. Best-effort: a render stops at its next frame and leaves no
-partial file; narration cannot interrupt speech already being synthesised and stops at the next
-line. `cancelling: false` means it could not be cancelled — usually because it had already
-finished, which the message says.
+`{ job }` → asks a job to stop. Best-effort, and the granularity differs by tool:
+
+| tool | stops at |
+|---|---|
+| `render` | the next frame; no partial file is left behind |
+| `subtitles_to_video` | the next cue |
+| `narrate` | only if it has not started — one synthesis is a single uninterruptible call |
+
+`cancelling: false` means it could not be cancelled, usually because it had already finished.
+A job that finishes *despite* a cancel reports `finished` with its `result` and
+`cancelled: false` — the work happened, so saying otherwise would be a lie.

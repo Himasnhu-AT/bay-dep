@@ -135,7 +135,11 @@ def main(argv: list[str]) -> int:
         print(text)
         return 0
 
-    if wait and isinstance(value, dict) and "job" in value and not value.get("finished"):
+    # Never poll on the job tools themselves: `job_status` on a running job returns exactly the
+    # shape below, so polling it would block until the render finished — the one command whose
+    # whole purpose is a point-in-time answer. `job_cancel` returns no `finished` key at all.
+    pollable = name not in ("job_status", "job_cancel")
+    if wait and pollable and isinstance(value, dict) and "job" in value and not value.get("finished"):
         value = await_job(value["job"])
         if value is None:
             return 1
