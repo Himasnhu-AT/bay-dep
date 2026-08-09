@@ -71,6 +71,11 @@ pub fn machine_tools() -> &'static [&'static str] {
         "fonts_check",
         "runtime_status",
         "runtime_install",
+        // Following and stopping background work needs no document — and must keep working
+        // after one is closed, or a render started against a project the user then closed
+        // becomes unfollowable.
+        "job_status",
+        "job_cancel",
     ]
 }
 
@@ -167,6 +172,10 @@ pub fn plan_without_document(name: &str, args: &Value) -> Option<Result<Value, S
         // before it can do anything else.
         "runtime_status" => Some(Ok(bay_provision::mcp::runtime_status(args))),
         "runtime_install" => Some(bay_provision::mcp::runtime_install(args)),
+        // Following and stopping background work is a machine question too: the job outlives
+        // the document it was started against, so closing a project must not orphan a render.
+        "job_status" => Some(Ok(bay_jobs::mcp::status(args))),
+        "job_cancel" => Some(bay_jobs::mcp::cancel(args)),
         _ => None,
     }
 }

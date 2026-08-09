@@ -97,15 +97,20 @@ speech_status {}                       // confirm before planning around it
 media_import { "path": "bed.mp3" }
 add_audio    { "mediaId": "…", "start": 0, "duration": 21.429, "volume": 0.14 }
 
-// one line per scene; check endSeconds fits before moving on
+// one line per scene; narrate returns a job id, so poll before moving on
 narrate { "text": "The loss lands on a bigger balance than the gain did.",
           "start": 10.85, "voice": "af_heart", "speed": 1.06, "volume": 1.15,
           "captionY": 0.79, "captionFontSize": 38, "captionFontFamily": "Helvetica Neue",
           "maxWords": 4, "captionLayer": 12 }
-// → { endSeconds: 14.10, words: 11, cues: [...] }
+// → { job: 7, status: "started" }
+job_status { "job": 7 }
+// → { finished: true, result: { endSeconds: 14.10, words: 11, cues: [...] } }
+//   Check result.endSeconds fits before moving on.
 
 subtitles_export { "path": "out.srt", "format": "srt" }
 render           { "path": "out.mp4", "duration": 21.429 }
+// → { job: 8, status: "started" } — poll job_status until finished, then read
+//   result.bytes and result.encodeSeconds.
 ```
 
 Then verify the mix — see [narration.md](narration.md#levels).

@@ -37,14 +37,15 @@ rewrite it.
 ## Budgeting the script
 
 Kokoro at `speed: 1.06` runs roughly **2.5 words/second including pauses**. Budget each line
-against its scene, then verify — `narrate` returns `endSeconds`.
+against its scene, then verify — `narrate` returns a job id, and `job_status`'s
+`result.endSeconds` is the number to check.
 
 ```
 words ≈ available_seconds × 2.5
 ```
 
 A line that overruns gets clipped by the render duration, or talks over the next scene. Both
-are caught by comparing `endSeconds` to the next line's start. Fix by starting earlier,
+are caught by comparing `result.endSeconds` to the next line's start. Fix by starting earlier,
 shortening the line, or raising `speed` — in that order. Cutting a clause the picture already
 carries is usually the best fix.
 

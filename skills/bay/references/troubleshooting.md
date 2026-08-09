@@ -60,8 +60,8 @@ Kokoro is quiet (≈ −26 dBFS mean) versus a typical bed (≈ −17 dBFS). Duc
 keep `peakDb` normalization on. Target 10–15 dB separation and measure it.
 
 ### The last narration line is cut off
-It ran past the render `duration`. `narrate` returns `endSeconds` — compare it to the end
-before rendering.
+It ran past the render `duration`. `narrate` returns a job id; poll `job_status` until
+`finished`, then compare `result.endSeconds` to the end before rendering.
 
 ### Snapshots go somewhere unexpected
 Paths are resolved by the **server** process, whose cwd is wherever it was started. Use

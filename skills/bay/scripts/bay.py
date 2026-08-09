@@ -11,6 +11,10 @@ speaks the same JSON-RPC to the same endpoint, as a stopgap.
     ./bay.py <tool> '<json>'                call with arguments
     ./bay.py <tool> key=value key=value     call with arguments, shell-friendly
 
+render, narrate and subtitles_to_video return a job id rather than a result, because they take
+seconds to minutes. This script polls for you and prints the finished result, so a shell
+pipeline sees the same thing it always did. Pass --no-wait to get the raw job id instead.
+
 Endpoint: BAY_MCP_URL, default http://127.0.0.1:7333/mcp
 Exits non-zero on a tool error, so it composes in shell pipelines.
 """
@@ -19,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -65,6 +70,38 @@ def parse_args(argv: list[str]) -> dict:
     return args
 
 
+def await_job(job: int) -> dict | None:
+    """Poll job_status until the job finishes, then return its result.
+
+    Without this the bootstrap path would print a job id and exit, which looks like success and
+    hands back nothing usable. Progress goes to stderr so stdout stays pipeable JSON.
+    """
+    last = ""
+    while True:
+        body = rpc("tools/call", {"name": "job_status", "arguments": {"job": job}})
+        text = body.get("result", {}).get("content", [{}])[0].get("text", "{}")
+        try:
+            state = json.loads(text)
+        except json.JSONDecodeError:
+            print(f"could not read job {job}: {text}", file=sys.stderr)
+            return None
+        if state.get("error") and not state.get("finished"):
+            print(f"ERROR: {state['error']}", file=sys.stderr)
+            return None
+        message = state.get("message", "")
+        if message and message != last:
+            fraction = state.get("fraction")
+            bar = f" {fraction * 100:.0f}%" if isinstance(fraction, (int, float)) else ""
+            print(f"  {message}{bar}", file=sys.stderr)
+            last = message
+        if state.get("finished"):
+            if state.get("error"):
+                print(f"ERROR: {state['error']}", file=sys.stderr)
+                return None
+            return state.get("result") or state
+        time.sleep(0.5)
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -76,6 +113,9 @@ def main(argv: list[str]) -> int:
             required = ", ".join(tool["inputSchema"].get("required") or []) or "-"
             print(f"{tool['name']:20} {required}")
         return 0
+
+    wait = "--no-wait" not in argv
+    argv = [arg for arg in argv if arg != "--no-wait"]
 
     name, args = argv[0], parse_args(argv[1:])
     body = rpc("tools/call", {"name": name, "arguments": args})
@@ -90,9 +130,17 @@ def main(argv: list[str]) -> int:
         print(f"ERROR: {text}", file=sys.stderr)
         return 1
     try:
-        print(json.dumps(json.loads(text), indent=2))
+        value = json.loads(text)
     except json.JSONDecodeError:
         print(text)
+        return 0
+
+    if wait and isinstance(value, dict) and "job" in value and not value.get("finished"):
+        value = await_job(value["job"])
+        if value is None:
+            return 1
+
+    print(json.dumps(value, indent=2))
     return 0
 
 

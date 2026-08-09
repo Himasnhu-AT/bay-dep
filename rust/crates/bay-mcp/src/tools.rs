@@ -112,6 +112,46 @@ fn merge(base: Value, extra: Value) -> Value {
     out
 }
 
+/// Run a job tool on the headless transport and answer with a job id.
+///
+/// The **contract** is the same as the attached path: the caller gets `{job, ...}` and polls
+/// `job_status`. The **timing** is not, and deliberately so.
+///
+/// The headless server owns its `Studio` and stays single-threaded on purpose — one GPU device
+/// and one project mean concurrent calls would need a lock around everything anyway
+/// (`server.rs`). `narrate` and `subtitles_to_video` mutate that document, so running them on a
+/// worker would either race the next request or need the result posted back and applied between
+/// requests. Doing the work here and handing back an already-finished job keeps one contract for
+/// agents without unpicking that invariant.
+///
+/// It also costs nothing that matters: the 20-second ceiling this whole change is about only
+/// ever existed on the attached transport. A headless call has always been free to take minutes.
+fn headless_job(kind: &str, label: &str, work: impl FnOnce() -> ToolResult) -> ToolResult {
+    let handle = bay_jobs::start(kind, label, bay_jobs::Unit::Steps, 0);
+    let outcome = work();
+    let id = handle.id();
+    match &outcome {
+        Ok(value) => bay_jobs::finish(&handle, Ok(value.clone())),
+        Err(error) => bay_jobs::finish(&handle, Err(error.to_string())),
+    }
+    // The result is inlined as well as stored. A caller that polls gets the same thing; a caller
+    // that does not has still been told what happened, rather than being made to ask for an
+    // answer that is already sitting there.
+    match outcome {
+        Ok(value) => Ok(json!({
+            "job": id,
+            "status": "finished",
+            "finished": true,
+            "result": value,
+            "message": format!(
+                "{kind} finished. Poll job_status with job {id} for the same result, or read \
+                 the result field here."
+            ),
+        })),
+        Err(error) => Err(error),
+    }
+}
+
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
     json!({
         "name": name,
@@ -316,6 +356,30 @@ pub fn definitions() -> Vec<Value> {
                     "description": "Override the render length in seconds. Defaults to the timeline's own duration." }
             }),
             &["path"],
+        ),
+        tool(
+            "job_status",
+            "Follow work that runs in the background. render, narrate and subtitles_to_video \
+             return a job id immediately rather than holding the call open for minutes; poll \
+             this with that id until \"finished\" is true, then read \"result\" for what the \
+             tool would have returned. Call with no id to list everything running. Installs \
+             appear here too.",
+            json!({
+                "job": { "type": "integer",
+                    "description": "A job id. Omit to list every job this bay knows about." }
+            }),
+            &[],
+        ),
+        tool(
+            "job_cancel",
+            "Ask a running job to stop. Best-effort and cooperative: a render stops at its next \
+             frame and leaves no partial file, while narration cannot interrupt speech already \
+             being synthesised and stops at the next line. Poll job_status to see it land — a \
+             job that has already finished cannot be cancelled and says so.",
+            json!({
+                "job": { "type": "integer", "description": "The job id to cancel." }
+            }),
+            &["job"],
         ),
         tool(
             "runtime_status",
@@ -544,37 +608,52 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             &required_text(args, "path")?,
             number(args, "scale", 0.5) as f32,
         ),
-        "render" => studio.render_video(
-            &required_text(args, "path")?,
-            args.get("duration").and_then(|v| v.as_f64()),
-        ),
+        // The three job tools answer with an id on BOTH transports, so an agent never has to
+        // know whether a window is open. What differs is only when the work happens — see
+        // `headless_job`.
+        "render" => headless_job("render", &required_text(args, "path")?, || {
+            studio.render_video(
+                &required_text(args, "path")?,
+                args.get("duration").and_then(|v| v.as_f64()),
+            )
+        }),
+        "job_status" => Ok(bay_jobs::mcp::status(args)),
+        "job_cancel" => bay_jobs::mcp::cancel(args).map_err(crate::studio::err),
         "runtime_status" => Ok(bay_provision::mcp::runtime_status(args)),
         "runtime_install" => bay_provision::mcp::runtime_install(args).map_err(crate::studio::err),
         "speech_status" => studio.speech_status(),
-        "narrate" => studio.narrate(
-            &required_text(args, "text")?,
-            &text(args, "voice").unwrap_or_else(|| "af_heart".into()),
-            number(args, "speed", 1.0) as f32,
-            &text(args, "langCode").unwrap_or_else(|| "a".into()),
-            number(args, "start", 0.0),
-            number(args, "volume", 1.0) as f32,
-            text(args, "audioPath"),
-            match args.get("peakDb") {
-                Some(Value::Null) => None,
-                Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
-                None => Some(-2.0),
-            },
-            cue_style(args),
-            if args
-                .get("captions")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true)
-            {
-                Some(caption_style(args))
-            } else {
-                None
-            },
-        ),
+        "narrate" => {
+            let label = required_text(args, "text")?
+                .chars()
+                .take(60)
+                .collect::<String>();
+            headless_job("narrate", &label, || {
+                studio.narrate(
+                    &required_text(args, "text")?,
+                    &text(args, "voice").unwrap_or_else(|| "af_heart".into()),
+                    number(args, "speed", 1.0) as f32,
+                    &text(args, "langCode").unwrap_or_else(|| "a".into()),
+                    number(args, "start", 0.0),
+                    number(args, "volume", 1.0) as f32,
+                    text(args, "audioPath"),
+                    match args.get("peakDb") {
+                        Some(Value::Null) => None,
+                        Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
+                        None => Some(-2.0),
+                    },
+                    cue_style(args),
+                    if args
+                        .get("captions")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true)
+                    {
+                        Some(caption_style(args))
+                    } else {
+                        None
+                    },
+                )
+            })
+        }
         "subtitles_add" => studio.subtitles_add(
             &required_text(args, "path")?,
             number(args, "offset", 0.0),
@@ -584,7 +663,12 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             &required_text(args, "path")?,
             &text(args, "format").unwrap_or_else(|| "srt".into()),
         ),
-        "subtitles_to_video" => subtitles_to_video(studio, args),
+        "subtitles_to_video" => {
+            let label = required_text(args, "srt").unwrap_or_else(|_| "subtitles".into());
+            headless_job("subtitles_to_video", &label, || {
+                subtitles_to_video(studio, args)
+            })
+        }
         "project_save" => studio.project_save(text(args, "path").as_deref()),
         "project_list" => studio.project_list(),
         "project_load" => {

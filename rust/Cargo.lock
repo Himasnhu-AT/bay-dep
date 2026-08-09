@@ -559,6 +559,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
  "bay-core",
+ "bay-jobs",
  "bay-paths",
  "bay-preview",
  "bay-project",
@@ -654,6 +655,7 @@ version = "0.1.0"
 dependencies = [
  "bay-agent",
  "bay-core",
+ "bay-jobs",
  "bay-preview",
  "bay-project",
  "bay-provision",
@@ -700,6 +702,7 @@ dependencies = [
 name = "bay-provision"
 version = "0.1.0"
 dependencies = [
+ "bay-jobs",
  "bay-paths",
  "bay-test-support",
  "flate2",
@@ -754,6 +757,7 @@ dependencies = [
  "bay-agent",
  "bay-audio",
  "bay-core",
+ "bay-jobs",
  "bay-paths",
  "bay-preview",
  "bay-provision",

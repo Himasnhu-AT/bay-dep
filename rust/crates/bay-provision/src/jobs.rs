@@ -8,14 +8,21 @@
 //! Progress is reported as one overall pair of numbers rather than per-artifact ones. A user
 //! watching a download does not want to know that this is archive two of three; they want to
 //! know how much is left.
+//!
+//! **The registry itself now lives in `bay-jobs`**, shared with renders and narration, which is
+//! what lets one `job_status` tool report every kind of long-running work. This module is the
+//! provisioning-shaped view of it: it keeps the byte-oriented [`JobState`] and its wire format
+//! unchanged, because `runtime_status`'s JSON is a published contract and the install progress
+//! bar reads those exact fields.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::{Http, Progress, ProvisionError, manifest};
 
-pub type JobId = u64;
+pub use bay_jobs::JobId;
+
+/// The kind recorded in the shared registry, so `job_status` can tell an install from a render.
+pub const KIND: &str = "install";
 
 /// What an install is doing, as of the last poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,18 +62,19 @@ impl JobState {
             "error": self.error,
         })
     }
-}
 
-type Registry = Mutex<HashMap<JobId, Arc<Mutex<JobState>>>>;
-
-fn registry() -> &'static Registry {
-    static JOBS: OnceLock<Registry> = OnceLock::new();
-    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn next_id() -> JobId {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::SeqCst)
+    /// The provisioning view of a shared-registry job.
+    fn from_shared(shared: &bay_jobs::JobState) -> Self {
+        Self {
+            id: shared.id,
+            component: shared.label.clone(),
+            message: shared.message.clone(),
+            done_bytes: shared.done,
+            total_bytes: shared.total,
+            finished: shared.finished,
+            error: shared.error.clone(),
+        }
+    }
 }
 
 /// Begin installing `component_id` on a background thread.
@@ -96,24 +104,18 @@ pub fn start(component_id: &str) -> Result<JobId, ProvisionError> {
         return Ok(running);
     }
 
-    let id = next_id();
-    let state = Arc::new(Mutex::new(JobState {
-        id,
-        component: component_id.to_string(),
-        message: if plan.satisfied {
-            "already installed".into()
-        } else {
-            format!("starting — {}", crate::human_bytes(plan.download_bytes))
-        },
-        done_bytes: 0,
-        total_bytes: plan.download_bytes,
-        finished: false,
-        error: None,
-    }));
-
-    if let Ok(mut jobs) = registry().lock() {
-        jobs.insert(id, Arc::clone(&state));
-    }
+    let handle = bay_jobs::start(
+        KIND,
+        component_id,
+        bay_jobs::Unit::Bytes,
+        plan.download_bytes,
+    );
+    handle.say(if plan.satisfied {
+        "already installed".to_string()
+    } else {
+        format!("starting — {}", crate::human_bytes(plan.download_bytes))
+    });
+    let id = handle.id();
 
     let component = component_id.to_string();
     let names: HashMap<String, String> = plan
@@ -121,6 +123,7 @@ pub fn start(component_id: &str) -> Result<JobId, ProvisionError> {
         .iter()
         .map(|need| (need.artifact.clone(), need.name.clone()))
         .collect();
+    let total = plan.download_bytes;
 
     std::thread::Builder::new()
         .name(format!("bay-provision-{component}"))
@@ -132,38 +135,36 @@ pub fn start(component_id: &str) -> Result<JobId, ProvisionError> {
             let mut done_by_artifact: HashMap<String, u64> = HashMap::new();
             let fetch = Http::new();
             let outcome = crate::install_blocking(&component, &fetch, &mut |progress| {
-                let Ok(mut state) = state.lock() else { return };
                 match progress {
                     Progress::Downloading { artifact, done, .. } => {
                         done_by_artifact.insert(artifact.clone(), done);
                         let label = names.get(&artifact).cloned().unwrap_or(artifact);
-                        state.message = format!("downloading {label}");
-                        state.done_bytes = done_by_artifact.values().sum();
+                        handle.progress(
+                            done_by_artifact.values().sum(),
+                            total,
+                            format!("downloading {label}"),
+                        );
                     }
                     Progress::Unpacking { artifact } => {
                         let label = names.get(&artifact).cloned().unwrap_or(artifact);
-                        state.message = format!("unpacking {label}");
+                        handle.say(format!("unpacking {label}"));
                     }
                     Progress::Step { detail, .. } => {
                         // The venv step has no byte count bay can see, so the bar is parked at
                         // full and the message carries the news.
-                        state.done_bytes = state.total_bytes;
-                        state.message = detail;
+                        handle.progress(total, total, detail);
                     }
                 }
             });
 
-            if let Ok(mut state) = state.lock() {
-                state.finished = true;
-                match outcome {
-                    Ok(()) => {
-                        state.done_bytes = state.total_bytes;
-                        state.message = "installed".into();
-                    }
-                    Err(error) => {
-                        state.message = "failed".into();
-                        state.error = Some(error.to_string());
-                    }
+            match outcome {
+                Ok(()) => {
+                    handle.progress(total, total, "installed");
+                    bay_jobs::finish(&handle, Ok(serde_json::json!({ "installed": true })));
+                }
+                Err(error) => {
+                    handle.say("failed");
+                    bay_jobs::finish(&handle, Err(error.to_string()));
                 }
             }
         })
@@ -175,33 +176,27 @@ pub fn start(component_id: &str) -> Result<JobId, ProvisionError> {
     Ok(id)
 }
 
-/// The current state of a job, or `None` if there was never one with that id.
+/// The current state of an install job, or `None` if there was never one with that id.
+///
+/// A job of another kind is not an install, so this reports `None` for it rather than
+/// describing a render in byte terms it does not have.
 pub fn state(id: JobId) -> Option<JobState> {
-    let jobs = registry().lock().ok()?;
-    let state = jobs.get(&id)?;
-    let state = state.lock().ok()?;
-    Some(state.clone())
+    let shared = bay_jobs::state(id)?;
+    (shared.kind == KIND).then(|| JobState::from_shared(&shared))
 }
 
-/// Every job this process has run, newest last.
+/// Every install this process has run, newest last.
 pub fn all() -> Vec<JobState> {
-    let Ok(jobs) = registry().lock() else {
-        return Vec::new();
-    };
-    let mut states: Vec<JobState> = jobs
-        .values()
-        .filter_map(|state| state.lock().ok().map(|s| s.clone()))
-        .collect();
-    states.sort_by_key(|state| state.id);
-    states
+    bay_jobs::all()
+        .iter()
+        .filter(|state| state.kind == KIND)
+        .map(JobState::from_shared)
+        .collect()
 }
 
 /// The id of a running install of `component_id`, if there is one.
 pub fn running_for(component_id: &str) -> Option<JobId> {
-    all()
-        .into_iter()
-        .find(|state| state.component == component_id && !state.finished)
-        .map(|state| state.id)
+    bay_jobs::running(KIND, component_id)
 }
 
 #[cfg(test)]
@@ -218,6 +213,27 @@ mod tests {
     #[test]
     fn polling_an_id_that_was_never_issued_is_none() {
         assert!(state(u64::MAX).is_none());
+    }
+
+    #[test]
+    fn a_render_is_not_reported_as_an_install() {
+        // One registry now holds both, so the provisioning view has to filter. Without this,
+        // runtime_status would describe a render's frame counts as downloaded bytes.
+        let handle = bay_jobs::start(
+            "render",
+            "/tmp/not-an-install.mp4",
+            bay_jobs::Unit::Frames,
+            9,
+        );
+        assert!(
+            state(handle.id()).is_none(),
+            "a render must not be readable as an install job"
+        );
+        assert!(
+            !all().iter().any(|job| job.id == handle.id()),
+            "a render must not appear in the install list"
+        );
+        bay_jobs::finish(&handle, Ok(serde_json::json!({})));
     }
 
     #[test]

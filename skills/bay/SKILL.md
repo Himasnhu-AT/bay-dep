@@ -58,6 +58,11 @@ a job id immediately because it takes minutes; poll `runtime_status` with that i
 reason to tell the user to go and install something. A GPU adapter is the one thing bay cannot
 provide.
 
+**The same shape covers the slow tools.** `render`, `narrate` and `subtitles_to_video` return a
+job id rather than holding the call open for minutes; poll `mcp__bay__job_status` with it until
+`finished` is true, then read `result`. `mcp__bay__job_cancel` stops one. Everything else,
+`media_import` included, still answers in a single call.
+
 ---
 
 ## The loop
@@ -68,9 +73,11 @@ provide.
 3. **`media_import`** — register music, footage, stills. Returns real probed durations.
 4. **`add_text` / `add_shape` / `add_image` / `add_video` / `add_audio`** — place elements.
 5. **`animate`** — one property of one element per call, with easing.
-6. **`narrate`** — optional: speak a script and lay word-synced captions.
+6. **`narrate`** — optional: speak a script and lay word-synced captions. Returns a job id;
+   poll `job_status` until `finished`, then read `result.endSeconds`.
 7. **`snapshot` — and actually look at the PNG.** Non-negotiable; see below.
-8. **`render`** — encode the MP4.
+8. **`render`** — encode the MP4. Returns a job id; poll `job_status` until `finished`.
+   `fraction` moves per encoded frame, so a long render is watchable rather than silent.
 
 `timeline` dumps everything currently placed, so you can re-read your own work instead of
 keeping a parallel model in your head.

@@ -1,7 +1,20 @@
 # bay tool reference
 
-22 tools. Every one returns JSON; a failure comes back as a tool error with a message naming
+24 tools. Every one returns JSON; a failure comes back as a tool error with a message naming
 the offending value, so read it and correct the call rather than guessing.
+
+**Three of them do not answer directly.** `render`, `narrate` and `subtitles_to_video` take
+seconds to minutes, so they return a **job id** immediately and you poll `job_status` with it
+until `finished` is true — then read `result`, which is exactly what the tool would have
+returned in-band. `runtime_install` has always worked this way; these now match it.
+
+```jsonc
+narrate  { "text": "…" }        -> { "job": 7, "status": "started" }
+job_status { "job": 7 }          -> { "finished": false, "fraction": 0.4, "message": "…" }
+job_status { "job": 7 }          -> { "finished": true, "result": { "endSeconds": 4.2, … } }
+```
+
+Everything else, including `media_import`, still answers in one call.
 
 ---
 
@@ -144,8 +157,9 @@ Speak text, place the audio, and lay word-synced captions.
 | `captions` | true | place captions as well as audio |
 | plus caption styling | | `captionFontSize`, `captionColor`, `captionFontFamily`, `captionY`, `captionLayer`, `captionFade`, `maxWords`, `minCaptionSeconds`, `maxCaptionSeconds`, `gapSeconds` |
 
-Returns `endSeconds` — **check it fits** before committing. Audio and captions come from one
-synthesis, so they cannot drift apart.
+Returns a **job id** — poll `job_status` until `finished`, then read `result.endSeconds` and
+**check it fits** before committing. Audio and captions come from one synthesis, so they cannot
+drift apart.
 
 ### `subtitles_add`
 `{ path: "…srt|vtt", offset?: 0 }` plus caption styling. Places every cue as a caption.
@@ -161,9 +175,9 @@ optionally narrates each cue at its own time, and renders.
 { "path": "script.srt", "output": "out.mp4", "narrate": true, "voice": "af_heart" }
 ```
 
-Reports `overruns`: cues whose spoken audio ran past the next cue's start. Speech does not
-have to fit the window a subtitle author chose, so this is surfaced rather than silently
-truncated.
+Returns a **job id** — poll `job_status` until `finished`. `result.overruns` lists cues whose
+spoken audio ran past the next cue's start. Speech does not have to fit the window a subtitle
+author chose, so this is surfaced rather than silently truncated.
 
 ---
 
@@ -177,4 +191,22 @@ for review. **Paths are resolved by the server process — use absolute paths.**
 `{ path, duration? }` → encodes the whole timeline, picture and sound. `duration` overrides
 the timeline's own length — useful when elements extend past the intended end for crossfades.
 
-Returns `bytes` and `encodeSeconds`. Requires ffmpeg.
+Returns a **job id**. Poll `job_status` with it: `fraction` moves per encoded frame, and
+`result` carries `bytes` and `encodeSeconds` once `finished` is true. Requires ffmpeg.
+
+### `job_status`
+`{ job? }` → one job, or every job when the id is omitted. The fields that matter:
+
+| field | meaning |
+|---|---|
+| `finished` | the only thing worth branching on |
+| `result` | what the tool returns, present once finished |
+| `error` | why it failed, if it did |
+| `fraction` | 0–1, or null when the size is not known yet |
+| `message` | one line for a human: "encoding frame 240 of 900" |
+
+### `job_cancel`
+`{ job }` → asks a job to stop. Best-effort: a render stops at its next frame and leaves no
+partial file; narration cannot interrupt speech already being synthesised and stops at the next
+line. `cancelling: false` means it could not be cancelled — usually because it had already
+finished, which the message says.

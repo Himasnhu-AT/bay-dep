@@ -90,9 +90,18 @@ pub struct SlowContext {
 }
 
 /// Run a slow tool. **Never call this on the main thread.**
-pub fn run(name: &str, args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+///
+/// `job` is the registry handle when the caller has registered one — present for everything in
+/// [`job_tools`], absent for `media_import`, which answers in-band. Where it is present the work
+/// reports progress through it and stops when it is cancelled.
+pub fn run(
+    name: &str,
+    args: &Value,
+    context: &SlowContext,
+    job: Option<&bay_jobs::Handle>,
+) -> Result<SlowResult, String> {
     match name {
-        "render" => render(args, context),
+        "render" => render(args, context, job),
         "media_import" => media_import(args, context),
         "narrate" => narrate(args, context),
         "subtitles_to_video" => subtitles_to_video(args),
@@ -100,7 +109,11 @@ pub fn run(name: &str, args: &Value, context: &SlowContext) -> Result<SlowResult
     }
 }
 
-fn render(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+fn render(
+    args: &Value,
+    context: &SlowContext,
+    job: Option<&bay_jobs::Handle>,
+) -> Result<SlowResult, String> {
     let path = require_str(args, "path")?;
     let duration = args
         .get("duration")
@@ -130,7 +143,7 @@ fn render(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
     )?;
 
     renderer
-        .export_video(
+        .export_video_observed(
             project.active_scene(),
             duration,
             fps,
@@ -139,8 +152,23 @@ fn render(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
             &project.settings.background,
             &project.media,
             &path,
+            &mut |done, total| match job {
+                // A render is the one long job with a real denominator, so this is where the
+                // "no progress for a four-minute render" complaint actually gets answered.
+                Some(handle) => {
+                    handle.progress(done, total, format!("encoding frame {done} of {total}"));
+                    !handle.cancelled()
+                }
+                None => true,
+            },
         )
-        .map_err(|reason| format!("the render failed writing {path}: {reason}"))?;
+        .map_err(|reason| {
+            if job.is_some_and(|handle| handle.cancelled()) {
+                format!("the render of {path} was cancelled")
+            } else {
+                format!("the render failed writing {path}: {reason}")
+            }
+        })?;
 
     Ok(SlowResult {
         value: serde_json::json!({
@@ -454,6 +482,10 @@ fn subtitles_to_video(args: &Value) -> Result<SlowResult, String> {
             timeline_duration: duration,
             next_id: 1,
         },
+        // No handle: subtitles_to_video narrates every cue before it encodes, so a frame
+        // counter here would jump from nothing to a bar that is already most of the way
+        // through. Its own progress is reported per cue by the caller.
+        None,
     )?;
 
     Ok(SlowResult {
@@ -493,7 +525,7 @@ mod tests {
     #[test]
     fn every_slow_tool_is_dispatchable() {
         for name in slow_tools() {
-            let error = run(name, &serde_json::json!({}), &context())
+            let error = run(name, &serde_json::json!({}), &context(), None)
                 .err()
                 .unwrap_or_default();
             assert!(
@@ -507,7 +539,7 @@ mod tests {
     /// expensive work starts.
     #[test]
     fn render_without_a_path_is_refused() {
-        let error = run("render", &serde_json::json!({}), &context())
+        let error = run("render", &serde_json::json!({}), &context(), None)
             .err()
             .expect("render needs a path");
         assert!(error.contains("path"), "{error}");
@@ -521,6 +553,7 @@ mod tests {
             "render",
             &serde_json::json!({"path": "/tmp/bay-never-written.mp4"}),
             &context,
+            None,
         )
         .err()
         .expect("an empty timeline cannot be rendered");
@@ -537,6 +570,7 @@ mod tests {
             "media_import",
             &serde_json::json!({"path": "/definitely/not/here.mp4"}),
             &context(),
+            None,
         )
         .err()
         .expect("a missing file is an error");
@@ -555,6 +589,7 @@ mod tests {
             "media_import",
             &serde_json::json!({"path": file.to_string_lossy()}),
             &context(),
+            None,
         )
         .expect("import should succeed even if the probe fails");
 

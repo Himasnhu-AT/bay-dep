@@ -6,6 +6,7 @@ description = "Model Context Protocol server exposing the bay editor engine as a
 
 [dependencies]
 bay-agent = { path = "../bay-agent" }
+bay-jobs = { path = "../bay-jobs" }
 bay-core = { path = "../bay-core" }
 bay-project = { path = "../bay-project" }
 bay-preview = { path = "../bay-preview" }

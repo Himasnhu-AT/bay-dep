@@ -115,7 +115,7 @@ synthesis, so they cannot drift apart. Splitting them would make drift possible 
   "captionY": 0.79, "captionFontFamily": "Helvetica Neue", "maxWords": 5 }
 ```
 
-It returns `endSeconds`, so a caller can check a line fits its scene before committing —
+It returns a job id whose `result.endSeconds` lets a caller check a line fits its scene before committing —
 which is how the closing line of the volatility-drag reel was caught overrunning the music
 bed by 0.62s.
 

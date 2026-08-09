@@ -62,6 +62,20 @@ impl gpui::Focusable for BayApp {
     }
 }
 
+/// A short, human-recognisable name for what a job is working on.
+///
+/// The output path for a render, the opening words for a narration. It is what the progress
+/// line and `job_status` show, so "render" alone would be useless once two are running.
+fn job_label(call: &bay_agent::ToolCall) -> String {
+    for key in ["path", "text", "srt"] {
+        if let Some(value) = call.arguments.get(key).and_then(|v| v.as_str()) {
+            let trimmed: String = value.chars().take(60).collect();
+            return trimmed;
+        }
+    }
+    call.name.clone()
+}
+
 impl BayApp {
     /// Drain agent tool calls forever, on the foreground executor.
     ///
@@ -120,11 +134,40 @@ impl BayApp {
         self.status = Some(format!("Claude is running {}…", call.name));
         cx.notify();
 
+        // Tools long enough to need a job answer with an id straight away and are polled;
+        // `media_import` still answers in-band, because a poll round trip costs more than the
+        // probe it would be waiting for.
+        let (handle, request) = if bay_agent::slow::job_tools().contains(&call.name.as_str()) {
+            let handle = bay_jobs::start(&call.name, &job_label(&call), bay_jobs::Unit::Frames, 0);
+            // Answered NOW, while the work is still running. This is the whole point: the
+            // request no longer sits open for minutes, so no timeout can claim it and report a
+            // failure for work that is going to succeed.
+            request.respond(bay_agent::AgentResponse::Ok(serde_json::json!({
+                "job": handle.id(),
+                "status": "started",
+                "message": format!(
+                    "{} is running in the background — poll job_status with job {} until \
+                     finished is true.",
+                    call.name,
+                    handle.id()
+                ),
+            })));
+            (Some(handle), None)
+        } else {
+            (None, Some(request))
+        };
+
         // The background executor is Send+Sync — unlike the foreground one, which is !Send and
         // is exactly why an agent's work cannot simply be done wherever it arrives.
-        let job = cx
-            .background_executor()
-            .spawn(async move { bay_agent::slow::run(&call.name, &call.arguments, &context) });
+        let worker_handle = handle.clone();
+        let job = cx.background_executor().spawn(async move {
+            bay_agent::slow::run(
+                &call.name,
+                &call.arguments,
+                &context,
+                worker_handle.as_ref(),
+            )
+        });
 
         cx.spawn(async move |this, cx| {
             let outcome = job.await;
@@ -138,7 +181,22 @@ impl BayApp {
                         )
                     }),
             };
-            request.respond(response);
+
+            match (handle, request) {
+                // A job: the answer goes into the registry for the poller to collect. The edit
+                // has already been applied on the main thread by finish_slow_tool above, so a
+                // caller that sees `finished` can trust the document reflects it.
+                (Some(handle), _) => {
+                    let outcome = match response {
+                        bay_agent::AgentResponse::Ok(value) => Ok(value),
+                        bay_agent::AgentResponse::Err(message) => Err(message),
+                    };
+                    bay_jobs::finish(&handle, outcome);
+                }
+                // Not a job: answer the request that is still waiting.
+                (None, Some(request)) => request.respond(response),
+                (None, None) => {}
+            }
         })
         .detach();
     }
@@ -1523,6 +1581,7 @@ mod agent_routing_tests {
             "render",
             &serde_json::json!({"path": out.to_string_lossy()}),
             &context,
+            None,
         );
         match result {
             Ok(result) => {

@@ -60,7 +60,9 @@ silently.
 | Tool | What it does |
 |---|---|
 | `runtime_status` | **What bay needs and whether this machine has it.** ffmpeg for render, Kokoro for narration. |
-| `runtime_install` | **Install what is missing** — bay fetches it, the user installs nothing. Returns a job id; poll `runtime_status` with it. |
+| `runtime_install` | **Install what is missing** — bay fetches it, the user installs nothing. Returns a job id; poll `runtime_status` (or `job_status`) with it. |
+| `job_status` | **Follow background work.** One job by id, or all of them. `finished`, `fraction`, `result`, `error`. |
+| `job_cancel` | Ask a job to stop. Cooperative and best-effort — a render stops at its next frame, leaving no partial file. |
 | `project_create` | Start an empty project. 1080×1920 @ 30 for a vertical reel. |
 | `project_info` | Canvas, fps, duration, element counts. |
 | `fonts_check` | **Which families are actually installed.** Call before `add_text`. |
@@ -73,7 +75,7 @@ silently.
 | `element_delete` | Remove by id. |
 | `timeline` | Dump every layer, element, timing, transform and animation. |
 | `snapshot` | **Render one frame to a PNG so you can look at it.** |
-| `render` | Encode the whole timeline to MP4, picture and sound. |
+| `render` | Encode the whole timeline to MP4, picture and sound. Returns a job id; poll `job_status`. |
 | `project_save` | Save to the user's project library (no `path`), so it appears in the desktop app's launcher — or to an explicit `path`. |
 | `project_list` | The projects in the library: id, name, canvas, duration, path. |
 | `project_load` | Reopen one by `id` from the library, or by `path`. |

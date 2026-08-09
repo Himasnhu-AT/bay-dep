@@ -6,6 +6,7 @@ description = "The bridge an AI agent's edits cross to reach the live editor: pu
 
 [dependencies]
 bay-paths = { path = "../bay-paths" }
+bay-jobs = { path = "../bay-jobs" }
 bay-core = { path = "../bay-core" }
 bay-speech = { path = "../bay-speech" }
 bay-provision = { path = "../bay-provision" }

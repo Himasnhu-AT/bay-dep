@@ -33,6 +33,8 @@
 //! interrupt an HTTP request already in flight and checks between cues. Nothing here promises
 //! to stop work that is mid-syscall, and `job_cancel`'s description says so.
 
+pub mod mcp;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};

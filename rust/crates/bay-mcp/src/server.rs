@@ -955,7 +955,15 @@ mod narration_tests {
         ));
         assert!(!is_error, "{body}");
         let warm = second.elapsed();
-        let body: Value = serde_json::from_str(&body).unwrap();
+        let envelope: Value = serde_json::from_str(&body).unwrap();
+
+        // narrate is a job tool now: it answers with an id, and what it used to return in-band
+        // is the job's `result`. Asserted through job_status rather than the inlined copy, so
+        // this test covers the path an agent actually takes.
+        let job = envelope["job"].as_u64().expect("narrate returns a job id");
+        let body = bay_jobs::mcp::status(&json!({ "job": job }));
+        assert_eq!(body["finished"], true, "{body}");
+        let body = &body["result"];
 
         assert!(body["words"].as_u64().unwrap() >= 2, "{body}");
         assert!(
