@@ -6,156 +6,133 @@ description: Build and render videos with bay, a native GPU video editor driven 
 # bay
 
 A native video editor you drive with tool calls. You build a timeline — text, shapes, images,
-clips, audio — animate it, **look at rendered frames**, and encode an MP4.
+clips, audio — animate it, **look at rendered frames**, and encode an MP4. bay composites on the
+GPU and encodes through ffmpeg. There is no browser, no HTML, no screenshot loop.
 
-bay composites on the GPU and encodes through ffmpeg. There is no browser, no HTML, no
-screenshot loop.
-
----
+**bay owns the values; you own the decisions.** The project's kit resolves family, size, weight
+and colour from the `role` and `tone` you give an element. The move registry resolves duration
+and curve from the move you name. That is deliberate: an agent that picks its own sizes picks
+small ones, and an agent that picks its own curves picks one. Spend your attention on what the
+piece is about, what each beat says, and what carries across the seam between them.
 
 ## How you call it
 
-bay is an MCP server. **Call its tools directly** — `mcp__bay__project_create`,
-`mcp__bay__add_text`, `mcp__bay__snapshot`, `mcp__bay__render`. That is the whole interface;
-there is nothing to shell out to.
+bay is an MCP server. **Call its tools directly.** The tool prefix follows the name the server
+was registered under — `mcp__bay__project_create`, `mcp__vii__project_create`. Look for
+`project_create` in your tool list and use whatever prefix it carries; every tool named in this
+skill is written bare for that reason. **The live schema is the authority on arguments** — read
+the tool's own description before you call it, not a copy of it.
 
-If those tools are not in your tool list, the server is not registered yet:
+If no such tool exists at all, bay is not registered yet:
 
 ```bash
-cd <bay-repo>/rust && cargo build --release -p bay-desktop
-./target/release/bay --mcp --port 7333        # loopback only, no window
+open -a bay                                  # or: bay --mcp   for no window
 claude mcp add --transport http bay http://127.0.0.1:7333/mcp
 ```
 
-**Two ways to serve, same port, same 22 tools.**
+MCP servers load at session start, so a server registered now is available **next** session.
 
-- **`bay` (the editor)** — the window serves agents on 7333, so your edits land in the timeline
-  the user is watching and undo with the same keystroke as theirs.
-- **`bay --mcp`** — no window. For a machine with no display, or a batch job nobody is watching.
+**Two ways to serve, same tools, same port.** `bay` (the editor) serves agents from the window,
+so your edits land in the timeline the user is watching and undo with their keystroke. `bay --mcp`
+has no window — batch renders, or a machine with no display. They cannot both hold 7333, and
+**never start a second server on another port**: it is an address nothing can reach. `bay --agents`
+says what holds the port. A window that is already open is where your edits go — `project_info`
+first, and ask before you `project_create` over someone's work.
 
-**Never tell someone to quit bay to finish their video.** Rendering and narration run on a
-worker thread, so they work with the window open; the editor keeps drawing while an MP4
-encodes. If a tool ever answers with "close the app", that is a bug — report it rather than
-passing it on.
-
-They cannot both hold 7333, deliberately: an agent edits *a* document, and the value of
-watching it happen depends on there being no ambiguity about which one.
-
-**With the editor open and nothing loaded, call `project_create`** — it makes the project and
-opens it in the window. If something is already on the timeline, `project_info` first and ask
-before replacing it.
-
-**A tool list is fixed when the session starts.** Registering a server — or starting one — part
-way through does nothing for the session you are in, even though `claude mcp list` will happily
-report it connected, because that is a fresh probe rather than the binding your tools came
-from. So an HTTP registration silently yields no tools whenever bay was not already listening
-at launch, which is most of the time, since the app only holds the port while it is open.
-
-Registering it over stdio avoids that entirely — Claude Code spawns the process itself, so it
-is connected every session with nothing to remember:
-
-```bash
-claude mcp add -s user bay-headless -- /Applications/bay.app/Contents/MacOS/bay --stdio
-```
-
-That gets all 22 tools and no window. Keep the HTTP entry as well for when you want the live
-editor; they are different trade-offs, not competing answers.
-
-MCP servers load at session start, so a server registered *now* is available **next** session.
-That one bootstrap gap is the only reason `scripts/bay.py` exists — see
-[Scripts](#scripts). Once the tools are listed, ignore it.
-
-Rendering needs a GPU adapter and `ffmpeg` on PATH. Narration additionally needs Kokoro;
-`mcp__bay__speech_status` tells you whether it is there and what to do if not.
-
----
+**You can install what is missing yourself.** `runtime_status` names it and its size;
+`runtime_install` fetches it and returns a job id. A render that fails for want of ffmpeg, or a
+narration for want of Kokoro, is never a reason to tell the user to install something. A GPU
+adapter is the one thing bay cannot provide. `render`, `narrate`, `subtitles_to_video` and
+`shots_detect` return a job id — poll `job_status` until `finished`, then read `result`.
 
 ## The loop
 
-1. **`project_create`** — 1080×1920 @ 30 for a vertical reel, 1920×1080 for landscape.
-2. **`fonts_check`** — confirm every family you plan to use is installed. An unavailable
-   family renders in a fallback that looks *almost* right and survives every automated check.
-3. **`media_import`** — register music, footage, stills. Returns real probed durations.
-4. **`add_text` / `add_shape` / `add_image` / `add_video` / `add_audio`** — place elements.
-5. **`animate`** — one property of one element per call, with easing.
-6. **`narrate`** — optional: speak a script and lay word-synced captions.
-7. **`snapshot` — and actually look at the PNG.** Non-negotiable; see below.
-8. **`render`** — encode the MP4.
+1. **`project_create`** — canvas, and the **kit**. A vertical reel is portrait at 30; landscape is
+   the other way up. The kit is committed to the project before anything is placed.
+2. **Write the beats before the elements.** `marker_add` every beat, the turn and the payoff.
+   Beats are how `check` reads the piece and how the mix is judged. See
+   [references/structure.md](references/structure.md).
+3. **`media_import`** — bed, footage, stills. Returns real probed durations. `shots_detect` finds
+   the cuts in footage you have not watched.
+4. **`add_text` / `add_shape`** with a `role` and a `tone`; **`add_image` / `add_video`** for
+   anything you imported; **`add_audio`** for the bed.
+5. **`animate`** — name a registry `move`. `animate_many` runs one move across a group, staggered:
+   that is the verb for kinetic type, a list, or any set that arrives together. Hand-written
+   keyframes still work and are reported per channel as `off-vocabulary-motion`, so the cost of
+   leaving the vocabulary scales with how far you leave it.
+6. **`narrate`** — speak the script and lay word-synced captions. Returns cues and an end time.
+7. **The bed and the sound.** A bed under the whole runtime ducked against the narration, and a
+   sound under every significant move. Not a finishing touch — see
+   [references/craft.md](references/craft.md).
+8. **`check`** — then the gate below. Costs nothing, needs no GPU.
+9. **`snapshot` several moments and actually Read the PNGs.** Paths are resolved by the *server*
+   process, so pass absolute ones.
+10. **`render`** — it runs `check` first and refuses on an error. `timeline` dumps everything
+    placed, so re-read your own work instead of keeping a parallel copy in your head.
 
-`timeline` dumps everything currently placed, so you can re-read your own work instead of
-keeping a parallel model in your head.
+## The gate before you render
 
----
+Numbered because it is in order, and because everything numbered in this skill's history was
+executed and everything narrated was approximated. `check` names the number for each; none of
+these is satisfied by adding an element.
 
-## The quality gate that matters
+1. **`check` returns `status: clean` and an empty `skipped`.** A suite that could not run has not
+   passed — install what it names and run it again.
+2. **Nothing big is nearly invisible.** A large element close in tone to what is under it reads as
+   a stain, not a panel: `dead-plate`. Fix with `tone`, or delete it.
+3. **No container is empty.** A shape that holds nothing for a stretch reads as a failed load:
+   `empty-container`. Put the marks in, or take the shape out.
+4. **The first half-second carries the piece.** `no-hook` compares it against the video's own
+   median. `add_text(role: "hook")` at the kit's largest tier, opaque, on frame one.
+5. **Consecutive beats share an element that changed.** `broken-continuity`. Keep the id and
+   `animate` it across the seam; a rebuilt beat loses its id and is a carousel card.
+6. **When something arrives, something already there answers it.** `no-response`. `animate` a
+   positional or scale move on an incumbent — not opacity, and not its own stagger group.
+7. **Every text is on screen long enough to read.** `unreadable-dwell` does the arithmetic;
+   `element_trim` fixes it.
+8. **Motion comes from the registry.** `off-vocabulary-motion` lists any channel that does not.
+   Several distinct moves, each doing real work — not one move everywhere, and not a rotation.
+9. **The bottom of the frame is alive.** `bottom-dead` wants real content low in frame from a
+   non-caption element, not a hairline and not the caption band.
+10. **The mix is positional.** Narration windows must be louder than the gaps, the bed must stay
+    audible in the gaps, and the loudest moment must land on the `payoff` marker you placed in
+    step 2 — before any audio existed.
+11. **You looked.** Snapshot the hook, the turn, the payoff and one beat you are least sure of,
+    and Read them. Every defect worth catching is invisible to a lint and obvious in a frame.
 
-**Every defect worth catching is invisible to a structural check and obvious in a frame.**
-A blank frame at a cut, type that collides, a hero number too small to read at thumb size, a
-chart track with no contrast, a caption that orphans its last word — none of these fail a
-lint. All of them are apparent the moment you open the PNG.
-
-So: `snapshot` several moments, **Read the images**, and fix what you see. Snapshot paths are
-resolved by the *server* process — pass absolute paths.
-
-A cheap automated companion: `scripts/inkcheck.py` sweeps the timeline and reports frames
-with almost no ink. That catches dead air at cuts, which is easy to introduce and easy to
-miss. It is not a substitute for looking.
-
----
+`render({ignoreChecks: true, reason: …})` exists and stamps your reason into the file. It is a
+written claim, not a suppression: fixing is nearly always cheaper than justifying.
 
 ## Non-obvious things that will bite you
 
-- **Coordinates are fractions of the canvas.** `x: 0.5, y: 0.5` is dead centre.
-- **`anchorX`/`anchorY` decide which point of an element sits at `(x, y)`.** This is what
-  makes charts possible: `anchorX: 0` pins a bar's left edge so animating `scaleX` grows it
-  rightward instead of outward from its middle.
-- **Keyframe times in `animate` are relative to the ELEMENT's start**, not the timeline's.
-- **For text, `scale` is the box the type is laid out in**, and text is drawn from the box's
-  top-left. To place a paragraph at pixel `(x, y)`, set `anchorX: 0, anchorY: 0`.
-- **Land reveals ON the beat, don't start them on one.** Passing a beat time as an animation's
-  start makes the element *begin* moving on the beat and arrive late. Use
-  `start = beat − duration`.
-- **Narration must not read the screen.** The picture carries the numbers; the voice carries
-  the reasoning. If the voice says what the frame already says, cut it.
-
-Detail lives in the references below. Read the one you need — don't read them all up front.
+- **Coordinates are fractions of the canvas.** Centre is half and half. Layers stack upward from
+  the bottom one.
+- **`anchorX`/`anchorY` decide which point of an element sits at `(x, y)`.** This is what makes
+  charts possible: pin a bar's left edge and animating `scaleX` grows it rightward instead of
+  outward from its middle.
+- **Keyframe times are relative to the ELEMENT's start**, not the timeline's.
+- **For text, `scale` is the box the type is laid out in**, and text draws from the box's top-left.
+- **Land reveals ON the cue, don't start them on one.** Passing a cue time as an animation's start
+  makes the element *begin* moving there and arrive late.
+- **A mask is a stencil over the canvas, not over the layer.** `mask_set` does not inherit the
+  element's transform — which is exactly what makes a wipe possible: hold the mask still, move the
+  element under it.
+- **Only transforms are animatable** (`opacity, scale, x, y, rotation, scaleX, scaleY`, and
+  `volume` on audio). Colour, blur, letter-spacing and mask geometry are one-shot state changes,
+  so plan the move around what is a channel.
+- **Edit in place.** `element_trim`, `element_source`, `element_split`, `element_move`,
+  `transform_set` and `text_update` all keep the id and the animation. Deleting and re-adding
+  loses both, and the id is what continuity is measured on.
 
 | Read | For |
 |---|---|
-| [references/tools.md](references/tools.md) | every tool, its arguments, and what it returns |
-| [references/layout.md](references/layout.md) | canvas grid, type sizing, keep-outs, colour and contrast |
-| [references/charts.md](references/charts.md) | bars, columns, gridlines, count-ups, dot grids |
-| [references/narration.md](references/narration.md) | Kokoro voices, caption timing, audio balance |
-| [references/recipes.md](references/recipes.md) | worked end-to-end patterns to copy |
-| [references/troubleshooting.md](references/troubleshooting.md) | what each failure actually means |
-
----
-
-## Scripts
-
-You do not need these to use bay. Both exist for jobs a tool call cannot do.
-
-**`scripts/inkcheck.py`** — sweeps ~70 frames and measures how much ink is on each one. This
-is arithmetic over a batch of renders, not something you can do by looking at images one at a
-time, which is why it is a script. Run it before shipping.
-
-**`scripts/bay.py`** — a fallback for one situation only: you started the server *this*
-session, so `mcp__bay__*` is not in your tool list until the next one. It speaks the same
-JSON-RPC to the same endpoint. If the MCP tools are listed, do not use this.
-
-```bash
-./scripts/bay.py tools                       # list tools + required args
-./scripts/bay.py snapshot at=2.5 path=/tmp/f.png scale=0.5
-```
-
-Both default to `127.0.0.1:7333`; override with `BAY_MCP_URL`.
-
----
+| [references/structure.md](references/structure.md) | beats, roles, the hold, the turn, the landing |
+| [references/craft.md](references/craft.md) | what a move, a kit and an asset are FOR; audio; narration |
+| [references/tools.md](references/tools.md) | the generated tool index |
 
 ## When NOT to use bay
 
 - **The deliverable is a web page, not a file.** bay emits MP4s.
 - **You need a browser to render something** — a live site, a DOM screenshot, a WebGL scene.
-- **You need per-character text animation, path/line charts, or stroke outlines.** bay has
-  none of these yet; see the "Still missing" table in
-  [references/troubleshooting.md](references/troubleshooting.md) before promising them.
+- **You need per-character text animation, gradients, text stroke, or a group/parent transform.**
+  bay has none of these. Say so rather than approximating them with dozens of elements.
