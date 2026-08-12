@@ -27,6 +27,54 @@ palmier premise is verified.
 
 ---
 
+## `check` reports false positives — 52% of one real run
+
+**Found 2026-08-12** by reading the project behind `wicks-v2.mp4`
+(`project-1786466680050.json`, 188 elements): `check` returned **242 warnings, `ok: true`**, and
+**127 of them were wrong**. The agent shipped anyway, which is the correct response to a report
+that is half noise — and the reason the real findings in the same report went unread.
+
+| Bug | Size | Detail |
+|---|---|---|
+| **`small-text` measures the wrong number** | S | It computes `font_size × transform.scale × scale_y` (`check.rs:262`). The renderer computes `font_size × canvas_height / 1080` (`bay-preview:1689`) and uses `transform.scale` for the **layout box**, not the glyph size. On a 1920 canvas it understates by 2.4×: a 26pt kicker at `scale: 0.744` renders 46px and is reported as 19px. **67 of 69 findings were false.** Fix: mirror the renderer's formula, and add a test that pins the two together so they cannot drift again. |
+| **`invisible` ignores the animation** | S | It reads `transform.opacity <= 0` (`check.rs:349`) without consulting the `opacity` channel. Every correctly-authored fade-in sets base opacity 0 and animates up — so the check fires on the house entrance pattern. **60 of 60 findings were false.** Fix: flag only when the base is zero *and* no channel raises it. |
+| **`overlap` fires on overlay lanes** | S | 92 findings, all decoratives layered on one overlay lane on purpose. The rule is right for the main picture lane and wrong everywhere else. Fix: restrict to the main lane, or drop to a note off-main. |
+
+A check that cries wolf gets turned off, and then it is worth nothing on the run that matters —
+which is stated in this file's own tests and was not honoured by the checks that predate them.
+
+## `check` cannot see how much of the timeline will be rendered
+
+**Found 2026-08-12, same run.** The project is **155s long; it was rendered with
+`duration: 61`.** 48 of 119 visual elements — including `W = R − |r|`, the thesis of the brief —
+start after 61s and are in no frame of the output. The video ends mid-sentence. `check` passed
+it clean, because nothing in the model says what the render will ask for.
+
+Size: **S.** Options, in order of preference: have `render` refuse (or loudly warn) when
+`duration` truncates a non-empty timeline; and give `check` an optional `duration` argument so
+"what will actually ship" can be linted before it is encoded. The second is what an agent would
+reach for; the first is what protects someone who never calls `check`.
+
+Related, and the deeper authoring failure: the brief asked for 60 seconds and the agent wrote
+90s of narration across 6 clips. Budgeting is documented (`narration.md`, words ≈ seconds × 2.5)
+and was not applied. Worth a `check` finding of its own — **speech longer than the timeline it
+sits in, or a timeline far longer than the brief** — since it is mechanically detectable.
+
+## Projects still resolve to the legacy `vii` path
+
+**Found 2026-08-12.** `project_list` reports its root as
+`~/Library/Application Support/vii/projects`. The rename to bay was supposed to migrate this
+(`bay-paths/src/lib.rs:103` and its tests cover the case), but on this machine the `vii`
+directory exists and still wins, so new projects are being written into the old brand's folder.
+
+Size: **S–M.** It is not just cosmetic: `bay.app` and a `vii` directory disagreeing about where
+projects live is how someone loses work at the next rename, and the fallback quietly makes the
+migration test's guarantee untrue in practice. Decide whether the resolver should prefer `bay`
+once it exists and migrate on first write, and make the live behaviour match whatever the tests
+claim.
+
+---
+
 ## Two-stage seek for windowed decode
 
 **M** — wants [export decode intent](#export-renders-from-the-480px-preview-cache) landed first
