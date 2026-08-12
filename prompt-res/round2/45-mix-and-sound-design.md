@@ -54,6 +54,71 @@ should have to know.
 today's changes and I have not reproduced it. The channel half of §0.3 stands; treat its rate
 claim as superseded by the table above.)*
 
+**4. `bed-too-quiet`'s threshold is right; its statistic is biased low, and it actively makes
+videos worse.** This is the highest-priority item in this document.
+
+`gap_bed_lufs` (`bay-project/src/mix.rs`) is the **median of the bed across every non-speaking
+hop**. Where gaps are short relative to the duck's ramps, most non-speaking hops are *transition*
+rather than steady state, so the median reads the ramp instead of the bed. The error scales with
+how tight the gaps are, and it always runs one way — it under-reports the bed, so authors turn
+the bed up to clear it.
+
+Measured on two projects:
+
+| | gaps | release | `gapBedLufs` | true plateau | **under-report** |
+|---|---|---|---|---|---|
+| `shoot-b` | ~1.1 s | 330 ms | −15.3 | −12.6 | **2.7 dB** |
+| `shoot-c` | **0.35–0.60 s** | 520 ms | **−32.4** | **−21.1** | **11.3 dB** |
+
+At `shoot-c`'s gap lengths *no* hop is steady state, so the median is reading pure ramp. An
+11.3 dB under-report is larger than the entire usable range of the control.
+
+**What it cost.** `shoot-c` chased the warning to `volume 3.0` (and the check wanted 3.6). Going
+back down to **1.9** — the value my corrected formula gives, landing the plateau at −21.1, inside
+the §1.2 target — improved *every* measured axis at once:
+
+| | vol 3.0 | vol 1.9 |
+|---|---|---|
+| LRA | 3.70 | **3.90** |
+| separation | 8.1 LU | **9.5 LU** |
+| silence detected at −34 dB | 1 stretch, 0.61 s | **5 stretches, longest 1.178 s** |
+| `check` warnings | 16 | **6** |
+
+The pre-payoff rest went 0.612 s → 1.178 s. **The check was filling in an authored rest and
+costing 10 warnings elsewhere to do it.** `shoot-b`, following the same warning, shipped a bed
+plateau 1.4 LU *above* programme level.
+
+**Fix: use a high percentile (p90) of the bed over gap hops rather than the median, and report
+the plateau** so an author can see the number they are actually setting. The −26 LUFS floor is
+well-argued and should stay — it is only ever compared against the wrong statistic.
+
+**A second, independent bias in the same number, pointing the other way.** `mix.rs` models a
+clip's level as `file_lufs + 20·log10(gain)` — a **constant** file level times the keyframe gain.
+Amplitude shaped into the *file* is therefore invisible: `shoot-c` arranged two smooth drop-outs
+into the bed so the music stops under their rests, and `check` scored those stretches as though
+the bed were playing at full level. So one statistic is simultaneously **pessimistic about the
+plateau and optimistic about bed presence**. `silencedetect` on the encoded file was the only
+thing that told the truth. Any check reasoning about beds needs a per-hop measurement of the
+file, not a single integrated number.
+
+**Corollary for the level formula:** where a bed has shaped silence in it, the file's *integrated*
+level understates its plateau — `shoot-c`'s bed measures −32.35 whole-file but −31.48 across its
+body. Measure the body.
+
+Related, and my error rather than bay's: the level formula I gave both shoots sets a *ratio*
+(bed N LU under the narration file) where the check sets an *absolute floor on the delivered
+scale*. The term connecting them is the export lift, which I omitted:
+`delivered_bed_plateau = bed_file_LUFS + 20·log10(volume) + (−14 − authored_LUFS)`. The lift
+depends on speech coverage — +12.1 dB on a 76 %-speech piece — so one ratio maps to a different
+absolute level in every video. **Any level guidance has to be stated on the delivered scale, or
+it is not guidance.** This is the same raw-vs-delivered confusion as §2, one level up, and it
+argues hard for `targetLufs` doing the arithmetic inside bay.
+
+Also worth knowing for any check that reasons about beds: `mix.rs` models a clip's level as
+`file_lufs + 20·log10(gain)` — a **constant** file level times the keyframe gain. Amplitude
+changes baked into the *file* (a bed arranged to drop out under a rest) are invisible to `check`,
+which will score those stretches as though the bed were playing.
+
 **3. Field finding worth acting on: `flat-mix` and `speech-masked` are the same check in
 different units, and having both creates a tuning trap.** `shoot-b` reports that
 `bed-too-quiet`, `flat-mix` and `speech-masked` form a narrow coupled window that trades off
@@ -63,6 +128,11 @@ real duck the bed is already down for the whole overlap, so what it actually mea
 separation in linear gain* — which is `speech-masked`'s statistic in worse units. **This is
 direct evidence for §7.1: now that `speech-masked` exists, delete `flat-mix`.** Three coupled
 thresholds teach an agent to tune to the middle of a window rather than to a correct mix.
+
+The cleanest demonstration came from `shoot-c`: **`flat-mix` went from 10 occurrences to 0 with
+only the bed's level changed and no duck parameter touched.** A finding whose text is "nothing
+ducks" cannot be cleared by changing a gain while the duck stays identical — it is not measuring
+ducking.
 
 ---
 

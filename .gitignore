@@ -24,3 +24,7 @@ bun.lockb
 
 rust-migration-notes.md
 dist/
+
+# --- rendered video output (reproducible from the project JSON + assets/) ---
+out/
+assets/round2/bed_*.wav
