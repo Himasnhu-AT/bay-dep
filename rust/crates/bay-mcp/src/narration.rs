@@ -6,37 +6,62 @@
 //! downstream and get the same styling.
 
 use bay_project::Element;
-use bay_speech::{Cue, CueStyle};
+use bay_speech::Cue;
 
 use crate::studio::{Studio, ToolError, ToolResult, err};
 
-/// How a caption block is drawn. Defaults are sized for a 1080x1920 social reel, sitting above
-/// the platform caption band rather than under it.
-#[derive(Debug, Clone)]
-pub struct CaptionStyle {
-    pub font_size: f32,
-    pub color: String,
-    pub font_family: Option<String>,
-    pub font_weight: u16,
-    /// Vertical position of the caption box's top, as a fraction of the canvas.
-    pub y: f32,
-    pub layer: usize,
-    /// Fade in/out time in seconds. A hard cut on every caption reads as a flicker.
-    pub fade: f64,
+/// The caption vocabulary, defined once in the planner and re-exported here.
+///
+/// **Not mirrored.** These types used to exist twice — once here for the wire and once in
+/// `bay_agent::plan` for the editor window — and the two drifted: the window ignored the kit,
+/// centred every caption and faded at 0.12 s while the wire did something else. One definition
+/// is the only way a caption can mean the same thing on both transports.
+pub use bay_agent::plan::{
+    CAPTION_FADE_SECONDS, CAPTION_LAYER, CaptionPlacement, CaptionPreset, CaptionStyle,
+};
+
+/// Everything one call to [`Studio::narrate`] needs.
+///
+/// A struct rather than ten positional arguments, and a shorter one than the list it replaces:
+/// the eleven caption parameters are gone into [`CaptionStyle`], and `speed` is optional because
+/// the rate is now stated in words a second and the multiplier derived from it.
+pub struct NarrateArgs {
+    pub text: String,
+    pub voice: String,
+    /// The raw Kokoro multiplier, when a caller insists. `None` derives it from the target rate.
+    pub speed: Option<f32>,
+    /// How fast the line should be read, in words a second. 2.5 is 150 wpm.
+    pub target_words_per_second: f64,
+    pub lang_code: String,
+    pub start: f64,
+    pub volume: f32,
+    pub out_path: Option<String>,
+    pub peak_db: Option<f32>,
+    /// `None` places no captions — the audio only.
+    pub captions: Option<CaptionStyle>,
 }
 
-impl Default for CaptionStyle {
+impl Default for NarrateArgs {
     fn default() -> Self {
         Self {
-            font_size: 46.0,
-            color: "#EDECE6".to_string(),
-            font_family: None,
-            font_weight: 600,
-            y: 0.70,
-            layer: 9,
-            fade: 0.12,
+            text: String::new(),
+            voice: "af_heart".to_string(),
+            speed: None,
+            target_words_per_second: bay_speech::TARGET_WORDS_PER_SECOND,
+            lang_code: "a".to_string(),
+            start: 0.0,
+            volume: 1.0,
+            out_path: None,
+            peak_db: Some(-2.0),
+            captions: None,
         }
     }
+}
+
+/// The refusal for a line that is too long to be one clip. The message is
+/// [`bay_speech::over_length_message`] so the wire and the window refuse it identically.
+fn too_long(text: &str, words: usize, seconds: f64, verb: &str) -> ToolError {
+    err(bay_speech::over_length_message(text, words, seconds, verb))
 }
 
 impl Studio {
@@ -79,20 +104,51 @@ impl Studio {
     ///
     /// The audio and the captions come from the same synthesis, so they cannot drift apart —
     /// which is the whole reason this is one tool rather than two.
-    #[allow(clippy::too_many_arguments)]
-    pub fn narrate(
-        &mut self,
-        text: &str,
-        voice: &str,
-        speed: f32,
-        lang_code: &str,
-        start: f64,
-        volume: f32,
-        out_path: Option<String>,
-        peak_db: Option<f32>,
-        style: CueStyle,
-        captions: Option<CaptionStyle>,
-    ) -> ToolResult {
+    ///
+    /// Two refusals live here, both measured on the video this comes from:
+    ///
+    /// - **A clip longer than [`bay_speech::MAX_NARRATION_SECONDS`] is refused**, before the
+    ///   synthesis when the word count already says so and after it when the voice disagreed.
+    ///   Its 10.30 s, 29-word run-on landed on the turn of the video, and no caption rule
+    ///   repairs a sentence nobody can follow.
+    /// - **The read's rate is a stated target, not a multiplier.** `speed: 1.0` delivered 2.99
+    ///   words a second in that project — a 179 wpm read — and measures 3.30 through this path,
+    ///   while every plan was budgeted at the 2.5 the documentation claimed. The rate is asked
+    ///   for in words a second and the speed derived from it; what actually came out is measured
+    ///   and returned as `wordsPerSecond`.
+    pub fn narrate(&mut self, args: NarrateArgs) -> ToolResult {
+        let NarrateArgs {
+            text,
+            voice,
+            speed,
+            target_words_per_second,
+            lang_code,
+            start,
+            volume,
+            out_path,
+            peak_db,
+            captions,
+        } = args;
+
+        let speed = speed.unwrap_or_else(|| bay_speech::speed_for_rate(target_words_per_second));
+        // What this speed will actually deliver, which is what the length has to be judged on.
+        let planned_rate = bay_speech::BASE_WORDS_PER_SECOND * f64::from(speed);
+        let words = bay_speech::word_count(&text);
+        let estimate = bay_speech::estimated_seconds(&text, planned_rate);
+        if estimate > bay_speech::MAX_NARRATION_SECONDS {
+            return Err(too_long(&text, words, estimate, "would take"));
+        }
+        // The caption face is checked here rather than where the captions are placed, which is
+        // after the audio is already on the timeline: a refusal must not leave half a narration
+        // behind for the caller to clean up.
+        if let Some(family) = captions
+            .as_ref()
+            .and_then(|style| style.font_family.clone())
+        {
+            let weight = captions.as_ref().map(|s| s.font_weight).unwrap_or(400);
+            self.require_face(&family, weight, "the captions")?;
+        }
+
         let out_path = out_path.unwrap_or_else(|| {
             std::env::temp_dir()
                 .join(format!("bay-narration-{}.wav", self.next_narration_id()))
@@ -102,8 +158,19 @@ impl Studio {
 
         let utterance = self
             .speech()
-            .speak_normalized(text, voice, speed, lang_code, &out_path, peak_db)
+            .speak_normalized(&text, &voice, speed, &lang_code, &out_path, peak_db)
             .map_err(|error| err(error.to_string()))?;
+
+        // Checked before anything is placed: a refusal must not leave half a narration on the
+        // timeline for the caller to clean up.
+        if utterance.duration_seconds > bay_speech::MAX_NARRATION_SECONDS {
+            return Err(too_long(
+                &text,
+                utterance.words.len().max(words),
+                utterance.duration_seconds,
+                "came out at",
+            ));
+        }
 
         // Register the WAV and drop it on the audio lane where the caller asked for it.
         let media = self.media_import(&utterance.path, None)?;
@@ -118,15 +185,27 @@ impl Studio {
             start,
             utterance.duration_seconds,
             volume,
+            0.0, // a line of narration plays from its own head; there is nothing to skip
+            // bay spoke this; the author wrote the words. Stamping it is what lets a mix check
+            // ask "is the bed under the voice" without being told which clip the voice is.
+            bay_project::ElementSource::Tool,
+            bay_project::AudioRole::Speech,
         )?;
 
-        let cues = bay_speech::shift(&utterance.cues(&style), start);
-        let placed = match captions {
-            Some(caption_style) => Some(self.place_cues(&cues, &caption_style)?),
+        let cue_style = captions
+            .as_ref()
+            .map(CaptionStyle::cue_style)
+            .unwrap_or_default();
+        // Against the script, not just the word timings: the sidecar drops punctuation tokens,
+        // so a full stop is only visible here.
+        let cues = bay_speech::shift(&utterance.cues_for(&text, &cue_style), start);
+        let placed = match &captions {
+            Some(caption_style) => Some(self.place_cues(&cues, caption_style)?),
             None => None,
         };
 
-        Ok(serde_json::json!({
+        let measured = utterance.words_per_second();
+        let mut out = serde_json::json!({
             "audioPath": utterance.path,
             "mediaId": media_id,
             "voice": utterance.voice,
@@ -134,19 +213,40 @@ impl Studio {
             "durationSeconds": utterance.duration_seconds,
             "endSeconds": start + utterance.duration_seconds,
             "words": utterance.words.len(),
+            "speed": speed,
+            "targetWordsPerSecond": target_words_per_second,
+            "wordsPerSecond": measured.map(|rate| (rate * 100.0).round() / 100.0),
+            "wordsPerMinute": measured.map(|rate| (rate * 60.0).round()),
+            "captionStyle": captions
+                .as_ref()
+                .map(|style| style.preset.as_str())
+                .unwrap_or("none"),
             "cues": cues.iter().map(describe_cue).collect::<Vec<_>>(),
             "captionsPlaced": placed,
-        }))
+        });
+        // The loop the old surface left open: the caller planned at a rate, and this is what it
+        // actually got. Only said when it matters, so it stays readable.
+        if let Some(rate) = measured
+            && (rate - target_words_per_second).abs() / target_words_per_second > 0.10
+        {
+            out["rateNote"] = serde_json::json!(format!(
+                "this came out at {rate:.2} words a second ({:.0} wpm), not the {target:.2} \
+                 asked for. Pass targetWordsPerSecond to aim somewhere else, or speed to set \
+                 the multiplier yourself.",
+                rate * 60.0,
+                target = target_words_per_second,
+            ));
+        }
+        Ok(out)
     }
 
     /// Put a list of cues on the timeline as caption elements.
     pub fn place_cues(&mut self, cues: &[Cue], style: &CaptionStyle) -> Result<usize, ToolError> {
-        if let Some(family) = &style.font_family
-            && !self.has_font_family(family)
-        {
-            return Err(err(format!(
-                "caption font family {family:?} is not installed — call fonts_check first"
-            )));
+        // Captions are the largest block of type in most of these videos, so they go through the
+        // same resolution gate `add_text` does: a family that does not shape is a whole video set
+        // in a face nobody chose, and captions would otherwise be the one way past it.
+        if let Some(family) = &style.font_family {
+            self.require_face(family, style.font_weight, "the captions")?;
         }
         for cue in cues {
             let id = format!("caption-{}", self.next_caption_id());

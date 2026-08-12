@@ -156,3 +156,62 @@ fn speech_provisions_a_python_that_can_import_kokoro() {
 
     let _ = std::fs::remove_dir_all(&scratch);
 }
+
+/// The recorded sound packs, fetched and unpacked for real.
+///
+/// The claim is not "a zip downloaded" — it is that the files land where the library looks and
+/// that the library then finds them by name. A pack that installs into the wrong directory is
+/// indistinguishable, from the editor's side, from one that never downloaded.
+#[test]
+fn sound_packs_install_and_the_library_finds_them() {
+    if !enabled() {
+        eprintln!("skipping: set BAY_PROVISION_LIVE=1 to run the real download");
+        return;
+    }
+    let scratch = scratch_root("sfx");
+    let root = scratch.join("runtime");
+
+    let before = bay_provision::manifest::plan(
+        bay_provision::Manifest::embedded(),
+        "sfx",
+        bay_provision::Target::CURRENT,
+        &root,
+        &|path| path.exists(),
+    )
+    .expect("sfx component");
+    assert!(!before.satisfied, "the scratch root should start empty");
+    assert!(before.download_bytes > 0);
+
+    bay_provision::install_blocking("sfx", &Http::new(), &mut |_| {})
+        .expect("provisioning sfx must succeed");
+
+    // Where `Studio::sfx_root` looks.
+    let sfx = root.join("sfx");
+    let sounds = bay_audio::library::installed(&sfx);
+    assert!(
+        sounds.len() > 100,
+        "both packs should be indexed, found {}",
+        sounds.len()
+    );
+
+    // The two packs are distinguishable, so a future third one cannot silently replace one.
+    let packs: std::collections::BTreeSet<&str> =
+        sounds.iter().map(|sound| sound.pack.as_str()).collect();
+    assert_eq!(packs.len(), 2, "{packs:?}");
+
+    // And the point of the whole thing: a search for a sound finds one.
+    let clicks = bay_audio::library::search(&sfx, "click");
+    assert!(!clicks.is_empty(), "a pack of interface sounds has a click");
+    assert!(
+        clicks[0].path.exists(),
+        "the indexed path must be a file that is really there"
+    );
+
+    // The licence travels with the download, which is what makes it checkable later.
+    let licences: Vec<_> = std::fs::read_dir(&sfx)
+        .expect("the sfx directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("License.txt").exists())
+        .collect();
+    assert_eq!(licences.len(), 2, "each pack ships its own licence file");
+}

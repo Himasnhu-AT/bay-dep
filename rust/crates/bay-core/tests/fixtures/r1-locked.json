@@ -1,0 +1,210 @@
+{
+  "metadata": {
+    "id": "r1-locked",
+    "name": "R1 — the reply-screenshot demo"
+  },
+  "settings": {
+    "fps": {
+      "numerator": 20,
+      "denominator": 1
+    },
+    "canvas": {
+      "width": 720,
+      "height": 1280
+    },
+    "background": {
+      "type": "color",
+      "color": "#000000"
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene-main",
+      "name": "Locked frame",
+      "isMain": true,
+      "tracks": {
+        "overlay": [
+          {
+            "id": "track-overlay",
+            "name": "Reply frame",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "image",
+                "id": "tweet-card",
+                "name": "Reply screenshot",
+                "start": 0,
+                "duration": 4716000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m-tweet",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.16,
+                  "scale": 0.86,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 0.134,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "hook"
+              },
+              {
+                "type": "text",
+                "id": "reply-line",
+                "name": "Reply line",
+                "start": 0,
+                "duration": 4716000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "I guess it's crazy good then, whole thing edited in Palmier!",
+                "fontSize": 44.0,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.83,
+                  "scale": 0.86,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 0.09,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 500,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.25,
+                "source": "author",
+                "role": "headline"
+              }
+            ]
+          }
+        ],
+        "main": {
+          "id": "track-main",
+          "name": "Main",
+          "kind": "video",
+          "hidden": false,
+          "muted": false,
+          "elements": [
+            {
+              "type": "video",
+              "id": "demo-window",
+              "name": "Palmier screen recording",
+              "start": 0,
+              "duration": 4716000,
+              "fadeIn": 0,
+              "fadeOut": 0,
+              "mediaId": "m-demo",
+              "trimStart": 0,
+              "trimEnd": 4716000,
+              "transform": {
+                "x": 0.5,
+                "y": 0.455,
+                "scale": 0.94,
+                "rotation": 0.0,
+                "opacity": 1.0,
+                "scaleX": 1.0,
+                "scaleY": 0.287,
+                "anchorX": 0.5,
+                "anchorY": 0.5,
+                "cropLeft": 0.0,
+                "cropTop": 0.0,
+                "cropRight": 0.0,
+                "cropBottom": 0.0
+              },
+              "effects": [],
+              "animations": {},
+              "blendMode": "normal",
+              "source": "author",
+              "role": "label"
+            }
+          ]
+        },
+        "audio": [
+          {
+            "id": "track-audio",
+            "name": "Audio",
+            "kind": "audio",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "audio",
+                "id": "bed",
+                "name": "Music bed",
+                "start": 0,
+                "duration": 4716000,
+                "fadeIn": 0,
+                "fadeOut": 120000,
+                "mediaId": "m-bed",
+                "muted": false,
+                "volume": 1.0,
+                "animations": {},
+                "trimStart": 0,
+                "source": "author",
+                "role": "bed"
+              }
+            ]
+          }
+        ]
+      },
+      "markers": []
+    }
+  ],
+  "currentSceneId": "scene-main",
+  "media": [
+    {
+      "id": "m-tweet",
+      "name": "reply-screenshot.png",
+      "path": "/assets/r1/reply-screenshot.png"
+    },
+    {
+      "id": "m-demo",
+      "name": "palmier-session.mp4",
+      "path": "/assets/r1/palmier-session.mp4",
+      "durationSeconds": 41.0,
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "id": "m-bed",
+      "name": "bed-loop.wav",
+      "path": "/assets/r1/bed-loop.wav",
+      "durationSeconds": 64.0,
+      "loudness": {
+        "peakDb": -1.0,
+        "rmsDb": -13.4,
+        "lufs": -14.0,
+        "accentSeconds": [
+          0.0,
+          2.0,
+          4.0,
+          6.0,
+          8.0
+        ]
+      }
+    }
+  ]
+}

@@ -4,19 +4,19 @@
     "",
     "The hash is the trust anchor, not the URL and not TLS: a downloaded artifact whose digest",
     "does not match this file is discarded and never reaches disk. That is why a URL here may",
-    "point at a personal domain rather than a CDN \u2014 substituting the bytes does not help an",
+    "point at a personal domain rather than a CDN — substituting the bytes does not help an",
     "attacker, and the publisher rotating a 'latest' link cannot silently change what bay runs.",
     "For the same reason every URL must be immutable: a tag like BtbN's 'latest' is rebuilt in",
     "place and would break the pin within a day. Use dated autobuild tags and build-id paths.",
     "",
     "To re-pin: download the artifact, `shasum -a 256` it, and record the digest and byte size",
-    "here. Where the publisher ships a .sha256 alongside, check ours against theirs first \u2014 all",
+    "here. Where the publisher ships a .sha256 alongside, check ours against theirs first — all",
     "four macOS ffmpeg artifacts below were confirmed that way at pin time.",
     "",
     "Licensing is recorded per artifact because it constrains how bay may ship it. The ffmpeg",
     "builds are GPL-3.0-or-later and deliberately NOT --enable-nonfree: a nonfree build cannot",
     "be redistributed by anyone, so bundling one into bay.app later would be a licence breach.",
-    "bay does not redistribute these at all today \u2014 the user's machine fetches them from the",
+    "bay does not redistribute these at all today — the user's machine fetches them from the",
     "publisher, at the user's request, which is one more reason provisioning is user-initiated."
   ],
   "components": [
@@ -31,7 +31,7 @@
       ],
       "diskBytes": 140000000,
       "$toolComment": [
-        "verifiedVersion is what bay is actually tested against \u2014 the version of the pinned",
+        "verifiedVersion is what bay is actually tested against — the version of the pinned",
         "builds above. minimumVersion is the floor a copy bay did NOT install has to clear.",
         "",
         "The floor is what stops a release going wrong in the one way pinning alone cannot",
@@ -50,7 +50,7 @@
     {
       "id": "speech",
       "title": "Narration",
-      "detail": "Kokoro text-to-speech: a Python runtime, the kokoro package and its ~339 MB of weights. Optional \u2014 everything else in bay works without it.",
+      "detail": "Kokoro text-to-speech: a Python runtime, the kokoro package and its ~339 MB of weights. Optional — everything else in bay works without it.",
       "artifacts": [
         "uv",
         "cpython",
@@ -115,6 +115,17 @@
         "kokoro-venv"
       ],
       "diskBytes": 1555479286
+    },
+    {
+      "$comment": "Recorded interface sound. bay SYNTHESISES whooshes, risers, impacts and clicks with no download at all (bay_audio::sfx) — those are abstract sounds, and a synthesised one comes out at the length the edit needs, which a fixed file cannot. This component is for the recorded material synthesis cannot stand in for. CC0 throughout, so bay may redistribute it; see docs/native/content-packs.md for why most 'free sound' sites cannot be shipped this way.",
+      "id": "sfx",
+      "title": "Sound effects",
+      "detail": "150 recorded interface sounds — clicks, switches, confirmations, errors. Public domain (CC0). bay already synthesises whooshes, risers and impacts without this.",
+      "artifacts": [
+        "kenney-interface-sounds",
+        "kenney-ui-audio"
+      ],
+      "diskBytes": 1500000
     }
   ],
   "artifacts": [
@@ -191,7 +202,7 @@
       ]
     },
     {
-      "$comment": "Windows gets both binaries from one archive \u2014 BtbN ships them together and there is no per-tool download. The dated autobuild tag is immutable; the 'latest' tag is not and must never be pinned.",
+      "$comment": "Windows gets both binaries from one archive — BtbN ships them together and there is no per-tool download. The dated autobuild tag is immutable; the 'latest' tag is not and must never be pinned.",
       "id": "ffmpeg-windows",
       "name": "FFmpeg 8.1.2",
       "source": "https://github.com/BtbN/FFmpeg-Builds",
@@ -2886,10 +2897,94 @@
           ]
         }
       ]
+    },
+    {
+      "$comment": "100 CC0 sounds. The licence is stated inside the archive itself (License.txt), not only on the page it came from — which is what makes it checkable years later. The same zip serves every platform; audio is not architecture-specific, so the builds differ only in the target they answer to.",
+      "id": "kenney-interface-sounds",
+      "name": "Kenney Interface Sounds",
+      "source": "https://kenney.nl/",
+      "license": "CC0-1.0",
+      "format": "zip",
+      "install": "tree",
+      "tree": {
+        "strip": 0,
+        "into": "sfx/kenney-interface"
+      },
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+          "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+          "bytes": 834536,
+          "provides": [
+            "sfx/kenney-interface/Audio"
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+          "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+          "bytes": 834536,
+          "provides": [
+            "sfx/kenney-interface/Audio"
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+          "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+          "bytes": 834536,
+          "provides": [
+            "sfx/kenney-interface/Audio"
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "52 CC0 sounds. The licence is stated inside the archive itself (License.txt), not only on the page it came from — which is what makes it checkable years later. The same zip serves every platform; audio is not architecture-specific, so the builds differ only in the target they answer to.",
+      "id": "kenney-ui-audio",
+      "name": "Kenney UI Audio",
+      "source": "https://kenney.nl/",
+      "license": "CC0-1.0",
+      "format": "zip",
+      "install": "tree",
+      "tree": {
+        "strip": 0,
+        "into": "sfx/kenney-ui"
+      },
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+          "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+          "bytes": 411949,
+          "provides": [
+            "sfx/kenney-ui/Audio"
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+          "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+          "bytes": 411949,
+          "provides": [
+            "sfx/kenney-ui/Audio"
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+          "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+          "bytes": 411949,
+          "provides": [
+            "sfx/kenney-ui/Audio"
+          ]
+        }
+      ]
     }
   ],
   "$stepComment": [
-    "kokoro-venv is not a download \u2014 it is uv resolving a ~1 GB dependency tree into a venv.",
+    "kokoro-venv is not a download — it is uv resolving a ~1 GB dependency tree into a venv.",
     "en_core_web_sm is pinned as an explicit wheel URL for a load-bearing reason: misaki's",
     "English G2P calls spacy.load() and, when the model is absent, shells out to pip from inside",
     "the running sidecar. That fails, and it takes narration down with an error that points",

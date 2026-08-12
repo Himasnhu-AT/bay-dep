@@ -6,6 +6,50 @@ use cosmic_text::{
     Align, Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
 };
 
+/// The face a `(family, weight)` request actually shaped with.
+///
+/// Read off a real shaping run rather than inferred from the font database, because the database
+/// answers "does this face exist" and the question that matters is "what will the renderer draw".
+/// Those differ: cosmic-text does not snap to the nearest weight, it drops the family and
+/// substitutes a different one, and nothing downstream of that point can tell.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedFace {
+    /// The family the shaper used — the first name the face declares.
+    pub family: String,
+    /// That face's own weight, which is not necessarily the one that was asked for.
+    pub weight: u16,
+    /// Whether the resolved face is monospaced. The nearest thing to a metric class the font
+    /// itself asserts, rather than one guessed from the family name.
+    pub monospaced: bool,
+    /// Cap height as a fraction of the em, measured from the face. `fontSize` is not a size;
+    /// this is the number that turns one into the other.
+    pub cap_per_em: Option<f32>,
+    /// Every name this face answers to. A face carries its family name once per language, so a
+    /// request has to be matched against all of them or a localised name reads as a substitution.
+    pub aliases: Vec<String>,
+}
+
+impl ResolvedFace {
+    /// Whether this is the family that was asked for. Case- and alias-insensitive, because a
+    /// face declares several names and the request may match any of them.
+    pub fn is(&self, family: &str) -> bool {
+        self.family.eq_ignore_ascii_case(family)
+            || self
+                .aliases
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(family))
+    }
+
+    /// Whether this face is monospaced or proportional, for a generated table.
+    pub fn metric_class(&self) -> &'static str {
+        if self.monospaced {
+            "monospace"
+        } else {
+            "proportional"
+        }
+    }
+}
+
 /// Horizontal alignment of a line within the raster box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
@@ -107,6 +151,110 @@ impl TextRaster {
             .db()
             .faces()
             .any(|face| face.families.iter().any(|(name, _)| name == family))
+    }
+
+    /// Whether `family` has an upright face at exactly `weight`.
+    ///
+    /// The pair, not the family, is what either exists or does not. cosmic-text does **not** snap
+    /// to the nearest weight: a miss drops the family and substitutes another face entirely —
+    /// `Avenir` at 700 comes back as Menlo Bold, `Baskerville` at 900 as Apple SD Gothic Neo
+    /// Heavy. A style kit that names a weight its family does not have therefore renders the
+    /// whole project in a face nobody chose, and nothing downstream can tell.
+    ///
+    /// Upright and normal-stretch only: bay never sets `Attrs::style` or `Attrs::stretch`, so an
+    /// italic-only or condensed-only cut is not reachable and must not report as available.
+    pub fn has_face(&mut self, family: &str, weight: u16) -> bool {
+        self.font_system.db().faces().any(|face| {
+            face.weight.0 == weight
+                && face.style == cosmic_text::fontdb::Style::Normal
+                && face.stretch == cosmic_text::fontdb::Stretch::Normal
+                && face.families.iter().any(|(name, _)| name == family)
+        })
+    }
+
+    /// What a `(family, weight)` request **actually shapes with** on this machine.
+    ///
+    /// This is the authoritative answer and [`has_face`](Self::has_face) is only a good guess:
+    /// the database is asked whether a face exists, this asks the shaper what it did. One glyph
+    /// is laid out with exactly the attributes the renderer will use, and the face id on the
+    /// resulting [`cosmic_text::LayoutGlyph`] is reported back.
+    ///
+    /// `None` only if nothing at all could be shaped, which means no fonts are installed.
+    pub fn resolve_face(&mut self, family: &str, weight: u16) -> Option<ResolvedFace> {
+        // A Latin capital, because cap height is what the ramp is quoted in and a family that
+        // cannot draw an `H` cannot set the type in this project either.
+        const PROBE: &str = "H";
+        let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(64.0, 76.8));
+        buffer.set_size(&mut self.font_system, Some(4096.0), Some(256.0));
+        let attrs = Attrs::new()
+            .family(Family::Name(family))
+            .weight(Weight(weight));
+        buffer.set_text(&mut self.font_system, PROBE, &attrs, Shaping::Advanced);
+        buffer.shape_until_scroll(&mut self.font_system, false);
+        let id = buffer
+            .layout_runs()
+            .flat_map(|run| run.glyphs.iter())
+            .map(|glyph| glyph.font_id)
+            .next()?;
+        drop(buffer);
+        self.describe_face(id)
+    }
+
+    /// Whether `family` at `weight` shapes in the family it names.
+    ///
+    /// The one question every caller actually has. A `false` here means the renderer will draw
+    /// something nobody chose — see [`resolve_face`](Self::resolve_face) for what.
+    pub fn resolves(&mut self, family: &str, weight: u16) -> bool {
+        self.resolve_face(family, weight)
+            .is_some_and(|face| face.is(family))
+    }
+
+    /// Every CSS weight `family` can actually be set in, out of the nine standard steps.
+    ///
+    /// Generated rather than declared: a table of which weights a family has is a fact about the
+    /// machine, and the only way to state it correctly is to ask.
+    pub fn resolvable_weights(&mut self, family: &str) -> Vec<u16> {
+        const STEPS: [u16; 9] = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+        STEPS
+            .into_iter()
+            .filter(|weight| self.resolves(family, *weight))
+            .collect()
+    }
+
+    fn describe_face(&mut self, id: cosmic_text::fontdb::ID) -> Option<ResolvedFace> {
+        let info = self.font_system.db().face(id)?;
+        let aliases: Vec<String> = info.families.iter().map(|(name, _)| name.clone()).collect();
+        let family = aliases.first().cloned().unwrap_or_default();
+        let weight = info.weight.0;
+        let monospaced = info.monospaced;
+        // Read off the face, not off a table keyed by family name: a substituted face has to be
+        // able to report its own metrics or the substitution is invisible in the numbers too.
+        let cap_per_em = self.font_system.get_font(id).and_then(|font| {
+            let face = font.rustybuzz();
+            let em = face.units_per_em() as f32;
+            if em <= 0.0 {
+                return None;
+            }
+            let cap = face
+                .capital_height()
+                .filter(|height| *height > 0)
+                .map(f32::from)
+                .or_else(|| {
+                    // Not every face fills in OS/2 `sCapHeight`; the top of an `H` is the same
+                    // measurement taken the long way.
+                    let glyph = face.glyph_index('H')?;
+                    face.glyph_bounding_box(glyph)
+                        .map(|bbox| f32::from(bbox.y_max))
+                })?;
+            Some(cap / em)
+        });
+        Some(ResolvedFace {
+            family,
+            weight,
+            monospaced,
+            cap_per_em,
+            aliases,
+        })
     }
 
     /// Rasterize `text` with full typographic control. See [`TextStyle`].

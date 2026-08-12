@@ -9,6 +9,9 @@ crate-type = ["rlib"]
 
 [dependencies]
 bytemuck = { workspace = true }
+# LUTs upload as Rgba16Float: the only float format guaranteed filterable, and far more
+# precision than a 33-entry cube needs.
+half = { version = "2", features = ["bytemuck"] }
 bay-gpu = { version = "0.1.0", path = "../bay-gpu" }
 thiserror = { workspace = true }
 wgpu = { workspace = true }

@@ -11,7 +11,7 @@ pub mod probe;
 use bay_compositor::{
     BlendMode, CanvasClearDescriptor, Compositor, EffectPassDescriptor,
     EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
-    QuadTransformDescriptor,
+    LayerMaskDescriptor, QuadTransformDescriptor,
 };
 use std::collections::HashSet;
 
@@ -23,7 +23,7 @@ use bay_text::TextRaster;
 /// effect). `brightness`/`contrast`/`saturation` are single-`amount` colour adjustments; `blur`
 /// expands into a separable two-pass gaussian (horizontal then vertical). Unknown effect types
 /// are skipped so the compositor never errors on an unknown shader.
-fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
+fn effect_groups(element: &Element, luts: &mut LutCache) -> Vec<Vec<EffectPassDescriptor>> {
     fn number(amount: f32) -> EffectUniformValueDescriptor {
         EffectUniformValueDescriptor::Number(amount)
     }
@@ -35,11 +35,25 @@ fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
         .filter_map(|effect| {
             let amount = effect.params.get("amount").copied();
             match effect.effect_type.as_str() {
+                // A whole grade in one pass. `amount` is how much of it to apply, so a look
+                // can be dialled back without re-authoring the table.
+                "lut" => {
+                    // A LUT with no file behind it grades nothing. Dropping the pass is right:
+                    // the alternative is a frame the shader cannot produce, and the missing
+                    // file is reported by `check` rather than by a black frame.
+                    let table = luts.resolve(effect.asset.as_deref()?)?;
+                    Some(vec![EffectPassDescriptor {
+                        shader: "lut".to_string(),
+                        uniforms: [("u_amount".to_string(), number(amount.unwrap_or(1.0)))].into(),
+                        lut: Some(table),
+                    }])
+                }
                 // Colour adjustments: `amount` defaults to 1.0 (no change).
                 shader @ ("brightness" | "contrast" | "saturation") => {
                     Some(vec![EffectPassDescriptor {
                         shader: shader.to_string(),
                         uniforms: [("u_amount".to_string(), number(amount.unwrap_or(1.0)))].into(),
+                        lut: None,
                     }])
                 }
                 // Separable gaussian blur: `amount` is sigma (px); split into H then V.
@@ -56,6 +70,7 @@ fn effect_groups(element: &Element) -> Vec<Vec<EffectPassDescriptor>> {
                             ),
                         ]
                         .into(),
+                        lut: None,
                     };
                     Some(vec![pass([1.0, 0.0]), pass([0.0, 1.0])])
                 }
@@ -87,6 +102,90 @@ fn blend_mode(mode: bay_project::BlendMode) -> BlendMode {
         Src::Saturation => BlendMode::Saturation,
         Src::Color => BlendMode::Color,
         Src::Luminosity => BlendMode::Luminosity,
+    }
+}
+
+/// Draw a mask shape into a frame-sized RGBA buffer: opaque white inside the shape,
+/// transparent outside it.
+///
+/// The edge is antialiased by sampling coverage rather than testing a single point, because a
+/// hard-edged ellipse over a face reads as a cut-out. Softening beyond that is the feather
+/// pass's job, on the GPU, where it belongs.
+fn rasterize_mask(mask: &bay_project::Mask, width: u32, height: u32) -> Vec<u8> {
+    use bay_project::MaskShape;
+    let (width, height) = (width.max(1), height.max(1));
+    let (w, h) = (width as f32, height as f32);
+    let centre = (mask.x.clamp(-2.0, 3.0) * w, mask.y.clamp(-2.0, 3.0) * h);
+    let half = (
+        (mask.width.clamp(0.0, 4.0) * w / 2.0).max(0.5),
+        (mask.height.clamp(0.0, 4.0) * h / 2.0).max(0.5),
+    );
+
+    let mut rgba = vec![0u8; (width * height * 4) as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let (dx, dy) = (
+                (x as f32 + 0.5 - centre.0) / half.0,
+                (y as f32 + 0.5 - centre.1) / half.1,
+            );
+            // Coverage rather than a point test, so the edge is antialiased — a hard-edged
+            // ellipse over a face reads as a cut-out. Softening past one pixel is the feather
+            // pass's job, on the GPU, where it belongs.
+            let coverage = match mask.shape {
+                MaskShape::Ellipse => {
+                    let distance = (dx * dx + dy * dy).sqrt();
+                    let scale = half.0.min(half.1).max(1.0);
+                    (1.0 - (distance - 1.0) * scale).clamp(0.0, 1.0)
+                }
+                MaskShape::Rect => {
+                    let inside_x = (1.0 - dx.abs()) * half.0;
+                    let inside_y = (1.0 - dy.abs()) * half.1;
+                    inside_x.min(inside_y).clamp(0.0, 1.0)
+                }
+            };
+            let index = ((y * width + x) * 4) as usize;
+            rgba[index] = 255;
+            rgba[index + 1] = 255;
+            rgba[index + 2] = 255;
+            rgba[index + 3] = (coverage * 255.0).round() as u8;
+        }
+    }
+    rgba
+}
+
+/// Test hook for [`rasterize_mask`].
+pub fn rasterize_mask_for_test(mask: &bay_project::Mask, width: u32, height: u32) -> Vec<u8> {
+    rasterize_mask(mask, width, height)
+}
+
+/// How a built-in look is named in an effect's `asset`, as opposed to a path on disk.
+pub const LOOK_PREFIX: &str = "look:";
+
+/// Grades in memory, by the name the effect gave — a built-in look or a `.cube` path.
+///
+/// Read once and held: a grade on twenty clips at thirty frames a second would otherwise open
+/// and parse the same file six hundred times a second. A file that fails to parse is
+/// remembered as a failure too, so a typo in a path does not retry the read every frame.
+#[derive(Default)]
+pub(crate) struct LutCache {
+    tables: std::collections::HashMap<String, Option<std::sync::Arc<bay_effects::Lut3d>>>,
+}
+
+impl LutCache {
+    /// Built-ins are checked first, and are not paths: `look:teal-orange` cannot be a filename,
+    /// so the two namespaces cannot collide — and a project naming a built-in keeps working on
+    /// a machine that has never downloaded anything.
+    fn resolve(&mut self, asset: &str) -> Option<(String, std::sync::Arc<bay_effects::Lut3d>)> {
+        let entry = self.tables.entry(asset.to_string()).or_insert_with(|| {
+            if let Some(id) = asset.strip_prefix(LOOK_PREFIX) {
+                return bay_effects::Look::by_id(id).map(|look| std::sync::Arc::new(look.to_lut()));
+            }
+            let text = std::fs::read_to_string(asset).ok()?;
+            bay_effects::Lut3d::parse_cube(&text)
+                .ok()
+                .map(std::sync::Arc::new)
+        });
+        entry.clone().map(|table| (asset.to_string(), table))
     }
 }
 
@@ -128,6 +227,12 @@ fn sanitise_transform(t: bay_project::Transform) -> bay_project::Transform {
         scale_y: finite(t.scale_y, 1.0).max(0.0),
         anchor_x: finite(t.anchor_x, 0.5).clamp(0.0, 1.0),
         anchor_y: finite(t.anchor_y, 0.5).clamp(0.0, 1.0),
+        // `crop_rect` does its own sanitising, but the raw fields travel with the transform,
+        // so they are cleaned here too rather than trusted downstream.
+        crop_left: finite(t.crop_left, 0.0).clamp(0.0, 1.0),
+        crop_top: finite(t.crop_top, 0.0).clamp(0.0, 1.0),
+        crop_right: finite(t.crop_right, 0.0).clamp(0.0, 1.0),
+        crop_bottom: finite(t.crop_bottom, 0.0).clamp(0.0, 1.0),
     }
 }
 
@@ -743,12 +848,188 @@ pub struct PreviewRenderer {
     uploaded_media: std::collections::HashMap<String, (u32, u32)>,
     /// media id → decode state (pending on a worker thread, ready, or permanently failed).
     video_cache: std::collections::HashMap<String, ClipState>,
+    /// Parsed `.cube` grades, read once per file.
+    luts: LutCache,
     /// Ready clips in least-recently-used order, for eviction under the global byte budget.
     video_lru: std::collections::VecDeque<String>,
     /// Content+style keys of text textures already rasterised and uploaded, so unchanged text
     /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
     raster_keys: HashSet<String>,
     raster_order: std::collections::VecDeque<String>,
+}
+
+/// The container the picture and sound are wrapped in — as opposed to what is on the timeline.
+///
+/// Before this existed the encoder was invoked with `-pix_fmt yuv420p` and nothing else, so
+/// every export took libx264's defaults whatever it was for: no way to ask for a smaller file,
+/// a better one, an alpha-capable codec, or a level a phone would play at a sensible volume.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportSettings {
+    pub codec: VideoCodec,
+    /// Constant-quality target. Lower is better and larger: 18 is visually lossless for H.264,
+    /// 23 is ffmpeg's own default, past 28 gradients start to band. Ignored by ProRes, which
+    /// is quality-fixed by its profile.
+    pub quality: u32,
+    /// Seconds into the timeline at which the export starts. Everything before is not encoded,
+    /// and the sound is shifted to match.
+    pub start_seconds: f64,
+    /// Normalise the mix towards a loudness target rather than exporting whatever level the
+    /// timeline happened to sum to.
+    ///
+    /// On by default because the platforms these files are posted to all normalise anyway, and
+    /// a mix that arrives quiet gets turned *up* by the platform along with its noise floor.
+    /// One-pass `loudnorm`, so it is an approximation — good to about a dB, which is far
+    /// closer than nothing.
+    pub loudness_lufs: Option<f64>,
+    pub audio_bitrate_kbps: u32,
+    /// Written into the container's `comment` tag.
+    ///
+    /// This exists for one caller: a render that went ahead over a gating check carries the
+    /// reason it was allowed to. A claim that lives only in a chat log is not a claim anybody
+    /// can check later, so it travels with the file.
+    pub metadata_comment: Option<String>,
+}
+
+impl Default for ExportSettings {
+    fn default() -> Self {
+        Self {
+            codec: VideoCodec::H264,
+            quality: 20,
+            start_seconds: 0.0,
+            // -14 LUFS is what Instagram, TikTok, YouTube and Spotify all normalise towards.
+            loudness_lufs: Some(-14.0),
+            audio_bitrate_kbps: 192,
+            metadata_comment: None,
+        }
+    }
+}
+
+/// The video codecs bay can ask ffmpeg for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoCodec {
+    /// Plays everywhere. The right answer unless there is a reason.
+    H264,
+    /// Half the bitrate for the same quality, and not every player takes it.
+    Hevc,
+    /// An editing codec: huge files, no generation loss, what you hand to someone else's
+    /// timeline.
+    ProRes,
+}
+
+impl VideoCodec {
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "h264" => Some(Self::H264),
+            "hevc" | "h265" => Some(Self::Hevc),
+            "prores" => Some(Self::ProRes),
+            _ => None,
+        }
+    }
+
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::Hevc => "hevc",
+            Self::ProRes => "prores",
+        }
+    }
+
+    /// The encoder arguments for this codec at `quality`, and the pixel format that goes with
+    /// it. `yuv420p` is what every consumer player expects; ProRes wants a 10-bit 4:2:2 layout
+    /// and would otherwise be pointless.
+    fn encoder_args(self, quality: u32) -> Vec<String> {
+        let quality = quality.min(51).to_string();
+        match self {
+            Self::H264 => vec![
+                "-c:v".into(),
+                "libx264".into(),
+                "-crf".into(),
+                quality,
+                "-preset".into(),
+                "medium".into(),
+                // Without this a phone or a browser may refuse the file outright.
+                "-profile:v".into(),
+                "high".into(),
+                "-pix_fmt".into(),
+                "yuv420p".into(),
+            ],
+            Self::Hevc => vec![
+                "-c:v".into(),
+                "libx265".into(),
+                "-crf".into(),
+                quality,
+                "-preset".into(),
+                "medium".into(),
+                // QuickTime will not open an HEVC file without this tag.
+                "-tag:v".into(),
+                "hvc1".into(),
+                "-pix_fmt".into(),
+                "yuv420p".into(),
+            ],
+            Self::ProRes => vec![
+                "-c:v".into(),
+                "prores_ks".into(),
+                "-profile:v".into(),
+                "3".into(), // 422 HQ
+                "-pix_fmt".into(),
+                "yuv422p10le".into(),
+            ],
+        }
+    }
+}
+
+/// The delivery targets worth having a name for, and what each one actually wants.
+///
+/// A preset is a *starting point*, not a lock: every field it sets can be overridden. It exists
+/// because "what CRF should a TikTok be?" is a question nobody should have to answer twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportPreset {
+    /// Instagram Reels, TikTok, YouTube Shorts — vertical, watched on a phone, normalised hard
+    /// by the platform.
+    Social,
+    /// Landscape YouTube. A little more bitrate, because the second encode is the platform's.
+    Youtube,
+    /// Handing the file to another editor: no generation loss, no loudness processing.
+    Master,
+}
+
+impl ExportPreset {
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "social" | "reel" | "tiktok" | "shorts" => Some(Self::Social),
+            "youtube" => Some(Self::Youtube),
+            "master" | "prores" => Some(Self::Master),
+            _ => None,
+        }
+    }
+
+    pub fn settings(self) -> ExportSettings {
+        match self {
+            Self::Social => ExportSettings {
+                codec: VideoCodec::H264,
+                quality: 20,
+                loudness_lufs: Some(-14.0),
+                audio_bitrate_kbps: 192,
+                ..ExportSettings::default()
+            },
+            Self::Youtube => ExportSettings {
+                codec: VideoCodec::H264,
+                quality: 18,
+                loudness_lufs: Some(-14.0),
+                audio_bitrate_kbps: 256,
+                ..ExportSettings::default()
+            },
+            Self::Master => ExportSettings {
+                codec: VideoCodec::ProRes,
+                quality: 0,
+                // A master is handed on for more work; normalising it would bake in a decision
+                // the next person has to undo.
+                loudness_lufs: None,
+                audio_bitrate_kbps: 320,
+                ..ExportSettings::default()
+            },
+        }
+    }
 }
 
 impl PreviewRenderer {
@@ -763,6 +1044,7 @@ impl PreviewRenderer {
             text: TextRaster::new(),
             uploaded_media: std::collections::HashMap::new(),
             video_cache: std::collections::HashMap::new(),
+            luts: LutCache::default(),
             video_lru: std::collections::VecDeque::new(),
             raster_keys: HashSet::new(),
             raster_order: std::collections::VecDeque::new(),
@@ -842,6 +1124,39 @@ impl PreviewRenderer {
         let texture = self
             .ctx
             .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape")?;
+        self.compositor.upsert_texture(key.clone(), texture);
+        self.remember_raster(key.clone());
+        Some(key)
+    }
+
+    /// Rasterise a mask shape into a frame-sized coverage texture: opaque where the clip
+    /// shows, transparent where it does not.
+    ///
+    /// Frame-sized because the compositor feathers and applies masks in frame space — a mask
+    /// is a stencil over the canvas, not over the layer, which is what lets one cut across a
+    /// rotated or scaled clip without inheriting its geometry. Cached like every other raster,
+    /// so a static vignette is drawn once rather than per frame.
+    fn ensure_mask_texture(
+        &mut self,
+        mask: &bay_project::Mask,
+        width: u32,
+        height: u32,
+    ) -> Option<String> {
+        let key = format!(
+            "mask:{:?}:{}:{}:{}:{}:{width}x{height}",
+            mask.shape,
+            mask.x.to_bits(),
+            mask.y.to_bits(),
+            mask.width.to_bits(),
+            mask.height.to_bits(),
+        );
+        if self.raster_keys.contains(&key) {
+            return Some(key);
+        }
+        let rgba = rasterize_mask(mask, width, height);
+        let texture = self
+            .ctx
+            .upload_rgba_texture(&rgba, width, height, "preview-mask")?;
         self.compositor.upsert_texture(key.clone(), texture);
         self.remember_raster(key.clone());
         Some(key)
@@ -1057,6 +1372,7 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
         out_path: &str,
+        settings: &ExportSettings,
     ) -> Result<(), String> {
         self.export_video_observed(
             scene,
@@ -1067,6 +1383,7 @@ impl PreviewRenderer {
             background,
             media,
             out_path,
+            settings,
             &mut |_, _| true,
         )
     }
@@ -1088,15 +1405,19 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
         out_path: &str,
+        settings: &ExportSettings,
         on_frame: &mut dyn FnMut(u64, u64) -> bool,
     ) -> Result<(), String> {
         use std::io::Write;
+
+        let start_seconds = settings.start_seconds.max(0.0);
 
         // Every audible clip on the audio lanes, resolved to a file on disk. Until this
         // existed, `export_video` piped a single rawvideo input and never read `tracks.audio`
         // at all — every export was silent, which made the editor unable to produce the one
         // thing a social reel is: picture cut to music.
-        let audio_clips = audible_clips(scene, media);
+        let audio_clips =
+            clips_in_range(audible_clips(scene, media), start_seconds, duration_seconds);
 
         let mut args: Vec<String> = vec![
             "-nostdin".into(),
@@ -1129,11 +1450,11 @@ impl PreviewRenderer {
             for (index, clip) in audio_clips.iter().enumerate() {
                 filters.push_str(&format!(
                     "[{input}:a]atrim=start={start:.4}:duration={duration:.4},asetpts=PTS-STARTPTS,\
-                     volume={volume:.4},adelay={delay_ms}:all=1[a{index}];",
+                     {volume},adelay={delay_ms}:all=1[a{index}];",
                     input = index + 1,
                     start = clip.trim_start_seconds,
                     duration = clip.duration_seconds,
-                    volume = clip.volume,
+                    volume = clip.volume_filter(),
                     delay_ms = (clip.start_seconds * 1000.0).round() as i64,
                 ));
             }
@@ -1141,9 +1462,24 @@ impl PreviewRenderer {
                 filters.push_str(&format!("[a{index}]"));
             }
             filters.push_str(&format!(
-                "amix=inputs={count}:normalize=0:dropout_transition=0[aout]",
+                "amix=inputs={count}:normalize=0:dropout_transition=0",
                 count = audio_clips.len()
             ));
+            // One-pass loudnorm. Two passes would measure first and be exact, but that means
+            // decoding the whole mix twice; within about a dB is the difference between a reel
+            // that arrives at a sensible level and one the platform turns up along with its
+            // noise floor.
+            if let Some(target) = settings.loudness_lufs {
+                filters.push_str(&format!(",loudnorm=I={target:.1}:TP=-1.5:LRA=11"));
+            }
+            // `loudnorm` runs internally at 192 kHz and hands back 96 kHz, so a chain that ends
+            // on it delivers a 96 kHz file — double the AAC bitrate for nothing, and a rate every
+            // platform re-encodes anyway. `amix` separately takes its channel layout from its
+            // FIRST input, so a mono narration clip placed before the bed collapsed the whole
+            // mix to mono. Both were measured in shipped files. Pin the delivery format here,
+            // after everything that could have changed it, rather than trusting the chain.
+            filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
+            filters.push_str("[aout]");
 
             args.push("-filter_complex".into());
             args.push(filters);
@@ -1154,13 +1490,18 @@ impl PreviewRenderer {
             args.push("-c:a".into());
             args.push("aac".into());
             args.push("-b:a".into());
-            args.push("192k".into());
+            args.push(format!("{}k", settings.audio_bitrate_kbps.clamp(32, 512)));
             // The mixed bed can outlast the picture; the video track defines the duration.
             args.push("-shortest".into());
         }
 
-        args.push("-pix_fmt".into());
-        args.push("yuv420p".into());
+        args.extend(settings.codec.encoder_args(settings.quality));
+        // Travels with the file: a render that went ahead over a gating check says so in its own
+        // metadata, where it outlives the session that authorised it.
+        if let Some(comment) = settings.metadata_comment.as_deref() {
+            args.push("-metadata".into());
+            args.push(format!("comment={comment}"));
+        }
         // Encode beside the destination, not at it. The pid keeps two concurrent exports of the
         // same path from clobbering each other's staging file.
         let part_path = staging_path(out_path);
@@ -1207,7 +1548,9 @@ impl PreviewRenderer {
         let total_frames = (duration_seconds * fps).ceil().max(1.0) as u64;
         let mut failure: Option<String> = None;
         for index in 0..total_frames {
-            let seconds = index as f64 / fps;
+            // Frame 0 of the *file* is `start_seconds` into the timeline, which is what makes
+            // this a ranged export rather than a full one with a trimmed head.
+            let seconds = start_seconds + index as f64 / fps;
             let playhead = MediaTime::from_seconds_f64(seconds).unwrap_or(MediaTime::ZERO);
             // Close decoders for clips the playhead has left behind, so a long timeline does not
             // end up holding one ffmpeg process per clip it has ever shown.
@@ -1484,7 +1827,16 @@ impl PreviewRenderer {
                     (transform.scale * width as f32).max(1.0),
                     (transform.scale * height as f32).max(1.0),
                 );
-                let (fit_w, fit_h) = fit_contain(natural_size, box_w, box_h);
+                // The visible source is what `contain` has to fit. Fitting the uncropped size
+                // would letterbox the frame to the shape of a picture the crop just removed.
+                let (_, _, crop_w, crop_h) = transform.crop_rect();
+                let cropped_size = natural_size.map(|(w, h)| {
+                    (
+                        ((w as f32 * crop_w).round() as u32).max(1),
+                        ((h as f32 * crop_h).round() as u32).max(1),
+                    )
+                });
+                let (fit_w, fit_h) = fit_contain(cropped_size, box_w, box_h);
                 // Per-axis scale multiplies the *fitted* size, so it composes with `contain`
                 // rather than fighting it: at (1, 1) the geometry is bit-identical to before,
                 // and a bar animating `scaleX` stretches from its fitted width.
@@ -1502,6 +1854,17 @@ impl PreviewRenderer {
                 let center_x = transform.x * width as f32 + (0.5 - transform.anchor_x) * layer_w;
                 let center_y = transform.y * height as f32 + (0.5 - transform.anchor_y) * layer_h;
 
+                // Rasterised before the descriptor is built: `ensure_mask_texture` borrows
+                // `self` mutably, and the descriptor below holds a borrow of the element.
+                let mask_descriptor = element.mask().and_then(|mask| {
+                    let texture_id = self.ensure_mask_texture(&mask, width, height)?;
+                    Some(LayerMaskDescriptor {
+                        texture_id,
+                        feather: mask.feather.max(0.0),
+                        inverted: mask.inverted,
+                    })
+                });
+
                 items.push(FrameItemDescriptor::Layer(LayerDescriptor {
                     texture_id,
                     transform: QuadTransformDescriptor {
@@ -1512,11 +1875,15 @@ impl PreviewRenderer {
                         rotation_degrees: transform.rotation,
                         flip_x: false,
                         flip_y: false,
+                        crop: transform.crop_rect(),
                     },
-                    opacity: transform.opacity.clamp(0.0, 1.0),
+                    // The clip's own fade multiplies whatever opacity the transform (and any
+                    // keyframes on it) asked for, rather than replacing it — a title can fade
+                    // up while it is also animating its opacity, and neither cancels the other.
+                    opacity: (transform.opacity * element.fade_gain(local)).clamp(0.0, 1.0),
                     blend_mode: blend_mode(element.blend_mode().unwrap_or_default()),
-                    effect_pass_groups: effect_groups(element),
-                    mask: None,
+                    effect_pass_groups: effect_groups(element, &mut self.luts),
+                    mask: mask_descriptor,
                 }));
             }
         }
@@ -1611,8 +1978,139 @@ pub struct AudibleClip {
     /// How much of the source to skip, in seconds.
     pub trim_start_seconds: f64,
     pub duration_seconds: f64,
-    /// Linear gain. 1.0 is unity.
+    /// Linear gain. 1.0 is unity. Constant when `gain_points` holds one point or none.
     pub volume: f32,
+    /// The clip's level over its own length as `(seconds, gain)` — fades and any volume
+    /// keyframes, taken from the same model function the preview mixer reads, so the export
+    /// cannot duck in a different place than the room did.
+    pub gain_points: Vec<(f64, f32)>,
+}
+
+/// How many points an ffmpeg `volume` expression may carry.
+///
+/// The expression is a nested `if()` chain, one level per point, and ffmpeg's parser accepts
+/// **97** and rejects 98 — bisected against the real binary. Six eased volume keyframes
+/// subdivide to 82 points and export; seven make 98 and the whole encode fails with "Missing
+/// ')' or too many args". A duck of one narration line is four keys, so **two lines could not
+/// be exported**, which is a complete explanation for a bed that was chopped into 13 clips with
+/// stepped gains instead of being keyframed. 90 leaves room under the real limit.
+const MAX_GAIN_EXPRESSION_POINTS: usize = 90;
+
+/// How far the decimated polyline may sit from the one the model described, in dB.
+///
+/// 0.3 dB is below the level-difference limen for a sustained sound, so the export and the room
+/// agree about the duck to the ear even though they no longer agree to the sample. What this
+/// buys is that a 150 ms ease costs ~5 points instead of 16, and a flat hold costs 2.
+const GAIN_DECIMATION_DB: f32 = 0.3;
+
+/// Thin a level polyline until it fits an ffmpeg expression, keeping every point that carries
+/// shape.
+///
+/// A run of points collapses to its two ends whenever **every** point in the run sits within
+/// [`GAIN_DECIMATION_DB`] of the straight line between them — so the 16 subdivisions of an eased
+/// segment collapse to the few that describe the curve, and the flat hold between two ducks
+/// collapses to its ends. The error is measured against the original polyline rather than
+/// against the previous survivor, because measuring it locally lets it accumulate: dropping ten
+/// points that are each 0.05 dB from their neighbours can land the tenth half a dB from where
+/// the model put it.
+///
+/// If that is still too many points, the tolerance is doubled and it runs again: a project with
+/// more ducks than the expression can hold gets a coarser curve rather than a failed encode.
+fn decimate_gain_points(points: &[(f64, f32)], limit: usize) -> Vec<(f64, f32)> {
+    if points.len() <= 2 {
+        return points.to_vec();
+    }
+    let mut tolerance = GAIN_DECIMATION_DB;
+    for _ in 0..12 {
+        let mut kept: Vec<(f64, f32)> = vec![points[0]];
+        let mut anchor = 0usize;
+        while anchor < points.len() - 1 {
+            // The next point always fits — a segment with nothing between it and its anchor has
+            // nothing to be wrong about — so the scan starts one past it.
+            let mut furthest = anchor + 1;
+            for end in anchor + 2..points.len() {
+                if !run_fits(points, anchor, end, tolerance) {
+                    break;
+                }
+                furthest = end;
+            }
+            kept.push(points[furthest]);
+            anchor = furthest;
+        }
+        if kept.len() <= limit {
+            return kept;
+        }
+        tolerance *= 2.0;
+    }
+    // Nothing survives twelve doublings except a curve with more corners than the limit; keep
+    // the ends and an even sample of the middle rather than emitting an expression ffmpeg will
+    // refuse outright.
+    let stride = points.len().div_ceil(limit.max(2));
+    let mut kept: Vec<(f64, f32)> = points.iter().step_by(stride).copied().collect();
+    if kept.last() != points.last() {
+        kept.push(points[points.len() - 1]);
+    }
+    kept
+}
+
+/// Whether every point between `anchor` and `end` is within `tolerance` dB of the straight
+/// line joining them.
+fn run_fits(points: &[(f64, f32)], anchor: usize, end: usize, tolerance: f32) -> bool {
+    let ((from_time, from_gain), (to_time, to_gain)) = (points[anchor], points[end]);
+    let span = to_time - from_time;
+    points[anchor + 1..end].iter().all(|(time, gain)| {
+        let approximated = if span <= 0.0 {
+            to_gain
+        } else {
+            from_gain + (to_gain - from_gain) * ((time - from_time) / span) as f32
+        };
+        decibels_apart(*gain, approximated) <= tolerance
+    })
+}
+
+/// Level difference in dB, with a floor so that two silences are zero apart rather than
+/// infinitely so.
+fn decibels_apart(a: f32, b: f32) -> f32 {
+    const FLOOR: f32 = 1e-4;
+    let (a, b) = (a.max(FLOOR), b.max(FLOOR));
+    20.0 * (a / b).log10().abs()
+}
+
+impl AudibleClip {
+    /// The ffmpeg filter fragment that applies this clip's level.
+    ///
+    /// A flat clip is a plain `volume=`. A moving one becomes a piecewise-linear expression
+    /// evaluated per frame — the same polyline the preview interpolates, written in ffmpeg's
+    /// expression language. `t` there is seconds into the *trimmed* clip, which is exactly
+    /// what `gain_points` is measured in.
+    ///
+    /// Decimated on the way in, because the expression parser has a hard limit the model does
+    /// not — see [`MAX_GAIN_EXPRESSION_POINTS`]. The preview mixer keeps the full polyline;
+    /// what the two share is the description, not the sample count.
+    fn volume_filter(&self) -> String {
+        let decimated = decimate_gain_points(&self.gain_points, MAX_GAIN_EXPRESSION_POINTS);
+        let points: Vec<&(f64, f32)> = decimated.iter().collect();
+        if points.len() < 2 {
+            let gain = points.first().map(|(_, g)| *g).unwrap_or(self.volume);
+            return format!("volume={gain:.4}");
+        }
+        // Built from the last segment backwards, so each `if` only has to decide "before this
+        // point or after it".
+        let mut expression = format!("{:.4}", points[points.len() - 1].1);
+        for pair in points.windows(2).rev() {
+            let ((ta, va), (tb, vb)) = (pair[0], pair[1]);
+            let segment = if (tb - ta).abs() < 1e-9 {
+                format!("{vb:.4}")
+            } else {
+                // va + (vb - va) * (t - ta) / (tb - ta)
+                format!("({va:.4}+({:.4})*(t-{ta:.4})/{:.4})", vb - va, tb - ta)
+            };
+            // Commas inside an ffmpeg expression must be escaped, or the filtergraph parser
+            // reads one as the end of this filter.
+            expression = format!(r"if(lt(t\,{tb:.4})\,{segment}\,{expression})");
+        }
+        format!("volume='{expression}':eval=frame")
+    }
 }
 
 /// Collect every audible clip on the scene's audio lanes, in timeline order.
@@ -1643,16 +2141,88 @@ fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
             clips.push(AudibleClip {
                 path: asset.path.clone(),
                 start_seconds: audio.start.to_seconds_f64().max(0.0),
-                // `AudioElement` has no trim field yet, so a clip always plays from its head.
-                // Kept explicit so adding trim later is a one-line change here.
-                trim_start_seconds: 0.0,
+                trim_start_seconds: audio.trim_start.to_seconds_f64().max(0.0),
                 duration_seconds,
                 volume: audio.volume,
+                gain_points: element.gain_points(),
             });
         }
     }
     clips
 }
+
+/// Test hook for [`VideoCodec::encoder_args`] — the arguments are what actually reach ffmpeg,
+/// and a codec that quietly fell back to the default would only show up when someone opened
+/// the file.
+pub fn encoder_args_for_test(codec: VideoCodec, quality: u32) -> Vec<String> {
+    codec.encoder_args(quality)
+}
+
+/// Shift and clip a set of audible clips into an exported range.
+///
+/// A ranged export renumbers time from `start_seconds`, so every clip's position moves with it
+/// and anything that finishes before the range begins is dropped rather than delayed into it.
+/// A clip that straddles the start keeps its in-point advanced by the same amount it lost, so
+/// the sound under the first frame is the sound that was under it in the timeline.
+fn clips_in_range(clips: Vec<AudibleClip>, start_seconds: f64, duration: f64) -> Vec<AudibleClip> {
+    if start_seconds <= 0.0 {
+        return clips;
+    }
+    let end = start_seconds + duration.max(0.0);
+    clips
+        .into_iter()
+        .filter_map(|clip| {
+            let clip_end = clip.start_seconds + clip.duration_seconds;
+            if clip_end <= start_seconds || clip.start_seconds >= end {
+                return None;
+            }
+            let lost = (start_seconds - clip.start_seconds).max(0.0);
+            let duration_seconds =
+                (clip.duration_seconds - lost).min(end - start_seconds.max(clip.start_seconds));
+            if duration_seconds <= 0.0 {
+                return None;
+            }
+            Some(AudibleClip {
+                start_seconds: (clip.start_seconds - start_seconds).max(0.0),
+                trim_start_seconds: clip.trim_start_seconds + lost,
+                duration_seconds,
+                // The level curve is measured from the clip's own head, so the part that is
+                // still playing has to be read from where the range picked it up.
+                gain_points: clip
+                    .gain_points
+                    .iter()
+                    .map(|(t, gain)| (t - lost, *gain))
+                    .collect(),
+                ..clip
+            })
+        })
+        .collect()
+}
+
+/// Test hook for [`clips_in_range`].
+pub fn clips_in_range_for_test(
+    clips: Vec<AudibleClip>,
+    start_seconds: f64,
+    duration: f64,
+) -> Vec<AudibleClip> {
+    clips_in_range(clips, start_seconds, duration)
+}
+
+/// Test hook for [`AudibleClip::volume_filter`]. The expression is what ffmpeg actually
+/// applies to the mix, and a syntax slip in it is a silent export, so it is worth asserting
+/// without spawning an encoder.
+pub fn volume_filter_for_test(clip: &AudibleClip) -> String {
+    clip.volume_filter()
+}
+
+/// Test hook for [`decimate_gain_points`], with the limit the export uses.
+pub fn decimate_gain_points_for_test(points: &[(f64, f32)]) -> Vec<(f64, f32)> {
+    decimate_gain_points(points, MAX_GAIN_EXPRESSION_POINTS)
+}
+
+/// The point budget an exported level curve has to fit inside, for tests that assert a duck
+/// is exportable rather than only well-shaped.
+pub const GAIN_EXPRESSION_LIMIT: usize = MAX_GAIN_EXPRESSION_POINTS;
 
 /// Test hook for [`audible_clips`] — the selection rules are pure and worth asserting without
 /// spawning ffmpeg.

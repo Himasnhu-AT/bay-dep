@@ -28,7 +28,18 @@ use crate::plan::Planned;
 
 /// Tools that must not run on the UI thread.
 pub fn slow_tools() -> &'static [&'static str] {
-    &["render", "narrate", "media_import", "subtitles_to_video"]
+    &[
+        "render",
+        "narrate",
+        "media_import",
+        // Measuring a file's loudness decodes all of it. Cheap for a bed, minutes for a long
+        // take, and never on the thread drawing the window.
+        "audio_probe",
+        "subtitles_to_video",
+        // Scanning for cuts decodes the whole file. On a long take that is minutes of work,
+        // and it must never run on the thread drawing the window.
+        "shots_detect",
+    ]
 }
 
 /// Tools that answer with a **job id** instead of a result, for the caller to poll.
@@ -44,7 +55,7 @@ pub fn slow_tools() -> &'static [&'static str] {
 /// larger than the 20s meant for a file dialog, because it is the one slow tool that still
 /// answers in-band.
 pub fn job_tools() -> &'static [&'static str] {
-    &["render", "narrate", "subtitles_to_video"]
+    &["render", "narrate", "subtitles_to_video", "shots_detect"]
 }
 
 /// What the main thread should do with a finished job.
@@ -63,6 +74,9 @@ pub enum FollowUp {
     PlaceNarration {
         asset: Box<MediaAsset>,
         utterance: Box<Utterance>,
+        /// The script it was spoken from — captions break on its full stops, which the word
+        /// timings alone cannot see.
+        script: String,
         start: f64,
         volume: f32,
         cue_style: CueStyle,
@@ -108,6 +122,8 @@ pub fn run(
     match name {
         "render" => render(args, context, job),
         "media_import" => media_import(args, context),
+        "audio_probe" => audio_probe(args, context),
+        "shots_detect" => shots_detect(args, context),
         "narrate" => narrate(args, context, job),
         "subtitles_to_video" => subtitles_to_video(args, job),
         other => Err(format!("{other} is not a background tool")),
@@ -120,10 +136,15 @@ fn render(
     job: Option<&bay_jobs::Handle>,
 ) -> Result<SlowResult, String> {
     let path = require_str(args, "path")?;
+    let mut settings = export_settings(args)?;
+    // A range shortens what is left to render, so the default duration is measured from where
+    // the export actually starts rather than from zero.
+    let remaining = (context.timeline_duration - settings.start_seconds).max(0.0);
     let duration = args
         .get("duration")
         .and_then(|v| v.as_f64())
-        .unwrap_or(context.timeline_duration);
+        .unwrap_or(remaining)
+        .min(remaining.max(f64::MIN_POSITIVE));
     if duration <= 0.0 {
         return Err(
             "there is nothing on the timeline to render — add an element first, or pass an \
@@ -131,6 +152,12 @@ fn render(
                 .into(),
         );
     }
+
+    // Before anything is encoded, and after the cheaper "there is nothing here" answer: an
+    // error-severity finding stops the render outright, and the one escape is stamped into the
+    // file below and into the result.
+    let stamp = render_stamp(&context.project, args)?;
+    settings.metadata_comment = stamp.clone();
 
     let project = &context.project;
     let canvas = project.settings.canvas;
@@ -157,6 +184,7 @@ fn render(
             &project.settings.background,
             &project.media,
             &path,
+            &settings,
             &mut |done, total| match job {
                 // A render is the one long job with a real denominator, so this is where the
                 // "no progress for a four-minute render" complaint actually gets answered.
@@ -182,12 +210,178 @@ fn render(
             "width": width,
             "height": height,
             "fps": fps,
+            "checksOverridden": stamp,
         }),
         follow_up: FollowUp::None,
     })
 }
 
+/// The pre-render gate, read off a `render` call's own arguments.
+///
+/// `Ok(None)` — nothing gating. `Ok(Some(stamp))` — gated and overridden, and `stamp` belongs in
+/// the job result **and** in the file's metadata. `Err` — refused, with what to fix.
+///
+/// One function so both transports gate identically: the headless server and the editor window
+/// call it with the same project and the same arguments. A gate one path enforces and the other
+/// does not is not a gate, it is a preference.
+pub fn render_stamp(project: &Project, args: &Value) -> Result<Option<String>, String> {
+    bay_core::check::render_gate(
+        project,
+        args.get("ignoreChecks")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        args.get("reason").and_then(|value| value.as_str()),
+    )
+}
+
+/// Read the encode settings out of a `render` call: a named preset first, then any explicit
+/// field on top of it. A preset is a starting point, never a lock.
+pub fn export_settings(args: &Value) -> Result<bay_preview::ExportSettings, String> {
+    let mut settings = match args.get("preset").and_then(|v| v.as_str()) {
+        Some(name) => bay_preview::ExportPreset::from_wire(name)
+            .ok_or_else(|| {
+                format!(
+                    "unknown preset {name:?} — use \"social\" (Reels/TikTok/Shorts), \
+                     \"youtube\", or \"master\" (ProRes, no loudness processing)"
+                )
+            })?
+            .settings(),
+        None => bay_preview::ExportSettings::default(),
+    };
+    if let Some(name) = args.get("codec").and_then(|v| v.as_str()) {
+        settings.codec = bay_preview::VideoCodec::from_wire(name)
+            .ok_or_else(|| format!("unknown codec {name:?} — h264, hevc or prores"))?;
+    }
+    if let Some(quality) = args.get("quality").and_then(|v| v.as_f64()) {
+        if !(0.0..=51.0).contains(&quality) {
+            return Err("quality is a CRF: 0-51, lower is better and larger".into());
+        }
+        settings.quality = quality as u32;
+    }
+    if let Some(start) = args.get("startSeconds").and_then(|v| v.as_f64()) {
+        if !start.is_finite() || start < 0.0 {
+            return Err("startSeconds must be a finite, non-negative number".into());
+        }
+        settings.start_seconds = start;
+    }
+    match args.get("loudness") {
+        Some(Value::Bool(false)) => settings.loudness_lufs = None,
+        Some(Value::Bool(true)) => settings.loudness_lufs = Some(-14.0),
+        Some(Value::Number(target)) => {
+            let target = target.as_f64().unwrap_or(-14.0);
+            if !(-40.0..=0.0).contains(&target) {
+                return Err("a loudness target is negative LUFS, roughly -40 to 0".into());
+            }
+            settings.loudness_lufs = Some(target);
+        }
+        Some(_) => return Err("loudness is a boolean or a LUFS number".into()),
+        None => {}
+    }
+    if let Some(kbps) = args.get("audioBitrateKbps").and_then(|v| v.as_u64()) {
+        settings.audio_bitrate_kbps = kbps as u32;
+    }
+    Ok(settings)
+}
+
+/// Find the cuts in an imported clip.
+///
+/// A read, not an edit: it answers "what is in this file", and what to do about the answer is
+/// the caller's decision. Placing the shots automatically would guess at an edit nobody asked
+/// for, and the guess would be wrong most of the time.
+fn shots_detect(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+
+    let threshold = args
+        .get("threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(bay_preview::probe::DEFAULT_SHOT_THRESHOLD);
+    let min_seconds = args
+        .get("minSeconds")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.4);
+
+    let shots = bay_preview::probe::detect_shots(&asset.path, threshold, min_seconds)
+        .map_err(|e| format!("could not scan {:?} for cuts: {e}", asset.name))?;
+
+    Ok(SlowResult {
+        value: serde_json::json!({
+            "mediaId": media_id,
+            "name": asset.name,
+            "threshold": threshold,
+            "shots": shots
+                .iter()
+                .enumerate()
+                .map(|(index, shot)| serde_json::json!({
+                    "index": index,
+                    "startSeconds": shot.start_seconds,
+                    "endSeconds": shot.end_seconds,
+                    "durationSeconds": shot.duration_seconds(),
+                }))
+                .collect::<Vec<_>>(),
+        }),
+        follow_up: FollowUp::None,
+    })
+}
+
+/// Measure an asset already in the project, and remember what it measured.
+///
+/// Shares [`loudness_of`] with the import, because a level is only comparable to another level
+/// when both were measured the same way — and because two implementations of one verb is the
+/// bug class this whole module's routing exists to avoid.
+fn audio_probe(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .ok_or_else(|| format!("no media {media_id:?} in this project — media_import it first"))?;
+
+    let mut updated = asset.clone();
+    let mut value = serde_json::json!({ "mediaId": media_id, "name": asset.name });
+    match bay_preview::probe::probe_loudness(&asset.path) {
+        Ok(loudness) => {
+            merge_loudness(&mut value, &loudness);
+            updated.loudness = Some(loudness);
+        }
+        Err(error) => {
+            return Err(format!(
+                "could not measure {:?}: {error}. Loudness needs ffmpeg; without it the mix \
+                 checks report that they could not evaluate rather than passing.",
+                asset.name
+            ));
+        }
+    }
+    Ok(SlowResult {
+        value,
+        follow_up: FollowUp::ImportMedia(Box::new(updated)),
+    })
+}
+
+/// A measurement, as an agent reads it. One tenth of a dB, which is what ffmpeg reports and
+/// about what the ear resolves for a level difference.
+fn merge_loudness(value: &mut Value, loudness: &bay_project::AssetLoudness) {
+    let tenth = |v: f32| (f64::from(v) * 10.0).round() / 10.0;
+    value["lufs"] = serde_json::json!(tenth(loudness.lufs));
+    value["peakDb"] = serde_json::json!(tenth(loudness.peak_db));
+    value["rmsDb"] = serde_json::json!(tenth(loudness.rms_db));
+    value["accentSeconds"] = serde_json::json!(loudness.accent_seconds);
+    value["audible"] = serde_json::json!(loudness.is_audible());
+}
+
 fn media_import(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    // `mediaId` instead of `path` re-measures something already imported. Reachable under this
+    // name as well as under `audio_probe`, because a live MCP session caches the tool list when
+    // it connects and cannot call a name that did not exist then.
+    if args.get("mediaId").is_some() {
+        return audio_probe(args, context);
+    }
     let path = require_str(args, "path")?;
     let absolute = std::fs::canonicalize(&path)
         .map_err(|e| format!("could not resolve media path {path}: {e}"))?
@@ -203,17 +397,18 @@ fn media_import(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
         .map(str::to_string)
         .unwrap_or_else(|| format!("media-{}", context.next_id));
 
-    let asset = MediaAsset {
-        id: media_id.clone(),
-        name: name.clone(),
-        path: absolute.clone(),
-    };
+    let mut asset = MediaAsset::new(media_id.clone(), name.clone(), absolute.clone());
 
     // A probe failure is reported but not fatal — an asset can still be placed with an explicit
     // duration. Silently defaulting is how a 3-minute clip becomes a 4-second one.
     let mut value = serde_json::json!({ "mediaId": media_id, "name": name, "path": absolute });
     match bay_preview::probe::probe_media(&absolute) {
         Ok(meta) => {
+            // Kept on the asset, not only in this reply: it is what lets a trim stop at the end
+            // of the file instead of running off it, and what `check` compares a clip against.
+            asset.duration_seconds = Some(meta.duration.to_seconds_f64());
+            asset.width = Some(meta.width);
+            asset.height = Some(meta.height);
             value["durationSeconds"] = serde_json::json!(meta.duration.to_seconds_f64());
             value["width"] = serde_json::json!(meta.width);
             value["height"] = serde_json::json!(meta.height);
@@ -221,6 +416,23 @@ fn media_import(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
             value["hasVideo"] = serde_json::json!(meta.has_video);
         }
         Err(error) => value["probeError"] = serde_json::json!(error.to_string()),
+    }
+
+    // Loudness, for anything with a sound in it. Measured at import because a level is only a
+    // decision once the file's own loudness is known: a bed at `2.0` against a file that
+    // integrates to -35 LUFS is still 9 LU too quiet, and no reasoning about the multiplier can
+    // discover that. Not fatal — the file is still placeable, and the mix checks say they could
+    // not evaluate rather than passing.
+    if value["hasAudio"].as_bool().unwrap_or(false) {
+        match bay_preview::probe::probe_loudness(&absolute) {
+            Ok(loudness) => {
+                let mut measured = serde_json::json!({});
+                merge_loudness(&mut measured, &loudness);
+                value["loudness"] = measured;
+                asset.loudness = Some(loudness);
+            }
+            Err(error) => value["loudnessError"] = serde_json::json!(error.to_string()),
+        }
     }
 
     Ok(SlowResult {
@@ -254,9 +466,34 @@ fn narrate(
         .map(str::to_string)
         .or_else(|| bay_speech::voices::lang_code_for(&voice).map(str::to_string))
         .unwrap_or_else(|| "a".into());
-    let speed = args.get("speed").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+    // The rate is stated in words a second and the multiplier derived from it. `speed: 1.0` is
+    // 2.99 words a second — a 179 wpm gabble — and the whole project this comes from was planned
+    // against a documented 2.5 that nothing ever delivered.
+    let target_rate = args
+        .get("targetWordsPerSecond")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(bay_speech::TARGET_WORDS_PER_SECOND);
+    let speed = args
+        .get("speed")
+        .and_then(|v| v.as_f64())
+        .map(|value| value as f32)
+        .unwrap_or_else(|| bay_speech::speed_for_rate(target_rate));
     let start = args.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let volume = args.get("volume").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+
+    // Refused before the synthesis is paid for. A 10.30 s, 29-word run-on landed on the turn of
+    // the video this rule comes from, and nothing downstream repairs a sentence that long.
+    let words = bay_speech::word_count(&text);
+    let estimate =
+        bay_speech::estimated_seconds(&text, bay_speech::BASE_WORDS_PER_SECOND * f64::from(speed));
+    if estimate > bay_speech::MAX_NARRATION_SECONDS {
+        return Err(bay_speech::over_length_message(
+            &text,
+            words,
+            estimate,
+            "would take",
+        ));
+    }
     let peak_db = args
         .get("peakDb")
         .and_then(|v| v.as_f64())
@@ -283,26 +520,43 @@ fn narrate(
         .speak_normalized(&text, &voice, speed, &lang_code, &out_path, peak_db)
         .map_err(|error| error.to_string())?;
 
-    let asset = MediaAsset {
-        id: format!("media-{}", context.next_id),
-        name: std::path::Path::new(&utterance.path)
+    // …and again on what actually came out, before anything is placed.
+    if utterance.duration_seconds > bay_speech::MAX_NARRATION_SECONDS {
+        return Err(bay_speech::over_length_message(
+            &text,
+            utterance.words.len().max(words),
+            utterance.duration_seconds,
+            "came out at",
+        ));
+    }
+
+    let mut asset = MediaAsset::new(
+        format!("media-{}", context.next_id),
+        std::path::Path::new(&utterance.path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "narration.wav".into()),
-        path: utterance.path.clone(),
-    };
+        utterance.path.clone(),
+    );
+    // Synthesis already knows how long the line came out; nothing needs to probe it back.
+    asset.duration_seconds = Some(utterance.duration_seconds);
 
-    let cue_style = crate::plan::cue_style_from(args);
+    // Against the open project's kit — the same kit `add_text` draws from, so captions are not
+    // the one block of type in the video that ignores the look it was committed to.
+    let style =
+        crate::plan::caption_style_from(args, context.project.settings.kit.as_ref(), "narrate")?;
     let captions = if args
         .get("captions")
         .and_then(|v| v.as_bool())
         .unwrap_or(true)
     {
-        Some(crate::plan::caption_style_from(args))
+        Some(style.clone())
     } else {
         None
     };
+    let cue_style = style.cue_style();
 
+    let measured = utterance.words_per_second();
     Ok(SlowResult {
         value: serde_json::json!({
             "audioPath": utterance.path,
@@ -311,10 +565,16 @@ fn narrate(
             "words": utterance.words.len(),
             "startSeconds": start,
             "endSeconds": start + utterance.duration_seconds,
+            "speed": speed,
+            "targetWordsPerSecond": target_rate,
+            "wordsPerSecond": measured.map(|rate| (rate * 100.0).round() / 100.0),
+            "wordsPerMinute": measured.map(|rate| (rate * 60.0).round()),
+            "captionStyle": style.preset.as_str(),
         }),
         follow_up: FollowUp::PlaceNarration {
             asset: Box::new(asset),
             utterance: Box::new(utterance),
+            script: text,
             start,
             volume,
             cue_style,
@@ -358,6 +618,7 @@ pub fn plan_follow_up(follow_up: FollowUp, project: &Project) -> Result<Applied,
         FollowUp::PlaceNarration {
             asset,
             utterance,
+            script,
             start,
             volume,
             cue_style,
@@ -367,6 +628,7 @@ pub fn plan_follow_up(follow_up: FollowUp, project: &Project) -> Result<Applied,
                 project,
                 (*asset).clone(),
                 &utterance,
+                &script,
                 start,
                 volume,
                 &cue_style,
@@ -416,7 +678,11 @@ fn subtitles_to_video(args: &Value, job: Option<&bay_jobs::Handle>) -> Result<Sl
     ));
 
     // Captions come from the file's own timings, so they are placed before anything is spoken.
-    let style = crate::plan::caption_style_from(args);
+    let style = crate::plan::caption_style_from(
+        args,
+        editor.project().settings.kit.as_ref(),
+        "subtitles_to_video",
+    )?;
     let planned = crate::plan::plan_captions(editor.project(), &cues, &style)?;
     if let Planned::Tx { commands, .. } = planned {
         for command in commands {
@@ -443,7 +709,15 @@ fn subtitles_to_video(args: &Value, job: Option<&bay_jobs::Handle>) -> Result<Sl
             .map(str::to_string)
             .or_else(|| bay_speech::voices::lang_code_for(&voice).map(str::to_string))
             .unwrap_or_else(|| "a".into());
-        let speed = args.get("speed").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        let target_rate = args
+            .get("targetWordsPerSecond")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(bay_speech::TARGET_WORDS_PER_SECOND);
+        let speed = args
+            .get("speed")
+            .and_then(|v| v.as_f64())
+            .map(|value| value as f32)
+            .unwrap_or_else(|| bay_speech::speed_for_rate(target_rate));
         let volume = args.get("volume").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
         let mut engine = bay_speech::SpeechEngine::new(bay_speech::SpeechConfig::default());
 
@@ -472,11 +746,12 @@ fn subtitles_to_video(args: &Value, job: Option<&bay_jobs::Handle>) -> Result<Sl
             let utterance = engine
                 .speak_normalized(&line, &voice, speed, &lang_code, &out, Some(-2.0))
                 .map_err(|error| error.to_string())?;
-            let asset = MediaAsset {
-                id: format!("narration-{index}"),
-                name: format!("cue-{index}.wav"),
-                path: utterance.path.clone(),
-            };
+            let mut asset = MediaAsset::new(
+                format!("narration-{index}"),
+                format!("cue-{index}.wav"),
+                utterance.path.clone(),
+            );
+            asset.duration_seconds = Some(utterance.duration_seconds);
             editor.add_media(asset.clone());
             // Captions are already on the timeline from the file; narrating them again would
             // stack a second set on top.
@@ -484,6 +759,7 @@ fn subtitles_to_video(args: &Value, job: Option<&bay_jobs::Handle>) -> Result<Sl
                 editor.project(),
                 asset,
                 &utterance,
+                &line,
                 cue.start,
                 volume,
                 &CueStyle::default(),

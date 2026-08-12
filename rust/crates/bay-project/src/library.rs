@@ -242,12 +242,21 @@ impl ProjectLibrary {
 }
 
 /// Read a project from any path (library slot or a file the user picked).
+///
+/// Provenance is inferred on the way in ([`Project::infer_provenance`]) rather than left to
+/// serde's default, because every project written before the field existed would otherwise open
+/// claiming its captions were the author's own work. This is the one door project files come
+/// through — the launcher, `project_load` by id, and `project_load` by path all land here — so
+/// inferring it here is what makes it true everywhere rather than in whichever caller
+/// remembered.
 pub fn read_project(path: &Path) -> Result<Project> {
     let text = std::fs::read_to_string(path).map_err(io(path))?;
-    serde_json::from_str(&text).map_err(|e| LibraryError::Json {
+    let mut project: Project = serde_json::from_str(&text).map_err(|e| LibraryError::Json {
         path: path.to_path_buf(),
         message: e.to_string(),
-    })
+    })?;
+    project.infer_provenance();
+    Ok(project)
 }
 
 /// Write a project to any path, atomically: serialize to a sibling temp file and rename over
@@ -300,6 +309,10 @@ impl Project {
                 background: Background::Color {
                     color: background.to_string(),
                 },
+                // No kit until something commits one. `Studio::project_create` does it on the
+                // way in, so a project an agent builds is never kit-less; a project the desktop
+                // app makes takes one the first time type is placed on it.
+                kit: None,
             },
             scenes: vec![Scene {
                 id: "scene-main".into(),
@@ -310,6 +323,7 @@ impl Project {
                     main: Track::new("track-main", "Main", TrackKind::Video),
                     audio: Vec::new(),
                 },
+                markers: Vec::new(),
             }],
             current_scene_id: "scene-main".into(),
             media: Vec::new(),

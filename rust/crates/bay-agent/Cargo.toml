@@ -11,6 +11,9 @@ bay-core = { path = "../bay-core" }
 bay-speech = { path = "../bay-speech" }
 bay-provision = { path = "../bay-provision" }
 bay-preview = { path = "../bay-preview" }
+# For validating a .cube before it is attached, so a broken grade is an error rather than a
+# clip that quietly looks untouched.
+bay-effects = { path = "../bay-effects" }
 bay-project = { path = "../bay-project" }
 bay-text = { path = "../bay-text" }
 bay-time = { path = "../bay-time" }

@@ -82,6 +82,7 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
             effect_type: "brightness".into(),
             enabled: true,
             params: [("amount".to_string(), 0.5)].into_iter().collect(),
+            asset: None,
         });
     }
     let (width, height) = (128, 72);
@@ -112,6 +113,7 @@ fn renders_contrast_saturation_and_blur_on_gpu() {
                 effect_type: effect_type.into(),
                 enabled: true,
                 params: [("amount".to_string(), 1.5)].into_iter().collect(),
+                asset: None,
             });
         }
         let (width, height) = (128, 72);
@@ -146,11 +148,11 @@ fn renders_a_real_image_element_from_disk() {
         .unwrap();
 
     let mut project = Project::starter();
-    project.media.push(MediaAsset {
-        id: "m1".into(),
-        name: "Pic".into(),
-        path: path.to_string_lossy().into_owned(),
-    });
+    project.media.push(MediaAsset::new(
+        "m1",
+        "Pic",
+        path.to_string_lossy().into_owned(),
+    ));
     project
         .active_scene_mut()
         .tracks
@@ -161,11 +163,16 @@ fn renders_a_real_image_element_from_disk() {
             name: "Pic".into(),
             start: MediaTime::ZERO,
             duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
             media_id: "m1".into(),
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
             blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
         }));
 
     let frame = renderer
@@ -215,11 +222,11 @@ fn renders_a_real_video_frame_via_ffmpeg() {
     }
 
     let mut project = Project::starter();
-    project.media.push(MediaAsset {
-        id: "v1".into(),
-        name: "Vid".into(),
-        path: path.to_string_lossy().into_owned(),
-    });
+    project.media.push(MediaAsset::new(
+        "v1",
+        "Vid",
+        path.to_string_lossy().into_owned(),
+    ));
     project
         .active_scene_mut()
         .tracks
@@ -230,6 +237,8 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             name: "Vid".into(),
             start: MediaTime::ZERO,
             duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
             media_id: "v1".into(),
             trim_start: MediaTime::ZERO,
             trim_end: MediaTime::from_ticks(120_000),
@@ -237,6 +246,9 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             effects: Vec::new(),
             animations: Default::default(),
             blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
         }));
 
     // Clear the starter content so only the video clip is on screen; otherwise the title text
@@ -306,6 +318,7 @@ fn exports_a_short_video_via_ffmpeg() {
         &project.settings.background,
         &project.media,
         out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
     );
     if !require_ffmpeg_step(ok.is_ok(), "encode the exported mp4") {
         return;
@@ -370,6 +383,7 @@ fn a_failed_export_leaves_no_file_behind() {
         &project.settings.background,
         &project.media,
         missing.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
     );
 
     assert!(
@@ -491,11 +505,11 @@ fn a_non_square_image_is_not_stretched_to_the_canvas() {
     img.save(&path).expect("write test png");
 
     let mut project = Project::starter();
-    project.media.push(MediaAsset {
-        id: "wide".into(),
-        name: "wide.png".into(),
-        path: path.to_string_lossy().to_string(),
-    });
+    project.media.push(MediaAsset::new(
+        "wide",
+        "wide.png",
+        path.to_string_lossy().to_string(),
+    ));
     let scene = project.active_scene_mut();
     scene.tracks.main.elements.clear();
     scene.tracks.overlay.clear();
@@ -508,11 +522,16 @@ fn a_non_square_image_is_not_stretched_to_the_canvas() {
             name: "wide".into(),
             start: MediaTime::ZERO,
             duration: MediaTime::from_seconds_f64(2.0).unwrap(),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
             media_id: "wide".into(),
             transform: Transform::default(), // centered, scale 1.0 => full-canvas box
             effects: Vec::new(),
             animations: Default::default(),
             blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
         }));
 
     let size = 64; // square canvas
@@ -639,11 +658,11 @@ fn decode_runs_off_the_render_path_and_is_cached() {
     }
 
     let mut project = Project::starter();
-    project.media.push(MediaAsset {
-        id: "async1".into(),
-        name: "Async".into(),
-        path: path.to_string_lossy().into_owned(),
-    });
+    project.media.push(MediaAsset::new(
+        "async1",
+        "Async",
+        path.to_string_lossy().into_owned(),
+    ));
     {
         let scene = project.active_scene_mut();
         scene.tracks.overlay.clear();
@@ -657,6 +676,8 @@ fn decode_runs_off_the_render_path_and_is_cached() {
                 name: "Async".into(),
                 start: MediaTime::ZERO,
                 duration: MediaTime::from_seconds_f64(3.0).unwrap(),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
                 media_id: "async1".into(),
                 trim_start: MediaTime::ZERO,
                 trim_end: MediaTime::from_seconds_f64(3.0).unwrap(),
@@ -664,6 +685,9 @@ fn decode_runs_off_the_render_path_and_is_cached() {
                 effects: Vec::new(),
                 animations: Default::default(),
                 blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
             }));
     }
 
@@ -721,11 +745,11 @@ fn a_missing_media_file_fails_once_and_does_not_crash() {
         return;
     };
     let mut project = Project::starter();
-    project.media.push(MediaAsset {
-        id: "gone".into(),
-        name: "Missing".into(),
-        path: "/nonexistent/definitely-not-here.mp4".into(),
-    });
+    project.media.push(MediaAsset::new(
+        "gone",
+        "Missing",
+        "/nonexistent/definitely-not-here.mp4",
+    ));
     {
         let scene = project.active_scene_mut();
         scene.tracks.overlay.clear();
@@ -739,6 +763,8 @@ fn a_missing_media_file_fails_once_and_does_not_crash() {
                 name: "Missing".into(),
                 start: MediaTime::ZERO,
                 duration: MediaTime::from_seconds_f64(1.0).unwrap(),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
                 media_id: "gone".into(),
                 trim_start: MediaTime::ZERO,
                 trim_end: MediaTime::from_seconds_f64(1.0).unwrap(),
@@ -746,6 +772,9 @@ fn a_missing_media_file_fails_once_and_does_not_crash() {
                 effects: Vec::new(),
                 animations: Default::default(),
                 blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
             }));
     }
 
@@ -800,6 +829,7 @@ fn a_non_finite_transform_does_not_panic_the_renderer() {
             scale_y: f32::INFINITY,
             anchor_x: f32::NAN,
             anchor_y: f32::NEG_INFINITY,
+            ..Transform::default()
         };
     }
     let frame = renderer
@@ -868,6 +898,8 @@ fn bar(scale_x: f32, anchor_x: f32) -> bay_project::ShapeElement {
         name: "Bar".into(),
         start: MediaTime::ZERO,
         duration: MediaTime::from_ticks(120_000),
+        fade_in: MediaTime::ZERO,
+        fade_out: MediaTime::ZERO,
         shape: bay_project::ShapeKind::Rect { radius: 0.0 },
         color: "#ff0000".into(),
         transform: Transform {
@@ -880,10 +912,14 @@ fn bar(scale_x: f32, anchor_x: f32) -> bay_project::ShapeElement {
             scale_y: 0.1,
             anchor_x,
             anchor_y: 0.5,
+            ..Transform::default()
         },
         effects: Vec::new(),
         animations: Default::default(),
         blend_mode: Default::default(),
+        mask: None,
+        source: Default::default(),
+        role: Default::default(),
     }
 }
 
@@ -1140,14 +1176,8 @@ fn easing_changes_the_midpoint_but_never_the_endpoints() {
     use bay_project::{AnimationChannel, Easing, Keyframe};
     let channel = |easing| AnimationChannel {
         keys: vec![
-            Keyframe {
-                time: MediaTime::ZERO,
-                value: 0.0,
-            },
-            Keyframe {
-                time: MediaTime::from_ticks(120_000),
-                value: 1.0,
-            },
+            Keyframe::new(MediaTime::ZERO, 0.0),
+            Keyframe::new(MediaTime::from_ticks(120_000), 1.0),
         ],
         easing,
     };
@@ -1216,14 +1246,8 @@ fn an_animated_scale_actually_changes_a_texts_rendered_size() {
                 "scale".to_string(),
                 bay_project::AnimationChannel {
                     keys: vec![
-                        bay_project::Keyframe {
-                            time: MediaTime::ZERO,
-                            value: 0.45,
-                        },
-                        bay_project::Keyframe {
-                            time: MediaTime::from_ticks(120_000),
-                            value: 0.9,
-                        },
+                        bay_project::Keyframe::new(MediaTime::ZERO, 0.45),
+                        bay_project::Keyframe::new(MediaTime::from_ticks(120_000), 0.9),
                     ],
                     easing: bay_project::Easing::Linear,
                 },
@@ -1275,9 +1299,15 @@ fn audible_clips_skips_everything_that_would_contribute_no_sound() {
             name: id.into(),
             start: MediaTime::ZERO,
             duration: MediaTime::from_ticks(duration),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
             media_id: media.into(),
+            trim_start: MediaTime::ZERO,
             muted,
             volume,
+            animations: Default::default(),
+            source: Default::default(),
+            role: Default::default(),
         })
     };
     let mut track = Track::new("t-audio", "Audio", TrackKind::Audio);
@@ -1293,11 +1323,7 @@ fn audible_clips_skips_everything_that_would_contribute_no_sound() {
     muted_track.elements = vec![clip("on-muted-track", "m-ok", false, 1.0, 120_000)];
     scene.tracks.audio = vec![track, muted_track];
 
-    let media = vec![MediaAsset {
-        id: "m-ok".into(),
-        name: "ok.mp3".into(),
-        path: "/tmp/ok.mp3".into(),
-    }];
+    let media = vec![MediaAsset::new("m-ok", "ok.mp3", "/tmp/ok.mp3")];
     let clips = bay_preview::audible_clips_for_test(project.active_scene(), &media);
     assert_eq!(
         clips.len(),
@@ -1305,6 +1331,38 @@ fn audible_clips_skips_everything_that_would_contribute_no_sound() {
         "only the one audible clip survives: {clips:?}"
     );
     assert_eq!(clips[0].path, "/tmp/ok.mp3");
+}
+
+/// The in-point has to reach the export mixer, or a bed trimmed to start at the drop still
+/// exports from bar one — the edit would look right in the timeline and be wrong in the file.
+#[test]
+fn an_audio_clips_in_point_reaches_the_mixer() {
+    use bay_project::{AudioElement, MediaAsset, Track, TrackKind};
+    let mut project = Project::starter();
+    let scene = project.active_scene_mut();
+    let mut track = Track::new("t-audio", "Audio", TrackKind::Audio);
+    track.elements = vec![Element::Audio(AudioElement {
+        id: "bed".into(),
+        name: "bed".into(),
+        start: MediaTime::from_ticks(120_000),
+        duration: MediaTime::from_ticks(2 * 120_000),
+        fade_in: MediaTime::ZERO,
+        fade_out: MediaTime::ZERO,
+        media_id: "m-ok".into(),
+        muted: false,
+        volume: 1.0,
+        animations: Default::default(),
+        trim_start: MediaTime::from_ticks(30 * 120_000),
+        source: Default::default(),
+        role: Default::default(),
+    })];
+    scene.tracks.audio = vec![track];
+
+    let media = vec![MediaAsset::new("m-ok", "ok.mp3", "/tmp/ok.mp3")];
+    let clips = bay_preview::audible_clips_for_test(project.active_scene(), &media);
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].trim_start_seconds, 30.0);
+    assert_eq!(clips[0].start_seconds, 1.0);
 }
 
 #[test]
@@ -1339,11 +1397,11 @@ fn an_exported_video_carries_its_soundtrack() {
     assert!(made, "could not synthesize a test tone");
 
     let mut project = Project::starter();
-    project.media = vec![bay_project::MediaAsset {
-        id: "media-music".into(),
-        name: "tone.wav".into(),
-        path: tone.to_str().unwrap().into(),
-    }];
+    project.media = vec![bay_project::MediaAsset::new(
+        "media-music",
+        "tone.wav",
+        tone.to_str().unwrap(),
+    )];
     {
         let scene = project.active_scene_mut();
         scene.tracks.audio[0].elements = vec![Element::Audio(bay_project::AudioElement {
@@ -1351,9 +1409,15 @@ fn an_exported_video_carries_its_soundtrack() {
             name: "Bed".into(),
             start: MediaTime::ZERO,
             duration: MediaTime::from_ticks(240_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
             media_id: "media-music".into(),
             muted: false,
             volume: 1.0,
+            animations: Default::default(),
+            trim_start: MediaTime::ZERO,
+            source: Default::default(),
+            role: Default::default(),
         })];
     }
 
@@ -1366,6 +1430,7 @@ fn an_exported_video_carries_its_soundtrack() {
         &project.settings.background,
         &project.media,
         out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
     );
     assert!(
         ok.is_ok(),
@@ -1421,6 +1486,8 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 name: format!("text-{i}"),
                 start: MediaTime::ZERO,
                 duration: MediaTime::from_ticks(240_000),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
                 content: format!("unique string {i}"),
                 font_size: 20.0,
                 color: "#ffffff".into(),
@@ -1433,17 +1500,22 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 effects: Vec::new(),
                 animations: Default::default(),
                 blend_mode: Default::default(),
+                mask: None,
                 font_family: None,
                 font_weight: 400,
                 align: Default::default(),
                 letter_spacing: 0.0,
                 line_height: 1.2,
+                source: Default::default(),
+                role: Default::default(),
             }));
             elements.push(Element::Shape(bay_project::ShapeElement {
                 id: format!("shape-{i}"),
                 name: format!("shape-{i}"),
                 start: MediaTime::ZERO,
                 duration: MediaTime::from_ticks(240_000),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
                 shape: bay_project::ShapeKind::Rect { radius: 0.4 },
                 // A unique colour per shape forces a unique cache key.
                 color: format!("#{:02x}20a0", 40 + i * 3),
@@ -1458,6 +1530,9 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 effects: Vec::new(),
                 animations: Default::default(),
                 blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
             }));
         }
         scene.tracks.main.elements = elements;
@@ -1614,24 +1689,29 @@ fn an_export_keeps_detail_the_preview_budget_would_have_destroyed() {
         width: sw,
         height: sh,
     };
-    project.media.push(MediaAsset {
-        id: "stripes".into(),
-        name: "Stripes".into(),
-        path: source_mp4.to_string_lossy().into_owned(),
-    });
+    project.media.push(MediaAsset::new(
+        "stripes",
+        "Stripes",
+        source_mp4.to_string_lossy().into_owned(),
+    ));
     let scene = project.active_scene_mut();
     scene.tracks.main.elements = vec![Element::Video(VideoElement {
         id: "clip1".into(),
         name: "Stripes".into(),
         start: MediaTime::ZERO,
         duration: MediaTime::from_ticks(120_000),
+        fade_in: MediaTime::ZERO,
+        fade_out: MediaTime::ZERO,
         media_id: "stripes".into(),
         trim_start: MediaTime::ZERO,
         transform: Transform::default(),
         effects: Vec::new(),
         animations: Default::default(),
         blend_mode: Default::default(),
+        mask: None,
         trim_end: MediaTime::ZERO,
+        source: Default::default(),
+        role: Default::default(),
     })];
 
     let result = renderer.export_video(
@@ -1643,6 +1723,7 @@ fn an_export_keeps_detail_the_preview_budget_would_have_destroyed() {
         &project.settings.background,
         &project.media,
         out_mp4.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
     );
     assert!(result.is_ok(), "export should succeed: {result:?}");
 
@@ -1738,11 +1819,11 @@ fn a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to() {
         width: 320,
         height: 180,
     };
-    project.media.push(MediaAsset {
-        id: "bands".into(),
-        name: "Bands".into(),
-        path: source.to_string_lossy().into_owned(),
-    });
+    project.media.push(MediaAsset::new(
+        "bands",
+        "Bands",
+        source.to_string_lossy().into_owned(),
+    ));
     // Trim to 2.5s — the middle of the third band (luma 120), and deliberately not on a keyframe.
     let scene = project.active_scene_mut();
     scene.tracks.main.elements = vec![Element::Video(VideoElement {
@@ -1750,6 +1831,8 @@ fn a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to() {
         name: "Bands".into(),
         start: MediaTime::ZERO,
         duration: MediaTime::from_ticks(120_000),
+        fade_in: MediaTime::ZERO,
+        fade_out: MediaTime::ZERO,
         media_id: "bands".into(),
         trim_start: MediaTime::from_seconds_f64(2.5).unwrap(),
         trim_end: MediaTime::ZERO,
@@ -1757,6 +1840,9 @@ fn a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to() {
         effects: Vec::new(),
         animations: Default::default(),
         blend_mode: Default::default(),
+        mask: None,
+        source: Default::default(),
+        role: Default::default(),
     })];
 
     let result = renderer.export_video(
@@ -1768,6 +1854,7 @@ fn a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to() {
         &project.settings.background,
         &project.media,
         out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
     );
     assert!(result.is_ok(), "export should succeed: {result:?}");
 
@@ -1838,14 +1925,13 @@ fn overlapping_clips_each_get_their_own_stream() {
         height: 90,
     };
     for name in ["red", "blue"] {
-        project.media.push(MediaAsset {
-            id: name.into(),
-            name: name.into(),
-            path: dir
-                .join(format!("{name}.mp4"))
+        project.media.push(MediaAsset::new(
+            name,
+            name,
+            dir.join(format!("{name}.mp4"))
                 .to_string_lossy()
                 .into_owned(),
-        });
+        ));
     }
 
     let clip = |id: &str, media: &str, scale: f32, x: f32| {
@@ -1854,6 +1940,8 @@ fn overlapping_clips_each_get_their_own_stream() {
             name: media.into(),
             start: MediaTime::ZERO,
             duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
             media_id: media.into(),
             trim_start: MediaTime::ZERO,
             trim_end: MediaTime::ZERO,
@@ -1865,6 +1953,9 @@ fn overlapping_clips_each_get_their_own_stream() {
             effects: Vec::new(),
             animations: Default::default(),
             blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
         })
     };
     // Side by side, each at a quarter width, so both survive into the same frame.
@@ -1883,6 +1974,7 @@ fn overlapping_clips_each_get_their_own_stream() {
         &project.settings.background,
         &project.media,
         out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
     );
     assert!(result.is_ok(), "export should succeed: {result:?}");
 
@@ -1952,6 +2044,7 @@ fn a_cancelled_export_leaves_no_file_behind() {
         &project.media,
         out.to_str().unwrap(),
         // Stop a few frames in, while ffmpeg definitely still has work to do.
+        &bay_preview::ExportSettings::default(),
         &mut |done, _total| {
             seen = done;
             done < 5
@@ -1996,6 +2089,7 @@ fn an_export_reports_progress_to_the_last_frame() {
         &project.settings.background,
         &project.media,
         out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
         &mut |done, total| {
             last = (done, total);
             true
@@ -2086,5 +2180,739 @@ fn a_stream_read_backwards_returns_the_frame_asked_for() {
             (got - want).abs() < 12.0,
             "request {index} should have landed on the band at luma {want}, got {got:.1}"
         );
+    }
+}
+
+/// The level curve has to survive the trip into ffmpeg's expression language, because a slip
+/// there is not a wrong sound — it is a filtergraph that fails to parse and an export with no
+/// audio at all.
+#[test]
+fn a_moving_level_becomes_an_ffmpeg_expression() {
+    let flat = bay_preview::AudibleClip {
+        path: "/tmp/a.mp3".into(),
+        start_seconds: 0.0,
+        trim_start_seconds: 0.0,
+        duration_seconds: 4.0,
+        volume: 0.5,
+        gain_points: vec![(0.0, 0.5)],
+    };
+    assert_eq!(bay_preview::volume_filter_for_test(&flat), "volume=0.5000");
+
+    let ducked = bay_preview::AudibleClip {
+        gain_points: vec![(0.0, 1.0), (1.0, 0.2), (3.0, 0.2), (4.0, 1.0)],
+        ..flat
+    };
+    let filter = bay_preview::volume_filter_for_test(&ducked);
+    assert!(filter.starts_with("volume='"), "{filter}");
+    assert!(filter.ends_with(":eval=frame"), "{filter}");
+    // Every comma inside the expression must be escaped, or the filtergraph parser reads it
+    // as the end of the filter and the whole graph fails.
+    let expression = filter
+        .trim_start_matches("volume='")
+        .trim_end_matches("':eval=frame");
+    for (index, character) in expression.char_indices() {
+        if character == ',' {
+            assert!(
+                index > 0 && expression.as_bytes()[index - 1] == b'\\',
+                "unescaped comma at {index} in {expression}"
+            );
+        }
+    }
+    // Three segments → three conditionals.
+    assert_eq!(expression.matches("if(lt(t").count(), 3, "{expression}");
+}
+
+/// The whole reason a bed came to be chopped into 13 clips instead of ducked.
+///
+/// `Element::gain_points` subdivides every eased segment into 16 steps and
+/// `AudibleClip::volume_filter` renders them as a nested `if()` chain; ffmpeg's expression
+/// parser accepts **97** points and rejects 98. Six eased volume keys made 82 points and
+/// exported; **seven made 98 and the whole encode failed**, so ducking past a single narration
+/// line was impossible — which is a sufficient explanation for the stepped-gain hack, and makes
+/// the point budget a prerequisite for `duck` rather than an optimisation.
+#[test]
+fn a_six_line_duck_fits_inside_the_expression_budget() {
+    use bay_project::duck::{DuckParams, duck};
+    use bay_project::{AudioElement, AudioRole, Element as El, MediaTime as MT};
+
+    let audio = |id: &str, start: f64, duration: f64, volume: f32, role| {
+        El::Audio(AudioElement {
+            id: id.into(),
+            name: id.into(),
+            start: MT::from_seconds_f64(start).expect("representable"),
+            duration: MT::from_seconds_f64(duration).expect("representable"),
+            fade_in: MT::ZERO,
+            fade_out: MT::ZERO,
+            media_id: "m".into(),
+            muted: false,
+            volume,
+            animations: Default::default(),
+            trim_start: MT::ZERO,
+            source: Default::default(),
+            role,
+        })
+    };
+
+    let mut bed = audio("bed", 0.0, 61.0, 0.85, AudioRole::Bed);
+    let lines: Vec<Element> = (0..6)
+        .map(|index| {
+            audio(
+                &format!("line-{index}"),
+                2.0 + index as f64 * 10.0,
+                5.0,
+                1.0,
+                AudioRole::Speech,
+            )
+        })
+        .collect();
+    let refs: Vec<&Element> = lines.iter().collect();
+    let ducked = duck(&bed, &refs, &DuckParams::default()).expect("a six-line duck");
+    assert_eq!(
+        ducked.keys.len(),
+        25,
+        "four keys a line plus a leading hold"
+    );
+    bed.animations_mut()
+        .expect("audio animates")
+        .insert("volume".into(), ducked.channel);
+
+    let points = bed.gain_points();
+    assert!(
+        points.len() > bay_preview::GAIN_EXPRESSION_LIMIT,
+        "the model emits {} points — if this stops being over the budget the test below proves \
+         nothing",
+        points.len()
+    );
+    let decimated = bay_preview::decimate_gain_points_for_test(&points);
+    assert!(
+        decimated.len() <= bay_preview::GAIN_EXPRESSION_LIMIT,
+        "{} points is more than ffmpeg's parser will take",
+        decimated.len()
+    );
+
+    // …and it is still the same duck. Every point of the full curve has to be within 0.3 dB of
+    // what the decimated polyline says at that instant, or the export is quieter than the room.
+    for (at, gain) in &points {
+        let approximated = interpolate(&decimated, *at);
+        let apart = 20.0 * (gain.max(1e-4) / approximated.max(1e-4)).log10().abs();
+        assert!(
+            apart <= 0.35,
+            "at {at:.3}s the export says {approximated:.4} where the model says {gain:.4} \
+             ({apart:.2} dB apart)"
+        );
+    }
+    // The depth survives: the decimation may lose the shape of a ramp, never its destination.
+    let bottom = decimated
+        .iter()
+        .map(|(_, g)| *g)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (20.0 * (0.85 / bottom).log10() - 8.0).abs() < 0.1,
+        "8 dB was asked for, the exported curve reaches {bottom}"
+    );
+}
+
+/// Read a level polyline at `at`, the way ffmpeg's expression does.
+fn interpolate(points: &[(f64, f32)], at: f64) -> f32 {
+    match points.iter().position(|(t, _)| *t >= at) {
+        None => points.last().map(|(_, g)| *g).unwrap_or(0.0),
+        Some(0) => points[0].1,
+        Some(index) => {
+            let ((ta, va), (tb, vb)) = (points[index - 1], points[index]);
+            if (tb - ta).abs() < 1e-9 {
+                vb
+            } else {
+                va + (vb - va) * ((at - ta) / (tb - ta)) as f32
+            }
+        }
+    }
+}
+
+/// A fade on an audio clip has to reach the export, not only the preview.
+#[test]
+fn an_audio_fade_reaches_the_export_mixer() {
+    use bay_project::{AudioElement, MediaAsset, Track, TrackKind};
+    let mut project = Project::starter();
+    {
+        let scene = project.active_scene_mut();
+        let mut track = Track::new("t-audio", "Audio", TrackKind::Audio);
+        let mut clip = Element::Audio(AudioElement {
+            id: "bed".into(),
+            name: "bed".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(4 * 120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            media_id: "m-ok".into(),
+            muted: false,
+            volume: 1.0,
+            trim_start: MediaTime::ZERO,
+            animations: Default::default(),
+            source: Default::default(),
+            role: Default::default(),
+        });
+        clip.set_fades(
+            MediaTime::from_ticks(120_000),
+            MediaTime::from_ticks(120_000),
+        );
+        track.elements = vec![clip];
+        scene.tracks.audio = vec![track];
+    }
+    let media = vec![MediaAsset::new("m-ok", "ok.mp3", "/tmp/ok.mp3")];
+    let clips = bay_preview::audible_clips_for_test(project.active_scene(), &media);
+    assert_eq!(clips.len(), 1);
+    assert!(
+        clips[0].gain_points.len() > 1,
+        "the fade reached the mixer: {:?}",
+        clips[0].gain_points
+    );
+    assert_eq!(clips[0].gain_points.first(), Some(&(0.0, 0.0)));
+    assert_eq!(clips[0].gain_points.last(), Some(&(4.0, 0.0)));
+}
+
+// ---------------------------------------------------------------------------------------
+// Export settings: what the file is wrapped in.
+
+#[test]
+fn presets_pick_settings_that_match_where_the_file_is_going() {
+    use bay_preview::{ExportPreset, VideoCodec};
+
+    let social = ExportPreset::from_wire("tiktok")
+        .expect("an alias for social")
+        .settings();
+    assert_eq!(social.codec, VideoCodec::H264);
+    assert_eq!(social.loudness_lufs, Some(-14.0));
+
+    let youtube = ExportPreset::from_wire("youtube").unwrap().settings();
+    assert!(
+        youtube.quality < social.quality,
+        "more bitrate for the platform's re-encode"
+    );
+
+    // A master is handed on for more work. Normalising it would bake in a decision the next
+    // person has to undo.
+    let master = ExportPreset::from_wire("master").unwrap().settings();
+    assert_eq!(master.codec, VideoCodec::ProRes);
+    assert_eq!(master.loudness_lufs, None);
+
+    assert!(ExportPreset::from_wire("vimeo").is_none());
+}
+
+/// A ranged export renumbers time from its start: the sound moves with the picture, or the
+/// music lands somewhere else in the file than it did in the room.
+#[test]
+fn a_range_moves_the_sound_with_the_picture() {
+    let clip = |start: f64, duration: f64| bay_preview::AudibleClip {
+        path: "/tmp/a.mp3".into(),
+        start_seconds: start,
+        trim_start_seconds: 0.0,
+        duration_seconds: duration,
+        volume: 1.0,
+        gain_points: vec![(0.0, 1.0)],
+    };
+
+    // Exporting 5s..15s of a timeline.
+    let kept = bay_preview::clips_in_range_for_test(
+        vec![
+            clip(0.0, 2.0),  // over before the range starts
+            clip(6.0, 3.0),  // wholly inside
+            clip(4.0, 4.0),  // straddles the start
+            clip(20.0, 2.0), // after the range ends
+        ],
+        5.0,
+        10.0,
+    );
+    assert_eq!(kept.len(), 2, "{kept:?}");
+
+    let inside = kept
+        .iter()
+        .find(|c| c.duration_seconds == 3.0)
+        .expect("the whole clip");
+    assert_eq!(
+        inside.start_seconds, 1.0,
+        "6s in the timeline is 1s into the file"
+    );
+
+    let straddling = kept
+        .iter()
+        .find(|c| c.start_seconds == 0.0)
+        .expect("the straddler");
+    assert_eq!(
+        straddling.duration_seconds, 3.0,
+        "it lost the second before the range"
+    );
+    assert_eq!(
+        straddling.trim_start_seconds, 1.0,
+        "and skips that second of its own source, so the sound under frame 0 is the right one"
+    );
+}
+
+#[test]
+fn a_range_of_zero_leaves_every_clip_alone() {
+    let clips = vec![bay_preview::AudibleClip {
+        path: "/tmp/a.mp3".into(),
+        start_seconds: 3.0,
+        trim_start_seconds: 1.0,
+        duration_seconds: 2.0,
+        volume: 1.0,
+        gain_points: vec![(0.0, 1.0)],
+    }];
+    let kept = bay_preview::clips_in_range_for_test(clips.clone(), 0.0, 10.0);
+    assert_eq!(kept, clips);
+}
+
+/// The encode arguments are what actually reach ffmpeg. A codec that silently fell back to
+/// the default would be invisible until someone opened the file.
+#[test]
+fn each_codec_asks_for_itself() {
+    use bay_preview::VideoCodec;
+    let args = |codec: VideoCodec| bay_preview::encoder_args_for_test(codec, 20).join(" ");
+
+    let h264 = args(VideoCodec::H264);
+    assert!(h264.contains("libx264"), "{h264}");
+    assert!(h264.contains("-crf 20"), "{h264}");
+    assert!(h264.contains("yuv420p"), "{h264}");
+
+    let hevc = args(VideoCodec::Hevc);
+    assert!(hevc.contains("libx265"), "{hevc}");
+    // QuickTime will not open an HEVC file without this tag.
+    assert!(hevc.contains("hvc1"), "{hevc}");
+
+    let prores = args(VideoCodec::ProRes);
+    assert!(prores.contains("prores"), "{prores}");
+    assert!(
+        prores.contains("yuv422p10le"),
+        "10-bit 4:2:2, or ProRes is pointless: {prores}"
+    );
+}
+
+/// A real encode at a non-default codec. Skipped without ffmpeg or a GPU, and a skip is a
+/// skip — it never reads as a pass.
+#[test]
+fn hevc_actually_encodes() {
+    if !require_ffmpeg() {
+        return;
+    }
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let dir = std::env::temp_dir().join("bay-export-settings-test");
+    let _ = std::fs::create_dir_all(&dir);
+    let out = dir.join("hevc.mp4");
+    let _ = std::fs::remove_file(&out);
+
+    let project = Project::starter();
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.4,
+        10.0,
+        160,
+        90,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings {
+            codec: bay_preview::VideoCodec::Hevc,
+            quality: 30,
+            ..bay_preview::ExportSettings::default()
+        },
+    );
+    assert!(result.is_ok(), "hevc export failed: {result:?}");
+    let size = std::fs::metadata(&out).expect("the file exists").len();
+    assert!(size > 0, "an empty file is not an export");
+}
+
+/// A grade has to reach the pixels. This builds a real cube that swaps red and blue, renders a
+/// red frame through it, and looks at what comes out — the only way to catch a LUT that parses,
+/// uploads, binds, and samples the wrong axis.
+#[test]
+fn a_lut_actually_grades_the_frame() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let dir = std::env::temp_dir().join("bay-lut-test");
+    let _ = std::fs::create_dir_all(&dir);
+    let cube = dir.join("swap-rb.cube");
+
+    // A 2-cube whose output is the input with red and blue exchanged. Entries are ordered with
+    // red varying fastest.
+    let mut text = String::from("LUT_3D_SIZE 2\n");
+    for b in 0..2 {
+        for g in 0..2 {
+            for r in 0..2 {
+                text.push_str(&format!("{b}.0 {g}.0 {r}.0\n"));
+            }
+        }
+    }
+    std::fs::write(&cube, text).expect("write the cube");
+
+    // A full-frame red shape, graded.
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize {
+        width: 64,
+        height: 64,
+    };
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.audio.clear();
+        scene.tracks.main.elements = vec![Element::Shape(bay_project::ShapeElement {
+            id: "s".into(),
+            name: "s".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            shape: bay_project::ShapeKind::Rect { radius: 0.0 },
+            color: "#ff0000".into(),
+            transform: bay_project::Transform::default(),
+            effects: vec![bay_project::Effect {
+                id: "fx".into(),
+                effect_type: "lut".into(),
+                enabled: true,
+                params: [("amount".to_string(), 1.0)].into(),
+                asset: Some(cube.to_string_lossy().into_owned()),
+            }],
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            64,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("a frame");
+
+    // Centre pixel, BGRA.
+    let index = ((32 * 64) + 32) * 4;
+    let (blue, green, red) = (
+        frame.bgra[index],
+        frame.bgra[index + 1],
+        frame.bgra[index + 2],
+    );
+    assert!(
+        blue > 200 && red < 60,
+        "the grade swapped red for blue: got r={red} g={green} b={blue}"
+    );
+}
+
+/// An effect naming a .cube that is not there must leave the clip alone rather than take the
+/// frame down with it — the missing file is `check`'s job to report, not the renderer's.
+#[test]
+fn a_missing_lut_file_leaves_the_frame_standing() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    if let Some(element) = project.active_scene_mut().tracks.main.elements.first_mut()
+        && let Some(effects) = element.effects_mut()
+    {
+        {
+            effects.push(bay_project::Effect {
+                id: "fx".into(),
+                effect_type: "lut".into(),
+                enabled: true,
+                params: [("amount".to_string(), 1.0)].into(),
+                asset: Some("/tmp/definitely-not-here.cube".into()),
+            });
+        }
+    }
+    assert!(
+        renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                64,
+                64,
+                &project.settings.background,
+                &project.media,
+            )
+            .is_some(),
+        "a missing grade must not cost the whole frame"
+    );
+}
+
+/// Crop is the difference between reframing and squashing: it must move which *part* of the
+/// source is on screen, not stretch what was already there.
+#[test]
+fn a_crop_shows_a_different_part_of_the_source() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let dir = std::env::temp_dir().join("bay-crop-test");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("halves.png");
+
+    // Left half red, right half blue.
+    let mut image = image::RgbaImage::new(64, 64);
+    for (x, _y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = if x < 32 {
+            image::Rgba([255, 0, 0, 255])
+        } else {
+            image::Rgba([0, 0, 255, 255])
+        };
+    }
+    image.save(&path).expect("write the test image");
+
+    let framed = |crop_left: f32, crop_right: f32| {
+        let mut project = Project::starter();
+        project.settings.canvas = bay_project::CanvasSize {
+            width: 64,
+            height: 64,
+        };
+        project.media.push(bay_project::MediaAsset::new(
+            "m",
+            "halves.png",
+            path.to_string_lossy(),
+        ));
+        {
+            let scene = project.active_scene_mut();
+            scene.tracks.overlay.clear();
+            scene.tracks.audio.clear();
+            scene.tracks.main.elements = vec![Element::Image(bay_project::ImageElement {
+                id: "img".into(),
+                name: "img".into(),
+                start: MediaTime::ZERO,
+                duration: MediaTime::from_ticks(120_000),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                media_id: "m".into(),
+                transform: bay_project::Transform {
+                    crop_left,
+                    crop_right,
+                    ..bay_project::Transform::default()
+                },
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
+            })];
+        }
+        project
+    };
+
+    // Keep only the right half: the centre of the frame must now be blue.
+    let project = framed(0.5, 0.0);
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            64,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("a frame");
+    let index = ((32 * 64) + 32) * 4;
+    let (blue, red) = (frame.bgra[index], frame.bgra[index + 2]);
+    assert!(
+        blue > 200 && red < 60,
+        "cropping to the right half should show blue: r={red} b={blue}"
+    );
+}
+
+/// A mask limits where a clip shows. The pipeline behind it has been in the tree, tested and
+/// switched off, since before any element could ask for one.
+#[test]
+fn a_mask_hides_what_falls_outside_it() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize {
+        width: 64,
+        height: 64,
+    };
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.audio.clear();
+        scene.tracks.main.elements = vec![Element::Shape(bay_project::ShapeElement {
+            id: "s".into(),
+            name: "s".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            shape: bay_project::ShapeKind::Rect { radius: 0.0 },
+            color: "#ffffff".into(),
+            transform: bay_project::Transform::default(),
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            // A small circle in the middle of a full-frame white rectangle.
+            mask: Some(bay_project::Mask {
+                shape: bay_project::MaskShape::Ellipse,
+                x: 0.5,
+                y: 0.5,
+                width: 0.4,
+                height: 0.4,
+                feather: 0.0,
+                inverted: false,
+            }),
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+
+    let frame = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            64,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("a frame");
+
+    let alpha_at = |x: usize, y: usize| frame.bgra[((y * 64) + x) * 4 + 1];
+    assert!(alpha_at(32, 32) > 200, "the middle is inside the mask");
+    assert!(
+        alpha_at(4, 4) < 60,
+        "the corner is outside it and must be dark, got {}",
+        alpha_at(4, 4)
+    );
+}
+
+/// The mask raster itself: white inside, transparent outside, and an edge that is neither.
+#[test]
+fn a_mask_raster_covers_its_shape_and_nothing_else() {
+    let mask = bay_project::Mask {
+        shape: bay_project::MaskShape::Rect,
+        x: 0.5,
+        y: 0.5,
+        width: 0.5,
+        height: 0.5,
+        feather: 0.0,
+        inverted: false,
+    };
+    let rgba = bay_preview::rasterize_mask_for_test(&mask, 32, 32);
+    let alpha = |x: usize, y: usize| rgba[((y * 32) + x) * 4 + 3];
+    assert_eq!(alpha(16, 16), 255, "the centre is inside");
+    assert_eq!(alpha(0, 0), 0, "the corner is outside");
+    assert_eq!(alpha(16, 0), 0, "and so is directly above it");
+}
+
+/// `loudnorm` runs internally at 192 kHz and returns 96 kHz, and `amix` takes its channel layout
+/// from its FIRST input — so a chain ending on `loudnorm`, fed a mono narration clip before the
+/// bed, delivered 96 kHz **mono**. Both were measured in files that shipped. The export chain now
+/// pins the delivery format after everything that could have changed it; this is the test that
+/// says so, because the symptom is invisible until someone probes the file.
+#[test]
+fn an_export_delivers_48k_stereo_however_the_mix_was_assembled() {
+    use bay_project::{AudioElement, Track};
+
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+
+    // A mono 24 kHz voice and a stereo 48 kHz bed, with the MONO one first — the order that
+    // collapsed the mix in the shipped file.
+    let voice = dir.join(format!("bay-voice-{pid}.wav"));
+    let bed = dir.join(format!("bay-bed-{pid}.wav"));
+    for (path, args) in [
+        (&voice, ["sine=f=440:d=2:r=24000", "1"]),
+        (&bed, ["sine=f=220:d=2:r=48000", "2"]),
+    ] {
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                args[0],
+            ])
+            .args(["-ac", args[1], "-y"])
+            .arg(path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !require_ffmpeg_step(made, "generate a test tone") {
+            return;
+        }
+    }
+
+    let mut project = Project::starter();
+    for (index, (id, path)) in [("voice", &voice), ("bed", &bed)].into_iter().enumerate() {
+        project
+            .media
+            .push(MediaAsset::new(id, id, path.to_str().unwrap()));
+        let mut track = Track::new(
+            format!("audio-{index}"),
+            format!("Audio {index}"),
+            bay_project::TrackKind::Audio,
+        );
+        track.elements.push(Element::Audio(AudioElement {
+            id: id.into(),
+            name: id.into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_seconds_f64(2.0).unwrap(),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            media_id: id.into(),
+            muted: false,
+            volume: 1.0,
+            animations: Default::default(),
+            trim_start: MediaTime::ZERO,
+            source: Default::default(),
+            role: Default::default(),
+        }));
+        project.active_scene_mut().tracks.audio.push(track);
+    }
+
+    let out = dir.join(format!("bay-fmt-{pid}.mp4"));
+    let ok = renderer.export_video(
+        project.active_scene(),
+        1.0,
+        10.0,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
+    );
+    if !require_ffmpeg_step(ok.is_ok(), "encode the mixed export") {
+        return;
+    }
+
+    let probe = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0"])
+        .args(["-show_entries", "stream=sample_rate,channels"])
+        .args(["-of", "default=nw=1"])
+        .arg(&out)
+        .output()
+        .expect("ffprobe runs");
+    let text = String::from_utf8_lossy(&probe.stdout);
+    assert!(
+        text.contains("sample_rate=48000"),
+        "loudnorm hands back 96 kHz unless the chain resamples after it; got {text}"
+    );
+    assert!(
+        text.contains("channels=2"),
+        "amix takes its layout from its first input, and the mono voice is first; got {text}"
+    );
+
+    for path in [&voice, &bed, &out] {
+        let _ = std::fs::remove_file(path);
     }
 }

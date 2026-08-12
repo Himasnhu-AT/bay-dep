@@ -4,13 +4,40 @@
 //! are the entire user interface an agent gets. A field whose description says what units it
 //! is in and what a good value looks like removes a whole round-trip of trial and error.
 
-use bay_project::{ShapeKind, Transform};
+use bay_agent::plan::EASINGS;
+use bay_project::{
+    AudioRole, ElementRole, ElementSource, Framing, ShapeKind, StyleKit, Tone, Transform,
+};
 use serde_json::{Value, json};
 
 use crate::studio::{
-    Studio, ToolError, ToolResult, VisualArgs, err, parse_align, parse_blend, parse_easing,
-    parse_keys,
+    KitChoice, Studio, TextArgs, ToolError, ToolResult, VisualArgs, err, parse_align,
+    parse_audio_role, parse_blend, parse_role, parse_tone,
 };
+
+/// Every move in the registry, for the `move` enum on the three tools that take one.
+///
+/// Read off the registry rather than written out, so the schema an agent reads and the table it
+/// is validated against cannot drift — a move offered in an enum and rejected by the parser is a
+/// tool call that fails for no reason the caller can see, which is exactly what the deleted
+/// headless `parse_easing` did to six curves.
+static MOVE_IDS: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(bay_project::moves::ids);
+
+/// The vocabulary in one line: what each move is and what channel carries it. The full entry —
+/// including when each one is the wrong choice — comes from `apply_move` with no arguments,
+/// which keeps the schema readable and the reasons available.
+static MOVE_HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let listing = bay_project::moves::MOVES
+        .iter()
+        .map(|m| format!("{} ({}, {})", m.id, m.kind.as_str(), m.lead))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "A named move, which carries its own duration, curve and amplitude: {listing}. Call \
+         apply_move with no arguments for what each one is for and when it is the wrong choice."
+    )
+});
 
 fn number(value: &Value, key: &str, fallback: f64) -> f64 {
     value.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
@@ -35,17 +62,26 @@ fn required_text(value: &Value, key: &str) -> Result<String, ToolError> {
 }
 
 /// The transform/blend block every visual tool accepts.
-fn visual(args: &Value) -> Result<VisualArgs, ToolError> {
+///
+/// A named `framing` from the kit supplies the defaults when one is given, so "put it in the
+/// lower third" is a word rather than four floats an agent copied out of a document. Anything
+/// stated explicitly still wins — the framing is a starting point, not a cage.
+fn visual(args: &Value, framing: Option<&Framing>) -> Result<VisualArgs, ToolError> {
+    let (x, y, anchor_x, anchor_y, scale) = match framing {
+        Some(f) => (f.x, f.y, f.anchor_x, f.anchor_y, f.scale),
+        None => (0.5, 0.5, 0.5, 0.5, 1.0),
+    };
     let transform = Transform {
-        x: number(args, "x", 0.5) as f32,
-        y: number(args, "y", 0.5) as f32,
-        scale: number(args, "scale", 1.0) as f32,
+        x: number(args, "x", f64::from(x)) as f32,
+        y: number(args, "y", f64::from(y)) as f32,
+        scale: number(args, "scale", f64::from(scale)) as f32,
         rotation: number(args, "rotation", 0.0) as f32,
         opacity: number(args, "opacity", 1.0) as f32,
         scale_x: number(args, "scaleX", 1.0) as f32,
         scale_y: number(args, "scaleY", 1.0) as f32,
-        anchor_x: number(args, "anchorX", 0.5) as f32,
-        anchor_y: number(args, "anchorY", 0.5) as f32,
+        anchor_x: number(args, "anchorX", f64::from(anchor_x)) as f32,
+        anchor_y: number(args, "anchorY", f64::from(anchor_y)) as f32,
+        ..Transform::default()
     };
     Ok(VisualArgs {
         transform,
@@ -53,13 +89,104 @@ fn visual(args: &Value) -> Result<VisualArgs, ToolError> {
     })
 }
 
+/// The style values that used to be arguments and are not any more.
+///
+/// Refusing them rather than ignoring them: an argument that is silently dropped teaches an
+/// agent that it worked. The message names the role whose ramp entry decides the value instead,
+/// with the number the committed kit actually gives it — so the correction is one call away and
+/// the caller can see what it is getting.
+fn reject_raw_style(
+    args: &Value,
+    tool: &str,
+    kit: &StyleKit,
+    role: ElementRole,
+) -> Result<(), ToolError> {
+    const DELETED: [(&str, &str); 4] = [
+        ("fontSize", "size"),
+        ("fontFamily", "typeface"),
+        ("fontWeight", "weight"),
+        ("color", "colour"),
+    ];
+    let style = kit.resolve(role, Tone::default_for(role));
+    for (key, what) in DELETED {
+        if args.get(key).is_some_and(|v| !v.is_null()) {
+            return Err(err(format!(
+                "{tool} does not take {key:?} any more — the {what} comes from the project's \
+                 style kit ({}) through \"role\". role {:?} is set in {} {} at fontSize {:.0} in \
+                 {}. Say what the element is FOR with \"role\", and how loud it is with \"tone\" \
+                 (one of {:?}); call style_pick to change the kit, not the element.",
+                kit.id,
+                role.as_str(),
+                style.family,
+                style.weight,
+                style.size,
+                style.color,
+                Tone::NAMES,
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The named framing a call asked for, if any. An unknown name is refused with the list rather
+/// than silently falling back to the centre of the frame.
+fn named_framing(args: &Value, kit: &StyleKit) -> Result<Option<Framing>, ToolError> {
+    let Some(name) = text(args, "framing") else {
+        return Ok(None);
+    };
+    kit.framing(&name).cloned().map(Some).ok_or_else(|| {
+        err(format!(
+            "the {:?} kit has no framing {name:?} — it declares {:?}",
+            kit.id,
+            kit.framing_names()
+        ))
+    })
+}
+
+/// The kit choice a tool was given, if it named one. `customKit` outranks `kit`, and a bare
+/// brief is the normal path.
+fn kit_choice(args: &Value) -> Result<Option<KitChoice>, ToolError> {
+    if let Some(raw) = args.get("customKit").filter(|v| !v.is_null()) {
+        let kit: StyleKit = serde_json::from_value(raw.clone()).map_err(|e| {
+            err(format!(
+                "customKit is not a style kit: {e}. It needs id, name, note, faces \
+                 {{display, body, mono}} each with family+weight, ramp (a step per role), \
+                 palette {{bg, surface, ink, dim, accent, accent2}} and at least 4 framings \
+                 including one at y >= 0.60. Call style_pick with no arguments to see three \
+                 worked examples of the shape."
+            ))
+        })?;
+        return Ok(Some(KitChoice::Custom(Box::new(kit))));
+    }
+    if let Some(id) = text(args, "kit") {
+        return Ok(Some(KitChoice::Named(id)));
+    }
+    Ok(None)
+}
+
 fn layer(args: &Value) -> usize {
     args.get("layer").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+}
+
+/// The role on a tool that accepts one without insisting. Footage and stills carry a role so a
+/// distribution can partition on it, but demanding one from `add_video` would be asking the
+/// question twice for no new answer.
+fn optional_role(args: &Value) -> Result<ElementRole, ToolError> {
+    match args.get("role").and_then(|v| v.as_str()) {
+        Some(name) => parse_role(Some(name), "this tool"),
+        None => Ok(ElementRole::default()),
+    }
 }
 
 /// Schema fragment for the shared placement fields, spliced into every visual tool.
 fn visual_properties() -> Value {
     json!({
+        "framing": { "type": "string",
+            "description": "One of the committed kit's named framings — project_info and \
+                 style_pick list them. It sets x, y, anchorX, anchorY and scale in one word; \
+                 anything you also pass explicitly still wins. Every kit declares at least one \
+                 bottom-weighted framing, which is the half of the frame the project this rule \
+                 comes from never used at all." },
         "layer": { "type": "integer", "minimum": 0, "default": 0,
             "description": "Stacking order. 0 is the bottom (main) layer; higher numbers draw on top. Missing layers are created automatically." },
         "x": { "type": "number", "default": 0.5,
@@ -83,22 +210,128 @@ fn visual_properties() -> Value {
     })
 }
 
+/// Schema fragment for naming a style kit, shared by `project_create` and `style_pick` so the
+/// two cannot drift about what a kit is.
+fn kit_properties() -> Value {
+    json!({
+        "brief": { "type": "string",
+            "description": "What the video is about, in a sentence. Seeds which three kits are \
+                 offered; the same brief on a different day draws a different set." },
+        "kit": { "type": "string",
+            "description": format!(
+                "Commit to a named built-in kit: {:?}. Call style_pick with only a brief first \
+                 to see what each one is for.",
+                bay_project::builtin_kit_ids()
+            ) },
+        "customKit": { "type": "object",
+            "description": "A whole style kit of your own, validated before it is accepted: \
+                 three distinct families that resolve at the weights you name, a hero/body cap \
+                 ratio of at least 4.0, an accent genuinely far from the ink, and at least four \
+                 named framings including one at y >= 0.60. Deliberately more work than \
+                 accepting an offer." }
+    })
+}
+
+/// Schema fragment for the tone every drawn element carries.
+///
+/// This is the entire colour surface. `#rrggbb` is not reachable from a tool argument any more:
+/// the project that prompted this used five colours across 188 elements, one of them lifted out
+/// of a document that labels it as failing contrast, and the accent three times — never on the
+/// thing that was the point.
+fn tone_property() -> Value {
+    json!({
+        "tone": { "type": "string", "enum": Tone::NAMES,
+            "description": "How loud this element is, against the project's committed style kit. \
+                 ink = the loudest value, for the line that carries the beat. dim = secondary \
+                 type: kickers, axis labels, units, source notes. accent = the point — scarce, \
+                 one element per beat, and it must be on the thing that IS the argument. \
+                 accent2 = the opposition: a second series, the down bar, the contrast case. \
+                 surface = a plate or panel behind something else. Omit it and the role picks \
+                 the right one." }
+    })
+}
+
+/// Schema fragment for the role every visual element declares.
+///
+/// One fragment so the vocabulary cannot drift between the tools that require it and the ones
+/// that merely accept it. `required` is where the difference lives, not here.
+fn role_property(required: bool) -> Value {
+    let tail = if required {
+        "Required — say what the element is for, not what it looks like."
+    } else {
+        "Defaults to \"label\"."
+    };
+    json!({
+        "role": { "type": "string", "enum": ElementRole::NAMES,
+            "description": format!(
+                "What this element is FOR. hook = the opening claim that earns the next two \
+                 seconds. headline = the line a beat is built around. kicker = the small line \
+                 framing a headline. label = names a thing (axis, value, source). caption = \
+                 spoken words on screen (narrate sets this; you should not). lockup = the end \
+                 card or sign-off. data = a bar, line or mark whose size or position IS the \
+                 number. ground = background fills and plates. chrome = rules, borders, frame \
+                 furniture. ground and chrome together are capped at a small share of a \
+                 project, so do not label content as background to duck a rule. {tail}"
+            ) }
+    })
+}
+
 /// Schema fragment for caption styling, shared by every tool that puts captions on screen.
+///
+/// **Four fields where there were eleven.** The size, the colour, the family, the weight, the
+/// layer, the fade and the three cue-timing floors were all arguments, and the project this comes
+/// from set every one of them — producing 76 three-frame fades, 8 cues too short to read and 38
+/// elements sharing one x. What a caption looks like is the kit's answer to `captionStyle`; how
+/// long it stays up is a fact about reading. What is left is where it sits, which is the only
+/// part that was never settable.
 fn caption_properties() -> Value {
     json!({
-        "captionFontSize": { "type": "number", "default": 46,
-            "description": "Caption size against a 1080-tall canvas; scaled automatically for other heights." },
-        "captionColor": { "type": "string", "default": "#EDECE6" },
-        "captionFontFamily": { "type": "string", "description": "Installed family name. Check with fonts_check first." },
-        "captionFontWeight": { "type": "integer", "default": 600 },
-        "captionY": { "type": "number", "default": 0.70,
-            "description": "Top of the caption box as a fraction of canvas height. 0.70 clears the platform caption band." },
-        "captionLayer": { "type": "integer", "default": 9, "description": "Layer captions draw on; high so they sit above the artwork." },
-        "captionFade": { "type": "number", "default": 0.12, "description": "Fade in/out seconds per caption." },
-        "maxWords": { "type": "integer", "default": 4, "description": "Words per caption. 3-5 reads well at thumb size." },
-        "minCaptionSeconds": { "type": "number", "default": 0.7, "description": "Never show a caption for less than this." },
-        "maxCaptionSeconds": { "type": "number", "default": 3.0 },
-        "gapSeconds": { "type": "number", "default": 0.45, "description": "A silence at least this long forces a caption break." }
+        "captionStyle": { "type": "string", "enum": crate::narration::CaptionPreset::NAMES,
+            "default": "plain",
+            "description": "How loud the spoken word is on screen, against the project's style \
+                 kit. quiet = a small supporting line, in the kit's label step and its quiet \
+                 tone. plain = spoken words at the kit's caption step, in its ink — the default. \
+                 loud = kinetic type, two words at a time at headline size, for when the words \
+                 ARE the picture. There is no captionFontSize, captionColor, captionFontFamily \
+                 or captionFontWeight: this is where they come from." },
+        "captionX": { "type": "number",
+            "description": "Horizontal position of the caption box, as a fraction of canvas \
+                 width. Defaults to the kit's lower-third framing — which differs per kit, \
+                 which is the point: every video bay had made until now put its captions at \
+                 x = 0.08." },
+        "captionY": { "type": "number",
+            "description": "Top of the caption box as a fraction of canvas height. Defaults to \
+                 the kit's lower-third framing, which clears the platform caption band." },
+        "captionAlign": { "type": "string", "enum": ["left", "center", "right"],
+            "description": "Defaults to whatever the kit's lower-third framing hangs off — left \
+                 on a grid kit, centred on a centred one." }
+    })
+}
+
+// The eleven caption arguments that used to exist are refused — not ignored — by
+// `bay_agent::plan::reject_raw_caption_style`, which both transports go through.
+
+/// The duck's own arguments, shared by `duck` and by `audio_set`'s `duckUnder`.
+///
+/// Three of these are a mix decision and the rest are the shape of a duck, with bounds rather
+/// than freedom: outside them the automation is audible as automation. The tool refuses a value
+/// past a bound and says which bound, because "the release must be slower than the attack" is
+/// something an author can act on and a slightly-wrong number is not something they can hear
+/// until the file is posted.
+fn duck_properties() -> Value {
+    json!({
+        "depthDb": { "type": "number", "default": 8.0, "minimum": 3.0, "maximum": 24.0,
+            "description": "How far the bed drops under a line, in dB. 8 dB is the house value: it takes a bed from about -22 to -30 LUFS-S, which is the difference between the two states that gives a narrated mix its contour. Under 3 dB nobody hears it; over about 14 dB the music disappears rather than making room." },
+        "attackMs": { "type": "number", "default": 150.0, "minimum": 60.0, "maximum": 400.0,
+            "description": "How long the drop takes. Under 60 ms it pumps audibly; over 400 ms it masks the first syllable." },
+        "releaseMs": { "type": "number", "default": 500.0, "minimum": 200.0,
+            "description": "How long the recovery takes. Must be longer than the attack — the asymmetry (150 ms down, 500 ms up) is the whole mechanism that makes a duck inaudible, and a release faster than the attack is a pump." },
+        "preRollMs": { "type": "number", "default": 250.0,
+            "description": "How far before the first word the drop starts. A duck that begins ON the word is heard as a level jump." },
+        "holdMs": { "type": "number", "default": 150.0,
+            "description": "How long the bed stays down past the end of a line. Releasing on the final consonant clips the tail of the sentence." },
+        "joinGapMs": { "type": "number", "default": 1500.0,
+            "description": "Two lines closer together than this are ducked as one. A bed that recovers and re-ducks inside a second and a half breathes." }
     })
 }
 
@@ -169,16 +402,47 @@ pub fn definitions() -> Vec<Value> {
     vec![
         tool(
             "project_create",
-            "Start a new, empty project. Call this first. Clears anything already on the timeline. \
-             A vertical social reel is 1080x1920 at 30fps.",
-            json!({
-                "name": { "type": "string", "default": "Untitled" },
-                "width": { "type": "integer", "default": 1080 },
-                "height": { "type": "integer", "default": 1920 },
-                "fps": { "type": "integer", "default": 30 },
-                "background": { "type": "string", "default": "#000000",
-                    "description": "Canvas fill as #rrggbb. Every frame sits on this." }
-            }),
+            "Start a new, empty project. Call this first. Clears anything already on the \
+             timeline. A vertical social reel is 1080x1920 at 30fps.\n\nIt also commits the \
+             project to a STYLE KIT — the typefaces, type ramp, palette and framings every \
+             element afterwards is drawn with. Pass `brief` (what the video is about) and bay \
+             picks one, seeded by the brief and today's date and stepping over the last five \
+             kits this machine used, so the same subject a week later does not come out looking \
+             the same. Pass `kit` to name one outright, or `customKit` to declare your own \
+             (validated, and strictly more work than taking an offer). The response names the \
+             two alternatives it did not pick.",
+            merge(
+                json!({
+                    "name": { "type": "string", "default": "Untitled" },
+                    "width": { "type": "integer", "default": 1080 },
+                    "height": { "type": "integer", "default": 1920 },
+                    "fps": { "type": "integer", "default": 30 },
+                    "background": { "type": "string",
+                        "description": "Canvas fill as #rrggbb. Defaults to the chosen kit's \
+                             ground, which is what you want — a background picked apart from the \
+                             palette is reported as an off-token value." }
+                }),
+                kit_properties(),
+            ),
+            &[],
+        ),
+        tool(
+            "style_pick",
+            "Choose the project's STYLE KIT: three typefaces (display, body, mono), a type ramp \
+             that maps each element role to a size, a six-colour palette, and at least four \
+             named framings.\n\nCall it with a `brief` and nothing else to be offered three kits \
+             that suit it — seeded by the brief and today's date, and excluding the last five \
+             this machine committed. Call it again with `kit` to commit one. `add_text` and \
+             `add_shape` have no fontFamily, fontSize, fontWeight or color: this is where those \
+             values come from.",
+            merge(
+                json!({
+                    "brief": { "type": "string",
+                        "description": "What the video is about, in a sentence. It seeds the \
+                             offer, so a different subject draws different kits." }
+                }),
+                kit_properties(),
+            ),
             &[],
         ),
         tool(
@@ -201,41 +465,67 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "media_import",
             "Register a media file (image, video or audio) and probe its real duration and \
-             dimensions. Returns a mediaId to pass to add_image / add_video / add_audio.",
+             dimensions. Returns a mediaId to pass to add_image / add_video / add_audio.\n\nAn \
+             audio file is also measured: `loudness` comes back with `lufs`, `peakDb`, `rmsDb` \
+             and `accentSeconds`. Read it before choosing a level — `volume` is a multiplier and \
+             says nothing about how loud a clip will be, and two files that both sound fine on \
+             their own can differ by 15 dB. Pass `mediaId` instead of `path` to re-measure \
+             something already imported.",
             json!({
                 "path": { "type": "string", "description": "Path to the file on disk." },
-                "id": { "type": "string", "description": "Optional explicit media id." }
+                "id": { "type": "string", "description": "Optional explicit media id." },
+                "mediaId": { "type": "string",
+                    "description": "Measure an asset that is already in the project instead of importing a new one. Same answer as audio_probe." }
             }),
-            &["path"],
+            &[],
+        ),
+        tool(
+            "audio_probe",
+            "Measure an imported sound: `lufs` (EBU R128 integrated loudness — the unit a mix is \
+             specified in), `peakDb`, `rmsDb`, and `accentSeconds` (where its transients are, \
+             for landing a cut on the music). Cached on the asset at import, so this is only \
+             needed for a file that was imported before the measurement existed.\n\nWhy it \
+             matters: a bed at `volume: 2.0` against a file that integrates to -35 LUFS is \
+             still 9 LU too quiet, and no gain number can tell you that. Speech wants to sit \
+             about 9-14 LU above the bed while it is talking.",
+            json!({
+                "mediaId": { "type": "string", "description": "An id from media_import." }
+            }),
+            &["mediaId"],
         ),
         tool(
             "add_text",
-            "Place a text element on the timeline. Numbers should be set in a mono family and \
-             sized large — a hero figure on a 1080x1920 reel wants fontSize around 200-320.",
+            "Place a text element on the timeline.\n\nThere is no fontFamily, fontSize, \
+             fontWeight or color here, on purpose: say what the line is FOR with `role` and how \
+             loud it is with `tone`, and the project's committed style kit answers the rest. A \
+             hook and a headline come out at hero and headline size in the kit's display face; a \
+             kicker comes out small, tracked out, in its mono voice. Read project_info to see \
+             the ramp you are drawing against.",
             merge(
                 json!({
                     "start": { "type": "number", "description": "Timeline start, in seconds." },
                     "duration": { "type": "number", "description": "How long it stays on screen, in seconds." },
                     "content": { "type": "string", "description": "The text. Use \\n for line breaks." },
-                    "fontSize": { "type": "number", "default": 64,
-                        "description": "Point size, expressed against a 1080-tall canvas and scaled automatically for other heights." },
-                    "color": { "type": "string", "default": "#ffffff" },
-                    "fontFamily": { "type": "string", "description": "Installed family name. Check with fonts_check first." },
-                    "fontWeight": { "type": "integer", "default": 400, "description": "400 regular, 600 semibold, 700 bold." },
                     "align": { "type": "string", "enum": ["left", "center", "right"], "default": "left" },
-                    "letterSpacing": { "type": "number", "default": 0.0,
-                        "description": "Tracking in em. 0.18 suits an uppercase mono kicker; slightly negative tightens large display type." },
-                    "lineHeight": { "type": "number", "default": 1.2, "description": "Multiple of the font size." },
-                    "id": { "type": "string", "description": "Optional explicit element id, for animating it later." }
+                    "letterSpacing": { "type": "number",
+                        "description": "Tracking in em, overriding the kit's ramp for this role. Rarely needed — the ramp already opens up an uppercase kicker and tightens display type." },
+                    "lineHeight": { "type": "number", "description": "Multiple of the font size, overriding the kit's ramp for this role." },
+                    "id": { "type": "string", "description": "Optional explicit element id, for animating it later. Ids of the form caption-<number> are reserved for narrate and the subtitle tools." }
                 }),
-                visual_properties(),
+                merge(
+                    merge(visual_properties(), role_property(true)),
+                    tone_property(),
+                ),
             ),
-            &["start", "duration", "content"],
+            &["start", "duration", "content", "role"],
         ),
         tool(
             "add_shape",
             "Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines. To make \
-             a bar chart, set anchorX to 0 and animate scaleX from 0 to its final value.",
+             a bar chart, set anchorX to 0 and animate scaleX from 0 to its final value.\n\nThe \
+             fill comes from `tone` against the project's style kit — a data mark takes the \
+             accent, a plate takes the surface colour, which is the one that sits far enough \
+             above the ground to actually be seen.",
             merge(
                 json!({
                     "start": { "type": "number" },
@@ -243,12 +533,14 @@ pub fn definitions() -> Vec<Value> {
                     "shape": { "type": "string", "enum": ["rect", "ellipse"], "default": "rect" },
                     "radius": { "type": "number", "default": 0.0,
                         "description": "Corner radius for a rect, as a fraction of its shorter side. 0 is square, 0.5 is a fully rounded pill." },
-                    "color": { "type": "string", "default": "#ffffff" },
                     "id": { "type": "string" }
                 }),
-                visual_properties(),
+                merge(
+                    merge(visual_properties(), role_property(true)),
+                    tone_property(),
+                ),
             ),
-            &["start", "duration"],
+            &["start", "duration", "role"],
         ),
         tool(
             "add_image",
@@ -260,7 +552,7 @@ pub fn definitions() -> Vec<Value> {
                     "duration": { "type": "number" },
                     "id": { "type": "string" }
                 }),
-                visual_properties(),
+                merge(visual_properties(), role_property(false)),
             ),
             &["mediaId", "start", "duration"],
         ),
@@ -276,7 +568,7 @@ pub fn definitions() -> Vec<Value> {
                         "description": "Seconds to skip from the head of the source." },
                     "id": { "type": "string" }
                 }),
-                visual_properties(),
+                merge(visual_properties(), role_property(false)),
             ),
             &["mediaId", "start", "duration"],
         ),
@@ -289,43 +581,508 @@ pub fn definitions() -> Vec<Value> {
                 "start": { "type": "number", "description": "Timeline start, in seconds." },
                 "duration": { "type": "number", "description": "How much of it plays, in seconds." },
                 "volume": { "type": "number", "default": 1.0, "description": "Linear gain; 1.0 is unity." },
+                "trimStart": { "type": "number", "default": 0.0,
+                    "description": "Seconds to skip from the head of the file — start a music bed at the drop rather than at bar one." },
+                "role": { "type": "string", "enum": AudioRole::NAMES, "default": "bed",
+                    "description": "What this sound is doing: \"speech\" is narration or dialogue (narrate sets this itself), \"bed\" is music under the picture, \"sfx\" is a one-off effect. The bed is what a duck is measured against, so a voice-over placed by hand should say so." },
                 "id": { "type": "string" }
             }),
             &["mediaId", "start", "duration"],
         ),
         tool(
-            "animate",
-            "Attach a keyframe animation to one property of one element. Replaces any existing \
-             animation on that property. Keyframe times are relative to the ELEMENT's start, \
-             not the timeline's.",
+            "apply_move",
+            "Put a NAMED MOVE from bay's vocabulary on an element. Call it with no arguments to \
+             see the whole registry — each move says what it is for and when it is the wrong \
+             choice. A move carries its own duration, curve and amplitude, all of them chosen \
+             together: the same nominal duration on two different curves gives the eye wildly \
+             different amounts of visible motion, and that arithmetic has already happened here. \
+             Prefer this to hand-written keys.",
             json!({
                 "elementId": { "type": "string" },
+                "move": { "type": "string", "enum": MOVE_IDS.as_slice(), "description": MOVE_HELP.as_str() },
+                "at": { "type": "number", "default": 0.0, "description": "Seconds after the ELEMENT's start that the move begins. An exit goes at (duration - the move's own length); an entrance goes at 0." },
+                "direction": { "type": "string", "enum": bay_project::Direction::NAMES,
+                    "description": "The way the element TRAVELS — not where it came from. Only the directions a move declares are legal; anything else is refused by name." },
+                "distance": { "type": "number", "default": 1.0, "minimum": 0.25, "maximum": 4.0,
+                    "description": "A multiplier on the move's own amplitude, NOT a number of pixels. 1.0 is the tabled travel, which is right for most elements; scale it up for something physically large." }
+            }),
+            &[],
+        ),
+        tool(
+            "animate",
+            "Give an element motion. Two ways in: pass `move` to use a named move from bay's \
+             vocabulary (call apply_move with no arguments to list them) — which is what you \
+             should normally do, because a move carries a duration and a curve that were chosen \
+             together — or pass `property` and `keys` to write keyframes by hand. Hand-written \
+             keys are legal and are reported per channel as \"off-vocabulary-motion\", so use \
+             them for something the vocabulary does not have rather than as a default. Keyframe \
+             times are relative to the ELEMENT's start, not the timeline's.",
+            json!({
+                "elementId": { "type": "string" },
+                "move": { "type": "string", "enum": MOVE_IDS.as_slice(), "description": MOVE_HELP.as_str() },
+                "direction": { "type": "string", "enum": bay_project::Direction::NAMES,
+                    "description": "With `move`: the way the element TRAVELS. Only the directions that move declares are legal." },
+                "distance": { "type": "number", "default": 1.0, "minimum": 0.25, "maximum": 4.0,
+                    "description": "With `move`: a multiplier on the move's own amplitude, not a number of pixels." },
                 "property": { "type": "string",
-                    "enum": ["opacity", "scale", "x", "y", "rotation", "scaleX", "scaleY"] },
+                    "enum": ["opacity", "scale", "x", "y", "rotation", "scaleX", "scaleY", "volume"],
+                    "description": "Hand-keyed only. Visual clips take the transform properties; an audio clip takes \"volume\" — which is how you duck a music bed under narration instead of splitting it into clips with stepped gains." },
                 "keys": {
                     "type": "array",
-                    "description": "At least two keyframes, e.g. [{\"t\":0,\"value\":0},{\"t\":0.5,\"value\":1}].",
+                    "description": "Hand-keyed only: at least two keyframes, e.g. [{\"t\":0,\"value\":0},{\"t\":0.5,\"value\":1}]. A value-changing segment shorter than about 7 frames is over before the eye can arrive — it is received as a cut, not as motion.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "t": { "type": "number", "description": "Seconds after the element starts." },
-                            "value": { "type": "number" }
+                            "value": { "type": "number" },
+                            "easing": { "type": "string", "enum": EASINGS,
+                                "description": "The curve for the segment LEAVING this key, overriding the channel's. This is how one property arrives fast, holds, then leaves slowly — which a single channel-wide easing cannot express." }
                         },
                         "required": ["t", "value"]
                     }
                 },
+                "at": { "type": "number", "default": 0.0, "description": "With `move`: seconds after the element's start that it begins." },
                 "easing": { "type": "string",
-                    "enum": ["linear", "ease-in", "ease-out", "ease-in-out", "power-out", "expo-out", "back-out", "hold"],
+                    "enum": EASINGS,
                     "default": "linear",
-                    "description": "power-out is the workhorse for entrances; ease-in-out for anything transforming in place; hold for a hard cut." }
+                    "description": "Hand-keyed only — the channel default. spring-out is a damped settle with no overshoot. power-out and expo-out are the other entrances; power-in/power4-in are exits; back-out overshoots and is a rare deliberate choice, not a default; hold is a hard cut, and putting one on a segment where nothing changes states no intent and buys no variety." }
             }),
-            &["elementId", "property", "keys"],
+            &["elementId"],
+        ),
+        tool(
+            "animate_many",
+            "Run ONE move across MANY elements, staggered — the verb for kinetic type, list \
+             reveals, and any group arrival. Three ways in: `move` names a group move from the \
+             vocabulary and brings its own stagger; `by` moves every element a DELTA from \
+             wherever it already rests, appending to the animation it already has; `from`/`to` \
+             are absolute and shared. Reach for `by` when what is already on screen has to \
+             respond to something arriving — with absolute values that means rewriting every \
+             incumbent's whole key list, which is the cost that makes a crossfade win instead.",
+            json!({
+                "elementIds": { "type": "array", "items": { "type": "string" },
+                    "description": "In the order they should arrive — which is reading order for a headline, and order of IMPORTANCE for a group, since whatever moves first reads as most important." },
+                "move": { "type": "string", "enum": MOVE_IDS.as_slice(),
+                    "description": "A named move across the whole group. cascade, wave and counter-cascade bring their own stagger and decay; counter-cascade alternates sides between neighbours, which satisfies entrance-direction diversity by construction." },
+                "direction": { "type": "string", "enum": bay_project::Direction::NAMES },
+                "distance": { "type": "number", "default": 1.0, "minimum": 0.25, "maximum": 4.0 },
+                "property": { "type": "string",
+                    "enum": ["opacity", "scale", "x", "y", "rotation", "scaleX", "scaleY", "volume"] },
+                "by": { "type": "number",
+                    "description": "A DELTA from where each element currently rests, in the channel's own units. Appends to the element's existing animation rather than replacing it, so an incumbent keeps the entrance it came in on. This is how a stack opens a slot for an arrival." },
+                "from": { "type": "number", "description": "Absolute: the value every element holds until its cue." },
+                "to": { "type": "number", "description": "Absolute: where every element ends up." },
+                "duration": { "type": "number", "default": 0.5, "description": "Seconds each element takes to travel. Entrances want longer than exits." },
+                "at": { "type": "number", "default": 0.0, "description": "Seconds after the element's start that the FIRST one begins. Landing a reveal on a beat means starting it at (beat - duration), not at the beat." },
+                "stagger": { "type": "number", "default": 0.06,
+                    "description": "Seconds between successive cues. For a group arrival that should read as ONE beat, keep items x stagger under ~0.5s. A reveal deliberately paced to narration is the other case, and may run much longer. With `move`, the move's own stagger is the default." },
+                "decay": { "type": "number", "default": 1.0,
+                    "description": "Multiplier on each successive gap. 0.84 makes a cascade accelerate across a line; 1.0 keeps it even. Shrinking gaps are what make a word cascade read as a wave rather than a conveyor belt." },
+                "easing": { "type": "string", "enum": EASINGS, "default": "linear" }
+            }),
+            &["elementIds"],
         ),
         tool(
             "element_delete",
             "Remove an element from the timeline by id.",
             json!({ "elementId": { "type": "string" } }),
             &["elementId"],
+        ),
+        tool(
+            "element_move",
+            "Slide a clip along the timeline. This changes WHEN it plays and nothing about \
+             WHAT it plays — use element_trim to change its edges, element_source to change \
+             which part of the footage it shows.",
+            json!({
+                "elementId": { "type": "string" },
+                "start": { "type": "number", "description": "New timeline start, in seconds." }
+            }),
+            &["elementId", "start"],
+        ),
+        tool(
+            "element_trim",
+            "Trim a clip's edges. For video and audio this is a real trim: moving the head \
+             forward eats the same amount of footage, so the frame under the new edge is the \
+             frame that was already there. Both edges stop at the ends of the file — a trim \
+             that would run off is shortened to fit. Give either edge on its own.",
+            json!({
+                "elementId": { "type": "string" },
+                "start": { "type": "number", "description": "New timeline start in seconds. Omit to leave the head where it is." },
+                "duration": { "type": "number", "description": "New length in seconds. Omit to leave the tail where it is." }
+            }),
+            &["elementId"],
+        ),
+        tool(
+            "element_split",
+            "Cut a clip in two at a timeline position. The second half picks up in the footage \
+             exactly where the first stops, so this is a cut rather than a copy. Returns the \
+             new element's id.",
+            json!({
+                "elementId": { "type": "string" },
+                "at": { "type": "number", "description": "Timeline position of the cut, in seconds. Must fall inside the clip." },
+                "newId": { "type": "string", "description": "Id for the second half. Minted if omitted." }
+            }),
+            &["elementId", "at"],
+        ),
+        tool(
+            "element_source",
+            "Slip: change WHICH part of a video or audio file a clip plays, keeping it exactly \
+             where it is on the timeline and exactly as long. This is how you start a music bed \
+             at the drop, or move past a bad first second of a take. Clamped so the clip stays \
+             inside the file.",
+            json!({
+                "elementId": { "type": "string" },
+                "trimStart": { "type": "number", "description": "Seconds into the source file where the clip should begin." }
+            }),
+            &["elementId", "trimStart"],
+        ),
+        tool(
+            "element_duplicate",
+            "Copy a clip, effects and animation included, placed right after it.",
+            json!({
+                "elementId": { "type": "string" },
+                "newId": { "type": "string" }
+            }),
+            &["elementId"],
+        ),
+        tool(
+            "element_rename",
+            "Rename an element. Labels show on the timeline; the id is what tools address.",
+            json!({
+                "elementId": { "type": "string" },
+                "name": { "type": "string" }
+            }),
+            &["elementId", "name"],
+        ),
+        tool(
+            "transform_set",
+            "Reposition, scale, rotate or fade an element already on the timeline. Give only \
+             the fields you want to change — the rest keep their current values, so nudging y \
+             does not reset a scale you set earlier. This is what to reach for after a snapshot \
+             shows something in the wrong place.",
+            json!({
+                "elementId": { "type": "string" },
+                "x": { "type": "number", "description": "Anchor position across the canvas, 0..1." },
+                "y": { "type": "number", "description": "Anchor position down the canvas, 0..1." },
+                "scale": { "type": "number", "description": "Fraction of the canvas the element spans." },
+                "scaleX": { "type": "number" },
+                "scaleY": { "type": "number" },
+                "rotation": { "type": "number", "description": "Degrees." },
+                "opacity": { "type": "number", "description": "0 is invisible, 1 is solid." },
+                "anchorX": { "type": "number", "description": "Which point of the layer sits at (x,y). 0.5 is its centre." },
+                "anchorY": { "type": "number" }
+            }),
+            &["elementId"],
+        ),
+        tool(
+            "text_update",
+            "Change a title's words, or what it is for, in place — keeping its id, position and \
+             animation. Give only what changes.\n\nChanging `role` or `tone` re-resolves the \
+             line against the project's style kit, which is how a label is promoted to a \
+             headline. There is no fontFamily, fontSize, fontWeight or color: those come from \
+             the kit.",
+            merge(
+                json!({
+                    "elementId": { "type": "string" },
+                    "content": { "type": "string" },
+                    "align": { "type": "string", "enum": ["left", "center", "right"] },
+                    "letterSpacing": { "type": "number", "description": "Tracking in em, overriding the kit's. Negative tightens." },
+                    "lineHeight": { "type": "number", "description": "Multiple of the font size, overriding the kit's." }
+                }),
+                merge(role_property(false), tone_property()),
+            ),
+            &["elementId"],
+        ),
+        tool(
+            "effect_add",
+            "Add a picture effect to a clip. Returns the effect id, which effect_set and \
+             effect_remove take. `amount` is the usual parameter: 1.0 is unchanged for the \
+             colour adjustments, sigma in pixels for blur, and how much of the grade to apply \
+             for a lut.",
+            json!({
+                "elementId": { "type": "string" },
+                "type": { "type": "string", "enum": ["brightness", "contrast", "saturation", "blur", "lut"] },
+                "look": { "type": "string",
+                    "description": "A built-in grade by id — call looks_list first. Generated on the machine, so there is nothing to download and nothing to go missing." },
+                "lut": { "type": "string",
+                    "description": "Path to a .cube file, required when type is \"lut\". A LUT is a whole grade in one pass — the same look lands identically on every clip you attach it to, which is how a set of shots comes to look like one film. Checked when attached, so a bad path is an error here rather than a clip that quietly looks untouched." },
+                "params": {
+                    "type": "object",
+                    "description": "Scalar parameters, e.g. {\"amount\": 0.4}. Effect-specific.",
+                },
+                "effectId": { "type": "string", "description": "Minted if omitted." }
+            }),
+            &["elementId", "type"],
+        ),
+        tool(
+            "effect_set",
+            "Retune an effect that is already on a clip, or switch it off without removing it.",
+            json!({
+                "elementId": { "type": "string" },
+                "effectId": { "type": "string" },
+                "params": { "type": "object", "description": "Parameters to change; others keep their values." },
+                "enabled": { "type": "boolean" }
+            }),
+            &["elementId", "effectId"],
+        ),
+        tool(
+            "effect_remove",
+            "Take an effect off a clip.",
+            json!({
+                "elementId": { "type": "string" },
+                "effectId": { "type": "string" }
+            }),
+            &["elementId", "effectId"],
+        ),
+        tool(
+            "blend_set",
+            "Change how a clip composites over what is under it.",
+            json!({
+                "elementId": { "type": "string" },
+                "mode": { "type": "string",
+                    "description": "normal, multiply, screen, overlay, softLight, difference, luminosity, … — 17 in all, named as in the project format." }
+            }),
+            &["elementId", "mode"],
+        ),
+        tool(
+            "audio_set",
+            "Change an audio clip's level, mute it, or move its in-point — and duck it under \
+             the lines it plays behind. Pass `duckUnder` (the same thing the `duck` tool does, \
+             on the clip named by elementId) and bay writes the volume keyframes itself. Never \
+             cut a bed into pieces with stepped gains to fake a duck: that is a cliff at every \
+             seam, it cannot be adjusted afterwards, and it is what this replaces.",
+            merge(
+                json!({
+                    "elementId": { "type": "string" },
+                    "volume": { "type": "number", "description": "Linear gain, 0–4. 1.0 is unity. It is a multiplier, not a level: call audio_probe to see how loud the file itself is." },
+                    "muted": { "type": "boolean" },
+                    "trimStart": { "type": "number", "description": "Seconds into the file where the clip should start." },
+                    "duckUnder": { "type": "array", "items": { "type": "string" },
+                        "description": "Element ids this clip should get out of the way of. An empty array means every speech clip on the timeline, which is usually what you want. Volume set in the same call is applied first, so the duck comes back up to the new level." }
+                }),
+                duck_properties(),
+            ),
+            &["elementId"],
+        ),
+        tool(
+            "duck",
+            "Duck a music bed under narration: four volume keyframes per line, on ONE clip.\n\n\
+             You give the three numbers that are a mix decision — depth, attack, release. Where \
+             the lines ARE is something bay already knows, so it derives the times; lines closer \
+             together than `joinGapMs` are ducked as one rather than letting the bed surge back \
+             between them. Returns the keys it wrote, so you can read the curve and change it \
+             with one argument instead of re-cutting anything.\n\nA bed 8 dB down under speech \
+             and back up between lines is what gives a narrated video its contour. The failure \
+             this replaces was one music file cut into 13 clips with stepped gains, which ran \
+             the duck backwards for 61 seconds without anything noticing.",
+            merge(
+                json!({
+                    "bedId": { "type": "string", "description": "The clip to duck — the music, not the voice." },
+                    "underIds": { "type": "array", "items": { "type": "string" },
+                        "description": "The clips it must get out of the way of. Omit for every speech clip on the timeline (narrate marks its own output as speech)." }
+                }),
+                duck_properties(),
+            ),
+            &["bedId"],
+        ),
+        tool(
+            "fade_set",
+            "Fade a clip up at its head and down at its tail. On picture this fades opacity, \
+             on audio it fades level — the same field, so a shot and its sound fade together. \
+             Use this for the fade-from-black that opens a film and the fade-to-black that \
+             ends it, and for easing a music bed in and out. 0 removes a fade.",
+            json!({
+                "elementId": { "type": "string" },
+                "fadeIn": { "type": "number", "description": "Seconds to fade up at the start." },
+                "fadeOut": { "type": "number", "description": "Seconds to fade down at the end." }
+            }),
+            &["elementId"],
+        ),
+        tool(
+            "transition_add",
+            "Cross-dissolve between two clips on the same lane. They must already overlap by \
+             at least the transition's length — the overlap IS the dissolve, so overlap them \
+             first (element_move, or trim the outgoing clip long). Only the incoming clip \
+             fades, over the outgoing one playing at full underneath, so the middle of the \
+             dissolve does not dip through the background.",
+            json!({
+                "fromId": { "type": "string", "description": "The outgoing clip." },
+                "toId": { "type": "string", "description": "The incoming clip, which must start before the outgoing one ends." },
+                "duration": { "type": "number", "default": 0.5, "description": "Length of the dissolve in seconds." }
+            }),
+            &["fromId", "toId"],
+        ),
+        tool(
+            "element_ripple_delete",
+            "Remove a clip and close the hole it leaves: every later clip on the same lane \
+             moves back by its length. This is usually the delete you want — element_delete \
+             leaves a gap, which reads as a stall in the finished video. Only the clip's own \
+             lane moves.",
+            json!({ "elementId": { "type": "string" } }),
+            &["elementId"],
+        ),
+        tool(
+            "marker_add",
+            "Mark a moment on the timeline — a beat in the music, where a line lands, where \
+             the next cut goes. Markers show on the ruler and clips snap to them when dragged.",
+            json!({
+                "at": { "type": "number", "description": "Timeline position, in seconds." },
+                "label": { "type": "string" },
+                "id": { "type": "string" }
+            }),
+            &["at"],
+        ),
+        tool(
+            "crop_set",
+            "Reframe a clip: cut away part of the source so what is left fills the frame. This \
+             is how 16:9 footage becomes a 9:16 reel without letterboxing or squashing — \
+             scaleX/scaleY distort, this chooses. Insets are fractions of the source, so \
+             {\"left\": 0.25, \"right\": 0.25} keeps the middle half.",
+            json!({
+                "elementId": { "type": "string" },
+                "left": { "type": "number", "description": "Fraction of the source cut from the left, 0-1." },
+                "top": { "type": "number" },
+                "right": { "type": "number" },
+                "bottom": { "type": "number" }
+            }),
+            &["elementId"],
+        ),
+        tool(
+            "mask_set",
+            "Limit where a clip shows to a shape — a vignette, a spotlight on one part of the \
+             frame, half the screen for a split. Feather softens the edge. Pass shape \"none\" \
+             to remove one.",
+            json!({
+                "elementId": { "type": "string" },
+                "shape": { "type": "string", "enum": ["ellipse", "rect", "none"] },
+                "x": { "type": "number", "description": "Centre across the canvas, 0-1. Defaults to the middle." },
+                "y": { "type": "number" },
+                "width": { "type": "number", "description": "Size as a fraction of the canvas." },
+                "height": { "type": "number" },
+                "feather": { "type": "number", "description": "Edge softness in pixels. 0 is a hard edge." },
+                "inverted": { "type": "boolean", "description": "Show everything OUTSIDE the shape instead." }
+            }),
+            &["elementId"],
+        ),
+        tool(
+            "templates_list",
+            "The element bundles bay can place in one call: lower thirds, kickers, end cards, \
+             and anything the user saved. Each lists its text slots, which are the words you \
+             pass to template_place, in order. Prefer a template to building the same \
+             arrangement out of add_text and add_shape — the placement and timing are the part \
+             that is tedious to get right.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "template_place",
+            "Place a template on the timeline at a time, filling its text slots. Returns the \
+             ids it created, which every editing tool then takes.",
+            json!({
+                "templateId": { "type": "string", "description": "An id from templates_list." },
+                "start": { "type": "number", "default": 0, "description": "Timeline position, in seconds." },
+                "text": { "type": "array", "items": { "type": "string" },
+                    "description": "Words for the template's text slots, in the order templates_list gives them. Slots you leave out keep their placeholder." },
+                "layer": { "type": "integer", "default": 0 }
+            }),
+            &["templateId"],
+        ),
+        tool(
+            "sfx_search",
+            "Find a sound. Searches BOTH halves of the library at once: the effects bay \
+             synthesises (whoosh, riser, impact, click — no download, rendered at whatever \
+             length you ask for) and any recorded packs installed (clicks, switches, \
+             confirmations, errors). Place a synthesised one with sfx_add and a recorded one \
+             with sound_add. If nothing recorded is installed it says so, and how to install it.",
+            json!({
+                "query": { "type": "string", "description": "Words to match — \"click\", \"whoosh\", \"error\". Empty lists everything." }
+            }),
+            &[],
+        ),
+        tool(
+            "sound_add",
+            "Place a recorded sound from an installed pack on the audio lane. Its length is \
+             the file's own — use sfx_add instead when the sound has to match the length of \
+             something.",
+            json!({
+                "sound": { "type": "string", "description": "An id from sfx_search, e.g. \"kenney-interface/click_001\"." },
+                "start": { "type": "number", "description": "Timeline position, in seconds." },
+                "volume": { "type": "number", "default": 1.0 }
+            }),
+            &["sound", "start"],
+        ),
+        tool(
+            "sfx_list",
+            "The sound effects bay synthesises: whooshes, risers, clicks, impacts. These go \
+             UNDER an edit rather than in the world of the picture, and they are generated \
+             rather than downloaded — which means a whoosh comes out exactly as long as the \
+             move it covers, instead of being cut off or trailing. Nothing to install and \
+             nothing to go missing.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "sfx_add",
+            "Synthesise a sound effect and place it on the audio lane in one call. Match its \
+             length to what it accompanies: a whoosh over a 0.4s transition should be 0.4s. \
+             Put a riser BEFORE the moment it builds to and end it there; put a reverse whoosh \
+             so it ENDS on the cut.",
+            json!({
+                "sfx": { "type": "string", "description": "An id from sfx_list — whoosh, riser, impact, click…" },
+                "start": { "type": "number", "description": "Timeline position, in seconds." },
+                "duration": { "type": "number", "description": "How long to make it. Defaults to what suits that sound." },
+                "tone": { "type": "number", "default": 0.5,
+                    "description": "Brightness 0-1. Low is dull and distant, high is close and sharp." },
+                "level": { "type": "number", "default": 0.7,
+                    "description": "Peak of the synthesised sound, 0-1. Effects sit under narration, so leave headroom." },
+                "volume": { "type": "number", "default": 1.0, "description": "Clip gain on the timeline, on top of level." }
+            }),
+            &["sfx", "start"],
+        ),
+        tool(
+            "looks_list",
+            "The grades bay ships with: id, name, and what each one is for. Pass an id to \
+             effect_add as \"look\" to apply it, and use `amount` to dial it back. These are \
+             generated rather than downloaded, so they are on every machine and cannot go \
+             missing; your own .cube files still work through \"lut\".",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "shots_detect",
+            "Find the cuts in an imported clip and return the stretches between them. This is \
+             how you work with footage you have not watched: scan an hour of rushes, then place \
+             the shots you want with add_video and element_source. Frame-difference detection, \
+             so it finds cuts, not meaning — it will miss a dissolve, and it cannot tell you \
+             which shot is good. Decodes the whole file, so it returns a job id: poll \
+             job_status.",
+            json!({
+                "mediaId": { "type": "string", "description": "An id from media_import." },
+                "threshold": { "type": "number", "default": 0.3,
+                    "description": "How different two frames must be to count as a cut, 0-1. Lower finds more (and calls fast pans cuts); higher finds fewer." },
+                "minSeconds": { "type": "number", "default": 0.4,
+                    "description": "Shots shorter than this are folded into the one before, so a strobe is not reported as forty cuts." }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "check",
+            "Inspect the timeline for the mistakes that make a finished video look wrong: a \
+             large fill too close in colour to what it sits on to be seen, a card with nothing \
+             legible in it, an easing that overshoots a bar past its own number, an opening \
+             frame emptier than the rest of the video, two consecutive beats that carry nothing \
+             between them, elements off the canvas, type too small to read at thumbnail size, \
+             clips pointing at media nobody imported, black gaps in the picture.\n\nReturns \
+             \"status\": clean, findings, or unevaluated — and read \"skipped\" before treating \
+             anything as a pass, because a check that could not run says so there rather than \
+             staying quiet. \"findings\" is capped at 12, drawn one per code so a noisy code \
+             cannot hide a rare one; \"rollup\" has the full counts. \"stats.beats\" is how the \
+             video was cut into beats — from narration starts and markers where there are any, \
+             from what is on screen otherwise, from an 8s clock as a last resort — and every \
+             finding that names a beat is numbered in it, so marker_add is how you change what \
+             the per-beat checks are addressed against. render refuses while any error stands, \
+             so run this first: it costs milliseconds and needs no GPU.",
+            json!({}),
+            &[],
         ),
         tool(
             "timeline",
@@ -349,11 +1106,30 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "render",
-            "Encode the whole timeline to an MP4, picture and sound. Requires ffmpeg on PATH.",
+            "Encode the timeline, picture and sound. Requires ffmpeg. Returns a job id — poll \
+             job_status. Defaults are the ones a vertical reel wants: H.264, CRF 20, and the \
+             mix normalised to -14 LUFS so it does not arrive quiet and get turned up along \
+             with its noise floor. Pass a preset rather than tuning by hand unless you have a \
+             reason.",
             json!({
-                "path": { "type": "string", "description": "Output .mp4 path." },
+                "path": { "type": "string", "description": "Output path. .mp4 for h264/hevc, .mov for prores." },
                 "duration": { "type": "number",
-                    "description": "Override the render length in seconds. Defaults to the timeline's own duration." }
+                    "description": "How many seconds to encode. Defaults to the rest of the timeline from startSeconds." },
+                "startSeconds": { "type": "number", "default": 0,
+                    "description": "Where in the timeline the file begins — for exporting one section rather than the whole thing. The sound moves with it." },
+                "preset": { "type": "string", "enum": ["social", "youtube", "master"],
+                    "description": "social = Reels/TikTok/Shorts (H.264, CRF 20, -14 LUFS). youtube = a little more bitrate. master = ProRes with no loudness processing, for handing to another editor." },
+                "codec": { "type": "string", "enum": ["h264", "hevc", "prores"],
+                    "description": "h264 plays everywhere. hevc is half the size and not every player takes it. prores is an editing codec: huge, lossless-ish." },
+                "quality": { "type": "number",
+                    "description": "CRF 0-51: lower is better and larger. 18 is visually lossless, 23 is ffmpeg's default, past 28 gradients band. Ignored by prores." },
+                "loudness": {
+                    "description": "true for -14 LUFS, false to leave the mix alone, or a negative LUFS number for a specific target." },
+                "audioBitrateKbps": { "type": "integer", "description": "AAC bitrate. 192 by default." },
+                "ignoreChecks": { "type": "boolean", "default": false,
+                    "description": "Render anyway while check reports an error. Needs `reason`. There is no per-code version of this on purpose." },
+                "reason": { "type": "string",
+                    "description": "Why the errors are right anyway, in at least 40 characters. Written into the MP4's own comment metadata, where it outlives this session." }
             }),
             &["path"],
         ),
@@ -419,14 +1195,22 @@ pub fn definitions() -> Vec<Value> {
             "narrate",
             "Speak text with Kokoro, put the audio on the timeline, and place word-synced \
              captions for it. Audio and captions come from the same synthesis, so they cannot \
-             drift apart. Returns the cues it produced and the narration's end time.",
+             drift apart. Returns the cues it produced, the narration's end time, and the rate \
+             it actually came out at.\n\nOne line, one clip: a script longer than 8 seconds is \
+             refused with its own sentences listed, because a sentence that outlives the picture \
+             it was written for cannot be rescued downstream. Say the read's speed as a rate — \
+             `targetWordsPerSecond`, 2.5 being the 150 wpm a reel is read at — rather than as a \
+             multiplier; Kokoro's `speed: 1.0` is 2.99 words a second, which is a 179 wpm gabble.",
             merge(
                 json!({
-                    "text": { "type": "string", "description": "What to say. Punctuation drives the phrasing." },
+                    "text": { "type": "string", "description": "What to say. Punctuation drives the phrasing, and a full stop is where a caption breaks." },
                     "start": { "type": "number", "default": 0.0, "description": "Where the narration begins on the timeline, in seconds." },
                     "voice": { "type": "string", "default": "af_heart",
                         "description": "A Kokoro voice, e.g. af_heart, af_bella, am_michael, bf_emma. See speech_status." },
-                    "speed": { "type": "number", "default": 1.0, "description": "0.1 to 5.0. Around 1.0-1.15 suits a reel." },
+                    "targetWordsPerSecond": { "type": "number", "default": 2.5,
+                        "description": "How fast to read, in words a second: 2.5 is 150 wpm, the middle of the broadcast band. bay picks the Kokoro speed that lands there and reports what it actually got as wordsPerSecond." },
+                    "speed": { "type": "number",
+                        "description": "The raw Kokoro multiplier, 0.1 to 5.0, if you would rather set it yourself. Overrides targetWordsPerSecond." },
                     "langCode": { "type": "string", "default": "a",
                         "description": "a = American English, b = British, e Spanish, f French, h Hindi, i Italian, j Japanese, p Portuguese, z Mandarin." },
                     "volume": { "type": "number", "default": 1.0,
@@ -477,10 +1261,12 @@ pub fn definitions() -> Vec<Value> {
                     "narrate": { "type": "boolean", "default": false,
                         "description": "Speak each cue with Kokoro, starting at that cue's own time." },
                     "voice": { "type": "string", "default": "af_heart" },
-                    "speed": { "type": "number", "default": 1.0 },
+                    "targetWordsPerSecond": { "type": "number", "default": 2.5,
+                        "description": "How fast each cue is read, in words a second. 2.5 is 150 wpm." },
+                    "speed": { "type": "number", "description": "The raw Kokoro multiplier, if you would rather set it yourself." },
                     "langCode": { "type": "string", "default": "a" }
                 }),
-                caption_properties(),
+                merge(caption_properties(), kit_properties()),
             ),
             &["path", "output"],
         ),
@@ -516,13 +1302,25 @@ pub fn definitions() -> Vec<Value> {
 /// Route one tool call to the studio.
 pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
     match name {
-        "project_create" => studio.project_create(
-            &text(args, "name").unwrap_or_else(|| "Untitled".into()),
-            number(args, "width", 1080.0) as u32,
-            number(args, "height", 1920.0) as u32,
-            number(args, "fps", 30.0) as u32,
-            &text(args, "background").unwrap_or_else(|| "#000000".into()),
-        ),
+        "project_create" => {
+            let name = text(args, "name").unwrap_or_else(|| "Untitled".into());
+            // One implementation, two doors: `style_pick` and `project_create` resolve a kit the
+            // same way, so a session whose tool list predates `style_pick` can still reach every
+            // part of it through parameters on the tool it already knows about.
+            let choice = kit_choice(args)?
+                .unwrap_or_else(|| KitChoice::Brief(text(args, "brief").unwrap_or(name.clone())));
+            studio.project_create(
+                &name,
+                number(args, "width", 1080.0) as u32,
+                number(args, "height", 1920.0) as u32,
+                number(args, "fps", 30.0) as u32,
+                text(args, "background").as_deref(),
+                choice,
+            )
+        }
+        "style_pick" => {
+            studio.style_pick(&text(args, "brief").unwrap_or_default(), kit_choice(args)?)
+        }
         "project_info" => studio.project_info(),
         "fonts_check" => {
             let families: Vec<String> = args
@@ -539,22 +1337,103 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             }
             studio.fonts_check(&families)
         }
-        "media_import" => studio.media_import(&required_text(args, "path")?, text(args, "id")),
-        "add_text" => studio.add_text(
-            layer(args),
-            text(args, "id"),
+        // One implementation under two names: `audio_probe` is the verb, and `mediaId` on
+        // `media_import` is the same call reachable from a session whose tool list was cached
+        // before `audio_probe` existed.
+        "audio_probe" => studio.audio_probe(&required_text(args, "mediaId")?),
+        "media_import" => match text(args, "mediaId") {
+            Some(media_id) => studio.audio_probe(&media_id),
+            None => studio.media_import(&required_text(args, "path")?, text(args, "id")),
+        },
+        "sfx_list" => Ok(json!({
+            "sfx": bay_audio::sfx::EFFECTS
+                .iter()
+                .map(|effect| json!({
+                    "id": effect.id,
+                    "name": effect.name,
+                    "description": effect.description,
+                    "defaultSeconds": effect.default_seconds,
+                }))
+                .collect::<Vec<_>>(),
+        })),
+        "sfx_search" => studio.sfx_search(&text(args, "query").unwrap_or_default()),
+        "sound_add" => studio.sound_add(
+            &required_text(args, "sound")?,
             required_number(args, "start")?,
-            required_number(args, "duration")?,
-            required_text(args, "content")?,
-            number(args, "fontSize", 64.0) as f32,
-            text(args, "color").unwrap_or_else(|| "#ffffff".into()),
-            text(args, "fontFamily"),
-            number(args, "fontWeight", 400.0) as u16,
-            parse_align(args.get("align").and_then(|v| v.as_str()))?,
-            number(args, "letterSpacing", 0.0) as f32,
-            number(args, "lineHeight", 1.2) as f32,
-            visual(args)?,
+            number(args, "volume", 1.0) as f32,
         ),
+        "sfx_add" => studio.sfx_add(
+            &required_text(args, "sfx")?,
+            required_number(args, "start")?,
+            args.get("duration").and_then(|v| v.as_f64()),
+            number(args, "tone", 0.5) as f32,
+            number(args, "level", 0.7) as f32,
+            number(args, "volume", 1.0) as f32,
+        ),
+        "shots_detect" => {
+            let media_id = required_text(args, "mediaId")?;
+            let asset = studio
+                .project()
+                .media
+                .iter()
+                .find(|asset| asset.id == media_id)
+                .cloned()
+                .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?;
+            let threshold = number(
+                args,
+                "threshold",
+                bay_preview::probe::DEFAULT_SHOT_THRESHOLD,
+            );
+            let min_seconds = number(args, "minSeconds", 0.4);
+            headless_job("shots_detect", &asset.name, || {
+                let shots = bay_preview::probe::detect_shots(&asset.path, threshold, min_seconds)
+                    .map_err(|e| {
+                    err(format!("could not scan {:?} for cuts: {e}", asset.name))
+                })?;
+                Ok(json!({
+                    "mediaId": media_id,
+                    "name": asset.name,
+                    "threshold": threshold,
+                    "shots": shots
+                        .iter()
+                        .enumerate()
+                        .map(|(index, shot)| json!({
+                            "index": index,
+                            "startSeconds": shot.start_seconds,
+                            "endSeconds": shot.end_seconds,
+                            "durationSeconds": shot.duration_seconds(),
+                        }))
+                        .collect::<Vec<_>>(),
+                }))
+            })
+        }
+        "add_text" => {
+            let role = parse_role(args.get("role").and_then(|v| v.as_str()), "add_text")?;
+            let kit = studio.committed_kit()?;
+            reject_raw_style(args, "add_text", &kit, role)?;
+            let framing = named_framing(args, &kit)?;
+            studio.add_text(
+                layer(args),
+                text(args, "id"),
+                required_number(args, "start")?,
+                required_number(args, "duration")?,
+                TextArgs {
+                    content: required_text(args, "content")?,
+                    role,
+                    tone: parse_tone(args.get("tone").and_then(|v| v.as_str()), role)?,
+                    align: parse_align(args.get("align").and_then(|v| v.as_str()))?,
+                    letter_spacing: args
+                        .get("letterSpacing")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32),
+                    line_height: args
+                        .get("lineHeight")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32),
+                },
+                visual(args, framing.as_ref())?,
+            )
+        }
         "add_shape" => {
             let shape = match args.get("shape").and_then(|v| v.as_str()).unwrap_or("rect") {
                 "rect" => ShapeKind::Rect {
@@ -563,46 +1442,62 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 "ellipse" => ShapeKind::Ellipse,
                 other => return Err(err(format!("unknown shape {other:?} — rect or ellipse"))),
             };
+            let role = parse_role(args.get("role").and_then(|v| v.as_str()), "add_shape")?;
+            let kit = studio.committed_kit()?;
+            reject_raw_style(args, "add_shape", &kit, role)?;
+            let framing = named_framing(args, &kit)?;
             studio.add_shape(
                 layer(args),
                 text(args, "id"),
                 required_number(args, "start")?,
                 required_number(args, "duration")?,
                 shape,
-                text(args, "color").unwrap_or_else(|| "#ffffff".into()),
-                visual(args)?,
+                role,
+                parse_tone(args.get("tone").and_then(|v| v.as_str()), role)?,
+                visual(args, framing.as_ref())?,
             )
         }
-        "add_image" => studio.add_image(
-            layer(args),
-            text(args, "id"),
-            required_text(args, "mediaId")?,
-            required_number(args, "start")?,
-            required_number(args, "duration")?,
-            visual(args)?,
-        ),
-        "add_video" => studio.add_video(
-            layer(args),
-            text(args, "id"),
-            required_text(args, "mediaId")?,
-            required_number(args, "start")?,
-            required_number(args, "duration")?,
-            number(args, "trimStart", 0.0),
-            visual(args)?,
-        ),
+        "add_image" => {
+            let framing = named_framing(args, &studio.committed_kit()?)?;
+            studio.add_image(
+                layer(args),
+                text(args, "id"),
+                required_text(args, "mediaId")?,
+                required_number(args, "start")?,
+                required_number(args, "duration")?,
+                optional_role(args)?,
+                visual(args, framing.as_ref())?,
+            )
+        }
+        "add_video" => {
+            let framing = named_framing(args, &studio.committed_kit()?)?;
+            studio.add_video(
+                layer(args),
+                text(args, "id"),
+                required_text(args, "mediaId")?,
+                required_number(args, "start")?,
+                required_number(args, "duration")?,
+                number(args, "trimStart", 0.0),
+                optional_role(args)?,
+                visual(args, framing.as_ref())?,
+            )
+        }
         "add_audio" => studio.add_audio(
             text(args, "id"),
             required_text(args, "mediaId")?,
             required_number(args, "start")?,
             required_number(args, "duration")?,
             number(args, "volume", 1.0) as f32,
+            number(args, "trimStart", 0.0),
+            // An author placing a clip by hand is the author's clip, whatever it contains.
+            // Only bay's own generators claim Tool.
+            ElementSource::Author,
+            parse_audio_role(args.get("role").and_then(|v| v.as_str()))?,
         ),
-        "animate" => studio.animate(
-            &required_text(args, "elementId")?,
-            &required_text(args, "property")?,
-            parse_keys(args.get("keys").unwrap_or(&Value::Null))?,
-            parse_easing(args.get("easing").and_then(|v| v.as_str()))?,
-        ),
+        // `animate` has no arm here on purpose. It used to have one, into a second headless
+        // implementation that knew 8 of the 14 easings and refused `volume` outright; it now
+        // falls through to `apply_planned` like every other revising tool, so the wire and the
+        // editor window plan it identically.
         "element_delete" => studio.element_delete(&required_text(args, "elementId")?),
         "timeline" => studio.timeline(),
         "snapshot" => studio.snapshot(
@@ -613,12 +1508,23 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         // The three job tools answer with an id on BOTH transports, so an agent never has to
         // know whether a window is open. What differs is only when the work happens — see
         // `headless_job`.
-        "render" => headless_job("render", &required_text(args, "path")?, || {
-            studio.render_video(
-                &required_text(args, "path")?,
-                args.get("duration").and_then(|v| v.as_f64()),
-            )
-        }),
+        "render" => {
+            // The gate runs before the job is registered, so a refused render is an error the
+            // caller reads immediately rather than a job it has to poll to be told no.
+            let stamp = bay_agent::slow::render_stamp(studio.project(), args).map_err(err)?;
+            headless_job("render", &required_text(args, "path")?, || {
+                // Parsed by the same function the attached path uses, so a preset means the
+                // same thing whether a window is open or not.
+                let mut settings = bay_agent::slow::export_settings(args).map_err(err)?;
+                settings.metadata_comment = stamp.clone();
+                studio.render_video(
+                    &required_text(args, "path")?,
+                    args.get("duration").and_then(|v| v.as_f64()),
+                    settings,
+                    stamp,
+                )
+            })
+        }
         "job_status" => Ok(bay_jobs::mcp::status(args)),
         "job_cancel" => bay_jobs::mcp::cancel(args).map_err(crate::studio::err),
         "runtime_status" => Ok(bay_provision::mcp::runtime_status(args)),
@@ -629,38 +1535,27 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 .chars()
                 .take(60)
                 .collect::<String>();
-            headless_job("narrate", &label, || {
-                studio.narrate(
-                    &required_text(args, "text")?,
-                    &text(args, "voice").unwrap_or_else(|| "af_heart".into()),
-                    number(args, "speed", 1.0) as f32,
-                    &text(args, "langCode").unwrap_or_else(|| "a".into()),
-                    number(args, "start", 0.0),
-                    number(args, "volume", 1.0) as f32,
-                    text(args, "audioPath"),
-                    match args.get("peakDb") {
-                        Some(Value::Null) => None,
-                        Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
-                        None => Some(-2.0),
-                    },
-                    cue_style(args),
-                    if args
-                        .get("captions")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(true)
-                    {
-                        Some(caption_style(args))
-                    } else {
-                        None
-                    },
-                )
-            })
+            // Resolved before the closure borrows the studio mutably.
+            let captions = caption_style_for(studio, args, "narrate")?;
+            let wanted = args
+                .get("captions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let narrate = narrate_args(
+                args,
+                required_text(args, "text")?,
+                wanted.then_some(captions),
+            );
+            headless_job("narrate", &label, || studio.narrate(narrate))
         }
-        "subtitles_add" => studio.subtitles_add(
-            &required_text(args, "path")?,
-            number(args, "offset", 0.0),
-            &caption_style(args),
-        ),
+        "subtitles_add" => {
+            let style = caption_style_for(studio, args, "subtitles_add")?;
+            studio.subtitles_add(
+                &required_text(args, "path")?,
+                number(args, "offset", 0.0),
+                &style,
+            )
+        }
         "subtitles_export" => studio.subtitles_export(
             &required_text(args, "path")?,
             &text(args, "format").unwrap_or_else(|| "srt".into()),
@@ -676,33 +1571,68 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         "project_load" => {
             studio.project_load(text(args, "id").as_deref(), text(args, "path").as_deref())
         }
+        // A duck answers with the curve it wrote. 25 keyframes an agent cannot read back is the
+        // black box the 13-clip hack was reaching around, so the report is derived before the
+        // commands are applied and merged into the ordinary transaction result.
+        other @ ("duck" | "audio_set") => {
+            let report = bay_agent::plan::duck_report(studio.project(), other, args);
+            let mut out = studio.apply_planned(other, args)?;
+            if let (Some(report), Some(object)) = (report, out.as_object_mut()) {
+                object.insert("duck".into(), report);
+            }
+            Ok(out)
+        }
+        // Everything that revises what is already on the timeline is planned by
+        // `bay_agent::plan` and executed here. One implementation, two front ends: the live
+        // editor plans the same call the same way, so a trim cannot come to mean one thing in
+        // the window and another over the wire.
+        other if bay_agent::planned_tools().contains(&other) => studio.apply_planned(other, args),
         other => Err(err(format!("unknown tool {other:?}"))),
     }
 }
 
-/// Caption grouping parameters, parsed from the shared caption schema fragment.
-fn cue_style(args: &Value) -> bay_speech::CueStyle {
-    let default = bay_speech::CueStyle::default();
-    bay_speech::CueStyle {
-        max_words: number(args, "maxWords", default.max_words as f64).max(1.0) as usize,
-        min_seconds: number(args, "minCaptionSeconds", default.min_seconds),
-        max_seconds: number(args, "maxCaptionSeconds", default.max_seconds),
-        gap_seconds: number(args, "gapSeconds", default.gap_seconds),
+/// Everything `narrate` needs, decoded. `speed` is only read when a caller insists on setting
+/// the multiplier itself; otherwise the rate decides it.
+fn narrate_args(
+    args: &Value,
+    say: String,
+    captions: Option<crate::narration::CaptionStyle>,
+) -> crate::narration::NarrateArgs {
+    crate::narration::NarrateArgs {
+        text: say,
+        voice: text(args, "voice").unwrap_or_else(|| "af_heart".into()),
+        speed: args
+            .get("speed")
+            .and_then(|v| v.as_f64())
+            .map(|speed| speed as f32),
+        target_words_per_second: number(
+            args,
+            "targetWordsPerSecond",
+            bay_speech::TARGET_WORDS_PER_SECOND,
+        ),
+        lang_code: text(args, "langCode").unwrap_or_else(|| "a".into()),
+        start: number(args, "start", 0.0),
+        volume: number(args, "volume", 1.0) as f32,
+        out_path: text(args, "audioPath"),
+        peak_db: match args.get("peakDb") {
+            Some(Value::Null) => None,
+            Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
+            None => Some(-2.0),
+        },
+        captions,
     }
 }
 
-/// Caption appearance, parsed from the shared caption schema fragment.
-fn caption_style(args: &Value) -> crate::narration::CaptionStyle {
-    let default = crate::narration::CaptionStyle::default();
-    crate::narration::CaptionStyle {
-        font_size: number(args, "captionFontSize", default.font_size as f64) as f32,
-        color: text(args, "captionColor").unwrap_or(default.color),
-        font_family: text(args, "captionFontFamily"),
-        font_weight: number(args, "captionFontWeight", default.font_weight as f64) as u16,
-        y: number(args, "captionY", default.y as f64) as f32,
-        layer: number(args, "captionLayer", default.layer as f64).max(0.0) as usize,
-        fade: number(args, "captionFade", default.fade),
-    }
+/// Caption appearance: the preset and the placement the caller asked for, resolved against the
+/// committed kit. The eleven arguments this replaces are refused here rather than ignored.
+fn caption_style_for(
+    studio: &mut Studio,
+    args: &Value,
+    tool: &str,
+) -> Result<crate::narration::CaptionStyle, ToolError> {
+    // One decoder, both transports — the same function the editor window's planner calls.
+    let kit = studio.committed_kit()?;
+    bay_agent::plan::caption_style_from(args, Some(&kit), tool).map_err(err)
 }
 
 /// `subtitles_to_video`: an .srt in, a playable .mp4 out.
@@ -717,15 +1647,21 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
         std::fs::read_to_string(&path).map_err(|e| err(format!("could not read {path}: {e}")))?;
     let cues = bay_speech::parse(&source).map_err(err)?;
 
+    // The kit answers the ground, so the hardcoded `#0E0E12` this used to pass is gone: it was
+    // one of the values every project on this machine had in common.
+    let choice = kit_choice(args)?.unwrap_or_else(|| {
+        KitChoice::Brief(text(args, "brief").unwrap_or_else(|| format!("subtitles from {path}")))
+    });
     studio.project_create(
         "Subtitles",
         number(args, "width", 1080.0) as u32,
         number(args, "height", 1920.0) as u32,
         number(args, "fps", 30.0) as u32,
-        &text(args, "background").unwrap_or_else(|| "#0E0E12".into()),
+        text(args, "background").as_deref(),
+        choice,
     )?;
 
-    let style = caption_style(args);
+    let style = caption_style_for(studio, args, "subtitles_to_video")?;
     let placed = studio.place_cues(&cues, &style)?;
 
     // Narrating each cue at its own start keeps the voice aligned to the caption it belongs
@@ -737,28 +1673,16 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        let voice = text(args, "voice").unwrap_or_else(|| "af_heart".into());
-        let speed = number(args, "speed", 1.0) as f32;
-        let lang = text(args, "langCode").unwrap_or_else(|| "a".into());
         for (index, cue) in cues.iter().enumerate() {
             let spoken_line = cue.text.replace('\n', " ");
             if spoken_line.trim().is_empty() {
                 continue;
             }
-            let result = studio.narrate(
-                &spoken_line,
-                &voice,
-                speed,
-                &lang,
-                cue.start,
-                number(args, "volume", 1.0) as f32,
-                None,
-                Some(-2.0),
-                cue_style(args),
-                // Captions are already on the timeline from the file; narrating them again
-                // would stack a second set on top.
-                None,
-            )?;
+            // Captions are already on the timeline from the file; narrating them again would
+            // stack a second set on top — so this call speaks only.
+            let mut call = narrate_args(args, spoken_line, None);
+            call.start = cue.start;
+            let result = studio.narrate(call)?;
             spoken += 1;
             // Speech does not have to fit the cue window the subtitle author chose. Report
             // the overlaps rather than silently truncating or letting lines talk over
@@ -785,7 +1709,15 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
             .and_then(|d| d.as_f64())
             .unwrap_or(last),
     );
-    let render = studio.render_video(&output, Some(duration))?;
+    // Not gated, and deliberately: the project this encodes is one bay built itself from the
+    // caller's SRT, so an error in it would be bay's own bug and refusing would leave the
+    // caller with nothing to fix. `render` is where an authored timeline meets the gate.
+    let render = studio.render_video(
+        &output,
+        Some(duration),
+        bay_preview::ExportSettings::default(),
+        None,
+    )?;
 
     Ok(serde_json::json!({
         "source": path,

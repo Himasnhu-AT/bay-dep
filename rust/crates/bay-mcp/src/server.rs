@@ -93,7 +93,14 @@ Typical flow:
   4. add_text / add_shape / add_image / add_video to place elements, add_audio for the bed
   5. animate to give them motion
   6. snapshot at several times and LOOK at the frames
-  7. render
+  7. fix what the frames show, in place — transform_set, text_update, element_trim, audio_set
+  8. check — it names what will look wrong before you spend the encode finding out
+  9. render
+
+Editing, not just placing: element_trim moves a clip's edges and eats the footage behind
+them, element_source picks WHICH part of a file plays, element_split cuts a clip in two, and
+element_move slides it without changing what it shows. Prefer these to deleting and re-adding
+— a rebuilt element loses its animation and its id.
 
 Coordinates are fractions of the canvas: x=0.5,y=0.5 is dead centre. Layers stack upward
 from 0. Keyframe times in `animate` are relative to the element's own start.";
@@ -643,10 +650,254 @@ mod tests {
         }
     }
 
+    /// The loop the revising tools exist for, driven the way an agent drives it: build
+    /// something, notice it is wrong, fix it in place. Every step goes through the real
+    /// JSON-RPC surface, so this also proves the headless server reaches the shared planner.
+    #[test]
+    fn an_agent_can_revise_what_it_built_instead_of_rebuilding_it() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, _) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "headline", "id": "title", "start": 0, "duration": 3, "content": "Hook", "y": 0.9 }),
+        ));
+        assert!(!is_error);
+
+        // The snapshot would show it jammed against the bottom edge. Move it — the id, the
+        // words and everything else about it survive.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "transform_set",
+            json!({ "elementId": "title", "y": 0.42 }),
+        ));
+        assert!(!is_error, "{message}");
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is json");
+        let element = &timeline["layers"][0]["elements"][0];
+        assert_eq!(element["id"], "title");
+        assert_eq!(element["content"], "Hook", "the words survived the move");
+        assert!((element["transform"]["y"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+
+        // And a retype keeps the placement. Promoting it to a hook re-resolves it against the
+        // kit — the size comes from the ramp, not from the caller.
+        let (_, before) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let before: Value = serde_json::from_str(&before).expect("timeline is json");
+        let headline_size = before["layers"][0]["elements"][0]["fontSize"]
+            .as_f64()
+            .expect("a size");
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "text_update",
+            json!({ "elementId": "title", "content": "Better hook", "role": "hook" }),
+        ));
+        assert!(!is_error, "{message}");
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is json");
+        let element = &timeline["layers"][0]["elements"][0];
+        assert_eq!(element["content"], "Better hook");
+        assert_eq!(element["role"], "hook");
+        assert!(
+            element["fontSize"].as_f64().unwrap() > headline_size,
+            "a hook is bigger than a headline in every kit's ramp: {element}"
+        );
+        assert!((element["transform"]["y"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+    }
+
+    /// `check` has to find the two failures that most often reach a finished file: nothing on
+    /// screen, and a clip pointing at media nobody imported.
+    #[test]
+    fn check_reports_an_empty_timeline_and_then_goes_quiet() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (is_error, report) = unwrap_call(&call(&mut studio, "check", json!({})));
+        assert!(!is_error, "check is a read and must not fail: {report}");
+        let report: Value = serde_json::from_str(&report).expect("check returns json");
+        assert_eq!(
+            report["status"],
+            json!("findings"),
+            "an empty timeline is not clean"
+        );
+        assert!(
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["code"] == "nothing-visual"),
+            "{report}"
+        );
+        // A render must not proceed past it either — the gate is what makes the report matter.
+        let (is_error, refused) = unwrap_call(&call(
+            &mut studio,
+            "render",
+            json!({ "path": "/tmp/bay-never-rendered.mp4" }),
+        ));
+        assert!(is_error, "a gating error must stop the render: {refused}");
+        assert!(refused.contains("nothing-visual"), "{refused}");
+
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "role": "data", "start": 0, "duration": 2 }),
+        );
+        let (_, report) = unwrap_call(&call(&mut studio, "check", json!({})));
+        let report: Value = serde_json::from_str(&report).expect("check returns json");
+        assert_eq!(report["errors"], json!(0), "{report}");
+        // Every check ran, so the three-state status is a real pass rather than a silence.
+        assert!(
+            report["skipped"]
+                .as_array()
+                .expect("skipped is a list")
+                .is_empty(),
+            "{report}"
+        );
+    }
+
+    /// Looks and templates are the two libraries bay ships as code. Both have to be
+    /// discoverable and usable in one call each, or an agent will keep building the same
+    /// lower third out of primitives and getting the spacing slightly wrong.
+    #[test]
+    fn a_look_and_a_template_can_be_found_and_used() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (_, looks) = unwrap_call(&call(&mut studio, "looks_list", json!({})));
+        let looks: Value = serde_json::from_str(&looks).expect("json");
+        let first = looks["looks"][0]["id"].as_str().expect("at least one look");
+        assert!(!first.is_empty());
+
+        let (_, templates) = unwrap_call(&call(&mut studio, "templates_list", json!({})));
+        let templates: Value = serde_json::from_str(&templates).expect("json");
+        let lower_third = templates["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "lower-third")
+            .expect("the built-in lower third");
+        assert_eq!(lower_third["textSlots"][0], "name");
+
+        // Place it, filling its slots.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "template_place",
+            json!({ "templateId": "lower-third", "start": 1.0, "text": ["Ada", "Engineer"] }),
+        ));
+        assert!(!is_error, "{message}");
+        let placed: Value = serde_json::from_str(&message).expect("json");
+        let ids = placed["ids"].as_array().expect("ids");
+        assert_eq!(ids.len(), 3, "a rule and two lines: {placed}");
+
+        // The words landed, and the times are relative to where it was placed.
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("json");
+        let elements = timeline["layers"][0]["elements"].as_array().unwrap();
+        assert!(elements.iter().any(|e| e["content"] == "Ada"), "{timeline}");
+        assert!(
+            elements
+                .iter()
+                .any(|e| (e["startSeconds"].as_f64().unwrap() - 1.0).abs() < 1e-6),
+            "the bundle starts where it was placed: {timeline}"
+        );
+
+        // And a built-in grade goes on by name, with no file anywhere.
+        let element_id = elements[1]["id"].as_str().unwrap().to_string();
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "effect_add",
+            json!({ "elementId": element_id, "type": "lut", "look": first }),
+        ));
+        assert!(!is_error, "{message}");
+    }
+
+    /// A grade that does not exist has to be refused by name, with the list of ones that do —
+    /// the alternative is a clip that renders untouched and no way to tell why.
+    #[test]
+    fn an_unknown_look_is_refused_with_the_alternatives() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "role": "data", "id": "s", "start": 0, "duration": 2 }),
+        );
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "effect_add",
+            json!({ "elementId": "s", "type": "lut", "look": "vaporwave" }),
+        ));
+        assert!(is_error);
+        assert!(message.contains("teal-orange"), "{message}");
+    }
+
+    /// The whole point of synthesising these: one call gets a sound of exactly the length the
+    /// edit needs, onto the timeline, with no file to find and nothing to install.
+    #[test]
+    fn a_sound_effect_is_synthesised_and_placed_in_one_call() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (_, listed) = unwrap_call(&call(&mut studio, "sfx_list", json!({})));
+        let listed: Value = serde_json::from_str(&listed).expect("json");
+        assert!(
+            listed["sfx"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["id"] == "whoosh"),
+            "{listed}"
+        );
+
+        // A whoosh cut to the length of a 0.4s transition.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "sfx_add",
+            json!({ "sfx": "whoosh", "start": 2.0, "duration": 0.4 }),
+        ));
+        assert!(!is_error, "{message}");
+        let placed: Value = serde_json::from_str(&message).expect("json");
+        assert!(
+            (placed["durationSeconds"].as_f64().unwrap() - 0.4).abs() < 0.01,
+            "the sound is as long as it was asked to be: {placed}"
+        );
+
+        // It is a real file, and a real clip on the audio lane.
+        let path = placed["path"].as_str().expect("a path");
+        let written = std::fs::metadata(path).expect("the wav exists");
+        assert!(
+            written.len() > 44,
+            "a header with no samples is not a sound"
+        );
+
+        let (_, info) = unwrap_call(&call(&mut studio, "project_info", json!({})));
+        let info: Value = serde_json::from_str(&info).expect("json");
+        assert_eq!(info["audioElements"], json!(1), "{info}");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_unknown_sound_is_refused_with_the_ones_that_exist() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "sfx_add",
+            json!({ "sfx": "explosion", "start": 0.0 }),
+        ));
+        assert!(is_error);
+        assert!(message.contains("whoosh"), "{message}");
+    }
+
     #[test]
     fn tool_errors_come_back_as_results_not_protocol_errors() {
         let mut studio = new_studio();
-        let response = call(&mut studio, "add_text", json!({ "start": 0 }));
+        let response = call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "headline", "content": "x", "start": 0 }),
+        );
         assert!(
             response.get("error").is_none(),
             "a bad argument must not be a JSON-RPC error"
@@ -678,7 +929,7 @@ mod tests {
         let (is_error, _) = unwrap_call(&call(
             &mut studio,
             "add_shape",
-            json!({ "start": 0, "duration": 2, "id": "bar", "color": "#ff5b5b",
+            json!({ "role": "data", "start": 0, "duration": 2, "id": "bar", "tone": "accent",
                     "anchorX": 0.0, "scaleX": 0.6, "scaleY": 0.02 }),
         ));
         assert!(!is_error);
@@ -705,7 +956,7 @@ mod tests {
         call(
             &mut studio,
             "add_shape",
-            json!({ "start": 0, "duration": 1, "id": "s" }),
+            json!({ "role": "data", "start": 0, "duration": 1, "id": "s" }),
         );
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
@@ -726,7 +977,7 @@ mod tests {
         call(
             &mut studio,
             "add_shape",
-            json!({ "start": 0, "duration": 1, "id": "s" }),
+            json!({ "role": "data", "start": 0, "duration": 1, "id": "s" }),
         );
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
@@ -749,17 +1000,42 @@ mod tests {
         assert!(message.contains("media_import"), "{message}");
     }
 
+    /// A family is no longer something a caller can name at all — the kit owns it, and a kit
+    /// whose families are not installed is refused when it is committed. What survives from the
+    /// old rule is the part that mattered: a face nobody has must never be substituted silently.
     #[test]
-    fn an_uninstalled_font_family_is_refused_rather_than_silently_substituted() {
+    fn a_raw_font_family_is_refused_and_names_the_way_in() {
         let mut studio = new_studio();
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
             "add_text",
-            json!({ "start": 0, "duration": 1, "content": "x",
+            json!({ "role": "headline", "start": 0, "duration": 1, "content": "x",
                     "fontFamily": "Definitely Not An Installed Face" }),
         ));
+        assert!(is_error, "a family is not an argument any more");
+        assert!(message.contains("fontFamily"), "{message}");
+        assert!(message.contains("role"), "name the way in: {message}");
+        assert!(message.contains("style kit"), "{message}");
+    }
+
+    /// The custom-kit door is the one place a family can still be named, and it is closed
+    /// against a face this machine does not have.
+    #[test]
+    fn a_custom_kit_naming_an_absent_family_is_refused() {
+        let mut studio = new_studio();
+        let mut kit = bay_project::builtin_kit("swiss").unwrap().clone();
+        kit.id = "custom".into();
+        kit.faces.display.family = "Definitely Not An Installed Face".into();
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "style_pick",
+            json!({ "customKit": serde_json::to_value(&kit).unwrap() }),
+        ));
         assert!(is_error, "a missing family must not fall back silently");
-        assert!(message.contains("fonts_check"), "{message}");
+        assert!(
+            message.contains("Definitely Not An Installed Face"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -769,7 +1045,7 @@ mod tests {
             call(
                 &mut studio,
                 "add_shape",
-                json!({ "start": 0, "duration": 1, "layer": layer,
+                json!({ "role": "data", "start": 0, "duration": 1, "layer": layer,
                         "id": format!("s{layer}") }),
             );
         }
@@ -1060,11 +1336,69 @@ mod narration_tests {
             "the second narration ({warm:?}) should beat the first ({cold:?})"
         );
     }
+
+    /// §1.4 end to end, on real speech: the read is planned as a rate and measured as one, and
+    /// every cue it places clears both reading floors.
+    #[test]
+    fn a_real_narration_reports_its_rate_and_places_readable_cues() {
+        let mut studio = Studio::for_test(test_library_root(), 7452);
+        let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
+        let status: Value = serde_json::from_str(&status).unwrap();
+        if status["available"] != Value::Bool(true) {
+            eprintln!("skipping: Kokoro is not available here");
+            return;
+        }
+        call(&mut studio, "project_create", json!({ "kit": "swiss" }));
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "narrate",
+            json!({ "text": "The wick is the range. The body is the close.", "start": 0.0 }),
+        ));
+        assert!(!is_error, "{body}");
+        let envelope: Value = serde_json::from_str(&body).unwrap();
+        let body = envelope["result"].clone();
+
+        // The loop the old surface left open: the caller asked for a rate and is told what it
+        // got, rather than setting a multiplier and finding out from the finished video.
+        let rate = body["wordsPerSecond"]
+            .as_f64()
+            .expect("narrate reports the rate it delivered");
+        assert!(
+            (rate - bay_speech::TARGET_WORDS_PER_SECOND).abs() < 0.6,
+            "a default read should land near {} words a second, got {rate}: {body}",
+            bay_speech::TARGET_WORDS_PER_SECOND
+        );
+        assert!(
+            body["speed"].as_f64().unwrap() < 1.0,
+            "150 wpm means slowing Kokoro down: {body}"
+        );
+
+        for cue in body["cues"].as_array().expect("cues") {
+            let (start, end) = (cue["start"].as_f64().unwrap(), cue["end"].as_f64().unwrap());
+            let words = cue["text"].as_str().unwrap().split_whitespace().count();
+            assert!(
+                end - start + 1e-6 >= bay_speech::MIN_CUE_SECONDS,
+                "a {:.3}s cue is a flash: {cue}",
+                end - start
+            );
+            assert!(
+                end - start + 1e-6 >= bay_speech::MIN_SECONDS_PER_WORD * words as f64,
+                "{words} words in {:.3}s is faster than anyone reads: {cue}",
+                end - start
+            );
+            assert!(
+                !(cue["text"].as_str().unwrap().contains("range")
+                    && cue["text"].as_str().unwrap().contains("body")),
+                "a cue crossed the full stop: {cue}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod undo_tests {
-    use super::tests_support::{call, unwrap_call};
+    use super::tests_support::{call, new_studio, unwrap_call};
     use super::*;
     use serde_json::{Value, json};
 
@@ -1089,14 +1423,14 @@ mod undo_tests {
     /// same document a human is working in.
     #[test]
     fn agent_edits_are_undoable() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(&mut studio, "project_create", json!({}));
 
         // layer > 0 forces overlay-track creation, which used to clear history.
         let (is_error, body) = unwrap_call(&call(
             &mut studio,
             "add_shape",
-            json!({ "id": "bar", "start": 0, "duration": 2, "layer": 3, "color": "#ff0000" }),
+            json!({ "role": "data", "id": "bar", "start": 0, "duration": 2, "layer": 3 }),
         ));
         assert!(!is_error, "{body}");
 
@@ -1138,12 +1472,12 @@ mod undo_tests {
 
     #[test]
     fn creating_a_lane_does_not_wipe_earlier_history() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(&mut studio, "project_create", json!({}));
         call(
             &mut studio,
             "add_text",
-            json!({ "id": "t", "start": 0, "duration": 2, "content": "before" }),
+            json!({ "role": "headline", "id": "t", "start": 0, "duration": 2, "content": "before" }),
         );
         assert!(studio.editor_for_test().can_undo());
 
@@ -1151,7 +1485,7 @@ mod undo_tests {
         call(
             &mut studio,
             "add_shape",
-            json!({ "id": "s", "start": 0, "duration": 1, "layer": 5 }),
+            json!({ "role": "data", "id": "s", "start": 0, "duration": 1, "layer": 5 }),
         );
         assert!(
             studio.editor_for_test().can_undo(),
@@ -1161,5 +1495,202 @@ mod undo_tests {
         assert!(studio.editor_for_test_mut().undo());
         assert!(!timeline_ids(&mut studio).contains(&"s".to_string()));
         assert!(timeline_ids(&mut studio).contains(&"t".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    //! Who put an element on the timeline, and what it is for.
+    //!
+    //! These are contract tests for the tool surface, not the model — the model's own
+    //! round-trip lives in `bay-project`. What matters here is that a caller cannot take bay's
+    //! provenance, cannot place type without saying what it is for, and can read both back.
+
+    use super::tests_support::{call, new_studio, unwrap_call};
+    use super::*;
+    use serde_json::{Value, json};
+
+    /// The whole point of the field: an author cannot claim bay's provenance. `caption-<n>` is
+    /// what tells every later measurement which elements were never a choice.
+    #[test]
+    fn the_caption_id_space_is_refused_to_a_caller() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        for tool in ["add_text", "add_shape"] {
+            let (is_error, message) = unwrap_call(&call(
+                &mut studio,
+                tool,
+                json!({ "role": "label", "id": "caption-7", "start": 0, "duration": 1,
+                        "content": "mine" }),
+            ));
+            assert!(is_error, "{tool} accepted a reserved id");
+            assert!(message.contains("reserved"), "{message}");
+        }
+        // The shape of the rule, not the prefix: an id that merely starts with the word is fine.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "label", "id": "caption-note", "start": 0, "duration": 1,
+                    "content": "mine" }),
+        ));
+        assert!(!is_error, "{message}");
+    }
+
+    /// `role` is required, and the refusal has to teach the vocabulary — an agent that gets
+    /// "missing field" learns nothing about what the field is for.
+    #[test]
+    fn placing_type_without_saying_what_it_is_for_is_refused() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "start": 0, "duration": 2, "content": "Wicks" }),
+        ));
+        assert!(is_error, "add_text must insist on a role");
+        assert!(message.contains("role"), "{message}");
+        assert!(
+            message.contains("headline"),
+            "the list is the lesson: {message}"
+        );
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_shape",
+            json!({ "start": 0, "duration": 2 }),
+        ));
+        assert!(is_error, "add_shape must insist on a role");
+        assert!(message.contains("role"), "{message}");
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "wallpaper", "start": 0, "duration": 2, "content": "x" }),
+        ));
+        assert!(is_error, "an unknown role is not silently a default");
+        assert!(message.contains("ground"), "{message}");
+    }
+
+    /// What an author places is the author's, and the timeline says so on the way back out.
+    #[test]
+    fn an_authored_element_reads_back_with_its_role() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "hook", "id": "hero", "start": 0, "duration": 2,
+                    "content": "Wicks" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is JSON");
+        let element = &timeline["layers"][0]["elements"][0];
+        assert_eq!(element["id"], "hero");
+        assert_eq!(element["source"], "author");
+        assert_eq!(element["role"], "hook");
+
+        let (_, info) = unwrap_call(&call(&mut studio, "project_info", json!({})));
+        let info: Value = serde_json::from_str(&info).expect("project_info is JSON");
+        assert_eq!(info["authoredElements"], json!(1));
+        assert_eq!(info["toolElements"], json!(0));
+    }
+
+    /// A subtitle file becomes captions, and every one of them is bay's — no GPU, no speech
+    /// model, so this runs everywhere.
+    #[test]
+    fn captions_placed_from_a_subtitle_file_are_bays_own() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let path = tests_support::test_library_root().join("cues.srt");
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("scratch directory");
+        std::fs::write(
+            &path,
+            "1\n00:00:00,000 --> 00:00:01,500\nthe range is not\n\n\
+             2\n00:00:01,500 --> 00:00:03,000\nwhat it looks like\n",
+        )
+        .expect("write the cues");
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_add",
+            json!({ "path": path.to_string_lossy() }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let (_, info) = unwrap_call(&call(&mut studio, "project_info", json!({})));
+        let info: Value = serde_json::from_str(&info).expect("project_info is JSON");
+        assert_eq!(
+            info["toolElements"],
+            json!(2),
+            "both cues are bay's: {info}"
+        );
+        assert_eq!(info["authoredElements"], json!(0));
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is JSON");
+        let captions = timeline["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .flat_map(|layer| layer["elements"].as_array().cloned().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(captions.len(), 2);
+        for caption in &captions {
+            assert_eq!(caption["source"], "tool", "{caption}");
+            assert_eq!(caption["role"], "caption", "{caption}");
+        }
+    }
+
+    /// A hand-placed sound says what it is doing, so the mix can be measured. An unlabelled one
+    /// is a bed, which is what it usually is.
+    #[test]
+    fn an_audio_clip_carries_what_it_is_doing_in_the_mix() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let wav = tests_support::test_library_root().join("bed.wav");
+        std::fs::create_dir_all(wav.parent().expect("a parent")).expect("scratch directory");
+        let click = bay_audio::sfx::Sfx::by_id("click").expect("bay synthesises a click");
+        let pcm = click.render(bay_audio::sfx::SfxParams {
+            seconds: 0.2,
+            tone: 0.5,
+            level: 0.5,
+        });
+        std::fs::write(&wav, bay_audio::sfx::encode_wav(&pcm)).expect("write a wav");
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "media_import",
+            json!({ "path": wav.to_string_lossy(), "id": "m" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        for (role, expected) in [(Some("sfx"), "sfx"), (None, "bed")] {
+            let mut args = json!({ "mediaId": "m", "start": 0, "duration": 0.5,
+                                   "id": format!("a-{expected}") });
+            if let Some(role) = role {
+                args["role"] = json!(role);
+            }
+            let (is_error, body) = unwrap_call(&call(&mut studio, "add_audio", args));
+            assert!(!is_error, "{body}");
+        }
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is JSON");
+        let audio = timeline["audio"].as_array().expect("audio lane");
+        for clip in audio {
+            assert_eq!(clip["source"], "author", "{clip}");
+        }
+        assert_eq!(audio[0]["role"], "sfx");
+        assert_eq!(audio[1]["role"], "bed");
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_audio",
+            json!({ "mediaId": "m", "start": 1, "duration": 0.5, "role": "music" }),
+        ));
+        assert!(is_error, "an unknown audio role is not silently a bed");
+        assert!(message.contains("speech"), "{message}");
     }
 }

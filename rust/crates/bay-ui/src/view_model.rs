@@ -105,8 +105,28 @@ pub struct EditorViewModel {
     pub duration_seconds: f64,
     pub scenes: Vec<SceneTab>,
     pub tracks: Vec<TrackRow>,
+    /// The project's imported media. Empty until the user imports something — the panel shows
+    /// what is actually in the project, never a sample list.
+    pub media: Vec<MediaItem>,
+    /// Points on the timeline the ruler draws, and that a drag snaps to.
+    pub markers: Vec<MarkerPin>,
     pub preview_layers: Vec<PreviewLayer>,
     pub selected: Option<ElementInfo>,
+}
+
+/// A marker as the ruler needs it.
+pub struct MarkerPin {
+    pub id: String,
+    pub seconds: f64,
+    pub label: String,
+}
+
+/// One imported asset, as the media panel needs it.
+pub struct MediaItem {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub kind: bay_core::MediaKind,
 }
 
 /// A visual element on screen at the current playhead, for the layout preview.
@@ -151,6 +171,13 @@ pub struct ElementInfo {
     pub start_seconds: f64,
     pub duration_seconds: f64,
     pub text_content: Option<String>,
+    /// In-point into the source file, for clips that have one. `None` for titles, shapes and
+    /// stills — there is nothing inside them to choose.
+    pub source_start_seconds: Option<f64>,
+    pub fade_in_seconds: f64,
+    pub fade_out_seconds: f64,
+    /// How long the source file is, when the project knows. `None` means nobody probed it.
+    pub source_length_seconds: Option<f64>,
     pub transform: Option<bay_core::Transform>,
     /// How the element composites over lower layers (`None` for audio).
     pub blend_mode: Option<bay_core::BlendMode>,
@@ -250,6 +277,13 @@ impl EditorViewModel {
                 start_seconds: element.start().to_seconds_f64(),
                 duration_seconds: element.duration().to_seconds_f64(),
                 text_content,
+                source_start_seconds: element.source_start().map(|t| t.to_seconds_f64()),
+                fade_in_seconds: element.fade_in().to_seconds_f64(),
+                fade_out_seconds: element.fade_out().to_seconds_f64(),
+                source_length_seconds: element
+                    .media_id()
+                    .and_then(|id| project.media.iter().find(|asset| asset.id == id))
+                    .and_then(|asset| asset.duration_seconds),
                 transform: element.transform(),
                 blend_mode: element.blend_mode(),
                 effects: element
@@ -288,6 +322,25 @@ impl EditorViewModel {
                 })
                 .collect(),
             tracks,
+            media: project
+                .media
+                .iter()
+                .map(|asset| MediaItem {
+                    id: asset.id.clone(),
+                    name: asset.name.clone(),
+                    path: asset.path.clone(),
+                    kind: bay_core::MediaKind::of_path(&asset.path),
+                })
+                .collect(),
+            markers: scene
+                .markers
+                .iter()
+                .map(|marker| MarkerPin {
+                    id: marker.id.clone(),
+                    seconds: marker.time.to_seconds_f64(),
+                    label: marker.label.clone(),
+                })
+                .collect(),
             preview_layers,
             selected,
         }
@@ -329,6 +382,24 @@ mod tests {
             .iter()
             .flat_map(|t| &t.elements)
             .any(|b| b.selected && b.label == "Title"));
+    }
+
+    /// The media panel lists this. A project nobody has imported into has an empty library, and
+    /// the panel must show that rather than a sample list of files the user never added.
+    #[test]
+    fn the_media_library_holds_only_what_was_imported() {
+        let mut editor = Editor::starter();
+        assert!(EditorViewModel::build(&editor).media.is_empty());
+
+        editor.add_media(bay_core::MediaAsset::new(
+            "media-1",
+            "bed.mp3",
+            "/tmp/bed.mp3",
+        ));
+        let media = EditorViewModel::build(&editor).media;
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].name, "bed.mp3");
+        assert_eq!(media[0].kind, bay_core::MediaKind::Audio);
     }
 
     #[test]

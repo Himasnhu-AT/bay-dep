@@ -17,6 +17,9 @@ bench = false
 [dependencies]
 serde = { workspace = true }
 bay-project = { version = "0.1.0", path = "../bay-project" }
+# For the tick rate itself. Mirroring the constant instead is how two crates come to disagree
+# about how long a second is.
+bay-time = { version = "0.1.0", path = "../bay-time" }
 
 [dev-dependencies]
 serde_json = "1"

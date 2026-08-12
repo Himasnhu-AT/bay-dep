@@ -21,4 +21,6 @@ tar = "0.4"
 zip = { version = "6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+# The live install test asserts the packs land where the sound library looks for them.
+bay-audio = { path = "../bay-audio" }
 bay-test-support = { path = "../bay-test-support" }

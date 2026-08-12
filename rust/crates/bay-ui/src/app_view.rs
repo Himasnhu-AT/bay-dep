@@ -1352,7 +1352,7 @@ mod agent_routing_tests {
             let response = app.route_agent_call(
                 &call(
                     "add_text",
-                    serde_json::json!({"content": "hello", "start": 0, "duration": 2}),
+                    serde_json::json!({"role": "headline","content": "hello", "start": 0, "duration": 2}),
                 ),
                 cx,
             );
@@ -1398,7 +1398,7 @@ mod agent_routing_tests {
             let response = app.route_agent_call(
                 &call(
                     "add_text",
-                    serde_json::json!({"content": "hi", "start": 0, "duration": 1}),
+                    serde_json::json!({"role": "headline","content": "hi", "start": 0, "duration": 1}),
                 ),
                 cx,
             );
@@ -1476,7 +1476,7 @@ mod agent_routing_tests {
             app.route_agent_call(
                 &call(
                     "add_text",
-                    serde_json::json!({"content": "frame", "start": 0, "duration": 2}),
+                    serde_json::json!({"role": "headline","content": "frame", "start": 0, "duration": 2}),
                 ),
                 cx,
             );
@@ -1564,7 +1564,7 @@ mod agent_routing_tests {
             app.route_agent_call(
                 &call(
                     "add_text",
-                    serde_json::json!({"content": "render", "start": 0, "duration": 0.5}),
+                    serde_json::json!({"role": "headline","content": "render", "start": 0, "duration": 0.5}),
                 ),
                 cx,
             );
@@ -1638,12 +1638,13 @@ mod agent_routing_tests {
             let result = bay_agent::slow::SlowResult {
                 value: serde_json::json!({"durationSeconds": 2.0}),
                 follow_up: bay_agent::slow::FollowUp::PlaceNarration {
-                    asset: Box::new(bay_core::project::MediaAsset {
-                        id: "media-1".into(),
-                        name: "narration.wav".into(),
-                        path: "/tmp/bay-fake-narration.wav".into(),
-                    }),
+                    asset: Box::new(bay_core::project::MediaAsset::new(
+                        "media-1",
+                        "narration.wav",
+                        "/tmp/bay-fake-narration.wav",
+                    )),
                     utterance: Box::new(utterance),
+                    script: "local first".into(),
                     start: 1.0,
                     volume: 1.0,
                     cue_style: bay_speech::CueStyle::default(),

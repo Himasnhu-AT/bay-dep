@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use bay_project::{
     AnimationChannel, BlendMode, Effect, Element, ElementKind, ElementRef, MediaTime, Project,
-    Scene, Track, TrackKind, Transform,
+    Scene, StyleKit, Track, TrackKind, Transform,
 };
 
 use crate::selection::SelectionPatch;
@@ -47,6 +47,13 @@ pub enum Command {
     },
     /// Remove an element; if it was selected, the selection is cleared (override).
     RemoveElement { reference: ElementRef },
+    /// Remove an element and close the hole it leaves: every later clip on the same lane moves
+    /// back by its length, as one undo step.
+    ///
+    /// The difference from [`Command::RemoveElement`] is the difference between cutting a
+    /// sentence out of a paragraph and painting it white. Only the lane the clip was on moves,
+    /// because the lanes below it are not necessarily cut to the same rhythm.
+    RippleDelete { reference: ElementRef },
     /// Move an element's start time.
     MoveElement {
         reference: ElementRef,
@@ -64,11 +71,45 @@ pub enum Command {
         at: MediaTime,
         new_id: String,
     },
-    /// Set an element's start and duration together (a timeline edge-trim), as one undo step.
+    /// Trim an element's edges, as one undo step.
+    ///
+    /// For video and audio this is a **real trim**, not a reposition: moving the head forward
+    /// consumes the same amount of source, so the frame under the new head is the frame that
+    /// was there. Both edges stop at the media boundary — a trim that would run off either end
+    /// of the file is shortened to fit rather than showing frames that do not exist. Use
+    /// [`Command::MoveElement`] to slide a clip without touching what it plays.
     TrimElement {
         reference: ElementRef,
         start: MediaTime,
         duration: MediaTime,
+    },
+    /// Slip: move the in-point *inside* a clip, keeping its position and length on the
+    /// timeline. This is how you change which part of a shot plays without re-cutting around
+    /// it. No-op for elements with no timeline inside them (text, shapes, stills).
+    SetSourceStart {
+        reference: ElementRef,
+        trim_start: MediaTime,
+    },
+    /// Set a clip's fades: up from nothing over `fade_in` at its head, down over `fade_out`
+    /// at its tail. On a visual element this multiplies opacity; on audio it multiplies gain.
+    ///
+    /// A cross-dissolve is two clips overlapping with the upper one fading in — there is no
+    /// separate transition object, because the upper clip fading in over a lower one that is
+    /// still at full is exactly a dissolve, and one that does not dip through the background
+    /// the way two complementary fades would.
+    SetFades {
+        reference: ElementRef,
+        fade_in: MediaTime,
+        fade_out: MediaTime,
+    },
+    /// Replace an element with an edited copy of itself, in place.
+    ///
+    /// For the properties that have no command of their own — typography, a shape's fill, an
+    /// audio clip's gain. The replacement must keep the same id: an `ElementRef` is how every
+    /// other edit and the selection address it, so changing the id here would strand them.
+    ReplaceElement {
+        reference: ElementRef,
+        element: Element,
     },
     /// Rename an element.
     RenameElement { reference: ElementRef, name: String },
@@ -138,6 +179,14 @@ pub enum Command {
     },
     /// Remove an overlay/audio track (the main lane cannot be removed).
     RemoveTrack { track_id: String },
+    /// Drop a marker on the active scene's timeline.
+    AddMarker {
+        id: String,
+        time: MediaTime,
+        label: String,
+    },
+    /// Remove a marker by id.
+    RemoveMarker { id: String },
     /// Add a new empty scene.
     AddScene { id: String, name: String },
     /// Remove a scene (never the last one).
@@ -151,6 +200,13 @@ pub enum Command {
     SetTrackHidden { track_id: String, hidden: bool },
     /// Mute/unmute a track.
     SetTrackMuted { track_id: String, muted: bool },
+    /// Commit the project to a style kit — the typography, palette and framings every element
+    /// placed afterwards resolves against.
+    ///
+    /// A command rather than a write through `project_mut` because taking that handle clears the
+    /// undo history: choosing a look would otherwise throw away the user's ability to undo
+    /// everything they had done before choosing it.
+    SetStyleKit { kit: Box<StyleKit> },
     /// Paste the clipboard elements onto the main track and select them (ids are minted).
     Paste,
 }
@@ -161,10 +217,14 @@ pub enum CommandKind {
     SetSelection,
     AddElement,
     RemoveElement,
+    RippleDelete,
     MoveElement,
     SetElementDuration,
     SplitElement,
     TrimElement,
+    SetSourceStart,
+    SetFades,
+    ReplaceElement,
     RenameElement,
     SetTextContent,
     SetTransform,
@@ -178,11 +238,14 @@ pub enum CommandKind {
     ApplyMotionPreset,
     AddTrack,
     RemoveTrack,
+    AddMarker,
+    RemoveMarker,
     AddScene,
     RemoveScene,
     DuplicateElement,
     SetTrackHidden,
     SetTrackMuted,
+    SetStyleKit,
     Paste,
 }
 
@@ -206,6 +269,19 @@ pub(crate) enum ProjectPatch {
     SetElementDuration {
         reference: ElementRef,
         duration: MediaTime,
+    },
+    SetElementSourceStart {
+        reference: ElementRef,
+        trim_start: MediaTime,
+    },
+    SetElementFades {
+        reference: ElementRef,
+        fade_in: MediaTime,
+        fade_out: MediaTime,
+    },
+    ReplaceElement {
+        reference: ElementRef,
+        element: Element,
     },
     SetElementName {
         reference: ElementRef,
@@ -259,6 +335,18 @@ pub(crate) enum ProjectPatch {
         track_id: String,
         muted: bool,
     },
+    InsertMarker {
+        index: usize,
+        marker: bay_project::Marker,
+    },
+    RemoveMarker {
+        id: String,
+    },
+    /// `None` restores a project that had not committed to a kit yet, which is what undoing the
+    /// first commit has to do.
+    SetStyleKit {
+        kit: Option<Box<StyleKit>>,
+    },
     AddScene {
         index: usize,
         scene: Scene,
@@ -271,17 +359,27 @@ pub(crate) enum ProjectPatch {
 impl ProjectPatch {
     /// Apply to the project, returning the inverse patch (or `Noop` if nothing changed).
     pub(crate) fn apply(self, project: &mut Project) -> ProjectPatch {
-        // Scene-level patches act on the whole project rather than the active scene.
+        // Project-level patches act on the whole project rather than the active scene.
         match &self {
             ProjectPatch::AddScene { .. } | ProjectPatch::RemoveScene { .. } => {
                 return self.apply_scene(project);
+            }
+            ProjectPatch::SetStyleKit { .. } => {
+                let ProjectPatch::SetStyleKit { kit } = self else {
+                    unreachable!()
+                };
+                let previous = project.settings.kit.take().map(Box::new);
+                project.settings.kit = kit.map(|kit| *kit);
+                return ProjectPatch::SetStyleKit { kit: previous };
             }
             _ => {}
         }
 
         let scene = project.active_scene_mut();
         match self {
-            ProjectPatch::AddScene { .. } | ProjectPatch::RemoveScene { .. } => unreachable!(),
+            ProjectPatch::AddScene { .. }
+            | ProjectPatch::RemoveScene { .. }
+            | ProjectPatch::SetStyleKit { .. } => unreachable!(),
             ProjectPatch::Noop => ProjectPatch::Noop,
             ProjectPatch::InsertElement {
                 track_id,
@@ -344,6 +442,52 @@ impl ProjectPatch {
                 }
                 None => ProjectPatch::Noop,
             },
+            ProjectPatch::SetElementSourceStart {
+                reference,
+                trim_start,
+            } => match scene.element_mut(&reference) {
+                // Elements with no timeline inside them have no in-point to move, and
+                // `source_start` returning `None` is what says so.
+                Some(element) => match element.source_start() {
+                    Some(previous) => {
+                        element.set_source_start(trim_start);
+                        ProjectPatch::SetElementSourceStart {
+                            reference,
+                            trim_start: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                },
+                None => ProjectPatch::Noop,
+            },
+            ProjectPatch::SetElementFades {
+                reference,
+                fade_in,
+                fade_out,
+            } => match scene.element_mut(&reference) {
+                Some(element) => {
+                    let previous = (element.fade_in(), element.fade_out());
+                    element.set_fades(fade_in, fade_out);
+                    ProjectPatch::SetElementFades {
+                        reference,
+                        fade_in: previous.0,
+                        fade_out: previous.1,
+                    }
+                }
+                None => ProjectPatch::Noop,
+            },
+            ProjectPatch::ReplaceElement { reference, element } => {
+                match scene.element_mut(&reference) {
+                    Some(slot) => {
+                        let previous = std::mem::replace(slot, element);
+                        ProjectPatch::ReplaceElement {
+                            reference,
+                            element: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
             ProjectPatch::SetElementName { reference, name } => {
                 match scene.element_mut(&reference) {
                     Some(element) => {
@@ -516,6 +660,21 @@ impl ProjectPatch {
                     None => ProjectPatch::Noop,
                 }
             }
+            ProjectPatch::InsertMarker { index, marker } => {
+                let id = marker.id.clone();
+                let at = index.min(scene.markers.len());
+                scene.markers.insert(at, marker);
+                ProjectPatch::RemoveMarker { id }
+            }
+            ProjectPatch::RemoveMarker { id } => {
+                match scene.markers.iter().position(|marker| marker.id == id) {
+                    Some(index) => {
+                        let marker = scene.markers.remove(index);
+                        ProjectPatch::InsertMarker { index, marker }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
             ProjectPatch::SetTrackMuted { track_id, muted } => {
                 match scene.tracks.track_mut(&track_id) {
                     Some(track) => {
@@ -559,6 +718,106 @@ impl ProjectPatch {
             _ => ProjectPatch::Noop,
         }
     }
+}
+
+/// The shortest clip a trim may leave: one hundredth of a second. Zero-length elements render
+/// nothing and cannot be grabbed again, so an edge that runs all the way through its own clip
+/// is refused rather than obeyed.
+const MIN_TRIMMED_TICKS: i64 = bay_time::TICKS_PER_SECOND / 100;
+
+/// Where a trim actually lands once the media boundaries have had their say.
+struct PlannedTrim {
+    start: MediaTime,
+    duration: MediaTime,
+    /// The new in-point, for elements that read a timeline out of their source. `None` means
+    /// the element has none to move (text, shape, still).
+    source_start: Option<MediaTime>,
+}
+
+/// The source length of what an element plays, if the project knows it. `None` means nobody
+/// probed the file — the trim then has no far edge to stop at, which is the honest answer.
+fn source_length(project: &Project, element: &Element) -> Option<MediaTime> {
+    let media_id = element.media_id()?;
+    project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)?
+        .source_duration()
+}
+
+/// Clamp an in-point so the clip it heads stays inside its file: never before the first frame,
+/// and never so late that the clip runs past the last one.
+fn clamp_source_start(
+    requested: MediaTime,
+    duration: MediaTime,
+    source_length: Option<MediaTime>,
+) -> MediaTime {
+    let mut ticks = requested.as_ticks().max(0);
+    if let Some(length) = source_length {
+        let latest = (length.as_ticks() - duration.as_ticks()).max(0);
+        ticks = ticks.min(latest);
+    }
+    MediaTime::from_ticks(ticks)
+}
+
+/// Work out what an edge-trim means for one element.
+///
+/// The rule that makes this a trim rather than a reposition: **the head consumes source**.
+/// Moving the head one second later starts the clip one second later into the file, so the
+/// frame under the new edge is the frame that was already there — which is the entire point of
+/// dragging a clip's edge, and what bay did not do before.
+///
+/// Both edges then stop at the media boundary. A head dragged before the first frame, or a tail
+/// dragged past the last one, is *shortened to fit* rather than obeyed: showing frames that do
+/// not exist is not a thing an editor should be able to ask for. Returns `None` when nothing is
+/// left to trim.
+fn plan_trim(
+    element: &Element,
+    start: MediaTime,
+    duration: MediaTime,
+    source_length: Option<MediaTime>,
+) -> Option<PlannedTrim> {
+    if duration.as_ticks() < MIN_TRIMMED_TICKS {
+        return None;
+    }
+    let Some(current_source) = element.source_start() else {
+        // Text, shapes and stills have no source timeline: an edge-trim is exactly a change of
+        // placement and length, which is what it always was.
+        return Some(PlannedTrim {
+            start: MediaTime::from_ticks(start.as_ticks().max(0)),
+            duration,
+            source_start: None,
+        });
+    };
+
+    let mut start_ticks = start.as_ticks();
+    let mut duration_ticks = duration.as_ticks();
+    // How far the head moved, and therefore how much source it ate.
+    let delta = start_ticks - element.start().as_ticks();
+    let mut source_ticks = current_source.as_ticks() + delta;
+
+    // The head cannot reach before the first frame of the file. Give back what it overshot.
+    if source_ticks < 0 {
+        start_ticks -= source_ticks;
+        duration_ticks += source_ticks;
+        source_ticks = 0;
+    }
+    // Nor can the tail run past the last frame.
+    if let Some(length) = source_length {
+        let overshoot = (source_ticks + duration_ticks) - length.as_ticks();
+        if overshoot > 0 {
+            duration_ticks -= overshoot;
+        }
+    }
+    if duration_ticks < MIN_TRIMMED_TICKS || start_ticks < 0 {
+        return None;
+    }
+
+    Some(PlannedTrim {
+        start: MediaTime::from_ticks(start_ticks),
+        duration: MediaTime::from_ticks(duration_ticks),
+        source_start: Some(MediaTime::from_ticks(source_ticks)),
+    })
 }
 
 /// A command resolved against current state into concrete patches + selection intent.
@@ -621,6 +880,44 @@ impl Command {
                 })
             }
 
+            Command::RippleDelete { reference } => {
+                let removed = scene.element(reference)?;
+                let (gap, after) = (removed.duration(), removed.start());
+                let track = scene.tracks.track(&reference.track_id)?;
+
+                let mut forward = vec![ProjectPatch::RemoveElement {
+                    track_id: reference.track_id.clone(),
+                    element_id: reference.element_id.clone(),
+                }];
+                // Everything that started at or after the removed clip slides back by its
+                // length. Comparing against its START, not its end, keeps a clip that
+                // overlapped it (a dissolve partner) moving with the rest.
+                for element in &track.elements {
+                    if element.id() == reference.element_id || element.start() < after {
+                        continue;
+                    }
+                    forward.push(ProjectPatch::SetElementStart {
+                        reference: ElementRef::new(
+                            reference.track_id.clone(),
+                            element.id().to_string(),
+                        ),
+                        start: MediaTime::from_ticks(
+                            (element.start().as_ticks() - gap.as_ticks()).max(0),
+                        ),
+                    });
+                }
+                let selection_patch = state
+                    .selection
+                    .elements
+                    .contains(reference)
+                    .then(|| SelectionPatch::select_elements(Vec::new()));
+                Some(Lowered {
+                    kind: CommandKind::RippleDelete,
+                    forward,
+                    selection_patch,
+                })
+            }
+
             Command::MoveElement { reference, start } => {
                 scene.element(reference)?;
                 Some(Lowered {
@@ -671,6 +968,14 @@ impl Command {
                 right.set_id(new_id.clone());
                 right.set_start(*at);
                 right.set_duration(second_duration);
+                // The second half starts where the first one stopped *in the source*. Without
+                // this a split produced two clips playing the same footage from the same
+                // in-point — the first section twice, rather than a cut.
+                if let Some(source) = element.source_start() {
+                    right.set_source_start(MediaTime::from_ticks(
+                        source.as_ticks() + first_duration.as_ticks(),
+                    ));
+                }
 
                 Some(Lowered {
                     kind: CommandKind::SplitElement,
@@ -697,19 +1002,99 @@ impl Command {
                 start,
                 duration,
             } => {
-                scene.element(reference)?;
+                let element = scene.element(reference)?;
+                let trim = plan_trim(
+                    element,
+                    *start,
+                    *duration,
+                    source_length(&state.project, element),
+                )?;
+                let mut forward = vec![
+                    ProjectPatch::SetElementStart {
+                        reference: reference.clone(),
+                        start: trim.start,
+                    },
+                    ProjectPatch::SetElementDuration {
+                        reference: reference.clone(),
+                        duration: trim.duration,
+                    },
+                ];
+                if let Some(trim_start) = trim.source_start {
+                    forward.push(ProjectPatch::SetElementSourceStart {
+                        reference: reference.clone(),
+                        trim_start,
+                    });
+                }
                 Some(Lowered {
                     kind: CommandKind::TrimElement,
-                    forward: vec![
-                        ProjectPatch::SetElementStart {
-                            reference: reference.clone(),
-                            start: *start,
-                        },
-                        ProjectPatch::SetElementDuration {
-                            reference: reference.clone(),
-                            duration: *duration,
-                        },
-                    ],
+                    forward,
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetSourceStart {
+                reference,
+                trim_start,
+            } => {
+                let element = scene.element(reference)?;
+                element.source_start()?; // nothing to slip inside a still, a title or a shape
+                let clamped = clamp_source_start(
+                    *trim_start,
+                    element.duration(),
+                    source_length(&state.project, element),
+                );
+                Some(Lowered {
+                    kind: CommandKind::SetSourceStart,
+                    forward: vec![ProjectPatch::SetElementSourceStart {
+                        reference: reference.clone(),
+                        trim_start: clamped,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetFades {
+                reference,
+                fade_in,
+                fade_out,
+            } => {
+                let element = scene.element(reference)?;
+                // Fades longer than the clip would leave it never reaching full, which is
+                // almost always a typo rather than an intention.
+                let duration = element.duration();
+                let fade_in = (*fade_in).clamp(MediaTime::ZERO, duration);
+                let fade_out = (*fade_out).clamp(MediaTime::ZERO, duration);
+                if (fade_in, fade_out) == (element.fade_in(), element.fade_out()) {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetFades,
+                    forward: vec![ProjectPatch::SetElementFades {
+                        reference: reference.clone(),
+                        fade_in,
+                        fade_out,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::ReplaceElement { reference, element } => {
+                let current = scene.element(reference)?;
+                // A replacement that renumbers the element would leave the selection, the
+                // history and every later tool call pointing at something that no longer
+                // exists. Refuse rather than half-apply.
+                if element.id() != reference.element_id || element.kind() != current.kind() {
+                    return None;
+                }
+                if element == current {
+                    return None; // nothing to record
+                }
+                Some(Lowered {
+                    kind: CommandKind::ReplaceElement,
+                    forward: vec![ProjectPatch::ReplaceElement {
+                        reference: reference.clone(),
+                        element: element.clone(),
+                    }],
                     selection_patch: None,
                 })
             }
@@ -850,7 +1235,12 @@ impl Command {
                 value,
             } => {
                 let element = scene.element(reference)?;
-                let animations = element.animations()?; // visual only
+                // Checked against the kind: a music bed has a level and no position, and a
+                // key on a property it does not have would be stored and never read.
+                if !element.animatable().contains(&property.as_str()) {
+                    return None;
+                }
+                let animations = element.animations()?;
                 let mut channel = animations.get(property).cloned().unwrap_or_default();
                 channel.upsert(*time, *value);
                 Some(Lowered {
@@ -890,7 +1280,9 @@ impl Command {
                 animations,
             } => {
                 let element = scene.element(reference)?;
-                if matches!(element.kind(), ElementKind::Audio) {
+                // Audio has no effects but does have a level to animate, so refuse only the
+                // half that cannot apply rather than the whole command.
+                if matches!(element.kind(), ElementKind::Audio) && !effects.is_empty() {
                     return None;
                 }
                 let base = element.effects().len();
@@ -956,6 +1348,40 @@ impl Command {
                         track_id: track_id.clone(),
                     }],
                     selection_patch,
+                })
+            }
+
+            Command::AddMarker { id, time, label } => {
+                if scene.markers.iter().any(|marker| marker.id == *id) {
+                    return None;
+                }
+                // Kept in time order, so the ruler draws them in order and `snap_targets` does
+                // not have to sort on every drag.
+                let index = scene
+                    .markers
+                    .iter()
+                    .position(|marker| marker.time > *time)
+                    .unwrap_or(scene.markers.len());
+                Some(Lowered {
+                    kind: CommandKind::AddMarker,
+                    forward: vec![ProjectPatch::InsertMarker {
+                        index,
+                        marker: bay_project::Marker {
+                            id: id.clone(),
+                            time: *time,
+                            label: label.clone(),
+                        },
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::RemoveMarker { id } => {
+                scene.markers.iter().find(|marker| marker.id == *id)?;
+                Some(Lowered {
+                    kind: CommandKind::RemoveMarker,
+                    forward: vec![ProjectPatch::RemoveMarker { id: id.clone() }],
+                    selection_patch: None,
                 })
             }
 
@@ -1030,6 +1456,14 @@ impl Command {
                     selection_patch: None,
                 })
             }
+
+            Command::SetStyleKit { kit } => Some(Lowered {
+                kind: CommandKind::SetStyleKit,
+                forward: vec![ProjectPatch::SetStyleKit {
+                    kit: Some(kit.clone()),
+                }],
+                selection_patch: None,
+            }),
 
             Command::Paste => None, // resolved in Editor::execute (mints ids)
         }

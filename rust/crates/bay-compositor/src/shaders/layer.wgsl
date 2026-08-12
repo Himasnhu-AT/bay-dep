@@ -11,6 +11,8 @@ struct LayerUniforms {
     opacity: f32,
     flip_x: f32,
     flip_y: f32,
+    crop_offset: vec2f,
+    crop_size: vec2f,
     _padding: vec2f,
 }
 
@@ -45,6 +47,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
         select(uv.x, 1.0 - uv.x, uniforms.flip_x > 0.5),
         select(uv.y, 1.0 - uv.y, uniforms.flip_y > 0.5),
     );
-    let color = textureSampleLevel(source_texture, source_sampler, sample_uv, 0.0);
+    // Reframe rather than squash: the quad still covers its own box, but it reads only the
+    // kept region of the source. An uncropped layer has offset 0 and size 1, so this is the
+    // identity for everything that came before crops existed.
+    let cropped_uv = uniforms.crop_offset + sample_uv * uniforms.crop_size;
+    let color = textureSampleLevel(source_texture, source_sampler, cropped_uv, 0.0);
     return vec4f(color.rgb, color.a * uniforms.opacity);
 }

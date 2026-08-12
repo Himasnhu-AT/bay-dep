@@ -121,33 +121,72 @@ synthesis, so they cannot drift apart. Splitting them would make drift possible 
 ```jsonc
 // narrate
 { "text": "Averages add. Money compounds.", "start": 19.55,
-  "voice": "af_heart", "speed": 1.06,
-  "captionY": 0.79, "captionFontFamily": "Helvetica Neue", "maxWords": 5 }
+  "voice": "af_heart", "targetWordsPerSecond": 2.5,
+  "captionStyle": "plain", "captionY": 0.79, "captionAlign": "left" }
 ```
 
 It returns a job id whose `result.endSeconds` lets a caller check a line fits its scene before committing —
 which is how the closing line of the volatility-drag reel was caught overrunning the music
-bed by 0.62s.
+bed by 0.62s. The result also carries `wordsPerSecond` and `wordsPerMinute`: what the read
+**actually** came out at, against the rate that was asked for.
 
-### Caption grouping
+### The read's rate
 
-`CueStyle` holds the decisions that make captions readable:
+`speed` is a multiplier nobody can plan in. `speed: 1.0` is **3.30 words a second** measured
+through this path — a 198 wpm gabble — while the old skill documented 2.5, so every duration an
+agent budgeted was out by a fifth. State the rate instead:
 
 | Field | Default | Why |
 |---|---|---|
-| `maxWords` | 4 | 3–5 words reads at thumb size |
-| `minCaptionSeconds` | 0.7 | a caption faster than this cannot be read |
-| `maxCaptionSeconds` | 3.0 | forces a break in a long unbroken run |
-| `gapSeconds` | 0.45 | a silence this long is a pause: break the caption there |
+| `targetWordsPerSecond` | 2.5 | 150 wpm, the middle of the broadcast band. bay derives `speed` from it |
+| `speed` | derived | the raw multiplier, if a caller insists. Overrides the target |
 
-Two rules that only show up on screen:
+**A clip over 8.0 s is refused**, before the synthesis where the word count already says so and
+after it where the voice disagreed. The refusal lists the script's own sentences, because the
+fix is always to narrate them as separate clips.
+
+### Caption style
+
+Eleven caption arguments used to exist. They are one:
+
+| Field | Default | Why |
+|---|---|---|
+| `captionStyle` | `plain` | `quiet` \| `plain` \| `loud` — how loud the spoken word is on screen. The committed style kit answers the face, the size, the weight and the colour |
+| `captionX` / `captionY` | the kit's `lower-third` framing | where the block sits. Both were unsettable, which is why 38 caption elements in one project shared x = 0.08 |
+| `captionAlign` | the kit's framing | `left` \| `center` \| `right` |
+
+`captionFontSize`, `captionColor`, `captionFontFamily`, `captionFontWeight`, `captionLayer`,
+`captionFade`, `maxWords`, `minCaptionSeconds`, `maxCaptionSeconds` and `gapSeconds` are
+**refused, not ignored** — the error names what decides that value now.
+
+### Caption grouping
+
+What a caption has to clear to be readable is a fact about reading, not a parameter of the
+video, so `CueStyle` is engine-owned:
+
+| Rule | Value | Why |
+|---|---|---|
+| words a line | 4 (2 under `loud`) | 3–5 words reads at thumb size |
+| minimum on screen | 0.833 s | the BBC's floor; 8 cues in one project were under it |
+| minimum per word | 0.30 s | 18 cues ran over 17 characters a second |
+| a pause breaks a caption | 0.45 s | a caption should never span a silence |
+| a full stop breaks a caption | always | two cues in one project carried the end of one sentence and the start of the next |
+| caption fade | 0.28 s | 8.4 frames at 30 fps. At the old 0.12 s it was a three-frame pop, and 76 of them shipped |
+
+Four rules that only show up on screen:
 
 - A short cue is extended **only into genuinely free time** — stretching blindly would put two
   captions on screen at once.
-- Holes *smaller* than `gapSeconds` between consecutive captions are closed. A caption ends on
-  its last word, so two captions of one sentence otherwise leave the inter-word silence
-  between them, which reads as a blink. A hole at or above `gapSeconds` is a real pause and is
-  left alone, because there the caption *should* clear.
+- Holes *smaller* than the pause threshold between consecutive captions are closed. A caption
+  ends on its last word, so two captions of one sentence otherwise leave the inter-word silence
+  between them, which reads as a blink. A hole at or above it is a real pause and is left
+  alone, because there the caption *should* clear.
+- A cue that still cannot be given enough time absorbs an adjacent **orphan** — a run shorter
+  than a full line, in the same sentence, with no pause between them. Merging two full lines
+  would preserve their seconds per word exactly and only double the words on screen.
+- Sentence ends come from the script, not from the word list: the sidecar drops
+  punctuation-only tokens (it has to, or every comma becomes a caption), so the two are walked
+  together and matched on letters alone.
 
 ---
 

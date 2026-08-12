@@ -1,6 +1,8 @@
-//! Project-level settings: frame rate, canvas size, and background.
+//! Project-level settings: frame rate, canvas size, background, and the committed style kit.
 
 use serde::{Deserialize, Serialize};
+
+use crate::kit::StyleKit;
 
 /// Frames per second as an exact rational (e.g. 30000/1001 for 29.97).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,4 +66,11 @@ pub struct ProjectSettings {
     pub fps: Fps,
     pub canvas: CanvasSize,
     pub background: Background,
+    /// The typography and colour this project is committed to. See [`StyleKit`].
+    ///
+    /// `Option`, and `#[serde(default)]`, because every project written before kits existed says
+    /// nothing about one — and must still load and render exactly as it did. A project with no
+    /// kit is a project from before; `add_text` commits one rather than refusing to draw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kit: Option<StyleKit>,
 }

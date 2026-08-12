@@ -68,6 +68,7 @@ fn bench_mix_stereo(c: &mut Criterion) {
                     dst_start_secs: 0.0,
                     play_secs: total_secs,
                     volume: 1.0 / clips as f32,
+                    envelope: None,
                 })
                 .collect();
 
