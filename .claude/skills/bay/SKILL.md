@@ -73,6 +73,11 @@ adapter is the one thing bay cannot provide. `render`, `narrate`, `subtitles_to_
    **`audio_beats`** gives a track's tempo, its first beat and every beat in seconds, so a cut
    can land *on* the music. Read `confidence` before `bpm`, and `candidates` before you commit to
    a grid that has to end on the last beat.
+
+   **`silence_detect`** finds the dead air in a recorded take — the first thing anyone does to an
+   interview. Its threshold is measured off the material, not typed. `keepRanges` is the shape of
+   the edit. Note that **`add_video` carries no audio**: the picture and the sound are separate
+   elements, so an edit made only of video clips exports silent.
 4. **`add_text` / `add_shape`** with a `role` and a `tone`; **`add_image` / `add_video`** for
    anything you imported; **`add_audio`** for the bed. Images letterbox by default — pass
    **`cover: {width, height}`** to fill a rectangle of the canvas instead, and bay crops the

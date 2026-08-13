@@ -457,19 +457,59 @@ fn apply_cover(
     }
 }
 
+/// `silence_detect` — the dead air in a recording, and the shape of the edit that removes it.
+fn silence_detect(studio: &Studio, args: &Value) -> Result<Value, ToolError> {
+    let path = source_path(studio, args)?;
+    let options = bay_audio::silence::Options {
+        threshold_db: args.get("thresholdDb").and_then(Value::as_f64),
+        minimum_seconds: number(args, "minimumSeconds", 0.5),
+        pad_seconds: number(args, "padSeconds", 0.08),
+    };
+    let pcm = bay_audio::decode_pcm(&path, 16000).ok_or_else(|| {
+        crate::studio::err(format!(
+            "could not read audio from {path}. Decoding needs ffmpeg — runtime_install with \
+             component \"video\" installs it."
+        ))
+    })?;
+    let scan = bay_audio::silence::detect(&pcm, options)
+        .ok_or_else(|| crate::studio::err(format!("{path} has no audio to measure")))?;
+
+    let keeps: Vec<Value> = scan
+        .keep_ranges()
+        .into_iter()
+        .map(|(start, end)| {
+            json!({ "startSeconds": start, "endSeconds": end,
+                                    "durationSeconds": (end - start * 1.0).max(0.0) })
+        })
+        .collect();
+    let mut value = serde_json::to_value(&scan).unwrap_or(Value::Null);
+    value["keepRanges"] = json!(keeps);
+    value["tightenedSeconds"] = json!(scan.tightened_seconds());
+    value["hint"] = json!(
+        "keepRanges is the edit: one trimmed clip per range, butted together. Look at \
+         removableShare first — much over a third and the threshold is eating speech."
+    );
+    Ok(value)
+}
+
+/// An imported `mediaId` or a bare `path`, for the tools that only read a file.
+fn source_path(studio: &Studio, args: &Value) -> Result<String, ToolError> {
+    match text(args, "mediaId") {
+        Some(id) => studio.media_path(&id).ok_or_else(|| {
+            crate::studio::err(format!(
+                "no media with id {id:?} — media_import returns the id, or pass `path` instead"
+            ))
+        }),
+        None => required_text(args, "path"),
+    }
+}
+
 /// `audio_beats` — the tempo of a file, so a cut can land on it.
 ///
 /// Takes an imported `mediaId` or a bare `path`; the first is what an author already has, the
 /// second is for a track that is not on the timeline yet.
 fn audio_beats(studio: &Studio, args: &Value) -> Result<Value, ToolError> {
-    let path = match text(args, "mediaId") {
-        Some(id) => studio.media_path(&id).ok_or_else(|| {
-            crate::studio::err(format!(
-                "no media with id {id:?} — media_import returns the id, or pass `path` instead"
-            ))
-        })?,
-        None => required_text(args, "path")?,
-    };
+    let path = source_path(studio, args)?;
     let beats = bay_audio::beats::detect_file(&path).ok_or_else(|| {
         crate::studio::err(format!(
             "could not read audio from {path}. Decoding needs ffmpeg — runtime_status says \
@@ -1403,6 +1443,34 @@ pub fn definitions() -> Vec<Value> {
             &[],
         ),
         tool(
+            "silence_detect",
+            "Find the dead air in a recording: the pause before an answer, the gap while someone \
+             thinks, the run-up at the head and the tail after the last word. On a raw interview \
+             this is routinely a fifth of the runtime, and removing it is most of what makes a \
+             take feel edited.\n\n\
+             The threshold is measured off the material, not typed — a fixed dBFS number is the \
+             noise floor in one room and the speech in another. `noiseFloorDb` and `speechDb` \
+             tell you what it found and `thresholdDb` what it used.\n\n\
+             It reports, it does not cut. `silences` are the ranges with nothing in them and \
+             `keepRanges` is their complement — the shape of the edit. Raise `minimumSeconds` to \
+             keep the beats: removing every 0.4 s pause is what makes an over-edited podcast \
+             exhausting to listen to.",
+            json!({
+                "mediaId": { "type": "string", "description": "An imported asset. Either this or `path`." },
+                "path": { "type": "string", "description": "An absolute path, if it is not imported." },
+                "minimumSeconds": { "type": "number",
+                    "description": "Ignore anything shorter. Defaults to 0.5 — below that it is \
+                                    the rhythm of speech rather than a gap in it." },
+                "thresholdDb": { "type": "number",
+                    "description": "Override the measured threshold. Omit it; the derived one is \
+                                    almost always right and travels to the next file." },
+                "padSeconds": { "type": "number",
+                    "description": "How much silence to leave at each end of a cut so it does not \
+                                    clip the breath before a word. Defaults to 0.08." }
+            }),
+            &[],
+        ),
+        tool(
             "library_save",
             "Keep a file in your media library, under a name you choose, in a collection. \
              Searching does not keep anything and the download cache is keyed by the provider's \
@@ -1820,6 +1888,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         "library_list" => Ok(bay_stock::mcp::library_list(args)),
         "library_collect" => bay_stock::mcp::library_collect(args).map_err(crate::studio::err),
         "audio_beats" => audio_beats(studio, args),
+        "silence_detect" => silence_detect(studio, args),
         "narrate" => {
             let label = required_text(args, "text")?
                 .chars()

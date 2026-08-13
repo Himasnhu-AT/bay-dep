@@ -11,7 +11,7 @@ default value, because a printed default is the value that comes back.
 The tool prefix is whatever name the server was registered under (`mcp__bay__…`,
 `mcp__vii__…`). Every tool is written bare here for that reason.
 
-69 tools.
+70 tools.
 
 | tool | required | also takes |
 |---|---|---|
@@ -82,6 +82,7 @@ Returns "status": clean, findings, or unevaluated — and read "skipped" before 
 This sends your query to a third party — it is the only tool in bay that does | `query` | `describe`, `kind`, `provider`, `limit`, `minWidth`, `licence` |
 | **stock_fetch** — Download one stock_search result to this machine, with its licence and attribution recorded beside it | `asset` | `maxBytes` |
 | **audio_beats** — Find the pulse of an audio file: tempo, where the grid starts, and every beat in seconds | — | `mediaId`, `path`, `everyNthBeat` |
+| **silence_detect** — Find the dead air in a recording: the pause before an answer, the gap while someone thinks, the run-up at the head and the tail after the last word | — | `mediaId`, `path`, `minimumSeconds`, `thresholdDb`, `padSeconds` |
 | **library_save** — Keep a file in your media library, under a name you choose, in a collection | `path` | `collection`, `name`, `stockId` |
 | **library_list** — What is in the media library, with the credit lines anything CC-BY obliges you to show | — | `collection` |
 | **library_collect** — Copy a whole collection into a folder — usually one beside the project file | `collection`, `into` | — |

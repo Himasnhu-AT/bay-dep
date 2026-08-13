@@ -5,6 +5,7 @@ pub mod beats;
 pub mod library;
 pub mod loudness;
 pub mod sfx;
+pub mod silence;
 pub mod wav;
 
 /// Decoded interleaved PCM samples ready for playback.

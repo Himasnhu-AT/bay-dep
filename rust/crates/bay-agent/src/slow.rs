@@ -49,6 +49,10 @@ pub fn slow_tools() -> &'static [&'static str] {
         "image_rank",
         // Decoding a whole track to find its pulse.
         "audio_beats",
+        // Decoding a whole take to find the dead air in it.
+        "silence_detect",
+        // Decoding a whole take to find the dead air in it.
+        "silence_detect",
     ]
 }
 
@@ -137,6 +141,29 @@ fn audio_beats(args: &Value) -> Result<Value, String> {
     Ok(value)
 }
 
+/// The dead air in a file on disk — the editor-attached twin of 's arm.
+fn silence_detect(args: &Value) -> Result<Value, String> {
+    let path = require_str(args, "path")?;
+    let options = bay_audio::silence::Options {
+        threshold_db: args.get("thresholdDb").and_then(Value::as_f64),
+        minimum_seconds: args
+            .get("minimumSeconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.5),
+        pad_seconds: args
+            .get("padSeconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.08),
+    };
+    let pcm = bay_audio::decode_pcm(&path, 16000)
+        .ok_or_else(|| format!("could not read audio from {path} — decoding needs ffmpeg"))?;
+    let scan = bay_audio::silence::detect(&pcm, options)
+        .ok_or_else(|| format!("{path} has no audio to measure"))?;
+    let mut value = serde_json::to_value(&scan).map_err(|e| e.to_string())?;
+    value["keepRanges"] = serde_json::json!(scan.keep_ranges());
+    Ok(value)
+}
+
 /// Has this job been asked to stop? `false` when it is not a job at all.
 fn cancelled(job: Option<&bay_jobs::Handle>) -> bool {
     job.is_some_and(|handle| handle.cancelled())
@@ -166,6 +193,7 @@ pub fn run(
         "stock_fetch" => crate::illustrate::stock_fetch(args).map(SlowResult::value),
         "image_rank" => bay_vision::mcp::image_rank(args).map(SlowResult::value),
         "audio_beats" => audio_beats(args).map(SlowResult::value),
+        "silence_detect" => silence_detect(args).map(SlowResult::value),
         other => Err(format!("{other} is not a background tool")),
     }
 }
