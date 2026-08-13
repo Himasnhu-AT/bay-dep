@@ -11,7 +11,7 @@ default value, because a printed default is the value that comes back.
 The tool prefix is whatever name the server was registered under (`mcp__bay__…`,
 `mcp__vii__…`). Every tool is written bare here for that reason.
 
-65 tools.
+69 tools.
 
 | tool | required | also takes |
 |---|---|---|
@@ -25,10 +25,10 @@ Call it with a `brief` and nothing else to be offered three kits that suit it �
 | **audio_probe** — Measure an imported sound: `lufs` (EBU R128 integrated loudness — the unit a mix is specified in), `peakDb`, `rmsDb`, and `accentSeconds` (where its transients are, for landing a cut on the music) | `mediaId` | — |
 | **add_text** — Place a text element on the timeline.
 
-There is no fontFamily, fontSize, fontWeight or color here, on purpose: say what the line is FOR with `role` and how loud it is with `tone`, and the project's committed style kit answers the rest | `start`, `duration`, `content`, `role` | `align`, `letterSpacing`, `lineHeight`, `id`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
-| **add_shape** — Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines | `start`, `duration`, `role` | `shape`, `radius`, `id`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
-| **add_image** — Place an imported image | `mediaId`, `start`, `duration` | `id`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
-| **add_video** — Place an imported video clip | `mediaId`, `start`, `duration` | `trimStart`, `id`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
+There is no fontFamily, fontSize, fontWeight or color here, on purpose: say what the line is FOR with `role` and how loud it is with `tone`, and the project's committed style kit answers the rest | `start`, `duration`, `content`, `role` | `align`, `letterSpacing`, `lineHeight`, `id`, `cover`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
+| **add_shape** — Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines | `start`, `duration`, `role` | `shape`, `radius`, `id`, `cover`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
+| **add_image** — Place an imported image | `mediaId`, `start`, `duration` | `id`, `cover`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
+| **add_video** — Place an imported video clip | `mediaId`, `start`, `duration` | `trimStart`, `id`, `cover`, `framing`, `layer`, `x`, `y`, `scale`, `scaleX`, `scaleY`, `anchorX`, `anchorY`, `rotation`, `opacity`, `blendMode` |
 | **add_audio** — Place an audio clip (music bed, sound effect) on the audio lane | `mediaId`, `start`, `duration` | `volume`, `trimStart`, `role`, `id` |
 | **apply_move** — Put a NAMED MOVE from bay's vocabulary on an element | — | `elementId`, `move`, `at`, `direction`, `distance` |
 | **animate** — Give an element motion | `elementId` | `move`, `direction`, `distance`, `property`, `keys`, `at`, `easing` |
@@ -79,8 +79,12 @@ Returns "status": clean, findings, or unevaluated — and read "skipped" before 
 | **stock_status** — Which image archives bay can reach, which need a key, and how much has already been downloaded | — | — |
 | **stock_search** — Search an open image archive and get results ordered by what is actually in the picture.
 
-This sends your query to a third party — it is the only tool in bay that does | `query` | `describe`, `provider`, `limit`, `minWidth`, `licence` |
+This sends your query to a third party — it is the only tool in bay that does | `query` | `describe`, `kind`, `provider`, `limit`, `minWidth`, `licence` |
 | **stock_fetch** — Download one stock_search result to this machine, with its licence and attribution recorded beside it | `asset` | `maxBytes` |
+| **audio_beats** — Find the pulse of an audio file: tempo, where the grid starts, and every beat in seconds | — | `mediaId`, `path`, `everyNthBeat` |
+| **library_save** — Keep a file in your media library, under a name you choose, in a collection | `path` | `collection`, `name`, `stockId` |
+| **library_list** — What is in the media library, with the credit lines anything CC-BY obliges you to show | — | `collection` |
+| **library_collect** — Copy a whole collection into a folder — usually one beside the project file | `collection`, `into` | — |
 | **stock_credits** — The attribution for everything downloaded, as text you can paste | — | — |
 | **image_rank** — Score images already on disk against a phrase, best first | `query`, `paths` | — |
 | **narrate** — Speak text with Kokoro, put the audio on the timeline, and place word-synced captions for it | `text` | `start`, `voice`, `targetWordsPerSecond`, `speed`, `langCode`, `volume`, `peakDb`, `audioPath`, `captions`, `captionStyle`, `captionX`, `captionY`, `captionAlign` |

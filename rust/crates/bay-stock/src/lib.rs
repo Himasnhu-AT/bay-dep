@@ -50,6 +50,7 @@ use std::path::PathBuf;
 
 mod cache;
 mod http;
+pub mod library;
 pub mod mcp;
 mod providers;
 
@@ -104,12 +105,13 @@ pub enum StockError {
     NoCacheDir,
 }
 
-/// Image or footage.
+/// Image, footage, or music.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
     Image,
     Video,
+    Audio,
 }
 
 impl Kind {
@@ -117,6 +119,7 @@ impl Kind {
         match self {
             Kind::Image => "image",
             Kind::Video => "video",
+            Kind::Audio => "audio",
         }
     }
 
@@ -125,6 +128,7 @@ impl Kind {
         match self {
             Kind::Image => "image/",
             Kind::Video => "video/",
+            Kind::Audio => "audio/",
         }
     }
 }
@@ -292,6 +296,9 @@ pub struct StockAsset {
     pub height: Option<u32>,
     pub licence: Licence,
     pub credit: Credit,
+    /// How long it runs, for audio and video. `None` for a still.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<f64>,
     /// Full-size original.
     pub url: String,
     /// A smaller rendering, used for ranking so a re-rank does not pull 40 originals.

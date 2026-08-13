@@ -41,9 +41,10 @@ ADVANCE_UPPER, ADVANCE_LOWER = 0.0360, 0.0310
 ADVANCE_SPACE, ADVANCE_PUNCT = 0.0150, 0.0140
 CAPTION_ROLE = "chrome"
 
-BPM = 138.0
-BEAT = 60.0 / BPM
-FIRST_BEAT = 0.36          # where the grid starts in the track
+# The grid used to come from a 40-line numpy script — decode, spectral flux, autocorrelation,
+# phase by comb filter — that lived in a scratch directory and had to be re-run by hand. It is
+# `audio_beats` now, and the tempo is read off the track at build time rather than pasted in.
+MUSIC = "music.wav"
 
 
 def text_width(s):
@@ -89,6 +90,14 @@ def call(tool, args, timeout=900):
 
 
 def main():
+    grid = call("audio_beats", {"path": str(HERE / MUSIC)})
+    if not grid["usable"]:
+        raise SystemExit(f"no usable pulse in {MUSIC} (confidence {grid['confidence']})")
+    beat = grid["beatSeconds"]
+    first_beat = grid["firstBeatSeconds"]
+    print(f"{grid['bpm']} BPM, beat {beat:.4f}s, first {first_beat:.3f}s, "
+          f"confidence {grid['confidence']}")
+
     spec = json.loads((HERE / "cards1929.json").read_text())
     pairs = json.loads((HERE / "picks1929.json").read_text())["pairs"]
     used = json.loads((HERE / "used1929.json").read_text())
@@ -96,10 +105,10 @@ def main():
     assert len(cards) == len(pairs), f"{len(cards)} cards vs {len(pairs)} picture pairs"
 
     # Card boundaries, in seconds, straight off the beat grid.
-    at = FIRST_BEAT
+    at = first_beat
     for card in cards:
         card["start"] = frame(at)
-        at += card["beats"] * BEAT
+        at += card["beats"] * beat
         card["end"] = frame(at)
     total = frame(min(at + 0.30, 50.26))
 
@@ -115,9 +124,11 @@ def main():
             call("marker_add", {"at": card["start"], "label": card["mark"]})
     print(f"markers: {sum(1 for c in cards if c.get('mark'))}")
 
+    # Straight from the download cache. The `cover` argument on add_image crops each source to
+    # the panel, which is what an ffmpeg pass per image used to do into a `plates/` directory.
     media = {}
     for key, u in used.items():
-        r = call("media_import", {"path": u["plate"], "id": f"m{key}"})
+        r = call("media_import", {"path": u["source"], "id": f"m{key}"})
         media[key] = r.get("id", f"m{key}")
     print(f"imported: {len(media)}")
 
@@ -152,7 +163,9 @@ def main():
             call("add_image", {"mediaId": media[str(index)], "start": start,
                                "duration": frame(end - start), "id": eid, "layer": 1,
                                "x": 0.5, "y": PANEL_CY, "anchorX": 0.5, "anchorY": 0.5,
-                               "scale": 1.0, "role": "ground"})
+                               "role": "ground",
+                               "cover": {"width": 1.0,
+                                         "height": PANEL_BOTTOM - PANEL_TOP}})
             # A stencil the size of the picture panel, held still while the picture moves under
             # it. Without this the seam `shunt` slides the outgoing frame straight out of the
             # panel and over the headline — the mask is what makes the panel an actual window

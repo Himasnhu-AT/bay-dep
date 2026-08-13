@@ -111,6 +111,7 @@ impl Provider for Wikimedia {
                 stock_id: stock_id("wikimedia", &key.clone()),
                 title,
                 kind: Kind::Image,
+                duration_seconds: None,
                 licence,
                 credit: Credit {
                     creator,

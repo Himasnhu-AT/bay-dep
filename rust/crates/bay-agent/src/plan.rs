@@ -104,6 +104,10 @@ pub fn machine_tools() -> &'static [&'static str] {
         "vision_status",
         "stock_status",
         "stock_credits",
+        // The library is the user's, not a document's — it must be readable with nothing open.
+        "library_list",
+        "library_save",
+        "library_collect",
         // Following and stopping background work needs no document — and must keep working
         // after one is closed, or a render started against a project the user then closed
         // becomes unfollowable.

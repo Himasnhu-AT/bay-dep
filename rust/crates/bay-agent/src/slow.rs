@@ -47,6 +47,8 @@ pub fn slow_tools() -> &'static [&'static str] {
         "stock_fetch",
         // Loading 780 MB of weights and running a forward pass per image.
         "image_rank",
+        // Decoding a whole track to find its pulse.
+        "audio_beats",
     ]
 }
 
@@ -121,6 +123,20 @@ pub struct SlowContext {
     pub next_id: usize,
 }
 
+/// The tempo of a file on disk. The editor-attached twin of `bay-mcp`'s arm, which resolves a
+/// `mediaId` first; here the caller has already been given a path.
+fn audio_beats(args: &Value) -> Result<Value, String> {
+    let path = require_str(args, "path")?;
+    let beats = bay_audio::beats::detect_file(&path)
+        .ok_or_else(|| format!("could not read audio from {path} — decoding needs ffmpeg"))?;
+    let mut value = serde_json::to_value(&beats).map_err(|e| e.to_string())?;
+    if let Some(n) = args.get("everyNthBeat").and_then(Value::as_u64) {
+        value["cutTimes"] = serde_json::json!(beats.every(n as usize));
+    }
+    value["usable"] = serde_json::json!(beats.is_usable());
+    Ok(value)
+}
+
 /// Has this job been asked to stop? `false` when it is not a job at all.
 fn cancelled(job: Option<&bay_jobs::Handle>) -> bool {
     job.is_some_and(|handle| handle.cancelled())
@@ -149,6 +165,7 @@ pub fn run(
         "stock_search" => crate::illustrate::stock_search(args).map(SlowResult::value),
         "stock_fetch" => crate::illustrate::stock_fetch(args).map(SlowResult::value),
         "image_rank" => bay_vision::mcp::image_rank(args).map(SlowResult::value),
+        "audio_beats" => audio_beats(args).map(SlowResult::value),
         other => Err(format!("{other} is not a background tool")),
     }
 }

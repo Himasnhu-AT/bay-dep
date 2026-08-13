@@ -572,6 +572,7 @@ name = "bay-agent"
 version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
+ "bay-audio",
  "bay-core",
  "bay-effects",
  "bay-jobs",
@@ -594,6 +595,7 @@ dependencies = [
  "bay-paths",
  "bay-test-support",
  "criterion",
+ "serde",
 ]
 
 [[package]]

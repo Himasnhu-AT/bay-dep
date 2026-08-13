@@ -9,6 +9,17 @@ python3 hunt1929.py     # search + SigLIP re-rank, writes bank1929.json
 python3 build1929.py    # needs music.wav beside it — see ../loaf-of-bread/music-cut/README.md
 ```
 
+**This build no longer preprocesses anything.** It reads the tempo with `audio_beats` instead of
+a numpy script that lived in a scratch directory, and imports the downloaded originals straight
+from the cache — `add_image(cover: {width, height})` crops each one to the panel, which is what
+an ffmpeg pass per image used to do into a `plates/` folder. Two whole steps of the earlier
+pipeline are gone.
+
+One consequence worth knowing: `audio_beats` reads this track at **139.75 BPM** where the
+hand-written script said 138, so 115 beats is 49.7 s rather than 50.3. The confidence is 0.379 —
+a real ambiguity, not a bug — and `candidates` lists both readings. The cut measures the same
+either way.
+
 ## What changed: the cards say what they mean
 
 The Weimar cut opened on the bare word **1923** and nobody reading it knew what 1923 was. Those
@@ -61,10 +72,10 @@ a 1933 antisemitic boycott photo for a query about shop windows.
 
 | | narrated 1923 | music 1923 | **1929** |
 |---|---|---|---|
-| runtime | 78.3 s | 50.3 s | **50.3 s** |
+| runtime | 78.3 s | 50.3 s | **49.7 s** |
 | picture cuts | 25 | 38 | **36** |
-| hard cuts (scene > 0.20) | 8 | 24 | **23** |
-| mean frame delta | 0.67 % | 0.94 % | **1.05 %** |
+| hard cuts (scene > 0.20) | 8 | 24 | **21** |
+| mean frame delta | 0.67 % | 0.94 % | **1.03 %** |
 | reference reel | — | — | 1.88 %, 37 hard cuts |
 
 `check` returns `unevaluated` with `skipped: [speech-masked, bed-too-quiet]` and **zero

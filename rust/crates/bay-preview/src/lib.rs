@@ -203,6 +203,60 @@ fn fit_contain(natural: Option<(u32, u32)>, box_w: f32, box_h: f32) -> (f32, f32
     ((nw as f32 * scale).max(1.0), (nh as f32 * scale).max(1.0))
 }
 
+/// The crop insets and scale that make a source **fill** a rectangle of the canvas.
+///
+/// `fit_contain` is unconditional on the render path, which is the right default — it never
+/// distorts and never hides part of the picture. But a montage wants the opposite: a panel with
+/// no letterbox in it, every frame the same shape, the source cropped to suit. That was being
+/// done outside the editor entirely, by an ffmpeg pass per image
+/// (`scale=…:force_original_aspect_ratio=increase,crop=…`) writing a normalised plate to disk
+/// before import. Three videos were built that way.
+///
+/// The whole trick is that a crop changes the source's aspect, and `fit_contain` of something
+/// whose aspect already matches the box fills it exactly. So: trim the source to the panel's
+/// aspect, then choose the scale that makes the contained result the panel.
+///
+/// `panel_w`/`panel_h` are fractions of the canvas. Returns `(left, top, right, bottom, scale)`,
+/// insets as fractions of the source. A source with no intrinsic size needs no crop.
+pub fn cover_fit(
+    natural: Option<(u32, u32)>,
+    panel_w: f32,
+    panel_h: f32,
+    canvas_w: u32,
+    canvas_h: u32,
+) -> (f32, f32, f32, f32, f32) {
+    // The scale is `max` because `fit_contain` picks the limiting axis for us: a panel wider
+    // than it is tall is limited by width, a taller one by height, and after the crop the other
+    // axis follows exactly.
+    let scale = panel_w.max(panel_h);
+    let Some((nw, nh)) = natural else {
+        return (0.0, 0.0, 0.0, 0.0, scale);
+    };
+    if nw == 0 || nh == 0 || panel_w <= 0.0 || panel_h <= 0.0 || canvas_w == 0 || canvas_h == 0 {
+        return (0.0, 0.0, 0.0, 0.0, scale);
+    }
+    let target = (panel_w * canvas_w as f32) / (panel_h * canvas_h as f32);
+    let source = nw as f32 / nh as f32;
+
+    // A crop of less than half a source pixel is not a crop. Panels are specified as canvas
+    // fractions, so a panel meant to be exactly the source's shape almost never divides into one
+    // — 1080×1121 against a panel of 0.584 canvas heights is out by 0.13 of a pixel. Reporting
+    // that as a crop is noise in the project file and a lie in the timeline dump.
+    let (side, axis_pixels) = if source > target {
+        ((1.0 - target / source) / 2.0, nw as f32)
+    } else {
+        ((1.0 - source / target) / 2.0, nh as f32)
+    };
+    if side * axis_pixels < 0.5 {
+        return (0.0, 0.0, 0.0, 0.0, scale);
+    }
+    if source > target {
+        (side, 0.0, side, 0.0, scale) // wider than the panel: trim the sides
+    } else {
+        (0.0, side, 0.0, side, scale) // taller: trim top and bottom
+    }
+}
+
 /// Test hook for [`fit_contain`] — the geometry is pure, so it is worth asserting directly
 /// rather than only through rendered pixels.
 pub fn fit_contain_for_test(natural: Option<(u32, u32)>, box_w: f32, box_h: f32) -> (f32, f32) {

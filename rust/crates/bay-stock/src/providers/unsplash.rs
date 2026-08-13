@@ -75,6 +75,7 @@ impl Provider for Unsplash {
                     .or_else(|| text(item, "alt_description"))
                     .unwrap_or_else(|| "untitled".into()),
                 kind: Kind::Image,
+                duration_seconds: None,
                 licence: Licence::Permissive {
                     name: "Unsplash licence".into(),
                 },

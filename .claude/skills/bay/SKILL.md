@@ -65,9 +65,18 @@ adapter is the one thing bay cannot provide. `render`, `narrate`, `subtitles_to_
      "Reichsbank". It proposes; you choose.
 
    It is also the one tool in bay that sends anything off the machine, and `stock_credits` is
-   what you owe afterwards.
+   what you owe afterwards. **`kind: "audio"`** searches CC music the same way — that is where a
+   bed comes from when you have none. `library_save` keeps the ones you chose under names you
+   pick, and `library_collect` copies a whole collection beside a project so the piece travels as
+   one folder.
+
+   **`audio_beats`** gives a track's tempo, its first beat and every beat in seconds, so a cut
+   can land *on* the music. Read `confidence` before `bpm`, and `candidates` before you commit to
+   a grid that has to end on the last beat.
 4. **`add_text` / `add_shape`** with a `role` and a `tone`; **`add_image` / `add_video`** for
-   anything you imported; **`add_audio`** for the bed.
+   anything you imported; **`add_audio`** for the bed. Images letterbox by default — pass
+   **`cover: {width, height}`** to fill a rectangle of the canvas instead, and bay crops the
+   source to that shape for you.
 5. **`animate`** — name a registry `move`. `animate_many` runs one move across a group, staggered:
    that is the verb for kinetic type, a list, or any set that arrives together. Hand-written
    keyframes still work and are reported per channel as `off-vocabulary-motion`, so the cost of
@@ -146,6 +155,7 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 |---|---|
 | [references/structure.md](references/structure.md) | beats, roles, the hold, the turn, the landing |
 | [references/craft.md](references/craft.md) | what a move, a kit and an asset are FOR; audio; narration |
+| [references/archive-reel.md](references/archive-reel.md) | the **archive reel** — a named format: portrait, no voice, archival stills cut to a beat grid. Every number, and the six things that go wrong |
 | [references/tools.md](references/tools.md) | the generated tool index |
 
 ## When NOT to use bay

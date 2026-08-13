@@ -181,6 +181,13 @@ fn optional_role(args: &Value) -> Result<ElementRole, ToolError> {
 /// Schema fragment for the shared placement fields, spliced into every visual tool.
 fn visual_properties() -> Value {
     json!({
+        "cover": { "type": "object",
+            "description": "Fill a rectangle of the canvas instead of letterboxing inside it. \
+                            Give it {width, height} as fractions of the canvas — the panel you \
+                            want the picture to occupy — and bay crops the source to that shape \
+                            and scales it to fit exactly. Without this a 16:9 photo on a 9:16 \
+                            canvas fills about a third of the frame. It replaces cropping every \
+                            image with ffmpeg before you import it." },
         "framing": { "type": "string",
             "description": "One of the committed kit's named framings — project_info and \
                  style_pick list them. It sets x, y, anchorX, anchorY and scale in one word; \
@@ -414,6 +421,75 @@ fn installable_detail() -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Fold a `cover` request into the transform: crop the source to the panel, scale to fill it.
+///
+/// Silently does nothing without a `cover` argument, and does nothing when the asset was never
+/// probed — a source of unknown size cannot be cropped to a shape, and guessing one would put a
+/// wrong crop on the element permanently.
+fn apply_cover(
+    studio: &Studio,
+    media_id: &str,
+    args: &Value,
+    visual: &mut crate::studio::VisualArgs,
+) {
+    let Some(cover) = args.get("cover").filter(|v| v.is_object()) else {
+        return;
+    };
+    let panel_w = cover.get("width").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+    let panel_h = cover.get("height").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+    let (canvas_w, canvas_h) = studio.canvas();
+    let (left, top, right, bottom, scale) = bay_preview::cover_fit(
+        studio.media_size(media_id),
+        panel_w,
+        panel_h,
+        canvas_w,
+        canvas_h,
+    );
+    visual.transform.crop_left = left;
+    visual.transform.crop_top = top;
+    visual.transform.crop_right = right;
+    visual.transform.crop_bottom = bottom;
+    // An explicit `scale` still wins: the caller asked for a number and should get it.
+    if args.get("scale").is_none() {
+        visual.transform.scale = scale;
+    }
+}
+
+/// `audio_beats` — the tempo of a file, so a cut can land on it.
+///
+/// Takes an imported `mediaId` or a bare `path`; the first is what an author already has, the
+/// second is for a track that is not on the timeline yet.
+fn audio_beats(studio: &Studio, args: &Value) -> Result<Value, ToolError> {
+    let path = match text(args, "mediaId") {
+        Some(id) => studio.media_path(&id).ok_or_else(|| {
+            crate::studio::err(format!(
+                "no media with id {id:?} — media_import returns the id, or pass `path` instead"
+            ))
+        })?,
+        None => required_text(args, "path")?,
+    };
+    let beats = bay_audio::beats::detect_file(&path).ok_or_else(|| {
+        crate::studio::err(format!(
+            "could not read audio from {path}. Decoding needs ffmpeg — runtime_status says \
+             whether it is installed, and runtime_install with component \"video\" installs it."
+        ))
+    })?;
+    let mut value = serde_json::to_value(&beats).unwrap_or(Value::Null);
+    if let Some(n) = args.get("everyNthBeat").and_then(Value::as_u64) {
+        value["everyNthBeat"] = json!(n);
+        value["cutTimes"] = json!(beats.every(n as usize));
+    }
+    value["usable"] = json!(beats.is_usable());
+    value["hint"] = json!(if beats.is_usable() {
+        "cut on these. `candidates` shows the other readings — if the last cut is meant to land \
+         on the last beat, check the total against the track length before committing."
+    } else {
+        "there is no usable pulse here — this grid is arithmetic rather than music. Place the \
+         cuts by hand."
+    });
+    Ok(value)
 }
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -1262,6 +1338,10 @@ pub fn definitions() -> Vec<Value> {
                                     of `query`. \"children stacking bundles of banknotes like \
                                     toy bricks\" scores far better than \"money\". Defaults to \
                                     `query`, which works but ranks worse." },
+                "kind": { "type": "string", "enum": ["image", "video", "audio"],
+                    "description": "Defaults to image. \"audio\" searches CC-licensed music and \
+                                    sound through Openverse, keyless — that is where a bed comes \
+                                    from when you have none. Results carry durationSeconds." },
                 "provider": { "type": "string", "enum": ["wikimedia", "openverse", "pexels", "unsplash"],
                     "description": "wikimedia (default) is the archive for things that actually \
                                     happened — historical photographs, documents, banknotes. \
@@ -1300,6 +1380,66 @@ pub fn definitions() -> Vec<Value> {
                                     Defaults to 64 MB." }
             }),
             &["asset"],
+        ),
+        tool(
+            "audio_beats",
+            "Find the pulse of an audio file: tempo, where the grid starts, and every beat in \
+             seconds. This is what lets a cut land ON the music instead of near it.\n\n\
+             Read `confidence` before you trust `bpm`. Near 1 the track has an unmistakable \
+             pulse; below about 0.2 it has none and the grid is arithmetic, not music — place \
+             cuts by hand instead. `candidates` lists the other readings that nearly won, \
+             because on real music the top two are often a couple of BPM apart and that is half \
+             a second of drift across a minute.\n\n\
+             `everyNthBeat` thins the grid to a cut rate: 3 at 138 BPM is a picture every 1.3s.",
+            json!({
+                "mediaId": { "type": "string",
+                    "description": "An imported audio asset. Either this or `path`." },
+                "path": { "type": "string",
+                    "description": "An absolute path to an audio or video file, if it is not imported." },
+                "everyNthBeat": { "type": "integer",
+                    "description": "Also return the grid thinned to every Nth beat — the rate you \
+                                    intend to cut at, rather than the pulse." }
+            }),
+            &[],
+        ),
+        tool(
+            "library_save",
+            "Keep a file in your media library, under a name you choose, in a collection. \
+             Searching does not keep anything and the download cache is keyed by the provider's \
+             numbering; this is where you put the ones you decided on.\n\n\
+             Pass `stockId` when the file came from stock_fetch and the licence and attribution \
+             travel with it — otherwise a CC-BY image ends up in a finished film with nobody \
+             able to say whose it was.",
+            json!({
+                "path": { "type": "string", "description": "The file to keep. stock_fetch returns one." },
+                "collection": { "type": "string",
+                    "description": "A folder name — usually the piece you are making. Defaults to \"default\"." },
+                "name": { "type": "string", "description": "What to call it. Defaults to the filename." },
+                "stockId": { "type": "string",
+                    "description": "From stock_search, so the licence and credit are kept beside the file." }
+            }),
+            &["path"],
+        ),
+        tool(
+            "library_list",
+            "What is in the media library, with the credit lines anything CC-BY obliges you to \
+             show.",
+            json!({
+                "collection": { "type": "string", "description": "Narrow to one collection." }
+            }),
+            &[],
+        ),
+        tool(
+            "library_collect",
+            "Copy a whole collection into a folder — usually one beside the project file. A \
+             project references media by absolute path, so a project plus this folder is the \
+             entire piece and can move to another machine.",
+            json!({
+                "collection": { "type": "string", "description": "Which collection to copy." },
+                "into": { "type": "string",
+                    "description": "Absolute path to the folder to copy into. Created if missing." }
+            }),
+            &["collection", "into"],
         ),
         tool(
             "stock_credits",
@@ -1593,27 +1733,33 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         }
         "add_image" => {
             let framing = named_framing(args, &studio.committed_kit()?)?;
+            let media_id = required_text(args, "mediaId")?;
+            let mut visual = visual(args, framing.as_ref())?;
+            apply_cover(studio, &media_id, args, &mut visual);
             studio.add_image(
                 layer(args),
                 text(args, "id"),
-                required_text(args, "mediaId")?,
+                media_id,
                 required_number(args, "start")?,
                 required_number(args, "duration")?,
                 optional_role(args)?,
-                visual(args, framing.as_ref())?,
+                visual,
             )
         }
         "add_video" => {
             let framing = named_framing(args, &studio.committed_kit()?)?;
+            let media_id = required_text(args, "mediaId")?;
+            let mut visual = visual(args, framing.as_ref())?;
+            apply_cover(studio, &media_id, args, &mut visual);
             studio.add_video(
                 layer(args),
                 text(args, "id"),
-                required_text(args, "mediaId")?,
+                media_id,
                 required_number(args, "start")?,
                 required_number(args, "duration")?,
                 number(args, "trimStart", 0.0),
                 optional_role(args)?,
-                visual(args, framing.as_ref())?,
+                visual,
             )
         }
         "add_audio" => studio.add_audio(
@@ -1670,6 +1816,10 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         "stock_search" => bay_agent::illustrate::stock_search(args).map_err(crate::studio::err),
         "stock_fetch" => bay_agent::illustrate::stock_fetch(args).map_err(crate::studio::err),
         "stock_credits" => Ok(bay_stock::mcp::stock_credits()),
+        "library_save" => bay_stock::mcp::library_save(args).map_err(crate::studio::err),
+        "library_list" => Ok(bay_stock::mcp::library_list(args)),
+        "library_collect" => bay_stock::mcp::library_collect(args).map_err(crate::studio::err),
+        "audio_beats" => audio_beats(studio, args),
         "narrate" => {
             let label = required_text(args, "text")?
                 .chars()

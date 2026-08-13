@@ -77,6 +77,7 @@ impl Provider for Pexels {
                 stock_id: stock_id("pexels", &id.to_string()),
                 title: text(photo, "alt").unwrap_or_else(|| "untitled".into()),
                 kind: Kind::Image,
+                duration_seconds: None,
                 licence: Licence::Permissive {
                     name: "Pexels licence".into(),
                 },

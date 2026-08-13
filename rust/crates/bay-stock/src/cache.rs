@@ -381,9 +381,15 @@ fn extension_for(content_type: &str, kind: Kind) -> &'static str {
         "video/mp4" => "mp4",
         "video/quicktime" => "mov",
         "video/webm" => "webm",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
+        "audio/flac" | "audio/x-flac" => "flac",
+        "audio/ogg" | "audio/vorbis" => "ogg",
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" => "m4a",
         _ => match kind {
             Kind::Image => "jpg",
             Kind::Video => "mp4",
+            Kind::Audio => "mp3",
         },
     }
 }

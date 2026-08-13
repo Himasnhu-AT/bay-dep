@@ -10,6 +10,7 @@ bay-jobs = { path = "../bay-jobs" }
 bay-core = { path = "../bay-core" }
 bay-speech = { path = "../bay-speech" }
 bay-provision = { path = "../bay-provision" }
+bay-audio = { path = "../bay-audio" }
 bay-stock = { path = "../bay-stock" }
 bay-vision = { path = "../bay-vision" }
 bay-preview = { path = "../bay-preview" }

@@ -829,6 +829,35 @@ impl Studio {
     /// Idempotent and cheap to repeat — one decode, no encode. It exists as its own verb for
     /// the assets imported before the measurement did, and because "how loud is this file"
     /// is a question worth being able to ask without placing anything.
+    /// The canvas, in pixels.
+    pub fn canvas(&self) -> (u32, u32) {
+        let canvas = &self.editor.project().settings.canvas;
+        (canvas.width, canvas.height)
+    }
+
+    /// The file behind a media id, or `None` when nothing in the project has that id.
+    ///
+    /// Read-only and takes `&self`, so a tool that only needs to look at the file — measuring a
+    /// tempo, say — does not have to borrow the editor mutably.
+    pub fn media_path(&self, media_id: &str) -> Option<String> {
+        self.editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .map(|asset| asset.path.clone())
+    }
+
+    /// The pixel size of a media asset, when a probe found one.
+    pub fn media_size(&self, media_id: &str) -> Option<(u32, u32)> {
+        self.editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .and_then(|asset| Some((asset.width?, asset.height?)))
+    }
+
     pub fn audio_probe(&mut self, media_id: &str) -> ToolResult {
         let asset = self
             .editor

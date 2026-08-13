@@ -10,7 +10,7 @@
 
 use serde_json::{Value, json};
 
-use crate::{Allowed, Http, Kind, Query, StockAsset, Transport, cache, providers};
+use crate::{Allowed, Http, Kind, Query, StockAsset, Transport, cache, library, providers};
 
 /// `stock_status`: which archives can be reached, and whether re-ranking is available.
 pub fn stock_status() -> Value {
@@ -115,13 +115,31 @@ pub fn stock_search(
         .filter(|s| !s.is_empty())
         .unwrap_or(text);
 
+    let mut query = Query::new(text);
+    query.kind = match args.get("kind").and_then(Value::as_str) {
+        Some("video") => Kind::Video,
+        Some("audio") | Some("music") => Kind::Audio,
+        _ => Kind::Image,
+    };
+
+    // The default provider follows the kind. Wikimedia has no audio endpoint at all, so asking
+    // it for music returns an empty list and no explanation — which is what happened the first
+    // time this was called.
     let provider_id = args
         .get("provider")
         .and_then(Value::as_str)
-        .unwrap_or("wikimedia");
+        .unwrap_or(match query.kind {
+            Kind::Audio => "openverse",
+            _ => "wikimedia",
+        });
     let provider = providers::provider_named(provider_id).map_err(|e| e.to_string())?;
+    if query.kind == Kind::Audio && provider_id != "openverse" {
+        return Err(format!(
+            "{provider_id} has no audio. Music comes from openverse — omit `provider` and it is \
+             chosen for you."
+        ));
+    }
 
-    let mut query = Query::new(text);
     query.limit = args
         .get("limit")
         .and_then(Value::as_u64)
@@ -131,9 +149,6 @@ pub fn stock_search(
         .get("minWidth")
         .and_then(Value::as_u64)
         .map(|n| n as u32);
-    if args.get("kind").and_then(Value::as_str) == Some("video") {
-        query.kind = Kind::Video;
-    }
     // Default-deny. Only the exact opt-in string turns ShareAlike on, so a typo refuses rather
     // than silently making somebody's film copyleft.
     if args.get("licence").and_then(Value::as_str) == Some("allow-sharealike")
@@ -291,6 +306,90 @@ pub fn stock_credits() -> Value {
              shown — not on an end card nobody reads"
         },
     })
+}
+
+/// `library_save`: keep a file, under a name you chose, in a collection.
+pub fn library_save(args: &Value) -> Result<Value, String> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("library_save needs a path — stock_fetch returns one, and so does media_import")?;
+    let collection = args
+        .get("collection")
+        .and_then(Value::as_str)
+        .unwrap_or("default");
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".into())
+        });
+
+    // Carry the receipt across when the file came from a search, so the credit survives the move
+    // out of the cache. Losing it here is how a CC-BY image ends up in a finished film with
+    // nobody able to say whose it was.
+    let receipt = cache::receipts()
+        .into_iter()
+        .find(|r| args.get("stockId").and_then(Value::as_str) == Some(r.stock_id.as_str()));
+
+    let item = library::save(
+        std::path::Path::new(path),
+        collection,
+        &name,
+        receipt.as_ref(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "saved": item,
+        "creditLine": item.credit_line(),
+        "hint": "library_collect copies the whole collection beside a project, so the piece \
+                 travels as one folder",
+    }))
+}
+
+/// `library_list`: what is kept.
+pub fn library_list(args: &Value) -> Value {
+    let collection = args.get("collection").and_then(Value::as_str);
+    let items = library::list(collection);
+    let credits: Vec<String> = items
+        .iter()
+        .filter_map(library::Item::credit_line)
+        .collect();
+    let bytes: u64 = items.iter().map(|i| i.bytes).sum();
+    let mut collections: Vec<String> = items.iter().map(|i| i.collection.clone()).collect();
+    collections.sort();
+    collections.dedup();
+    json!({
+        "items": items,
+        "collections": collections,
+        "bytes": bytes,
+        "libraryDir": library::library_dir(),
+        "credits": credits,
+    })
+}
+
+/// `library_collect`: copy a collection into a project's own media folder.
+pub fn library_collect(args: &Value) -> Result<Value, String> {
+    let collection = args
+        .get("collection")
+        .and_then(Value::as_str)
+        .ok_or("library_collect needs a collection — library_list names them")?;
+    let into = args.get("into").and_then(Value::as_str).ok_or(
+        "library_collect needs `into`: the folder to copy into, usually beside the project",
+    )?;
+    let copied =
+        library::collect(collection, std::path::Path::new(into)).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "copied": copied,
+        "count": copied.len(),
+        "into": into,
+        "hint": "media_import each of these to put them on the timeline. A project references \
+                 media by absolute path, so a project plus this folder is the whole piece.",
+    }))
 }
 
 /// The real transport, for callers with nothing to inject.
@@ -468,6 +567,19 @@ mod tests {
         )
         .unwrap();
         assert!(out["hint"].as_str().unwrap().contains("clear winner"));
+    }
+
+    /// Music defaults to the one provider that has any, and says so rather than answering with
+    /// an empty list when asked for the impossible.
+    #[test]
+    fn asking_wikimedia_for_music_is_refused_with_the_reason() {
+        let error = stock_search(
+            &json!({"query": "tension", "kind": "audio", "provider": "wikimedia"}),
+            &Canned(body(1)),
+            Rerank::None,
+        )
+        .unwrap_err();
+        assert!(error.contains("openverse"), "{error}");
     }
 
     #[test]

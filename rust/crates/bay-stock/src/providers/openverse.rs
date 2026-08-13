@@ -36,11 +36,26 @@ impl Provider for Openverse {
             "clevelandart.org",
             "statliga.se",
             "nypl.org",
+            // Audio comes from the source's own CDN too — Freesound serves nearly all of the
+            // CC-BY music the audio endpoint returns.
+            "freesound.org",
+            "jamendo.com",
+            "archive.org",
+            "ccmixter.org",
         ]
     }
 
     fn search_url(&self, query: &Query, _key: Option<&str>) -> String {
         let fetch = (query.limit * 4).clamp(10, 50);
+        if query.kind == Kind::Audio {
+            // The audio endpoint takes the same filters and answers the same licence codes, so
+            // everything below about what bay will and will not cut applies unchanged to music.
+            return format!(
+                "https://api.openverse.org/v1/audio/?q={}&page_size={fetch}\
+                 &license_type=commercial,modification",
+                urlencode(&query.text)
+            );
+        }
         // `license_type=commercial,modification` asks the API for exactly the two freedoms an
         // editor needs. It is belt and braces — `Licence::parse` refuses the rest anyway — but
         // filtering server-side means the candidate list is not mostly discards.
@@ -61,6 +76,9 @@ impl Provider for Openverse {
         let Some(results) = root.get("results").and_then(|r| r.as_array()) else {
             return Ok(Vec::new());
         };
+        if query.kind == Kind::Audio {
+            return Ok(self.parse_audio(results, query));
+        }
 
         let mut out = Vec::new();
         for item in results {
@@ -90,6 +108,7 @@ impl Provider for Openverse {
                 stock_id: stock_id("openverse", &id),
                 title: text(item, "title").unwrap_or_else(|| "untitled".into()),
                 kind: Kind::Image,
+                duration_seconds: None,
                 licence,
                 credit: Credit {
                     creator: text(item, "creator"),
@@ -104,6 +123,49 @@ impl Provider for Openverse {
             });
         }
         Ok(out)
+    }
+}
+
+impl Openverse {
+    /// The audio shape. Openverse reports length in milliseconds and has no thumbnail worth
+    /// ranking, so the preview is the audio itself — nothing looks at it, and `bay-vision`
+    /// scores pictures rather than sound.
+    fn parse_audio(&self, results: &[serde_json::Value], query: &Query) -> Vec<StockAsset> {
+        let mut out = Vec::new();
+        for item in results {
+            let raw_licence = text(item, "license").unwrap_or_default();
+            let version = text(item, "license_version");
+            let Some(licence) =
+                Licence::parse_allowed(&raw_licence, version.as_deref(), query.allowed)
+            else {
+                continue;
+            };
+            let (Some(id), Some(url)) = (text(item, "id"), text(item, "url")) else {
+                continue;
+            };
+            let seconds = item
+                .get("duration")
+                .and_then(|v| v.as_f64())
+                .map(|ms| (ms / 1000.0 * 100.0).round() / 100.0);
+            out.push(StockAsset {
+                stock_id: stock_id("openverse", &id),
+                title: text(item, "title").unwrap_or_else(|| "untitled".into()),
+                kind: Kind::Audio,
+                duration_seconds: seconds,
+                licence,
+                credit: Credit {
+                    creator: text(item, "creator"),
+                    source: text(item, "source").unwrap_or_else(|| "Openverse".into()),
+                    page_url: text(item, "foreign_landing_url").unwrap_or_else(|| url.clone()),
+                },
+                preview_url: url.clone(),
+                url,
+                width: None,
+                height: None,
+                provider: "openverse".to_string(),
+            });
+        }
+        out
     }
 }
 
@@ -183,6 +245,55 @@ mod tests {
                 || url.contains("license_type=commercial,modification")
         );
         assert!(url.contains("trading+floor"));
+    }
+
+    const AUDIO: &str = r#"{"result_count":2,"results":[
+      {"id":"m1","title":"Cinematic Tension","url":"https://cdn.freesound.org/previews/456/a.mp3",
+       "foreign_landing_url":"https://freesound.org/s/456104/","creator":"klankbeeld",
+       "license":"by","license_version":"4.0","source":"freesound","duration":9750},
+      {"id":"m2","title":"Sharealike loop","url":"https://cdn.freesound.org/previews/263/b.mp3",
+       "foreign_landing_url":"https://freesound.org/s/263998/","creator":"x",
+       "license":"by-sa","license_version":"4.0","source":"freesound","duration":30750}]}"#;
+
+    fn audio_query() -> Query {
+        let mut q = Query::new("cinematic tension");
+        q.kind = Kind::Audio;
+        q
+    }
+
+    #[test]
+    fn a_music_result_carries_its_length_in_seconds() {
+        let found = Openverse.parse(AUDIO, &audio_query()).unwrap();
+        let first = found.iter().find(|a| a.stock_id == "openverse:m1").unwrap();
+        assert_eq!(first.kind, Kind::Audio);
+        assert_eq!(
+            first.duration_seconds,
+            Some(9.75),
+            "milliseconds must become seconds"
+        );
+        assert_eq!(first.credit.creator.as_deref(), Some("klankbeeld"));
+        assert!(first.licence.needs_credit());
+    }
+
+    /// The licence policy is one policy. Music is not a special case that gets to be copyleft
+    /// because it is harder to find.
+    #[test]
+    fn sharealike_music_is_filtered_out_like_everything_else() {
+        let found = Openverse.parse(AUDIO, &audio_query()).unwrap();
+        assert!(!found.iter().any(|a| a.stock_id == "openverse:m2"));
+        let mut opted = audio_query();
+        opted.allowed = crate::Allowed::with_share_alike();
+        let found = Openverse.parse(AUDIO, &opted).unwrap();
+        assert!(found.iter().any(|a| a.stock_id == "openverse:m2"));
+    }
+
+    #[test]
+    fn searching_for_music_asks_the_audio_endpoint() {
+        let url = Openverse.search_url(&audio_query(), None);
+        assert!(url.contains("/v1/audio/"), "{url}");
+        assert!(!url.contains("/v1/images/"), "{url}");
+        let image = Openverse.search_url(&Query::new("x"), None);
+        assert!(image.contains("/v1/images/"), "{image}");
     }
 
     #[test]

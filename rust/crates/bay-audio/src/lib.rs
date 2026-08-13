@@ -1,6 +1,7 @@
 //! Audio decode + analysis via the ffmpeg CLI sidecar: waveform peaks for display, and full
 //! interleaved f32 PCM for playback.
 
+pub mod beats;
 pub mod library;
 pub mod loudness;
 pub mod sfx;
