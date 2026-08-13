@@ -1,0 +1,180 @@
+{
+ "_note": "The 1929 crash, for the music grid. Every card is a complete sentence with its own context — the last piece opened on the bare word '1923' and nobody reading it knew what 1923 was. Lines are capped at 26 characters: past that the red chip is wider than the frame. `beats` sum to 115, the length of the track.",
+ "title": [
+  "HOW WALL STREET LOST",
+  "89% OF ITS VALUE"
+ ],
+ "cards": [
+  {
+   "beats": 7,
+   "show": [
+    "New York, September 1929",
+    "Prices hit a record high"
+   ],
+   "mark": "hook",
+   "q": "New York Stock Exchange building",
+   "d": "the neoclassical columned facade of the New York Stock Exchange in the 1920s"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "You could buy stock with",
+    "just ten percent down"
+   ],
+   "q": "stock certificate 1929",
+   "d": "an ornate engraved share certificate from the 1920s"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "A broker lent the rest",
+    "It was buying on margin"
+   ],
+   "q": "Wall Street 1920s street",
+   "d": "a busy 1920s New York street of tall buildings and men in hats"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "Drivers and clerks were",
+    "trading on borrowed cash"
+   ],
+   "q": "New York street 1920s crowd",
+   "d": "a crowded 1920s city pavement full of ordinary men in suits and hats"
+  },
+  {
+   "beats": 7,
+   "show": [
+    "Thursday, 24 October",
+    "The selling began"
+   ],
+   "mark": "the crash",
+   "q": "Crowd outside New York Stock Exchange",
+   "d": "a dense anxious crowd of men filling the street outside the stock exchange"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "Nearly 13 million shares",
+    "sold in a single day"
+   ],
+   "q": "Wall Street Crash 1929",
+   "d": "a huge crowd packed shoulder to shoulder in a narrow city street"
+  },
+  {
+   "beats": 7,
+   "show": [
+    "The ticker ran late",
+    "No one knew their losses"
+   ],
+   "q": "stock ticker tape machine",
+   "d": "a ticker tape machine printing a long ribbon of paper"
+  },
+  {
+   "beats": 7,
+   "show": [
+    "Bankers pooled money",
+    "and bought in the open"
+   ],
+   "q": "banker portrait 1920s",
+   "d": "a formal portrait of financiers in dark suits and hats"
+  },
+  {
+   "beats": 5,
+   "show": [
+    "It steadied the panic",
+    "for one weekend"
+   ],
+   "q": "Wall Street 1929 police",
+   "d": "police standing in the street outside a financial building"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "The next Monday, the 28th",
+    "Prices fell 13 percent"
+   ],
+   "mark": "monday",
+   "q": "New York Stock Exchange 1929 crowd",
+   "d": "a crowd of men held back outside the exchange, hats and overcoats"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "Tuesday was far worse",
+    "16 million shares dumped"
+   ],
+   "mark": "black tuesday",
+   "q": "Beurskrach Wall Street 1929",
+   "d": "a newspaper photograph of the stock market panic, a dense crowd"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "The loans were called in",
+    "Each sale forced another"
+   ],
+   "q": "Great Depression 1929 unemployed",
+   "d": "a man standing idle or selling apples on a city street in the Depression"
+  },
+  {
+   "beats": 7,
+   "show": [
+    "By 1932 the Dow sank",
+    "from 381 points to 41"
+   ],
+   "mark": "the number",
+   "q": "Dow Jones 1929 chart",
+   "d": "a line chart falling steeply away from a high peak"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "That is 89 percent",
+    "of everything, wiped out"
+   ],
+   "mark": "payoff",
+   "q": "stock market crash graph",
+   "d": "a graph plunging downward, a steep decline"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "Thousands of banks shut",
+    "Savings simply vanished"
+   ],
+   "q": "bank failure Great Depression",
+   "d": "a closed bank with people gathered outside the doors"
+  },
+  {
+   "beats": 6,
+   "show": [
+    "A quarter of America",
+    "was out of work"
+   ],
+   "q": "bread line Great Depression",
+   "d": "a long line of poor men queuing in the street for free food"
+  },
+  {
+   "beats": 7,
+   "show": [
+    "It did not recover",
+    "until November 1954"
+   ],
+   "mark": "the wait",
+   "q": "New York Stock Exchange 1950s",
+   "d": "a 1950s stock exchange trading floor, men in suits among paper"
+  },
+  {
+   "beats": 8,
+   "show": [
+    "Twenty-five years",
+    "to get back to even"
+   ],
+   "mark": "landing",
+   "q": "Wall Street street sign",
+   "d": "the Wall Street street sign, or the exchange facade seen from below"
+  }
+ ],
+ "mark": "1929"
+}
