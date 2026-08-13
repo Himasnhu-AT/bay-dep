@@ -99,6 +99,11 @@ pub fn machine_tools() -> &'static [&'static str] {
         "fonts_check",
         "runtime_status",
         "runtime_install",
+        // Reporting what the machine can do needs no document, and must answer before a project
+        // exists — choosing images is something an author does while deciding what to build.
+        "vision_status",
+        "stock_status",
+        "stock_credits",
         // Following and stopping background work needs no document — and must keep working
         // after one is closed, or a render started against a project the user then closed
         // becomes unfollowable.

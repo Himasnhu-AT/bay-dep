@@ -126,6 +126,16 @@
         "kenney-ui-audio"
       ],
       "diskBytes": 1500000
+    },
+    {
+      "id": "vision",
+      "title": "Visual search",
+      "detail": "A SigLIP image-text encoder, so stock_search can order results by what is in the photograph rather than by what is in its filename. Optional — searching still works without it, just much worse.",
+      "artifacts": [
+        "siglip-model",
+        "siglip-tokenizer"
+      ],
+      "diskBytes": 820000000
     }
   ],
   "artifacts": [
@@ -2978,6 +2988,108 @@
           "bytes": 411949,
           "provides": [
             "sfx/kenney-ui/Audio"
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": [
+        "Google's own checkpoint, Apache-2.0, pinned to a commit rather than to a branch.",
+        "",
+        "fp32 both towers, which is why it is 813 MB. The quantised ONNX conversions are a third",
+        "the size, but every one of them is a third party's re-upload of somebody else's weights,",
+        "and bay's rule is that an artifact needs an immutable URL from a source that can be",
+        "checked years later. Google's repository is that; a community conversion is not.",
+        "",
+        "The same file serves every platform: weights are not architecture-specific."
+      ],
+      "id": "siglip-model",
+      "name": "SigLIP base patch16-224 weights",
+      "source": "https://huggingface.co/google/siglip-base-patch16-224",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/model.safetensors",
+          "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8",
+          "bytes": 812672320,
+          "files": [
+            {
+              "member": "model.safetensors",
+              "install": "models/siglip/model.safetensors"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/model.safetensors",
+          "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8",
+          "bytes": 812672320,
+          "files": [
+            {
+              "member": "model.safetensors",
+              "install": "models/siglip/model.safetensors"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/model.safetensors",
+          "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8",
+          "bytes": 812672320,
+          "files": [
+            {
+              "member": "model.safetensors",
+              "install": "models/siglip/model.safetensors"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "siglip-tokenizer",
+      "name": "SigLIP tokenizer",
+      "source": "https://huggingface.co/google/siglip-base-patch16-224",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/tokenizer.json",
+          "sha256": "c6e405cb7c670d56636a9402c81023a55bc6c3c53d89cf02b92f5c5005bfe920",
+          "bytes": 2399357,
+          "files": [
+            {
+              "member": "tokenizer.json",
+              "install": "models/siglip/tokenizer.json"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/tokenizer.json",
+          "sha256": "c6e405cb7c670d56636a9402c81023a55bc6c3c53d89cf02b92f5c5005bfe920",
+          "bytes": 2399357,
+          "files": [
+            {
+              "member": "tokenizer.json",
+              "install": "models/siglip/tokenizer.json"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/tokenizer.json",
+          "sha256": "c6e405cb7c670d56636a9402c81023a55bc6c3c53d89cf02b92f5c5005bfe920",
+          "bytes": 2399357,
+          "files": [
+            {
+              "member": "tokenizer.json",
+              "install": "models/siglip/tokenizer.json"
+            }
           ]
         }
       ]

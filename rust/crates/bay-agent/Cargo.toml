@@ -10,6 +10,8 @@ bay-jobs = { path = "../bay-jobs" }
 bay-core = { path = "../bay-core" }
 bay-speech = { path = "../bay-speech" }
 bay-provision = { path = "../bay-provision" }
+bay-stock = { path = "../bay-stock" }
+bay-vision = { path = "../bay-vision" }
 bay-preview = { path = "../bay-preview" }
 # For validating a .cube before it is attached, so a broken grade is an error rather than a
 # clip that quietly looks untouched.

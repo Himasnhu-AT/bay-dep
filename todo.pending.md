@@ -22,8 +22,11 @@ export decoding from the preview cache, the 20-second tool ceiling, the unpinned
 download, the three render-path panics, and the sidecar that could outlive its parent.
 
 **Deliberately not doing yet:** Linux (macOS and Windows only, and an unsupported platform says
-so rather than pretending), multiple windows, Stage 3 edit-conflict leases, and vision until the
-palmier premise is verified.
+so rather than pretending), multiple windows, and Stage 3 edit-conflict leases.
+
+**Vision is no longer on that list — it shipped.** See
+[`todo.completed.md`](todo.completed.md#finding-a-picture-by-describing-it). The runtime question
+below is answered: Candle, in-process.
 
 ---
 
@@ -261,8 +264,19 @@ and third, the shared pieces are worth pulling out:
   entry plus a component, and it inherits the digest verification, the resume-safe staging, the
   background job and the progress UI for free. The assistant and vision should add entries, not
   plumbing.
-- a policy on **which runtime**: llama.cpp for GGUF text+vision, plus something for SigLIP
-  embeddings (ONNX Runtime, or Candle if we want it in-process).
+- a policy on **which runtime**: **decided for embeddings — Candle, in-process.** `bay-vision`
+  runs SigLIP with no sidecar and no interpreter, which is why visual search does not depend on
+  the 1.2 GB speech component. Two findings from building it, for whoever does the assistant:
+  - **Metal does not work.** candle 0.9's Metal backend has no `layer-norm` and no
+    `softmax-last-dim` kernel, so a SigLIP forward pass dies at the first encoder block. Not a
+    misconfiguration — there is nothing to set. It runs on the CPU with Accelerate as the BLAS.
+    Anything else built on candle should assume the same until those kernels land.
+  - **The provisioning half really is free**, as claimed above. The `vision` component is two
+    manifest artifacts and one line in `editor_view.rs`; it inherited digest verification,
+    staging and the progress UI with no new plumbing.
+
+  Still open for the *assistant*: llama.cpp for GGUF text+vision is untested here, and a
+  generative model is a much worse fit for in-process than a 780 MB encoder is.
 
 The downloader half is no longer in the way. Generalising the *sidecar supervisor* is still worth
-doing before a second and third model process exist.
+doing before a second and third model **process** exist — though vision no longer adds one.

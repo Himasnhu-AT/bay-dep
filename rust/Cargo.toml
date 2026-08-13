@@ -19,6 +19,8 @@ members = [
     "crates/bay-preview",
     "crates/bay-text",
     "crates/bay-ui",
+    "crates/bay-stock",
+    "crates/bay-vision",
     "crates/bay-test-support",
 ]
 

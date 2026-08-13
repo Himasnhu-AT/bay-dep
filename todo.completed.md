@@ -9,14 +9,76 @@ Companions: [`todo.pending.md`](todo.pending.md) (not built yet) ·
 | | |
 |---|---|
 | Engine | shapes, per-axis scale + anchors, 8 easings, full text typography, audio in export |
-| MCP | 24 tools over HTTP/stdio; snapshot, render, timeline introspection |
+| MCP | 65 tools over HTTP/stdio; snapshot, render, timeline introspection |
 | Speech | Kokoro sidecar, word-level timestamps, SRT/VTT in and out, `subtitles_to_video` |
+| Vision | SigLIP in-process; find a picture by describing it, and fetch it from the open archives |
 | Runtimes | bay installs its own ffmpeg and Kokoro — weights included — from a pinned, hash-verified manifest |
 | Platform | menu bar, Cmd+Q/W/M/S, quit saves the open project, `BUNDLE=1 ./run.sh` for the real .app |
 | Agents | one owner of `:7333`, discoverable via `bay --agents`; conflicts name what holds it |
 | Build | `./build.sh` builds the one binary, `bay`; runtimes are the app's job, not the build's |
 | Skill | `.claude/skills/bay/` — an agent can drive the editor unassisted |
-| Tests | 431 passing, and the suite is deterministic |
+| Tests | 967 passing, and the suite is deterministic |
+
+---
+
+## Finding a picture by describing it
+
+**The problem, concretely.** Ask Wikimedia Commons for "Barings Bank" and the first result is a
+Barclays branch on Baring Road in Beaconsfield. The words match perfectly and the photograph is
+of nothing to do with the subject, because the search is over filenames and wikitext. An archive
+that answers with the filename rather than the picture cannot be used to illustrate anything
+without a human opening every result.
+
+Three crates, and the value is in the composition rather than in any one of them:
+
+- **`bay-vision`** — SigLIP image/text embeddings, in-process via Candle. No sidecar, no
+  interpreter, so visual search does not depend on the 1.2 GB speech component. Provisioned as
+  the `vision` component: Google's own Apache-2.0 checkpoint, pinned to a commit, 815 MB.
+- **`bay-stock`** — search and download over Wikimedia Commons and Openverse (keyless), with
+  Pexels and Unsplash wired and dormant until a key exists. Every result is licensed for use in
+  a video; ND, NC and SA are filtered out before the caller sees them.
+- **`bay_agent::illustrate`** — the join, in the one crate both the editor path and the headless
+  server route through, so the same verb cannot behave two ways.
+
+Six tools: `vision_status`, `stock_status`, `stock_search`, `stock_fetch`, `stock_credits`,
+`image_rank`. 59 → 65.
+
+**What proves it.** `assets/loaf-of-bread/` — a 78 s short built entirely from images this
+found. Its `sources.json` is the twenty-five it chose out of an archive it re-ranked, and
+`MANIFEST.md` records the measurements. 967 tests pass, up from 870; 81 of the new ones are in
+these two crates and every one runs without a network, a GPU or a model. The live path is proven
+separately by the video: `stock_search "hyperinflation 1923 Germany"` re-ranked the archive's
+tenth result to first.
+
+**Three things worth keeping in mind.**
+
+1. **The archive and the encoder want opposite inputs.** Commons wants two keywords and returns
+   *nothing at all* for a sentence; SigLIP wants the longest, most concrete description you can
+   write. That is why `stock_search` takes both `query` and `describe`, and it is not a
+   convenience — passing a sentence as `query` returns zero results, measured.
+2. **Scores are not calibrated and must not be read as confidence.** SigLIP's sigmoid training
+   leaves the signal in the *ordering* and in the gap between the best and the median. Every
+   result set carries a `separation`, and a separation near zero means the archive has nothing
+   matching the query — search for something else rather than placing the top hit.
+3. **The tool proposes; a person picks.** It put an East German party headquarters first for
+   "Reichsbank", and a 1933 antisemitic boycott photo first for a query about shop windows.
+   Both were caught by looking at a contact sheet. Nothing here should be wired to place an
+   image without someone seeing it, which is the same position `shots_detect` already takes.
+
+**ShareAlike is an explicit, per-call opt-in.** ND is refused because an edit is a derivative
+work and NC because bay cannot know how a film will be used — those are flat refusals. SA is
+different: it does not restrict the edit, it obliges the *finished film* to carry the same
+licence. Refusing it outright made the best historical material invisible (the Bundesarchiv
+released its Weimar photographs as CC BY-SA 3.0 de, so the default policy returns none of them);
+accepting it silently would make someone's film copyleft without telling them. So
+`licence: "allow-sharealike"` turns it on for one call and the result carries a
+`licenceWarning` saying what it costs.
+
+**Two pre-existing bugs fixed while here.** `runtime_install`'s component enum was a hardcoded
+`["video", "speech"]` and had already drifted — `sfx` shipped as a component no agent could
+legally ask for. It is now derived from the manifest. And Commons writes an unknown author as a
+tooltip span wrapping the word plus the same word again, so stripping tags produced
+`UnknownUnknown` in generated credit lines.
 
 ---
 

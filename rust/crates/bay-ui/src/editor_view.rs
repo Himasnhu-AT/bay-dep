@@ -175,6 +175,8 @@ fn runtime_offers() -> Vec<RuntimeOffer> {
             element_id: match plan.component.as_str() {
                 "video" => "install-video",
                 "speech" => "install-speech",
+                "sfx" => "install-sfx",
+                "vision" => "install-vision",
                 _ => "install-runtime",
             },
             id: plan.component.clone(),

@@ -39,6 +39,14 @@ pub fn slow_tools() -> &'static [&'static str] {
         // Scanning for cuts decodes the whole file. On a long take that is minutes of work,
         // and it must never run on the thread drawing the window.
         "shots_detect",
+        // A search is one HTTP round trip to an archive, plus — when the vision component is
+        // installed — a preview download and a SigLIP forward pass per candidate. Seconds, on
+        // somebody else's server, and never on the thread drawing the window.
+        "stock_search",
+        // Downloading an archive original: a few megabytes usually, tens occasionally.
+        "stock_fetch",
+        // Loading 780 MB of weights and running a forward pass per image.
+        "image_rank",
     ]
 }
 
@@ -92,6 +100,16 @@ pub struct SlowResult {
     pub follow_up: FollowUp,
 }
 
+impl SlowResult {
+    /// A result that answers and changes nothing — a search, a score, a download to disk.
+    pub fn value(value: Value) -> Self {
+        Self {
+            value,
+            follow_up: FollowUp::None,
+        }
+    }
+}
+
 /// Everything a slow job needs, copied out of the editor on the main thread.
 ///
 /// Owned rather than borrowed on purpose: the worker must not hold a reference into a project
@@ -126,6 +144,11 @@ pub fn run(
         "shots_detect" => shots_detect(args, context),
         "narrate" => narrate(args, context, job),
         "subtitles_to_video" => subtitles_to_video(args, job),
+        // These three touch the network or the encoder and never the document, so they answer
+        // with a bare value and leave the project alone.
+        "stock_search" => crate::illustrate::stock_search(args).map(SlowResult::value),
+        "stock_fetch" => crate::illustrate::stock_fetch(args).map(SlowResult::value),
+        "image_rank" => bay_vision::mcp::image_rank(args).map(SlowResult::value),
         other => Err(format!("{other} is not a background tool")),
     }
 }

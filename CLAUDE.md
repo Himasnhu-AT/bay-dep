@@ -46,6 +46,9 @@ rust/
 │   ├── bay-preview   preview rendering, decode planning, caching
 │   ├── compositor, gpu, effects, masks    the wgpu render path
 │   ├── bay-audio, bay-text, bay-speech
+│   ├── bay-vision   SigLIP image↔text embeddings (Candle, in-process, CPU)
+│   ├── bay-stock    searching the open image archives; the one crate that talks to a
+│   │                  third party, and only when a tool call asks it to
 │   ├── bay-provision installs bay's own runtimes (ffmpeg, Python, Kokoro) from a
 │   │                  pinned, SHA-256-verified manifest — the user installs nothing
 │   ├── time              MediaTime tick math

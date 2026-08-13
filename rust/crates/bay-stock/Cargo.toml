@@ -1,0 +1,24 @@
+[package]
+name = "bay-stock"
+version = "0.1.0"
+edition = "2024"
+description = "Searching the open image archives, and bringing back files bay is allowed to cut."
+
+[dependencies]
+bay-paths = { path = "../bay-paths" }
+serde = { workspace = true }
+serde_json = "1"
+thiserror = { workspace = true }
+sha2 = "0.10"
+
+# The same client, version and TLS stack as bay-provision, deliberately.
+#
+# bay-provision's copy is NOT shared with this one, and that is the point. Its trust model is
+# "the pinned digest is the anchor" and every byte it moves is verified against the manifest.
+# A search result has no digest by construction — nobody pinned it, it did not exist when bay
+# shipped. Routing an unpinned fetch through the verified-download path would mean either
+# weakening those tests or inventing a pin, and neither is worth the deduplication.
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+
+[dev-dependencies]
+bay-test-support = { path = "../bay-test-support" }

@@ -53,7 +53,19 @@ adapter is the one thing bay cannot provide. `render`, `narrate`, `subtitles_to_
    Beats are how `check` reads the piece and how the mix is judged. See
    [references/structure.md](references/structure.md).
 3. **`media_import`** — bed, footage, stills. Returns real probed durations. `shots_detect` finds
-   the cuts in footage you have not watched.
+   the cuts in footage you have not watched. **No pictures of your own?** `stock_search` searches
+   the open archives and orders the results by what is *in* the frame, `stock_fetch` brings one
+   down, and `media_import` takes it from there. Three things about it:
+   - It takes **two** strings and they want opposite things. `query` is keywords for the archive,
+     which matches filenames — two or three words, and a sentence returns nothing at all.
+     `describe` is what the picture should show, and the longer and more concrete the better.
+   - Read `separation` before you trust the order. Near zero means nothing in the archive matches
+     and you should ask a different question, not place the top hit.
+   - **Look at what it picked.** It has put an East German party headquarters first for
+     "Reichsbank". It proposes; you choose.
+
+   It is also the one tool in bay that sends anything off the machine, and `stock_credits` is
+   what you owe afterwards.
 4. **`add_text` / `add_shape`** with a `role` and a `tone`; **`add_image` / `add_video`** for
    anything you imported; **`add_audio`** for the bed.
 5. **`animate`** — name a registry `move`. `animate_many` runs one move across a group, staggered:
@@ -111,7 +123,13 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
   charts possible: pin a bar's left edge and animating `scaleX` grows it rightward instead of
   outward from its middle.
 - **Keyframe times are relative to the ELEMENT's start**, not the timeline's.
-- **For text, `scale` is the box the type is laid out in**, and text draws from the box's top-left.
+- **For text, `scale` is the box the type is laid out in**, and text draws from the box's
+  top-left. Two consequences, both of which have shipped as bugs:
+  - `scale` **never** changes the glyph size — only the role does. Shrinking `scale` to make a
+    headline smaller narrows the box instead, and the type wraps to one character per line.
+  - With `anchorY: 0.5` the *box* is centred, so a full-width box puts your first line roughly
+    0.45 of the canvas **above** where you asked. Use `anchorY: 0` and treat `y` as the top of
+    the text, or measure the offset once on a snapshot and subtract it.
 - **Land reveals ON the cue, don't start them on one.** Passing a cue time as an animation's start
   makes the element *begin* moving there and arrive late.
 - **A mask is a stencil over the canvas, not over the layer.** `mask_set` does not inherit the

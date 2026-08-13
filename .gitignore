@@ -28,3 +28,5 @@ dist/
 # --- rendered video output (reproducible from the project JSON + assets/) ---
 out/
 assets/round2/bed_*.wav
+assets/loaf-of-bread/bed.wav
+assets/loaf-of-bread/plates/

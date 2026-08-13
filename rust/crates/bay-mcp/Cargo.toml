@@ -16,6 +16,8 @@ bay-paths = { path = "../bay-paths" }
 bay-text = { path = "../bay-text" }
 bay-speech = { path = "../bay-speech" }
 bay-provision = { path = "../bay-provision" }
+bay-stock = { path = "../bay-stock" }
+bay-vision = { path = "../bay-vision" }
 bay-time = { path = "../bay-time" }
 serde = { workspace = true }
 serde_json = "1"

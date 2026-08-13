@@ -385,6 +385,37 @@ fn headless_job(kind: &str, label: &str, work: impl FnOnce() -> ToolResult) -> T
     }
 }
 
+/// The components `runtime_install` will accept, read from the manifest rather than listed here.
+///
+/// This was a hardcoded `["video", "speech"]`, and by the time `sfx` shipped the list had
+/// already drifted: the component existed, the installer handled it, and no agent could ask for
+/// it because the schema said it was not a legal value. Deriving it means adding a component to
+/// the manifest is the whole change.
+fn installable_components() -> Vec<&'static str> {
+    bay_provision::Manifest::embedded()
+        .components
+        .iter()
+        .map(|component| component.id.as_str())
+        .collect()
+}
+
+/// What each component is and roughly what it costs, from the manifest's own words.
+fn installable_detail() -> String {
+    bay_provision::Manifest::embedded()
+        .components
+        .iter()
+        .map(|component| {
+            format!(
+                "{} (~{} MB) = {}",
+                component.id,
+                component.disk_bytes / 1_000_000,
+                component.detail
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
     json!({
         "name": name,
@@ -1175,12 +1206,10 @@ pub fn definitions() -> Vec<Value> {
             "runtime_install",
             "Install what bay is missing, from builds pinned and hash-verified in bay itself. \
              The user needs nothing installed beforehand. Returns immediately with a job id — \
-             this takes minutes — so poll runtime_status with that id until finished is true. \
-             \"video\" is about 57 MB and is what render and media_import need; \"speech\" is \
-             about 1.2 GB and is only needed for narrate.",
+             this takes minutes — so poll runtime_status with that id until finished is true.",
             json!({
-                "component": { "type": "string", "enum": ["video", "speech"],
-                    "description": "video = ffmpeg and ffprobe. speech = Python, Kokoro and its weights." }
+                "component": { "type": "string", "enum": installable_components(),
+                    "description": installable_detail() }
             }),
             &["component"],
         ),
@@ -1190,6 +1219,111 @@ pub fn definitions() -> Vec<Value> {
              can speak. Call this before narrate.",
             json!({}),
             &[],
+        ),
+        tool(
+            "vision_status",
+            "Whether bay can find a picture from a description — the SigLIP encoder that scores \
+             an image against a phrase. Without it stock_search still works, but the results \
+             come back in the archive's keyword order, which is about filenames rather than \
+             about what is in the photograph.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "stock_status",
+            "Which image archives bay can reach, which need a key, and how much has already \
+             been downloaded. Worth reading once before your first stock_search: searching is \
+             the one part of bay that sends anything off this machine.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "stock_search",
+            "Search an open image archive and get results ordered by what is actually in the \
+             picture.\n\nThis sends your query to a third party — it is the only tool in bay \
+             that does. Nothing is downloaded to your disk until you call stock_fetch.\n\nEvery \
+             result is licensed for use in a video: NonCommercial, NoDerivatives and ShareAlike \
+             are filtered out before you see them, because an edit is a derivative work. \
+             Results carry a `licence`, a `credit`, a `score`, and `was` — where the archive \
+             itself had ranked it, so you can see what the re-rank changed.\n\nRead `separation` \
+             before you trust the order: if it is near zero every candidate scored alike and the \
+             archive has nothing matching your query. Search for something else rather than \
+             taking the top hit.",
+            json!({
+                "query": { "type": "string",
+                    "description": "KEYWORDS for the archive to match, not a sentence. The \
+                                    archive searches filenames and article text, so \
+                                    \"hyperinflation 1923\" finds things and \"children playing \
+                                    with worthless banknotes in 1923 Germany\" finds nothing at \
+                                    all. Keep it to two or three words." },
+                "describe": { "type": "string",
+                    "description": "What the picture should SHOW, as a sentence — this is what \
+                                    the results are re-ranked against, and it wants the opposite \
+                                    of `query`. \"children stacking bundles of banknotes like \
+                                    toy bricks\" scores far better than \"money\". Defaults to \
+                                    `query`, which works but ranks worse." },
+                "provider": { "type": "string", "enum": ["wikimedia", "openverse", "pexels", "unsplash"],
+                    "description": "wikimedia (default) is the archive for things that actually \
+                                    happened — historical photographs, documents, banknotes. \
+                                    openverse is a CC aggregator, better for generic b-roll. \
+                                    pexels and unsplash are modern stock and need a free API key." },
+                "limit": { "type": "integer",
+                    "description": "How many results to return, 1-50. Defaults to 12. More \
+                                    candidates are always fetched and scored than are returned." },
+                "minWidth": { "type": "integer",
+                    "description": "Drop anything narrower than this. 1200 keeps thumbnails out \
+                                    of a piece that will be delivered at 1080 wide." },
+                "licence": { "type": "string", "enum": ["allow-sharealike"],
+                    "description": "Omit this. By default ShareAlike results are filtered out, \
+                                    because using one obliges you to release your finished video \
+                                    under CC BY-SA too — a decision about your own work.\n\n\
+                                    Set it to \"allow-sharealike\" when you have decided that is \
+                                    acceptable. It matters for historical subjects: the German \
+                                    federal archive released its Weimar photographs as CC BY-SA, \
+                                    so the default policy returns none of them. The result \
+                                    carries a `licenceWarning` saying what you have taken on." }
+            }),
+            &["query"],
+        ),
+        tool(
+            "stock_fetch",
+            "Download one stock_search result to this machine, with its licence and attribution \
+             recorded beside it. Pass the whole result object from stock_search as `asset`.\n\n\
+             It does not put the file on the timeline — call media_import with the path it \
+             returns. Returns `creditLine` when the licence obliges you to credit somebody; \
+             stock_credits collects all of them at the end.",
+            json!({
+                "asset": { "type": "object",
+                    "description": "One entire object from stock_search's results array." },
+                "maxBytes": { "type": "integer",
+                    "description": "Refuse anything larger rather than filling the disk. \
+                                    Defaults to 64 MB." }
+            }),
+            &["asset"],
+        ),
+        tool(
+            "stock_credits",
+            "The attribution for everything downloaded, as text you can paste. Credits belong in \
+             the post description, or on screen at the moment the sourced image is shown — not \
+             on an end card nobody reads.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "image_rank",
+            "Score images already on disk against a phrase, best first. The same encoder \
+             stock_search re-ranks with, pointed at your own files — for choosing among frames \
+             you exported, or among pictures you already downloaded.\n\nScores are not \
+             calibrated: 0.05 can be an excellent match. Read `separation`, not the absolute \
+             number.",
+            json!({
+                "query": { "type": "string",
+                    "description": "Describe what you are looking for, in plain words." },
+                "paths": { "type": "array", "items": { "type": "string" },
+                    "description": "Absolute paths to the images to score. Unreadable files are \
+                                    listed in `skipped` rather than failing the call." }
+            }),
+            &["query", "paths"],
         ),
         tool(
             "narrate",
@@ -1530,6 +1664,12 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         "runtime_status" => Ok(bay_provision::mcp::runtime_status(args)),
         "runtime_install" => bay_provision::mcp::runtime_install(args).map_err(crate::studio::err),
         "speech_status" => studio.speech_status(),
+        "vision_status" => Ok(bay_vision::mcp::vision_status()),
+        "image_rank" => bay_vision::mcp::image_rank(args).map_err(crate::studio::err),
+        "stock_status" => Ok(bay_stock::mcp::stock_status()),
+        "stock_search" => bay_agent::illustrate::stock_search(args).map_err(crate::studio::err),
+        "stock_fetch" => bay_agent::illustrate::stock_fetch(args).map_err(crate::studio::err),
+        "stock_credits" => Ok(bay_stock::mcp::stock_credits()),
         "narrate" => {
             let label = required_text(args, "text")?
                 .chars()

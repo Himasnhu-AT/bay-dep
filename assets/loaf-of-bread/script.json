@@ -1,0 +1,239 @@
+{
+ "title": [
+  "HOW A LOAF OF BREAD",
+  "COST 200 BILLION MARKS"
+ ],
+ "voice": "bm_george",
+ "lines": [
+  {
+   "beat": 1,
+   "show": [
+    "1923"
+   ],
+   "say": "Nineteen twenty three."
+  },
+  {
+   "beat": 2,
+   "show": [
+    "Germany owed reparations",
+    "it could not pay"
+   ],
+   "say": "Germany owed reparations it could not possibly pay."
+  },
+  {
+   "beat": 3,
+   "show": [
+    "So the presses",
+    "never stopped"
+   ],
+   "say": "So the printing presses never stopped."
+  },
+  {
+   "beat": 4,
+   "show": [
+    "In January, a loaf",
+    "of bread cost 250 marks"
+   ],
+   "say": "In January, a loaf of bread cost two hundred and fifty marks."
+  },
+  {
+   "beat": 5,
+   "show": [
+    "By November",
+    "the same loaf cost"
+   ],
+   "say": "By November, the same loaf cost"
+  },
+  {
+   "beat": 6,
+   "show": [
+    "200 BILLION MARKS"
+   ],
+   "say": "two hundred billion marks."
+  },
+  {
+   "beat": 7,
+   "show": [
+    "Prices doubled",
+    "in under four days"
+   ],
+   "say": "At the peak, prices doubled in under four days."
+  },
+  {
+   "beat": 8,
+   "show": [
+    "Wages were paid",
+    "twice a day"
+   ],
+   "say": "Wages were paid twice a day."
+  },
+  {
+   "beat": 9,
+   "show": [
+    "You ran to the shops",
+    "at lunch"
+   ],
+   "say": "You ran to the shops at lunchtime,"
+  },
+  {
+   "beat": 10,
+   "show": [
+    "because by evening",
+    "it was worth half"
+   ],
+   "say": "because by the evening your money was worth half."
+  },
+  {
+   "beat": 11,
+   "show": [
+    "Savings vanished",
+    "inside a week"
+   ],
+   "say": "Savings built over a lifetime vanished inside a week."
+  },
+  {
+   "beat": 12,
+   "show": [
+    "The middle class",
+    "was erased"
+   ],
+   "say": "The German middle class was erased."
+  },
+  {
+   "beat": 13,
+   "show": [
+    "It was cheaper to paper",
+    "a wall with money"
+   ],
+   "say": "It became cheaper to paper a wall with banknotes"
+  },
+  {
+   "beat": 14,
+   "show": [
+    "than to buy wallpaper"
+   ],
+   "say": "than to buy wallpaper."
+  },
+  {
+   "beat": 15,
+   "show": [
+    "Then, on",
+    "15 November 1923"
+   ],
+   "say": "Then, on the fifteenth of November,"
+  },
+  {
+   "beat": 16,
+   "show": [
+    "a new currency",
+    "was issued"
+   ],
+   "say": "a new currency was issued."
+  },
+  {
+   "beat": 17,
+   "show": [
+    "One new mark",
+    "for one TRILLION old"
+   ],
+   "say": "One new mark, for one trillion old ones."
+  },
+  {
+   "beat": 18,
+   "show": [
+    "Backed by no gold"
+   ],
+   "say": "It was backed by no gold at all."
+  },
+  {
+   "beat": 19,
+   "show": [
+    "Only a mortgage",
+    "on German farmland"
+   ],
+   "say": "Only a mortgage on German farmland."
+  },
+  {
+   "beat": 20,
+   "show": [
+    "It was not even",
+    "legal tender"
+   ],
+   "say": "It was not even legal tender."
+  },
+  {
+   "beat": 21,
+   "show": [
+    "It should not",
+    "have worked"
+   ],
+   "say": "It should not have worked."
+  },
+  {
+   "beat": 22,
+   "show": [
+    "Within days",
+    "the prices stopped"
+   ],
+   "say": "Within days, the prices stopped."
+  },
+  {
+   "beat": 23,
+   "show": [
+    "The old money",
+    "was burned"
+   ],
+   "say": "The old money was carted away and burned."
+  },
+  {
+   "beat": 24,
+   "show": [
+    "Ten months",
+    "to kill a currency"
+   ],
+   "say": "It took ten months to kill a currency."
+  },
+  {
+   "beat": 25,
+   "show": [
+    "One afternoon",
+    "to believe in the next"
+   ],
+   "say": "And one afternoon to believe in the next one."
+  }
+ ],
+ "markers": [
+  {
+   "line": 1,
+   "label": "hook"
+  },
+  {
+   "line": 4,
+   "label": "the number"
+  },
+  {
+   "line": 7,
+   "label": "the spiral"
+  },
+  {
+   "line": 11,
+   "label": "the cost"
+  },
+  {
+   "line": 15,
+   "label": "turn"
+  },
+  {
+   "line": 17,
+   "label": "payoff"
+  },
+  {
+   "line": 21,
+   "label": "the doubt"
+  },
+  {
+   "line": 24,
+   "label": "landing"
+  }
+ ]
+}
