@@ -1,0 +1,5696 @@
+{
+  "metadata": {
+    "id": "project-1786626280872-7",
+    "name": "loaf-of-bread-music"
+  },
+  "settings": {
+    "fps": {
+      "numerator": 30,
+      "denominator": 1
+    },
+    "canvas": {
+      "width": 1080,
+      "height": 1920
+    },
+    "background": {
+      "type": "color",
+      "color": "#000000"
+    },
+    "kit": {
+      "id": "stadium",
+      "name": "Stadium",
+      "note": "Shouted against stated: a Clarendon slab at poster scale over a neo-grotesque. For sport, retail, launches and anything with a scoreline.",
+      "faces": {
+        "display": {
+          "family": "Rockwell",
+          "weight": 700
+        },
+        "body": {
+          "family": "Helvetica Neue",
+          "weight": 400
+        },
+        "mono": {
+          "family": "Menlo",
+          "weight": 700
+        }
+      },
+      "ramp": {
+        "hook": {
+          "size": 193.8,
+          "tracking": -0.02,
+          "lineHeight": 1.02
+        },
+        "headline": {
+          "size": 121.6,
+          "tracking": -0.015,
+          "lineHeight": 1.08
+        },
+        "kicker": {
+          "size": 36.2,
+          "tracking": 0.16,
+          "lineHeight": 1.2
+        },
+        "label": {
+          "size": 37.2,
+          "tracking": 0.0,
+          "lineHeight": 1.32
+        },
+        "caption": {
+          "size": 58.6,
+          "tracking": 0.0,
+          "lineHeight": 1.28
+        },
+        "lockup": {
+          "size": 73.0,
+          "tracking": 0.06,
+          "lineHeight": 1.16
+        },
+        "data": {
+          "size": 178.6,
+          "tracking": -0.01,
+          "lineHeight": 1.0
+        },
+        "ground": {
+          "size": 30.1,
+          "tracking": 0.0,
+          "lineHeight": 1.3
+        },
+        "chrome": {
+          "size": 30.1,
+          "tracking": 0.1,
+          "lineHeight": 1.2
+        }
+      },
+      "palette": {
+        "bg": "#101014",
+        "surface": "#43415A",
+        "ink": "#FFFFFF",
+        "dim": "#8A8A9B",
+        "accent": "#EE4436",
+        "accent2": "#F0B429"
+      },
+      "framings": [
+        {
+          "name": "hero",
+          "x": 0.5,
+          "y": 0.38,
+          "anchorX": 0.5,
+          "anchorY": 0.5,
+          "scale": 0.84000003
+        },
+        {
+          "name": "top-left",
+          "x": 0.08,
+          "y": 0.111999996,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.60480005
+        },
+        {
+          "name": "left-column",
+          "x": 0.08,
+          "y": 0.53999996,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.5544
+        },
+        {
+          "name": "lower-third",
+          "x": 0.08,
+          "y": 0.66,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.84000003
+        },
+        {
+          "name": "footer",
+          "x": 0.08,
+          "y": 0.92,
+          "anchorX": 0.0,
+          "anchorY": 1.0,
+          "scale": 0.84000003
+        }
+      ]
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene-main",
+      "name": "Main",
+      "isMain": true,
+      "tracks": {
+        "overlay": [
+          {
+            "id": "track-overlay-1",
+            "name": "Overlay 1",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "image",
+                "id": "s000",
+                "name": "s000",
+                "start": 0,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m59",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 252000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 340000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s001",
+                "name": "s001",
+                "start": 148000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m60",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 104000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 192000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s010",
+                "name": "s010",
+                "start": 252000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m56",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 312000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 400000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s011",
+                "name": "s011",
+                "start": 408000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m45",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s020",
+                "name": "s020",
+                "start": 564000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m54",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 260000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 348000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s021",
+                "name": "s021",
+                "start": 696000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m47",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 128000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 216000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s030",
+                "name": "s030",
+                "start": 824000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m59",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 368000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 456000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s031",
+                "name": "s031",
+                "start": 1008000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m27",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 184000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 272000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s040",
+                "name": "s040",
+                "start": 1192000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m57",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 260000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 348000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s041",
+                "name": "s041",
+                "start": 1320000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m36",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 132000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 220000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s050",
+                "name": "s050",
+                "start": 1452000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m16",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 364000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 452000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s051",
+                "name": "s051",
+                "start": 1632000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m49",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 184000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 272000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s060",
+                "name": "s060",
+                "start": 1816000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m8",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 316000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 404000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s061",
+                "name": "s061",
+                "start": 1976000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m53",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s070",
+                "name": "s070",
+                "start": 2132000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m56",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 312000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 400000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s071",
+                "name": "s071",
+                "start": 2288000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m35",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s080",
+                "name": "s080",
+                "start": 2444000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m60",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 260000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 348000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s081",
+                "name": "s081",
+                "start": 2576000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m53",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 128000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 216000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s090",
+                "name": "s090",
+                "start": 2704000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m45",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 312000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 400000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s091",
+                "name": "s091",
+                "start": 2860000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m34",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s100",
+                "name": "s100",
+                "start": 3016000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m52",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 368000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 456000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s101",
+                "name": "s101",
+                "start": 3200000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m22",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 184000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 272000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s110",
+                "name": "s110",
+                "start": 3384000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m50",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 312000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 400000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s111",
+                "name": "s111",
+                "start": 3540000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m26",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s120",
+                "name": "s120",
+                "start": 3696000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m58",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 312000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 400000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s121",
+                "name": "s121",
+                "start": 3852000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m51",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s130",
+                "name": "s130",
+                "start": 4008000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m46",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 364000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 452000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s131",
+                "name": "s131",
+                "start": 4188000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m37",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 184000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 272000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s140",
+                "name": "s140",
+                "start": 4372000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m18",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 316000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 404000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s141",
+                "name": "s141",
+                "start": 4528000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m55",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 160000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 248000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s150",
+                "name": "s150",
+                "start": 4688000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m61",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 364000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 452000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s151",
+                "name": "s151",
+                "start": 4872000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m56",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 180000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 268000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s160",
+                "name": "s160",
+                "start": 5052000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m39",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.46447998
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 312000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 400000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s161",
+                "name": "s161",
+                "start": 5208000,
+                "duration": 624000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m17",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 156000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 244000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s170",
+                "name": "s170",
+                "start": 5364000,
+                "duration": 624000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m55",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.53552
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 260000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 348000,
+                        "value": 0.401
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s171",
+                "name": "s171",
+                "start": 5496000,
+                "duration": 536000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m21",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.58889997,
+                        "easing": "power4-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "power4-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 128000,
+                        "value": 0.501,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 216000,
+                        "value": 0.601
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s180",
+                "name": "s180",
+                "start": 5624000,
+                "duration": 408000,
+                "fadeIn": 24000,
+                "fadeOut": 0,
+                "mediaId": "m39",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.4111,
+                        "easing": "power4-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "power4-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "image",
+                "id": "s181",
+                "name": "s181",
+                "start": 5836000,
+                "duration": 196000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "m23",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.501,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.58889997,
+                        "easing": "power4-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "power4-out"
+                  }
+                },
+                "blendMode": "normal",
+                "mask": {
+                  "shape": "rect",
+                  "x": 0.5,
+                  "y": 0.501,
+                  "width": 1.0,
+                  "height": 0.584,
+                  "feather": 0.0,
+                  "inverted": false
+                },
+                "source": "author",
+                "role": "ground"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-2",
+            "name": "Overlay 2",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": []
+          },
+          {
+            "id": "track-overlay-3",
+            "name": "Overlay 3",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "shape",
+                "id": "chip00_0",
+                "name": "chip00_0",
+                "start": 36000,
+                "duration": 208000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.47,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.21,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip01_0",
+                "name": "chip01_0",
+                "start": 244000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.76,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip01_1",
+                "name": "chip01_1",
+                "start": 244000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.4915,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip02_0",
+                "name": "chip02_0",
+                "start": 556000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.47,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.4245,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip03_0",
+                "name": "chip03_0",
+                "start": 816000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.43,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.2685,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip03_1",
+                "name": "chip03_1",
+                "start": 816000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.47,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.461,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip03_2",
+                "name": "chip03_2",
+                "start": 816000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.51,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.338,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip04_0",
+                "name": "chip04_0",
+                "start": 1184000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.299,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip04_1",
+                "name": "chip04_1",
+                "start": 1184000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.4135,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip05_0",
+                "name": "chip05_0",
+                "start": 1444000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.47,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.7005,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip06_0",
+                "name": "chip06_0",
+                "start": 1808000,
+                "duration": 316000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.4685,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip06_1",
+                "name": "chip06_1",
+                "start": 1808000,
+                "duration": 316000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.444,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip07_0",
+                "name": "chip07_0",
+                "start": 2124000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.4855,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip07_1",
+                "name": "chip07_1",
+                "start": 2124000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.3525,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip08_0",
+                "name": "chip08_0",
+                "start": 2436000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.455,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip08_1",
+                "name": "chip08_1",
+                "start": 2436000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.2745,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip09_0",
+                "name": "chip09_0",
+                "start": 2696000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.3465,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip09_1",
+                "name": "chip09_1",
+                "start": 2696000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.5525,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip10_0",
+                "name": "chip10_0",
+                "start": 3008000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.655,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip10_1",
+                "name": "chip10_1",
+                "start": 3008000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.6135,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip11_0",
+                "name": "chip11_0",
+                "start": 3376000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.821,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip11_1",
+                "name": "chip11_1",
+                "start": 3376000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.366,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip12_0",
+                "name": "chip12_0",
+                "start": 3688000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.655,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip12_1",
+                "name": "chip12_1",
+                "start": 3688000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.427,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip13_0",
+                "name": "chip13_0",
+                "start": 4000000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.7025,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip13_1",
+                "name": "chip13_1",
+                "start": 4000000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.566,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip14_0",
+                "name": "chip14_0",
+                "start": 4364000,
+                "duration": 316000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.47,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.659,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip15_0",
+                "name": "chip15_0",
+                "start": 4680000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.394,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip15_1",
+                "name": "chip15_1",
+                "start": 4680000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.7015,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip16_0",
+                "name": "chip16_0",
+                "start": 5044000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.533,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip16_1",
+                "name": "chip16_1",
+                "start": 5044000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.638,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip17_0",
+                "name": "chip17_0",
+                "start": 5356000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.377,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip17_1",
+                "name": "chip17_1",
+                "start": 5356000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.3355,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip18_0",
+                "name": "chip18_0",
+                "start": 5616000,
+                "duration": 420000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.45,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.6415,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              },
+              {
+                "type": "shape",
+                "id": "chip18_1",
+                "name": "chip18_1",
+                "start": 5616000,
+                "duration": 420000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.49,
+                  "scale": 1.0,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.8135,
+                  "scaleY": 0.042,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-4",
+            "name": "Overlay 4",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "text",
+                "id": "cap00_0",
+                "name": "1923",
+                "start": 36000,
+                "duration": 208000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "1923",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4464,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap01_0",
+                "name": "Germany owed reparations",
+                "start": 244000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Germany owed reparations",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap01_1",
+                "name": "it could not pay",
+                "start": 244000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "it could not pay",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap02_0",
+                "name": "So it printed",
+                "start": 556000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "So it printed",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4464,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap03_0",
+                "name": "January",
+                "start": 816000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "January",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4064,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap03_1",
+                "name": "a loaf of bread",
+                "start": 816000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "a loaf of bread",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4464,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap03_2",
+                "name": "250 marks",
+                "start": 816000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "250 marks",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4864,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap04_0",
+                "name": "November",
+                "start": 1184000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "November",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap04_1",
+                "name": "the same loaf",
+                "start": 1184000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "the same loaf",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap05_0",
+                "name": "200 BILLION MARKS",
+                "start": 1444000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "200 BILLION MARKS",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4464,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap06_0",
+                "name": "Prices doubled",
+                "start": 1808000,
+                "duration": 316000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Prices doubled",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap06_1",
+                "name": "every few days",
+                "start": 1808000,
+                "duration": 316000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "every few days",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap07_0",
+                "name": "Wages were paid",
+                "start": 2124000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Wages were paid",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap07_1",
+                "name": "twice a day",
+                "start": 2124000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "twice a day",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap08_0",
+                "name": "You spent them",
+                "start": 2436000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "You spent them",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap08_1",
+                "name": "at lunch",
+                "start": 2436000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "at lunch",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap09_0",
+                "name": "By evening",
+                "start": 2696000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "By evening",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap09_1",
+                "name": "worth half as much",
+                "start": 2696000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "worth half as much",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap10_0",
+                "name": "A lifetime of savings",
+                "start": 3008000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "A lifetime of savings",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap10_1",
+                "name": "bought a tram ticket",
+                "start": 3008000,
+                "duration": 368000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "bought a tram ticket",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap11_0",
+                "name": "Children stacked banknot",
+                "start": 3376000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Children stacked banknotes",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap11_1",
+                "name": "like bricks",
+                "start": 3376000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "like bricks",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap12_0",
+                "name": "Cheaper to burn money",
+                "start": 3688000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Cheaper to burn money",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap12_1",
+                "name": "than firewood",
+                "start": 3688000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "than firewood",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap13_0",
+                "name": "Cheaper to paper a wall",
+                "start": 4000000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Cheaper to paper a wall",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap13_1",
+                "name": "than buy wallpaper",
+                "start": 4000000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "than buy wallpaper",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap14_0",
+                "name": "15 NOVEMBER 1923",
+                "start": 4364000,
+                "duration": 316000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "15 NOVEMBER 1923",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4464,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap15_0",
+                "name": "One new mark",
+                "start": 4680000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "One new mark",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap15_1",
+                "name": "for one TRILLION old",
+                "start": 4680000,
+                "duration": 364000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "for one TRILLION old",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap16_0",
+                "name": "Backed by no gold",
+                "start": 5044000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Backed by no gold",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap16_1",
+                "name": "only German farmland",
+                "start": 5044000,
+                "duration": 312000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "only German farmland",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap17_0",
+                "name": "Within days",
+                "start": 5356000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Within days",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap17_1",
+                "name": "it stopped",
+                "start": 5356000,
+                "duration": 260000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "it stopped",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap18_0",
+                "name": "Ten months to kill it",
+                "start": 5616000,
+                "duration": 420000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "Ten months to kill it",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4264,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "cap18_1",
+                "name": "one afternoon to replace",
+                "start": 5616000,
+                "duration": 420000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "one afternoon to replace it",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.4664,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-5",
+            "name": "Overlay 5",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "text",
+                "id": "title0",
+                "name": "HOW A LOAF OF BREAD",
+                "start": 0,
+                "duration": 6032000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "HOW A LOAF OF BREAD",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.0514,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "title1",
+                "name": "COST 200 BILLION MARKS",
+                "start": 0,
+                "duration": 6032000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "COST 200 BILLION MARKS",
+                "fontSize": 37.2,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.0959,
+                  "scale": 0.94,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "mark",
+                "name": "1923",
+                "start": 0,
+                "duration": 6032000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "1923",
+                "fontSize": 36.2,
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.058,
+                  "y": 0.7324,
+                  "scale": 0.2,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.0,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Menlo",
+                "fontWeight": 700,
+                "align": "left",
+                "letterSpacing": 0.16,
+                "lineHeight": 1.2,
+                "source": "author",
+                "role": "kicker"
+              }
+            ]
+          }
+        ],
+        "main": {
+          "id": "track-main",
+          "name": "Main",
+          "kind": "video",
+          "hidden": false,
+          "muted": false,
+          "elements": []
+        },
+        "audio": [
+          {
+            "id": "track-audio",
+            "name": "Audio",
+            "kind": "audio",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "audio",
+                "id": "bedclip",
+                "name": "bedclip",
+                "start": 0,
+                "duration": 6032000,
+                "fadeIn": 0,
+                "fadeOut": 108000,
+                "mediaId": "music",
+                "muted": false,
+                "volume": 1.0,
+                "animations": {},
+                "trimStart": 0,
+                "source": "author",
+                "role": "bed"
+              }
+            ]
+          }
+        ]
+      },
+      "markers": [
+        {
+          "id": "marker-1",
+          "time": 44000,
+          "label": "hook"
+        },
+        {
+          "id": "marker-2",
+          "time": 824000,
+          "label": "the number"
+        },
+        {
+          "id": "marker-3",
+          "time": 1452000,
+          "label": "the number lands"
+        },
+        {
+          "id": "marker-4",
+          "time": 1816000,
+          "label": "the spiral"
+        },
+        {
+          "id": "marker-5",
+          "time": 3016000,
+          "label": "the cost"
+        },
+        {
+          "id": "marker-6",
+          "time": 4372000,
+          "label": "turn"
+        },
+        {
+          "id": "marker-7",
+          "time": 4688000,
+          "label": "payoff"
+        },
+        {
+          "id": "marker-8",
+          "time": 5624000,
+          "label": "landing"
+        }
+      ]
+    }
+  ],
+  "currentSceneId": "scene-main",
+  "media": [
+    {
+      "id": "m8",
+      "name": "p08.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p08.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m16",
+      "name": "p16.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p16.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m17",
+      "name": "p17.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p17.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m18",
+      "name": "p18.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p18.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m20",
+      "name": "p20.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p20.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m21",
+      "name": "p21.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p21.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m22",
+      "name": "p22.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p22.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m23",
+      "name": "p23.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p23.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m26",
+      "name": "p26.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p26.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m27",
+      "name": "p27.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p27.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m34",
+      "name": "p34.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p34.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m35",
+      "name": "p35.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p35.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m36",
+      "name": "p36.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p36.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m37",
+      "name": "p37.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p37.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m39",
+      "name": "p39.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p39.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m45",
+      "name": "p45.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p45.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m46",
+      "name": "p46.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p46.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m47",
+      "name": "p47.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p47.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m49",
+      "name": "p49.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p49.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m50",
+      "name": "p50.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p50.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m51",
+      "name": "p51.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p51.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m52",
+      "name": "p52.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p52.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m53",
+      "name": "p53.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p53.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m54",
+      "name": "p54.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p54.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m55",
+      "name": "p55.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p55.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m56",
+      "name": "p56.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p56.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m57",
+      "name": "p57.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p57.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m58",
+      "name": "p58.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p58.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m59",
+      "name": "p59.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p59.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m60",
+      "name": "p60.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p60.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m61",
+      "name": "p61.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p61.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "m62",
+      "name": "p62.png",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/plates2/p62.png",
+      "durationSeconds": 0.0,
+      "width": 1080,
+      "height": 1122
+    },
+    {
+      "id": "music",
+      "name": "music.wav",
+      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/6ce70dd5-730c-4f44-a5e1-464464ec1e74/scratchpad/music.wav",
+      "durationSeconds": 50.31765,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": 0.0,
+        "rmsDb": -16.1,
+        "lufs": -13.9,
+        "accentSeconds": [
+          36.0,
+          46.7
+        ]
+      }
+    }
+  ]
+}
