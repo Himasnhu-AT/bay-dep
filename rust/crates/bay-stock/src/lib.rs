@@ -317,6 +317,17 @@ pub struct Query {
 }
 
 impl Query {
+    /// What Commons calls this kind in a `filetype:` filter.
+    ///
+    /// Audio is not listed because no adapter that answers audio uses this — Openverse has its
+    /// own endpoint and Commons is not where anyone looks for a music bed.
+    pub fn file_type(&self) -> &'static str {
+        match self.kind {
+            Kind::Video => "video",
+            _ => "bitmap",
+        }
+    }
+
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),

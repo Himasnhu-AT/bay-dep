@@ -7,7 +7,7 @@
 //! else's problem.
 
 use crate::providers::{Provider, number, stock_id, text};
-use crate::{Credit, Kind, Licence, Query, StockAsset, StockError};
+use crate::{Credit, Licence, Query, StockAsset, StockError};
 
 pub struct Wikimedia;
 
@@ -26,9 +26,12 @@ impl Provider for Wikimedia {
     }
 
     fn search_url(&self, query: &Query, _key: Option<&str>) -> String {
-        // `filetype:bitmap` keeps SVG diagrams and PDFs out of an image search; `gsrnamespace=6`
-        // is the File: namespace. `iiurlwidth` asks the thumbnailer for a preview at a width the
-        // ranker can use without pulling a 40 MB original.
+        // `filetype:bitmap` keeps SVG diagrams and PDFs out of an image search, and
+        // `filetype:video` is the same switch for footage — Commons has a lot of recorded talks,
+        // interviews and archive film. Without this the adapter answered a request for video
+        // with stills and said nothing, which is the failure mode this whole crate is supposed
+        // not to have. `gsrnamespace=6` is the File: namespace; `iiurlwidth` asks the
+        // thumbnailer for a preview the ranker can use without pulling the original.
         //
         // The limit is deliberately larger than the caller's: the whole point of re-ranking is
         // to choose from more candidates than you intend to use, and Commons' own order is the
@@ -37,8 +40,8 @@ impl Provider for Wikimedia {
         format!(
             "https://commons.wikimedia.org/w/api.php?action=query&format=json\
              &generator=search&gsrsearch={}&gsrnamespace=6&gsrlimit={fetch}\
-             &prop=imageinfo&iiprop=url%7Cextmetadata%7Csize&iiurlwidth=800",
-            urlencode(&format!("filetype:bitmap {}", query.text))
+             &prop=imageinfo&iiprop=url%7Cextmetadata%7Csize%7Cmediatype&iiurlwidth=800",
+            urlencode(&format!("filetype:{} {}", query.file_type(), query.text))
         )
     }
 
@@ -110,8 +113,11 @@ impl Provider for Wikimedia {
             out.push(StockAsset {
                 stock_id: stock_id("wikimedia", &key.clone()),
                 title,
-                kind: Kind::Image,
-                duration_seconds: None,
+                kind: query.kind,
+                duration_seconds: info
+                    .get("duration")
+                    .and_then(|v| v.as_f64())
+                    .map(|s| (s * 100.0).round() / 100.0),
                 licence,
                 credit: Credit {
                     creator,
@@ -187,6 +193,7 @@ fn urlencode(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Kind;
 
     const BODY: &str = r#"{"query":{"pages":{
       "10":{"title":"File:Kids with money.jpg","imageinfo":[{
@@ -251,6 +258,35 @@ mod tests {
         let second = Wikimedia.parse(BODY, &Query::new("x")).unwrap();
         let ids = |v: &[StockAsset]| v.iter().map(|a| a.stock_id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&first), ids(&second));
+    }
+
+    /// The defect this pins: asking for video used to return stills and say nothing, because
+    /// both the filter and the kind were hardcoded to images.
+    #[test]
+    fn asking_for_video_searches_for_video_and_labels_it_video() {
+        let mut query = Query::new("ocean waves");
+        query.kind = Kind::Video;
+        let url = Wikimedia.search_url(&query, None);
+        assert!(url.contains("filetype%3Avideo"), "{url}");
+        assert!(!url.contains("filetype%3Abitmap"), "{url}");
+
+        let body = r#"{"query":{"pages":{"1":{"title":"File:A talk.webm","imageinfo":[{
+            "url":"https://upload.wikimedia.org/a.webm",
+            "thumburl":"https://upload.wikimedia.org/t.jpg",
+            "descriptionurl":"https://commons.wikimedia.org/wiki/File:A.webm",
+            "width":1280,"height":720,"duration":373.57,
+            "extmetadata":{"LicenseShortName":{"value":"CC BY 3.0"}}}]}}}}"#;
+        let found = Wikimedia.parse(body, &query).unwrap();
+        assert_eq!(found[0].kind, Kind::Video);
+        assert_eq!(found[0].duration_seconds, Some(373.57));
+    }
+
+    #[test]
+    fn an_image_search_still_asks_for_bitmaps() {
+        let url = Wikimedia.search_url(&Query::new("bank"), None);
+        assert!(url.contains("filetype%3Abitmap"), "{url}");
+        let found = Wikimedia.parse(BODY, &Query::new("x")).unwrap();
+        assert!(found.iter().all(|a| a.kind == Kind::Image));
     }
 
     #[test]
