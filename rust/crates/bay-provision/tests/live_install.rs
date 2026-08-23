@@ -127,6 +127,27 @@ fn speech_provisions_a_python_that_can_import_kokoro() {
         "the venv must import kokoro, not merely exist"
     );
 
+    // The weights, which used to be the hidden second phase: the progress bar finished and then
+    // the first narrate silently pulled ~339 MB inside one blocking call. Asserting the venv
+    // imports kokoro says nothing about whether they arrived, which is why this test could pass
+    // for months while that download was completely unreported.
+    let models = scratch.join("runtime").join("models").join("kokoro");
+    assert!(
+        models.join("kokoro-v1_0.pth").is_file(),
+        "the model itself must be on disk after installing speech, not fetched at speak time"
+    );
+    assert!(
+        models.join("config.json").is_file(),
+        "the model config must be on disk"
+    );
+    let voices = std::fs::read_dir(models.join("voices"))
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0);
+    assert_eq!(
+        voices, 54,
+        "every voice the sidecar advertises must be installed, found {voices}"
+    );
+
     let after = bay_provision::report();
     assert!(
         after.component("speech").is_some_and(|plan| plan.satisfied),
@@ -134,4 +155,63 @@ fn speech_provisions_a_python_that_can_import_kokoro() {
     );
 
     let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// The recorded sound packs, fetched and unpacked for real.
+///
+/// The claim is not "a zip downloaded" — it is that the files land where the library looks and
+/// that the library then finds them by name. A pack that installs into the wrong directory is
+/// indistinguishable, from the editor's side, from one that never downloaded.
+#[test]
+fn sound_packs_install_and_the_library_finds_them() {
+    if !enabled() {
+        eprintln!("skipping: set BAY_PROVISION_LIVE=1 to run the real download");
+        return;
+    }
+    let scratch = scratch_root("sfx");
+    let root = scratch.join("runtime");
+
+    let before = bay_provision::manifest::plan(
+        bay_provision::Manifest::embedded(),
+        "sfx",
+        bay_provision::Target::CURRENT,
+        &root,
+        &|path| path.exists(),
+    )
+    .expect("sfx component");
+    assert!(!before.satisfied, "the scratch root should start empty");
+    assert!(before.download_bytes > 0);
+
+    bay_provision::install_blocking("sfx", &Http::new(), &mut |_| {})
+        .expect("provisioning sfx must succeed");
+
+    // Where `Studio::sfx_root` looks.
+    let sfx = root.join("sfx");
+    let sounds = bay_audio::library::installed(&sfx);
+    assert!(
+        sounds.len() > 100,
+        "both packs should be indexed, found {}",
+        sounds.len()
+    );
+
+    // The two packs are distinguishable, so a future third one cannot silently replace one.
+    let packs: std::collections::BTreeSet<&str> =
+        sounds.iter().map(|sound| sound.pack.as_str()).collect();
+    assert_eq!(packs.len(), 2, "{packs:?}");
+
+    // And the point of the whole thing: a search for a sound finds one.
+    let clicks = bay_audio::library::search(&sfx, "click");
+    assert!(!clicks.is_empty(), "a pack of interface sounds has a click");
+    assert!(
+        clicks[0].path.exists(),
+        "the indexed path must be a file that is really there"
+    );
+
+    // The licence travels with the download, which is what makes it checkable later.
+    let licences: Vec<_> = std::fs::read_dir(&sfx)
+        .expect("the sfx directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("License.txt").exists())
+        .collect();
+    assert_eq!(licences.len(), 2, "each pack ships its own licence file");
 }

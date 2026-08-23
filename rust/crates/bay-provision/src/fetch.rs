@@ -107,6 +107,40 @@ fn copy_with_progress(
 }
 
 /// A writer that hashes everything passing through it.
+/// Stops a download that has already exceeded the size the manifest declared.
+///
+/// The digest is the trust anchor, but it is only checked once the transfer *ends* — so without
+/// a ceiling a hostile or compromised origin can stream unbounded data into the cache and fill
+/// the disk before anything rejects it. The manifest states the size and the module already
+/// takes the position that a server disagreeing with it should be distrusted; this acts on that
+/// rather than only reporting it.
+struct Capped<'a> {
+    inner: &'a mut dyn Write,
+    written: u64,
+    limit: u64,
+}
+
+impl Write for Capped<'_> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.written.saturating_add(buffer.len() as u64) > self.limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "the server sent more than the {} bytes this artifact is pinned at",
+                    self.limit
+                ),
+            ));
+        }
+        let written = self.inner.write(buffer)?;
+        self.written += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 struct Hashing<'a> {
     inner: &'a mut dyn Write,
     hasher: Sha256,
@@ -182,12 +216,21 @@ pub fn download_verified(
     let staging = cache.join(format!("{}.{}.part", need.sha256, std::process::id()));
     let outcome = (|| -> Result<String, ProvisionError> {
         let mut file = File::create(&staging).map_err(|e| ProvisionError::at(&staging, e))?;
-        let mut hashing = Hashing {
-            inner: &mut file,
-            hasher: Sha256::new(),
+        let digest = {
+            // A little slack, so a server that pads by a few bytes fails on the digest — which
+            // says what is wrong — rather than on the ceiling, which only says "too big".
+            let mut capped = Capped {
+                inner: &mut file,
+                written: 0,
+                limit: need.bytes.saturating_add(64 * 1024),
+            };
+            let mut hashing = Hashing {
+                inner: &mut capped,
+                hasher: Sha256::new(),
+            };
+            fetch.get(&need.url, &mut hashing, on_progress)?;
+            hex(&hashing.hasher.finalize())
         };
-        fetch.get(&need.url, &mut hashing, on_progress)?;
-        let digest = hex(&hashing.hasher.finalize());
         file.sync_all()
             .map_err(|e| ProvisionError::at(&staging, e))?;
         Ok(digest)

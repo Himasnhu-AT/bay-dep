@@ -9,14 +9,76 @@ Companions: [`todo.pending.md`](todo.pending.md) (not built yet) ·
 | | |
 |---|---|
 | Engine | shapes, per-axis scale + anchors, 8 easings, full text typography, audio in export |
-| MCP | 24 tools over HTTP/stdio; snapshot, render, timeline introspection |
+| MCP | 65 tools over HTTP/stdio; snapshot, render, timeline introspection |
 | Speech | Kokoro sidecar, word-level timestamps, SRT/VTT in and out, `subtitles_to_video` |
-| Runtimes | bay installs its own ffmpeg and Kokoro from a pinned, hash-verified manifest |
+| Vision | SigLIP in-process; find a picture by describing it, and fetch it from the open archives |
+| Runtimes | bay installs its own ffmpeg and Kokoro — weights included — from a pinned, hash-verified manifest |
 | Platform | menu bar, Cmd+Q/W/M/S, quit saves the open project, `BUNDLE=1 ./run.sh` for the real .app |
 | Agents | one owner of `:7333`, discoverable via `bay --agents`; conflicts name what holds it |
 | Build | `./build.sh` builds the one binary, `bay`; runtimes are the app's job, not the build's |
 | Skill | `.claude/skills/bay/` — an agent can drive the editor unassisted |
-| Tests | 386 passing, and the suite is deterministic |
+| Tests | 967 passing, and the suite is deterministic |
+
+---
+
+## Finding a picture by describing it
+
+**The problem, concretely.** Ask Wikimedia Commons for "Barings Bank" and the first result is a
+Barclays branch on Baring Road in Beaconsfield. The words match perfectly and the photograph is
+of nothing to do with the subject, because the search is over filenames and wikitext. An archive
+that answers with the filename rather than the picture cannot be used to illustrate anything
+without a human opening every result.
+
+Three crates, and the value is in the composition rather than in any one of them:
+
+- **`bay-vision`** — SigLIP image/text embeddings, in-process via Candle. No sidecar, no
+  interpreter, so visual search does not depend on the 1.2 GB speech component. Provisioned as
+  the `vision` component: Google's own Apache-2.0 checkpoint, pinned to a commit, 815 MB.
+- **`bay-stock`** — search and download over Wikimedia Commons and Openverse (keyless), with
+  Pexels and Unsplash wired and dormant until a key exists. Every result is licensed for use in
+  a video; ND, NC and SA are filtered out before the caller sees them.
+- **`bay_agent::illustrate`** — the join, in the one crate both the editor path and the headless
+  server route through, so the same verb cannot behave two ways.
+
+Six tools: `vision_status`, `stock_status`, `stock_search`, `stock_fetch`, `stock_credits`,
+`image_rank`. 59 → 65.
+
+**What proves it.** `assets/loaf-of-bread/` — a 78 s short built entirely from images this
+found. Its `sources.json` is the twenty-five it chose out of an archive it re-ranked, and
+`MANIFEST.md` records the measurements. 967 tests pass, up from 870; 81 of the new ones are in
+these two crates and every one runs without a network, a GPU or a model. The live path is proven
+separately by the video: `stock_search "hyperinflation 1923 Germany"` re-ranked the archive's
+tenth result to first.
+
+**Three things worth keeping in mind.**
+
+1. **The archive and the encoder want opposite inputs.** Commons wants two keywords and returns
+   *nothing at all* for a sentence; SigLIP wants the longest, most concrete description you can
+   write. That is why `stock_search` takes both `query` and `describe`, and it is not a
+   convenience — passing a sentence as `query` returns zero results, measured.
+2. **Scores are not calibrated and must not be read as confidence.** SigLIP's sigmoid training
+   leaves the signal in the *ordering* and in the gap between the best and the median. Every
+   result set carries a `separation`, and a separation near zero means the archive has nothing
+   matching the query — search for something else rather than placing the top hit.
+3. **The tool proposes; a person picks.** It put an East German party headquarters first for
+   "Reichsbank", and a 1933 antisemitic boycott photo first for a query about shop windows.
+   Both were caught by looking at a contact sheet. Nothing here should be wired to place an
+   image without someone seeing it, which is the same position `shots_detect` already takes.
+
+**ShareAlike is an explicit, per-call opt-in.** ND is refused because an edit is a derivative
+work and NC because bay cannot know how a film will be used — those are flat refusals. SA is
+different: it does not restrict the edit, it obliges the *finished film* to carry the same
+licence. Refusing it outright made the best historical material invisible (the Bundesarchiv
+released its Weimar photographs as CC BY-SA 3.0 de, so the default policy returns none of them);
+accepting it silently would make someone's film copyleft without telling them. So
+`licence: "allow-sharealike"` turns it on for one call and the result carries a
+`licenceWarning` saying what it costs.
+
+**Two pre-existing bugs fixed while here.** `runtime_install`'s component enum was a hardcoded
+`["video", "speech"]` and had already drifted — `sfx` shipped as a component no agent could
+legally ask for. It is now derived from the manifest. And Commons writes an unknown author as a
+tooltip span wrapping the word plus the same word again, so stripping tags produced
+`UnknownUnknown` in generated credit lines.
 
 ---
 
@@ -335,3 +397,72 @@ Dependabot flagged four crates. Three moved within semver and are fixed:
 `wgpu` stays pinned at `=29.0.1`; the lockfile change touched 9 packages, none in the GPU stack.
 Confirmed by GitHub: 7 open alerts → 1. The survivor is `grid`, which cannot be fixed here — see
 [`todo.pending.md`](todo.pending.md).
+
+---
+
+## The pending sweep — five defects, closed
+
+Landed together on `fix/pending-sweep`. Each one contradicted something the repo says about
+itself, which is why they went first.
+
+### Export decoded from the ≤480px preview cache
+
+`plan_decode` scaled every clip to 480px wide and, on a long clip, dropped the sample rate to
+2 fps to stay inside a 192 MB budget; `export_video` then composited those cached frames at the
+export size. A 4K export was a 480px cache upscaled 8×, and a 10-minute clip repeated each
+decoded frame 15 times.
+
+Decode now has an intent. Preview keeps that plan byte for byte; export plans at source
+resolution and the delivered frame rate and **streams**, holding one frame per on-screen clip.
+
+**Proof:** 1px vertical stripes at 960×540, exported 1:1, luma standard deviation — source
+127.5, before **1.5** (averaged to flat grey), after **126.2**. The 2px version of that test
+passed against the bug (2px lands exactly on Nyquist under a 2:1 downscale and survives), which
+was measured rather than assumed and is written into the test. Cost, measured: a 1080p 5s@30
+export takes 1.76s producing 3.5 MB against 0.95s producing 0.78 MB — the old path was fast
+because it was encoding a blurry upscale.
+
+### Three panics on the live render path
+
+`upload_rgba_texture` asserted its buffer length, the readback `expect`ed `device.poll`, and
+`bay-preview` `expect`ed the compositor pass — the third was not in the write-up and was found
+while fixing the other two. A bad texture now drops one layer and the frame still draws; a
+failed readback fails the frame and each caller degrades on its own terms.
+
+**Proof:** table-driven short/long/zero-dimension uploads return `None` on a live device, and
+the device stays usable afterwards. Device loss itself is unproven — see `todo.testing.md`.
+
+### Slow tools cut off at 20 seconds
+
+Every `tools/call` shared one 20-second budget chosen for a native file dialog, so any render
+over 20s returned "the editor did not answer in time" while the render carried on and its
+result was applied to the document anyway.
+
+Budgets are per tool class now, and `render`, `narrate` and `subtitles_to_video` return a job
+id instead of holding the call open — the shape `runtime_install` had proved. A render reports
+`fraction` per encoded frame and stops when cancelled, leaving no partial file.
+
+**Proof:** the bridge test `todo.testing.md` asked for (every previous one used a fast tool);
+`timeout_for` walked against the real `slow_tools()` list; cancel and progress asserted through
+a real export. Seven published contract documents changed with it.
+
+### Kokoro weights fetched mid-narrate with no progress
+
+`runtime_install speech` reported "installed" and then the first `narrate` silently pulled
+~339 MB inside one blocking call with its stdout discarded. The weights are now 56 pinned
+artifacts at commit `f3ff357`, installed under `runtime/models/kokoro/`, with
+`HF_HUB_OFFLINE=1` on the sidecar once they are there.
+
+**Proof:** the sidecar with `--model-dir` and offline mode synthesised 2.02s of real audio with
+word timings and no network. The live install test asserts the model, config and all 54 voices
+land — it previously asserted only that the venv imports kokoro, so it would have passed
+throughout the bug.
+
+### A sidecar outliving its parent
+
+The pid watchdog is defeated by pid reuse and armed silently or not at all. The sidecar now
+blocks on a pipe bay holds, which the OS closes however bay dies, including `kill -9`; behind
+it an idle timeout, and behind that the original pid check. An unsupervised sidecar says so.
+
+**Proof:** four tests that run on a bare `python3` (the kokoro import is lazy), verified to fail
+when the pipe watchdog is disabled.

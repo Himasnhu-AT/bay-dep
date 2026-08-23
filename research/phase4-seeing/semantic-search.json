@@ -1,0 +1,71 @@
+{
+  "hint": "SigLIP scores are not calibrated; use ranking and best-vs-median separation.",
+  "matches": [
+    {
+      "endSeconds": 120.887,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 103.5365,
+      "score": 0.13777098059654236,
+      "startSeconds": 86.186
+    },
+    {
+      "endSeconds": 324.09,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 297.5135,
+      "score": 0.1323322355747223,
+      "startSeconds": 270.937
+    },
+    {
+      "endSeconds": 261.561,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 256.4225,
+      "score": 0.1320173591375351,
+      "startSeconds": 251.284
+    },
+    {
+      "endSeconds": 247.28,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 217.851,
+      "score": 0.13096199929714203,
+      "startSeconds": 188.422
+    },
+    {
+      "endSeconds": 373.573,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 351.9015,
+      "score": 0.1147690936923027,
+      "startSeconds": 330.23
+    },
+    {
+      "endSeconds": 270.937,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 266.249,
+      "score": 0.09616028517484665,
+      "startSeconds": 261.561
+    },
+    {
+      "endSeconds": 330.23,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 327.15999999999997,
+      "score": 0.09378620982170105,
+      "startSeconds": 324.09
+    },
+    {
+      "endSeconds": 251.284,
+      "mediaId": "goodall",
+      "mediaName": "goodall.webm",
+      "sampleSeconds": 249.28199999999998,
+      "score": 0.09170534461736679,
+      "startSeconds": 247.28
+    }
+  ],
+  "query": "an elderly woman with long gray hair speaking in an interview",
+  "separation": 0.17814910411834717
+}

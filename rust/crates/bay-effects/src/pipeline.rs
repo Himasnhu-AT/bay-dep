@@ -15,6 +15,8 @@ const CONTRAST_SHADER_ID: &str = "contrast";
 const CONTRAST_SHADER_SOURCE: &str = include_str!("shaders/contrast.wgsl");
 const SATURATION_SHADER_ID: &str = "saturation";
 const SATURATION_SHADER_SOURCE: &str = include_str!("shaders/saturation.wgsl");
+const LUT_SHADER_ID: &str = "lut";
+const LUT_SHADER_SOURCE: &str = include_str!("shaders/lut.wgsl");
 
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
@@ -26,6 +28,14 @@ pub struct ApplyEffectsOptions<'a> {
 pub struct EffectPipeline {
     uniform_bind_group_layout: wgpu::BindGroupLayout,
     pipelines: HashMap<String, wgpu::RenderPipeline>,
+    /// The LUT shader needs a third bind group (a 3D texture + its sampler), which the other
+    /// effects have no use for — so it gets its own layout rather than every effect paying for
+    /// a binding it ignores.
+    lut_bind_group_layout: wgpu::BindGroupLayout,
+    lut_sampler: wgpu::Sampler,
+    /// Uploaded cubes, by the id the pass named. A grade repeated across twenty clips and
+    /// every frame of each is one upload.
+    lut_textures: std::cell::RefCell<HashMap<String, wgpu::Texture>>,
 }
 
 #[derive(Debug, Error)]
@@ -48,6 +58,8 @@ pub enum EffectsError {
     },
     #[error("Shader '{shader}' does not support uniform '{uniform}'")]
     UnsupportedUniform { shader: String, uniform: String },
+    #[error("The 'lut' effect needs a lookup table, and this pass carries none")]
+    MissingLut,
 }
 
 #[repr(C)]
@@ -111,6 +123,13 @@ impl EffectPipeline {
                     label: Some("effects-saturation-shader"),
                     source: wgpu::ShaderSource::Wgsl(SATURATION_SHADER_SOURCE.into()),
                 });
+        let lut_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-lut-shader"),
+                    source: wgpu::ShaderSource::Wgsl(LUT_SHADER_SOURCE.into()),
+                });
         let pipeline_layout =
             context
                 .device()
@@ -122,6 +141,53 @@ impl EffectPipeline {
                     ],
                     immediate_size: 0,
                 });
+        let lut_bind_group_layout =
+            context
+                .device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("effects-lut-bind-group-layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D3,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+        let lut_pipeline_layout =
+            context
+                .device()
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("effects-lut-pipeline-layout"),
+                    bind_group_layouts: &[
+                        Some(context.texture_sampler_bind_group_layout()),
+                        Some(&uniform_bind_group_layout),
+                        Some(&lut_bind_group_layout),
+                    ],
+                    immediate_size: 0,
+                });
+        // Linear between entries, clamped at the edges. A 33-cube is coarse; nearest sampling
+        // would band every gradient in the frame.
+        let lut_sampler = context.device().create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("effects-lut-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         // Every effect shares the fullscreen vertex stage, uniform layout, and target
         // format; only the fragment shader differs. `create_effect_pipeline` captures
         // that shared descriptor so adding an effect is one shader module + one entry.
@@ -166,11 +232,24 @@ impl EffectPipeline {
                     "effects-saturation-pipeline",
                 ),
             ),
+            (
+                LUT_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &lut_pipeline_layout,
+                    &vertex_shader_module,
+                    &lut_shader_module,
+                    "effects-lut-pipeline",
+                ),
+            ),
         ]);
 
         Self {
             uniform_bind_group_layout,
             pipelines,
+            lut_bind_group_layout,
+            lut_sampler,
+            lut_textures: std::cell::RefCell::new(HashMap::new()),
         }
     }
 
@@ -264,6 +343,41 @@ impl EffectPipeline {
                     shader: pass.shader.clone(),
                 }
             })?;
+            // The grade's own bind group. Built per pass because the texture it points at is
+            // cached across frames but the view and group are cheap.
+            let lut_bind_group = if pass.shader == LUT_SHADER_ID {
+                let (id, table) = pass.lut.as_ref().ok_or(EffectsError::MissingLut)?;
+                let view = {
+                    let mut cache = self.lut_textures.borrow_mut();
+                    let texture = cache
+                        .entry(id.clone())
+                        .or_insert_with(|| upload_lut(context, table));
+                    texture.create_view(&wgpu::TextureViewDescriptor {
+                        dimension: Some(wgpu::TextureViewDimension::D3),
+                        ..Default::default()
+                    })
+                };
+                Some(
+                    context
+                        .device()
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("effects-lut-bind-group"),
+                            layout: &self.lut_bind_group_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(&view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                                },
+                            ],
+                        }),
+                )
+            } else {
+                None
+            };
 
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -286,6 +400,9 @@ impl EffectPipeline {
                 render_pass.set_vertex_buffer(0, context.fullscreen_quad().slice(..));
                 render_pass.set_bind_group(0, &texture_bind_group, &[]);
                 render_pass.set_bind_group(1, &uniform_bind_group, &[]);
+                if let Some(lut) = lut_bind_group.as_ref() {
+                    render_pass.set_bind_group(2, lut, &[]);
+                }
                 render_pass.draw(0..6, 0..1);
             }
 
@@ -294,6 +411,49 @@ impl EffectPipeline {
 
         current_texture.ok_or(EffectsError::MissingEffectPasses)
     }
+}
+
+/// Upload a parsed cube as an RGBA32F 3D texture.
+///
+/// Float rather than 8-bit: a LUT's whole job is to move colours precisely, and quantising the
+/// table to 256 steps before sampling it puts banding back into the thing that was meant to
+/// remove it.
+fn upload_lut(context: &GpuContext, table: &crate::Lut3d) -> wgpu::Texture {
+    let size = table.size;
+    let texture = context.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("effects-lut-texture"),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: size,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    context.queue().write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &table.to_half_bytes(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(size * 8), // RGBA × f16
+            rows_per_image: Some(size),
+        },
+        wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: size,
+        },
+    );
+    texture
 }
 
 fn create_effect_pipeline(
@@ -371,6 +531,24 @@ fn pack_effect_uniforms(
                 scalars: [amount, 0.0, 0.0, 0.0],
             })
         }
+        LUT_SHADER_ID => {
+            let amount = read_number_uniform(pass, "u_amount")?;
+            reject_unsupported_uniforms(pass, &["u_amount"])?;
+            // The cube's edge length travels in the uniform because the shader needs it to
+            // land on texel centres, and it is a property of the table rather than of the
+            // pass — so it is read from the table rather than trusted from a uniform nobody
+            // would remember to set.
+            let size = pass
+                .lut
+                .as_ref()
+                .map(|(_, table)| table.size as f32)
+                .ok_or(EffectsError::MissingLut)?;
+            Ok(EffectUniformBuffer {
+                resolution,
+                direction: [0.0, 0.0],
+                scalars: [amount, size, 0.0, 0.0],
+            })
+        }
         other => Err(EffectsError::UnknownEffectShader {
             shader: other.to_string(),
         }),
@@ -441,6 +619,7 @@ mod tests {
                 .iter()
                 .map(|(k, v)| ((*k).to_string(), v.clone()))
                 .collect(),
+            lut: None,
         }
     }
 

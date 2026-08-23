@@ -10,6 +10,8 @@ pub const MUTED: u32 = 0x8a8a9a;
 pub const ACCENT: u32 = 0x5b8cff;
 pub const SELECTED: u32 = 0x2d3a66;
 pub const SELECTED_BORDER: u32 = 0x8fb0ff;
+/// Timeline markers. Warm, so a marker is never mistaken for the playhead.
+pub const MARKER: u32 = 0xf2b03c;
 
 /// Block fill per element kind label ("Video" / "Image" / "Text" / "Audio").
 pub fn element_color(kind_label: &str) -> u32 {

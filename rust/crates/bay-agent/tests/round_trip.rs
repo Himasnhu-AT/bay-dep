@@ -27,6 +27,8 @@ fn empty_project() -> Project {
                 height: 1920,
             },
             background: Default::default(),
+            kit: bay_project::builtin_kit("swiss").cloned(),
+            plan: None,
         },
         scenes: vec![Scene {
             id: "scene-main".into(),
@@ -37,6 +39,8 @@ fn empty_project() -> Project {
                 main: Track::new("track-main", "Main", TrackKind::Video),
                 audio: Vec::new(),
             },
+            markers: Vec::new(),
+            groups: Default::default(),
         }],
         current_scene_id: "scene-main".into(),
         media: Vec::new(),
@@ -95,7 +99,8 @@ fn an_agent_edit_lands_in_the_editor_and_undoes() {
             ToolCall {
                 name: "add_text".into(),
                 arguments: serde_json::json!({
-                    "start": 0, "duration": 3, "content": "Hook", "fontSize": 96
+                    "role": "headline", "start": 0, "duration": 3, "content": "Hook",
+                    "tone": "accent"
                 }),
             },
             Duration::from_secs(5),
@@ -154,7 +159,7 @@ fn an_agent_edit_leaves_the_selection_alone() {
         bridge.call(
             ToolCall {
                 name: "add_text".into(),
-                arguments: serde_json::json!({ "start": 0, "duration": 1, "content": "a" }),
+                arguments: serde_json::json!({ "role": "headline", "start": 0, "duration": 1, "content": "a" }),
             },
             Duration::from_secs(5),
         )
@@ -177,7 +182,7 @@ fn a_plan_carries_the_scene_it_was_made_for() {
     let mut editor = Editor::new(empty_project());
     let planned = plan(
         "add_text",
-        &serde_json::json!({ "start": 0, "duration": 1, "content": "x" }),
+        &serde_json::json!({ "role": "headline", "start": 0, "duration": 1, "content": "x" }),
         editor.project(),
     )
     .expect("should plan");

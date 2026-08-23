@@ -24,7 +24,11 @@
       "id": "video",
       "title": "Video tools",
       "detail": "ffmpeg and ffprobe. bay needs them to decode, probe, draw waveforms and export MP4. Without them text and images still render; everything touching real footage does not.",
-      "artifacts": ["ffmpeg", "ffprobe", "ffmpeg-windows"],
+      "artifacts": [
+        "ffmpeg",
+        "ffprobe",
+        "ffmpeg-windows"
+      ],
       "diskBytes": 140000000,
       "$toolComment": [
         "verifiedVersion is what bay is actually tested against — the version of the pinned",
@@ -46,13 +50,158 @@
     {
       "id": "speech",
       "title": "Narration",
-      "detail": "Kokoro text-to-speech: a Python runtime, the kokoro package and its ~330 MB of weights. Optional — everything else in bay works without it.",
-      "artifacts": ["uv", "cpython"],
-      "steps": ["kokoro-venv"],
-      "diskBytes": 1200000000
+      "detail": "Kokoro text-to-speech: a Python runtime, the kokoro package and its ~339 MB of weights. Optional — everything else in bay works without it.",
+      "artifacts": [
+        "uv",
+        "cpython",
+        "kokoro-config",
+        "kokoro-model",
+        "kokoro-voice-af_alloy",
+        "kokoro-voice-af_aoede",
+        "kokoro-voice-af_bella",
+        "kokoro-voice-af_heart",
+        "kokoro-voice-af_jessica",
+        "kokoro-voice-af_kore",
+        "kokoro-voice-af_nicole",
+        "kokoro-voice-af_nova",
+        "kokoro-voice-af_river",
+        "kokoro-voice-af_sarah",
+        "kokoro-voice-af_sky",
+        "kokoro-voice-am_adam",
+        "kokoro-voice-am_echo",
+        "kokoro-voice-am_eric",
+        "kokoro-voice-am_fenrir",
+        "kokoro-voice-am_liam",
+        "kokoro-voice-am_michael",
+        "kokoro-voice-am_onyx",
+        "kokoro-voice-am_puck",
+        "kokoro-voice-am_santa",
+        "kokoro-voice-bf_alice",
+        "kokoro-voice-bf_emma",
+        "kokoro-voice-bf_isabella",
+        "kokoro-voice-bf_lily",
+        "kokoro-voice-bm_daniel",
+        "kokoro-voice-bm_fable",
+        "kokoro-voice-bm_george",
+        "kokoro-voice-bm_lewis",
+        "kokoro-voice-ef_dora",
+        "kokoro-voice-em_alex",
+        "kokoro-voice-em_santa",
+        "kokoro-voice-ff_siwis",
+        "kokoro-voice-hf_alpha",
+        "kokoro-voice-hf_beta",
+        "kokoro-voice-hm_omega",
+        "kokoro-voice-hm_psi",
+        "kokoro-voice-if_sara",
+        "kokoro-voice-im_nicola",
+        "kokoro-voice-jf_alpha",
+        "kokoro-voice-jf_gongitsune",
+        "kokoro-voice-jf_nezumi",
+        "kokoro-voice-jf_tebukuro",
+        "kokoro-voice-jm_kumo",
+        "kokoro-voice-pf_dora",
+        "kokoro-voice-pm_alex",
+        "kokoro-voice-pm_santa",
+        "kokoro-voice-zf_xiaobei",
+        "kokoro-voice-zf_xiaoni",
+        "kokoro-voice-zf_xiaoxiao",
+        "kokoro-voice-zf_xiaoyi",
+        "kokoro-voice-zm_yunjian",
+        "kokoro-voice-zm_yunxi",
+        "kokoro-voice-zm_yunxia",
+        "kokoro-voice-zm_yunyang"
+      ],
+      "steps": [
+        "kokoro-venv"
+      ],
+      "diskBytes": 1555479286
+    },
+    {
+      "id": "listen",
+      "title": "Transcription",
+      "detail": "Local speech-to-text with whisper.cpp, including word-level timing for transcript edits and captions. Optional — media remains editable without it.",
+      "artifacts": [
+        "whisper-small-en-q5"
+      ],
+      "diskBytes": 190098681
+    },
+    {
+      "$comment": "Recorded interface sound. bay SYNTHESISES whooshes, risers, impacts and clicks with no download at all (bay_audio::sfx) — those are abstract sounds, and a synthesised one comes out at the length the edit needs, which a fixed file cannot. This component is for the recorded material synthesis cannot stand in for. CC0 throughout, so bay may redistribute it; see docs/native/content-packs.md for why most 'free sound' sites cannot be shipped this way.",
+      "id": "sfx",
+      "title": "Sound effects",
+      "detail": "150 recorded interface sounds — clicks, switches, confirmations, errors. Public domain (CC0). bay already synthesises whooshes, risers and impacts without this.",
+      "artifacts": [
+        "kenney-interface-sounds",
+        "kenney-ui-audio"
+      ],
+      "diskBytes": 1500000
+    },
+    {
+      "id": "vision",
+      "title": "Visual search",
+      "detail": "A SigLIP image-text encoder, so stock_search can order results by what is in the photograph rather than by what is in its filename. Optional — searching still works without it, just much worse.",
+      "artifacts": [
+        "siglip-model",
+        "siglip-tokenizer"
+      ],
+      "diskBytes": 820000000
+    },
+    {
+      "$comment": "Adapter slot only until bay can pin a redistributable Apple-Silicon runner and weights. An empty artifact list deliberately reports unsupported instead of downloading mutable model files or inventing a second installer. BAY_GEN_LOCAL_COMMAND remains a development override; production artifacts must land in runtime/bin/bay-gen-local through this manifest.",
+      "id": "generation-local",
+      "title": "Local media generation",
+      "detail": "Open-weights image, short-video, and music generation on this machine. No pinned build is available for this platform in this release; fal and Gemini remain explicit-consent alternatives.",
+      "artifacts": [],
+      "diskBytes": 0
     }
   ],
   "artifacts": [
+    {
+      "id": "whisper-small-en-q5",
+      "name": "Whisper small.en q5_1",
+      "source": "https://huggingface.co/ggerganov/whisper.cpp",
+      "license": "MIT",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small.en-q5_1.bin",
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "bytes": 190098681,
+          "files": [
+            {
+              "member": "ggml-small.en-q5_1.bin",
+              "install": "models/whisper/ggml-small.en-q5_1.bin"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small.en-q5_1.bin",
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "bytes": 190098681,
+          "files": [
+            {
+              "member": "ggml-small.en-q5_1.bin",
+              "install": "models/whisper/ggml-small.en-q5_1.bin"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small.en-q5_1.bin",
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "bytes": 190098681,
+          "files": [
+            {
+              "member": "ggml-small.en-q5_1.bin",
+              "install": "models/whisper/ggml-small.en-q5_1.bin"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": "ffmpeg",
       "name": "FFmpeg 9.0",
@@ -66,14 +215,26 @@
           "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffmpeg.zip",
           "sha256": "5267ef149ee0d208057a1b316aac079b661b0476574dee5da7d225769773c603",
           "bytes": 28440078,
-          "files": [{ "member": "ffmpeg", "install": "bin/ffmpeg", "executable": true }]
+          "files": [
+            {
+              "member": "ffmpeg",
+              "install": "bin/ffmpeg",
+              "executable": true
+            }
+          ]
         },
         {
           "target": "macos-x86_64",
           "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1785871427_9.0/ffmpeg.zip",
           "sha256": "79d14663d8b078dbbc38de18d63a30f8a5bfc860af5dfee7f8cf3e387cf1c02c",
           "bytes": 33842767,
-          "files": [{ "member": "ffmpeg", "install": "bin/ffmpeg", "executable": true }]
+          "files": [
+            {
+              "member": "ffmpeg",
+              "install": "bin/ffmpeg",
+              "executable": true
+            }
+          ]
         }
       ]
     },
@@ -90,14 +251,26 @@
           "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1785863997_9.0/ffprobe.zip",
           "sha256": "7778fbb533fb60d3336cbd9a9e51eced71658f020b570c7203590c1c41d42f50",
           "bytes": 28364088,
-          "files": [{ "member": "ffprobe", "install": "bin/ffprobe", "executable": true }]
+          "files": [
+            {
+              "member": "ffprobe",
+              "install": "bin/ffprobe",
+              "executable": true
+            }
+          ]
         },
         {
           "target": "macos-x86_64",
           "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1785871427_9.0/ffprobe.zip",
           "sha256": "a2dd3f2e7eb35a10fa6ac43b1a8c21890f27bee0dc4a86ddee16a57d72d3898d",
           "bytes": 33741166,
-          "files": [{ "member": "ffprobe", "install": "bin/ffprobe", "executable": true }]
+          "files": [
+            {
+              "member": "ffprobe",
+              "install": "bin/ffprobe",
+              "executable": true
+            }
+          ]
         }
       ]
     },
@@ -144,21 +317,39 @@
           "url": "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-aarch64-apple-darwin.tar.gz",
           "sha256": "546f7f8a6c70ff13a3a9d2bc958db3427298cebf3e0cb756f9177133b7068843",
           "bytes": 17686637,
-          "files": [{ "member": "uv-aarch64-apple-darwin/uv", "install": "bin/uv", "executable": true }]
+          "files": [
+            {
+              "member": "uv-aarch64-apple-darwin/uv",
+              "install": "bin/uv",
+              "executable": true
+            }
+          ]
         },
         {
           "target": "macos-x86_64",
           "url": "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-x86_64-apple-darwin.tar.gz",
           "sha256": "4c9f52262a14da336e4a42ed24992d12d0c956acde87619e4611d321dffa602b",
           "bytes": 19547702,
-          "files": [{ "member": "uv-x86_64-apple-darwin/uv", "install": "bin/uv", "executable": true }]
+          "files": [
+            {
+              "member": "uv-x86_64-apple-darwin/uv",
+              "install": "bin/uv",
+              "executable": true
+            }
+          ]
         },
         {
           "target": "windows-x86_64",
           "url": "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-x86_64-pc-windows-msvc.zip",
           "sha256": "b23350c79e8ad0192b8124af13a0f17e8d4e4549524785e1aef389ae5a06990e",
           "bytes": 19013455,
-          "files": [{ "member": "uv.exe", "install": "bin/uv.exe", "executable": true }]
+          "files": [
+            {
+              "member": "uv.exe",
+              "install": "bin/uv.exe",
+              "executable": true
+            }
+          ]
         }
       ]
     },
@@ -170,28 +361,2799 @@
       "license": "PSF-2.0",
       "format": "tar.gz",
       "install": "tree",
-      "tree": { "strip": 1, "into": "python/3.12.13" },
+      "tree": {
+        "strip": 1,
+        "into": "python/3.12.13"
+      },
       "builds": [
         {
           "target": "macos-aarch64",
           "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13+20260807-aarch64-apple-darwin-install_only.tar.gz",
           "sha256": "4201588fc5051c2ba988abbe1f033d318965ee378fadf7fb7ef79882ba7be84b",
           "bytes": 25168985,
-          "provides": ["python/3.12.13/bin/python3.12"]
+          "provides": [
+            "python/3.12.13/bin/python3.12"
+          ]
         },
         {
           "target": "macos-x86_64",
           "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13+20260807-x86_64-apple-darwin-install_only.tar.gz",
           "sha256": "ce9dc826a3215d5deadf6d7ba409a882b8d431192c4c06deb34ff00f93ceb4f5",
           "bytes": 24829594,
-          "provides": ["python/3.12.13/bin/python3.12"]
+          "provides": [
+            "python/3.12.13/bin/python3.12"
+          ]
         },
         {
           "target": "windows-x86_64",
           "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13+20260807-x86_64-pc-windows-msvc-install_only.tar.gz",
           "sha256": "6cf2be701aa7e9470454c9c86285c1bcc1832518d63e39c3e34e9d8ea1cbb99f",
           "bytes": 46113914,
-          "provides": ["python/3.12.13/python.exe"]
+          "provides": [
+            "python/3.12.13/python.exe"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-config",
+      "name": "Kokoro config.json",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/config.json",
+          "sha256": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+          "bytes": 2351,
+          "files": [
+            {
+              "member": "config.json",
+              "install": "models/kokoro/config.json"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/config.json",
+          "sha256": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+          "bytes": 2351,
+          "files": [
+            {
+              "member": "config.json",
+              "install": "models/kokoro/config.json"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/config.json",
+          "sha256": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+          "bytes": 2351,
+          "files": [
+            {
+              "member": "config.json",
+              "install": "models/kokoro/config.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-model",
+      "name": "Kokoro kokoro-v1_0.pth",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/kokoro-v1_0.pth",
+          "sha256": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+          "bytes": 327212226,
+          "files": [
+            {
+              "member": "kokoro-v1_0.pth",
+              "install": "models/kokoro/kokoro-v1_0.pth"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/kokoro-v1_0.pth",
+          "sha256": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+          "bytes": 327212226,
+          "files": [
+            {
+              "member": "kokoro-v1_0.pth",
+              "install": "models/kokoro/kokoro-v1_0.pth"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/kokoro-v1_0.pth",
+          "sha256": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+          "bytes": 327212226,
+          "files": [
+            {
+              "member": "kokoro-v1_0.pth",
+              "install": "models/kokoro/kokoro-v1_0.pth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_alloy",
+      "name": "Kokoro voices/af_alloy.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_alloy.pt",
+          "sha256": "6d877149dd8b348fbad12e5845b7e43d975390e9f3b68a811d1d86168bef5aa3",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_alloy.pt",
+              "install": "models/kokoro/voices/af_alloy.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_alloy.pt",
+          "sha256": "6d877149dd8b348fbad12e5845b7e43d975390e9f3b68a811d1d86168bef5aa3",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_alloy.pt",
+              "install": "models/kokoro/voices/af_alloy.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_alloy.pt",
+          "sha256": "6d877149dd8b348fbad12e5845b7e43d975390e9f3b68a811d1d86168bef5aa3",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_alloy.pt",
+              "install": "models/kokoro/voices/af_alloy.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_aoede",
+      "name": "Kokoro voices/af_aoede.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_aoede.pt",
+          "sha256": "c03bd1a4c3716c2d8eaa3d50022f62d5c31cfbd6e15933a00b17fefe13841cc4",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_aoede.pt",
+              "install": "models/kokoro/voices/af_aoede.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_aoede.pt",
+          "sha256": "c03bd1a4c3716c2d8eaa3d50022f62d5c31cfbd6e15933a00b17fefe13841cc4",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_aoede.pt",
+              "install": "models/kokoro/voices/af_aoede.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_aoede.pt",
+          "sha256": "c03bd1a4c3716c2d8eaa3d50022f62d5c31cfbd6e15933a00b17fefe13841cc4",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_aoede.pt",
+              "install": "models/kokoro/voices/af_aoede.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_bella",
+      "name": "Kokoro voices/af_bella.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_bella.pt",
+          "sha256": "8cb64e02fcc8de0327a8e13817e49c76c945ecf0052ceac97d3081480e8e48d6",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_bella.pt",
+              "install": "models/kokoro/voices/af_bella.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_bella.pt",
+          "sha256": "8cb64e02fcc8de0327a8e13817e49c76c945ecf0052ceac97d3081480e8e48d6",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_bella.pt",
+              "install": "models/kokoro/voices/af_bella.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_bella.pt",
+          "sha256": "8cb64e02fcc8de0327a8e13817e49c76c945ecf0052ceac97d3081480e8e48d6",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_bella.pt",
+              "install": "models/kokoro/voices/af_bella.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_heart",
+      "name": "Kokoro voices/af_heart.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_heart.pt",
+          "sha256": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_heart.pt",
+              "install": "models/kokoro/voices/af_heart.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_heart.pt",
+          "sha256": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_heart.pt",
+              "install": "models/kokoro/voices/af_heart.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_heart.pt",
+          "sha256": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_heart.pt",
+              "install": "models/kokoro/voices/af_heart.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_jessica",
+      "name": "Kokoro voices/af_jessica.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_jessica.pt",
+          "sha256": "cdfdccb8cc975aa34ee6b89642963b0064237675de0e41a30ae64cc958dd4e87",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/af_jessica.pt",
+              "install": "models/kokoro/voices/af_jessica.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_jessica.pt",
+          "sha256": "cdfdccb8cc975aa34ee6b89642963b0064237675de0e41a30ae64cc958dd4e87",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/af_jessica.pt",
+              "install": "models/kokoro/voices/af_jessica.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_jessica.pt",
+          "sha256": "cdfdccb8cc975aa34ee6b89642963b0064237675de0e41a30ae64cc958dd4e87",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/af_jessica.pt",
+              "install": "models/kokoro/voices/af_jessica.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_kore",
+      "name": "Kokoro voices/af_kore.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_kore.pt",
+          "sha256": "8bfbc512321c3db49dff984ac675fa5ac7eaed5a96cc31104d3a9080e179d69d",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/af_kore.pt",
+              "install": "models/kokoro/voices/af_kore.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_kore.pt",
+          "sha256": "8bfbc512321c3db49dff984ac675fa5ac7eaed5a96cc31104d3a9080e179d69d",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/af_kore.pt",
+              "install": "models/kokoro/voices/af_kore.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_kore.pt",
+          "sha256": "8bfbc512321c3db49dff984ac675fa5ac7eaed5a96cc31104d3a9080e179d69d",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/af_kore.pt",
+              "install": "models/kokoro/voices/af_kore.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_nicole",
+      "name": "Kokoro voices/af_nicole.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_nicole.pt",
+          "sha256": "c5561808bcf5250fe8c5f5de32caf2d94f27e57e95befdb098c5c85991d4c5da",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/af_nicole.pt",
+              "install": "models/kokoro/voices/af_nicole.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_nicole.pt",
+          "sha256": "c5561808bcf5250fe8c5f5de32caf2d94f27e57e95befdb098c5c85991d4c5da",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/af_nicole.pt",
+              "install": "models/kokoro/voices/af_nicole.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_nicole.pt",
+          "sha256": "c5561808bcf5250fe8c5f5de32caf2d94f27e57e95befdb098c5c85991d4c5da",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/af_nicole.pt",
+              "install": "models/kokoro/voices/af_nicole.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_nova",
+      "name": "Kokoro voices/af_nova.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_nova.pt",
+          "sha256": "e0233676ddc21908c37a1f102f6b88a59e4e5c1bd764983616eb9eda629dbcd2",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/af_nova.pt",
+              "install": "models/kokoro/voices/af_nova.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_nova.pt",
+          "sha256": "e0233676ddc21908c37a1f102f6b88a59e4e5c1bd764983616eb9eda629dbcd2",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/af_nova.pt",
+              "install": "models/kokoro/voices/af_nova.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_nova.pt",
+          "sha256": "e0233676ddc21908c37a1f102f6b88a59e4e5c1bd764983616eb9eda629dbcd2",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/af_nova.pt",
+              "install": "models/kokoro/voices/af_nova.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_river",
+      "name": "Kokoro voices/af_river.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_river.pt",
+          "sha256": "e149459bd9c084416b74756b9bd3418256a8b839088abb07d463730c369dab8f",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_river.pt",
+              "install": "models/kokoro/voices/af_river.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_river.pt",
+          "sha256": "e149459bd9c084416b74756b9bd3418256a8b839088abb07d463730c369dab8f",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_river.pt",
+              "install": "models/kokoro/voices/af_river.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_river.pt",
+          "sha256": "e149459bd9c084416b74756b9bd3418256a8b839088abb07d463730c369dab8f",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_river.pt",
+              "install": "models/kokoro/voices/af_river.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_sarah",
+      "name": "Kokoro voices/af_sarah.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_sarah.pt",
+          "sha256": "49bd364ea3be9eb3e9685e8f9a15448c4883112a7c0ff7ab139fa4088b08cef9",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_sarah.pt",
+              "install": "models/kokoro/voices/af_sarah.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_sarah.pt",
+          "sha256": "49bd364ea3be9eb3e9685e8f9a15448c4883112a7c0ff7ab139fa4088b08cef9",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_sarah.pt",
+              "install": "models/kokoro/voices/af_sarah.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_sarah.pt",
+          "sha256": "49bd364ea3be9eb3e9685e8f9a15448c4883112a7c0ff7ab139fa4088b08cef9",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/af_sarah.pt",
+              "install": "models/kokoro/voices/af_sarah.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-af_sky",
+      "name": "Kokoro voices/af_sky.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_sky.pt",
+          "sha256": "c799548aed06e0cb0d655a85a01b48e7f10484d71663f9a3045a5b9362e8512c",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/af_sky.pt",
+              "install": "models/kokoro/voices/af_sky.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_sky.pt",
+          "sha256": "c799548aed06e0cb0d655a85a01b48e7f10484d71663f9a3045a5b9362e8512c",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/af_sky.pt",
+              "install": "models/kokoro/voices/af_sky.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/af_sky.pt",
+          "sha256": "c799548aed06e0cb0d655a85a01b48e7f10484d71663f9a3045a5b9362e8512c",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/af_sky.pt",
+              "install": "models/kokoro/voices/af_sky.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_adam",
+      "name": "Kokoro voices/am_adam.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_adam.pt",
+          "sha256": "ced7e284aba12472891be1da3ab34db84cc05cc02b5889535796dbf2d8b0cb34",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_adam.pt",
+              "install": "models/kokoro/voices/am_adam.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_adam.pt",
+          "sha256": "ced7e284aba12472891be1da3ab34db84cc05cc02b5889535796dbf2d8b0cb34",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_adam.pt",
+              "install": "models/kokoro/voices/am_adam.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_adam.pt",
+          "sha256": "ced7e284aba12472891be1da3ab34db84cc05cc02b5889535796dbf2d8b0cb34",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_adam.pt",
+              "install": "models/kokoro/voices/am_adam.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_echo",
+      "name": "Kokoro voices/am_echo.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_echo.pt",
+          "sha256": "8bcfdc852bc985fb45c396c561e571ffb9183930071f962f1b50df5c97b161e8",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_echo.pt",
+              "install": "models/kokoro/voices/am_echo.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_echo.pt",
+          "sha256": "8bcfdc852bc985fb45c396c561e571ffb9183930071f962f1b50df5c97b161e8",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_echo.pt",
+              "install": "models/kokoro/voices/am_echo.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_echo.pt",
+          "sha256": "8bcfdc852bc985fb45c396c561e571ffb9183930071f962f1b50df5c97b161e8",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_echo.pt",
+              "install": "models/kokoro/voices/am_echo.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_eric",
+      "name": "Kokoro voices/am_eric.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_eric.pt",
+          "sha256": "ada66f0eefff34ec921b1d7474d7ac8bec00cd863c170f1c534916e9b8212aae",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_eric.pt",
+              "install": "models/kokoro/voices/am_eric.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_eric.pt",
+          "sha256": "ada66f0eefff34ec921b1d7474d7ac8bec00cd863c170f1c534916e9b8212aae",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_eric.pt",
+              "install": "models/kokoro/voices/am_eric.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_eric.pt",
+          "sha256": "ada66f0eefff34ec921b1d7474d7ac8bec00cd863c170f1c534916e9b8212aae",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_eric.pt",
+              "install": "models/kokoro/voices/am_eric.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_fenrir",
+      "name": "Kokoro voices/am_fenrir.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_fenrir.pt",
+          "sha256": "98e507eca1db08230ae3b6232d59c10aec9630022d19accac4f5d12fcec3c37a",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/am_fenrir.pt",
+              "install": "models/kokoro/voices/am_fenrir.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_fenrir.pt",
+          "sha256": "98e507eca1db08230ae3b6232d59c10aec9630022d19accac4f5d12fcec3c37a",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/am_fenrir.pt",
+              "install": "models/kokoro/voices/am_fenrir.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_fenrir.pt",
+          "sha256": "98e507eca1db08230ae3b6232d59c10aec9630022d19accac4f5d12fcec3c37a",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/am_fenrir.pt",
+              "install": "models/kokoro/voices/am_fenrir.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_liam",
+      "name": "Kokoro voices/am_liam.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_liam.pt",
+          "sha256": "c82550757ddb31308b97f30040dda8c2d609a9e2de6135848d0a948368138518",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_liam.pt",
+              "install": "models/kokoro/voices/am_liam.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_liam.pt",
+          "sha256": "c82550757ddb31308b97f30040dda8c2d609a9e2de6135848d0a948368138518",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_liam.pt",
+              "install": "models/kokoro/voices/am_liam.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_liam.pt",
+          "sha256": "c82550757ddb31308b97f30040dda8c2d609a9e2de6135848d0a948368138518",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_liam.pt",
+              "install": "models/kokoro/voices/am_liam.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_michael",
+      "name": "Kokoro voices/am_michael.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_michael.pt",
+          "sha256": "9a443b79a4b22489a5b0ab7c651a0bcd1a30bef675c28333f06971abbd47bd37",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/am_michael.pt",
+              "install": "models/kokoro/voices/am_michael.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_michael.pt",
+          "sha256": "9a443b79a4b22489a5b0ab7c651a0bcd1a30bef675c28333f06971abbd47bd37",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/am_michael.pt",
+              "install": "models/kokoro/voices/am_michael.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_michael.pt",
+          "sha256": "9a443b79a4b22489a5b0ab7c651a0bcd1a30bef675c28333f06971abbd47bd37",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/am_michael.pt",
+              "install": "models/kokoro/voices/am_michael.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_onyx",
+      "name": "Kokoro voices/am_onyx.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_onyx.pt",
+          "sha256": "e8452be16cd0f6da7b4579eaf7b1e4506e92524882053d86d72b96b9a7fed584",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_onyx.pt",
+              "install": "models/kokoro/voices/am_onyx.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_onyx.pt",
+          "sha256": "e8452be16cd0f6da7b4579eaf7b1e4506e92524882053d86d72b96b9a7fed584",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_onyx.pt",
+              "install": "models/kokoro/voices/am_onyx.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_onyx.pt",
+          "sha256": "e8452be16cd0f6da7b4579eaf7b1e4506e92524882053d86d72b96b9a7fed584",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_onyx.pt",
+              "install": "models/kokoro/voices/am_onyx.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_puck",
+      "name": "Kokoro voices/am_puck.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_puck.pt",
+          "sha256": "dd1d8973f4ce4b7d8ae407c77a435f485dabc052081b80ea75c4f30b84f36223",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_puck.pt",
+              "install": "models/kokoro/voices/am_puck.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_puck.pt",
+          "sha256": "dd1d8973f4ce4b7d8ae407c77a435f485dabc052081b80ea75c4f30b84f36223",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_puck.pt",
+              "install": "models/kokoro/voices/am_puck.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_puck.pt",
+          "sha256": "dd1d8973f4ce4b7d8ae407c77a435f485dabc052081b80ea75c4f30b84f36223",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/am_puck.pt",
+              "install": "models/kokoro/voices/am_puck.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-am_santa",
+      "name": "Kokoro voices/am_santa.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_santa.pt",
+          "sha256": "7f2f7582fa2b1f160e90aafe6d0b442a685e773608b6667e545d743b073e97a7",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/am_santa.pt",
+              "install": "models/kokoro/voices/am_santa.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_santa.pt",
+          "sha256": "7f2f7582fa2b1f160e90aafe6d0b442a685e773608b6667e545d743b073e97a7",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/am_santa.pt",
+              "install": "models/kokoro/voices/am_santa.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/am_santa.pt",
+          "sha256": "7f2f7582fa2b1f160e90aafe6d0b442a685e773608b6667e545d743b073e97a7",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/am_santa.pt",
+              "install": "models/kokoro/voices/am_santa.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bf_alice",
+      "name": "Kokoro voices/bf_alice.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_alice.pt",
+          "sha256": "d292651b6af6c0d81705c2580dcb4463fccc0ff7b8d618a471dbb4e45655b3f3",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bf_alice.pt",
+              "install": "models/kokoro/voices/bf_alice.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_alice.pt",
+          "sha256": "d292651b6af6c0d81705c2580dcb4463fccc0ff7b8d618a471dbb4e45655b3f3",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bf_alice.pt",
+              "install": "models/kokoro/voices/bf_alice.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_alice.pt",
+          "sha256": "d292651b6af6c0d81705c2580dcb4463fccc0ff7b8d618a471dbb4e45655b3f3",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bf_alice.pt",
+              "install": "models/kokoro/voices/bf_alice.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bf_emma",
+      "name": "Kokoro voices/bf_emma.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_emma.pt",
+          "sha256": "d0a423deabf4a52b4f49318c51742c54e21bb89bbbe9a12141e7758ddb5da701",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/bf_emma.pt",
+              "install": "models/kokoro/voices/bf_emma.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_emma.pt",
+          "sha256": "d0a423deabf4a52b4f49318c51742c54e21bb89bbbe9a12141e7758ddb5da701",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/bf_emma.pt",
+              "install": "models/kokoro/voices/bf_emma.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_emma.pt",
+          "sha256": "d0a423deabf4a52b4f49318c51742c54e21bb89bbbe9a12141e7758ddb5da701",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/bf_emma.pt",
+              "install": "models/kokoro/voices/bf_emma.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bf_isabella",
+      "name": "Kokoro voices/bf_isabella.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_isabella.pt",
+          "sha256": "cdd4c37003805104d1d08fb1e05855c8fb2c68de24ca6e71f264a30aaa59eefd",
+          "bytes": 523440,
+          "files": [
+            {
+              "member": "voices/bf_isabella.pt",
+              "install": "models/kokoro/voices/bf_isabella.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_isabella.pt",
+          "sha256": "cdd4c37003805104d1d08fb1e05855c8fb2c68de24ca6e71f264a30aaa59eefd",
+          "bytes": 523440,
+          "files": [
+            {
+              "member": "voices/bf_isabella.pt",
+              "install": "models/kokoro/voices/bf_isabella.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_isabella.pt",
+          "sha256": "cdd4c37003805104d1d08fb1e05855c8fb2c68de24ca6e71f264a30aaa59eefd",
+          "bytes": 523440,
+          "files": [
+            {
+              "member": "voices/bf_isabella.pt",
+              "install": "models/kokoro/voices/bf_isabella.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bf_lily",
+      "name": "Kokoro voices/bf_lily.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_lily.pt",
+          "sha256": "6e09c2e481e2d53004d7e5ae7d3a325369e130a6f45c35a6002de75084be9285",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/bf_lily.pt",
+              "install": "models/kokoro/voices/bf_lily.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_lily.pt",
+          "sha256": "6e09c2e481e2d53004d7e5ae7d3a325369e130a6f45c35a6002de75084be9285",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/bf_lily.pt",
+              "install": "models/kokoro/voices/bf_lily.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bf_lily.pt",
+          "sha256": "6e09c2e481e2d53004d7e5ae7d3a325369e130a6f45c35a6002de75084be9285",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/bf_lily.pt",
+              "install": "models/kokoro/voices/bf_lily.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bm_daniel",
+      "name": "Kokoro voices/bm_daniel.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_daniel.pt",
+          "sha256": "fc3fce4e9c12ed4dbc8fa9680cfe51ee190a96444ce7c3ad647549a30823fc5d",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/bm_daniel.pt",
+              "install": "models/kokoro/voices/bm_daniel.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_daniel.pt",
+          "sha256": "fc3fce4e9c12ed4dbc8fa9680cfe51ee190a96444ce7c3ad647549a30823fc5d",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/bm_daniel.pt",
+              "install": "models/kokoro/voices/bm_daniel.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_daniel.pt",
+          "sha256": "fc3fce4e9c12ed4dbc8fa9680cfe51ee190a96444ce7c3ad647549a30823fc5d",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/bm_daniel.pt",
+              "install": "models/kokoro/voices/bm_daniel.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bm_fable",
+      "name": "Kokoro voices/bm_fable.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_fable.pt",
+          "sha256": "d44935f3135257a9064df99f007fc1342ff1aa767552b4a4fa4c3b2e6e59079c",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bm_fable.pt",
+              "install": "models/kokoro/voices/bm_fable.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_fable.pt",
+          "sha256": "d44935f3135257a9064df99f007fc1342ff1aa767552b4a4fa4c3b2e6e59079c",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bm_fable.pt",
+              "install": "models/kokoro/voices/bm_fable.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_fable.pt",
+          "sha256": "d44935f3135257a9064df99f007fc1342ff1aa767552b4a4fa4c3b2e6e59079c",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bm_fable.pt",
+              "install": "models/kokoro/voices/bm_fable.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bm_george",
+      "name": "Kokoro voices/bm_george.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_george.pt",
+          "sha256": "f1bc812213dc59774769e5c80004b13eeb79bd78130b11b2d7f934542dab811b",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/bm_george.pt",
+              "install": "models/kokoro/voices/bm_george.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_george.pt",
+          "sha256": "f1bc812213dc59774769e5c80004b13eeb79bd78130b11b2d7f934542dab811b",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/bm_george.pt",
+              "install": "models/kokoro/voices/bm_george.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_george.pt",
+          "sha256": "f1bc812213dc59774769e5c80004b13eeb79bd78130b11b2d7f934542dab811b",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/bm_george.pt",
+              "install": "models/kokoro/voices/bm_george.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-bm_lewis",
+      "name": "Kokoro voices/bm_lewis.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_lewis.pt",
+          "sha256": "b5204750dcba01029d2ac9cec17aec3b20a6d64073c579d694a23cb40effbd0e",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bm_lewis.pt",
+              "install": "models/kokoro/voices/bm_lewis.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_lewis.pt",
+          "sha256": "b5204750dcba01029d2ac9cec17aec3b20a6d64073c579d694a23cb40effbd0e",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bm_lewis.pt",
+              "install": "models/kokoro/voices/bm_lewis.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/bm_lewis.pt",
+          "sha256": "b5204750dcba01029d2ac9cec17aec3b20a6d64073c579d694a23cb40effbd0e",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/bm_lewis.pt",
+              "install": "models/kokoro/voices/bm_lewis.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-ef_dora",
+      "name": "Kokoro voices/ef_dora.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ef_dora.pt",
+          "sha256": "d9d69b0f8a2b87a345f269d89639f89dfbd1a6c9da0c498ae36dd34afcf35530",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/ef_dora.pt",
+              "install": "models/kokoro/voices/ef_dora.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ef_dora.pt",
+          "sha256": "d9d69b0f8a2b87a345f269d89639f89dfbd1a6c9da0c498ae36dd34afcf35530",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/ef_dora.pt",
+              "install": "models/kokoro/voices/ef_dora.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ef_dora.pt",
+          "sha256": "d9d69b0f8a2b87a345f269d89639f89dfbd1a6c9da0c498ae36dd34afcf35530",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/ef_dora.pt",
+              "install": "models/kokoro/voices/ef_dora.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-em_alex",
+      "name": "Kokoro voices/em_alex.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/em_alex.pt",
+          "sha256": "5eac53f767c3f31a081918ba531969aea850bed18fe56419b804d642c6973431",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/em_alex.pt",
+              "install": "models/kokoro/voices/em_alex.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/em_alex.pt",
+          "sha256": "5eac53f767c3f31a081918ba531969aea850bed18fe56419b804d642c6973431",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/em_alex.pt",
+              "install": "models/kokoro/voices/em_alex.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/em_alex.pt",
+          "sha256": "5eac53f767c3f31a081918ba531969aea850bed18fe56419b804d642c6973431",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/em_alex.pt",
+              "install": "models/kokoro/voices/em_alex.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-em_santa",
+      "name": "Kokoro voices/em_santa.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/em_santa.pt",
+          "sha256": "aa8620cb96cec705823efca0d956a63e158e09ad41aca934d354b7f0778f63cb",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/em_santa.pt",
+              "install": "models/kokoro/voices/em_santa.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/em_santa.pt",
+          "sha256": "aa8620cb96cec705823efca0d956a63e158e09ad41aca934d354b7f0778f63cb",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/em_santa.pt",
+              "install": "models/kokoro/voices/em_santa.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/em_santa.pt",
+          "sha256": "aa8620cb96cec705823efca0d956a63e158e09ad41aca934d354b7f0778f63cb",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/em_santa.pt",
+              "install": "models/kokoro/voices/em_santa.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-ff_siwis",
+      "name": "Kokoro voices/ff_siwis.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ff_siwis.pt",
+          "sha256": "8073bf2d2c4b9543a90f2f0fd2144de4ed157e2d4b79ddeb0d5123066171fbc9",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/ff_siwis.pt",
+              "install": "models/kokoro/voices/ff_siwis.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ff_siwis.pt",
+          "sha256": "8073bf2d2c4b9543a90f2f0fd2144de4ed157e2d4b79ddeb0d5123066171fbc9",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/ff_siwis.pt",
+              "install": "models/kokoro/voices/ff_siwis.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ff_siwis.pt",
+          "sha256": "8073bf2d2c4b9543a90f2f0fd2144de4ed157e2d4b79ddeb0d5123066171fbc9",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/ff_siwis.pt",
+              "install": "models/kokoro/voices/ff_siwis.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-hf_alpha",
+      "name": "Kokoro voices/hf_alpha.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_alpha.pt",
+          "sha256": "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/hf_alpha.pt",
+              "install": "models/kokoro/voices/hf_alpha.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_alpha.pt",
+          "sha256": "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/hf_alpha.pt",
+              "install": "models/kokoro/voices/hf_alpha.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_alpha.pt",
+          "sha256": "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/hf_alpha.pt",
+              "install": "models/kokoro/voices/hf_alpha.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-hf_beta",
+      "name": "Kokoro voices/hf_beta.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_beta.pt",
+          "sha256": "63c0a1a6272e98d43f4511bba40e30dd9c8ceaf5f39af869509b9f51a71c503e",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/hf_beta.pt",
+              "install": "models/kokoro/voices/hf_beta.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_beta.pt",
+          "sha256": "63c0a1a6272e98d43f4511bba40e30dd9c8ceaf5f39af869509b9f51a71c503e",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/hf_beta.pt",
+              "install": "models/kokoro/voices/hf_beta.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_beta.pt",
+          "sha256": "63c0a1a6272e98d43f4511bba40e30dd9c8ceaf5f39af869509b9f51a71c503e",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/hf_beta.pt",
+              "install": "models/kokoro/voices/hf_beta.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-hm_omega",
+      "name": "Kokoro voices/hm_omega.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hm_omega.pt",
+          "sha256": "b55f02a8e8483fffe0afa566e7d22ed8013acf47ad4f6bbee2795a840155703e",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/hm_omega.pt",
+              "install": "models/kokoro/voices/hm_omega.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hm_omega.pt",
+          "sha256": "b55f02a8e8483fffe0afa566e7d22ed8013acf47ad4f6bbee2795a840155703e",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/hm_omega.pt",
+              "install": "models/kokoro/voices/hm_omega.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hm_omega.pt",
+          "sha256": "b55f02a8e8483fffe0afa566e7d22ed8013acf47ad4f6bbee2795a840155703e",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/hm_omega.pt",
+              "install": "models/kokoro/voices/hm_omega.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-hm_psi",
+      "name": "Kokoro voices/hm_psi.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hm_psi.pt",
+          "sha256": "2f0f055cea4f1083f4ef127ece48d71606347f6557dbb961c0ca5740a2da485b",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/hm_psi.pt",
+              "install": "models/kokoro/voices/hm_psi.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hm_psi.pt",
+          "sha256": "2f0f055cea4f1083f4ef127ece48d71606347f6557dbb961c0ca5740a2da485b",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/hm_psi.pt",
+              "install": "models/kokoro/voices/hm_psi.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hm_psi.pt",
+          "sha256": "2f0f055cea4f1083f4ef127ece48d71606347f6557dbb961c0ca5740a2da485b",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/hm_psi.pt",
+              "install": "models/kokoro/voices/hm_psi.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-if_sara",
+      "name": "Kokoro voices/if_sara.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/if_sara.pt",
+          "sha256": "6c0b253b955fe32f1a1a86006aebe83d050ea95afd0e7be15182f087deedbf55",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/if_sara.pt",
+              "install": "models/kokoro/voices/if_sara.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/if_sara.pt",
+          "sha256": "6c0b253b955fe32f1a1a86006aebe83d050ea95afd0e7be15182f087deedbf55",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/if_sara.pt",
+              "install": "models/kokoro/voices/if_sara.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/if_sara.pt",
+          "sha256": "6c0b253b955fe32f1a1a86006aebe83d050ea95afd0e7be15182f087deedbf55",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/if_sara.pt",
+              "install": "models/kokoro/voices/if_sara.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-im_nicola",
+      "name": "Kokoro voices/im_nicola.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/im_nicola.pt",
+          "sha256": "234ed06648649f9bd874b37508ea17560b9c993ef85b4ddb3e3a71e062bd2c12",
+          "bytes": 523341,
+          "files": [
+            {
+              "member": "voices/im_nicola.pt",
+              "install": "models/kokoro/voices/im_nicola.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/im_nicola.pt",
+          "sha256": "234ed06648649f9bd874b37508ea17560b9c993ef85b4ddb3e3a71e062bd2c12",
+          "bytes": 523341,
+          "files": [
+            {
+              "member": "voices/im_nicola.pt",
+              "install": "models/kokoro/voices/im_nicola.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/im_nicola.pt",
+          "sha256": "234ed06648649f9bd874b37508ea17560b9c993ef85b4ddb3e3a71e062bd2c12",
+          "bytes": 523341,
+          "files": [
+            {
+              "member": "voices/im_nicola.pt",
+              "install": "models/kokoro/voices/im_nicola.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-jf_alpha",
+      "name": "Kokoro voices/jf_alpha.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_alpha.pt",
+          "sha256": "1bf4c9dc69e45ee46183b071f4db766349aac5592acbcfeaf051018048a5d787",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/jf_alpha.pt",
+              "install": "models/kokoro/voices/jf_alpha.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_alpha.pt",
+          "sha256": "1bf4c9dc69e45ee46183b071f4db766349aac5592acbcfeaf051018048a5d787",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/jf_alpha.pt",
+              "install": "models/kokoro/voices/jf_alpha.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_alpha.pt",
+          "sha256": "1bf4c9dc69e45ee46183b071f4db766349aac5592acbcfeaf051018048a5d787",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/jf_alpha.pt",
+              "install": "models/kokoro/voices/jf_alpha.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-jf_gongitsune",
+      "name": "Kokoro voices/jf_gongitsune.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_gongitsune.pt",
+          "sha256": "1b171917f18f351e65f2bf9657700cd6bfec4e65589c297525b9cf3c20105770",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/jf_gongitsune.pt",
+              "install": "models/kokoro/voices/jf_gongitsune.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_gongitsune.pt",
+          "sha256": "1b171917f18f351e65f2bf9657700cd6bfec4e65589c297525b9cf3c20105770",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/jf_gongitsune.pt",
+              "install": "models/kokoro/voices/jf_gongitsune.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_gongitsune.pt",
+          "sha256": "1b171917f18f351e65f2bf9657700cd6bfec4e65589c297525b9cf3c20105770",
+          "bytes": 523351,
+          "files": [
+            {
+              "member": "voices/jf_gongitsune.pt",
+              "install": "models/kokoro/voices/jf_gongitsune.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-jf_nezumi",
+      "name": "Kokoro voices/jf_nezumi.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_nezumi.pt",
+          "sha256": "d83f007a7f01783b77014561a7d493d327a0210e143440e91c9b697590d27661",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/jf_nezumi.pt",
+              "install": "models/kokoro/voices/jf_nezumi.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_nezumi.pt",
+          "sha256": "d83f007a7f01783b77014561a7d493d327a0210e143440e91c9b697590d27661",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/jf_nezumi.pt",
+              "install": "models/kokoro/voices/jf_nezumi.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_nezumi.pt",
+          "sha256": "d83f007a7f01783b77014561a7d493d327a0210e143440e91c9b697590d27661",
+          "bytes": 523420,
+          "files": [
+            {
+              "member": "voices/jf_nezumi.pt",
+              "install": "models/kokoro/voices/jf_nezumi.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-jf_tebukuro",
+      "name": "Kokoro voices/jf_tebukuro.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_tebukuro.pt",
+          "sha256": "0d6917904438aec85f73a6fa1f7ac2be6481aae47c697834936930a91796c576",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/jf_tebukuro.pt",
+              "install": "models/kokoro/voices/jf_tebukuro.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_tebukuro.pt",
+          "sha256": "0d6917904438aec85f73a6fa1f7ac2be6481aae47c697834936930a91796c576",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/jf_tebukuro.pt",
+              "install": "models/kokoro/voices/jf_tebukuro.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_tebukuro.pt",
+          "sha256": "0d6917904438aec85f73a6fa1f7ac2be6481aae47c697834936930a91796c576",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/jf_tebukuro.pt",
+              "install": "models/kokoro/voices/jf_tebukuro.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-jm_kumo",
+      "name": "Kokoro voices/jm_kumo.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jm_kumo.pt",
+          "sha256": "98340afd68b1cee84fe0cd95528cfa6d4b39e416aa75a9df64049d52c8b55896",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/jm_kumo.pt",
+              "install": "models/kokoro/voices/jm_kumo.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jm_kumo.pt",
+          "sha256": "98340afd68b1cee84fe0cd95528cfa6d4b39e416aa75a9df64049d52c8b55896",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/jm_kumo.pt",
+              "install": "models/kokoro/voices/jm_kumo.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jm_kumo.pt",
+          "sha256": "98340afd68b1cee84fe0cd95528cfa6d4b39e416aa75a9df64049d52c8b55896",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/jm_kumo.pt",
+              "install": "models/kokoro/voices/jm_kumo.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-pf_dora",
+      "name": "Kokoro voices/pf_dora.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pf_dora.pt",
+          "sha256": "07e4ff987c5d5a8c3995efd15cc4f0db7c4c15e881b198d8ab7f67ecf51f5eb7",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/pf_dora.pt",
+              "install": "models/kokoro/voices/pf_dora.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pf_dora.pt",
+          "sha256": "07e4ff987c5d5a8c3995efd15cc4f0db7c4c15e881b198d8ab7f67ecf51f5eb7",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/pf_dora.pt",
+              "install": "models/kokoro/voices/pf_dora.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pf_dora.pt",
+          "sha256": "07e4ff987c5d5a8c3995efd15cc4f0db7c4c15e881b198d8ab7f67ecf51f5eb7",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/pf_dora.pt",
+              "install": "models/kokoro/voices/pf_dora.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-pm_alex",
+      "name": "Kokoro voices/pm_alex.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pm_alex.pt",
+          "sha256": "cf0ba8c573c2480fc54123683a35cf1e2ae130428e441eb91f9149bdb188a526",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/pm_alex.pt",
+              "install": "models/kokoro/voices/pm_alex.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pm_alex.pt",
+          "sha256": "cf0ba8c573c2480fc54123683a35cf1e2ae130428e441eb91f9149bdb188a526",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/pm_alex.pt",
+              "install": "models/kokoro/voices/pm_alex.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pm_alex.pt",
+          "sha256": "cf0ba8c573c2480fc54123683a35cf1e2ae130428e441eb91f9149bdb188a526",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/pm_alex.pt",
+              "install": "models/kokoro/voices/pm_alex.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-pm_santa",
+      "name": "Kokoro voices/pm_santa.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pm_santa.pt",
+          "sha256": "d42103169c5c872abbafb9129133af7e942bb9d272c3cc3b95c203e7d7198c29",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/pm_santa.pt",
+              "install": "models/kokoro/voices/pm_santa.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pm_santa.pt",
+          "sha256": "d42103169c5c872abbafb9129133af7e942bb9d272c3cc3b95c203e7d7198c29",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/pm_santa.pt",
+              "install": "models/kokoro/voices/pm_santa.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pm_santa.pt",
+          "sha256": "d42103169c5c872abbafb9129133af7e942bb9d272c3cc3b95c203e7d7198c29",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/pm_santa.pt",
+              "install": "models/kokoro/voices/pm_santa.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zf_xiaobei",
+      "name": "Kokoro voices/zf_xiaobei.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaobei.pt",
+          "sha256": "9b76be63dab4f4f96962030acc0126a9aee9728608fbbe115e2b58a2bd504df6",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zf_xiaobei.pt",
+              "install": "models/kokoro/voices/zf_xiaobei.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaobei.pt",
+          "sha256": "9b76be63dab4f4f96962030acc0126a9aee9728608fbbe115e2b58a2bd504df6",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zf_xiaobei.pt",
+              "install": "models/kokoro/voices/zf_xiaobei.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaobei.pt",
+          "sha256": "9b76be63dab4f4f96962030acc0126a9aee9728608fbbe115e2b58a2bd504df6",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zf_xiaobei.pt",
+              "install": "models/kokoro/voices/zf_xiaobei.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zf_xiaoni",
+      "name": "Kokoro voices/zf_xiaoni.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoni.pt",
+          "sha256": "95b49f169bf1640f4f43c25e13daa39f7b98d15d00823e83ef5c14b3ced59e49",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zf_xiaoni.pt",
+              "install": "models/kokoro/voices/zf_xiaoni.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoni.pt",
+          "sha256": "95b49f169bf1640f4f43c25e13daa39f7b98d15d00823e83ef5c14b3ced59e49",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zf_xiaoni.pt",
+              "install": "models/kokoro/voices/zf_xiaoni.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoni.pt",
+          "sha256": "95b49f169bf1640f4f43c25e13daa39f7b98d15d00823e83ef5c14b3ced59e49",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zf_xiaoni.pt",
+              "install": "models/kokoro/voices/zf_xiaoni.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zf_xiaoxiao",
+      "name": "Kokoro voices/zf_xiaoxiao.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoxiao.pt",
+          "sha256": "cfaf6f2ded1ee56f1ff94fcd2b0e6cdf32e5b794bdc05b44e7439d44aef5887c",
+          "bytes": 523440,
+          "files": [
+            {
+              "member": "voices/zf_xiaoxiao.pt",
+              "install": "models/kokoro/voices/zf_xiaoxiao.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoxiao.pt",
+          "sha256": "cfaf6f2ded1ee56f1ff94fcd2b0e6cdf32e5b794bdc05b44e7439d44aef5887c",
+          "bytes": 523440,
+          "files": [
+            {
+              "member": "voices/zf_xiaoxiao.pt",
+              "install": "models/kokoro/voices/zf_xiaoxiao.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoxiao.pt",
+          "sha256": "cfaf6f2ded1ee56f1ff94fcd2b0e6cdf32e5b794bdc05b44e7439d44aef5887c",
+          "bytes": 523440,
+          "files": [
+            {
+              "member": "voices/zf_xiaoxiao.pt",
+              "install": "models/kokoro/voices/zf_xiaoxiao.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zf_xiaoyi",
+      "name": "Kokoro voices/zf_xiaoyi.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoyi.pt",
+          "sha256": "b5235dbaeef85a4c613bf78af9a88ff63c25bac5f26ba77e36186d8b7ebf05e2",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zf_xiaoyi.pt",
+              "install": "models/kokoro/voices/zf_xiaoyi.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoyi.pt",
+          "sha256": "b5235dbaeef85a4c613bf78af9a88ff63c25bac5f26ba77e36186d8b7ebf05e2",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zf_xiaoyi.pt",
+              "install": "models/kokoro/voices/zf_xiaoyi.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaoyi.pt",
+          "sha256": "b5235dbaeef85a4c613bf78af9a88ff63c25bac5f26ba77e36186d8b7ebf05e2",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zf_xiaoyi.pt",
+              "install": "models/kokoro/voices/zf_xiaoyi.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zm_yunjian",
+      "name": "Kokoro voices/zm_yunjian.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunjian.pt",
+          "sha256": "76cbf8bad35901d011d9628a2fdceb7b4f1f127e7a3269cb393b3941eb7fc417",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zm_yunjian.pt",
+              "install": "models/kokoro/voices/zm_yunjian.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunjian.pt",
+          "sha256": "76cbf8bad35901d011d9628a2fdceb7b4f1f127e7a3269cb393b3941eb7fc417",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zm_yunjian.pt",
+              "install": "models/kokoro/voices/zm_yunjian.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunjian.pt",
+          "sha256": "76cbf8bad35901d011d9628a2fdceb7b4f1f127e7a3269cb393b3941eb7fc417",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zm_yunjian.pt",
+              "install": "models/kokoro/voices/zm_yunjian.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zm_yunxi",
+      "name": "Kokoro voices/zm_yunxi.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunxi.pt",
+          "sha256": "dbe6e1ce7c3dbaf2f5667432947b638b1c6831ccbe154c4610dbcc44f431e27b",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/zm_yunxi.pt",
+              "install": "models/kokoro/voices/zm_yunxi.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunxi.pt",
+          "sha256": "dbe6e1ce7c3dbaf2f5667432947b638b1c6831ccbe154c4610dbcc44f431e27b",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/zm_yunxi.pt",
+              "install": "models/kokoro/voices/zm_yunxi.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunxi.pt",
+          "sha256": "dbe6e1ce7c3dbaf2f5667432947b638b1c6831ccbe154c4610dbcc44f431e27b",
+          "bytes": 523425,
+          "files": [
+            {
+              "member": "voices/zm_yunxi.pt",
+              "install": "models/kokoro/voices/zm_yunxi.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zm_yunxia",
+      "name": "Kokoro voices/zm_yunxia.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunxia.pt",
+          "sha256": "bb2b03b08e84d64e1214440ce3b624987fac177f2eeb5bab8571799a3d980acd",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zm_yunxia.pt",
+              "install": "models/kokoro/voices/zm_yunxia.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunxia.pt",
+          "sha256": "bb2b03b08e84d64e1214440ce3b624987fac177f2eeb5bab8571799a3d980acd",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zm_yunxia.pt",
+              "install": "models/kokoro/voices/zm_yunxia.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunxia.pt",
+          "sha256": "bb2b03b08e84d64e1214440ce3b624987fac177f2eeb5bab8571799a3d980acd",
+          "bytes": 523430,
+          "files": [
+            {
+              "member": "voices/zm_yunxia.pt",
+              "install": "models/kokoro/voices/zm_yunxia.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kokoro-voice-zm_yunyang",
+      "name": "Kokoro voices/zm_yunyang.pt",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunyang.pt",
+          "sha256": "5238ac22e0c7f8b6cdd2eddd6e444b8a700b73c4674d9a047d59a94ff96379a2",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zm_yunyang.pt",
+              "install": "models/kokoro/voices/zm_yunyang.pt"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunyang.pt",
+          "sha256": "5238ac22e0c7f8b6cdd2eddd6e444b8a700b73c4674d9a047d59a94ff96379a2",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zm_yunyang.pt",
+              "install": "models/kokoro/voices/zm_yunyang.pt"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zm_yunyang.pt",
+          "sha256": "5238ac22e0c7f8b6cdd2eddd6e444b8a700b73c4674d9a047d59a94ff96379a2",
+          "bytes": 523435,
+          "files": [
+            {
+              "member": "voices/zm_yunyang.pt",
+              "install": "models/kokoro/voices/zm_yunyang.pt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "100 CC0 sounds. The licence is stated inside the archive itself (License.txt), not only on the page it came from — which is what makes it checkable years later. The same zip serves every platform; audio is not architecture-specific, so the builds differ only in the target they answer to.",
+      "id": "kenney-interface-sounds",
+      "name": "Kenney Interface Sounds",
+      "source": "https://kenney.nl/",
+      "license": "CC0-1.0",
+      "format": "zip",
+      "install": "tree",
+      "tree": {
+        "strip": 0,
+        "into": "sfx/kenney-interface"
+      },
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+          "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+          "bytes": 834536,
+          "provides": [
+            "sfx/kenney-interface/Audio"
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+          "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+          "bytes": 834536,
+          "provides": [
+            "sfx/kenney-interface/Audio"
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+          "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+          "bytes": 834536,
+          "provides": [
+            "sfx/kenney-interface/Audio"
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": "52 CC0 sounds. The licence is stated inside the archive itself (License.txt), not only on the page it came from — which is what makes it checkable years later. The same zip serves every platform; audio is not architecture-specific, so the builds differ only in the target they answer to.",
+      "id": "kenney-ui-audio",
+      "name": "Kenney UI Audio",
+      "source": "https://kenney.nl/",
+      "license": "CC0-1.0",
+      "format": "zip",
+      "install": "tree",
+      "tree": {
+        "strip": 0,
+        "into": "sfx/kenney-ui"
+      },
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+          "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+          "bytes": 411949,
+          "provides": [
+            "sfx/kenney-ui/Audio"
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+          "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+          "bytes": 411949,
+          "provides": [
+            "sfx/kenney-ui/Audio"
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+          "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+          "bytes": 411949,
+          "provides": [
+            "sfx/kenney-ui/Audio"
+          ]
+        }
+      ]
+    },
+    {
+      "$comment": [
+        "Google's own checkpoint, Apache-2.0, pinned to a commit rather than to a branch.",
+        "",
+        "fp32 both towers, which is why it is 813 MB. The quantised ONNX conversions are a third",
+        "the size, but every one of them is a third party's re-upload of somebody else's weights,",
+        "and bay's rule is that an artifact needs an immutable URL from a source that can be",
+        "checked years later. Google's repository is that; a community conversion is not.",
+        "",
+        "The same file serves every platform: weights are not architecture-specific."
+      ],
+      "id": "siglip-model",
+      "name": "SigLIP base patch16-224 weights",
+      "source": "https://huggingface.co/google/siglip-base-patch16-224",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/model.safetensors",
+          "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8",
+          "bytes": 812672320,
+          "files": [
+            {
+              "member": "model.safetensors",
+              "install": "models/siglip/model.safetensors"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/model.safetensors",
+          "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8",
+          "bytes": 812672320,
+          "files": [
+            {
+              "member": "model.safetensors",
+              "install": "models/siglip/model.safetensors"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/model.safetensors",
+          "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8",
+          "bytes": 812672320,
+          "files": [
+            {
+              "member": "model.safetensors",
+              "install": "models/siglip/model.safetensors"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "siglip-tokenizer",
+      "name": "SigLIP tokenizer",
+      "source": "https://huggingface.co/google/siglip-base-patch16-224",
+      "license": "Apache-2.0",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/tokenizer.json",
+          "sha256": "c6e405cb7c670d56636a9402c81023a55bc6c3c53d89cf02b92f5c5005bfe920",
+          "bytes": 2399357,
+          "files": [
+            {
+              "member": "tokenizer.json",
+              "install": "models/siglip/tokenizer.json"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/tokenizer.json",
+          "sha256": "c6e405cb7c670d56636a9402c81023a55bc6c3c53d89cf02b92f5c5005bfe920",
+          "bytes": 2399357,
+          "files": [
+            {
+              "member": "tokenizer.json",
+              "install": "models/siglip/tokenizer.json"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/google/siglip-base-patch16-224/resolve/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed/tokenizer.json",
+          "sha256": "c6e405cb7c670d56636a9402c81023a55bc6c3c53d89cf02b92f5c5005bfe920",
+          "bytes": 2399357,
+          "files": [
+            {
+              "member": "tokenizer.json",
+              "install": "models/siglip/tokenizer.json"
+            }
+          ]
         }
       ]
     }
@@ -206,8 +3168,14 @@
   "kokoroVenv": {
     "python": "3.12.13",
     "venv": "kokoro-venv",
-    "packages": ["kokoro>=0.9.4", "soundfile"],
+    "packages": [
+      "kokoro>=0.9.4",
+      "soundfile"
+    ],
     "spacyModel": "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    "provides": ["kokoro", "en_core_web_sm"]
+    "provides": [
+      "kokoro",
+      "en_core_web_sm"
+    ]
   }
 }

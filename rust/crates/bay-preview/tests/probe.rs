@@ -279,3 +279,112 @@ fn the_decode_plan_never_exceeds_the_memory_budget() {
         }
     }
 }
+
+// -- Export decode intent ------------------------------------------------------------------
+//
+// The preview budget is a memory ceiling for frames held in RAM. It silently became the ceiling
+// for the delivered file too, so every export was composited from a <=480px cache and upscaled.
+// These pin the two plans apart.
+
+#[test]
+fn an_export_decodes_at_source_resolution_not_the_preview_budget() {
+    let plan = bay_preview::plan_export_decode_for_test((1920, 1080), 0, 5.0, 30.0);
+    assert_eq!(
+        (plan.width, plan.height),
+        (1920, 1080),
+        "export must decode the source as it is, not at the preview's 480px budget"
+    );
+    assert!(
+        plan.max_frames.is_none(),
+        "an export streams, so nothing caps its frame count"
+    );
+
+    let (preview_w, _, _, _) = bay_preview::plan_decode_for_test((1920, 1080), 0, 5.0);
+    assert_eq!(preview_w, 480, "the preview budget itself must not change");
+}
+
+#[test]
+fn a_long_export_keeps_the_delivered_frame_rate() {
+    // The case that made the defect visible: at 600s the preview plan drops toward
+    // VIDEO_MIN_FPS to keep the whole clip resident, so the same decoded frame was repeated for
+    // up to half a second of a 30fps export.
+    let preview = bay_preview::plan_decode_for_test((1920, 1080), 0, 600.0);
+    assert!(
+        preview.2 < 10.0,
+        "precondition: the preview plan lowers fps on a long clip, got {}",
+        preview.2
+    );
+
+    let plan = bay_preview::plan_export_decode_for_test((1920, 1080), 0, 600.0, 30.0);
+    assert!(
+        (plan.fps - 30.0).abs() < 0.01,
+        "export must decode at the delivered rate, got {}",
+        plan.fps
+    );
+    assert_eq!((plan.width, plan.height), (1920, 1080));
+}
+
+#[test]
+fn a_rotated_export_is_planned_at_its_display_size() {
+    // ffmpeg autorotates on decode, so a 90-degree clip arrives transposed. Export must plan
+    // against what it will actually receive, exactly as the preview does.
+    let plan = bay_preview::plan_export_decode_for_test((1920, 1080), 90, 5.0, 30.0);
+    assert_eq!(
+        (plan.width, plan.height),
+        (1080, 1920),
+        "a rotated source must be planned at its display size"
+    );
+}
+
+#[test]
+fn export_dimensions_stay_even_for_the_encoder() {
+    // yuv420p needs even dimensions; an odd source must not produce an odd plan.
+    for natural in [(1919, 1081), (3, 3), (0, 0)] {
+        let plan = bay_preview::plan_export_decode_for_test(natural, 0, 4.0, 30.0);
+        assert_eq!(plan.width % 2, 0, "{natural:?} -> width {}", plan.width);
+        assert_eq!(plan.height % 2, 0, "{natural:?} -> height {}", plan.height);
+        assert!(plan.width >= 2 && plan.height >= 2, "{natural:?}");
+    }
+}
+
+/// A corrupt file's *claimed* dimensions must not size a buffer.
+///
+/// Export deliberately plans at source resolution with no downscale, and those numbers come
+/// from ffprobe reading container metadata — a claim, not a measurement. A crafted file can
+/// declare 100000x100000, which sizes a ~40 GB frame buffer and aborts the process. That breaks
+/// the same rule the rest of this branch enforces: the render path degrades on bad input, it
+/// does not abort. The preview plan was never exposed because it clamped to 480 regardless.
+#[test]
+fn an_absurd_declared_size_is_clamped_rather_than_allocated() {
+    for natural in [(100_000u32, 100_000u32), (u32::MAX, u32::MAX), (65_536, 4)] {
+        let plan = bay_preview::plan_export_decode_for_test(natural, 0, 5.0, 30.0);
+        assert!(
+            plan.width <= 16_384 && plan.height <= 16_384,
+            "{natural:?} planned {}x{}, which is not a size any codec produces",
+            plan.width,
+            plan.height
+        );
+        // The buffer that would be allocated has to stay computable and sane.
+        let bytes = (plan.width as usize)
+            .checked_mul(plan.height as usize)
+            .and_then(|p| p.checked_mul(4))
+            .expect("a clamped frame size must not overflow");
+        assert!(
+            bytes <= 16_384 * 16_384 * 4,
+            "{natural:?} would allocate {bytes} bytes per frame"
+        );
+    }
+}
+
+/// An ordinary source is untouched by that ceiling.
+#[test]
+fn the_export_ceiling_does_not_touch_real_footage() {
+    for natural in [(1920u32, 1080u32), (3840, 2160), (1080, 1920)] {
+        let plan = bay_preview::plan_export_decode_for_test(natural, 0, 5.0, 30.0);
+        assert_eq!(
+            (plan.width, plan.height),
+            natural,
+            "real footage must still export at its own size"
+        );
+    }
+}

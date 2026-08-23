@@ -50,7 +50,7 @@ done
 echo "── building $APP_NAME $VERSION for ${ARCHS[*]} ──"
 for target in "${ARCHS[@]}"; do
   rustup target add "$target" >/dev/null 2>&1 || true
-  (cd rust && cargo build --release --target "$target" -p bay-desktop)
+  (cd rust && env -u CARGO_TARGET_DIR cargo build --release --target "$target" -p bay-desktop)
 done
 
 rm -rf "$APP"
@@ -76,6 +76,13 @@ else
   echo "  (no assets/bay.icns — run ./script/make-icon to generate one)"
   ICON_ENTRY=''
 fi
+
+# The release is also the CLI and the agent skill distribution. Keeping the exact reviewed skill
+# inside the app means a consumer does not need a source checkout; the installer links the CLI
+# binary and copies this directory into Claude Code, Cursor, and OpenClaw's skill registries.
+cp "$ROOT/script/install-agent-tools" "$APP/Contents/Resources/install-agent-tools"
+chmod +x "$APP/Contents/Resources/install-agent-tools"
+cp -R "$ROOT/.claude/skills/bay" "$APP/Contents/Resources/bay-skill"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

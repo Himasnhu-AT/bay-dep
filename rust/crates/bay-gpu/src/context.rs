@@ -708,20 +708,25 @@ impl GpuContext {
     ///
     /// `queue.write_texture` imposes **no** 256-byte row-pitch alignment — that constraint is
     /// specific to buffer⇄texture copies — so rows are written at their natural pitch.
+    ///
+    /// Returns `None` rather than panicking when the buffer length disagrees with `width`/`height`
+    /// or either dimension is zero. A mis-sized raster is bad input, and `CLAUDE.md` requires the
+    /// render path to degrade on bad input: the caller drops that one layer and still produces a
+    /// frame.
     pub fn upload_rgba_texture(
         &self,
         rgba: &[u8],
         width: u32,
         height: u32,
         label: &'static str,
-    ) -> wgpu::Texture {
+    ) -> Option<wgpu::Texture> {
+        if width == 0 || height == 0 {
+            return None;
+        }
         let expected = (width as usize) * (height as usize) * 4;
-        assert_eq!(
-            rgba.len(),
-            expected,
-            "upload_rgba_texture: buffer is {} bytes, expected {width}x{height}x4 = {expected}",
-            rgba.len(),
-        );
+        if rgba.len() != expected {
+            return None;
+        }
         let texture = self.create_render_texture(width, height, label);
         let pixels = self.swizzle_for_native_format(rgba);
         self.queue.write_texture(
@@ -743,7 +748,7 @@ impl GpuContext {
                 depth_or_array_layers: 1,
             },
         );
-        texture
+        Some(texture)
     }
 
     /// Reads a texture back into a tightly-packed RGBA8 `Vec` (length `width * height * 4`).
@@ -753,7 +758,16 @@ impl GpuContext {
     /// `COPY_BYTES_PER_ROW_ALIGNMENT` (256), so we copy into a padded buffer then strip the
     /// per-row padding. No channel swizzle — callers pick [`read_texture_rgba`] or
     /// [`read_texture_bgra`] for a specific order. Blocks on `device.poll(Wait)`.
-    fn read_texture_native(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+    ///
+    /// Returns `None` when the device is lost mid-readback. That is not bad input — it is a
+    /// laptop that slept or an eGPU that was unplugged — and it must surface as a failed frame
+    /// so the caller can hold its last good one, not as a crash.
+    fn read_texture_native(
+        &self,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Option<Vec<u8>> {
         let unpadded_bytes_per_row = (width as usize) * 4;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
@@ -794,10 +808,24 @@ impl GpuContext {
         self.queue.submit([encoder.finish()]);
 
         let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device
+        // The mapping result has to be captured, not discarded. `poll` can return Ok while the
+        // map itself failed, and `get_mapped_range` then panics — the exact abort-on-a-bad-frame
+        // behaviour this signature exists to remove.
+        let mapped_ok = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reported = std::sync::Arc::clone(&mapped_ok);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            reported.store(result.is_ok(), std::sync::atomic::Ordering::SeqCst);
+        });
+        if self
+            .device
             .poll(wgpu::wgt::PollType::wait_indefinitely())
-            .expect("device.poll(Wait) failed during texture readback");
+            .is_err()
+        {
+            return None;
+        }
+        if !mapped_ok.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
 
         let mapped = slice.get_mapped_range();
         let mut out = vec![0u8; unpadded_bytes_per_row * height as usize];
@@ -809,32 +837,46 @@ impl GpuContext {
         }
         drop(mapped);
         buffer.unmap();
-        out
+        Some(out)
     }
 
     /// Read `texture` back as canonical **RGBA** (swizzles once on BGRA backends). For tests and
     /// offline export where downstream consumers (PNG, ffmpeg) expect RGBA.
-    pub fn read_texture_rgba(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
-        let mut out = self.read_texture_native(texture, width, height);
+    ///
+    /// `None` means the readback failed — see [`Self::read_texture_native`].
+    pub fn read_texture_rgba(
+        &self,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Option<Vec<u8>> {
+        let mut out = self.read_texture_native(texture, width, height)?;
         if self.texture_format == wgpu::TextureFormat::Bgra8Unorm {
             for texel in out.chunks_exact_mut(4) {
                 texel.swap(0, 2);
             }
         }
-        out
+        Some(out)
     }
 
     /// Read `texture` back as **BGRA** — the byte order GPUI's `RenderImage` wants. On Metal/DX12
     /// (native BGRA) this is the raw readback with *no* channel swizzle, so the live preview path
     /// avoids a full-buffer pass every frame; only GL backends swap once.
-    pub fn read_texture_bgra(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
-        let mut out = self.read_texture_native(texture, width, height);
+    ///
+    /// `None` means the readback failed — see [`Self::read_texture_native`].
+    pub fn read_texture_bgra(
+        &self,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Option<Vec<u8>> {
+        let mut out = self.read_texture_native(texture, width, height)?;
         if self.texture_format == wgpu::TextureFormat::Rgba8Unorm {
             for texel in out.chunks_exact_mut(4) {
                 texel.swap(0, 2);
             }
         }
-        out
+        Some(out)
     }
 
     /// Swaps R and B when the native texture format is BGRA so a caller-supplied RGBA buffer

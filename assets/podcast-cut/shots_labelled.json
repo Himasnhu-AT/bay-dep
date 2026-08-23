@@ -1,0 +1,310 @@
+[
+ {
+  "index": 16,
+  "startSeconds": 11.411,
+  "endSeconds": 20.387,
+  "durationSeconds": 8.976,
+  "mid": 15.9,
+  "label": "titles",
+  "scores": {
+   "guest": -0.0071,
+   "host": -0.0318,
+   "broll": 0.0254,
+   "titles": 0.0412
+  }
+ },
+ {
+  "index": 17,
+  "startSeconds": 20.387,
+  "endSeconds": 86.186,
+  "durationSeconds": 65.799,
+  "mid": 53.29,
+  "label": "host",
+  "scores": {
+   "guest": 0.0391,
+   "host": 0.0957,
+   "broll": -0.0044,
+   "titles": -0.0022
+  }
+ },
+ {
+  "index": 18,
+  "startSeconds": 86.186,
+  "endSeconds": 120.887,
+  "durationSeconds": 34.70099999999999,
+  "mid": 103.54,
+  "label": "guest",
+  "scores": {
+   "guest": 0.1693,
+   "host": 0.0782,
+   "broll": -0.035,
+   "titles": -0.0579
+  }
+ },
+ {
+  "index": 19,
+  "startSeconds": 120.887,
+  "endSeconds": 125.392,
+  "durationSeconds": 4.5049999999999955,
+  "mid": 123.14,
+  "label": "broll",
+  "scores": {
+   "guest": -0.108,
+   "host": -0.1009,
+   "broll": 0.0309,
+   "titles": -0.0638
+  }
+ },
+ {
+  "index": 20,
+  "startSeconds": 125.392,
+  "endSeconds": 131.398,
+  "durationSeconds": 6.006,
+  "mid": 128.39,
+  "label": "broll",
+  "scores": {
+   "guest": 0.0113,
+   "host": -0.043,
+   "broll": 0.0234,
+   "titles": -0.0955
+  }
+ },
+ {
+  "index": 21,
+  "startSeconds": 131.398,
+  "endSeconds": 137.404,
+  "durationSeconds": 6.006,
+  "mid": 134.4,
+  "label": "broll",
+  "scores": {
+   "guest": -0.0749,
+   "host": -0.0667,
+   "broll": 0.0461,
+   "titles": -0.0982
+  }
+ },
+ {
+  "index": 22,
+  "startSeconds": 137.404,
+  "endSeconds": 142.676,
+  "durationSeconds": 5.271999999999991,
+  "mid": 140.04,
+  "label": "broll",
+  "scores": {
+   "guest": -0.1142,
+   "host": -0.1471,
+   "broll": 0.0511,
+   "titles": -0.1002
+  }
+ },
+ {
+  "index": 23,
+  "startSeconds": 142.676,
+  "endSeconds": 148.815,
+  "durationSeconds": 6.13900000000001,
+  "mid": 145.75,
+  "label": "broll",
+  "scores": {
+   "guest": -0.0501,
+   "host": -0.0268,
+   "broll": 0.0031,
+   "titles": -0.1274
+  }
+ },
+ {
+  "index": 24,
+  "startSeconds": 148.815,
+  "endSeconds": 151.251,
+  "durationSeconds": 2.436000000000007,
+  "mid": 150.03,
+  "label": "broll",
+  "scores": {
+   "guest": -0.1049,
+   "host": -0.1231,
+   "broll": -0.0003,
+   "titles": -0.1062
+  }
+ },
+ {
+  "index": 25,
+  "startSeconds": 151.251,
+  "endSeconds": 162.129,
+  "durationSeconds": 10.877999999999986,
+  "mid": 156.69,
+  "label": "broll",
+  "scores": {
+   "guest": -0.0338,
+   "host": -0.1122,
+   "broll": -0.0012,
+   "titles": -0.1003
+  }
+ },
+ {
+  "index": 26,
+  "startSeconds": 162.129,
+  "endSeconds": 166.4,
+  "durationSeconds": 4.271000000000015,
+  "mid": 164.26,
+  "label": "broll",
+  "scores": {
+   "guest": -0.086,
+   "host": -0.0888,
+   "broll": 0.0503,
+   "titles": -0.1134
+  }
+ },
+ {
+  "index": 27,
+  "startSeconds": 166.4,
+  "endSeconds": 171.071,
+  "durationSeconds": 4.670999999999992,
+  "mid": 168.74,
+  "label": "broll",
+  "scores": {
+   "guest": -0.1275,
+   "host": -0.0898,
+   "broll": 0.0593,
+   "titles": -0.1018
+  }
+ },
+ {
+  "index": 28,
+  "startSeconds": 171.071,
+  "endSeconds": 179.479,
+  "durationSeconds": 8.408000000000015,
+  "mid": 175.28,
+  "label": "guest",
+  "scores": {
+   "guest": 0.0407,
+   "host": -0.0034,
+   "broll": 0.0195,
+   "titles": -0.0983
+  }
+ },
+ {
+  "index": 29,
+  "startSeconds": 179.479,
+  "endSeconds": 182.516,
+  "durationSeconds": 3.0369999999999777,
+  "mid": 181.0,
+  "label": "broll",
+  "scores": {
+   "guest": -0.0335,
+   "host": -0.0523,
+   "broll": 0.0991,
+   "titles": -0.1068
+  }
+ },
+ {
+  "index": 30,
+  "startSeconds": 182.516,
+  "endSeconds": 188.422,
+  "durationSeconds": 5.906000000000006,
+  "mid": 185.47,
+  "label": "broll",
+  "scores": {
+   "guest": -0.1048,
+   "host": -0.074,
+   "broll": 0.0764,
+   "titles": -0.0939
+  }
+ },
+ {
+  "index": 31,
+  "startSeconds": 188.422,
+  "endSeconds": 247.28,
+  "durationSeconds": 58.858000000000004,
+  "mid": 217.85,
+  "label": "guest",
+  "scores": {
+   "guest": 0.1579,
+   "host": 0.0723,
+   "broll": -0.0345,
+   "titles": -0.0549
+  }
+ },
+ {
+  "index": 32,
+  "startSeconds": 247.28,
+  "endSeconds": 251.284,
+  "durationSeconds": 4.003999999999991,
+  "mid": 249.28,
+  "label": "host",
+  "scores": {
+   "guest": 0.0726,
+   "host": 0.1445,
+   "broll": -0.07,
+   "titles": -0.1038
+  }
+ },
+ {
+  "index": 33,
+  "startSeconds": 251.284,
+  "endSeconds": 261.561,
+  "durationSeconds": 10.276999999999987,
+  "mid": 256.42,
+  "label": "guest",
+  "scores": {
+   "guest": 0.1487,
+   "host": 0.0796,
+   "broll": -0.0342,
+   "titles": -0.0681
+  }
+ },
+ {
+  "index": 34,
+  "startSeconds": 261.561,
+  "endSeconds": 270.937,
+  "durationSeconds": 9.376000000000033,
+  "mid": 266.25,
+  "label": "host",
+  "scores": {
+   "guest": 0.0702,
+   "host": 0.1532,
+   "broll": -0.0567,
+   "titles": -0.0758
+  }
+ },
+ {
+  "index": 35,
+  "startSeconds": 270.937,
+  "endSeconds": 324.09,
+  "durationSeconds": 53.15299999999996,
+  "mid": 297.51,
+  "label": "guest",
+  "scores": {
+   "guest": 0.1634,
+   "host": 0.079,
+   "broll": -0.0394,
+   "titles": -0.0588
+  }
+ },
+ {
+  "index": 36,
+  "startSeconds": 324.09,
+  "endSeconds": 330.23,
+  "durationSeconds": 6.140000000000043,
+  "mid": 327.16,
+  "label": "host",
+  "scores": {
+   "guest": 0.059,
+   "host": 0.1343,
+   "broll": -0.0678,
+   "titles": -0.0904
+  }
+ },
+ {
+  "index": 37,
+  "startSeconds": 330.23,
+  "endSeconds": 373.573,
+  "durationSeconds": 43.34299999999996,
+  "mid": 351.9,
+  "label": "guest",
+  "scores": {
+   "guest": 0.1432,
+   "host": 0.0728,
+   "broll": -0.037,
+   "titles": -0.077
+  }
+ }
+]

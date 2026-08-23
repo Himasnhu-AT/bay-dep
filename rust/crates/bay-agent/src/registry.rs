@@ -99,7 +99,8 @@ impl Instance {
     /// The exact command that points an MCP client at this window.
     pub fn mcp_add_command(&self) -> String {
         format!(
-            "claude mcp add --transport http bay http://127.0.0.1:{}/mcp",
+            "claude mcp add --transport http bay http://127.0.0.1:{}/mcp \
+             --header \"Authorization: Bearer $BAY_MCP_TOKEN\"",
             self.port
         )
     }
@@ -326,6 +327,29 @@ pub fn live() -> Vec<Instance> {
     instances
 }
 
+/// The window a second launch should raise instead of opening a rival.
+///
+/// **Not "the first live instance".** [`live`] lists every bay that serves agents, and most of
+/// them are not this launch's twin:
+///
+/// - A headless `bay --mcp` has no window to raise. It answers `window_focus` with
+///   `unknown tool "window_focus"`, which is not the JSON the launcher expects, so it read the
+///   reply as "running, but wedged" and refused to open the editor at all. One forgotten
+///   `bay --mcp --port 7335` from days earlier was enough to make the editor unlaunchable —
+///   and the port it was on had nothing to do with the editor's.
+/// - An editor from another checkout, on its own `BAY_AGENT_PORT`, is a different
+///   configuration's window. Raising it and stopping is the opposite of what was asked for;
+///   running two checkouts side by side is exactly what that override is for.
+///
+/// So the only thing worth focusing is an editor holding *this* process's port — which is the
+/// same lock this launch is about to lose to it.
+pub fn window_to_focus() -> Option<Instance> {
+    let port = agent_port();
+    live()
+        .into_iter()
+        .find(|instance| instance.port == port && instance.kind == Kind::Editor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,7 +475,8 @@ mod tests {
         };
         assert_eq!(
             instance.mcp_add_command(),
-            "claude mcp add --transport http bay http://127.0.0.1:7333/mcp"
+            "claude mcp add --transport http bay http://127.0.0.1:7333/mcp \
+             --header \"Authorization: Bearer $BAY_MCP_TOKEN\""
         );
     }
 
@@ -584,6 +609,58 @@ mod tests {
             Owner::Bay(instance) => assert_eq!(instance.kind, Kind::Editor),
             other => panic!("expected a bay, got {other:?}"),
         }
+        drop(listener);
+    }
+
+    /// The failure that prompted this: a `bay --mcp --port 7335`, left running for a day,
+    /// stopped the editor from opening at all. It is listed — it *is* serving agents — but it
+    /// has no window, so a launch that treats it as one sends `window_focus`, gets
+    /// `unknown tool` back, and concludes the editor is wedged.
+    #[test]
+    fn a_headless_server_is_never_the_window_to_focus() {
+        let _scratch = Scratch::new("focus-headless");
+        // An OS-assigned port, held for the whole test: this stands in for the unrelated
+        // `--port N` server, and holding the listener is what keeps `live` from reaping it.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a scratch port");
+        let other = listener.local_addr().expect("bound address").port();
+        register(other, Kind::Headless, None).expect("register");
+
+        assert_eq!(live().len(), 1, "the headless server is still serving");
+        assert_eq!(
+            window_to_focus(),
+            None,
+            "a headless server has no window to raise"
+        );
+        drop(listener);
+    }
+
+    /// `BAY_AGENT_PORT` exists so two checkouts can run side by side. Focusing the other one's
+    /// window and exiting would make the second checkout impossible to open.
+    #[test]
+    fn another_checkouts_window_is_left_alone() {
+        let _scratch = Scratch::new("focus-other-port");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a scratch port");
+        let other = listener.local_addr().expect("bound address").port();
+        register(other, Kind::Editor, Some("Their Reel")).expect("register");
+
+        assert_ne!(other, agent_port(), "the scratch port must not be ours");
+        assert_eq!(window_to_focus(), None, "that window is not this launch's");
+        drop(listener);
+    }
+
+    /// And the case it is all for: our own window, open, is the one to raise.
+    #[test]
+    fn our_own_open_window_is_the_one_to_focus() {
+        let _scratch = Scratch::new("focus-ours");
+        let Some(listener) = claim() else {
+            eprintln!("skipping: port {} is in use", agent_port());
+            return;
+        };
+        register(agent_port(), Kind::Editor, Some("Reel v2")).expect("register");
+
+        let focus = window_to_focus().expect("our window must be raised, not duplicated");
+        assert_eq!(focus.port, agent_port());
+        assert_eq!(focus.project.as_deref(), Some("Reel v2"));
         drop(listener);
     }
 

@@ -13,8 +13,8 @@ use gpui::{
 
 use bay_core::project::library;
 use bay_core::{
-    AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaTime,
-    Project, TextElement, Transform, VideoElement,
+    AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaKind,
+    MediaTime, Project, TextElement, Transform, VideoElement,
 };
 use bay_preview::PreviewRenderer;
 
@@ -71,6 +71,13 @@ gpui::actions!(
         TogglePlay,
         SeekForward,
         SeekBackward,
+        StepForward,
+        StepBackward,
+        GoToStart,
+        GoToEnd,
+        RippleDelete,
+        AddMarker,
+        SelectAll,
         CopyClip,
         PasteClip,
     ]
@@ -88,13 +95,23 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("delete", DeleteSelected, editor),
         KeyBinding::new("s", SplitClip, editor),
         KeyBinding::new("space", TogglePlay, editor),
-        KeyBinding::new("right", SeekForward, editor),
-        KeyBinding::new("left", SeekBackward, editor),
+        // A frame at a time is the default, because that is the unit an edit is made in.
+        // Shift is the coarse step; a second was the only step there used to be.
+        KeyBinding::new("right", StepForward, editor),
+        KeyBinding::new("left", StepBackward, editor),
+        KeyBinding::new("shift-right", SeekForward, editor),
+        KeyBinding::new("shift-left", SeekBackward, editor),
+        KeyBinding::new("home", GoToStart, editor),
+        KeyBinding::new("end", GoToEnd, editor),
+        KeyBinding::new("shift-backspace", RippleDelete, editor),
+        KeyBinding::new("m", AddMarker, editor),
+        KeyBinding::new("cmd-a", SelectAll, editor),
         KeyBinding::new("cmd-c", CopyClip, editor),
         KeyBinding::new("cmd-v", PasteClip, editor),
     ]
 }
 
+use crate::geometry::TimelineGeometry;
 use crate::theme;
 use crate::view_model::{EditorViewModel, TrackRow};
 
@@ -105,6 +122,22 @@ const MAX_ZOOM: f32 = 400.0;
 const TRACK_LABEL_WIDTH: f32 = 132.0;
 const LANE_HEIGHT: f32 = 40.0;
 const TICKS_PER_SECOND: i64 = 120_000;
+
+/// Padding around the timeline panel, and the gap between a track's label and its lane.
+///
+/// Real numbers rather than `.p_2()`/`.gap_2()` because scrubbing turns a window-space mouse x
+/// into a time, and that needs the lane's left edge as a value the code can read. These
+/// constants drive the layout, so the two can't drift apart.
+const TIMELINE_PADDING: f32 = 8.0;
+const TRACK_GAP: f32 = 8.0;
+/// Height of the ruler strip above the lanes — the scrub target.
+const RULER_HEIGHT: f32 = 22.0;
+
+/// Window-space x of the left edge of every lane (and of the ruler). The timeline spans the
+/// window, so its own left edge is zero.
+fn lane_origin_x() -> f32 {
+    TIMELINE_PADDING + TRACK_LABEL_WIDTH + TRACK_GAP
+}
 
 /// The single project file that predates the project library. Still read once at startup so a
 /// project made before the library existed is adopted rather than lost.
@@ -142,6 +175,8 @@ fn runtime_offers() -> Vec<RuntimeOffer> {
             element_id: match plan.component.as_str() {
                 "video" => "install-video",
                 "speech" => "install-speech",
+                "sfx" => "install-sfx",
+                "vision" => "install-vision",
                 _ => "install-runtime",
             },
             id: plan.component.clone(),
@@ -194,6 +229,12 @@ pub struct EditorView {
     needs_focus: bool,
     dragging: Option<DragState>,
     pixels_per_second: f32,
+    /// Horizontal scroll of the timeline, in px. One offset for every lane and the ruler: they
+    /// are reading the same time axis, so they scroll as one or they lie about where a clip is.
+    scroll_x: f32,
+    /// True while the pointer is dragging the playhead. Set by a press on the ruler or on empty
+    /// lane space, cleared on release.
+    scrubbing: bool,
     /// GPU compositor preview (None if no adapter); the rendered image + a change signature.
     preview: Option<PreviewRenderer>,
     preview_image: Option<Arc<RenderImage>>,
@@ -263,6 +304,8 @@ impl EditorView {
             needs_focus: true,
             dragging: None,
             pixels_per_second: DEFAULT_PIXELS_PER_SECOND,
+            scroll_x: 0.0,
+            scrubbing: false,
             preview,
             preview_image: None,
             preview_sig: None,
@@ -478,7 +521,12 @@ impl EditorView {
             media_id: String,
             start_sec: f64,
             end_sec: f64,
+            /// In-point into the source file, in seconds.
+            trim_start_sec: f64,
             volume: f32,
+            /// The clip's level over its own length — fades and any volume keyframes,
+            /// sampled from the model so preview and export agree.
+            gain_points: Vec<(f64, f32)>,
         }
         let active: Vec<Active> = {
             let scene = self.editor.active_scene();
@@ -497,7 +545,9 @@ impl EditorView {
                             media_id: audio.media_id.clone(),
                             start_sec: element.start().to_seconds_f64(),
                             end_sec,
+                            trim_start_sec: audio.trim_start.to_seconds_f64().max(0.0),
                             volume: audio.volume,
+                            gain_points: element.gain_points(),
                         });
                     }
                 }
@@ -534,11 +584,19 @@ impl EditorView {
                     let pcm = self.audio_cache.get(&clip.media_id)?;
                     Some(bay_audio::MixClip {
                         pcm: pcm.as_ref(),
-                        // Audio has no trim: source position tracks the playhead into the clip.
-                        src_start_secs: (playhead_sec - clip.start_sec).max(0.0),
+                        // Where in the file to start reading: the clip's own in-point, plus
+                        // however far the playhead already is into the clip.
+                        src_start_secs: clip.trim_start_sec
+                            + (playhead_sec - clip.start_sec).max(0.0),
                         dst_start_secs: (clip.start_sec - playhead_sec).max(0.0),
                         play_secs: clip.end_sec - clip.start_sec.max(playhead_sec),
                         volume: clip.volume.clamp(0.0, 2.0),
+                        // Read against the clip's own timeline, so pressing play halfway
+                        // through a fade hears the middle of the fade, not the start of it.
+                        envelope: (clip.gain_points.len() > 1).then(|| bay_audio::GainEnvelope {
+                            clip_offset_secs: (playhead_sec - clip.start_sec).max(0.0),
+                            points: clip.gain_points.clone(),
+                        }),
                     })
                 })
                 .collect();
@@ -604,6 +662,66 @@ impl EditorView {
                 animations,
             });
         }
+    }
+
+    /// Save the selected clips as a template in the library, so they can be placed again in
+    /// this project or any other.
+    ///
+    /// The motion presets above live in this window and die with it — useful until the app is
+    /// closed, which is not really a preset at all. A template is written to disk.
+    fn save_template(&mut self) {
+        let selected: Vec<bay_core::Element> = self
+            .editor
+            .selection()
+            .iter()
+            .filter_map(|reference| self.editor.active_scene().element(reference).cloned())
+            .collect();
+        if selected.is_empty() {
+            self.status = Some("Select the clips to save as a template first.".into());
+            return;
+        }
+        let Some(library) = bay_core::project::TemplateLibrary::open_default() else {
+            self.status = Some("No data directory, so there is nowhere to save a template.".into());
+            return;
+        };
+
+        // Times are stored relative to the template's own start, so placing it later does not
+        // require rewriting every time inside it.
+        let origin = selected
+            .iter()
+            .map(|element| element.start())
+            .min()
+            .unwrap_or(MediaTime::ZERO);
+        let elements: Vec<bay_core::Element> = selected
+            .iter()
+            .map(|element| {
+                let mut relative = element.clone();
+                relative.set_start(MediaTime::from_ticks(
+                    element.start().as_ticks() - origin.as_ticks(),
+                ));
+                relative
+            })
+            .collect();
+        // Every title in the bundle is a slot worth filling when it is placed again.
+        let text_slots = elements
+            .iter()
+            .filter(|element| matches!(element, bay_core::Element::Text(_)))
+            .map(|element| element.id().to_string())
+            .collect();
+
+        self.add_counter += 1;
+        let id = format!("saved-{}", self.add_counter);
+        let template = bay_core::project::Template {
+            name: format!("Template {}", self.add_counter),
+            description: format!("{} element(s) saved from this project", elements.len()),
+            id: id.clone(),
+            elements,
+            text_slots,
+        };
+        self.status = Some(match library.save(&template) {
+            Ok(path) => format!("Saved template {id} to {}", path.display()),
+            Err(error) => format!("Could not save the template: {error}"),
+        });
     }
 
     /// Apply a saved preset to the selected clip (minting fresh effect ids), one undo step.
@@ -722,10 +840,55 @@ impl EditorView {
             media,
         );
 
+        // A frame the GPU could not produce (device loss on a laptop that slept) leaves the last
+        // good one on screen. Showing nothing, or a black rectangle, would look like the project
+        // is empty rather than like the GPU hiccuped.
+        //
+        // Clearing the signature is what makes that a hiccup rather than a permanent freeze: it
+        // was recorded before the render, so leaving it set means this scene is considered
+        // already drawn and the next tick returns early — forever, even after the GPU recovers.
+        let Some(frame) = frame else {
+            self.preview_sig = None;
+            return;
+        };
         if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra) {
             let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
             self.preview_image = Some(Arc::new(render_image));
         }
+    }
+
+    /// The edge a drag is actually moving, after snapping — and the delta in pixels that
+    /// produces it, so the block under the pointer and the edit that commits cannot disagree.
+    ///
+    /// Snapping is applied here rather than at the drop so the user *sees* the clip jump onto
+    /// its neighbour's edge while dragging. A snap you only discover after letting go is
+    /// indistinguishable from the editor moving your clip on its own.
+    fn snapped_delta_px(&self, drag: &DragState) -> f32 {
+        let geometry = self.geometry();
+        let raw_ticks = geometry.delta_px_to_ticks(drag.delta_px).as_ticks();
+        // Which edge the pointer is carrying: the head for a move or a start-trim, the tail
+        // for an end-trim.
+        let moving_edge = match drag.mode {
+            DragMode::Move | DragMode::TrimStart => drag.origin_start_ticks + raw_ticks,
+            DragMode::TrimEnd => drag.origin_start_ticks + drag.origin_duration_ticks + raw_ticks,
+        };
+        let targets = self
+            .editor
+            .active_scene()
+            .snap_targets(Some(&drag.reference));
+        // The playhead is a target too: cutting to where you are looking is the common case.
+        let mut targets = targets;
+        targets.push(self.editor.playhead());
+        let (snapped, did_snap) = crate::geometry::snap_time(
+            MediaTime::from_ticks(moving_edge),
+            &targets,
+            self.pixels_per_second,
+        );
+        if !did_snap {
+            return drag.delta_px;
+        }
+        let corrected_ticks = snapped.as_ticks() - moving_edge;
+        drag.delta_px + geometry.delta_ticks_to_px(MediaTime::from_ticks(corrected_ticks))
     }
 
     /// Finish a drag: commit a single undoable edit (move or edge-trim) from origin to drop point.
@@ -733,13 +896,36 @@ impl EditorView {
         let Some(drag) = self.dragging.take() else {
             return;
         };
-        let delta_ticks = (drag.delta_px / self.pixels_per_second * TICKS_PER_SECOND as f32) as i64;
+        let delta_px = self.snapped_delta_px(&drag);
+        let delta_ticks = (delta_px / self.pixels_per_second * TICKS_PER_SECOND as f32) as i64;
         if delta_ticks == 0 {
             return;
         }
         match drag.mode {
             DragMode::Move => {
                 let new_start = (drag.origin_start_ticks + delta_ticks).max(0);
+                // Everything else in the selection moves by the same amount, so dragging one
+                // clip of a group carries the group rather than tearing it apart.
+                let others: Vec<ElementRef> = self
+                    .editor
+                    .selection()
+                    .iter()
+                    .filter(|reference| **reference != drag.reference)
+                    .cloned()
+                    .collect();
+                for reference in others {
+                    let current = self
+                        .editor
+                        .active_scene()
+                        .element(&reference)
+                        .map(|element| element.start().as_ticks());
+                    if let Some(start) = current {
+                        self.editor.execute(Command::MoveElement {
+                            reference,
+                            start: MediaTime::from_ticks((start + delta_ticks).max(0)),
+                        });
+                    }
+                }
                 self.editor.execute(Command::MoveElement {
                     reference: drag.reference,
                     start: MediaTime::from_ticks(new_start),
@@ -779,7 +965,25 @@ impl EditorView {
     ) -> Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static> {
         Box::new(
             cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                this.editor.select(vec![reference.clone()]);
+                // The lane underneath scrubs the playhead on a press. Grabbing a clip is not
+                // also a request to move the playhead, so the event stops here.
+                cx.stop_propagation();
+                // Shift adds to the selection instead of replacing it, so several clips can
+                // be moved or deleted as one.
+                if event.modifiers.shift {
+                    let mut selection = this.editor.selection().to_vec();
+                    match selection.iter().position(|other| *other == reference) {
+                        Some(index) => {
+                            selection.remove(index);
+                        }
+                        None => selection.push(reference.clone()),
+                    }
+                    this.editor.select(selection);
+                } else if !this.editor.is_selected(&reference) {
+                    // Grabbing a clip that is already part of a group keeps the group, so a
+                    // drag moves all of it.
+                    this.editor.select(vec![reference.clone()]);
+                }
                 this.dragging = Some(DragState {
                     reference: reference.clone(),
                     mode,
@@ -794,12 +998,39 @@ impl EditorView {
     }
 
     fn delete_selected(&mut self) {
-        if let Some(reference) = self.editor.selection().first().cloned() {
+        for reference in self.editor.selection().to_vec() {
             self.editor.execute(Command::RemoveElement { reference });
         }
     }
 
-    /// Pick an image or video file, import it as a media asset, and add a clip at the playhead.
+    /// Delete and close the hole: every later clip on the same lane moves back by the removed
+    /// clip's length. This is the delete you want nine times out of ten — the plain one leaves
+    /// a gap that reads as a stall in the finished video.
+    fn ripple_delete_selected(&mut self) {
+        for reference in self.editor.selection().to_vec() {
+            self.editor.execute(Command::RippleDelete { reference });
+        }
+    }
+
+    /// Drop a marker at the playhead.
+    fn add_marker(&mut self) {
+        self.add_counter += 1;
+        self.editor.execute(Command::AddMarker {
+            id: format!("marker-{}", self.add_counter),
+            time: self.editor.playhead(),
+            label: String::new(),
+        });
+    }
+
+    /// Step the playhead by whole frames, so a key press lands on a frame boundary rather than
+    /// somewhere between two.
+    fn step_frames(&mut self, frames: i64) {
+        let geometry = self.geometry();
+        let current = geometry.frame_of(self.editor.playhead());
+        self.editor.seek(geometry.time_of_frame(current + frames));
+    }
+
+    /// Pick a media file, import it into the project library, and add a clip at the playhead.
     fn import_media(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter(
@@ -813,116 +1044,136 @@ impl EditorView {
         else {
             return;
         };
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let is_video = matches!(
-            extension.as_str(),
-            "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v"
-        );
-        let is_audio = matches!(
-            extension.as_str(),
-            "mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg"
-        );
-
-        self.add_counter += 1;
-        let uid = self.add_counter;
-        let media_id = format!("media-{uid}");
-        let name = path
+        let path = path.to_string_lossy().into_owned();
+        let name = std::path::Path::new(&path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Media".to_string());
-        let start = self.editor.playhead();
-        // Probe timed media for its real length, so a 3-minute clip no longer imports as a
-        // 4-second one. Stills are NEVER probed for duration: ffprobe reports a nominal
-        // ~0.04s for a JPEG (a one-frame "video"), which would import a photo as a 40ms clip.
-        // A probe failure (no ffprobe, unreadable file) falls back rather than aborting.
+
+        self.add_counter += 1;
+        let media_id = format!("media-{}", self.add_counter);
+        let mut asset = MediaAsset::new(media_id.clone(), name.clone(), path.clone());
+        // Probed once at import and kept: a trim can then stop at the end of the file, and
+        // `check` has something to measure a clip against.
+        if let Ok(meta) = bay_preview::probe::probe_media(&path) {
+            asset.duration_seconds = Some(meta.duration.to_seconds_f64());
+            asset.width = Some(meta.width);
+            asset.height = Some(meta.height);
+        }
+        self.editor.add_media(asset);
+        self.place_media(&media_id, &name, &path);
+        self.preview_sig = None; // new media asset → force a re-render
+    }
+
+    /// How long a clip of this file should be. Timed media is probed so a 3-minute track does
+    /// not land as a 4-second one; stills are NEVER probed, because ffprobe reports a nominal
+    /// ~0.04s for a JPEG (a one-frame "video") and a photo would import as a 40ms clip.
+    ///
+    /// A probe failure falls back to 4s rather than aborting the import — but it says so. A
+    /// silent fallback is the bug probing was added to fix.
+    fn media_duration(&mut self, path: &str, kind: MediaKind) -> MediaTime {
         const DEFAULT_STILL: i64 = TICKS_PER_SECOND * 4;
-        let duration = if is_audio || is_video {
-            use bay_preview::probe::ProbeError;
-            match bay_preview::probe::probe_media(&path.to_string_lossy()) {
-                Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
-                // Do NOT pretend the fallback is the real length: without ffprobe every clip
-                // silently imports as 4s, which is the bug probing was added to fix.
-                Err(ProbeError::Unavailable(_)) => {
-                    self.status = Some(
-                        "ffprobe not found — clip length is a 4s guess. Install ffmpeg for real \
-                         durations."
-                            .to_string(),
-                    );
-                    MediaTime::from_ticks(DEFAULT_STILL)
-                }
-                Err(error) => {
-                    self.status =
-                        Some(format!("Could not read media duration ({error}); using 4s"));
-                    MediaTime::from_ticks(DEFAULT_STILL)
-                }
-                Ok(_) => MediaTime::from_ticks(DEFAULT_STILL),
+        if !kind.is_timed() {
+            return MediaTime::from_ticks(DEFAULT_STILL);
+        }
+        use bay_preview::probe::ProbeError;
+        match bay_preview::probe::probe_media(path) {
+            Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
+            Err(ProbeError::Unavailable(_)) => {
+                self.status = Some(
+                    "ffprobe not found — clip length is a 4s guess. Install ffmpeg for real \
+                     durations."
+                        .to_string(),
+                );
+                MediaTime::from_ticks(DEFAULT_STILL)
             }
-        } else {
-            MediaTime::from_ticks(DEFAULT_STILL)
-        };
+            Err(error) => {
+                self.status = Some(format!("Could not read media duration ({error}); using 4s"));
+                MediaTime::from_ticks(DEFAULT_STILL)
+            }
+            Ok(_) => MediaTime::from_ticks(DEFAULT_STILL),
+        }
+    }
 
-        self.editor.add_media(MediaAsset {
-            id: media_id.clone(),
-            name: name.clone(),
-            path: path.to_string_lossy().into_owned(),
-        });
-
-        let (track_id, element) = if is_audio {
-            (
+    /// Put a clip of an already-imported asset on the timeline at the playhead, on the lane its
+    /// kind belongs to. Shared by the import flow and by clicking an asset in the media panel,
+    /// so the two cannot place the same file differently.
+    fn place_media(&mut self, media_id: &str, name: &str, path: &str) {
+        let kind = MediaKind::of_path(path);
+        let duration = self.media_duration(path, kind);
+        let start = self.editor.playhead();
+        self.add_counter += 1;
+        let uid = self.add_counter;
+        let (track_id, element) = match kind {
+            MediaKind::Audio => (
                 "track-audio",
                 Element::Audio(AudioElement {
                     id: format!("aud-{uid}"),
-                    name,
+                    name: name.to_string(),
                     start,
                     duration,
-                    media_id,
+                    fade_in: MediaTime::ZERO,
+                    fade_out: MediaTime::ZERO,
+                    media_id: media_id.to_string(),
                     muted: false,
                     volume: 1.0,
+                    speed: 1.0,
+                    prosody: None,
+                    dialogue_chain: None,
+                    animations: Default::default(),
+                    trim_start: MediaTime::ZERO,
+                    source: Default::default(),
+                    role: Default::default(),
                 }),
-            )
-        } else if is_video {
-            (
+            ),
+            MediaKind::Video => (
                 "track-main",
                 Element::Video(VideoElement {
                     id: format!("vid-{uid}"),
-                    name,
+                    name: name.to_string(),
                     start,
                     duration,
-                    media_id,
+                    fade_in: MediaTime::ZERO,
+                    fade_out: MediaTime::ZERO,
+                    media_id: media_id.to_string(),
                     trim_start: MediaTime::ZERO,
                     trim_end: duration,
+                    speed: 1.0,
+                    freeze: None,
                     transform: Transform::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
                     blend_mode: Default::default(),
+                    mask: None,
+                    source: Default::default(),
+                    role: Default::default(),
                 }),
-            )
-        } else {
-            (
+            ),
+            MediaKind::Image => (
                 "track-main",
                 Element::Image(ImageElement {
                     id: format!("img-{uid}"),
-                    name,
+                    name: name.to_string(),
                     start,
                     duration,
-                    media_id,
+                    fade_in: MediaTime::ZERO,
+                    fade_out: MediaTime::ZERO,
+                    media_id: media_id.to_string(),
                     transform: Transform::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
                     blend_mode: Default::default(),
+                    mask: None,
+                    source: Default::default(),
+                    role: Default::default(),
                 }),
-            )
+            ),
         };
         self.editor.execute(Command::AddElement {
             track_id: track_id.into(),
             element,
             select: true,
         });
-        self.preview_sig = None; // new media asset → force a re-render
     }
 
     /// Render the composited frame at the playhead at full canvas resolution and save it as a PNG.
@@ -945,6 +1196,10 @@ impl EditorView {
             media,
         );
 
+        let Some(frame) = frame else {
+            self.status = Some("Frame export failed: the GPU could not render a frame".to_string());
+            return;
+        };
         let mut rgba = frame.bgra;
         for texel in rgba.chunks_exact_mut(4) {
             texel.swap(0, 2); // BGRA → RGBA for PNG
@@ -977,7 +1232,7 @@ impl EditorView {
         let scene = self.editor.active_scene();
         let media = self.editor.media();
         let out = export_video_path();
-        let ok = renderer.export_video(
+        let result = renderer.export_video(
             scene,
             duration,
             fps,
@@ -986,11 +1241,13 @@ impl EditorView {
             &background,
             media,
             &out.to_string_lossy(),
+            &bay_preview::ExportSettings::default(),
         );
-        self.status = Some(if ok {
-            format!("Exported video to {}", out.display())
-        } else {
-            "Video export failed (is ffmpeg installed?)".to_string()
+        self.status = Some(match result {
+            Ok(()) => format!("Exported video to {}", out.display()),
+            // The old text asked "is ffmpeg installed?" for every failure, including the ones
+            // where ffmpeg ran fine and said exactly what was wrong.
+            Err(reason) => format!("Video export failed: {reason}"),
         });
     }
 
@@ -1094,6 +1351,11 @@ impl EditorView {
             self.editor.media(),
         );
 
+        let Some(frame) = frame else {
+            return AgentResponse::Err(
+                "the GPU could not produce a frame — the device may have been lost".into(),
+            );
+        };
         let mut rgba = frame.bgra;
         for texel in rgba.chunks_exact_mut(4) {
             texel.swap(0, 2); // BGRA → RGBA for PNG
@@ -1180,6 +1442,90 @@ impl EditorView {
     fn seek_by(&mut self, delta_ticks: i64) {
         let ticks = self.editor.playhead().as_ticks();
         self.editor.seek(MediaTime::from_ticks(ticks + delta_ticks));
+    }
+
+    // ---- timeline geometry --------------------------------------------------------------
+
+    /// The px ↔ time mapping the whole timeline shares — lanes, ruler, playhead and scrub. One
+    /// source, so a clip block and the playhead can't disagree about where a second is.
+    fn geometry(&self) -> TimelineGeometry {
+        TimelineGeometry::new(
+            self.pixels_per_second,
+            self.scroll_x,
+            self.editor.project().settings.fps,
+        )
+    }
+
+    /// Width of one lane: the timeline spans the window, and the lanes take what the track
+    /// labels leave.
+    fn lane_width(window: &Window) -> f32 {
+        (f32::from(window.viewport_size().width) - lane_origin_x() - TIMELINE_PADDING).max(1.0)
+    }
+
+    /// Scrollable width, with half a viewport of room past the last clip so the end of the film
+    /// is not glued to the right edge.
+    fn content_width(&self, lane_width: f32) -> f32 {
+        self.geometry()
+            .content_width_px(self.editor.duration(), lane_width * 0.5)
+    }
+
+    /// Move the playhead to a window-space x, snapped to a frame.
+    ///
+    /// Scrubbing stops playback: a transport still running under the pointer fights the drag,
+    /// and the frame the user let go on is not the one they end up looking at.
+    fn scrub_to(&mut self, window_x: f32) {
+        if self.playing {
+            self.toggle_play();
+        }
+        let time = self.geometry().px_to_frame_time(window_x - lane_origin_x());
+        self.editor.seek(time);
+    }
+
+    /// Scroll the lanes horizontally by a wheel/trackpad delta, clamped to the content.
+    fn scroll_by(&mut self, delta_x: f32, lane_width: f32) {
+        let content = self.content_width(lane_width);
+        self.scroll_x = crate::geometry::clamp_scroll(self.scroll_x - delta_x, content, lane_width);
+    }
+
+    /// Zoom about a fixed point, keeping the time under `anchor_x` on the same pixel. Zooming
+    /// around the left edge instead would throw the playhead off screen at every step.
+    fn zoom_by(&mut self, factor: f32, anchor_x: f32, lane_width: f32) {
+        let zoomed = self
+            .geometry()
+            .zoom_at(anchor_x, factor, MIN_ZOOM, MAX_ZOOM);
+        self.pixels_per_second = zoomed.pixels_per_second();
+        self.scroll_x = zoomed.scroll_x();
+        let content = self.content_width(lane_width);
+        self.scroll_x = crate::geometry::clamp_scroll(self.scroll_x, content, lane_width);
+    }
+
+    /// Keep the playhead in view while the transport runs. Without this, playback walks off the
+    /// right edge of the viewport and the user has to chase it by hand — the moment scrolling
+    /// exists, following is not optional.
+    ///
+    /// Pages rather than centres: it lands the playhead a fifth of the way in and then leaves
+    /// the view alone until it goes off the edge again, so the lanes are not sliding under the
+    /// pointer on every frame.
+    fn follow_playhead(&mut self, lane_width: f32) {
+        let x = self.geometry().ticks_to_px(self.editor.playhead());
+        if (0.0..=lane_width).contains(&x) {
+            return;
+        }
+        let absolute = self
+            .geometry()
+            .with_scroll_x(0.0)
+            .ticks_to_px(self.editor.playhead());
+        let content = self.content_width(lane_width);
+        self.scroll_x =
+            crate::geometry::clamp_scroll(absolute - lane_width * 0.2, content, lane_width);
+    }
+
+    /// Where the playhead sits inside the lane, clamped so a zoom anchored on it stays on
+    /// screen even when it is scrolled out of view.
+    fn playhead_anchor_x(&self, lane_width: f32) -> f32 {
+        self.geometry()
+            .ticks_to_px(self.editor.playhead())
+            .clamp(0.0, lane_width)
     }
 
     /// Start/stop transport playback. Restarts from 0 if pressed at the end.
@@ -1388,6 +1734,8 @@ impl EditorView {
                             name: "Text".into(),
                             start: MediaTime::ZERO,
                             duration: MediaTime::from_ticks(240_000),
+                            fade_in: MediaTime::ZERO,
+                            fade_out: MediaTime::ZERO,
                             content: "New text".into(),
                             font_size: 48.0,
                             color: "#ffffff".into(),
@@ -1395,11 +1743,16 @@ impl EditorView {
                             effects: Vec::new(),
                             animations: Default::default(),
                             blend_mode: Default::default(),
+                            mask: None,
                             font_family: None,
                             font_weight: 400,
                             align: Default::default(),
                             letter_spacing: 0.0,
                             line_height: 1.2,
+                            decorations: None,
+                            karaoke: None,
+                            source: Default::default(),
+                            role: Default::default(),
                         });
                         this.editor.execute(Command::AddElement {
                             track_id: "track-main".into(),
@@ -1512,84 +1865,64 @@ impl EditorView {
             }))
     }
 
-    fn media_panel(&self, cx: &mut Context<Self>) -> Div {
-        // (element-id, display name, kind).
-        let items: [(&'static str, &'static str, &'static str); 3] = [
-            ("media-clip", "Clip.mp4", "video"),
-            ("media-logo", "Logo.png", "image"),
-            ("media-music", "Music.mp3", "audio"),
-        ];
-
-        let mut buttons: Vec<gpui::Stateful<Div>> = Vec::new();
-        for (id, name, kind) in items {
-            buttons.push(
+    /// The project's media library: what the user actually imported, and nothing else.
+    fn media_panel(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let mut items: Vec<gpui::Stateful<Div>> = Vec::new();
+        for (index, asset) in vm.media.iter().enumerate() {
+            let (id, name, path) = (asset.id.clone(), asset.name.clone(), asset.path.clone());
+            items.push(
                 div()
-                    .id(id)
+                    .id(("media", index))
                     .px_2()
                     .py_1()
                     .rounded_md()
                     .bg(rgb(theme::PANEL_ALT))
+                    .border_l_2()
+                    .border_color(rgb(theme::element_color(asset.kind.label())))
                     .text_sm()
                     .text_color(rgb(theme::TEXT))
-                    .child(name)
+                    .overflow_hidden()
+                    .child(Self::shared(asset.name.clone()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.add_counter += 1;
-                        let uid = this.add_counter;
-                        let start = this.editor.playhead();
-                        let duration = MediaTime::from_ticks(TICKS_PER_SECOND * 5);
-                        let (track_id, element) = match kind {
-                            "video" => (
-                                "track-main".to_string(),
-                                Element::Video(VideoElement {
-                                    id: format!("clip-{uid}"),
-                                    name: name.into(),
-                                    start,
-                                    duration,
-                                    media_id: id.into(),
-                                    trim_start: MediaTime::ZERO,
-                                    trim_end: duration,
-                                    transform: Transform::default(),
-                                    effects: Vec::new(),
-                                    animations: Default::default(),
-                                    blend_mode: Default::default(),
-                                }),
-                            ),
-                            "image" => (
-                                "track-main".to_string(),
-                                Element::Image(ImageElement {
-                                    id: format!("img-{uid}"),
-                                    name: name.into(),
-                                    start,
-                                    duration,
-                                    media_id: id.into(),
-                                    transform: Transform::default(),
-                                    effects: Vec::new(),
-                                    animations: Default::default(),
-                                    blend_mode: Default::default(),
-                                }),
-                            ),
-                            _ => (
-                                "track-audio".to_string(),
-                                Element::Audio(AudioElement {
-                                    id: format!("aud-{uid}"),
-                                    name: name.into(),
-                                    start,
-                                    duration,
-                                    media_id: id.into(),
-                                    muted: false,
-                                    volume: 1.0,
-                                }),
-                            ),
-                        };
-                        this.editor.execute(Command::AddElement {
-                            track_id,
-                            element,
-                            select: true,
-                        });
+                        this.place_media(&id, &name, &path);
                         cx.notify();
                     })),
             );
         }
+
+        // An empty library says so. Filling it with sample names the user never imported makes
+        // the panel a lie, and clicking one drops a clip that references a file nobody has.
+        let body: Div = if items.is_empty() {
+            div()
+                .text_xs()
+                .text_color(rgb(theme::MUTED))
+                .child("No media yet. Import a video, image or audio file and it appears here.")
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme::MUTED))
+                        .child("Click to add at playhead"),
+                )
+                .child(
+                    // A long library scrolls rather than running off the bottom of the panel.
+                    div()
+                        .id("media-list")
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .overflow_y_scroll()
+                        .children(items),
+                )
+        };
 
         div()
             .flex()
@@ -1607,13 +1940,7 @@ impl EditorView {
                     this.import_media()
                 }),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child("Click to add at playhead"),
-            )
-            .children(buttons)
+            .child(body)
     }
 
     fn preview(&self, vm: &EditorViewModel) -> Div {
@@ -2010,6 +2337,76 @@ impl EditorView {
                 },
             ));
 
+        // Fades. One pair of rows for every kind: on picture this ramps opacity, on audio it
+        // ramps level, so a shot and its sound are faded the same way.
+        for (label, id, is_in) in [
+            ("Fade in", "fade-in", true),
+            ("Fade out", "fade-out", false),
+        ] {
+            let seconds = if is_in {
+                selected.fade_in_seconds
+            } else {
+                selected.fade_out_seconds
+            };
+            let fade_ref = selected.reference.clone();
+            body = body.child(self.nudge_row(
+                label,
+                format!("{seconds:.2}s"),
+                id,
+                cx,
+                move |this, delta| {
+                    let current = this
+                        .editor
+                        .active_scene()
+                        .element(&fade_ref)
+                        .map(|element| (element.fade_in(), element.fade_out()));
+                    if let Some((fade_in, fade_out)) = current {
+                        let bumped = |time: MediaTime| {
+                            MediaTime::from_ticks((time.as_ticks() + delta).max(0))
+                        };
+                        this.editor.execute(Command::SetFades {
+                            reference: fade_ref.clone(),
+                            fade_in: if is_in { bumped(fade_in) } else { fade_in },
+                            fade_out: if is_in { fade_out } else { bumped(fade_out) },
+                        });
+                    }
+                },
+            ));
+        }
+
+        // Which part of the file this clip plays. Only clips with a timeline inside them have
+        // one, and until it was shown here a slip was invisible: two clips of the same shot
+        // looked identical in the inspector no matter what they were actually playing.
+        if let Some(source_start) = selected.source_start_seconds {
+            let label = match selected.source_length_seconds {
+                Some(length) => format!("{source_start:.2}s of {length:.2}s"),
+                None => format!("{source_start:.2}s"),
+            };
+            let source_ref = selected.reference.clone();
+            body = body.child(self.nudge_row(
+                "Source in",
+                label,
+                "source-in",
+                cx,
+                move |this, delta| {
+                    let current = this
+                        .editor
+                        .active_scene()
+                        .element(&source_ref)
+                        .and_then(|element| element.source_start())
+                        .map(|time| time.as_ticks());
+                    if let Some(ticks) = current {
+                        // A slip, not a trim: the clip stays where it is and plays a different
+                        // part of the shot. The command clamps it to the file.
+                        this.editor.execute(Command::SetSourceStart {
+                            reference: source_ref.clone(),
+                            trim_start: MediaTime::from_ticks((ticks + delta).max(0)),
+                        });
+                    }
+                },
+            ));
+        }
+
         if let Some(content) = &selected.text_content {
             let editing = self
                 .editing_text
@@ -2232,6 +2629,7 @@ impl EditorView {
                         effect_type: effect_type.into(),
                         enabled: true,
                         params: [("amount".to_string(), amount)].into_iter().collect(),
+                        asset: None,
                     };
                     this.editor.execute(Command::AddEffect {
                         reference: reference.clone(),
@@ -2269,6 +2667,17 @@ impl EditorView {
                     self.button("save-preset", "Save Preset", true, cx, |this, _cx| {
                         this.save_preset()
                     }),
+                )
+                .child(
+                    // The one above lives in this window; this one is written to the library
+                    // and survives it.
+                    self.button(
+                        "save-template",
+                        "Save as Template",
+                        true,
+                        cx,
+                        |this, _cx| this.save_template(),
+                    ),
                 );
             for (index, preset) in self.presets.iter().enumerate() {
                 let label = format!("Apply {}", preset.name);
@@ -2315,7 +2724,7 @@ impl EditorView {
             }))
     }
 
-    fn timeline(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+    fn timeline(&self, vm: &EditorViewModel, lane_width: f32, cx: &mut Context<Self>) -> Div {
         let mut rows: Vec<Div> = Vec::new();
         let mut block_index: usize = 0;
         for track in &vm.tracks {
@@ -2360,24 +2769,144 @@ impl EditorView {
                     .text_color(rgb(theme::MUTED))
                     .child(Self::shared(readout)),
             )
-            .child(self.transport_button("zoom-out", "− zoom", cx, |this| {
-                this.pixels_per_second = (this.pixels_per_second / 1.5).max(MIN_ZOOM);
-            }))
-            .child(self.transport_button("zoom-in", "zoom +", cx, |this| {
-                this.pixels_per_second = (this.pixels_per_second * 1.5).min(MAX_ZOOM);
+            .child(
+                self.transport_button("zoom-out", "− zoom", cx, move |this| {
+                    let anchor = this.playhead_anchor_x(lane_width);
+                    this.zoom_by(1.0 / 1.5, anchor, lane_width);
+                }),
+            )
+            .child(self.transport_button("zoom-in", "zoom +", cx, move |this| {
+                let anchor = this.playhead_anchor_x(lane_width);
+                this.zoom_by(1.5, anchor, lane_width);
             }));
 
         div()
             .flex()
             .flex_col()
-            .h(px(250.0))
-            .p_2()
+            // Tall enough for the transport, the ruler and five lanes. Past that the track list
+            // scrolls — projects with a stack of overlays are normal, not exceptional.
+            .h(px(300.0))
+            .p(px(TIMELINE_PADDING))
             .gap_1()
             .bg(rgb(theme::PANEL))
             .border_t_1()
             .border_color(rgb(theme::BORDER))
+            // Two-finger horizontal scroll pans the lanes. Vertical is left alone: the track
+            // list below handles it, and hijacking both would stop the tracks scrolling at all.
+            .on_scroll_wheel(cx.listener(
+                move |this, event: &gpui::ScrollWheelEvent, window, cx| {
+                    let delta = event.delta.pixel_delta(window.line_height());
+                    if delta.x != gpui::Pixels::ZERO {
+                        this.scroll_by(f32::from(delta.x), lane_width);
+                        cx.notify();
+                    }
+                },
+            ))
             .child(transport)
-            .children(rows)
+            .child(self.ruler(vm, lane_width, cx))
+            .child(
+                // The tracks scroll: a project with a stack of overlays is taller than the
+                // panel, and before this the rows past the bottom edge simply could not be
+                // reached.
+                div()
+                    .id("timeline-tracks")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+    }
+
+    /// The time ruler above the lanes: ticks, timecode labels, and the playhead's handle. This
+    /// is the scrub target — pressing anywhere on it moves the playhead there, and the press
+    /// keeps scrubbing until the button is released.
+    fn ruler(&self, vm: &EditorViewModel, lane_width: f32, cx: &mut Context<Self>) -> Div {
+        let geometry = self.geometry();
+        let mut marks: Vec<Div> = Vec::new();
+        for tick in geometry.ruler_ticks(lane_width) {
+            let height = if tick.major {
+                RULER_HEIGHT * 0.5
+            } else {
+                RULER_HEIGHT * 0.25
+            };
+            marks.push(
+                div()
+                    .absolute()
+                    .left(px(tick.x))
+                    .bottom(px(0.0))
+                    .w(px(1.0))
+                    .h(px(height))
+                    .bg(rgb(theme::BORDER)),
+            );
+            if let Some(label) = tick.label {
+                marks.push(
+                    div()
+                        .absolute()
+                        .left(px(tick.x + 3.0))
+                        .top(px(0.0))
+                        .text_xs()
+                        .text_color(rgb(theme::MUTED))
+                        .child(Self::shared(label)),
+                );
+            }
+        }
+
+        // Markers, drawn under the playhead so the head stays readable on top of one.
+        for marker in &vm.markers {
+            let x = geometry.seconds_to_px(marker.seconds);
+            if x < -8.0 || x > lane_width + 8.0 {
+                continue;
+            }
+            marks.push(
+                div()
+                    .absolute()
+                    .left(px(x - 3.0))
+                    .top(px(RULER_HEIGHT - 8.0))
+                    .w(px(7.0))
+                    .h(px(7.0))
+                    .rounded_sm()
+                    .bg(rgb(theme::MARKER)),
+            );
+        }
+
+        let playhead_x = geometry.seconds_to_px(vm.playhead_seconds);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(TRACK_GAP))
+            .h(px(RULER_HEIGHT))
+            .child(div().w(px(TRACK_LABEL_WIDTH)))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .h(px(RULER_HEIGHT))
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.scrubbing = true;
+                            this.scrub_to(f32::from(event.position.x));
+                            cx.notify();
+                        }),
+                    )
+                    .children(marks)
+                    .child(
+                        // A grabbable head on the playhead: a 2px line is not a mouse target.
+                        div()
+                            .absolute()
+                            .left(px(playhead_x - 4.0))
+                            .top(px(0.0))
+                            .w(px(9.0))
+                            .h(px(9.0))
+                            .rounded_sm()
+                            .bg(rgb(theme::ACCENT)),
+                    ),
+            )
     }
 
     fn track_row(
@@ -2387,6 +2916,10 @@ impl EditorView {
         block_index: &mut usize,
         cx: &mut Context<Self>,
     ) -> Div {
+        let geometry = self.geometry();
+        // Where t=0 sits on screen. A drag may not push a clip before the start of the
+        // timeline, and once the lane can scroll that boundary is no longer x=0.
+        let zero_x = geometry.seconds_to_px(0.0);
         let mut blocks: Vec<gpui::Stateful<Div>> = Vec::new();
         for block in &track.elements {
             let id = *block_index;
@@ -2395,23 +2928,30 @@ impl EditorView {
             let origin_start_ticks = (block.start_seconds * TICKS_PER_SECOND as f64) as i64;
             let origin_duration_ticks = (block.duration_seconds * TICKS_PER_SECOND as f64) as i64;
 
-            // Live geometry while this block is the one being dragged/trimmed.
-            let base_left = block.start_seconds as f32 * self.pixels_per_second;
+            // Live geometry while this block is the one being dragged/trimmed. `seconds_to_px`
+            // carries the scroll offset; the width is a difference, so it does not.
+            let base_left = geometry.seconds_to_px(block.start_seconds);
             let base_width =
                 (block.duration_seconds as f32 * self.pixels_per_second).max(MIN_BLOCK_WIDTH);
             let (mut left, mut width) = (base_left, base_width);
             if let Some(drag) = &self.dragging {
+                // The dragged clip shows the snapped position; the rest of the selection moves
+                // with it, so a group drag looks like one gesture rather than one clip
+                // detaching from its neighbours.
+                let delta = self.snapped_delta_px(drag);
                 if drag.reference == block.reference {
                     match drag.mode {
-                        DragMode::Move => left = (base_left + drag.delta_px).max(0.0),
+                        DragMode::Move => left = (base_left + delta).max(zero_x),
                         DragMode::TrimStart => {
-                            left = (base_left + drag.delta_px).max(0.0);
-                            width = (base_width - drag.delta_px).max(MIN_BLOCK_WIDTH);
+                            left = (base_left + delta).max(zero_x);
+                            width = (base_width - delta).max(MIN_BLOCK_WIDTH);
                         }
                         DragMode::TrimEnd => {
-                            width = (base_width + drag.delta_px).max(MIN_BLOCK_WIDTH);
+                            width = (base_width + delta).max(MIN_BLOCK_WIDTH);
                         }
                     }
+                } else if drag.mode == DragMode::Move && block.selected {
+                    left = (base_left + delta).max(zero_x);
                 }
             }
             let inner_height = LANE_HEIGHT - 8.0;
@@ -2517,7 +3057,7 @@ impl EditorView {
             .flex()
             .flex_row()
             .items_center()
-            .gap_2()
+            .gap(px(TRACK_GAP))
             .h(px(LANE_HEIGHT + 6.0))
             .child(
                 div()
@@ -2575,12 +3115,23 @@ impl EditorView {
                     .rounded_md()
                     .bg(rgb(theme::LANE))
                     .overflow_hidden()
+                    // Pressing empty lane space scrubs, the same as the ruler. A press that
+                    // lands on a clip never gets here: `begin_drag` stops propagation, so
+                    // dragging a clip does not also drag the playhead.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.scrubbing = true;
+                            this.scrub_to(f32::from(event.position.x));
+                            cx.notify();
+                        }),
+                    )
                     .children(blocks)
                     .child(
                         // Playhead line across this lane.
                         div()
                             .absolute()
-                            .left(px(playhead_seconds as f32 * self.pixels_per_second))
+                            .left(px(geometry.seconds_to_px(playhead_seconds)))
                             .top(px(0.0))
                             .w(px(2.0))
                             .h(px(LANE_HEIGHT))
@@ -2592,8 +3143,10 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let lane_width = Self::lane_width(window);
         if self.playing {
             self.advance_playback();
+            self.follow_playhead(lane_width);
             if self.playing {
                 window.request_animation_frame();
             }
@@ -2662,6 +3215,51 @@ impl Render for EditorView {
                 this.seek_by(TICKS_PER_SECOND);
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &StepForward, _window, cx| {
+                this.step_frames(1);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &StepBackward, _window, cx| {
+                this.step_frames(-1);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &GoToStart, _window, cx| {
+                this.editor.seek(MediaTime::ZERO);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &GoToEnd, _window, cx| {
+                let end = this.editor.duration();
+                this.editor.seek(end);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &RippleDelete, _window, cx| {
+                this.ripple_delete_selected();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &AddMarker, _window, cx| {
+                this.add_marker();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SelectAll, _window, cx| {
+                let all: Vec<ElementRef> = this
+                    .editor
+                    .active_scene()
+                    .tracks
+                    .iter()
+                    .flat_map(|track| {
+                        let track_id = track.id.clone();
+                        track
+                            .elements
+                            .iter()
+                            .map(move |element| {
+                                ElementRef::new(track_id.clone(), element.id().to_string())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                this.editor.select(all);
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &SeekBackward, _window, cx| {
                 this.seek_by(-TICKS_PER_SECOND);
                 cx.notify();
@@ -2678,6 +3276,11 @@ impl Render for EditorView {
                 if let Some(drag) = this.dragging.as_mut() {
                     drag.delta_px = f32::from(event.position.x) - drag.pointer_start_x;
                     cx.notify();
+                } else if this.scrubbing {
+                    // Handled here, not on the ruler: the pointer leaves the ruler's few pixels
+                    // almost immediately, and a scrub that stops when it does is unusable.
+                    this.scrub_to(f32::from(event.position.x));
+                    cx.notify();
                 }
             }))
             .on_mouse_up(
@@ -2685,6 +3288,10 @@ impl Render for EditorView {
                 cx.listener(|this, _event, _window, cx| {
                     if this.dragging.is_some() {
                         this.finish_drag();
+                        cx.notify();
+                    }
+                    if this.scrubbing {
+                        this.scrubbing = false;
                         cx.notify();
                     }
                 }),
@@ -2697,11 +3304,11 @@ impl Render for EditorView {
                     .flex_row()
                     .flex_1()
                     .min_h(px(0.0))
-                    .child(self.media_panel(cx))
+                    .child(self.media_panel(&vm, cx))
                     .child(self.preview(&vm))
                     .child(self.inspector(&vm, cx)),
             )
-            .child(self.timeline(&vm, cx))
+            .child(self.timeline(&vm, lane_width, cx))
     }
 }
 
@@ -2783,5 +3390,133 @@ mod provisioning_tests {
         let line = describe_progress(&failed);
         assert!(line.contains("expected abc, received def"), "{line}");
         assert!(line.contains("failed"), "{line}");
+    }
+}
+
+/// The timeline's pointer arithmetic: where a press lands, and what scrolling and zooming do to
+/// it. This is the layer where a mistake shows up as "the playhead is a second off" rather than
+/// as a crash, so it is asserted rather than eyeballed.
+#[cfg(test)]
+mod timeline_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn view(cx: &mut TestAppContext) -> gpui::Entity<EditorView> {
+        cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        })
+    }
+
+    /// The lane starts after the track labels, so a press must have that gutter taken off it
+    /// before it means anything. 96px at the default 48 px/s is two seconds in.
+    #[gpui::test]
+    fn a_press_on_a_lane_moves_the_playhead_to_that_time(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.scrub_to(lane_origin_x() + 96.0);
+            assert_eq!(this.editor.playhead().to_seconds_f64(), 2.0);
+        });
+    }
+
+    /// Once the lanes can scroll, the same pixel is a different time. Reading the press without
+    /// the offset is how a scrub lands a screenful away from the pointer.
+    #[gpui::test]
+    fn a_scrubbed_press_counts_the_scroll_offset(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.scroll_x = 96.0;
+            this.scrub_to(lane_origin_x() + 96.0);
+            assert_eq!(this.editor.playhead().to_seconds_f64(), 4.0);
+        });
+    }
+
+    /// Dragging left past the labels asks for a negative time. There is no film before zero.
+    #[gpui::test]
+    fn a_press_left_of_the_lane_cannot_seek_before_the_start(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.scrub_to(0.0);
+            assert_eq!(this.editor.playhead(), MediaTime::ZERO);
+        });
+    }
+
+    /// A transport still running under the pointer fights the drag: the frame the user let go
+    /// on is not the frame they end up looking at.
+    #[gpui::test]
+    fn scrubbing_stops_playback(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.playing = true;
+            this.scrub_to(lane_origin_x() + 48.0);
+            assert!(!this.playing, "a scrub takes the transport off the user");
+            assert_eq!(this.editor.playhead().to_seconds_f64(), 1.0);
+        });
+    }
+
+    /// Scrolling stops where the content does, in both directions — the starter runs 7s, so at
+    /// 48 px/s there is 336px of film plus half a viewport of tail.
+    #[gpui::test]
+    fn scrolling_stops_at_both_ends(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            const LANE: f32 = 200.0;
+            this.scroll_by(500.0, LANE); // a big swipe right-to-left
+            assert_eq!(this.scroll_x, 0.0, "there is nothing before the start");
+
+            this.scroll_by(-5_000.0, LANE);
+            let content = 7.0 * DEFAULT_PIXELS_PER_SECOND + LANE * 0.5;
+            assert!(
+                (this.scroll_x - (content - LANE)).abs() < 0.5,
+                "scrolled to {} past a {content}px timeline",
+                this.scroll_x
+            );
+        });
+    }
+
+    /// Playback with a scrollable timeline has to bring the playhead with it. A transport that
+    /// runs off the right edge leaves the user scrolling to find their own film.
+    #[gpui::test]
+    fn playback_brings_the_view_with_it(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            const LANE: f32 = 120.0; // ~2.5s of film on screen at the default zoom
+            this.editor
+                .seek(MediaTime::from_ticks(6 * TICKS_PER_SECOND));
+            assert_eq!(this.scroll_x, 0.0);
+
+            this.follow_playhead(LANE);
+            let x = this.geometry().ticks_to_px(this.editor.playhead());
+            assert!(
+                (0.0..=LANE).contains(&x),
+                "the playhead sits at {x} in a {LANE}px lane"
+            );
+
+            // Already on screen: the view must not jump on every frame.
+            let settled = this.scroll_x;
+            this.follow_playhead(LANE);
+            assert_eq!(this.scroll_x, settled);
+        });
+    }
+
+    /// Zoom anchored on the playhead. Zooming about the left edge instead throws the frame the
+    /// user is looking at off screen at every step.
+    #[gpui::test]
+    fn zooming_keeps_the_playhead_under_the_same_pixel(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            const LANE: f32 = 800.0;
+            this.editor
+                .seek(MediaTime::from_ticks(3 * TICKS_PER_SECOND));
+            let before = this.playhead_anchor_x(LANE);
+
+            this.zoom_by(1.5, before, LANE);
+            assert!(this.pixels_per_second > DEFAULT_PIXELS_PER_SECOND);
+            assert!(
+                (this.playhead_anchor_x(LANE) - before).abs() < 1.0,
+                "the playhead moved from {before} to {}",
+                this.playhead_anchor_x(LANE)
+            );
+        });
     }
 }

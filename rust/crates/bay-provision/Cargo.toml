@@ -6,6 +6,7 @@ description = "Installs the runtimes bay needs — ffmpeg, Python, Kokoro — fr
 
 [dependencies]
 bay-paths = { path = "../bay-paths" }
+bay-jobs = { path = "../bay-jobs" }
 serde = { workspace = true }
 serde_json = "1"
 thiserror = { workspace = true }
@@ -20,4 +21,6 @@ tar = "0.4"
 zip = { version = "6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+# The live install test asserts the packs land where the sound library looks for them.
+bay-audio = { path = "../bay-audio" }
 bay-test-support = { path = "../bay-test-support" }

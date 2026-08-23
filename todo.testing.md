@@ -104,9 +104,9 @@ BAY_PROVISION_LIVE=1 BAY_PROVISION_LIVE_SPEECH=1 cargo test -p bay-provision --t
 The first provisions into a throwaway data dir and then *runs* `ffmpeg -version` (~15s). The
 second builds the venv and asserts `kokoro` imports (~72s). A skip is never reported as a pass.
 
-**Their known limit:** the speech half asserts only that `kokoro` **imports** — it never speaks.
-So no test on any platform exercises the weight download, which is precisely the path with no
-progress reporting (see [`todo.pending.md`](todo.pending.md)).
+**Their known limit was** that the speech half asserted only that `kokoro` **imports** — it
+never spoke, so nothing exercised the weight download. That is closed: the weights are pinned
+artifacts now, and the test asserts the model, its config and all 54 voices are on disk.
 
 Also run the strict gate, which turns GPU/ffmpeg skips into failures:
 
@@ -122,9 +122,9 @@ STRICT=1 ./test.sh
   job state with `total_bytes: 0` — a value a real job never has. So the only branch covered is
   the reassuring one, and the actual behaviour (reading "100% of 43 MB" through a multi-minute
   venv build) is untested. Fix the test with the state a real job produces.
-- **The attached-bridge timeout.** Every bridge test uses a fast tool, which is why a flat 20s
-  ceiling on `render` and `narrate` survived unnoticed. Whatever fixes it wants a test that runs
-  a deliberately slow tool through the attached path.
+- ~~**The attached-bridge timeout.**~~ Closed: budgets are per tool class, the slow tools return
+  a job id instead, and a bridge test now drives a deliberately slow tool through the attached
+  path.
 
 ---
 
@@ -154,3 +154,30 @@ simulation is not execution, and the Windows half has never run on Windows:
 
 Worth one pass on a Windows box confirming the data directory lands in `%LOCALAPPDATA%\bay` and
 that a pre-rename directory is adopted rather than ignored.
+
+---
+
+## 7. Landed on `fix/pending-sweep` but not yet observed in the real app
+
+Everything below has tests and was measured on this machine. What it has *not* had is a human
+using the built app, which is a different claim.
+
+- **Device loss on the render path.** `read_texture_bgra` returns `None` instead of panicking,
+  and each caller degrades — the live preview keeps its last good frame. The `None` branch is
+  tested; **an actual device loss is not**, because it cannot be induced portably. To settle it:
+  sleep a laptop mid-playback, or unplug an eGPU, and confirm the preview freezes on its last
+  frame rather than crashing.
+
+- **Streaming export under memory pressure.** Export holds one source-resolution frame per
+  on-screen clip — 33 MB each at 4K. A 1080p export was measured (1.76s, 3.5 MB); a 4K export
+  with several overlapping clips has not been. Watch peak RSS during one.
+
+- **The job contract against a real external agent.** `render`/`narrate`/`subtitles_to_video`
+  return a job id now, and the seven contract documents were updated together. No agent outside
+  this repository has driven the new shape yet. Run a real reel end to end through
+  `mcp__bay__*` and confirm the poll loop reads naturally.
+
+- **A provisioned-from-scratch speech install.** The weights were verified by pointing the
+  sidecar at a hand-laid-out directory and synthesising offline. The full path —
+  `runtime_install speech` fetching all 56 artifacts into `runtime/models/kokoro/` — is covered
+  by `BAY_PROVISION_LIVE_SPEECH=1` and should be run once before releasing.

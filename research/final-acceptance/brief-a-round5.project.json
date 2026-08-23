@@ -1,0 +1,2506 @@
+{
+  "metadata": {
+    "id": "round5-a-90424",
+    "name": "round5-brief-a-rebuilt"
+  },
+  "settings": {
+    "fps": {
+      "numerator": 30,
+      "denominator": 1
+    },
+    "canvas": {
+      "width": 1080,
+      "height": 1920
+    },
+    "background": {
+      "type": "color",
+      "color": "#0B0F0D"
+    },
+    "kit": {
+      "id": "technical-brief",
+      "name": "Technical brief",
+      "note": "Measured and engineered against spoken and human: an engineering grotesque over a plain text sans. For process, tooling, benchmarks and how-it-works.",
+      "faces": {
+        "display": {
+          "family": "DIN Alternate",
+          "weight": 700
+        },
+        "body": {
+          "family": "PT Sans",
+          "weight": 400
+        },
+        "mono": {
+          "family": "PT Mono",
+          "weight": 400
+        }
+      },
+      "ramp": {
+        "hook": {
+          "size": 171.9,
+          "tracking": -0.02,
+          "lineHeight": 1.02
+        },
+        "headline": {
+          "size": 109.3,
+          "tracking": -0.015,
+          "lineHeight": 1.08
+        },
+        "kicker": {
+          "size": 36.2,
+          "tracking": 0.16,
+          "lineHeight": 1.2
+        },
+        "label": {
+          "size": 36.2,
+          "tracking": 0.0,
+          "lineHeight": 1.32
+        },
+        "caption": {
+          "size": 57.1,
+          "tracking": 0.0,
+          "lineHeight": 1.28
+        },
+        "lockup": {
+          "size": 70.5,
+          "tracking": 0.06,
+          "lineHeight": 1.16
+        },
+        "data": {
+          "size": 158.5,
+          "tracking": -0.01,
+          "lineHeight": 1.0
+        },
+        "ground": {
+          "size": 28.9,
+          "tracking": 0.0,
+          "lineHeight": 1.3
+        },
+        "chrome": {
+          "size": 28.9,
+          "tracking": 0.1,
+          "lineHeight": 1.2
+        }
+      },
+      "palette": {
+        "bg": "#0B0F0D",
+        "surface": "#34473F",
+        "ink": "#E9EFE9",
+        "dim": "#7C8B83",
+        "accent": "#22B573",
+        "accent2": "#E06C2A"
+      },
+      "framings": [
+        {
+          "name": "top-left",
+          "x": 0.1,
+          "y": 0.14,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.8
+        },
+        {
+          "name": "left-column",
+          "x": 0.1,
+          "y": 0.42,
+          "anchorX": 0.0,
+          "anchorY": 0.5,
+          "scale": 0.8
+        },
+        {
+          "name": "grid-right",
+          "x": 0.9,
+          "y": 0.42,
+          "anchorX": 1.0,
+          "anchorY": 0.5,
+          "scale": 0.368
+        },
+        {
+          "name": "lower-third",
+          "x": 0.1,
+          "y": 0.7,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.8
+        },
+        {
+          "name": "baseline",
+          "x": 0.1,
+          "y": 0.86,
+          "anchorX": 0.0,
+          "anchorY": 1.0,
+          "scale": 0.8
+        }
+      ]
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene-main",
+      "name": "Main",
+      "isMain": true,
+      "tracks": {
+        "overlay": [
+          {
+            "id": "track-overlay-1",
+            "name": "Overlay 1",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "shape",
+                "id": "body-a",
+                "name": "body-a",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#E9EFE9",
+                "transform": {
+                  "x": 0.32,
+                  "y": 0.49,
+                  "scale": 0.24,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.3,
+                  "scaleY": 0.38,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 536040,
+                        "value": 0.49,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 544040,
+                        "value": 0.49,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 600040,
+                        "value": 0.5098
+                      },
+                      {
+                        "time": 3860040,
+                        "value": 0.5098,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 3868040,
+                        "value": 0.5098,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3924040,
+                        "value": 0.5296
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "wick-a-top",
+                "name": "wick-a-top",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#7C8B83",
+                "transform": {
+                  "x": 0.32,
+                  "y": 0.31,
+                  "scale": 0.23,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.035,
+                  "scaleY": 0.55,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 600000,
+                        "value": 0.23,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 612000,
+                        "value": 0.23805,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 636000,
+                        "value": 0.23
+                      },
+                      {
+                        "time": 3924000,
+                        "value": 0.23,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 3936000,
+                        "value": 0.23805,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 3960000,
+                        "value": 0.23
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleX": {
+                    "keys": [
+                      {
+                        "time": 548040,
+                        "value": 0.035,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 560040,
+                        "value": 0.03325,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 576040,
+                        "value": 0.03605,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 600040,
+                        "value": 0.035
+                      },
+                      {
+                        "time": 3872040,
+                        "value": 0.035,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3884040,
+                        "value": 0.03325,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 3900040,
+                        "value": 0.03605,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 3924040,
+                        "value": 0.035
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleY": {
+                    "keys": [
+                      {
+                        "time": 548040,
+                        "value": 0.55,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 560040,
+                        "value": 0.59400004,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 576040,
+                        "value": 0.528,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 600040,
+                        "value": 0.55
+                      },
+                      {
+                        "time": 3872040,
+                        "value": 0.55,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3884040,
+                        "value": 0.59400004,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 3900040,
+                        "value": 0.528,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 3924040,
+                        "value": 0.55
+                      }
+                    ],
+                    "easing": "ease-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "wick-a-bottom",
+                "name": "wick-a-bottom",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#7C8B83",
+                "transform": {
+                  "x": 0.32,
+                  "y": 0.67,
+                  "scale": 0.23,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.035,
+                  "scaleY": 0.65,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 1448040,
+                        "value": 0.67,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 1456040,
+                        "value": 0.67,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1512040,
+                        "value": 0.6502
+                      },
+                      {
+                        "time": 4904040,
+                        "value": 0.6502,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 4912040,
+                        "value": 0.6502,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 4968040,
+                        "value": 0.6304
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "body-b",
+                "name": "body-b",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#E06C2A",
+                "transform": {
+                  "x": 0.68,
+                  "y": 0.52,
+                  "scale": 0.12,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.3,
+                  "scaleY": 0.2,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 1512000,
+                        "value": 0.12,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 1524000,
+                        "value": 0.124199994,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 1548000,
+                        "value": 0.12
+                      },
+                      {
+                        "time": 4968000,
+                        "value": 0.12,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 4980000,
+                        "value": 0.124199994,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 5004000,
+                        "value": 0.12
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleX": {
+                    "keys": [
+                      {
+                        "time": 1460040,
+                        "value": 0.3,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1472040,
+                        "value": 0.285,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 1488040,
+                        "value": 0.30900002,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 1512040,
+                        "value": 0.3
+                      },
+                      {
+                        "time": 4916040,
+                        "value": 0.3,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 4928040,
+                        "value": 0.285,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 4944040,
+                        "value": 0.30900002,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 4968040,
+                        "value": 0.3
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleY": {
+                    "keys": [
+                      {
+                        "time": 1460040,
+                        "value": 0.2,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1472040,
+                        "value": 0.216,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 1488040,
+                        "value": 0.192,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 1512040,
+                        "value": 0.2
+                      },
+                      {
+                        "time": 4916040,
+                        "value": 0.2,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 4928040,
+                        "value": 0.216,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 4944040,
+                        "value": 0.192,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 4968040,
+                        "value": 0.2
+                      }
+                    ],
+                    "easing": "ease-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "wick-b-top",
+                "name": "wick-b-top",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#22B573",
+                "transform": {
+                  "x": 0.68,
+                  "y": 0.29,
+                  "scale": 0.3,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.035,
+                  "scaleY": 0.78,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 2576040,
+                        "value": 0.29,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 2584040,
+                        "value": 0.29,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2640040,
+                        "value": 0.3098
+                      },
+                      {
+                        "time": 5816040,
+                        "value": 0.3098,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 5824040,
+                        "value": 0.3098,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 5880040,
+                        "value": 0.3296
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "wick-b-bottom",
+                "name": "wick-b-bottom",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#22B573",
+                "transform": {
+                  "x": 0.68,
+                  "y": 0.73,
+                  "scale": 0.3,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.035,
+                  "scaleY": 0.72,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 2640000,
+                        "value": 0.3,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 2652000,
+                        "value": 0.3105,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2676000,
+                        "value": 0.3
+                      },
+                      {
+                        "time": 5880000,
+                        "value": 0.3,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 5892000,
+                        "value": 0.3105,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 5916000,
+                        "value": 0.3
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleX": {
+                    "keys": [
+                      {
+                        "time": 2588040,
+                        "value": 0.035,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2600040,
+                        "value": 0.03325,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2616040,
+                        "value": 0.03605,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 2640040,
+                        "value": 0.035
+                      },
+                      {
+                        "time": 5828040,
+                        "value": 0.035,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 5840040,
+                        "value": 0.03325,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 5856040,
+                        "value": 0.03605,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 5880040,
+                        "value": 0.035
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleY": {
+                    "keys": [
+                      {
+                        "time": 2588040,
+                        "value": 0.72,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2600040,
+                        "value": 0.77760005,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2616040,
+                        "value": 0.6912,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 2640040,
+                        "value": 0.72
+                      },
+                      {
+                        "time": 5828040,
+                        "value": 0.72,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 5840040,
+                        "value": 0.77760005,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 5856040,
+                        "value": 0.6912,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 5880040,
+                        "value": 0.72
+                      }
+                    ],
+                    "easing": "ease-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "range-a",
+                "name": "range-a",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#7C8B83",
+                "transform": {
+                  "x": 0.16,
+                  "y": 0.8,
+                  "scale": 0.2,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.05,
+                  "scaleY": 0.95,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 2768040,
+                        "value": 0.8,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 2776040,
+                        "value": 0.8,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2832040,
+                        "value": 0.7802
+                      },
+                      {
+                        "time": 6548040,
+                        "value": 0.7802,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 6556040,
+                        "value": 0.7802,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 6612040,
+                        "value": 0.7604
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "shape",
+                "id": "range-b",
+                "name": "range-b",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#22B573",
+                "transform": {
+                  "x": 0.84,
+                  "y": 0.8,
+                  "scale": 0.2,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 0.05,
+                  "scaleY": 0.95,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 2832000,
+                        "value": 0.2,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 2844000,
+                        "value": 0.207,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2868000,
+                        "value": 0.2
+                      },
+                      {
+                        "time": 6612000,
+                        "value": 0.2,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 6624000,
+                        "value": 0.207,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 6648000,
+                        "value": 0.2
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleX": {
+                    "keys": [
+                      {
+                        "time": 2780040,
+                        "value": 0.05,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2792040,
+                        "value": 0.0475,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2808040,
+                        "value": 0.0515,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 2832040,
+                        "value": 0.05
+                      },
+                      {
+                        "time": 6560040,
+                        "value": 0.05,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 6572040,
+                        "value": 0.0475,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 6588040,
+                        "value": 0.0515,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 6612040,
+                        "value": 0.05
+                      }
+                    ],
+                    "easing": "ease-out"
+                  },
+                  "scaleY": {
+                    "keys": [
+                      {
+                        "time": 2780040,
+                        "value": 0.95,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2792040,
+                        "value": 1.026,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2808040,
+                        "value": 0.91199994,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 2832040,
+                        "value": 0.95
+                      },
+                      {
+                        "time": 6560040,
+                        "value": 0.95,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 6572040,
+                        "value": 1.026,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 6588040,
+                        "value": 0.91199994,
+                        "easing": "ease-out"
+                      },
+                      {
+                        "time": 6612040,
+                        "value": 0.95
+                      }
+                    ],
+                    "easing": "ease-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "data"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-2",
+            "name": "Overlay 2",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "shape",
+                "id": "stop-line",
+                "name": "stop-line",
+                "start": 0,
+                "duration": 7200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "shape": {
+                  "kind": "rect",
+                  "radius": 0.0
+                },
+                "color": "#E06C2A",
+                "transform": {
+                  "x": 0.08,
+                  "y": 0.82,
+                  "scale": 0.84,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 0.012,
+                  "anchorX": 0.0,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "source": "author",
+                "role": "chrome"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-3",
+            "name": "Overlay 3",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": []
+          },
+          {
+            "id": "track-overlay-4",
+            "name": "Overlay 4",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "text",
+                "id": "hook",
+                "name": "TWO DAYS.\nSAME RANGE.",
+                "start": 0,
+                "duration": 600000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "TWO DAYS.\nSAME RANGE.",
+                "fontSize": 171.9,
+                "color": "#E9EFE9",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.06,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 28000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.022499997,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.06
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.02,
+                "lineHeight": 1.02,
+                "source": "author",
+                "role": "hook"
+              },
+              {
+                "type": "text",
+                "id": "range",
+                "name": "H − L = 4.20",
+                "start": 600000,
+                "duration": 912000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "H − L = 4.20",
+                "fontSize": 158.5,
+                "color": "#E9EFE9",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.1,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.1313,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.1
+                      }
+                    ],
+                    "easing": "spring-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.01,
+                "lineHeight": 1.0,
+                "source": "author",
+                "role": "data"
+              },
+              {
+                "type": "text",
+                "id": "test",
+                "name": "SAME NUMBER. SAME RISK?",
+                "start": 1512000,
+                "duration": 1128000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "SAME NUMBER. SAME RISK?",
+                "fontSize": 109.3,
+                "color": "#E9EFE9",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.1,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 32000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.6111,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.015,
+                "lineHeight": 1.08,
+                "source": "author",
+                "role": "headline"
+              },
+              {
+                "type": "text",
+                "id": "turn",
+                "name": "THEY DID NOT.",
+                "start": 2640000,
+                "duration": 192000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "THEY DID NOT.",
+                "fontSize": 109.3,
+                "color": "#22B573",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.1,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 1.0259999,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.9
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.015,
+                "lineHeight": 1.08,
+                "source": "author",
+                "role": "headline"
+              },
+              {
+                "type": "text",
+                "id": "path",
+                "name": "OUT  /  AND BACK",
+                "start": 2832000,
+                "duration": 1092000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "OUT  /  AND BACK",
+                "fontSize": 109.3,
+                "color": "#E9EFE9",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.1,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 40000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.70199996,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.9
+                      }
+                    ],
+                    "easing": "spring-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.112500004,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.1
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.015,
+                "lineHeight": 1.08,
+                "source": "author",
+                "role": "headline"
+              },
+              {
+                "type": "text",
+                "id": "formula",
+                "name": "W = R − |r|",
+                "start": 3924000,
+                "duration": 1044000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "W = R − |r|",
+                "fontSize": 171.9,
+                "color": "#22B573",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.08,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 32000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.3704,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.1269,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.08
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.02,
+                "lineHeight": 1.02,
+                "source": "author",
+                "role": "hook"
+              },
+              {
+                "type": "text",
+                "id": "square",
+                "name": "W²",
+                "start": 4968000,
+                "duration": 912000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "W²",
+                "fontSize": 171.9,
+                "color": "#22B573",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.08,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 28000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.042499997,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.08
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.02,
+                "lineHeight": 1.02,
+                "source": "author",
+                "role": "hook"
+              },
+              {
+                "type": "text",
+                "id": "stop",
+                "name": "STOP",
+                "start": 5880000,
+                "duration": 732000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "STOP",
+                "fontSize": 109.3,
+                "color": "#E06C2A",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.1,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 40000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.1313,
+                        "easing": "ease-in"
+                      },
+                      {
+                        "time": 16000,
+                        "value": 0.13960001,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 112000,
+                        "value": 0.1
+                      }
+                    ],
+                    "easing": "spring-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.015,
+                "lineHeight": 1.08,
+                "source": "author",
+                "role": "headline"
+              },
+              {
+                "type": "text",
+                "id": "landing",
+                "name": "THE BODY IS THE STORY.\nT",
+                "start": 6612000,
+                "duration": 588000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "THE BODY IS THE STORY.\nTHE WICK IS THE COST.",
+                "fontSize": 109.3,
+                "color": "#E9EFE9",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.08,
+                  "scale": 0.9,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.121700004,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 72000,
+                        "value": 0.0779,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 104000,
+                        "value": 0.08
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "DIN Alternate",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.015,
+                "lineHeight": 1.08,
+                "source": "author",
+                "role": "headline"
+              }
+            ]
+          }
+        ],
+        "main": {
+          "id": "track-main",
+          "name": "Main",
+          "kind": "video",
+          "hidden": false,
+          "muted": false,
+          "elements": []
+        },
+        "audio": [
+          {
+            "id": "track-audio",
+            "name": "Audio",
+            "kind": "audio",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "audio",
+                "id": "bed-a",
+                "name": "bed-a",
+                "start": 0,
+                "duration": 6000000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "bed",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "animations": {
+                  "volume": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 1.0,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 9600,
+                        "value": 1.0,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 31200,
+                        "value": 0.25118864,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 1359000,
+                        "value": 0.25118864,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 1425000,
+                        "value": 1.0,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 1521600,
+                        "value": 1.0,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 1543200,
+                        "value": 0.25118864,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 2397000,
+                        "value": 0.25118864,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 2463000,
+                        "value": 1.0,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 2637600,
+                        "value": 1.0,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 2659200,
+                        "value": 0.25118864,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 3789000,
+                        "value": 0.25118864,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 3855000,
+                        "value": 1.0,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 3933600,
+                        "value": 1.0,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 3955200,
+                        "value": 0.25118864,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 6000000,
+                        "value": 0.25118864,
+                        "easing": "sine-in-out"
+                      }
+                    ],
+                    "easing": "linear"
+                  }
+                },
+                "trimStart": 0,
+                "source": "author",
+                "role": "bed"
+              },
+              {
+                "type": "audio",
+                "id": "bed-a2",
+                "name": "bed-a2",
+                "start": 6000000,
+                "duration": 1200000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "bed",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "animations": {
+                  "volume": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 1.0,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 477000,
+                        "value": 0.25118864,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 543000,
+                        "value": 1.0,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 621600,
+                        "value": 1.0,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 643200,
+                        "value": 0.25118864,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 1176000,
+                        "value": 0.25118864,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 1200000,
+                        "value": 1.0,
+                        "easing": "hold"
+                      }
+                    ],
+                    "easing": "linear"
+                  }
+                },
+                "trimStart": 0,
+                "source": "author",
+                "role": "bed"
+              },
+              {
+                "type": "audio",
+                "id": "audio-29",
+                "name": "audio-29",
+                "start": 5874000,
+                "duration": 42000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "sfx-28",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "animations": {},
+                "trimStart": 0,
+                "source": "author",
+                "role": "sfx"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-1",
+                "name": "round5-a-audio-1",
+                "start": 36000,
+                "duration": 639000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-1",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-2",
+                "name": "round5-a-audio-2",
+                "start": 636000,
+                "duration": 705000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-2",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-3",
+                "name": "round5-a-audio-3",
+                "start": 1548000,
+                "duration": 831000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-3",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-4",
+                "name": "round5-a-audio-4",
+                "start": 2664000,
+                "duration": 243000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-4",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-5",
+                "name": "round5-a-audio-5",
+                "start": 2868000,
+                "duration": 903000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-5",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-6",
+                "name": "round5-a-audio-6",
+                "start": 3960000,
+                "duration": 891000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-6",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-7",
+                "name": "round5-a-audio-7",
+                "start": 5004000,
+                "duration": 840000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-7",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-8",
+                "name": "round5-a-audio-8",
+                "start": 5916000,
+                "duration": 543000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-8",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "round5-a-audio-9",
+                "name": "round5-a-audio-9",
+                "start": 6648000,
+                "duration": 510000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "round5-a-speech-9",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              }
+            ]
+          }
+        ]
+      },
+      "markers": [
+        {
+          "id": "marker-1",
+          "time": 0,
+          "label": "hook"
+        },
+        {
+          "id": "marker-2",
+          "time": 600000,
+          "label": "belief"
+        },
+        {
+          "id": "marker-3",
+          "time": 1512000,
+          "label": "setup"
+        },
+        {
+          "id": "marker-4",
+          "time": 2640000,
+          "label": "turn"
+        },
+        {
+          "id": "marker-5",
+          "time": 2832000,
+          "label": "mechanism"
+        },
+        {
+          "id": "marker-6",
+          "time": 3924000,
+          "label": "fix"
+        },
+        {
+          "id": "marker-7",
+          "time": 4968000,
+          "label": "consequence"
+        },
+        {
+          "id": "marker-8",
+          "time": 5880000,
+          "label": "payoff"
+        },
+        {
+          "id": "marker-9",
+          "time": 6612000,
+          "label": "landing"
+        }
+      ]
+    }
+  ],
+  "currentSceneId": "scene-main",
+  "media": [
+    {
+      "id": "bed",
+      "name": "bed_pad_c3.wav",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/bed_pad_c3.wav",
+      "durationSeconds": 50.0,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -22.7,
+        "rmsDb": -33.6,
+        "lufs": -32.2,
+        "accentSeconds": [
+          0.5,
+          15.2,
+          15.5,
+          39.9,
+          40.2
+        ]
+      }
+    },
+    {
+      "id": "sfx-28",
+      "name": "Impact (0.35s)",
+      "path": "/Users/himanshu/Library/Application Support/bay/sfx/sfx-28-impact.wav",
+      "durationSeconds": 0.35,
+      "loudness": {
+        "peakDb": -0.445528,
+        "rmsDb": -15.637942,
+        "lufs": -70.0
+      }
+    },
+    {
+      "id": "round5-a-speech-1",
+      "name": "round5-a-speech-1.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-1.wav",
+      "durationSeconds": 5.325,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -20.6,
+        "lufs": -19.8,
+        "accentSeconds": [
+          2.6,
+          3.3,
+          4.3
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-2",
+      "name": "round5-a-speech-2.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-2.wav",
+      "durationSeconds": 5.875,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -17.9,
+        "lufs": -17.0,
+        "accentSeconds": [
+          1.4,
+          3.0
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-3",
+      "name": "round5-a-speech-3.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-3.wav",
+      "durationSeconds": 6.925,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -18.8,
+        "lufs": -18.1,
+        "accentSeconds": [
+          2.4,
+          4.6
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-4",
+      "name": "round5-a-speech-4.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-4.wav",
+      "durationSeconds": 2.025,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -19.3,
+        "lufs": -17.6
+      }
+    },
+    {
+      "id": "round5-a-speech-5",
+      "name": "round5-a-speech-5.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-5.wav",
+      "durationSeconds": 7.525,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -19.9,
+        "lufs": -19.3,
+        "accentSeconds": [
+          5.4
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-6",
+      "name": "round5-a-speech-6.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-6.wav",
+      "durationSeconds": 7.425,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -19.1,
+        "lufs": -18.4,
+        "accentSeconds": [
+          2.4,
+          4.7,
+          5.4
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-7",
+      "name": "round5-a-speech-7.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-7.wav",
+      "durationSeconds": 7.0,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -20.5,
+        "lufs": -20.1,
+        "accentSeconds": [
+          1.3,
+          3.6,
+          3.9
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-8",
+      "name": "round5-a-speech-8.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-8.wav",
+      "durationSeconds": 4.525,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -20.2,
+        "lufs": -19.3,
+        "accentSeconds": [
+          1.9,
+          2.6
+        ]
+      }
+    },
+    {
+      "id": "round5-a-speech-9",
+      "name": "round5-a-speech-9.wav",
+      "path": "brief-a-round5.project.media/round5-a-speech-9.wav",
+      "durationSeconds": 4.25,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -19.4,
+        "lufs": -18.5,
+        "accentSeconds": [
+          2.2
+        ]
+      }
+    }
+  ]
+}

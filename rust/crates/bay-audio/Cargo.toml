@@ -12,6 +12,7 @@ path = "src/lib.rs"
 bench = false
 
 [dependencies]
+serde = { workspace = true }
 bay-paths = { version = "0.1.0", path = "../bay-paths" }
 
 [dev-dependencies]

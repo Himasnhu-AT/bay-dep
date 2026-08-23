@@ -15,6 +15,11 @@ You need Rust (stable) and `ffmpeg` on `PATH`. A GPU is needed for the composito
 bay still runs and says so. `uv` is optional and only used to provision the Kokoro speech
 sidecar.
 
+When running Cargo directly, use `env -u CARGO_TARGET_DIR cargo ...` from `rust/`. The agent
+shell's `CARGO_TARGET_DIR` points at a sandbox cache instead of the warm workspace target and can
+make `whisper-rs-sys` fail against an incomplete cached `whisper.cpp` checkout. Do not create a
+second target directory; the repository scripts already clear this variable.
+
 **Run `./test.sh` before opening a PR.** Clippy runs with `-D warnings`, so a warning is a
 failure.
 

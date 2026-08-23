@@ -15,14 +15,177 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
 
 use crate::studio::Studio;
 use crate::tools;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "bay";
+const TOKEN_BYTES: usize = 32;
+const TOKEN_HEX_LEN: usize = TOKEN_BYTES * 2;
+
+/// The credential required on every HTTP request.
+///
+/// Loopback is a network boundary, not an authorization boundary: any process running as the
+/// user can connect, and browser pages can send requests to localhost. The Origin check below
+/// closes the drive-by browser case; this token also closes origin-less requests from unrelated
+/// local processes. Stdio needs no token because the client owns the child process and its pipes.
+///
+/// Deliberately has no `Debug` or `Display` implementation, so an error cannot accidentally print
+/// it. The generated value is persisted in bay's per-user data directory for legitimate clients.
+struct AuthToken {
+    value: Vec<u8>,
+    path: Option<PathBuf>,
+}
+
+impl AuthToken {
+    fn load_or_create() -> std::io::Result<Self> {
+        if let Some(value) = std::env::var_os("BAY_MCP_TOKEN").filter(|value| !value.is_empty()) {
+            let value = value.to_string_lossy().into_owned().into_bytes();
+            if value.len() != TOKEN_HEX_LEN || !value.iter().all(u8::is_ascii_hexdigit) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "BAY_MCP_TOKEN must be exactly 64 hexadecimal characters",
+                ));
+            }
+            return Ok(Self { value, path: None });
+        }
+
+        let data = bay_paths::data_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not locate bay's data directory for the MCP token",
+            )
+        })?;
+        std::fs::create_dir_all(&data)?;
+        let path = data.join("mcp-token");
+
+        match Self::read_file(&path) {
+            Ok(value) => {
+                return Ok(Self {
+                    value,
+                    path: Some(path),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let mut random = [0u8; TOKEN_BYTES];
+        getrandom::fill(&mut random).map_err(|error| {
+            std::io::Error::other(format!("could not generate MCP token: {error}"))
+        })?;
+        let encoded = hex(&random);
+        match create_secret_file(&path, encoded.as_bytes()) {
+            Ok(()) => Ok(Self {
+                value: encoded.into_bytes(),
+                path: Some(path),
+            }),
+            // A simultaneously starting process may have won the create-new race. Read the one
+            // durable credential rather than replacing it with a value no client could predict.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Self::read_file(&path).map(|value| Self {
+                    value,
+                    path: Some(path),
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn read_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        let text = std::fs::read_to_string(path)?;
+        let value = text.trim().as_bytes().to_vec();
+        if value.len() != TOKEN_HEX_LEN || !value.iter().all(u8::is_ascii_hexdigit) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "{} is not a valid bay MCP token; remove it to generate a fresh one",
+                    path.display()
+                ),
+            ));
+        }
+        secure_existing_file(path)?;
+        Ok(value)
+    }
+
+    /// Compare token bytes without exposing how many leading bytes matched.
+    fn matches(&self, candidate: &[u8]) -> bool {
+        bool::from(self.value.as_slice().ct_eq(candidate))
+    }
+
+    #[cfg(test)]
+    fn from_test(value: &str) -> Self {
+        assert_eq!(value.len(), TOKEN_HEX_LEN);
+        Self {
+            value: value.as_bytes().to_vec(),
+            path: None,
+        }
+    }
+}
+
+/// Authorization header value for bay's own local clients.
+///
+/// Kept as an explicit API so the desktop's single-instance focus request uses the same
+/// credential source as the server. Callers must treat the returned string as a secret.
+pub fn authorization_header() -> std::io::Result<String> {
+    let token = AuthToken::load_or_create()?;
+    let value = String::from_utf8(token.value).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "bay's MCP token is not valid UTF-8",
+        )
+    })?;
+    Ok(format!("Bearer {value}"))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[cfg(unix)]
+fn create_secret_file(path: &std::path::Path, value: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(value)
+}
+
+#[cfg(not(unix))]
+fn create_secret_file(path: &std::path::Path, value: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(value)
+}
+
+#[cfg(unix)]
+fn secure_existing_file(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn secure_existing_file(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 /// Handle one JSON-RPC message. Returns `None` for notifications, which take no response.
 fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
@@ -93,7 +256,14 @@ Typical flow:
   4. add_text / add_shape / add_image / add_video to place elements, add_audio for the bed
   5. animate to give them motion
   6. snapshot at several times and LOOK at the frames
-  7. render
+  7. fix what the frames show, in place — transform_set, text_update, element_trim, audio_set
+  8. check — it names what will look wrong before you spend the encode finding out
+  9. render
+
+Editing, not just placing: element_trim moves a clip's edges and eats the footage behind
+them, element_source picks WHICH part of a file plays, element_split cuts a clip in two, and
+element_move slides it without changing what it shows. Prefer these to deleting and re-adding
+— a rebuilt element loses its animation and its id.
 
 Coordinates are fractions of the canvas: x=0.5,y=0.5 is dead centre. Layers stack upward
 from 0. Keyframe times in `animate` are relative to the element's own start.";
@@ -144,6 +314,7 @@ pub fn serve_listener(
     listener: TcpListener,
     bridge: Option<bay_agent::AgentBridge>,
 ) -> std::io::Result<()> {
+    let token = Arc::new(AuthToken::load_or_create()?);
     let bound = listener.local_addr()?;
     let mode = if bridge.is_some() {
         "attached to the open editor"
@@ -151,8 +322,12 @@ pub fn serve_listener(
         "headless"
     };
     println!("bay MCP server listening on http://{bound}/mcp ({mode})");
+    match &token.path {
+        Some(path) => println!("  authentication token: {}", path.display()),
+        None => println!("  authentication token: BAY_MCP_TOKEN"),
+    }
     if bridge.is_none() {
-        println!("  claude mcp add --transport http bay http://{bound}/mcp");
+        println!("  configure an Authorization: Bearer header, then register http://{bound}/mcp");
     }
     std::io::stdout().flush()?;
 
@@ -162,10 +337,11 @@ pub fn serve_listener(
                 match stream {
                     Ok(stream) => {
                         let bridge = bridge.clone();
+                        let token = Arc::clone(&token);
                         // Thread per connection: the handler blocks waiting for the editor to
                         // answer, and blocking the accept loop would stall every other client.
                         std::thread::spawn(move || {
-                            if let Err(e) = serve_attached_connection(&bridge, stream) {
+                            if let Err(e) = serve_attached_connection(&bridge, stream, &token) {
                                 eprintln!("bay-mcp: connection error: {e}");
                             }
                         });
@@ -179,7 +355,7 @@ pub fn serve_listener(
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
-                        if let Err(e) = serve_connection(&mut studio, stream) {
+                        if let Err(e) = serve_connection(&mut studio, stream, &token) {
                             eprintln!("bay-mcp: connection error: {e}");
                         }
                     }
@@ -191,19 +367,46 @@ pub fn serve_listener(
     Ok(())
 }
 
-/// How long a tool call waits for the editor before giving up.
+/// How long a fast tool call waits for the editor before giving up.
 ///
 /// Generous, because the one main-thread stall we cannot engineer away is a native file dialog
 /// — and short enough that an agent gets a message it can act on rather than hanging forever.
+///
+/// A file dialog is a *fast tool* concern, which is the reason this was the wrong number for
+/// everything else: applied flatly, it meant any `render` or `narrate` over 20 seconds returned
+/// "the editor did not answer in time" while the work carried on and its result was applied to
+/// the document anyway.
 const ATTACHED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The budget for a slow tool that still answers in-band.
+///
+/// After the job migration this is `media_import` alone: a `probe_media` shell-out that is
+/// normally milliseconds but can be much longer for a large file on a network share. Everything
+/// slower than that returns a job id instead of holding the request open, so this number never
+/// has to cover a render.
+const ATTACHED_SLOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// How long to wait for `tool`.
+///
+/// Pure and separate so the policy is testable without a bridge, and so adding a fifth slow
+/// tool cannot silently leave it on the fast budget — the test walks `slow_tools()` rather than
+/// a list written out again here.
+fn timeout_for(tool: &str) -> std::time::Duration {
+    if bay_agent::slow::slow_tools().contains(&tool) {
+        ATTACHED_SLOW_TIMEOUT
+    } else {
+        ATTACHED_TIMEOUT
+    }
+}
 
 /// Handle one connection in attached mode: `initialize` and `tools/list` are answered here,
 /// and everything else is forwarded to the editor.
 fn serve_attached_connection(
     bridge: &bay_agent::AgentBridge,
     stream: TcpStream,
+    token: &AuthToken,
 ) -> std::io::Result<()> {
-    serve_with(stream, |request| handle_attached(bridge, request))
+    serve_with(stream, token, |request| handle_attached(bridge, request))
 }
 
 fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<Value> {
@@ -225,7 +428,8 @@ fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<V
                     .to_string(),
                 arguments: params.get("arguments").cloned().unwrap_or(json!({})),
             };
-            let (text, is_error) = match bridge.call(call, ATTACHED_TIMEOUT) {
+            let budget = timeout_for(&call.name);
+            let (text, is_error) = match bridge.call(call, budget) {
                 bay_agent::AgentResponse::Ok(value) => (
                     serde_json::to_string(&value).unwrap_or_else(|_| "{}".into()),
                     false,
@@ -249,16 +453,43 @@ fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<V
     })
 }
 
-fn serve_connection(studio: &mut Studio, stream: TcpStream) -> std::io::Result<()> {
-    serve_with(stream, |request| handle(studio, request))
+fn serve_connection(
+    studio: &mut Studio,
+    stream: TcpStream,
+    token: &AuthToken,
+) -> std::io::Result<()> {
+    serve_with(stream, token, |request| handle(studio, request))
 }
 
 /// The HTTP half of the transport, shared by both modes.
 ///
 /// `dispatch` turns one JSON-RPC message into an optional reply; everything about reading the
 /// request and writing the response lives here so the two modes cannot drift apart.
+/// Is this `Origin` this machine talking to itself?
+///
+/// Compared on the host only: a scheme and port vary legitimately between clients, and what
+/// matters is that the page is not remote.
+fn is_loopback_origin(origin: &str) -> bool {
+    // "null" is what a sandboxed iframe or a file:// page sends. It is not loopback, and
+    // treating it as such would reopen the hole for exactly the pages least worth trusting.
+    let without_scheme = origin
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(origin);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    // IPv6 literals are bracketed and full of colons, so the port cannot be split off by
+    // looking for the first one.
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
 fn serve_with(
     mut stream: TcpStream,
+    token: &AuthToken,
     mut dispatch: impl FnMut(&Value) -> Option<Value>,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -272,8 +503,10 @@ fn serve_with(
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
 
-    // Headers — we only need the body length.
+    // Headers: the body length, Origin, and bearer credential.
     let mut content_length = 0usize;
+    let mut origin: Option<String> = None;
+    let mut authorization: Option<String> = None;
     loop {
         let mut header = String::new();
         if reader.read_line(&mut header)? == 0 {
@@ -283,12 +516,46 @@ fn serve_with(
         if header.is_empty() {
             break;
         }
-        if let Some(value) = header
-            .strip_prefix("Content-Length:")
-            .or_else(|| header.strip_prefix("content-length:"))
-        {
+        let Some((name, value)) = header.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("content-length") {
             content_length = value.trim().parse().unwrap_or(0);
+        } else if name.eq_ignore_ascii_case("origin") {
+            origin = Some(value.trim().to_string());
+        } else if name.eq_ignore_ascii_case("authorization") {
+            authorization = Some(value.trim().to_string());
         }
+    }
+
+    // Authenticate before reading or parsing the body, and crucially before either dispatch path.
+    // A local process that cannot read bay's user-only token file must never reach a tool.
+    let candidate = authorization
+        .as_deref()
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    if !token.matches(candidate.as_bytes()) {
+        return respond_unauthorized(&mut stream);
+    }
+
+    // Binding to loopback is not enough on its own. A browser on this machine can POST here
+    // from any page the user visits — `Content-Type: text/plain` makes it a CORS-simple request,
+    // so there is no preflight to refuse — and the call executes even though the reply is
+    // unreadable. That is enough to cancel someone's render, and with a DNS-rebinding step the
+    // reply becomes readable too, at which point a listing hands the page every render path and
+    // narration line this bay knows about.
+    //
+    // A real MCP client sends no Origin at all, so requiring loopback only when one IS present
+    // costs nothing and closes the drive-by.
+    if let Some(origin) = &origin
+        && !is_loopback_origin(origin)
+    {
+        return respond(
+            &mut stream,
+            403,
+            "text/plain",
+            b"cross-origin requests are refused; bay's MCP endpoint is for local clients",
+        );
     }
 
     // A GET on the MCP endpoint is the spec's "open an SSE stream" request. This server never
@@ -351,6 +618,8 @@ fn respond(
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         _ => "Unknown",
@@ -361,6 +630,21 @@ fn respond(
          Content-Length: {len}\r\n\
          Connection: close\r\n\r\n",
         len = body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()
+}
+
+fn respond_unauthorized(stream: &mut TcpStream) -> std::io::Result<()> {
+    let body = b"authentication required";
+    let head = format!(
+        "HTTP/1.1 401 Unauthorized\r\n\
+         Content-Type: text/plain\r\n\
+         WWW-Authenticate: Bearer\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n",
+        body.len()
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(body)?;
@@ -410,6 +694,190 @@ mod tests {
     use super::*;
     use tests_support::{call, new_studio, unwrap_call};
 
+    // The attached timeout. `todo.testing.md` recorded that every bridge test used a fast tool,
+    // which is why a flat 20s ceiling on `render` and `narrate` survived unnoticed: the suite
+    // only ever exercised calls that could not possibly hit it.
+
+    #[test]
+    fn a_slow_tool_is_not_held_to_the_file_dialog_budget() {
+        assert_eq!(
+            timeout_for("timeline"),
+            ATTACHED_TIMEOUT,
+            "a fast tool keeps the dialog budget"
+        );
+        assert_eq!(
+            timeout_for("media_import"),
+            ATTACHED_SLOW_TIMEOUT,
+            "probing a large file must not be cut off at the dialog budget"
+        );
+        assert!(
+            ATTACHED_SLOW_TIMEOUT > ATTACHED_TIMEOUT,
+            "the slow budget has to actually be more generous"
+        );
+    }
+
+    #[test]
+    fn every_slow_tool_gets_the_slow_budget() {
+        // Walks the real list rather than repeating it, so a fifth slow tool added later cannot
+        // silently be left on a 20-second ceiling — which is exactly how this bug happened.
+        for tool in bay_agent::slow::slow_tools() {
+            assert_eq!(
+                timeout_for(tool),
+                ATTACHED_SLOW_TIMEOUT,
+                "{tool} is classified slow but would be given the fast budget"
+            );
+        }
+    }
+
+    #[test]
+    fn every_job_tool_is_also_a_slow_tool() {
+        // job_tools is deliberately narrower than slow_tools, but it must be a subset: a tool
+        // that returns a job id while running on the UI thread would freeze the window.
+        for tool in bay_agent::slow::job_tools() {
+            assert!(
+                bay_agent::slow::slow_tools().contains(tool),
+                "{tool} returns a job id but is not classified as slow"
+            );
+        }
+    }
+
+    /// A deliberately slow tool, through the real bridge, must not be cut off.
+    ///
+    /// This is the test `todo.testing.md` asked for. The pump takes longer than the fast budget
+    /// and answers within the slow one; the call has to come back `Ok`.
+    #[test]
+    fn a_slow_tool_survives_a_delay_that_would_fail_a_fast_one() {
+        let (bridge, pump) = bay_agent::bridge();
+        let handle = std::thread::spawn(move || {
+            // Drain on a tick, the way the editor's own loop does.
+            let request = loop {
+                if let Some(request) = pump.try_next() {
+                    break request;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            // Longer than the fast budget the test injects below, shorter than the slow one.
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            request.respond(bay_agent::AgentResponse::Ok(json!({ "rendered": true })));
+        });
+
+        let response = bridge.call(
+            bay_agent::ToolCall {
+                name: "render".into(),
+                arguments: json!({ "path": "/tmp/x.mp4" }),
+            },
+            // Stands in for ATTACHED_SLOW_TIMEOUT, scaled down so the test is fast. The policy
+            // itself is asserted above; what this proves is that the bridge delivers a late-ish
+            // answer rather than claiming the slot.
+            std::time::Duration::from_secs(5),
+        );
+        match response {
+            bay_agent::AgentResponse::Ok(value) => assert_eq!(value["rendered"], true),
+            bay_agent::AgentResponse::Err(message) => {
+                panic!("a slow tool inside its budget must not time out: {message}")
+            }
+        }
+        handle.join().expect("the pump thread should finish");
+    }
+
+    #[test]
+    fn a_page_on_the_web_cannot_drive_this_server() {
+        // Loopback binding does not stop a browser: any page the user visits can POST here, and
+        // with Content-Type: text/plain there is no preflight to refuse. The call would execute
+        // even though the reply is unreadable — enough to cancel someone's render.
+        for origin in [
+            "https://evil.example",
+            "http://evil.example:7333",
+            "null",
+            "http://127.0.0.1.evil.example",
+            "http://notlocalhost",
+        ] {
+            assert!(
+                !is_loopback_origin(origin),
+                "{origin} must not be treated as this machine talking to itself"
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_client_is_still_allowed() {
+        for origin in [
+            "http://localhost",
+            "http://localhost:3000",
+            "http://127.0.0.1:7333",
+            "https://127.0.0.1",
+            "http://[::1]:7333",
+        ] {
+            assert!(is_loopback_origin(origin), "{origin} is local and allowed");
+        }
+    }
+
+    fn authenticated_http_round_trip(authorization: Option<&str>) -> (String, bool) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let dispatched = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&dispatched);
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept test request");
+            let token = AuthToken::from_test(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            );
+            serve_with(stream, &token, |_| {
+                observed.store(true, Ordering::SeqCst);
+                Some(json!({ "jsonrpc": "2.0", "id": 1, "result": { "ok": true } }))
+            })
+            .expect("serve test request");
+        });
+
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+        let authorization = authorization
+            .map(|value| format!("Authorization: {value}\r\n"))
+            .unwrap_or_default();
+        let request = format!(
+            "POST /mcp HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n{authorization}\r\n{body}",
+            body.len()
+        );
+        let mut client = TcpStream::connect(address).expect("connect to test listener");
+        client
+            .write_all(request.as_bytes())
+            .expect("write test request");
+        let mut response = String::new();
+        client
+            .read_to_string(&mut response)
+            .expect("read test response");
+        server.join().expect("test server should finish");
+        (response, dispatched.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn an_unauthenticated_request_is_rejected_before_dispatch() {
+        let (response, dispatched) = authenticated_http_round_trip(None);
+        assert!(
+            response.starts_with("HTTP/1.1 401 Unauthorized"),
+            "{response}"
+        );
+        assert!(!dispatched, "an unauthenticated request reached dispatch");
+    }
+
+    #[test]
+    fn a_correctly_authenticated_request_succeeds() {
+        let (response, dispatched) = authenticated_http_round_trip(Some(
+            "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ));
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains(r#""ok":true"#), "{response}");
+        assert!(
+            dispatched,
+            "an authenticated request never reached dispatch"
+        );
+    }
+
     #[test]
     fn initialize_advertises_tools() {
         let mut studio = new_studio();
@@ -454,10 +922,312 @@ mod tests {
         }
     }
 
+    /// The loop the revising tools exist for, driven the way an agent drives it: build
+    /// something, notice it is wrong, fix it in place. Every step goes through the real
+    /// JSON-RPC surface, so this also proves the headless server reaches the shared planner.
+    #[test]
+    fn an_agent_can_revise_what_it_built_instead_of_rebuilding_it() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, _) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "headline", "id": "title", "start": 0, "duration": 3, "content": "Hook", "y": 0.9 }),
+        ));
+        assert!(!is_error);
+
+        // The snapshot would show it jammed against the bottom edge. Move it — the id, the
+        // words and everything else about it survive.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "transform_set",
+            json!({ "elementId": "title", "y": 0.42 }),
+        ));
+        assert!(!is_error, "{message}");
+        let transform_result: Value =
+            serde_json::from_str(&message).expect("transform_set returns JSON");
+        assert_eq!(transform_result["textLayout"]["basis"], "glyph-ink");
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is json");
+        let element = &timeline["layers"][0]["elements"][0];
+        assert_eq!(element["id"], "title");
+        assert_eq!(element["content"], "Hook", "the words survived the move");
+        assert!((element["transform"]["y"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+
+        // And a retype keeps the placement. Promoting it to a hook re-resolves it against the
+        // kit — the size comes from the ramp, not from the caller.
+        let (_, before) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let before: Value = serde_json::from_str(&before).expect("timeline is json");
+        let headline_size = before["layers"][0]["elements"][0]["fontSize"]
+            .as_f64()
+            .expect("a size");
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "text_update",
+            json!({ "elementId": "title", "content": "Better hook", "role": "hook" }),
+        ));
+        assert!(!is_error, "{message}");
+        let update_result: Value =
+            serde_json::from_str(&message).expect("text_update returns JSON");
+        assert_eq!(update_result["textLayout"]["basis"], "glyph-ink");
+        assert!(
+            update_result["textLayout"]["height"].as_f64().unwrap() > 0.0,
+            "a typography revision must report the layout it produced: {update_result}"
+        );
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is json");
+        let element = &timeline["layers"][0]["elements"][0];
+        assert_eq!(element["content"], "Better hook");
+        assert_eq!(element["role"], "hook");
+        assert!(
+            element["fontSize"].as_f64().unwrap() > headline_size,
+            "a hook is bigger than a headline in every kit's ramp: {element}"
+        );
+        assert!((element["transform"]["y"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn named_move_reports_replace_and_append_semantics() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        call(
+            &mut studio,
+            "add_text",
+            json!({
+                "role": "headline", "id": "title", "start": 0, "duration": 3,
+                "content": "NO"
+            }),
+        );
+
+        let (_, first) = unwrap_call(&call(
+            &mut studio,
+            "apply_move",
+            json!({ "elementId": "title", "move": "nudge", "at": 0 }),
+        ));
+        let first: Value = serde_json::from_str(&first).expect("first move JSON");
+        assert_eq!(first["motion"]["channels"][0]["action"], "added");
+
+        let (_, repeated) = unwrap_call(&call(
+            &mut studio,
+            "apply_move",
+            json!({ "elementId": "title", "move": "nudge", "at": 0 }),
+        ));
+        let repeated: Value = serde_json::from_str(&repeated).expect("repeated move JSON");
+        assert_eq!(
+            repeated["motion"]["channels"][0]["action"],
+            "replaced-overlap"
+        );
+        assert!(
+            repeated["motion"]["signatureRule"]
+                .as_str()
+                .unwrap()
+                .contains("distinct set"),
+            "{repeated}"
+        );
+
+        let (_, later) = unwrap_call(&call(
+            &mut studio,
+            "apply_move",
+            json!({ "elementId": "title", "move": "nudge", "at": 1 }),
+        ));
+        let later: Value = serde_json::from_str(&later).expect("later move JSON");
+        assert_eq!(later["motion"]["channels"][0]["action"], "appended");
+    }
+
+    /// `check` has to find the two failures that most often reach a finished file: nothing on
+    /// screen, and a clip pointing at media nobody imported.
+    #[test]
+    fn check_reports_an_empty_timeline_and_then_goes_quiet() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (is_error, report) = unwrap_call(&call(&mut studio, "check", json!({})));
+        assert!(!is_error, "check is a read and must not fail: {report}");
+        let report: Value = serde_json::from_str(&report).expect("check returns json");
+        assert_eq!(
+            report["status"],
+            json!("findings"),
+            "an empty timeline is not clean"
+        );
+        assert!(
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["code"] == "nothing-visual"),
+            "{report}"
+        );
+        // A render must not proceed past it either — the gate is what makes the report matter.
+        let (is_error, refused) = unwrap_call(&call(
+            &mut studio,
+            "render",
+            json!({ "path": "/tmp/bay-never-rendered.mp4" }),
+        ));
+        assert!(is_error, "a gating error must stop the render: {refused}");
+        assert!(refused.contains("nothing-visual"), "{refused}");
+
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "role": "data", "start": 0, "duration": 2 }),
+        );
+        let (_, report) = unwrap_call(&call(&mut studio, "check", json!({})));
+        let report: Value = serde_json::from_str(&report).expect("check returns json");
+        assert_eq!(report["errors"], json!(0), "{report}");
+        // Every check ran, so the three-state status is a real pass rather than a silence.
+        assert!(
+            report["skipped"]
+                .as_array()
+                .expect("skipped is a list")
+                .is_empty(),
+            "{report}"
+        );
+    }
+
+    /// Looks and templates are the two libraries bay ships as code. Both have to be
+    /// discoverable and usable in one call each, or an agent will keep building the same
+    /// lower third out of primitives and getting the spacing slightly wrong.
+    #[test]
+    fn a_look_and_a_template_can_be_found_and_used() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (_, looks) = unwrap_call(&call(&mut studio, "looks_list", json!({})));
+        let looks: Value = serde_json::from_str(&looks).expect("json");
+        let first = looks["looks"][0]["id"].as_str().expect("at least one look");
+        assert!(!first.is_empty());
+
+        let (_, templates) = unwrap_call(&call(&mut studio, "templates_list", json!({})));
+        let templates: Value = serde_json::from_str(&templates).expect("json");
+        let lower_third = templates["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "lower-third")
+            .expect("the built-in lower third");
+        assert_eq!(lower_third["textSlots"][0], "name");
+
+        // Place it, filling its slots.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "template_place",
+            json!({ "templateId": "lower-third", "start": 1.0, "text": ["Ada", "Engineer"] }),
+        ));
+        assert!(!is_error, "{message}");
+        let placed: Value = serde_json::from_str(&message).expect("json");
+        let ids = placed["ids"].as_array().expect("ids");
+        assert_eq!(ids.len(), 3, "a rule and two lines: {placed}");
+
+        // The words landed, and the times are relative to where it was placed.
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("json");
+        let elements = timeline["layers"][0]["elements"].as_array().unwrap();
+        assert!(elements.iter().any(|e| e["content"] == "Ada"), "{timeline}");
+        assert!(
+            elements
+                .iter()
+                .any(|e| (e["startSeconds"].as_f64().unwrap() - 1.0).abs() < 1e-6),
+            "the bundle starts where it was placed: {timeline}"
+        );
+
+        // And a built-in grade goes on by name, with no file anywhere.
+        let element_id = elements[1]["id"].as_str().unwrap().to_string();
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "effect_add",
+            json!({ "elementId": element_id, "type": "lut", "look": first }),
+        ));
+        assert!(!is_error, "{message}");
+    }
+
+    /// A grade that does not exist has to be refused by name, with the list of ones that do —
+    /// the alternative is a clip that renders untouched and no way to tell why.
+    #[test]
+    fn an_unknown_look_is_refused_with_the_alternatives() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "role": "data", "id": "s", "start": 0, "duration": 2 }),
+        );
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "effect_add",
+            json!({ "elementId": "s", "type": "lut", "look": "vaporwave" }),
+        ));
+        assert!(is_error);
+        assert!(message.contains("teal-orange"), "{message}");
+    }
+
+    /// The whole point of synthesising these: one call gets a sound of exactly the length the
+    /// edit needs, onto the timeline, with no file to find and nothing to install.
+    #[test]
+    fn a_sound_effect_is_synthesised_and_placed_in_one_call() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (_, listed) = unwrap_call(&call(&mut studio, "sfx_list", json!({})));
+        let listed: Value = serde_json::from_str(&listed).expect("json");
+        assert!(
+            listed["sfx"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["id"] == "whoosh"),
+            "{listed}"
+        );
+
+        // A whoosh cut to the length of a 0.4s transition.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "sfx_add",
+            json!({ "sfx": "whoosh", "start": 2.0, "duration": 0.4 }),
+        ));
+        assert!(!is_error, "{message}");
+        let placed: Value = serde_json::from_str(&message).expect("json");
+        assert!(
+            (placed["durationSeconds"].as_f64().unwrap() - 0.4).abs() < 0.01,
+            "the sound is as long as it was asked to be: {placed}"
+        );
+
+        // It is a real file, and a real clip on the audio lane.
+        let path = placed["path"].as_str().expect("a path");
+        let written = std::fs::metadata(path).expect("the wav exists");
+        assert!(
+            written.len() > 44,
+            "a header with no samples is not a sound"
+        );
+
+        let (_, info) = unwrap_call(&call(&mut studio, "project_info", json!({})));
+        let info: Value = serde_json::from_str(&info).expect("json");
+        assert_eq!(info["audioElements"], json!(1), "{info}");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_unknown_sound_is_refused_with_the_ones_that_exist() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "sfx_add",
+            json!({ "sfx": "explosion", "start": 0.0 }),
+        ));
+        assert!(is_error);
+        assert!(message.contains("whoosh"), "{message}");
+    }
+
     #[test]
     fn tool_errors_come_back_as_results_not_protocol_errors() {
         let mut studio = new_studio();
-        let response = call(&mut studio, "add_text", json!({ "start": 0 }));
+        let response = call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "headline", "content": "x", "start": 0 }),
+        );
         assert!(
             response.get("error").is_none(),
             "a bad argument must not be a JSON-RPC error"
@@ -489,7 +1259,7 @@ mod tests {
         let (is_error, _) = unwrap_call(&call(
             &mut studio,
             "add_shape",
-            json!({ "start": 0, "duration": 2, "id": "bar", "color": "#ff5b5b",
+            json!({ "role": "data", "start": 0, "duration": 2, "id": "bar", "tone": "accent",
                     "anchorX": 0.0, "scaleX": 0.6, "scaleY": 0.02 }),
         ));
         assert!(!is_error);
@@ -516,7 +1286,7 @@ mod tests {
         call(
             &mut studio,
             "add_shape",
-            json!({ "start": 0, "duration": 1, "id": "s" }),
+            json!({ "role": "data", "start": 0, "duration": 1, "id": "s" }),
         );
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
@@ -537,7 +1307,7 @@ mod tests {
         call(
             &mut studio,
             "add_shape",
-            json!({ "start": 0, "duration": 1, "id": "s" }),
+            json!({ "role": "data", "start": 0, "duration": 1, "id": "s" }),
         );
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
@@ -560,17 +1330,42 @@ mod tests {
         assert!(message.contains("media_import"), "{message}");
     }
 
+    /// A family is no longer something a caller can name at all — the kit owns it, and a kit
+    /// whose families are not installed is refused when it is committed. What survives from the
+    /// old rule is the part that mattered: a face nobody has must never be substituted silently.
     #[test]
-    fn an_uninstalled_font_family_is_refused_rather_than_silently_substituted() {
+    fn a_raw_font_family_is_refused_and_names_the_way_in() {
         let mut studio = new_studio();
         let (is_error, message) = unwrap_call(&call(
             &mut studio,
             "add_text",
-            json!({ "start": 0, "duration": 1, "content": "x",
+            json!({ "role": "headline", "start": 0, "duration": 1, "content": "x",
                     "fontFamily": "Definitely Not An Installed Face" }),
         ));
+        assert!(is_error, "a family is not an argument any more");
+        assert!(message.contains("fontFamily"), "{message}");
+        assert!(message.contains("role"), "name the way in: {message}");
+        assert!(message.contains("style kit"), "{message}");
+    }
+
+    /// The custom-kit door is the one place a family can still be named, and it is closed
+    /// against a face this machine does not have.
+    #[test]
+    fn a_custom_kit_naming_an_absent_family_is_refused() {
+        let mut studio = new_studio();
+        let mut kit = bay_project::builtin_kit("swiss").unwrap().clone();
+        kit.id = "custom".into();
+        kit.faces.display.family = "Definitely Not An Installed Face".into();
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "style_pick",
+            json!({ "customKit": serde_json::to_value(&kit).unwrap() }),
+        ));
         assert!(is_error, "a missing family must not fall back silently");
-        assert!(message.contains("fonts_check"), "{message}");
+        assert!(
+            message.contains("Definitely Not An Installed Face"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -580,7 +1375,7 @@ mod tests {
             call(
                 &mut studio,
                 "add_shape",
-                json!({ "start": 0, "duration": 1, "layer": layer,
+                json!({ "role": "data", "start": 0, "duration": 1, "layer": layer,
                         "id": format!("s{layer}") }),
             );
         }
@@ -596,6 +1391,7 @@ mod tests {
 #[cfg(test)]
 mod narration_tests {
     use super::tests_support::*;
+    use crate::Studio;
     use serde_json::{Value, json};
 
     fn srt_fixture(dir: &std::path::Path) -> String {
@@ -811,7 +1607,11 @@ mod narration_tests {
 
     #[test]
     fn narrating_reuses_one_hot_sidecar_across_calls() {
-        let mut studio = new_studio();
+        // A port of its own, never the product's 7334. Sharing it meant this test failed
+        // whenever anything else on the machine held that port — another test binary spawning a
+        // sidecar, or a `bay --mcp` someone left running — and a test that fails for reasons
+        // outside the repository is one people learn to re-run rather than read.
+        let mut studio = Studio::for_test(test_library_root(), 7451);
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
         let status: Value = serde_json::from_str(&status).unwrap();
         if status["available"] != Value::Bool(true) {
@@ -837,7 +1637,15 @@ mod narration_tests {
         ));
         assert!(!is_error, "{body}");
         let warm = second.elapsed();
-        let body: Value = serde_json::from_str(&body).unwrap();
+        let envelope: Value = serde_json::from_str(&body).unwrap();
+
+        // narrate is a job tool now: it answers with an id, and what it used to return in-band
+        // is the job's `result`. Asserted through job_status rather than the inlined copy, so
+        // this test covers the path an agent actually takes.
+        let job = envelope["job"].as_u64().expect("narrate returns a job id");
+        let body = bay_jobs::mcp::status(&json!({ "job": job }));
+        assert_eq!(body["finished"], true, "{body}");
+        let body = &body["result"];
 
         assert!(body["words"].as_u64().unwrap() >= 2, "{body}");
         assert!(
@@ -858,11 +1666,69 @@ mod narration_tests {
             "the second narration ({warm:?}) should beat the first ({cold:?})"
         );
     }
+
+    /// §1.4 end to end, on real speech: the read is planned as a rate and measured as one, and
+    /// every cue it places clears both reading floors.
+    #[test]
+    fn a_real_narration_reports_its_rate_and_places_readable_cues() {
+        let mut studio = Studio::for_test(test_library_root(), 7452);
+        let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
+        let status: Value = serde_json::from_str(&status).unwrap();
+        if status["available"] != Value::Bool(true) {
+            eprintln!("skipping: Kokoro is not available here");
+            return;
+        }
+        call(&mut studio, "project_create", json!({ "kit": "swiss" }));
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "narrate",
+            json!({ "text": "The wick is the range. The body is the close.", "start": 0.0 }),
+        ));
+        assert!(!is_error, "{body}");
+        let envelope: Value = serde_json::from_str(&body).unwrap();
+        let body = envelope["result"].clone();
+
+        // The loop the old surface left open: the caller asked for a rate and is told what it
+        // got, rather than setting a multiplier and finding out from the finished video.
+        let rate = body["wordsPerSecond"]
+            .as_f64()
+            .expect("narrate reports the rate it delivered");
+        assert!(
+            (rate - bay_speech::TARGET_WORDS_PER_SECOND).abs() < 0.6,
+            "a default read should land near {} words a second, got {rate}: {body}",
+            bay_speech::TARGET_WORDS_PER_SECOND
+        );
+        assert!(
+            body["speed"].as_f64().unwrap() < 1.0,
+            "150 wpm means slowing Kokoro down: {body}"
+        );
+
+        for cue in body["cues"].as_array().expect("cues") {
+            let (start, end) = (cue["start"].as_f64().unwrap(), cue["end"].as_f64().unwrap());
+            let words = cue["text"].as_str().unwrap().split_whitespace().count();
+            assert!(
+                end - start + 1e-6 >= bay_speech::MIN_CUE_SECONDS,
+                "a {:.3}s cue is a flash: {cue}",
+                end - start
+            );
+            assert!(
+                end - start + 1e-6 >= bay_speech::MIN_SECONDS_PER_WORD * words as f64,
+                "{words} words in {:.3}s is faster than anyone reads: {cue}",
+                end - start
+            );
+            assert!(
+                !(cue["text"].as_str().unwrap().contains("range")
+                    && cue["text"].as_str().unwrap().contains("body")),
+                "a cue crossed the full stop: {cue}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod undo_tests {
-    use super::tests_support::{call, unwrap_call};
+    use super::tests_support::{call, new_studio, unwrap_call};
     use super::*;
     use serde_json::{Value, json};
 
@@ -887,14 +1753,14 @@ mod undo_tests {
     /// same document a human is working in.
     #[test]
     fn agent_edits_are_undoable() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(&mut studio, "project_create", json!({}));
 
         // layer > 0 forces overlay-track creation, which used to clear history.
         let (is_error, body) = unwrap_call(&call(
             &mut studio,
             "add_shape",
-            json!({ "id": "bar", "start": 0, "duration": 2, "layer": 3, "color": "#ff0000" }),
+            json!({ "role": "data", "id": "bar", "start": 0, "duration": 2, "layer": 3 }),
         ));
         assert!(!is_error, "{body}");
 
@@ -936,12 +1802,12 @@ mod undo_tests {
 
     #[test]
     fn creating_a_lane_does_not_wipe_earlier_history() {
-        let mut studio = Studio::new();
+        let mut studio = new_studio();
         call(&mut studio, "project_create", json!({}));
         call(
             &mut studio,
             "add_text",
-            json!({ "id": "t", "start": 0, "duration": 2, "content": "before" }),
+            json!({ "role": "headline", "id": "t", "start": 0, "duration": 2, "content": "before" }),
         );
         assert!(studio.editor_for_test().can_undo());
 
@@ -949,7 +1815,7 @@ mod undo_tests {
         call(
             &mut studio,
             "add_shape",
-            json!({ "id": "s", "start": 0, "duration": 1, "layer": 5 }),
+            json!({ "role": "data", "id": "s", "start": 0, "duration": 1, "layer": 5 }),
         );
         assert!(
             studio.editor_for_test().can_undo(),
@@ -959,5 +1825,257 @@ mod undo_tests {
         assert!(studio.editor_for_test_mut().undo());
         assert!(!timeline_ids(&mut studio).contains(&"s".to_string()));
         assert!(timeline_ids(&mut studio).contains(&"t".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    //! Who put an element on the timeline, and what it is for.
+    //!
+    //! These are contract tests for the tool surface, not the model — the model's own
+    //! round-trip lives in `bay-project`. What matters here is that a caller cannot take bay's
+    //! provenance, cannot place type without saying what it is for, and can read both back.
+
+    use super::tests_support::{call, new_studio, unwrap_call};
+    use super::*;
+    use serde_json::{Value, json};
+
+    /// The whole point of the field: an author cannot claim bay's provenance. `caption-<n>` is
+    /// what tells every later measurement which elements were never a choice.
+    #[test]
+    fn the_caption_id_space_is_refused_to_a_caller() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        for tool in ["add_text", "add_shape"] {
+            let (is_error, message) = unwrap_call(&call(
+                &mut studio,
+                tool,
+                json!({ "role": "label", "id": "caption-7", "start": 0, "duration": 1,
+                        "content": "mine" }),
+            ));
+            assert!(is_error, "{tool} accepted a reserved id");
+            assert!(message.contains("reserved"), "{message}");
+        }
+        // The shape of the rule, not the prefix: an id that merely starts with the word is fine.
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "label", "id": "caption-note", "start": 0, "duration": 1,
+                    "content": "mine" }),
+        ));
+        assert!(!is_error, "{message}");
+    }
+
+    /// `role` is required, and the refusal has to teach the vocabulary — an agent that gets
+    /// "missing field" learns nothing about what the field is for.
+    #[test]
+    fn placing_type_without_saying_what_it_is_for_is_refused() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "start": 0, "duration": 2, "content": "Wicks" }),
+        ));
+        assert!(is_error, "add_text must insist on a role");
+        assert!(message.contains("role"), "{message}");
+        assert!(
+            message.contains("headline"),
+            "the list is the lesson: {message}"
+        );
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_shape",
+            json!({ "start": 0, "duration": 2 }),
+        ));
+        assert!(is_error, "add_shape must insist on a role");
+        assert!(message.contains("role"), "{message}");
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "wallpaper", "start": 0, "duration": 2, "content": "x" }),
+        ));
+        assert!(is_error, "an unknown role is not silently a default");
+        assert!(message.contains("ground"), "{message}");
+    }
+
+    /// What an author places is the author's, and the timeline says so on the way back out.
+    #[test]
+    fn an_authored_element_reads_back_with_its_role() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({ "role": "hook", "id": "hero", "start": 0, "duration": 2,
+                    "content": "Wicks" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is JSON");
+        let element = &timeline["layers"][0]["elements"][0];
+        assert_eq!(element["id"], "hero");
+        assert_eq!(element["source"], "author");
+        assert_eq!(element["role"], "hook");
+
+        let (_, info) = unwrap_call(&call(&mut studio, "project_info", json!({})));
+        let info: Value = serde_json::from_str(&info).expect("project_info is JSON");
+        assert_eq!(info["authoredElements"], json!(1));
+        assert_eq!(info["toolElements"], json!(0));
+    }
+
+    #[test]
+    fn add_text_reports_wrapped_ink_height_for_stacking() {
+        let mut studio = new_studio();
+        call(
+            &mut studio,
+            "project_create",
+            json!({ "width": 1080, "height": 1920, "kit": "stadium" }),
+        );
+        let (_, one_line) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({
+                "role": "chrome", "id": "short", "start": 0, "duration": 2, "content": "SHORT",
+                "x": 0.5, "y": 0.05, "anchorX": 0.5, "anchorY": 0.0, "scale": 0.32
+            }),
+        ));
+        let (_, wrapped) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({
+                "role": "chrome", "start": 2, "duration": 2,
+                "content": "THE GREEN INTERVIEW · CC BY 3.0",
+                "x": 0.5, "y": 0.05, "anchorX": 0.5, "anchorY": 0.0, "scale": 0.32
+            }),
+        ));
+        let one_line: Value = serde_json::from_str(&one_line).expect("add_text JSON");
+        let wrapped: Value = serde_json::from_str(&wrapped).expect("add_text JSON");
+        let one_line_height = one_line["textLayout"]["height"]
+            .as_f64()
+            .expect("measured one-line height");
+        let wrapped_height = wrapped["textLayout"]["height"]
+            .as_f64()
+            .expect("measured wrapped height");
+
+        assert_eq!(wrapped["textLayout"]["basis"], "glyph-ink");
+        assert!(
+            wrapped_height > one_line_height * 1.5,
+            "wrapping must advance a stack: one line {one_line_height}, wrapped {wrapped_height}"
+        );
+
+        let (_, revised) = unwrap_call(&call(
+            &mut studio,
+            "text_update",
+            json!({
+                "elementId": "short",
+                "content": "THE GREEN INTERVIEW · CC BY 3.0"
+            }),
+        ));
+        let revised: Value = serde_json::from_str(&revised).expect("text_update JSON");
+        assert!(
+            revised["textLayout"]["height"].as_f64().unwrap() > one_line_height * 1.5,
+            "text_update must return the wrapped layout it produced: {revised}"
+        );
+    }
+
+    /// A subtitle file becomes captions, and every one of them is bay's — no GPU, no speech
+    /// model, so this runs everywhere.
+    #[test]
+    fn captions_placed_from_a_subtitle_file_are_bays_own() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let path = tests_support::test_library_root().join("cues.srt");
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("scratch directory");
+        std::fs::write(
+            &path,
+            "1\n00:00:00,000 --> 00:00:01,500\nthe range is not\n\n\
+             2\n00:00:01,500 --> 00:00:03,000\nwhat it looks like\n",
+        )
+        .expect("write the cues");
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_add",
+            json!({ "path": path.to_string_lossy() }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let (_, info) = unwrap_call(&call(&mut studio, "project_info", json!({})));
+        let info: Value = serde_json::from_str(&info).expect("project_info is JSON");
+        assert_eq!(
+            info["toolElements"],
+            json!(2),
+            "both cues are bay's: {info}"
+        );
+        assert_eq!(info["authoredElements"], json!(0));
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is JSON");
+        let captions = timeline["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .flat_map(|layer| layer["elements"].as_array().cloned().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(captions.len(), 2);
+        for caption in &captions {
+            assert_eq!(caption["source"], "tool", "{caption}");
+            assert_eq!(caption["role"], "caption", "{caption}");
+        }
+    }
+
+    /// A hand-placed sound says what it is doing, so the mix can be measured. An unlabelled one
+    /// is a bed, which is what it usually is.
+    #[test]
+    fn an_audio_clip_carries_what_it_is_doing_in_the_mix() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let wav = tests_support::test_library_root().join("bed.wav");
+        std::fs::create_dir_all(wav.parent().expect("a parent")).expect("scratch directory");
+        let click = bay_audio::sfx::Sfx::by_id("click").expect("bay synthesises a click");
+        let pcm = click.render(bay_audio::sfx::SfxParams {
+            seconds: 0.2,
+            tone: 0.5,
+            level: 0.5,
+        });
+        std::fs::write(&wav, bay_audio::sfx::encode_wav(&pcm)).expect("write a wav");
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "media_import",
+            json!({ "path": wav.to_string_lossy(), "id": "m" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        for (role, expected) in [(Some("sfx"), "sfx"), (None, "bed")] {
+            let mut args = json!({ "mediaId": "m", "start": 0, "duration": 0.5,
+                                   "id": format!("a-{expected}") });
+            if let Some(role) = role {
+                args["role"] = json!(role);
+            }
+            let (is_error, body) = unwrap_call(&call(&mut studio, "add_audio", args));
+            assert!(!is_error, "{body}");
+        }
+
+        let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
+        let timeline: Value = serde_json::from_str(&timeline).expect("timeline is JSON");
+        let audio = timeline["audio"].as_array().expect("audio lane");
+        for clip in audio {
+            assert_eq!(clip["source"], "author", "{clip}");
+        }
+        assert_eq!(audio[0]["role"], "sfx");
+        assert_eq!(audio[1]["role"], "bed");
+
+        let (is_error, message) = unwrap_call(&call(
+            &mut studio,
+            "add_audio",
+            json!({ "mediaId": "m", "start": 1, "duration": 0.5, "role": "music" }),
+        ));
+        assert!(is_error, "an unknown audio role is not silently a bed");
+        assert!(message.contains("speech"), "{message}");
     }
 }

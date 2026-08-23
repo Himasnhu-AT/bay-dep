@@ -24,3 +24,20 @@ bun.lockb
 
 rust-migration-notes.md
 dist/
+
+# --- rendered video output (reproducible from the project JSON + assets/) ---
+out/
+assets/round2/bed_*.wav
+assets/loaf-of-bread/bed.wav
+assets/loaf-of-bread/plates/
+assets/loaf-of-bread/music-cut/plates2/
+# third-party music, lifted from the reference reel — provenance in music-cut/README.md
+assets/loaf-of-bread/music-cut/music.wav
+assets/wall-street-1929/plates29/
+assets/wall-street-1929/music.wav
+# the source interview: 34 MB of CC BY video, fetched by podcut.py
+assets/podcast-cut/*.webm
+
+# third-party media scraped from public accounts — provenance in each index.json,
+# and not ours to redistribute, so it stays out of the repo
+downloaded-assets/

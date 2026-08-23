@@ -19,7 +19,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$ROOT/rust"
 echo "── build ──"
-cargo build --release -p bay-desktop "$@"
+env -u CARGO_TARGET_DIR cargo build --release -p bay-desktop "$@"
 
 if [ "${SKIP_SPEECH:-0}" = "1" ]; then
   echo "── speech: skipped (SKIP_SPEECH=1) ──"

@@ -57,7 +57,11 @@ struct LayerUniformBuffer {
     opacity: f32,
     flip_x: f32,
     flip_y: f32,
-    _padding: [f32; 2], // WebGL requires uniform buffer sizes to be multiples of 16 bytes (40 → 48)
+    /// The kept region of the source in UV space — offset and size. `(0,0)` + `(1,1)` is the
+    /// whole thing.
+    crop_offset: [f32; 2],
+    crop_size: [f32; 2],
+    _padding: [f32; 2], // uniform buffer sizes must be a multiple of 16 bytes (56 → 64)
 }
 
 #[repr(C)]
@@ -606,6 +610,8 @@ impl Compositor {
                         opacity: layer.opacity,
                         flip_x: if layer.transform.flip_x { 1.0 } else { 0.0 },
                         flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
+                        crop_offset: [layer.transform.crop.0, layer.transform.crop.1],
+                        crop_size: [layer.transform.crop.2, layer.transform.crop.3],
                         _padding: [0.0; 2],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -877,6 +883,7 @@ fn map_effect_passes(passes: &[EffectPassDescriptor]) -> Vec<EffectPass> {
                     (name.clone(), uniform_value)
                 })
                 .collect(),
+            lut: pass.lut.clone(),
         })
         .collect()
 }

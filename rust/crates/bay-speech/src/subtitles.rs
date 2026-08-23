@@ -21,13 +21,31 @@ impl Cue {
     }
 }
 
+/// The floor under a caption's time on screen, whatever it says.
+///
+/// The BBC's subtitle guideline, and the number 8 of the cues in the project this work comes
+/// from were under. A caption below it is a flash: the eye has not finished saccading to it
+/// before it is gone.
+pub const MIN_CUE_SECONDS: f64 = 0.833;
+
+/// …and the floor per word in it. 18 of that project's cues ran over 17 characters a second;
+/// this is the same claim in the unit captions are actually built in.
+pub const MIN_SECONDS_PER_WORD: f64 = 0.30;
+
 /// How to group words into readable captions.
+///
+/// **Not a tool argument any more.** Every field here was settable over MCP, and the project
+/// that prompted this set them wrong in the same direction every time — captions faster than
+/// anyone reads, split mid-sentence. What a caption has to clear to be readable is a fact about
+/// reading, not a parameter of the video.
 #[derive(Debug, Clone, Copy)]
 pub struct CueStyle {
     /// Words per caption. Social captions run short — 3 to 5 reads well at thumb size.
     pub max_words: usize,
     /// Never leave a caption up for less than this, however fast the words were spoken.
     pub min_seconds: f64,
+    /// …nor for less than this per word in it.
+    pub min_seconds_per_word: f64,
     /// Break a caption here even if it has not hit `max_words`.
     pub max_seconds: f64,
     /// A silence at least this long forces a break, so a caption never spans a pause.
@@ -38,53 +56,162 @@ impl Default for CueStyle {
     fn default() -> Self {
         Self {
             max_words: 4,
-            min_seconds: 0.7,
+            min_seconds: MIN_CUE_SECONDS,
+            min_seconds_per_word: MIN_SECONDS_PER_WORD,
             max_seconds: 3.0,
             gap_seconds: 0.45,
         }
     }
 }
 
+impl CueStyle {
+    /// The shortest a cue of `words` words may be.
+    pub fn floor(&self, words: usize) -> f64 {
+        self.min_seconds
+            .max(self.min_seconds_per_word * words as f64)
+    }
+}
+
+/// One run of words that will become a caption, before its window is decided.
+#[derive(Debug, Clone, Copy)]
+struct Group {
+    first: usize,
+    last: usize,
+    /// Whether the script ends a sentence on this group's last word. A caption may never span
+    /// one of these, and two of them may never be merged across.
+    closes: bool,
+}
+
 /// Group timed words into captions.
 ///
-/// Cues are extended to `min_seconds` only into the space actually available before the next
-/// cue starts — stretching blindly would overlap the following caption, putting two captions
-/// on screen at once.
+/// Use [`cues_from_spoken`] when the script is available: without it a sentence end can only be
+/// seen when the speech engine leaves the punctuation attached to a word, which Kokoro's
+/// sidecar does not.
 pub fn cues_from_words(words: &[WordSpan], style: &CueStyle) -> Vec<Cue> {
-    let mut cues: Vec<Cue> = Vec::new();
-    let mut group: Vec<&WordSpan> = Vec::new();
+    cues_from_spoken(words, "", style)
+}
 
-    let flush = |group: &mut Vec<&WordSpan>, cues: &mut Vec<Cue>| {
-        if group.is_empty() {
-            return;
-        }
-        let text = group
-            .iter()
-            .map(|word| word.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
-        cues.push(Cue {
-            start: group[0].start,
-            end: group[group.len() - 1].end,
-            text,
-        });
-        group.clear();
-    };
+/// Group timed words into captions, reading sentence ends out of the script they came from.
+///
+/// Three rules beyond "four words a line", each of which the project this comes from broke:
+///
+/// - **A caption never crosses a full stop.** Two of that project's cues carried the end of one
+///   sentence and the start of the next, which reads as a non-sequitur at thumb size.
+/// - **A caption is on screen for at least [`MIN_CUE_SECONDS`], and at least
+///   [`MIN_SECONDS_PER_WORD`] per word.** Only into time that is genuinely free — stretching
+///   blindly would put two captions on screen at once.
+/// - **A caption that still cannot clear that is merged into its neighbour**, when the two are
+///   in the same sentence and there is no pause between them. An orphaned one-word flash is a
+///   defect of the split, and the split is what gets fixed.
+pub fn cues_from_spoken(words: &[WordSpan], source: &str, style: &CueStyle) -> Vec<Cue> {
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let closes = sentence_ends(source, words);
+    let mut groups = split_groups(words, &closes, style);
+    merge_starved_groups(words, &mut groups, style);
+    finish(words, &groups, style)
+}
 
-    for word in words {
-        if let Some(previous) = group.last() {
-            let silence = word.start - previous.end;
-            let span = word.end - group[0].start;
-            if group.len() >= style.max_words
+/// Break the word stream wherever a caption must not continue.
+fn split_groups(words: &[WordSpan], closes: &[bool], style: &CueStyle) -> Vec<Group> {
+    let mut groups: Vec<Group> = Vec::new();
+    let mut first = 0usize;
+    for index in 1..=words.len() {
+        let previous = index - 1;
+        let done = index == words.len() || {
+            let silence = words[index].start - words[previous].end;
+            let span = words[index].end - words[first].start;
+            index - first >= style.max_words
                 || silence >= style.gap_seconds
                 || span > style.max_seconds
-            {
-                flush(&mut group, &mut cues);
-            }
+                || closes.get(previous).copied().unwrap_or(false)
+        };
+        if done {
+            groups.push(Group {
+                first,
+                last: previous,
+                closes: closes.get(previous).copied().unwrap_or(false),
+            });
+            first = index;
         }
-        group.push(word);
     }
-    flush(&mut group, &mut cues);
+    groups
+}
+
+/// Fold an **orphan** caption — one shorter than a full line — into the one beside it.
+///
+/// Legal only inside one sentence, across no pause, and up to one word over `max_words`: the
+/// cure for a flash is not a wall of text. Deliberately not applied to a full-length caption
+/// that is merely short of time, because merging two of those preserves their seconds-per-word
+/// exactly and fixes nothing — that case is speech spoken too fast, and it is fixed by the
+/// read's rate, not by the caption split.
+fn merge_starved_groups(words: &[WordSpan], groups: &mut Vec<Group>, style: &CueStyle) {
+    let room = |groups: &[Group], index: usize| -> f64 {
+        let start = words[groups[index].first].start;
+        match groups.get(index + 1) {
+            Some(next) => words[next.first].start - start,
+            None => f64::INFINITY,
+        }
+    };
+    // Whether `left` and the group after it are one sentence with no pause between them, and
+    // short enough together to still be one caption.
+    //
+    // One of the two has to be an **orphan** — shorter than a full line. Merging two full lines
+    // preserves their seconds per word exactly and fixes nothing; all it does is double the
+    // words on screen. What it is for is the leftover tail of a sentence, which is both the case
+    // that flashes and the case that hands its neighbour the silence it needs.
+    let joinable = |groups: &[Group], left: usize| -> bool {
+        let first = groups[left].last - groups[left].first + 1;
+        let second = groups[left + 1].last - groups[left + 1].first + 1;
+        !groups[left].closes
+            && words[groups[left + 1].first].start - words[groups[left].last].end
+                < style.gap_seconds
+            && first + second <= style.max_words + 1
+            && first.min(second) < style.max_words
+    };
+
+    let mut index = 0usize;
+    // Every merge removes one group, so the walk terminates; the guard says so out loud.
+    let mut guard = groups.len() * 2;
+    while index < groups.len() && guard > 0 {
+        guard -= 1;
+        let count = groups[index].last - groups[index].first + 1;
+        if room(groups, index) + 1e-9 >= style.floor(count) {
+            index += 1;
+            continue;
+        }
+        let left = if index > 0 && joinable(groups, index - 1) {
+            index - 1
+        } else if index + 1 < groups.len() && joinable(groups, index) {
+            index
+        } else {
+            // Nothing legal to fold into: the caption keeps whatever room there is. Better a
+            // short caption than one that spans a full stop or papers over a pause.
+            index += 1;
+            continue;
+        };
+        groups[left].last = groups[left + 1].last;
+        groups[left].closes = groups[left + 1].closes;
+        groups.remove(left + 1);
+        index = left;
+    }
+}
+
+/// Turn groups into cues: text, window, and the time each one is owed.
+fn finish(words: &[WordSpan], groups: &[Group], style: &CueStyle) -> Vec<Cue> {
+    let mut cues: Vec<Cue> = groups
+        .iter()
+        .map(|group| Cue {
+            start: words[group.first].start,
+            end: words[group.last].end,
+            text: words[group.first..=group.last]
+                .iter()
+                .map(|word| word.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        })
+        .collect();
 
     // Extend short cues, but only into genuinely free time.
     for index in 0..cues.len() {
@@ -92,7 +219,8 @@ pub fn cues_from_words(words: &[WordSpan], style: &CueStyle) -> Vec<Cue> {
             .get(index + 1)
             .map(|next| next.start)
             .unwrap_or(f64::INFINITY);
-        let wanted = cues[index].start + style.min_seconds;
+        let count = groups[index].last - groups[index].first + 1;
+        let wanted = cues[index].start + style.floor(count);
         if cues[index].end < wanted {
             cues[index].end = wanted.min(limit);
         }
@@ -110,6 +238,91 @@ pub fn cues_from_words(words: &[WordSpan], style: &CueStyle) -> Vec<Cue> {
         }
     }
     cues
+}
+
+/// Which spoken words the script ends a sentence on.
+///
+/// The sidecar drops punctuation-only tokens — it has to, or every comma becomes a caption — so
+/// the full stops are only in the script. The two are walked together and matched on the letters
+/// alone, because a speech engine may say a number as several words and nothing downstream can
+/// assume the two lists are the same length.
+pub fn sentence_ends(source: &str, words: &[WordSpan]) -> Vec<bool> {
+    /// How far ahead to look for a spoken word in the script before giving up on it. Enough to
+    /// step over "2024" spoken as three words; small enough that a mis-match cannot run away.
+    const LOOKAHEAD: usize = 8;
+
+    let script: Vec<(String, bool)> = source
+        .split_whitespace()
+        .map(|token| (letters(token), closes_sentence(token)))
+        .collect();
+
+    let mut ends = vec![false; words.len()];
+    let mut cursor = 0usize;
+    for (index, word) in words.iter().enumerate() {
+        // A word whose own text kept its punctuation answers the question by itself.
+        if closes_sentence(&word.text) {
+            ends[index] = true;
+        }
+        let spoken = letters(&word.text);
+        if spoken.is_empty() {
+            continue;
+        }
+        let found = (cursor..script.len().min(cursor + LOOKAHEAD))
+            .find(|position| script[*position].0 == spoken);
+        if let Some(position) = found {
+            ends[index] |= script[position].1;
+            cursor = position + 1;
+        }
+    }
+    ends
+}
+
+/// The letters and digits of a token, lowercased — what two spellings of the same word share.
+fn letters(token: &str) -> String {
+    token
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Whether a script token ends a sentence.
+///
+/// Trailing quotes and brackets are stepped over, so `she said."` counts. Three things are read
+/// as abbreviations rather than endings, because splitting a caption at one of them is worse
+/// than missing a real full stop: a single initial (`J.`), a token with a stop *inside* it
+/// (`e.g.`, `U.S.`), and a short list of the abbreviations that actually occur in a script.
+/// A named list, not a length rule — `of.` and `is.` end sentences constantly, and a
+/// two-letter cut-off silently swallowed them.
+pub fn closes_sentence(token: &str) -> bool {
+    const ABBREVIATIONS: [&str; 14] = [
+        "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "fig", "approx", "inc",
+        "ltd",
+    ];
+    let trimmed = token.trim_end_matches(['"', '\'', ')', ']', '}', '»', '”', '’']);
+    let Some(last) = trimmed.chars().next_back() else {
+        return false;
+    };
+    if !matches!(last, '.' | '!' | '?' | '…') {
+        return false;
+    }
+    if last == '.' {
+        let body = trimmed.trim_end_matches('.');
+        if body.contains('.') {
+            return false;
+        }
+        let letters = body.chars().filter(|c| c.is_alphanumeric()).count();
+        if letters <= 1 {
+            return false;
+        }
+        if ABBREVIATIONS
+            .iter()
+            .any(|abbreviation| body.eq_ignore_ascii_case(abbreviation))
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Shift every cue later by `offset` seconds — for placing narration partway into a timeline.
@@ -418,6 +631,153 @@ mod tests {
     fn a_backwards_cue_is_rejected() {
         let srt = "1\n00:00:05,000 --> 00:00:02,000\nnope\n\n";
         assert!(parse(srt).is_err(), "an end before its start is not a cue");
+    }
+
+    // ------------------------------------------------------------------ cue discipline
+    //
+    // The four measured defects in the narration this comes from: cues that straddled a full
+    // stop, cues under 0.833 s, cues under 0.30 s a word, and a one-word flash left over from
+    // the split. Each has a test, and each test is written against the numbers that were wrong.
+
+    /// A caption may not carry the end of one sentence and the start of the next.
+    #[test]
+    fn a_caption_never_crosses_a_full_stop() {
+        let script = "The wick is the range. Price closed here.";
+        let spoken = [
+            "The", "wick", "is", "the", "range", "Price", "closed", "here",
+        ];
+        let words: Vec<WordSpan> = spoken
+            .iter()
+            .enumerate()
+            .map(|(i, text)| word(text, i as f64 * 0.45, i as f64 * 0.45 + 0.4))
+            .collect();
+        let cues = cues_from_spoken(&words, script, &CueStyle::default());
+        assert!(
+            cues.iter().all(|cue| !(cue.text.contains("range")
+                && (cue.text.contains("Price") || cue.text.contains("closed")))),
+            "a cue spans the sentence break: {cues:?}"
+        );
+        let first_sentence: String = cues
+            .iter()
+            .take_while(|cue| !cue.text.starts_with("Price"))
+            .map(|cue| cue.text.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(first_sentence, "The wick is the range");
+    }
+
+    /// The break comes from the script, because the speech engine strips the punctuation.
+    #[test]
+    fn sentence_ends_are_read_out_of_the_script_not_the_word_list() {
+        let words = [word("range", 0.0, 0.4), word("price", 0.5, 0.9)];
+        let ends = sentence_ends("the range. price closed", &words);
+        assert_eq!(ends, vec![true, false], "{ends:?}");
+        // …and with no script at all nothing is claimed, rather than guessed.
+        assert_eq!(sentence_ends("", &words), vec![false, false]);
+    }
+
+    /// An abbreviation is not the end of a sentence, and a stop inside quotes is.
+    #[test]
+    fn an_abbreviation_does_not_break_a_caption() {
+        assert!(!closes_sentence("Mr."));
+        assert!(!closes_sentence("e.g."));
+        assert!(!closes_sentence("J."));
+        assert!(!closes_sentence("range"));
+        assert!(closes_sentence("range."));
+        assert!(closes_sentence("said.\""));
+        assert!(closes_sentence("really?"));
+        // Two-letter words end sentences all the time; a length rule swallowed them.
+        assert!(closes_sentence("of."));
+        assert!(closes_sentence("is."));
+    }
+
+    /// Every cue clears both floors when there is room, which is what a 150 wpm read gives.
+    #[test]
+    fn every_cue_clears_the_reading_floors_at_a_broadcast_rate() {
+        // 2.5 words a second: 0.40 s a word, the rate `narrate` now targets.
+        let script = "A candle is four numbers. The body is open against close.";
+        let words: Vec<WordSpan> = script
+            .split_whitespace()
+            .enumerate()
+            .map(|(i, token)| {
+                word(
+                    token.trim_end_matches('.'),
+                    i as f64 * 0.40,
+                    i as f64 * 0.40 + 0.34,
+                )
+            })
+            .collect();
+        let style = CueStyle::default();
+        let cues = cues_from_spoken(&words, script, &style);
+        assert!(!cues.is_empty());
+        for cue in &cues {
+            let count = cue.text.split_whitespace().count();
+            assert!(
+                cue.duration() + 1e-9 >= MIN_CUE_SECONDS,
+                "{cue:?} is a {:.3}s flash",
+                cue.duration()
+            );
+            assert!(
+                cue.duration() + 1e-9 >= MIN_SECONDS_PER_WORD * count as f64,
+                "{cue:?} gives {:.3}s for {count} words",
+                cue.duration()
+            );
+        }
+    }
+
+    /// A one-word tail left over by the split is folded back into its own sentence rather than
+    /// flashed on its own — when there is another sentence right behind it, so it cannot simply
+    /// be held longer.
+    #[test]
+    fn an_orphan_word_is_merged_rather_than_flashed() {
+        let script = "open high low close now. Then the next line runs on.";
+        let spoken = [
+            "open", "high", "low", "close", "now", "Then", "the", "next", "line", "runs", "on",
+        ];
+        let words: Vec<WordSpan> = spoken
+            .iter()
+            .enumerate()
+            .map(|(i, token)| word(token, i as f64 * 0.30, i as f64 * 0.30 + 0.26))
+            .collect();
+        let cues = cues_from_spoken(&words, script, &CueStyle::default());
+        assert_eq!(
+            cues[0].text, "open high low close now",
+            "the tail was left on its own: {cues:?}"
+        );
+        assert!(
+            cues.iter()
+                .all(|cue| cue.text.split_whitespace().count() > 1),
+            "no one-word flash survives: {cues:?}"
+        );
+    }
+
+    /// …but never across a full stop, however starved the orphan is.
+    #[test]
+    fn an_orphan_is_not_merged_across_a_sentence_end() {
+        let script = "open high low close. Now.";
+        let words: Vec<WordSpan> = ["open", "high", "low", "close", "Now"]
+            .iter()
+            .enumerate()
+            .map(|(i, token)| word(token, i as f64 * 0.30, i as f64 * 0.30 + 0.26))
+            .collect();
+        let cues = cues_from_spoken(&words, script, &CueStyle::default());
+        assert_eq!(cues.len(), 2, "{cues:?}");
+        assert_eq!(cues[1].text, "Now");
+    }
+
+    /// A full-length caption short of time is not "fixed" by doubling its length: merging two
+    /// four-word cues keeps the same seconds per word and only makes the line unreadable.
+    #[test]
+    fn a_fast_full_line_is_not_merged_into_a_wall_of_text() {
+        let words: Vec<WordSpan> = (0..8)
+            .map(|i| word(&format!("w{i}"), i as f64 * 0.16, i as f64 * 0.16 + 0.14))
+            .collect();
+        let cues = cues_from_words(&words, &CueStyle::default());
+        assert_eq!(cues.len(), 2, "{cues:?}");
+        assert!(
+            cues.iter()
+                .all(|cue| cue.text.split_whitespace().count() <= 4)
+        );
     }
 
     #[test]

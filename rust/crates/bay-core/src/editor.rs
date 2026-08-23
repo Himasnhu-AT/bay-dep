@@ -165,9 +165,25 @@ impl Editor {
     }
 
     /// Add an imported media asset to the project library (non-undoable).
+    /// Register an imported file, **replacing any asset already holding that id**.
+    ///
+    /// Replace rather than append, because an id is what every clip on the timeline points at:
+    /// two assets sharing one would make "which file does this clip play" depend on iteration
+    /// order. This is also how re-measuring an asset — `audio_probe` on a file imported before
+    /// loudness was recorded — updates it instead of shadowing it with a second copy that
+    /// nothing reads.
     pub fn add_media(&mut self, asset: bay_project::MediaAsset) {
         self.bus.begin();
-        self.state.project.media.push(asset);
+        match self
+            .state
+            .project
+            .media
+            .iter_mut()
+            .find(|existing| existing.id == asset.id)
+        {
+            Some(existing) => *existing = asset,
+            None => self.state.project.media.push(asset),
+        }
         self.bus.mark(Domain::Document);
         self.bus.commit();
     }

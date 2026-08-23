@@ -112,7 +112,7 @@ pub fn extract_files(
                 found.push(destination.clone());
             }
         }
-        Format::TarGz | Format::Auto => {
+        Format::TarGz | Format::Auto | Format::Raw => {
             let decoder = flate2::read::GzDecoder::new(reader_for(archive)?);
             let mut tar = tar::Archive::new(decoder);
             for entry in tar
@@ -204,7 +204,7 @@ pub fn extract_tree(
                     }
                 }
             }
-            Format::TarGz | Format::Auto => {
+            Format::TarGz | Format::Auto | Format::Raw => {
                 let decoder = flate2::read::GzDecoder::new(reader_for(archive)?);
                 let mut tar = tar::Archive::new(decoder);
                 // Ownership from the tarball is meaningless here — these files belong to the
@@ -258,6 +258,26 @@ pub fn extract_tree(
 }
 
 /// Write a member to `destination` via a `.part` file, then rename.
+/// Place a downloaded file that is not an archive.
+///
+/// The digest has already been checked by the caller, so this only has to put the bytes where
+/// the manifest says — inside the runtime root, which `resolve_inside` enforces.
+pub fn place_raw(
+    downloaded: &Path,
+    file: &crate::manifest::FileInstall,
+    root: &Path,
+) -> Result<PathBuf, ProvisionError> {
+    let destination = resolve_inside(root, &file.install).ok_or_else(|| {
+        ProvisionError::Archive(format!(
+            "{} would install outside the runtime root",
+            file.install
+        ))
+    })?;
+    let mut source = File::open(downloaded).map_err(|e| ProvisionError::at(downloaded, e))?;
+    write_atomically(&destination, &mut source, file.executable)?;
+    Ok(destination)
+}
+
 fn write_atomically(
     destination: &Path,
     source: &mut dyn Read,

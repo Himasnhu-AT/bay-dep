@@ -121,6 +121,65 @@ pub fn runtime_install(args: &Value) -> Result<Value, String> {
     }))
 }
 
+/// `runtime_remove`: tear down one component that bay installed.
+///
+/// Only manifest-owned paths under bay's runtime root are eligible. A system ffmpeg or Python
+/// that happens to satisfy a component is reported by `runtime_status`, but is never removed.
+pub fn runtime_remove(args: &Value) -> Result<Value, String> {
+    let component = required_component(args)?;
+    if let Some(job) = jobs::running_for(component) {
+        return Err(format!(
+            "cannot remove {component:?} while install job {job} is running; cancel it first"
+        ));
+    }
+    let target = crate::Target::CURRENT
+        .ok_or_else(|| format!("bay has no managed {component} runtime on this platform"))?;
+    let root = crate::root().map_err(|error| error.to_string())?;
+    runtime_remove_at(component, target, &root)
+}
+
+fn runtime_remove_at(
+    component: &str,
+    target: crate::Target,
+    root: &std::path::Path,
+) -> Result<Value, String> {
+    let removal = crate::remove_at(component, target, root).map_err(|error| error.to_string())?;
+    let removed = !removal.paths.is_empty();
+    Ok(json!({
+        "component": component,
+        "removed": removed,
+        "freedBytes": removal.bytes,
+        "freed": crate::human_bytes(removal.bytes),
+        "paths": removal.paths.iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>(),
+        "message": if removed {
+            format!("removed bay's managed {component} runtime")
+        } else {
+            format!("bay had no managed {component} runtime to remove; system tools were untouched")
+        },
+    }))
+}
+
+fn required_component(args: &Value) -> Result<&str, String> {
+    let component = args
+        .get("component")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "component is required — one of {}",
+                component_names().join(", ")
+            )
+        })?;
+    if Manifest::embedded().component(component).is_none() {
+        return Err(format!(
+            "no such component {component:?} — expected one of {}",
+            component_names().join(", ")
+        ));
+    }
+    Ok(component)
+}
+
 fn component_names() -> Vec<String> {
     Manifest::embedded()
         .components
@@ -191,5 +250,29 @@ mod tests {
                 .is_some_and(|e| e.contains("999999")),
             "{status}"
         );
+    }
+
+    #[test]
+    fn runtime_remove_actually_tears_down_the_requested_runtime() {
+        let Some(target) = crate::Target::CURRENT else {
+            eprintln!("skipping: this platform has no pinned runtime target");
+            return;
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bay-mcp-runtime-remove-{stamp}"));
+        let model = root.join("models/whisper/ggml-small.en-q5_1.bin");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        std::fs::write(&model, b"managed model").unwrap();
+
+        let result =
+            runtime_remove_at("listen", target, &root).expect("runtime_remove should succeed");
+
+        assert_eq!(result["removed"], true, "{result}");
+        assert!(!model.exists(), "runtime_remove left the model on disk");
+        assert!(result["freedBytes"].as_u64().unwrap() > 0, "{result}");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

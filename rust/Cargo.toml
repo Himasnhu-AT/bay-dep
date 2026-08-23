@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "desktop",
     "crates/bay-paths",
+    "crates/bay-jobs",
     "crates/bay-provision",
     "crates/bay-time",
     "crates/bay-effects",
@@ -11,13 +12,18 @@ members = [
     "crates/bay-compositor",
     "crates/bay-agent",
     "crates/bay-core",
+    "crates/bay-repair",
     "crates/bay-mcp",
+    "crates/bay-listen",
     "crates/bay-speech",
     "crates/bay-project",
     "crates/bay-audio",
     "crates/bay-preview",
     "crates/bay-text",
     "crates/bay-ui",
+    "crates/bay-stock",
+    "crates/bay-gen",
+    "crates/bay-vision",
     "crates/bay-test-support",
 ]
 

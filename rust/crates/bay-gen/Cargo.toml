@@ -1,0 +1,19 @@
+[package]
+name = "bay-gen"
+version = "0.1.0"
+edition = "2024"
+description = "Consent-gated generative media adapters and artifact verification for bay."
+
+[dependencies]
+bay-audio = { path = "../bay-audio" }
+bay-paths = { path = "../bay-paths" }
+bay-project = { path = "../bay-project" }
+bay-vision = { path = "../bay-vision" }
+base64 = "0.22"
+image = "0.25"
+serde = { workspace = true }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = { workspace = true }
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }

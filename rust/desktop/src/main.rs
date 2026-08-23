@@ -32,6 +32,9 @@ enum Mode {
     },
     /// Report whether a window is open and how to reach it.
     Agents,
+    /// Print the version and exit. What an installer checks to prove the copy it just put in
+    /// place is the copy that is now running.
+    Version,
     Help,
 }
 
@@ -39,6 +42,13 @@ fn parse_mode() -> Result<Mode, String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return Ok(Mode::Help);
+    }
+    // Before `--agents` and before the editor default: `--version` must answer from the binary
+    // alone, without touching the registry or the port. An installer runs it on a copy that is
+    // not running yet, and a version check that needed a live server could not be used to
+    // decide whether to start one.
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        return Ok(Mode::Version);
     }
     if args.iter().any(|a| a == "--agents") {
         return Ok(Mode::Agents);
@@ -71,13 +81,16 @@ USAGE
   bay --mcp              serve MCP with no window, on 127.0.0.1:7333
   bay --stdio            serve MCP over stdin/stdout instead
   bay --agents           what is serving agents right now, and how to reach it
+  bay --version          print the version and exit
   bay --mcp --port N     serve on another port — see the warning below
 
 With the editor open, an agent's edits land in the window you are looking at and undo with
 the same keystroke as your own. With it closed, --mcp gives the same tools headlessly, which
 is what you want for rendering.
 
-  claude mcp add --transport http bay http://127.0.0.1:7333/mcp
+  export BAY_MCP_TOKEN from bay's mcp-token file, then:
+  claude mcp add --transport http bay http://127.0.0.1:7333/mcp --header \
+    \"Authorization: Bearer $BAY_MCP_TOKEN\"
 
 Only one process can serve that endpoint at a time. If it is taken, bay tells you what has it
 rather than moving elsewhere — `bay --agents` answers the same question at any time.
@@ -145,6 +158,7 @@ fn main() {
 
     match mode {
         Mode::Help => return say(USAGE),
+        Mode::Version => return say(concat!("bay ", env!("CARGO_PKG_VERSION"))),
         Mode::Agents => return print_agents(),
         Mode::Headless { port, stdio } => {
             // No window, so nothing to attach to: the server owns the document itself.
@@ -209,7 +223,11 @@ fn main() {
 
     // A window already open? Raise it and stop. The bound port is the single-instance lock —
     // no pid files, no races: whoever holds the socket is the app.
-    if let Some(existing) = bay_agent::registry::live().into_iter().next() {
+    //
+    // "A window" means an editor on *this* port, not merely something bay registered somewhere:
+    // a headless `bay --mcp` has no window to raise, and asking it to focus one used to abort
+    // the launch entirely. See `registry::window_to_focus`.
+    if let Some(existing) = bay_agent::registry::window_to_focus() {
         match focus_existing(&existing) {
             Ok(()) => {
                 println!("bay is already running — brought that window to the front.");
@@ -240,7 +258,7 @@ fn main() {
                 bay_agent::registry::deregister(port);
             });
             println!("bay: this window accepts agent edits at http://127.0.0.1:{port}/mcp");
-            println!("     claude mcp add --transport http bay http://127.0.0.1:{port}/mcp");
+            println!("     configure Authorization: Bearer $BAY_MCP_TOKEN, then register that URL");
             (Some(pump), Some(port), None)
         }
         None => {
@@ -268,6 +286,7 @@ fn main() {
 /// Deliberately speaks the same MCP endpoint rather than inventing a second IPC channel: the
 /// window already serves it, and `window_focus` is a tool an agent may usefully call too.
 fn focus_existing(instance: &bay_agent::Instance) -> std::io::Result<()> {
+    let authorization = bay_mcp::server::authorization_header()?;
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": { "name": "window_focus", "arguments": {} }
@@ -275,7 +294,8 @@ fn focus_existing(instance: &bay_agent::Instance) -> std::io::Result<()> {
     .to_string();
     let request = format!(
         "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+         Authorization: {authorization}\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
         body.len()
     );
 

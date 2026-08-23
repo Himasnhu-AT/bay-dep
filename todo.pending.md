@@ -11,81 +11,88 @@ Companions: [`todo.completed.md`](todo.completed.md) (done, with evidence) ·
 | | Item | Size | Why now |
 |---|---|---|---|
 | 1 | [Windows, actually exercised](todo.testing.md) | S | The build is green but nothing on that platform has been *run*. Not a build task — see the testing file. |
-| 2 | [Slow tools time out at 20s](#slow-tools-time-out-against-the-open-editor-at-20s) | S–M | **Blocker.** Any render or narration over 20s returns a false "the editor did not answer in time" while the work carries on invisibly. A first narrate cannot possibly fit. |
-| 3 | [Kokoro weight download has no progress](#kokoro-weights-download-with-no-progress) | S–M | The other place the "no silent waits" promise breaks, and it compounds the one above. |
-| 4 | [Text → audio button](#text--audio--timeline) | S | Narration is one press away from any machine now, so this is no longer gated on setup — and a GUI user currently has no way to narrate at all. |
-| 5 | [Document types + Open Recent](#feeling-like-a-mac-app--what-is-left) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
-| 6 | [Sidecar can outlive its parent](#a-sidecar-can-outlive-its-parent) | S | A real leak, cheap to close. |
-| 7 | [Assistant, read-only first](#assistant-a-local-llm-that-can-edit-the-project) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+| 2 | [Text → audio button](#text--audio--timeline) | S | Narration is one press away from any machine now, so this is no longer gated on setup — and a GUI user currently has no way to narrate at all. |
+| 3 | [Two-stage seek](#two-stage-seek-for-windowed-decode) | M | The design piece windowed decode was missing. Its prerequisite — the export decode intent — has landed, so the planner is now the right shape to build on. |
+| 4 | [Document types + Open Recent](#feeling-like-a-mac-app--what-is-left) | S | The rest of "feels like a Mac app": project files get an icon and open on double-click. |
+| 5 | [Disk reporting + `runtime_remove`](#provisioning--what-is-still-open) | S–M | Now worth doing: the Kokoro weights moved under `runtime/`, so there is finally one directory to measure and reclaim. |
+| 6 | [Assistant, read-only first](#assistant-a-local-llm-that-can-edit-the-project) | L | The next substantial feature; wants the sidecar supervisor generalised first. |
+
+**Closed on `fix/pending-sweep`,** with evidence in [`todo.completed.md`](todo.completed.md):
+export decoding from the preview cache, the 20-second tool ceiling, the unpinned Kokoro weight
+download, the three render-path panics, and the sidecar that could outlive its parent.
 
 **Deliberately not doing yet:** Linux (macOS and Windows only, and an unsupported platform says
-so rather than pretending), multiple windows, Stage 3 edit-conflict leases, and vision until the
-palmier premise is verified.
+so rather than pretending), multiple windows, and Stage 3 edit-conflict leases.
+
+**Vision is no longer on that list — it shipped.** See
+[`todo.completed.md`](todo.completed.md#finding-a-picture-by-describing-it). The runtime question
+below is answered: Candle, in-process.
 
 ---
 
-## Slow tools time out against the open editor at 20s
+## `check` reports false positives — 52% of one real run
 
-**S–M · blocker**
+**Found 2026-08-12** by reading the project behind `wicks-v2.mp4`
+(`project-1786466680050.json`, 188 elements): `check` returned **242 warnings, `ok: true`**, and
+**127 of them were wrong**. The agent shipped anyway, which is the correct response to a report
+that is half noise — and the reason the real findings in the same report went unread.
 
-`serve_attached_connection` sends **every** `tools/call` through
-`bridge.call(call, ATTACHED_TIMEOUT)`, and `ATTACHED_TIMEOUT` is a flat 20 seconds
-(`bay-mcp/src/server.rs:198,228`). Slow tools answer only when their worker finishes
-(`bay-ui/src/app_view.rs`), so any `render`, `narrate`, `media_import` or `subtitles_to_video`
-that takes longer than 20 seconds returns:
+| Bug | Size | Detail |
+|---|---|---|
+| **`small-text` measures the wrong number** | S | It computes `font_size × transform.scale × scale_y` (`check.rs:262`). The renderer computes `font_size × canvas_height / 1080` (`bay-preview:1689`) and uses `transform.scale` for the **layout box**, not the glyph size. On a 1920 canvas it understates by 2.4×: a 26pt kicker at `scale: 0.744` renders 46px and is reported as 19px. **67 of 69 findings were false.** Fix: mirror the renderer's formula, and add a test that pins the two together so they cannot drift again. |
+| **`invisible` ignores the animation** | S | It reads `transform.opacity <= 0` (`check.rs:349`) without consulting the `opacity` channel. Every correctly-authored fade-in sets base opacity 0 and animates up — so the check fires on the house entrance pattern. **60 of 60 findings were false.** Fix: flag only when the base is zero *and* no channel raises it. |
+| **`overlap` fires on overlay lanes** | S | 92 findings, all decoratives layered on one overlay lane on purpose. The rule is right for the main picture lane and wrong everywhere else. Fix: restrict to the main lane, or drop to a note off-main. |
 
-> the editor did not answer in time — it may be showing a modal dialog
+A check that cries wolf gets turned off, and then it is worth nothing on the run that matters —
+which is stated in this file's own tests and was not honoured by the checks that predate them.
 
-which is false, unactionable, and arrives while the work carries on invisibly. `slow.rs` itself
-documents these as taking "seconds to minutes". A first `narrate` on a clean machine cannot fit:
-the model download alone exceeds it.
+## `check` cannot see how much of the timeline will be rendered
 
-The timeout's own doc comment explains it as covering a native file dialog stalling the main
-thread, which is a fast-tool concern. Options:
+**Found 2026-08-12, same run.** The project is **155s long; it was rendered with
+`duration: 61`.** 48 of 119 visual elements — including `W = R − |r|`, the thesis of the brief —
+start after 61s and are in no frame of the output. The video ends mid-sentence. `check` passed
+it clean, because nothing in the model says what the render will ask for.
 
-- Give slow tools their own budget, or none — they are already answered asynchronously, so the
-  timeout is protecting against a hang the async path has already ruled out.
-- Better: hand slow tools a job id immediately and let the caller poll, the same shape
-  `runtime_install` already uses. That also fixes "no progress for a 4-minute render".
+Size: **S.** Options, in order of preference: have `render` refuse (or loudly warn) when
+`duration` truncates a non-empty timeline; and give `check` an optional `duration` argument so
+"what will actually ship" can be linted before it is encoded. The second is what an agent would
+reach for; the first is what protects someone who never calls `check`.
 
-**No test covers this** — the bridge tests all use fast tools. Whatever the fix, it wants a test
-that runs a deliberately slow tool through the attached path.
+Related, and the deeper authoring failure: the brief asked for 60 seconds and the agent wrote
+90s of narration across 6 clips. Budgeting is documented (`narration.md`, words ≈ seconds × 2.5)
+and was not applied. Worth a `check` finding of its own — **speech longer than the timeline it
+sits in, or a timeline far longer than the brief** — since it is mechanically detectable.
+
+## Projects still resolve to the legacy `vii` path
+
+**Found 2026-08-12.** `project_list` reports its root as
+`~/Library/Application Support/vii/projects`. The rename to bay was supposed to migrate this
+(`bay-paths/src/lib.rs:103` and its tests cover the case), but on this machine the `vii`
+directory exists and still wins, so new projects are being written into the old brand's folder.
+
+Size: **S–M.** It is not just cosmetic: `bay.app` and a `vii` directory disagreeing about where
+projects live is how someone loses work at the next rename, and the fallback quietly makes the
+migration test's guarantee untrue in practice. Decide whether the resolver should prefer `bay`
+once it exists and migrate on first write, and make the live behaviour match whatever the tests
+claim.
 
 ---
 
-## Kokoro weights download with no progress
+## Two-stage seek for windowed decode
 
-**S–M**
+**M** — wants [export decode intent](#export-renders-from-the-480px-preview-cache) landed first
 
-The gap in the zero-install promise. `runtime_install speech` shows a progress bar for the
-~1.2 GB it fetches, but the **~330 MB of model weights are not part of that** — they are pulled
-by `huggingface_hub` inside the Python sidecar the first time `narrate` runs, into `<data>/models`
-via `HF_HOME`.
+The design piece M9 was missing. On a seek, return the nearest **keyframe** immediately, tagged
+inaccurate, and let the exact frame land behind it when its decode completes. Scrubbing then
+responds at keyframe latency instead of full-decode latency, and the UI knows which of the two it
+is holding — so an inaccurate frame can never be mistaken for a final one, and export (which
+awaits decodes) never sees one at all.
 
-An audit corrected the first reading of *where* the cost lands: the sidecar is spawned with only
-`--host`/`--port`, never `--preload`, so `script/bay-kokoro.py` builds the `KPipeline` lazily
-*inside* `POST /speak`. `/health` therefore answers in about a second and `READY_TIMEOUT` (180s)
-is never the constraint — the download sits under `SPEAK_TIMEOUT` (300s), inside one blocking
-tool call. The comment on `engine.rs:29-31` still says otherwise and is stale.
+The tag is the load-bearing part: without it this is just a race that occasionally shows the
+wrong frame.
 
-Nothing escapes either: the child is spawned `.stdout(Stdio::null())` and its stderr is only read
-if the process *dies*, so HuggingFace's own progress bars go straight to a discarded pipe.
-
-So the first narration on a clean machine is a multi-minute wait with no bar, no byte count and
-no explanation — and on a slow connection it fails with a timeout that looks like a bug.
-
-Options, roughly in order of preference:
-
-- **Fetch the weights in `bay-provision` like everything else.** They are a pinned artifact on
-  HuggingFace with a known digest, so they fit the existing manifest, downloader and progress UI
-  exactly, and `speech` stops having a hidden second phase. Then set `HF_HUB_OFFLINE=1` on the
-  sidecar so it can only use what was fetched, which also makes the "no surprise network calls"
-  claim true rather than nearly true.
-- Or have the sidecar report download progress back over its existing HTTP channel, and surface
-  that in the same job UI.
-
-Either way `READY_TIMEOUT` should drop back to meaning "the model failed to load" rather than
-doubling as a download budget.
+Both this and the export fix change decode planning, so doing them in the other order means
+writing the planner twice.
 
 ---
 
@@ -179,27 +186,6 @@ toolbar? Palmier uses a 3-way icon rail (Media / Captions / Audio); we have a ha
 
 ---
 
-## A sidecar can outlive its parent
-
-**S**
-
-The Kokoro sidecar's parent-PID watchdog polls `os.kill(ppid, 0)` and exits when that fails.
-Observed a sidecar still holding port 7431 long after every test process was gone, which then
-failed an unrelated test with `PortBusy`.
-
-Two plausible causes, both worth closing:
-
-- **PID reuse.** If the OS recycles the parent's pid, `kill(pid, 0)` succeeds forever and the
-  watchdog never fires. Recording the parent's *start time* alongside its pid, and comparing
-  both, makes the check exact.
-- **The watchdog thread never started** — it is only spawned when `BAY_KOKORO_PARENT_PID` is
-  set and numeric, and nothing reports when it is not.
-
-Belt and braces: have the sidecar exit on an idle timeout of its own, so it cannot outlive
-anything indefinitely regardless of what happened to its parent.
-
----
-
 ## `grid` advisory — blocked upstream
 
 **blocked**
@@ -278,8 +264,19 @@ and third, the shared pieces are worth pulling out:
   entry plus a component, and it inherits the digest verification, the resume-safe staging, the
   background job and the progress UI for free. The assistant and vision should add entries, not
   plumbing.
-- a policy on **which runtime**: llama.cpp for GGUF text+vision, plus something for SigLIP
-  embeddings (ONNX Runtime, or Candle if we want it in-process).
+- a policy on **which runtime**: **decided for embeddings — Candle, in-process.** `bay-vision`
+  runs SigLIP with no sidecar and no interpreter, which is why visual search does not depend on
+  the 1.2 GB speech component. Two findings from building it, for whoever does the assistant:
+  - **Metal does not work.** candle 0.9's Metal backend has no `layer-norm` and no
+    `softmax-last-dim` kernel, so a SigLIP forward pass dies at the first encoder block. Not a
+    misconfiguration — there is nothing to set. It runs on the CPU with Accelerate as the BLAS.
+    Anything else built on candle should assume the same until those kernels land.
+  - **The provisioning half really is free**, as claimed above. The `vision` component is two
+    manifest artifacts and one line in `editor_view.rs`; it inherited digest verification,
+    staging and the progress UI with no new plumbing.
+
+  Still open for the *assistant*: llama.cpp for GGUF text+vision is untested here, and a
+  generative model is a much worse fit for in-process than a 780 MB encoder is.
 
 The downloader half is no longer in the way. Generalising the *sidecar supervisor* is still worth
-doing before a second and third model process exist.
+doing before a second and third model **process** exist — though vision no longer adds one.

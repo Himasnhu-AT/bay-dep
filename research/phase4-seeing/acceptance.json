@@ -1,0 +1,516 @@
+{
+  "contactSheet": {
+    "columns": 3,
+    "height": 516,
+    "path": "/Users/himanshu/codes/synthai/vii/research/phase4-seeing/goodall-vertical-contact-sheet.png",
+    "rows": 2,
+    "times": [
+      0.5,
+      3.8,
+      4.3,
+      13.9,
+      14.7,
+      22.8
+    ],
+    "width": 405
+  },
+  "index": {
+    "granularity": "one midpoint frame per detected shot",
+    "mediaId": "goodall",
+    "model": "siglip-base-patch16-224",
+    "shots": 38
+  },
+  "reframe": {
+    "detector": "SigLIP-ranked subject crops with local appearance prior",
+    "elementId": "tracked-interview",
+    "points": [
+      {
+        "confidence": 0.05688367784023285,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 247.28,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.04148055613040924,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 247.78,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.02892589569091797,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 248.28,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.02656104415655136,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 248.78,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.02838427573442459,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 249.28,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.034220919013023376,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 249.78,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.035495202988386154,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 250.28,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.04298844188451767,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 250.78,
+        "x": 0.5,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.06150821968913078,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 251.28,
+        "x": 0.45143675804138184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.06327171623706818,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 251.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0638064593076706,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 252.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.06890778243541718,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 252.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07658319920301437,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 253.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05743090808391571,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 253.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07545482367277145,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 254.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0643443763256073,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 254.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05788898095488548,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 255.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.06549157202243805,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 255.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05366170406341553,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 256.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.06659099459648132,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 256.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05906063690781593,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 257.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07423952221870422,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 257.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07113967835903168,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 258.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07148222625255585,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 258.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0734122097492218,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 259.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0698184221982956,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 259.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07283046841621399,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 260.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07630723714828491,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 260.78,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.07478183507919312,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 261.28,
+        "x": 0.3860676884651184,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0688641294836998,
+        "rawX": 0.6139322519302368,
+        "rawY": 0.5,
+        "timeSeconds": 261.78,
+        "x": 0.6139322519302368,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.060643270611763,
+        "rawX": 0.6139322519302368,
+        "rawY": 0.5,
+        "timeSeconds": 262.28,
+        "x": 0.6139322519302368,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0599822923541069,
+        "rawX": 0.6139322519302368,
+        "rawY": 0.5,
+        "timeSeconds": 262.78,
+        "x": 0.6139322519302368,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.06390360742807388,
+        "rawX": 0.6139322519302368,
+        "rawY": 0.5,
+        "timeSeconds": 263.28,
+        "x": 0.6139322519302368,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.051828041672706604,
+        "rawX": 0.6139322519302368,
+        "rawY": 0.5,
+        "timeSeconds": 263.78,
+        "x": 0.6139322519302368,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.039084143936634064,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 264.28,
+        "x": 0.5653690099716187,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.03374014049768448,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 264.78,
+        "x": 0.5375056862831116,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.03478975221514702,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 265.28,
+        "x": 0.5215190052986145,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.04018302261829376,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 265.78,
+        "x": 0.512346625328064,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.041696690022945404,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 266.28,
+        "x": 0.5070838928222656,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.045259028673172,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 266.78,
+        "x": 0.5040643811225891,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05324506759643555,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 267.28,
+        "x": 0.5023319721221924,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.03739600628614426,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 267.78,
+        "x": 0.501338005065918,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.04207785055041313,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 268.28,
+        "x": 0.500767707824707,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.051049575209617615,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 268.78,
+        "x": 0.5004404783248901,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.04881126433610916,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 269.28,
+        "x": 0.5002527236938477,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0500919409096241,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 269.78,
+        "x": 0.5001450181007385,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.0488201379776001,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 270.28,
+        "x": 0.5000832080841064,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05291925370693207,
+        "rawX": 0.5,
+        "rawY": 0.5,
+        "timeSeconds": 270.78,
+        "x": 0.5000477433204651,
+        "y": 0.5
+      },
+      {
+        "confidence": 0.05171656608581543,
+        "rawX": 0.3860676884651184,
+        "rawY": 0.5,
+        "timeSeconds": 270.937,
+        "x": 0.48180222511291504,
+        "y": 0.5
+      }
+    ],
+    "smoothing": {
+      "method": "exponential damping",
+      "rawJitter": 1.025390625,
+      "seconds": 0.9,
+      "smoothedJitter": 0.7017683386802673
+    },
+    "target": {
+      "height": 1920,
+      "width": 1080
+    }
+  },
+  "render": {
+    "bytes": 10501087,
+    "checksOverridden": "phase4 real-footage acceptance",
+    "durationSeconds": 23.657,
+    "encodeSeconds": 65.83293925,
+    "fps": 30.0,
+    "height": 1920,
+    "path": "/Users/himanshu/codes/synthai/vii/research/phase4-seeing/goodall-vertical.mp4",
+    "projectHash": "512738a2cc58426f",
+    "receipt": "/Users/himanshu/codes/synthai/vii/research/phase4-seeing/goodall-vertical.mp4.bay-render.json",
+    "width": 1080
+  },
+  "search": {
+    "hint": "SigLIP scores are not calibrated; use ranking and best-vs-median separation.",
+    "matches": [
+      {
+        "endSeconds": 120.887,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 103.5365,
+        "score": 0.13777098059654236,
+        "startSeconds": 86.186
+      },
+      {
+        "endSeconds": 324.09,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 297.5135,
+        "score": 0.1323322355747223,
+        "startSeconds": 270.937
+      },
+      {
+        "endSeconds": 261.561,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 256.4225,
+        "score": 0.1320173591375351,
+        "startSeconds": 251.284
+      },
+      {
+        "endSeconds": 247.28,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 217.851,
+        "score": 0.13096199929714203,
+        "startSeconds": 188.422
+      },
+      {
+        "endSeconds": 373.573,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 351.9015,
+        "score": 0.1147690936923027,
+        "startSeconds": 330.23
+      },
+      {
+        "endSeconds": 270.937,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 266.249,
+        "score": 0.09616028517484665,
+        "startSeconds": 261.561
+      },
+      {
+        "endSeconds": 330.23,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 327.15999999999997,
+        "score": 0.09378620982170105,
+        "startSeconds": 324.09
+      },
+      {
+        "endSeconds": 251.284,
+        "mediaId": "goodall",
+        "mediaName": "goodall.webm",
+        "sampleSeconds": 249.28199999999998,
+        "score": 0.09170534461736679,
+        "startSeconds": 247.28
+      }
+    ],
+    "query": "an elderly woman with long gray hair speaking in an interview",
+    "separation": 0.17814910411834717
+  },
+  "semanticQuery": "an elderly woman with long gray hair speaking in an interview",
+  "source": "/Users/himanshu/codes/synthai/vii/assets/podcast-cut/pod/goodall.webm"
+}

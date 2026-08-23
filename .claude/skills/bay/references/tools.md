@@ -1,180 +1,122 @@
-# bay tool reference
+# Tools
 
-22 tools. Every one returns JSON; a failure comes back as a tool error with a message naming
-the offending value, so read it and correct the call rather than guessing.
+**Generated — do not hand-edit.** `python3 .claude/skills/bay/gen-tools.py` reads
+the JSON emitted by bay-mcp's `dump_tools` example and rewrites this file. Regenerate it
+whenever the tool surface changes; a hand-maintained argument list is wrong within a week.
 
----
+Argument **names** only. The live schema your client already holds carries the types, the
+descriptions and the defaults — read it there, per call. Nothing in this skill prints a
+default value, because a printed default is the value that comes back.
 
-## Project
+The tool prefix is whatever name the server was registered under (`mcp__bay__…`,
+`mcp__vii__…`). Every tool is written bare here for that reason.
 
-### `project_create`
-Start an empty project. **Call this first** — it clears the timeline.
+95 tools.
 
-| arg | default | notes |
+| tool | required | also takes |
 |---|---|---|
-| `name` | `"Untitled"` | |
-| `width` / `height` | 1080 / 1920 | vertical reel. Landscape is 1920×1080. |
-| `fps` | 30 | |
-| `background` | `"#000000"` | `#rrggbb`; every frame sits on this |
+| **project_create** — Start a new, empty project | — | `background`, `brief`, `customKit`, `fps`, `height`, `kit`, `name`, `width` |
+| **style_pick** — Choose the project's STYLE KIT: three typefaces (display, body, mono), a type ramp that maps each element role to a size, a six-colour palette, and at least four named framings | — | `brief`, `customKit`, `kit` |
+| **project_info** — Canvas size, fps, timeline duration and element counts for the current project | — | — |
+| **fonts_check** — Report which of the given font families are actually installed | `families` | — |
+| **media_import** — Register a media file (image, video or audio) and probe its real duration and dimensions | — | `generationReceipt`, `id`, `mediaId`, `path` |
+| **audio_probe** — Measure an imported sound: `lufs` (EBU R128 integrated loudness — the unit a mix is specified in), `peakDb`, `rmsDb`, and `accentSeconds` (where its transients are, for landing a cut on the music) | `mediaId` | — |
+| **add_text** — Place a text element on the timeline | `start`, `duration`, `content`, `role` | `align`, `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `letterSpacing`, `lineHeight`, `opacity`, `plate`, `rotation`, `scale`, `scaleX`, `scaleY`, `shadow`, `stroke`, `tone`, `x`, `y` |
+| **add_shape** — Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines | `start`, `duration`, `role` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `radius`, `rotation`, `scale`, `scaleX`, `scaleY`, `shape`, `tone`, `x`, `y` |
+| **add_image** — Place an imported image | `mediaId`, `start`, `duration` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `role`, `rotation`, `scale`, `scaleX`, `scaleY`, `x`, `y` |
+| **add_video** — Place an imported video clip | `mediaId`, `start`, `duration` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `role`, `rotation`, `scale`, `scaleX`, `scaleY`, `speed`, `trimStart`, `x`, `y` |
+| **add_audio** — Place an audio clip (music bed, sound effect) on the audio lane | `mediaId`, `start`, `duration` | `id`, `role`, `speed`, `trimStart`, `volume` |
+| **group_create** — Parent several visual elements to one transform | `elementIds` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `rotation`, `scale`, `scaleX`, `scaleY`, `x`, `y` |
+| **element_retime** — Change a video or audio clip's constant playback speed | `elementId` | `freezeAt`, `freezeDuration`, `speed` |
+| **apply_move** — Put a NAMED MOVE from bay's vocabulary on an element | — | `at`, `direction`, `distance`, `elementId`, `move` |
+| **animate** — Give an element motion | `elementId` | `at`, `direction`, `distance`, `easing`, `keys`, `move`, `property` |
+| **animate_many** — Run ONE move across MANY elements, staggered — the verb for kinetic type, list reveals, and any group arrival | `elementIds` | `at`, `by`, `decay`, `direction`, `distance`, `duration`, `easing`, `from`, `move`, `property`, `stagger`, `to` |
+| **element_delete** — Remove an element from the timeline by id | `elementId` | — |
+| **element_move** — Slide a clip along the timeline | `elementId`, `start` | — |
+| **element_trim** — Trim a clip's edges | `elementId` | `duration`, `start` |
+| **element_split** — Cut a clip in two at a timeline position | `elementId`, `at` | `newId` |
+| **element_source** — Slip: change WHICH part of a video or audio file a clip plays, keeping it exactly where it is on the timeline and exactly as long | `elementId`, `trimStart` | — |
+| **element_duplicate** — Copy a clip, effects and animation included, placed right after it | `elementId` | `newId` |
+| **element_rename** — Rename an element | `elementId`, `name` | — |
+| **transform_set** — Reposition, scale, rotate or fade an element already on the timeline | `elementId` | `anchorX`, `anchorY`, `opacity`, `rotation`, `scale`, `scaleX`, `scaleY`, `x`, `y` |
+| **text_update** — Change a title's words, or what it is for, in place — keeping its id, position and animation | `elementId` | `align`, `content`, `letterSpacing`, `lineHeight`, `role`, `tone` |
+| **effect_add** — Add a picture effect to a clip | `elementId`, `type` | `effectId`, `look`, `lut`, `params` |
+| **effect_set** — Retune an effect that is already on a clip, or switch it off without removing it | `elementId`, `effectId` | `enabled`, `params` |
+| **effect_remove** — Take an effect off a clip | `elementId`, `effectId` | — |
+| **blend_set** — Change how a clip composites over what is under it | `elementId`, `mode` | — |
+| **audio_set** — Change an audio clip's level, mute it, or move its in-point — and duck it under the lines it plays behind | `elementId` | `attackMs`, `depthDb`, `duckUnder`, `holdMs`, `joinGapMs`, `muted`, `preRollMs`, `releaseMs`, `trimStart`, `volume` |
+| **duck** — Duck a music bed under narration: four volume keyframes per line, on ONE clip | `bedId` | `attackMs`, `depthDb`, `holdMs`, `joinGapMs`, `preRollMs`, `releaseMs`, `underIds` |
+| **fade_set** — Fade a clip up at its head and down at its tail | `elementId` | `fadeIn`, `fadeOut` |
+| **transition_add** — Cross-dissolve between two clips on the same lane | `fromId`, `toId` | `duration` |
+| **element_ripple_delete** — Remove a clip and close the hole it leaves: every later clip on the same lane moves back by its length | `elementId` | — |
+| **marker_add** — Mark a moment on the timeline — a beat in the music, where a line lands, where the next cut goes | `at` | `id`, `label` |
+| **crop_set** — Reframe a clip: cut away part of the source so what is left fills the frame | `elementId` | `bottom`, `left`, `right`, `top` |
+| **mask_set** — Limit where a clip shows to a shape — a vignette, a spotlight on one part of the frame, half the screen for a split | `elementId` | `feather`, `height`, `inverted`, `shape`, `width`, `x`, `y` |
+| **templates_list** — The element bundles bay can place in one call: lower thirds, kickers, end cards, and anything the user saved | — | — |
+| **template_place** — Place a template on the timeline at a time, filling its text slots | `templateId` | `layer`, `start`, `text` |
+| **sfx_search** — Find a sound | — | `query` |
+| **sound_add** — Place a recorded sound from an installed pack on the audio lane | `sound`, `start` | `volume` |
+| **sfx_list** — The sound effects bay synthesises: whooshes, risers, clicks, impacts | — | — |
+| **sfx_add** — Synthesise a sound effect and place it on the audio lane in one call | `sfx`, `start` | `duration`, `level`, `tone`, `volume` |
+| **looks_list** — The grades bay ships with: id, name, and what each one is for | — | — |
+| **shots_detect** — Find the cuts in an imported clip and return the stretches between them | `mediaId` | `minSeconds`, `threshold` |
+| **media_index** — Build and persist a semantic index for imported footage | `mediaId` | — |
+| **media_search** — Find footage by meaning rather than filename | `query` | `limit`, `mediaId` |
+| **auto_reframe** — Track the subject in a video clip and animate crop insets for a new aspect ratio | `elementId` | `sampleSeconds`, `smoothingSeconds`, `targetHeight`, `targetWidth` |
+| **check** — Inspect the timeline for the mistakes that make a finished video look wrong: a large fill too close in colour to what it sits on to be seen, a card with nothing legible in it, an easing that overshoots a bar past its own number, an opening frame emptier than the rest of the video, two consecutive beats that carry nothing between them, elements off the canvas, type too small to read at thumbnail size, clips pointing at media nobody imported, black gaps in the picture | — | `duration` |
+| **check_frames** — Render low-resolution, caption-suppressed samples and inspect the picture itself | — | `duration` |
+| **timeline** — Dump the whole timeline: every layer, its elements, their timings, transforms and which properties are animated | — | — |
+| **snapshot** — Render ONE frame to a PNG so you can look at it | `at`, `path` | `scale` |
+| **contact_sheet** — Render review frames into one labelled PNG | `path` | `columns`, `times` |
+| **render** — Encode the timeline, picture and sound | `path` | `audioBitrateKbps`, `codec`, `duration`, `ignoreChecks`, `loudness`, `preset`, `quality`, `reason`, `startSeconds` |
+| **job_status** — Follow work that runs in the background | — | `job` |
+| **job_cancel** — Ask a running job to stop | `job` | — |
+| **runtime_status** — What bay needs to work, and whether it is installed on this machine — ffmpeg for decode and export, Kokoro for narration | — | `job` |
+| **runtime_install** — Install what bay is missing, from builds pinned and hash-verified in bay itself | `component` | — |
+| **speech_status** — Whether Kokoro text-to-speech is available on this machine, and which voices it can speak | — | — |
+| **vision_status** — Whether bay can find a picture from a description — the SigLIP encoder that scores an image against a phrase | — | — |
+| **stock_status** — Which image archives bay can reach, which need a key, and how much has already been downloaded | — | — |
+| **stock_search** — Search an open image archive and get results ordered by what is actually in the picture | `query` | `describe`, `kind`, `licence`, `limit`, `minWidth`, `provider` |
+| **stock_fetch** — Download one stock_search result to this machine, with its licence and attribution recorded beside it | `asset` | `maxBytes` |
+| **audio_beats** — Find the pulse of an audio file: tempo, where the grid starts, and every beat in seconds | — | `everyNthBeat`, `mediaId`, `path` |
+| **silence_detect** — Find the dead air in a recording: the pause before an answer, the gap while someone thinks, the run-up at the head and the tail after the last word | — | `mediaId`, `minimumSeconds`, `padSeconds`, `path`, `thresholdDb` |
+| **library_save** — Keep a file in your media library, under a name you choose, in a collection | `path` | `collection`, `name`, `stockId` |
+| **library_list** — What is in the media library, with the credit lines anything CC-BY obliges you to show | — | `collection` |
+| **library_collect** — Copy a whole collection into a folder — usually one beside the project file | `collection`, `into` | — |
+| **stock_credits** — The attribution for everything downloaded, as text you can paste | — | — |
+| **image_rank** — Score images already on disk against a phrase, best first | `query`, `paths` | — |
+| **narrate** — Speak text with Kokoro, put the audio on the timeline, and place word-synced captions for it | `text` | `audioPath`, `captionAlign`, `captionStyle`, `captionX`, `captionY`, `captions`, `energy`, `langCode`, `peakDb`, `pitchSemitones`, `speed`, `start`, `targetWordsPerSecond`, `voice`, `volume` |
+| **subtitles_add** — Read an SRT or WebVTT file and place every cue on the timeline as a caption | `path` | `captionAlign`, `captionStyle`, `captionX`, `captionY`, `offset` |
+| **subtitles_export** — Write the timeline's captions out as an SRT or WebVTT file | `path` | `format` |
+| **subtitles_to_video** — Turn a subtitle file straight into a video: create a project, place every cue as a caption, optionally narrate each cue with Kokoro, and render an MP4 | `path`, `output` | `background`, `brief`, `captionAlign`, `captionStyle`, `captionX`, `captionY`, `customKit`, `fps`, `height`, `kit`, `langCode`, `narrate`, `speed`, `targetWordsPerSecond`, `voice`, `width` |
+| **project_save** — Save the project | — | `path` |
+| **project_list** — List the projects in the user's bay library — the same list the desktop app opens on | — | — |
+| **project_load** — Replace the current project with one from the library (by id) or from a JSON file (by path) | — | `id`, `path` |
+| **transcribe** — Hear an imported video or audio file locally with whisper.cpp and attach the word-timed transcript to the media asset | `mediaId` | — |
+| **diarize** — Separate speakers in an existing transcript by clustering local acoustic features for each utterance | `mediaId` | `speakers` |
+| **transcript_get** — Read the persisted transcript for an imported asset: language, utterances, speakers where Whisper supplied turns, and every word's start/end/confidence | `mediaId` | — |
+| **transcript_search** — Find an exact word sequence in a transcript | `mediaId`, `query` | — |
+| **cut_by_transcript** — Build a dialogue edit by placing selected transcript ranges consecutively as paired video and speech clips | `mediaId` | `layer`, `ranges`, `timelineStart`, `wordRanges` |
+| **remove_silence_and_fillers** — Create a tightened transcript edit: remove configurable filler words, compress dead air, keep short conversational pauses untouched, and retain a bounded meaningful beat from long pauses | `mediaId` | `deadAirThresholdSeconds`, `fillerWords`, `keepMeaningfulPauses`, `layer`, `meaningfulPauseSeconds`, `meaningfulPauseThresholdSeconds`, `retainedPauseSeconds`, `sourceEnd`, `sourceStart`, `timelineStart` |
+| **plan_create** — Create the inspectable editorial promise before building: named genre format, target runtime, beat intents, and asset slots | `brief`, `format`, `targetRuntimeSeconds`, `beats` | `approve` |
+| **plan_get** — Read the project's plan artifact, critic obligations, tournament state, and the built-in format registry | — | — |
+| **variant_create** — Clone the active project into the project library as one deliberate alternative | `label` | — |
+| **variant_register_render** — Attach a real rendered file to a variant | `projectId`, `path` | — |
+| **tournament_compare** — Record one forced pairwise preference between two engine-verified renders | `leftProjectId`, `rightProjectId`, `winnerProjectId`, `reason` | — |
+| **critic_prepare** — Render an engine-seeded contact sheet and return only brief, sheet, and computed check/check_frames evidence for a fresh critic | `path` | — |
+| **critic_submit** — Submit a fresh critic's three forced choices and nine binary taste judgments | `weakestPanel`, `mostAlikePair`, `thumbnailPanel`, `binaries`, `rationale` | — |
+| **critic_refresh** — Re-render every open critic obligation at its original timestamp | — | — |
+| **gen_image** — Generate a still through a local, fal, or Gemini adapter, then verify the actual pixels against the prompt with bay's provisioned SigLIP encoder | `prompt` | `consent`, `execute`, `height`, `model`, `previewId`, `provider`, `seed`, `width` |
+| **gen_video** — Generate a short source clip through a local, fal, or Gemini adapter | `prompt` | `consent`, `execute`, `height`, `imageRef`, `model`, `previewId`, `provider`, `seconds`, `seed`, `width` |
+| **gen_music** — Generate a music bed through a local or fal adapter | `brief` | `bpm`, `consent`, `execute`, `model`, `previewId`, `provider`, `seconds`, `seed` |
+| **runtime_remove** — Remove one runtime component that bay installed and report the disk space actually freed | `component` | — |
 
-### `project_info`
-Canvas, fps, timeline duration, element counts, layer count.
+Two facts the table cannot show:
 
-### `project_save`
-`{ "path"?: "…json" }` → `{ id, name, path }`
-
-**Call this when the project is worth keeping.** With no `path` it saves into the user's project
-library — the list the desktop app opens on — so they can pick the project up in the GUI. Pass a
-`path` only to drop a copy somewhere specific.
-
-### `project_list`
-`{}` → `{ root, projects: [{ id, name, path, canvas, fps, durationSeconds, elements }] }`
-
-What is already in the user's library, newest first.
-
-### `project_load`
-`{ "id": "…" }` from `project_list`, or `{ "path": "…json" }` for a loose file. Give exactly one.
-
----
-
-## Media
-
-### `media_import`
-`{ "path": "…", "id"?: "…" }` → `{ mediaId, durationSeconds, width, height, hasAudio, hasVideo }`
-
-Probes the file, so you get its **real** duration rather than a guess. A probe failure is
-reported in `probeError` rather than silently defaulting.
-
-### `fonts_check`
-`{ "families": ["Helvetica Neue", "Menlo"] }` → `{ available: [...], missing: [...] }`
-
-**Call before using any family.** cosmic-text silently substitutes a fallback for an unknown
-family — the frame looks almost right and no automated check notices. `add_text` refuses an
-uninstalled family for this reason.
-
-macOS usually has: Helvetica Neue, Avenir Next, Futura, Optima, Baskerville, Georgia, Impact,
-Arial Black (display); Menlo, Monaco, Courier New, PT Mono, Andale Mono (mono).
-It usually does **not** have: SF Mono, IBM Plex Mono, Hanken Grotesk, JetBrains Mono.
-
----
-
-## Placing elements
-
-All visual tools share this block:
-
-| arg | default | meaning |
-|---|---|---|
-| `layer` | 0 | stacking order; 0 is bottom, higher draws on top, gaps auto-created |
-| `x`, `y` | 0.5 | position of the element's **anchor**, as a fraction of the canvas |
-| `scale` | 1.0 | size as a fraction of the canvas; 1.0 spans the frame |
-| `scaleX`, `scaleY` | 1.0 | per-axis multipliers on top of `scale` |
-| `anchorX`, `anchorY` | 0.5 | which point of the element sits at `(x, y)`; 0 = left/top, 1 = right/bottom |
-| `rotation` | 0 | degrees clockwise, **about the element's centre** (not its anchor) |
-| `opacity` | 1.0 | |
-| `blendMode` | `normal` | 17 modes: multiply, screen, overlay, difference, color-dodge, … |
-
-### `add_text`
-Plus: `content` (use `\n` for line breaks), `fontSize`, `color`, `fontFamily`, `fontWeight`,
-`align` (left/center/right), `letterSpacing` (em), `lineHeight`, `id`.
-
-`fontSize` is quoted **against a 1080-tall canvas** and scaled automatically. On a 1920-tall
-canvas the multiplier is 1.778 — so `fontSize: 180` renders at 320px.
-
-### `add_shape`
-Plus: `shape` (`rect`|`ellipse`), `radius` (fraction of the shorter side; 0.5 = a pill),
-`color`, `id`.
-
-### `add_image` / `add_video`
-Plus: `mediaId`, `start`, `duration`, (`trimStart` for video), `id`. Sources are fitted inside
-their scale box without distortion.
-
-### `add_audio`
-`{ mediaId, start, duration, volume?, id? }`. Mixed into the exported MP4.
-
----
-
-## Motion
-
-### `animate`
-```jsonc
-{ "elementId": "bar", "property": "scaleX", "easing": "power-out",
-  "keys": [{ "t": 0, "value": 0 }, { "t": 0.8, "value": 0.6 }] }
-```
-
-- Properties: `opacity`, `scale`, `x`, `y`, `rotation`, `scaleX`, `scaleY`.
-- **`t` is seconds after the ELEMENT starts**, not timeline seconds.
-- Replaces any existing animation on that property — re-animating is idempotent.
-- Needs at least two keyframes.
-- Easings: `linear`, `ease-in`, `ease-out`, `ease-in-out`, `power-out`, `expo-out`,
-  `back-out`, `hold`.
-  `power-out` is the workhorse for entrances; `ease-in-out` for anything transforming in
-  place; `hold` for a hard cut.
-
-### `element_delete`
-`{ "elementId": "…" }`.
-
----
-
-## Reading your work back
-
-### `timeline`
-Every layer, its elements, their timings, transforms, and which properties are animated. Use
-this between edits instead of tracking state yourself.
-
----
-
-## Speech and subtitles
-
-### `speech_status`
-Is Kokoro available here, and which voices can it speak? Reports what to do if not — it never
-throws.
-
-### `narrate`
-Speak text, place the audio, and lay word-synced captions.
-
-| arg | default | notes |
-|---|---|---|
-| `text` | — | punctuation drives phrasing; there is no SSML |
-| `start` | 0 | timeline seconds |
-| `voice` | `af_heart` | see `speech_status` |
-| `speed` | 1.0 | 1.0–1.15 suits a reel |
-| `langCode` | `a` | a/b English, e/f/h/i/j/p/z others |
-| `volume` | 1.0 | with `peakDb` on, 1.0 is already full-strength |
-| `peakDb` | −2.0 | normalize each utterance to this dBFS peak; `null` for raw |
-| `captions` | true | place captions as well as audio |
-| plus caption styling | | `captionFontSize`, `captionColor`, `captionFontFamily`, `captionY`, `captionLayer`, `captionFade`, `maxWords`, `minCaptionSeconds`, `maxCaptionSeconds`, `gapSeconds` |
-
-Returns `endSeconds` — **check it fits** before committing. Audio and captions come from one
-synthesis, so they cannot drift apart.
-
-### `subtitles_add`
-`{ path: "…srt|vtt", offset?: 0 }` plus caption styling. Places every cue as a caption.
-
-### `subtitles_export`
-`{ path, format: "srt"|"vtt" }`. Writes the timeline's captions back out.
-
-### `subtitles_to_video`
-An `.srt` in, a playable `.mp4` out — one call. Creates the project, places every cue,
-optionally narrates each cue at its own time, and renders.
-
-```jsonc
-{ "path": "script.srt", "output": "out.mp4", "narrate": true, "voice": "af_heart" }
-```
-
-Reports `overruns`: cues whose spoken audio ran past the next cue's start. Speech does not
-have to fit the window a subtitle author chose, so this is surfaced rather than silently
-truncated.
-
----
-
-## Output
-
-### `snapshot`
-`{ at, path, scale? }` → renders ONE frame to a PNG. `scale: 0.5` is fast and still legible
-for review. **Paths are resolved by the server process — use absolute paths.**
-
-### `render`
-`{ path, duration? }` → encodes the whole timeline, picture and sound. `duration` overrides
-the timeline's own length — useful when elements extend past the intended end for crossfades.
-
-Returns `bytes` and `encodeSeconds`. Requires ffmpeg.
+- **`render`, `narrate`, `subtitles_to_video`, `shots_detect`, `media_index`,
+  `auto_reframe`, and `diarize` answer with a job id.**
+  Poll `job_status` with it until `finished` is true, then read `result`. `job_cancel`
+  stops one. Everything else answers in a single call.
+- **bay has no scene object.** No tool creates, splits or selects one; a project is one
+  scene however long it runs. Structure is expressed in time — see
+  [structure.md](structure.md) — not in a container.

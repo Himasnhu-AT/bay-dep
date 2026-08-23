@@ -1,6 +1,13 @@
 //! Audio decode + analysis via the ffmpeg CLI sidecar: waveform peaks for display, and full
 //! interleaved f32 PCM for playback.
 
+pub mod beats;
+pub mod library;
+pub mod loudness;
+pub mod sfx;
+pub mod silence;
+pub mod wav;
+
 /// Decoded interleaved PCM samples ready for playback.
 pub struct AudioPcm {
     pub sample_rate: u32,
@@ -60,8 +67,57 @@ pub struct MixClip<'a> {
     pub dst_start_secs: f64,
     /// How many seconds of this clip to play.
     pub play_secs: f64,
-    /// Linear gain applied to this clip's samples.
+    /// Linear gain applied to this clip's samples. Ignored when `envelope` is set.
     pub volume: f32,
+    /// A level that moves over the clip — fades, or keyframed volume. Sampled per output
+    /// frame, so a fade is a real ramp rather than a step at the clip boundary.
+    ///
+    /// `None` is a flat `volume`, which is what every caller wanted before ducking existed.
+    pub envelope: Option<GainEnvelope>,
+}
+
+/// A gain curve read against a clip's *own* timeline.
+///
+/// Sampled by the mixer rather than baked in by the caller because playback can start in the
+/// middle of a clip: the fade at 2s into a bed has to be the same whether the transport
+/// started at 0s or at 1.9s.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GainEnvelope {
+    /// Seconds from the clip's own start at which this mix window begins.
+    pub clip_offset_secs: f64,
+    /// Level at each of these offsets into the clip, in order. One point is a constant.
+    pub points: Vec<(f64, f32)>,
+}
+
+impl GainEnvelope {
+    /// Level at `seconds` into the clip, linearly interpolated, clamped to the end values
+    /// outside the range the points cover.
+    pub fn gain_at(&self, seconds: f64) -> f32 {
+        match self.points.as_slice() {
+            [] => 1.0,
+            [(_, only)] => *only,
+            points => {
+                if seconds <= points[0].0 {
+                    return points[0].1;
+                }
+                let last = points[points.len() - 1];
+                if seconds >= last.0 {
+                    return last.1;
+                }
+                for pair in points.windows(2) {
+                    let ((ta, va), (tb, vb)) = (pair[0], pair[1]);
+                    if seconds >= ta && seconds <= tb {
+                        if tb <= ta {
+                            return vb;
+                        }
+                        let fraction = ((seconds - ta) / (tb - ta)) as f32;
+                        return va + (vb - va) * fraction;
+                    }
+                }
+                last.1
+            }
+        }
+    }
 }
 
 /// Mix `clips` into one interleaved **stereo** buffer of `total_secs` at `sample_rate`. Overlapping
@@ -93,8 +149,12 @@ pub fn mix_stereo(clips: &[MixClip], sample_rate: u32, total_secs: f64) -> Vec<f
             } else {
                 left
             };
-            out[dst_frame * 2] += left * clip.volume;
-            out[dst_frame * 2 + 1] += right * clip.volume;
+            let gain = match &clip.envelope {
+                Some(envelope) => envelope.gain_at(envelope.clip_offset_secs + f as f64 / rate),
+                None => clip.volume,
+            };
+            out[dst_frame * 2] += left * gain;
+            out[dst_frame * 2 + 1] += right * gain;
         }
     }
 

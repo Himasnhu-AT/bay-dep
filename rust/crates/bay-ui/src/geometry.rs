@@ -1,11 +1,11 @@
 //! Pure timeline and viewer geometry — the intended single owner of pixel ↔ tick ↔ frame
 //! conversions.
 //!
-//! **Status: not yet adopted.** This module is written and tested but has no callers.
-//! `editor_view.rs` still declares its own `TICKS_PER_SECOND` and does its own
-//! `pixels_per_second` arithmetic inline. Migrating those call sites is the remainder of
-//! T-008 in `docs/native/palmier-parity-todo.md`; until that lands, the guarantees below
-//! describe this module's own behaviour, not the UI's.
+//! **Status: partly adopted.** The timeline is on it — lane blocks, the ruler, the playhead,
+//! scrubbing, horizontal scroll and zoom all read their pixels from a [`TimelineGeometry`], so
+//! those agree by construction. `editor_view.rs` still declares its own `TICKS_PER_SECOND` and
+//! does inline tick arithmetic elsewhere (inspector nudges, transport steps); migrating the
+//! rest is the remainder of T-008 in `docs/native/palmier-parity-todo.md`.
 //!
 //! The goal: nothing else in the UI multiplies by `pixels_per_second` or divides by
 //! [`TICKS_PER_SECOND`]. Scattering those two constants is how a ruler, a clip block and a
@@ -254,6 +254,45 @@ impl TimelineGeometry {
             ticks += minor;
         }
         marks
+    }
+}
+
+/// How close, in pixels, a dragged edge has to come to something before it snaps to it.
+///
+/// In pixels rather than in time on purpose: it is a property of how accurately a hand can
+/// place a pointer, not of the timeline. At 8 px/s a 10px tolerance is over a second and at
+/// 400 px/s it is 25ms, and both are right — what the user sees is the same small distance.
+pub const SNAP_TOLERANCE_PX: f32 = 8.0;
+
+/// Snap `candidate` to the nearest of `targets`, if one is within [`SNAP_TOLERANCE_PX`] on
+/// screen at this zoom. Returns the time to use and whether it snapped.
+///
+/// Ties go to the earlier target, so a clip butted against another does not jitter between two
+/// equally-close edges as the pointer moves.
+pub fn snap_time(
+    candidate: MediaTime,
+    targets: &[MediaTime],
+    pixels_per_second: f32,
+) -> (MediaTime, bool) {
+    let pps = sane(pixels_per_second, PIXELS_PER_SECOND_FLOOR).max(PIXELS_PER_SECOND_FLOOR);
+    let tolerance_ticks =
+        (f64::from(SNAP_TOLERANCE_PX) / f64::from(pps) * TICKS_PER_SECOND as f64) as i64;
+    let mut best: Option<(i64, MediaTime)> = None;
+    for target in targets {
+        let distance = (target.as_ticks() - candidate.as_ticks()).abs();
+        if distance > tolerance_ticks {
+            continue;
+        }
+        match best {
+            Some((best_distance, best_target))
+                if best_distance < distance
+                    || (best_distance == distance && best_target <= *target) => {}
+            _ => best = Some((distance, *target)),
+        }
+    }
+    match best {
+        Some((_, target)) => (target, true),
+        None => (candidate, false),
     }
 }
 
@@ -1048,5 +1087,71 @@ mod tests {
         assert_eq!(track_at_y(&heights, 144.0), None);
         assert_eq!(track_at_y(&heights, -1.0), None);
         assert_eq!(track_at_y(&heights, f32::NAN), None);
+    }
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::*;
+
+    fn t(seconds: f64) -> MediaTime {
+        MediaTime::from_ticks((seconds * TICKS_PER_SECOND as f64) as i64)
+    }
+
+    /// The whole point: an edge dragged near another one lands *on* it, so two clips butt
+    /// together instead of leaving a one-frame sliver of black nobody can see but everybody
+    /// notices when it plays.
+    #[test]
+    fn a_near_miss_snaps_and_a_clear_miss_does_not() {
+        let targets = [t(2.0), t(5.0)];
+        // 48 px/s → an 8px tolerance is a sixth of a second.
+        let (snapped, did) = snap_time(t(2.1), &targets, 48.0);
+        assert!(did);
+        assert_eq!(snapped, t(2.0));
+
+        let (unsnapped, did) = snap_time(t(3.0), &targets, 48.0);
+        assert!(!did);
+        assert_eq!(unsnapped, t(3.0));
+    }
+
+    /// Tolerance is a distance on screen, so zooming in makes snapping *more* precise rather
+    /// than dragging clips around by ever-larger amounts of time.
+    #[test]
+    fn tolerance_shrinks_in_time_as_the_zoom_grows() {
+        let targets = [t(2.0)];
+        assert!(
+            snap_time(t(2.1), &targets, 48.0).1,
+            "a sixth of a second at 48 px/s"
+        );
+        assert!(
+            !snap_time(t(2.1), &targets, 400.0).1,
+            "the same 0.1s is 40px at 400 px/s — nowhere near"
+        );
+    }
+
+    #[test]
+    fn the_nearest_target_wins() {
+        let targets = [t(2.0), t(2.05)];
+        assert_eq!(snap_time(t(2.04), &targets, 48.0).0, t(2.05));
+    }
+
+    /// Two targets at the same distance must resolve the same way every time, or a clip
+    /// jitters between them as the pointer moves.
+    #[test]
+    fn a_tie_goes_to_the_earlier_target() {
+        let targets = [t(2.0), t(4.0)];
+        assert_eq!(snap_time(t(3.0), &targets, 4.0).0, t(2.0));
+    }
+
+    #[test]
+    fn nothing_to_snap_to_is_not_a_snap() {
+        assert_eq!(snap_time(t(3.0), &[], 48.0), (t(3.0), false));
+    }
+
+    #[test]
+    fn a_nonsense_zoom_does_not_panic() {
+        let targets = [t(2.0)];
+        let _ = snap_time(t(2.0), &targets, 0.0);
+        let _ = snap_time(t(2.0), &targets, f32::NAN);
     }
 }

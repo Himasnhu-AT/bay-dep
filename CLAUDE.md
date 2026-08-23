@@ -23,10 +23,16 @@ See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 RELEASE=1 ./run.sh    # release build — much smoother playback
 ./build.sh            # release build of the desktop app
 ./test.sh             # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
-STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures (what CI's mac job does)
+STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures for capability verification
 
-cd rust && cargo test --workspace     # cargo runs from rust/, never the repo root
+cd rust && env -u CARGO_TARGET_DIR cargo test --workspace
 ```
+
+Always remove `CARGO_TARGET_DIR` from direct Cargo invocations. The agent shell points it at a
+sandbox cache, bypassing the 89 GB warm `rust/target`; rebuilding `whisper-rs-sys` there fails
+because the cached `whisper.cpp` source is incomplete. Use
+`env -u CARGO_TARGET_DIR cargo ...`, never a second custom target directory. The repository
+scripts already do this.
 
 ffmpeg is required for decode, probing, waveforms, and MP4 export. bay installs its own when
 asked (`bay-provision`) and otherwise uses whatever is on the machine; without either, text and
@@ -46,6 +52,9 @@ rust/
 │   ├── bay-preview   preview rendering, decode planning, caching
 │   ├── compositor, gpu, effects, masks    the wgpu render path
 │   ├── bay-audio, bay-text, bay-speech
+│   ├── bay-vision   SigLIP image↔text embeddings (Candle, in-process, CPU)
+│   ├── bay-stock    searching the open image archives; the one crate that talks to a
+│   │                  third party, and only when a tool call asks it to
 │   ├── bay-provision installs bay's own runtimes (ffmpeg, Python, Kokoro) from a
 │   │                  pinned, SHA-256-verified manifest — the user installs nothing
 │   ├── time              MediaTime tick math
@@ -63,10 +72,19 @@ the MCP server. Logic is never duplicated between front ends.
 
 - **Never put logic in the UI crate that a headless client would need.** If the MCP server or a test
   can't reach it, it's in the wrong crate.
-- **Decode never runs on the render path.** A long clip must not freeze `render()`; decodes are
-  planned and awaited explicitly (export calls `await_decodes()` before encoding).
+- **Decode never runs on the *interactive* render path.** A long clip must not freeze `render()`;
+  preview decodes are planned on a worker and awaited explicitly. **Export is the exception, by
+  design:** it streams each clip at source resolution through `ClipStream` and decodes inside its
+  own frame loop. It does *not* call `await_decodes` — that would start preview-intent decodes of
+  clips the export will never read. Export is not interactive, and a 4K clip cannot be
+  pre-decoded into a memory budget at all.
+- **Preview and export plan decode differently, on purpose** (`DecodeIntent`). Preview is a
+  ≤480px, budget-bounded cache so scrubbing is instant; export is source resolution at the
+  delivered frame rate, streamed. Collapsing them is how a 4K export came to be a 480px cache
+  upscaled 8×.
 - **Cache budgets are global, not per clip.** An LRU byte budget across all clips — regressing this
-  means N clips get N budgets.
+  means N clips get N budgets. The budget applies to the *preview* cache; export holds one frame
+  per on-screen clip and nothing more.
 - **The render path cannot panic on bad input.** NaN/±inf transforms and tiny canvases (1×1, 8×4) are
   tested; keep them tested.
 - **Project wire format is kebab-case** and pinned by serde round-trip tests — it is the web↔native
