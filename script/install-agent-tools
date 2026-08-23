@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Install bay's CLI name and agent skill for local agent clients.
+#
+# From a source checkout:
+#   ./script/install-agent-tools
+#
+# From an installed macOS application:
+#   /Applications/bay.app/Contents/Resources/install-agent-tools
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+BIN_DIR="${HOME:?HOME is required}/.local/bin"
+BINARY=""
+CLIENTS=(claude cursor openclaw)
+
+usage() {
+  printf '%s\n' \
+    "usage: install-agent-tools [--binary PATH] [--bin-dir DIR] [--client NAME ...]" \
+    "" \
+    "Clients: claude, cursor, openclaw. With no --client, installs for all three."
+}
+
+chosen_clients=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --binary) shift; BINARY="${1:?--binary needs a path}" ;;
+    --bin-dir) shift; BIN_DIR="${1:?--bin-dir needs a directory}" ;;
+    --client) shift; chosen_clients+=("${1:?--client needs claude, cursor, or openclaw}") ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'install-agent-tools: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+[ ${#chosen_clients[@]} -eq 0 ] || CLIENTS=("${chosen_clients[@]}")
+
+if [ -d "$HERE/bay-skill" ]; then
+  SKILL_SOURCE="$HERE/bay-skill"
+elif [ -d "$ROOT/.claude/skills/bay" ]; then
+  SKILL_SOURCE="$ROOT/.claude/skills/bay"
+else
+  printf 'install-agent-tools: could not find the bundled bay skill\n' >&2
+  exit 1
+fi
+
+if [ -z "$BINARY" ]; then
+  for candidate in \
+    "$HERE/../MacOS/bay" \
+    "/Applications/bay.app/Contents/MacOS/bay" \
+    "$ROOT/rust/target/release/bay"
+  do
+    if [ -x "$candidate" ]; then
+      BINARY="$candidate"
+      break
+    fi
+  done
+fi
+[ -n "$BINARY" ] && [ -x "$BINARY" ] || {
+  printf 'install-agent-tools: no bay binary found; pass --binary PATH\n' >&2
+  exit 1
+}
+BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
+
+mkdir -p "$BIN_DIR"
+CLI="$BIN_DIR/bay"
+if [ -e "$CLI" ] && [ ! -L "$CLI" ]; then
+  printf 'install-agent-tools: refusing to replace non-symlink %s\n' "$CLI" >&2
+  exit 1
+fi
+ln -sfn "$BINARY" "$CLI"
+printf 'CLI:   %s -> %s\n' "$CLI" "$BINARY"
+
+install_skill() {
+  local client="$1" parent destination staging
+  case "$client" in
+    claude) parent="$HOME/.claude/skills" ;;
+    cursor) parent="$HOME/.cursor/skills" ;;
+    openclaw) parent="$HOME/.openclaw/skills" ;;
+    *) printf 'install-agent-tools: unknown client %s\n' "$client" >&2; return 2 ;;
+  esac
+  destination="$parent/bay"
+  staging="$parent/.bay.$$.staging"
+  mkdir -p "$parent"
+  rm -rf "$staging"
+  cp -R "$SKILL_SOURCE" "$staging"
+  if [ -e "$destination" ] || [ -L "$destination" ]; then
+    rm -rf "$destination"
+  fi
+  mv "$staging" "$destination"
+  printf 'Skill: %s (%s)\n' "$destination" "$client"
+}
+
+for client in "${CLIENTS[@]}"; do
+  install_skill "$client"
+done
+
+printf '\nAdd %s to PATH, then start bay and configure the MCP bearer token.\n' "$BIN_DIR"
+printf 'See docs/native/distribution.md in the source or bundled skill references.\n'

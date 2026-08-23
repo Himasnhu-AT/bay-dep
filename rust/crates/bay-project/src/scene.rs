@@ -1,9 +1,11 @@
 //! A scene: a named timeline (its `Tracks`) that the editor edits one at a time.
 
+use std::collections::BTreeMap;
+
 use bay_time::MediaTime;
 use serde::{Deserialize, Serialize};
 
-use crate::element::{Element, ElementSource};
+use crate::element::{AnimationChannel, Element, ElementSource, Transform};
 use crate::refs::ElementRef;
 use crate::track::{Track, TrackKind, Tracks};
 
@@ -45,6 +47,52 @@ pub struct Scene {
     /// `#[serde(default)]` so projects written before markers existed still load.
     #[serde(default)]
     pub markers: Vec<Marker>,
+    /// Parent transforms keyed by group id. Missing means the scene predates groups.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub groups: BTreeMap<String, ElementGroup>,
+}
+
+/// A transform parent for several visual elements.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElementGroup {
+    pub id: String,
+    #[serde(default)]
+    pub children: Vec<String>,
+    #[serde(default)]
+    pub transform: Transform,
+    /// Group channels use absolute scene time, unlike element-local channels.
+    #[serde(default)]
+    pub animations: BTreeMap<String, AnimationChannel>,
+}
+
+impl ElementGroup {
+    pub fn sampled_transform(&self, scene_time: MediaTime) -> Transform {
+        let mut transform = self.transform;
+        let sample = |name: &str| self.animations.get(name).and_then(|c| c.sample(scene_time));
+        if let Some(value) = sample("opacity") {
+            transform.opacity = value;
+        }
+        if let Some(value) = sample("scale") {
+            transform.scale = value;
+        }
+        if let Some(value) = sample("x") {
+            transform.x = value;
+        }
+        if let Some(value) = sample("y") {
+            transform.y = value;
+        }
+        if let Some(value) = sample("rotation") {
+            transform.rotation = value;
+        }
+        if let Some(value) = sample("scaleX") {
+            transform.scale_x = value;
+        }
+        if let Some(value) = sample("scaleY") {
+            transform.scale_y = value;
+        }
+        transform
+    }
 }
 
 /// A named point on the timeline.
@@ -73,6 +121,7 @@ impl Scene {
                 audio: Vec::new(),
             },
             markers: Vec::new(),
+            groups: BTreeMap::new(),
         }
     }
 
@@ -143,5 +192,75 @@ impl Scene {
         self.tracks
             .track_mut(&reference.track_id)?
             .element_mut(&reference.element_id)
+    }
+
+    /// Compose an element's local animation with its parent group, if any.
+    pub fn sampled_transform(
+        &self,
+        element: &Element,
+        local_time: MediaTime,
+        scene_time: MediaTime,
+    ) -> Option<Transform> {
+        let child = element.sampled_transform(local_time)?;
+        let Some(group) = self
+            .groups
+            .values()
+            .find(|group| group.children.iter().any(|id| id == element.id()))
+        else {
+            return Some(child);
+        };
+        Some(compose_group_transform(
+            child,
+            group.sampled_transform(scene_time),
+        ))
+    }
+}
+
+/// Apply a group transform around its anchor to a child transform.
+pub fn compose_group_transform(mut child: Transform, group: Transform) -> Transform {
+    let dx = (child.x - group.anchor_x) * group.scale * group.scale_x;
+    let dy = (child.y - group.anchor_y) * group.scale * group.scale_y;
+    let radians = group.rotation.to_radians();
+    let (sin, cos) = radians.sin_cos();
+    child.x = group.x + dx * cos - dy * sin;
+    child.y = group.y + dx * sin + dy * cos;
+    child.scale *= group.scale;
+    child.scale_x *= group.scale_x;
+    child.scale_y *= group.scale_y;
+    child.rotation += group.rotation;
+    child.opacity *= group.opacity;
+    child
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_transform_accumulates_around_the_group_anchor() {
+        let child = Transform {
+            x: 0.75,
+            y: 0.5,
+            scale: 0.5,
+            rotation: 10.0,
+            opacity: 0.8,
+            ..Transform::default()
+        };
+        let group = Transform {
+            x: 0.4,
+            y: 0.6,
+            scale: 2.0,
+            rotation: 90.0,
+            opacity: 0.5,
+            ..Transform::default()
+        };
+
+        let composed = compose_group_transform(child, group);
+
+        assert!((composed.x - 0.4).abs() < 0.0001);
+        assert!((composed.y - 1.1).abs() < 0.0001);
+        assert!((composed.scale - 1.0).abs() < 0.0001);
+        assert!((composed.rotation - 100.0).abs() < 0.0001);
+        assert!((composed.opacity - 0.4).abs() < 0.0001);
     }
 }

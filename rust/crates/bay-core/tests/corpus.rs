@@ -7,7 +7,7 @@
 //! on the failed project, silent on both predecessors" has to be measured with.
 //!
 //! ```sh
-//! BAY_CHECK_CORPUS="$HOME/Library/Application Support/vii/projects" \
+//! BAY_CHECK_CORPUS="$HOME/Library/Application Support/bay/projects" \
 //!   cargo test -p bay-core --test corpus -- --nocapture
 //! ```
 //!

@@ -40,7 +40,7 @@ echo
 
 cd "$ROOT/rust"
 if [ "${RELEASE:-0}" = "1" ]; then
-  exec cargo run --release -p bay-desktop "$@"
+  exec env -u CARGO_TARGET_DIR cargo run --release -p bay-desktop "$@"
 else
-  exec cargo run -p bay-desktop "$@"
+  exec env -u CARGO_TARGET_DIR cargo run -p bay-desktop "$@"
 fi

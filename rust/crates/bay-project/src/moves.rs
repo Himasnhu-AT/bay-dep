@@ -33,7 +33,7 @@
 //! move accounts for, per channel, with the element id, so the cost of evasion scales with the
 //! evasion.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bay_time::{MediaTime, TICKS_PER_SECOND};
 use serde::Serialize;
@@ -1583,11 +1583,116 @@ impl OffVocabularyMotion {
     }
 }
 
+const CROP_EPSILON: f32 = 1e-4;
+
+/// Whether a video carries the fixed-aperture camera path `auto_reframe` writes.
+///
+/// This is deliberately proved from the channels rather than from provenance. Four synchronized
+/// tracks must move one pair of opposite edges in exact opposition while the other pair stays
+/// open, preserving one crop aperture at every key. An author cannot exempt unrelated `x`,
+/// `scale`, or `rotation` motion with this shape, and independently keyed crop edges still fail.
+fn coordinated_camera_crop(element: &Element, fps: f32) -> bool {
+    let Element::Video(video) = element else {
+        return false;
+    };
+    let Some(left) = video.animations.get("cropLeft") else {
+        return false;
+    };
+    let Some(right) = video.animations.get("cropRight") else {
+        return false;
+    };
+    let Some(top) = video.animations.get("cropTop") else {
+        return false;
+    };
+    let Some(bottom) = video.animations.get("cropBottom") else {
+        return false;
+    };
+    let channels = [left, right, top, bottom];
+    let key_count = left.keys.len();
+    if key_count < 3
+        || channels
+            .iter()
+            .any(|channel| channel.keys.len() != key_count || channel.easing != Easing::Linear)
+    {
+        return false;
+    }
+    for index in 0..key_count {
+        let reference = &left.keys[index];
+        if !reference.value.is_finite()
+            || !(0.0..=1.0).contains(&reference.value)
+            || reference.easing.is_some()
+            || (index > 0 && reference.time <= left.keys[index - 1].time)
+        {
+            return false;
+        }
+        if channels.iter().skip(1).any(|channel| {
+            let key = &channel.keys[index];
+            key.time != reference.time
+                || key.easing != reference.easing
+                || !key.value.is_finite()
+                || !(0.0..=1.0).contains(&key.value)
+        }) {
+            return false;
+        }
+    }
+    if channels.iter().any(|channel| {
+        let changes = channel
+            .keys
+            .windows(2)
+            .any(|pair| (pair[0].value - pair[1].value).abs() > CROP_EPSILON);
+        changes && shortest_core_frames(channel, fps) < MIN_CORE_FRAMES
+    }) {
+        return false;
+    }
+
+    let fixed_pair = |one: &AnimationChannel, other: &AnimationChannel| {
+        let aperture_crop = one.keys[0].value + other.keys[0].value;
+        aperture_crop > CROP_EPSILON
+            && aperture_crop < 1.0 - CROP_EPSILON
+            && one
+                .keys
+                .iter()
+                .zip(&other.keys)
+                .all(|(a, b)| (a.value + b.value - aperture_crop).abs() <= CROP_EPSILON)
+    };
+    let open_pair = |one: &AnimationChannel, other: &AnimationChannel| {
+        one.keys
+            .iter()
+            .chain(&other.keys)
+            .all(|key| key.value.abs() <= CROP_EPSILON)
+    };
+    let starts_at_transform = (left.keys[0].value - video.transform.crop_left).abs()
+        <= CROP_EPSILON
+        && (right.keys[0].value - video.transform.crop_right).abs() <= CROP_EPSILON
+        && (top.keys[0].value - video.transform.crop_top).abs() <= CROP_EPSILON
+        && (bottom.keys[0].value - video.transform.crop_bottom).abs() <= CROP_EPSILON;
+
+    starts_at_transform
+        && ((fixed_pair(left, right) && open_pair(top, bottom))
+            || (fixed_pair(top, bottom) && open_pair(left, right)))
+}
+
 /// Every hand-keyed channel in the scene, for the `off-vocabulary-motion` finding.
+///
+/// A coordinated crop on a video is a camera move rather than four authored object moves. The
+/// exemption is structural: it accepts only a synchronized, fixed-aperture pan and never trusts a
+/// caller-supplied source label.
 pub fn off_vocabulary(scene: &Scene, fps: f32) -> Vec<OffVocabularyMotion> {
+    let camera_crop: BTreeSet<String> = scene
+        .authored_elements()
+        .filter(|element| coordinated_camera_crop(element, fps))
+        .map(|element| element.id().to_string())
+        .collect();
     audit(scene, fps)
         .into_iter()
-        .filter(|entry| entry.off_vocabulary_segments > 0)
+        .filter(|entry| {
+            entry.off_vocabulary_segments > 0
+                && !(camera_crop.contains(&entry.element_id)
+                    && matches!(
+                        entry.property.as_str(),
+                        "cropLeft" | "cropRight" | "cropTop" | "cropBottom"
+                    ))
+        })
         .map(|entry| OffVocabularyMotion {
             element_id: entry.element_id,
             property: entry.property,

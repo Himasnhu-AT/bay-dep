@@ -88,7 +88,9 @@ With the editor open, an agent's edits land in the window you are looking at and
 the same keystroke as your own. With it closed, --mcp gives the same tools headlessly, which
 is what you want for rendering.
 
-  claude mcp add --transport http bay http://127.0.0.1:7333/mcp
+  export BAY_MCP_TOKEN from bay's mcp-token file, then:
+  claude mcp add --transport http bay http://127.0.0.1:7333/mcp --header \
+    \"Authorization: Bearer $BAY_MCP_TOKEN\"
 
 Only one process can serve that endpoint at a time. If it is taken, bay tells you what has it
 rather than moving elsewhere — `bay --agents` answers the same question at any time.
@@ -221,7 +223,11 @@ fn main() {
 
     // A window already open? Raise it and stop. The bound port is the single-instance lock —
     // no pid files, no races: whoever holds the socket is the app.
-    if let Some(existing) = bay_agent::registry::live().into_iter().next() {
+    //
+    // "A window" means an editor on *this* port, not merely something bay registered somewhere:
+    // a headless `bay --mcp` has no window to raise, and asking it to focus one used to abort
+    // the launch entirely. See `registry::window_to_focus`.
+    if let Some(existing) = bay_agent::registry::window_to_focus() {
         match focus_existing(&existing) {
             Ok(()) => {
                 println!("bay is already running — brought that window to the front.");
@@ -252,7 +258,7 @@ fn main() {
                 bay_agent::registry::deregister(port);
             });
             println!("bay: this window accepts agent edits at http://127.0.0.1:{port}/mcp");
-            println!("     claude mcp add --transport http bay http://127.0.0.1:{port}/mcp");
+            println!("     configure Authorization: Bearer $BAY_MCP_TOKEN, then register that URL");
             (Some(pump), Some(port), None)
         }
         None => {
@@ -280,6 +286,7 @@ fn main() {
 /// Deliberately speaks the same MCP endpoint rather than inventing a second IPC channel: the
 /// window already serves it, and `window_focus` is a tool an agent may usefully call too.
 fn focus_existing(instance: &bay_agent::Instance) -> std::io::Result<()> {
+    let authorization = bay_mcp::server::authorization_header()?;
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": { "name": "window_focus", "arguments": {} }
@@ -287,7 +294,8 @@ fn focus_existing(instance: &bay_agent::Instance) -> std::io::Result<()> {
     .to_string();
     let request = format!(
         "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+         Authorization: {authorization}\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
         body.len()
     );
 

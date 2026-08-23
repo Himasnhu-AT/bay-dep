@@ -107,6 +107,128 @@ pub fn root() -> Result<PathBuf, ProvisionError> {
     bay_paths::runtime_dir().ok_or(ProvisionError::NoRuntimeDir)
 }
 
+/// What `runtime_remove` deleted from bay's managed runtime directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    pub paths: Vec<PathBuf>,
+    pub bytes: u64,
+}
+
+/// Remove one component installed by bay.
+///
+/// This never touches a system ffmpeg, Python, model cache, or user project. The manifest paths
+/// are the deletion allow-list, resolved under [`root`] with the same traversal guard used during
+/// installation.
+pub fn remove(component_id: &str) -> Result<Removal, ProvisionError> {
+    let target = Target::CURRENT.ok_or_else(|| ProvisionError::Unsupported {
+        component: component_id.to_string(),
+    })?;
+    remove_at(component_id, target, &root()?)
+}
+
+fn remove_at(component_id: &str, target: Target, root: &Path) -> Result<Removal, ProvisionError> {
+    let manifest = Manifest::embedded();
+    let component = manifest
+        .component(component_id)
+        .ok_or_else(|| ProvisionError::UnknownComponent(component_id.to_string()))?;
+    let mut relative_paths = Vec::new();
+
+    for artifact_id in &component.artifacts {
+        let Some(artifact) = manifest.artifact(artifact_id) else {
+            continue;
+        };
+        let Some(build) = artifact.build(target) else {
+            continue;
+        };
+        match artifact.install {
+            manifest::InstallKind::Files => {
+                relative_paths.extend(build.files.iter().map(|file| PathBuf::from(&file.install)));
+            }
+            manifest::InstallKind::Tree => {
+                let tree = artifact.tree.as_ref().ok_or_else(|| {
+                    ProvisionError::Archive(format!("{} has no tree rule", artifact.id))
+                })?;
+                relative_paths.push(PathBuf::from(&tree.into));
+            }
+        }
+    }
+    for step in &component.steps {
+        match step.as_str() {
+            "kokoro-venv" => {
+                relative_paths.push(PathBuf::from(&manifest.kokoro_venv.venv));
+            }
+            other => {
+                return Err(ProvisionError::Step {
+                    step: other.to_string(),
+                    detail: "bay does not know which managed paths this step owns".into(),
+                });
+            }
+        }
+    }
+
+    relative_paths.sort();
+    relative_paths.dedup();
+    // If a manifest ever names a tree and a file inside it, remove the child first. This makes
+    // the result deterministic and keeps error messages on the most specific path.
+    relative_paths.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+
+    let mut removed = Vec::new();
+    let mut bytes = 0u64;
+    for relative in relative_paths {
+        let path = archive::resolve_inside(root, relative.to_string_lossy().as_ref()).ok_or_else(
+            || ProvisionError::UnsafePath {
+                member: relative.display().to_string(),
+            },
+        )?;
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(ProvisionError::at(&path, error)),
+        };
+        bytes = bytes.saturating_add(path_bytes(&path, &metadata));
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            std::fs::remove_dir_all(&path).map_err(|error| ProvisionError::at(&path, error))?;
+        } else {
+            std::fs::remove_file(&path).map_err(|error| ProvisionError::at(&path, error))?;
+        }
+        removed.push(relative.clone());
+        prune_empty_parents(path.parent(), root);
+    }
+
+    receipt::forget(root, component.artifacts.iter().map(String::as_str))?;
+    bay_paths::tools::forget_cached();
+    Ok(Removal {
+        paths: removed,
+        bytes,
+    })
+}
+
+fn path_bytes(path: &Path, metadata: &std::fs::Metadata) -> u64 {
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return metadata.len();
+    }
+    std::fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| {
+            std::fs::symlink_metadata(entry.path())
+                .map(|metadata| path_bytes(&entry.path(), &metadata))
+                .unwrap_or(0)
+        })
+        .fold(0u64, u64::saturating_add)
+}
+
+fn prune_empty_parents(mut parent: Option<&Path>, root: &Path) {
+    while let Some(path) = parent {
+        if path == root || !path.starts_with(root) || std::fs::remove_dir(path).is_err() {
+            break;
+        }
+        parent = path.parent();
+    }
+}
+
 /// Where verified archives are kept between the download and the unpack.
 ///
 /// Inside the runtime directory rather than the system temp directory: a 170 MB archive that
@@ -648,5 +770,36 @@ mod tests {
         let error = install_blocking("nonsense", &Http::new(), &mut |_| {})
             .expect_err("there is no such component");
         assert!(error.to_string().contains("nonsense"), "{error}");
+    }
+
+    #[test]
+    fn removing_a_runtime_deletes_only_that_managed_component() {
+        let Some(target) = Target::CURRENT else {
+            eprintln!("skipping: this platform has no pinned runtime target");
+            return;
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bay-runtime-remove-{stamp}"));
+        let model = root.join("models/whisper/ggml-small.en-q5_1.bin");
+        let unrelated = root.join("projects-must-not-be-touched");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        std::fs::write(&model, b"managed model").unwrap();
+        std::fs::write(&unrelated, b"user data").unwrap();
+
+        let removed = remove_at("listen", target, &root).expect("remove listen runtime");
+
+        assert!(!model.exists(), "the managed runtime still exists");
+        assert!(unrelated.exists(), "runtime removal touched unrelated data");
+        assert!(
+            removed
+                .paths
+                .iter()
+                .any(|path| path.ends_with("ggml-small.en-q5_1.bin")),
+            "{removed:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

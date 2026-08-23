@@ -13,7 +13,7 @@ use bay_project::moves::{
 };
 use bay_project::{
     AnimationChannel, Easing, Element, ElementRole, ElementSource, Keyframe, MediaTime, Scene,
-    ShapeElement, ShapeKind, TextAlign, TextElement, Transform,
+    ShapeElement, ShapeKind, TextAlign, TextElement, Transform, VideoElement,
 };
 
 // ---------------------------------------------------------------------------- the core-span table
@@ -213,6 +213,8 @@ fn text_at(id: &str, y: f32) -> Element {
         align: TextAlign::Center,
         letter_spacing: 0.0,
         line_height: 1.2,
+        decorations: None,
+        karaoke: None,
         source: ElementSource::Author,
         role: ElementRole::Headline,
     })
@@ -250,6 +252,97 @@ fn scene_of(elements: Vec<Element>) -> Scene {
     let mut scene = Scene::empty("s", "Scene");
     scene.tracks.main.elements = elements;
     scene
+}
+
+fn tracked_crop(id: &str, right_values: [f32; 3]) -> Element {
+    let times = [0.0, 1.0, 2.0];
+    let left_values = [0.10, 0.18, 0.25];
+    let channel = |values: [f32; 3]| AnimationChannel {
+        keys: times
+            .into_iter()
+            .zip(values)
+            .map(|(time, value)| Keyframe {
+                time: MediaTime::from_seconds_f64(time).unwrap(),
+                value,
+                easing: None,
+            })
+            .collect(),
+        easing: Easing::Linear,
+    };
+    let animations = BTreeMap::from([
+        ("cropLeft".into(), channel(left_values)),
+        ("cropRight".into(), channel(right_values)),
+        ("cropTop".into(), channel([0.0; 3])),
+        ("cropBottom".into(), channel([0.0; 3])),
+    ]);
+    Element::Video(VideoElement {
+        id: id.into(),
+        name: id.into(),
+        start: MediaTime::ZERO,
+        duration: MediaTime::from_seconds_f64(2.0).unwrap(),
+        fade_in: MediaTime::ZERO,
+        fade_out: MediaTime::ZERO,
+        media_id: "source".into(),
+        trim_start: MediaTime::ZERO,
+        trim_end: MediaTime::from_seconds_f64(2.0).unwrap(),
+        speed: 1.0,
+        freeze: None,
+        transform: Transform {
+            crop_left: left_values[0],
+            crop_right: right_values[0],
+            ..Transform::default()
+        },
+        effects: Vec::new(),
+        animations,
+        blend_mode: Default::default(),
+        mask: None,
+        source: ElementSource::Author,
+        role: ElementRole::Label,
+    })
+}
+
+/// `auto_reframe` writes a coordinated camera window, not four independent authored moves. The
+/// opposite crop edges preserve one aperture while the window follows the subject.
+#[test]
+fn a_coordinated_video_crop_is_in_the_camera_vocabulary() {
+    let scene = scene_of(vec![tracked_crop("tracked", [0.40, 0.32, 0.25])]);
+    assert!(
+        moves::off_vocabulary(&scene, REFERENCE_FPS).is_empty(),
+        "{:#?}",
+        moves::off_vocabulary(&scene, REFERENCE_FPS)
+    );
+}
+
+/// Superficial resemblance is not enough: independently changing crop edges resize/squash the
+/// picture rather than moving a fixed-aspect camera window, and remain named as raw motion.
+#[test]
+fn an_uncoordinated_video_crop_remains_off_vocabulary() {
+    let scene = scene_of(vec![tracked_crop("warped", [0.40, 0.34, 0.25])]);
+    let off = moves::off_vocabulary(&scene, REFERENCE_FPS);
+    assert!(
+        off.iter().any(|finding| finding.element_id == "warped"
+            && matches!(finding.property.as_str(), "cropLeft" | "cropRight")),
+        "{off:#?}"
+    );
+}
+
+/// Fixed aperture alone is not enough: a coordinated path sampled so tightly that the eye sees
+/// cuts can still be bad camera motion, and must not use the reframe case to bypass the core-frame
+/// floor.
+#[test]
+fn a_too_fast_coordinated_crop_remains_off_vocabulary() {
+    let mut crop = tracked_crop("jerky", [0.40, 0.32, 0.25]);
+    for channel in crop.animations_mut().unwrap().values_mut() {
+        channel.keys[1].time = MediaTime::from_seconds_f64(0.01).unwrap();
+        channel.keys[2].time = MediaTime::from_seconds_f64(0.02).unwrap();
+    }
+    let scene = scene_of(vec![crop]);
+    let off = moves::off_vocabulary(&scene, REFERENCE_FPS);
+    assert!(
+        off.iter().any(|finding| finding.element_id == "jerky"
+            && matches!(finding.property.as_str(), "cropLeft" | "cropRight")),
+        "{off:#?}"
+    );
 }
 
 /// A move lands on the element where the element is: `lift` on a title at y = 0.31 and on a
@@ -408,6 +501,9 @@ fn a_move_an_element_cannot_perform_is_refused() {
         media_id: "m".into(),
         muted: false,
         volume: 1.0,
+        speed: 1.0,
+        prosody: None,
+        dialogue_chain: None,
         trim_start: MediaTime::ZERO,
         animations: BTreeMap::new(),
         source: ElementSource::Author,

@@ -37,3 +37,7 @@ assets/wall-street-1929/plates29/
 assets/wall-street-1929/music.wav
 # the source interview: 34 MB of CC BY video, fetched by podcut.py
 assets/podcast-cut/*.webm
+
+# third-party media scraped from public accounts — provenance in each index.json,
+# and not ours to redistribute, so it stays out of the repo
+downloaded-assets/

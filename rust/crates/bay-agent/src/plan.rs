@@ -45,6 +45,8 @@ pub enum Planned {
 pub fn planned_tools() -> &'static [&'static str] {
     &[
         "project_info",
+        "plan_create",
+        "plan_get",
         "timeline",
         "check",
         "add_text",
@@ -52,6 +54,8 @@ pub fn planned_tools() -> &'static [&'static str] {
         "add_image",
         "add_video",
         "add_audio",
+        "group_create",
+        "element_retime",
         "animate",
         "animate_many",
         "apply_move",
@@ -104,6 +108,11 @@ pub fn machine_tools() -> &'static [&'static str] {
         "vision_status",
         "stock_status",
         "stock_credits",
+        // Generation is a machine capability: previewing cost/egress and producing a file do not
+        // require an open project. The result is imported explicitly after its gates accept it.
+        "gen_image",
+        "gen_video",
+        "gen_music",
         // The library is the user's, not a document's — it must be readable with nothing open.
         "library_list",
         "library_save",
@@ -656,6 +665,54 @@ fn reject_raw_style(args: &Value, tool: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn text_decorations(args: &Value) -> Option<bay_project::TextDecorations> {
+    let stroke = args.get("stroke").and_then(|value| {
+        Some(bay_project::TextStroke {
+            width: value.get("width")?.as_f64()? as f32,
+            color: value
+                .get("color")
+                .and_then(Value::as_str)
+                .unwrap_or("#000000")
+                .to_string(),
+        })
+    });
+    let shadow = args.get("shadow").and_then(|value| {
+        Some(bay_project::TextShadow {
+            offset_x: value.get("offsetX")?.as_f64()? as f32,
+            offset_y: value.get("offsetY")?.as_f64()? as f32,
+            blur: value.get("blur")?.as_f64()? as f32,
+            color: value
+                .get("color")
+                .and_then(Value::as_str)
+                .unwrap_or("#00000099")
+                .to_string(),
+        })
+    });
+    let plate = args.get("plate").map(|value| bay_project::TextPlate {
+        color: value
+            .get("color")
+            .and_then(Value::as_str)
+            .unwrap_or("#000000B3")
+            .to_string(),
+        padding_x: value
+            .get("paddingX")
+            .and_then(Value::as_f64)
+            .unwrap_or(16.0) as f32,
+        padding_y: value
+            .get("paddingY")
+            .and_then(Value::as_f64)
+            .unwrap_or(10.0) as f32,
+        radius: value.get("radius").and_then(Value::as_f64).unwrap_or(12.0) as f32,
+    });
+    (stroke.is_some() || shadow.is_some() || plate.is_some()).then_some(
+        bay_project::TextDecorations {
+            stroke,
+            shadow,
+            plate,
+        },
+    )
+}
+
 fn describe_element(element: &Element) -> Value {
     let mut out = serde_json::json!({
         "id": element.id(),
@@ -808,12 +865,120 @@ fn parse_easing(name: Option<&str>) -> Result<Easing, String> {
     })
 }
 
+fn plan_draft(args: &Value) -> Result<crate::trust::PlanDraft, String> {
+    let beats = args
+        .get("beats")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing required array field \"beats\"".to_string())?
+        .iter()
+        .map(|beat| {
+            let slots = beat
+                .get("assetSlots")
+                .and_then(Value::as_array)
+                .map(|slots| {
+                    slots
+                        .iter()
+                        .map(|slot| {
+                            Ok(bay_project::AssetSlot {
+                                id: slot
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .ok_or_else(|| "asset slot needs string id".to_string())?
+                                    .to_string(),
+                                purpose: slot
+                                    .get("purpose")
+                                    .and_then(Value::as_str)
+                                    .ok_or_else(|| "asset slot needs string purpose".to_string())?
+                                    .to_string(),
+                                required: slot
+                                    .get("required")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            Ok(bay_project::BeatPlan {
+                id: beat
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "beat needs string id".to_string())?
+                    .to_string(),
+                role: beat
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "beat needs string role".to_string())?
+                    .to_string(),
+                marker_seconds: beat
+                    .get("at")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| "beat needs numeric at".to_string())?,
+                intent: beat
+                    .get("intent")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "beat needs string intent".to_string())?
+                    .to_string(),
+                asset_slots: slots,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(crate::trust::PlanDraft {
+        brief: args
+            .get("brief")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing required string field \"brief\"".to_string())?
+            .to_string(),
+        format: args
+            .get("format")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing required string field \"format\"".to_string())?
+            .to_string(),
+        target_runtime_seconds: args
+            .get("targetRuntimeSeconds")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| "missing required number field \"targetRuntimeSeconds\"".to_string())?,
+        beats,
+    })
+}
+
 /// Plan one tool call against `project`.
 pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, String> {
     let scene_id = project.active_scene().id.clone();
 
     match name {
         // ------------------------------------------------------------------ reads
+        "plan_get" => Ok(Planned::Read(serde_json::json!({
+            "plan": project.settings.plan,
+            "formats": crate::trust::format_registry(),
+        }))),
+        "plan_create" => {
+            let mut artifact = crate::trust::create_plan(plan_draft(args)?)?;
+            let approve = args
+                .get("approve")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if approve {
+                artifact = crate::trust::commit_plan(artifact);
+            }
+            let mut commands = vec![Command::SetPlan {
+                plan: Box::new(artifact.clone()),
+            }];
+            if approve {
+                commands.extend(crate::trust::marker_commands(&artifact)?);
+            }
+            Ok(Planned::Tx {
+                label: "plan_create".into(),
+                commands,
+                scene_id,
+                new_ids: artifact
+                    .beats
+                    .iter()
+                    .map(|beat| format!("plan-{}", beat.id))
+                    .collect(),
+            })
+        }
         "project_info" => {
             let scene = project.active_scene();
             let visual: usize = scene
@@ -957,9 +1122,23 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
         // read and it meant "no errors" on a suite where 25 of 27 codes could not fire — so
         // there is no boolean here any more. `status` is three-state and `skipped` says what
         // could not be evaluated, which is the difference between a pass and a silence.
-        "check" => Ok(Planned::Read(
-            serde_json::to_value(bay_core::check(project)).map_err(|e| e.to_string())?,
-        )),
+        "check" => {
+            let report = match args.get("duration") {
+                Some(value) => {
+                    let seconds = value
+                        .as_f64()
+                        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+                        .ok_or_else(|| {
+                            "duration must be a finite number greater than zero".to_string()
+                        })?;
+                    bay_core::check::check_duration(project, secs(seconds)?)
+                }
+                None => bay_core::check(project),
+            };
+            Ok(Planned::Read(
+                serde_json::to_value(report).map_err(|e| e.to_string())?,
+            ))
+        }
 
         "timeline" => {
             let scene = project.active_scene();
@@ -1045,6 +1224,8 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 },
                 letter_spacing: number(args, "letterSpacing", f64::from(style.tracking)) as f32,
                 line_height: number(args, "lineHeight", f64::from(style.line_height)) as f32,
+                decorations: text_decorations(args),
+                karaoke: None,
                 source: ElementSource::Author,
                 role,
             });
@@ -1198,8 +1379,25 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 }
             }
 
+            if let Some(group) = project.active_scene().groups.get(&element_id) {
+                if !Element::ANIMATABLE.contains(&property.as_str()) {
+                    return Err(format!(
+                        "{property:?} cannot be animated on a group — pick one of {:?}",
+                        Element::ANIMATABLE
+                    ));
+                }
+                let mut group = group.clone();
+                group.animations.insert(property, channel);
+                return Ok(Planned::Tx {
+                    label: "animate group".into(),
+                    commands: vec![Command::SetGroup { group }],
+                    scene_id,
+                    new_ids: Vec::new(),
+                });
+            }
+
             let reference = find_ref(project, &element_id)
-                .ok_or_else(|| format!("no element {element_id:?} on the timeline"))?;
+                .ok_or_else(|| format!("no element or group {element_id:?} on the timeline"))?;
             let element = project
                 .active_scene()
                 .element(&reference)
@@ -1207,9 +1405,24 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
             // Checked against the kind, not one global list: audio has `volume` and no
             // position, everything visual has a position and no level. Accepting `x` on a
             // music bed and then quietly doing nothing with the keys is worse than refusing.
-            if !element.animatable().contains(&property.as_str()) {
+            let nested_mask = matches!(
+                property.as_str(),
+                "mask.x" | "mask.y" | "mask.width" | "mask.height" | "mask.feather"
+            ) && element.mask().is_some();
+            let nested_effect = property
+                .strip_prefix("effect.")
+                .and_then(|rest| rest.split_once('.'))
+                .is_some_and(|(id, param)| {
+                    element
+                        .effects()
+                        .iter()
+                        .any(|effect| effect.id == id && effect.params.contains_key(param))
+                });
+            if !element.animatable().contains(&property.as_str()) && !nested_mask && !nested_effect
+            {
                 return Err(format!(
-                    "{property:?} cannot be animated on a {} — pick one of {:?}",
+                    "{property:?} cannot be animated on a {} — pick a transform channel, an \
+                     existing mask field, or effect.<id>.<param>; transform channels are {:?}",
                     element.kind().label().to_lowercase(),
                     element.animatable()
                 ));
@@ -2228,6 +2441,8 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     media_id,
                     trim_start: secs(trim_start)?,
                     trim_end: secs(trim_start + duration)?,
+                    speed: number(args, "speed", 1.0) as f32,
+                    freeze: None,
                     transform: transform_from(args),
                     effects: Vec::new(),
                     animations: BTreeMap::new(),
@@ -2291,6 +2506,10 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     media_id,
                     muted: false,
                     volume: number(args, "volume", 1.0) as f32,
+                    speed: number(args, "speed", 1.0) as f32,
+                    prosody: None,
+                    dialogue_chain: (role == bay_project::AudioRole::Speech)
+                        .then(bay_project::DialogueAudioChain::default),
                     animations: Default::default(),
                     // Where in the file to start. This is how a bed lands on the drop rather
                     // than always at bar one.
@@ -2305,6 +2524,111 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 commands,
                 scene_id,
                 new_ids: vec![id],
+            })
+        }
+
+        "group_create" => {
+            let id = text(args, "id").unwrap_or_else(|| mint_id(project, "group"));
+            if project.active_scene().groups.contains_key(&id) || find_ref(project, &id).is_some() {
+                return Err(format!("an element or group with id {id:?} already exists"));
+            }
+            let children: Vec<String> = args
+                .get("elementIds")
+                .and_then(|value| value.as_array())
+                .ok_or_else(|| "elementIds must be a non-empty array".to_string())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| "every elementIds entry must be a string".to_string())
+                })
+                .collect::<Result<_, _>>()?;
+            if children.is_empty() {
+                return Err("elementIds must be a non-empty array".into());
+            }
+            for child in &children {
+                let reference = find_ref(project, child)
+                    .ok_or_else(|| format!("no element {child:?} on the timeline"))?;
+                let element = project
+                    .active_scene()
+                    .element(&reference)
+                    .expect("reference exists");
+                if element.transform().is_none() {
+                    return Err(format!(
+                        "audio element {child:?} cannot be placed in a visual group"
+                    ));
+                }
+                if project
+                    .active_scene()
+                    .groups
+                    .values()
+                    .any(|group| group.children.contains(child))
+                {
+                    return Err(format!("element {child:?} already belongs to a group"));
+                }
+            }
+            let group = bay_project::ElementGroup {
+                id: id.clone(),
+                children,
+                transform: transform_from(args),
+                animations: BTreeMap::new(),
+            };
+            Ok(Planned::Tx {
+                label: "group_create".into(),
+                commands: vec![Command::SetGroup { group }],
+                scene_id,
+                new_ids: vec![id],
+            })
+        }
+
+        "element_retime" => {
+            let id = text(args, "elementId")
+                .ok_or_else(|| "missing required string field \"elementId\"".to_string())?;
+            let reference = find_ref(project, &id)
+                .ok_or_else(|| format!("no element {id:?} on the timeline"))?;
+            let mut element = project
+                .active_scene()
+                .element(&reference)
+                .cloned()
+                .ok_or_else(|| format!("no element {id:?} on the timeline"))?;
+            let speed = number(args, "speed", 1.0) as f32;
+            if !speed.is_finite() || speed <= 0.0 {
+                return Err("speed must be finite and greater than zero".into());
+            }
+            match &mut element {
+                Element::Video(video) => {
+                    video.speed = speed;
+                    video.freeze = match (
+                        args.get("freezeAt").and_then(|value| value.as_f64()),
+                        args.get("freezeDuration").and_then(|value| value.as_f64()),
+                    ) {
+                        (Some(at), Some(duration)) if duration > 0.0 => {
+                            Some(bay_project::FreezeFrame {
+                                at: secs(at)?,
+                                duration: secs(duration)?,
+                            })
+                        }
+                        (None, None) => None,
+                        _ => {
+                            return Err(
+                                "freezeAt and freezeDuration must be provided together, with a \
+                                 positive duration"
+                                    .into(),
+                            );
+                        }
+                    };
+                    let duration = video.duration;
+                    element.set_duration(duration);
+                }
+                Element::Audio(audio) => audio.speed = speed,
+                _ => return Err("only video and audio elements can be retimed".into()),
+            }
+            Ok(Planned::Tx {
+                label: "element_retime".into(),
+                commands: vec![Command::ReplaceElement { reference, element }],
+                scene_id,
+                new_ids: Vec::new(),
             })
         }
 
@@ -2395,6 +2719,7 @@ mod tests {
                 // A named kit rather than the picker's choice: these tests assert on the size
                 // and colour a role resolves to, and the picker is seeded by the date.
                 kit: bay_project::builtin_kit("swiss").cloned(),
+                plan: None,
             },
             scenes: vec![Scene {
                 id: "scene-main".into(),
@@ -2406,6 +2731,7 @@ mod tests {
                     audio: Vec::new(),
                 },
                 markers: Vec::new(),
+                groups: Default::default(),
             }],
             current_scene_id: "scene-main".into(),
             media: Vec::new(),
@@ -2442,6 +2768,8 @@ mod tests {
                 media_id: "m1".into(),
                 trim_start: secs(2.0).unwrap(),
                 trim_end: secs(12.0).unwrap(),
+                speed: 1.0,
+                freeze: None,
                 transform: Transform::default(),
                 effects: Vec::new(),
                 animations: Default::default(),
@@ -2475,6 +2803,8 @@ mod tests {
             align: Default::default(),
             letter_spacing: 0.0,
             line_height: 1.2,
+            decorations: None,
+            karaoke: None,
             source: Default::default(),
             role: Default::default(),
         })];
@@ -2529,6 +2859,9 @@ mod tests {
             media_id: "m1".into(),
             muted: false,
             volume: 1.0,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             trim_start: MediaTime::ZERO,
             source: Default::default(),
@@ -2631,6 +2964,50 @@ mod tests {
             assert!(error.contains(key), "{error}");
             assert!(error.contains("style kit"), "{error}");
         }
+    }
+
+    #[test]
+    fn templates_resolve_their_literals_through_the_project_kit() {
+        let project = project();
+        let kit = project.settings.kit.clone().unwrap();
+        let (_, commands, _) = tx(plan(
+            "template_place",
+            &serde_json::json!({
+                "templateId": "lower-third",
+                "start": 0,
+                "text": ["Ada", "Engineer"],
+            }),
+            &project,
+        )
+        .expect("should plan"));
+
+        let mut checked = 0;
+        for command in commands {
+            let Command::AddElement { element, .. } = command else {
+                continue;
+            };
+            let Some(role) = element.role() else {
+                continue;
+            };
+            let expected = kit.resolve(role, bay_project::Tone::default_for(role));
+            match element {
+                Element::Text(text) => {
+                    assert_eq!(text.font_family.as_deref(), Some(expected.family.as_str()));
+                    assert_eq!(text.font_size, expected.size);
+                    assert_eq!(text.color, expected.color);
+                    checked += 1;
+                }
+                Element::Shape(shape) => {
+                    assert_eq!(shape.color, expected.color);
+                    checked += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            checked, 3,
+            "every styled element in the template was checked"
+        );
     }
 
     /// A project made in the app — or opened from before kits existed — takes one the first time
@@ -2822,6 +3199,9 @@ mod tests {
             media_id: "m1".into(),
             muted: false,
             volume: 1.0,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             trim_start: MediaTime::ZERO,
             source: Default::default(),
@@ -2883,6 +3263,16 @@ mod tests {
                 .any(|f| f["code"] == "off-canvas")
         );
         assert!(value.get("ok").is_none(), "the boolean is gone on purpose");
+
+        let Planned::Read(short) =
+            plan("check", &serde_json::json!({"duration": 0.5}), &project).unwrap()
+        else {
+            panic!("a duration-scoped check must still be a read");
+        };
+        assert!(
+            short["stats"]["beats"]["endSeconds"].as_f64().unwrap() <= 0.5,
+            "the report must describe only the requested delivery interval: {short}"
+        );
     }
 
     /// Every revising tool addresses an element by id. A typo has to come back as an error the
@@ -3061,6 +3451,9 @@ mod tests {
             media_id: "m1".into(),
             muted: false,
             volume: 1.0,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             trim_start: MediaTime::ZERO,
             animations: Default::default(),
             source: Default::default(),
@@ -3138,6 +3531,70 @@ mod tests {
         assert_eq!(label, "add_text");
         assert_eq!(commands.len(), 1);
         assert_eq!(ids, vec!["text-1"]);
+    }
+
+    #[test]
+    fn text_decorations_survive_the_attached_editor_plan() {
+        let (_, commands, _) = tx(plan(
+            "add_text",
+            &serde_json::json!({
+                "role": "headline", "start": 0, "duration": 2, "content": "Hook",
+                "stroke": { "width": 3, "color": "#111111" },
+                "shadow": { "offsetX": 4, "offsetY": 5, "blur": 6 },
+                "plate": { "paddingX": 18 }
+            }),
+            &project(),
+        )
+        .expect("should plan"));
+        let [
+            Command::AddElement {
+                element: Element::Text(text),
+                ..
+            },
+        ] = &commands[..]
+        else {
+            panic!("expected one text element: {commands:?}");
+        };
+        let decorations = text.decorations.as_ref().expect("decorations");
+        assert_eq!(decorations.stroke.as_ref().unwrap().width, 3.0);
+        assert_eq!(decorations.shadow.as_ref().unwrap().blur, 6.0);
+        assert_eq!(decorations.plate.as_ref().unwrap().padding_x, 18.0);
+    }
+
+    #[test]
+    fn retime_and_group_are_planned_as_first_class_edits() {
+        let project = project_with_clip();
+        let (_, commands, _) = tx(plan(
+            "element_retime",
+            &serde_json::json!({
+                "elementId": "v1", "speed": 1.5,
+                "freezeAt": 2.0, "freezeDuration": 0.75
+            }),
+            &project,
+        )
+        .expect("retime should plan"));
+        let [
+            Command::ReplaceElement {
+                element: Element::Video(video),
+                ..
+            },
+        ] = &commands[..]
+        else {
+            panic!("expected one video replacement: {commands:?}");
+        };
+        assert_eq!(video.speed, 1.5);
+        assert_eq!(video.freeze.as_ref().unwrap().at, secs(2.0).unwrap());
+
+        let (_, commands, _) = tx(plan(
+            "group_create",
+            &serde_json::json!({ "id": "hero", "elementIds": ["v1"] }),
+            &project,
+        )
+        .expect("group should plan"));
+        assert!(matches!(
+            &commands[..],
+            [Command::SetGroup { group }] if group.id == "hero" && group.children == ["v1"]
+        ));
     }
 
     /// A layer above the last overlay must carry the AddTrack commands with it, in the same
@@ -3279,6 +3736,8 @@ mod tests {
                     align: Default::default(),
                     letter_spacing: 0.0,
                     line_height: 1.2,
+                    decorations: None,
+                    karaoke: None,
                     source: Default::default(),
                     role: Default::default(),
                 }));
@@ -3567,6 +4026,8 @@ pub struct CaptionStyle {
     pub preset: CaptionPreset,
     pub font_size: f32,
     pub color: String,
+    /// Active-word colour for karaoke captions.
+    pub highlight_color: String,
     pub font_family: Option<String>,
     pub font_weight: u16,
     /// Horizontal position of the caption box, as a fraction of the canvas.
@@ -3589,6 +4050,7 @@ impl Default for CaptionStyle {
             preset: CaptionPreset::Plain,
             font_size: 46.0,
             color: "#EDECE6".to_string(),
+            highlight_color: "#FFD84D".to_string(),
             font_family: None,
             font_weight: 600,
             x: 0.08,
@@ -3634,6 +4096,7 @@ impl CaptionStyle {
             preset,
             font_size: style.size,
             color: style.color,
+            highlight_color: kit.palette.accent.clone(),
             font_family: Some(style.family),
             font_weight: style.weight,
             x: placement.x.unwrap_or(base_x),
@@ -3788,6 +4251,71 @@ fn caption_fade(fade: f64, duration: f64) -> Option<AnimationChannel> {
     })
 }
 
+fn karaoke_for_cue(
+    project: &Project,
+    cue: &bay_speech::Cue,
+    highlight_color: &str,
+) -> bay_project::KaraokeSpec {
+    let mut has_word_timing = false;
+    let mut projected = Vec::new();
+    for element in project.active_scene().elements() {
+        let Element::Audio(audio) = element else {
+            continue;
+        };
+        if audio.role != bay_project::AudioRole::Speech || audio.speed <= 0.0 {
+            continue;
+        }
+        let Some(transcript) = project
+            .media
+            .iter()
+            .find(|asset| asset.id == audio.media_id)
+            .and_then(|asset| asset.transcript.as_ref())
+        else {
+            continue;
+        };
+        has_word_timing |= !transcript.words.is_empty();
+        let speed = f64::from(audio.speed);
+        let source_start = audio.trim_start.to_seconds_f64();
+        let source_end = source_start + audio.duration.to_seconds_f64() * speed;
+        let timeline_start = audio.start.to_seconds_f64();
+        projected.extend(transcript.words.iter().filter_map(|word| {
+            if word.start_seconds < source_start || word.end_seconds > source_end {
+                return None;
+            }
+            let start = timeline_start + (word.start_seconds - source_start) / speed;
+            let end = timeline_start + (word.end_seconds - source_start) / speed;
+            (start >= cue.start && start < cue.end).then(|| bay_project::KaraokeWord {
+                text: word.text.clone(),
+                start: secs((start - cue.start).max(0.0)).unwrap_or(MediaTime::ZERO),
+                end: secs((end - cue.start).min(cue.duration()).max(0.0))
+                    .unwrap_or(MediaTime::ZERO),
+            })
+        }));
+    }
+    if has_word_timing {
+        projected.sort_by_key(|word| word.start);
+        return bay_project::KaraokeSpec {
+            words: projected,
+            highlight_color: highlight_color.to_string(),
+        };
+    }
+
+    let tokens: Vec<&str> = cue.text.split_whitespace().collect();
+    let slice = cue.duration().max(0.05) / tokens.len().max(1) as f64;
+    bay_project::KaraokeSpec {
+        words: tokens
+            .iter()
+            .enumerate()
+            .map(|(index, token)| bay_project::KaraokeWord {
+                text: (*token).to_string(),
+                start: secs(index as f64 * slice).unwrap_or(MediaTime::ZERO),
+                end: secs((index + 1) as f64 * slice).unwrap_or(MediaTime::ZERO),
+            })
+            .collect(),
+        highlight_color: highlight_color.to_string(),
+    }
+}
+
 /// Commands that put `cues` on the timeline as captions.
 fn caption_commands(
     project: &Project,
@@ -3865,6 +4393,8 @@ fn caption_commands(
                 align: style.align,
                 letter_spacing: style.letter_spacing,
                 line_height: style.line_height,
+                decorations: None,
+                karaoke: Some(karaoke_for_cue(project, cue, &style.highlight_color)),
                 // bay wrote this, not the author — the same stamp the headless path applies,
                 // so a caption means the same thing whichever front end placed it.
                 source: ElementSource::Tool,
@@ -3948,6 +4478,9 @@ pub fn place_narration(
             muted: false,
             trim_start: MediaTime::ZERO,
             volume,
+            speed: 1.0,
+            prosody: Some(bay_project::SpeechProsody::default()),
+            dialogue_chain: Some(bay_project::DialogueAudioChain::default()),
             animations: Default::default(),
             source: ElementSource::Tool,
             role: bay_project::AudioRole::Speech,

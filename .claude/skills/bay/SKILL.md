@@ -27,10 +27,14 @@ If no such tool exists at all, bay is not registered yet:
 
 ```bash
 open -a bay                                  # or: bay --mcp   for no window
-claude mcp add --transport http bay http://127.0.0.1:7333/mcp
+export BAY_MCP_TOKEN="$(<"$HOME/Library/Application Support/bay/mcp-token")"
+claude mcp add --transport http bay http://127.0.0.1:7333/mcp \
+  --header "Authorization: Bearer $BAY_MCP_TOKEN"
 ```
 
 MCP servers load at session start, so a server registered now is available **next** session.
+For CLI and skill installation in Claude Code, Cursor, or OpenClaw, see
+[references/installation.md](references/installation.md).
 
 **Two ways to serve, same tools, same port.** `bay` (the editor) serves agents from the window,
 so your edits land in the timeline the user is watching and undo with their keystroke. `bay --mcp`
@@ -44,6 +48,8 @@ first, and ask before you `project_create` over someone's work.
 narration for want of Kokoro, is never a reason to tell the user to install something. A GPU
 adapter is the one thing bay cannot provide. `render`, `narrate`, `subtitles_to_video` and
 `shots_detect` return a job id — poll `job_status` until `finished`, then read `result`.
+`runtime_remove` tears down only the selected component under bay's managed runtime directory;
+it never removes a system ffmpeg, Python, or user media.
 
 ## The loop
 
@@ -91,9 +97,11 @@ adapter is the one thing bay cannot provide. `render`, `narrate`, `subtitles_to_
    sound under every significant move. Not a finishing touch — see
    [references/craft.md](references/craft.md).
 8. **`check`** — then the gate below. Costs nothing, needs no GPU.
-9. **`snapshot` several moments and actually Read the PNGs.** Paths are resolved by the *server*
-   process, so pass absolute ones.
-10. **`render`** — it runs `check` first and refuses on an error. `timeline` dumps everything
+9. **`check_frames`** — the picture-level gate: frozen arrangements, anchor scale and whether the
+   lower frame is alive. It needs a GPU and says `unevaluated` rather than pretending to pass.
+10. **`contact_sheet` and actually Read the PNG.** With no times bay picks two reproducible,
+   jittered samples per beat. Paths are resolved by the *server* process, so pass an absolute one.
+11. **`render`** — it runs `check` first and refuses on an error. `timeline` dumps everything
     placed, so re-read your own work instead of keeping a parallel copy in your head.
 
 ## The gate before you render
@@ -118,13 +126,14 @@ these is satisfied by adding an element.
    `element_trim` fixes it.
 8. **Motion comes from the registry.** `off-vocabulary-motion` lists any channel that does not.
    Several distinct moves, each doing real work — not one move everywhere, and not a rotation.
-9. **The bottom of the frame is alive.** `bottom-dead` wants real content low in frame from a
-   non-caption element, not a hairline and not the caption band.
+9. **`check_frames` returns `status: clean` and an empty `skipped`.** `frozen` rejects a static
+   arrangement, `anchor-scale` requires one dominant visual event, and `bottom-dead` wants real
+   non-caption content low in frame rather than a hairline or caption band.
 10. **The mix is positional.** Narration windows must be louder than the gaps, the bed must stay
     audible in the gaps, and the loudest moment must land on the `payoff` marker you placed in
     step 2 — before any audio existed.
-11. **You looked.** Snapshot the hook, the turn, the payoff and one beat you are least sure of,
-    and Read them. Every defect worth catching is invisible to a lint and obvious in a frame.
+11. **You looked.** Read the contact sheet, then snapshot any panel that needs full-size
+    inspection. Every defect worth catching is invisible to a lint and obvious in a frame.
 
 `render({ignoreChecks: true, reason: …})` exists and stamps your reason into the file. It is a
 written claim, not a suppression: fixing is nearly always cheaper than justifying.

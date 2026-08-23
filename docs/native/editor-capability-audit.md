@@ -41,7 +41,7 @@ Not a wish list — this is verified by tests in the tree.
 | Speech | Kokoro TTS with word-synced captions from one synthesis, SRT in/out |
 | Undo | every edit is a `Command` → self-inverting `ProjectPatch`; agent edits undo with Cmd+Z |
 | Provisioning | ffmpeg + Python + Kokoro from a pinned, SHA-256-verified manifest |
-| MCP | 26 tools; an agent can build a reel end to end and look at frames before rendering |
+| MCP | <!-- bay-tool-count -->95<!-- /bay-tool-count --> generated tools; an agent can build a reel end to end and look at frames before rendering |
 
 ---
 
@@ -178,7 +178,7 @@ queue (the jobs infrastructure to run one already exists), and a "reveal in Find
 
 ## 7. The MCP surface — where AI quality is actually capped — **closed**
 
-26 tools. The agent could **create** almost anything and **revise** almost nothing.
+The original surface could **create** almost anything and **revise** almost nothing.
 
 | Exists | Missing |
 |---|---|

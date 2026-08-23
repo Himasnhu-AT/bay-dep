@@ -81,6 +81,8 @@ fn the_source_range_fields_keep_their_wire_names() {
         media_id: "m".into(),
         trim_start: MediaTime::from_ticks(240_000),
         trim_end: MediaTime::from_ticks(360_000),
+        speed: 1.0,
+        freeze: None,
         transform: Default::default(),
         effects: Vec::new(),
         animations: Default::default(),
@@ -103,6 +105,9 @@ fn the_source_range_fields_keep_their_wire_names() {
         media_id: "m".into(),
         muted: false,
         volume: 1.0,
+        speed: 1.0,
+        prosody: None,
+        dialogue_chain: None,
         animations: Default::default(),
         trim_start: MediaTime::from_ticks(600_000),
         source: Default::default(),
@@ -175,6 +180,38 @@ fn a_project_without_loudness_still_loads() {
     assert!(floor.accent_seconds.is_empty());
 }
 
+#[test]
+fn word_timed_transcript_persists_on_the_media_asset() {
+    use bay_project::{MediaAsset, Transcript, TranscriptUtterance, TranscriptWord};
+
+    let mut asset = MediaAsset::new("m", "take.webm", "/tmp/take.webm");
+    asset.transcript = Some(Transcript {
+        language: "en".into(),
+        model: "ggml-small.en-q5_1.bin".into(),
+        duration_seconds: 2.0,
+        words: vec![TranscriptWord {
+            text: "hope".into(),
+            start_seconds: 1.1,
+            end_seconds: 1.5,
+            confidence: 0.94,
+            speaker: Some("speaker-1".into()),
+        }],
+        utterances: vec![TranscriptUtterance {
+            text: "hope".into(),
+            start_seconds: 1.1,
+            end_seconds: 1.5,
+            speaker: Some("speaker-1".into()),
+            word_start: 0,
+            word_end: 1,
+        }],
+    });
+    let json = serde_json::to_string(&asset).expect("serialize");
+    assert!(json.contains("\"startSeconds\":1.1"), "{json}");
+    assert!(json.contains("\"confidence\":0.94"), "{json}");
+    let restored: MediaAsset = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(restored, asset);
+}
+
 /// A project written before any of this existed must still open, as clips that play from
 /// their own head — which is what they were. Defaulting is the difference between "old
 /// projects load" and "old projects load wrong".
@@ -216,6 +253,9 @@ fn audio_clip(duration: f64, volume: f32) -> Element {
         media_id: "m".into(),
         muted: false,
         volume,
+        speed: 1.0,
+        prosody: None,
+        dialogue_chain: None,
         trim_start: MediaTime::ZERO,
         animations: Default::default(),
         source: Default::default(),
@@ -585,6 +625,8 @@ fn provenance_and_role_keep_their_wire_names() {
         align: Default::default(),
         letter_spacing: 0.0,
         line_height: 1.2,
+        decorations: None,
+        karaoke: None,
         source: ElementSource::Author,
         role: ElementRole::Hook,
     });
@@ -664,6 +706,34 @@ fn elements_without_provenance_load_as_the_authors_own() {
     .expect("an audio clip with no source or role");
     assert_eq!(bed.source, ElementSource::Author);
     assert_eq!(bed.role, AudioRole::Bed);
+}
+
+#[test]
+fn generated_media_provenance_round_trips_and_old_assets_default_to_authored() {
+    use bay_project::{GeneratedMediaProvenance, MediaAsset};
+
+    let old: MediaAsset =
+        serde_json::from_str(r#"{"id":"m","name":"photo","path":"/tmp/photo.png"}"#)
+            .expect("projects written before generation provenance must still load");
+    assert!(old.generated.is_none());
+
+    let mut generated = old;
+    generated.generated = Some(GeneratedMediaProvenance {
+        provider: "fal".into(),
+        model: "fal-ai/flux/dev".into(),
+        prompt: "a red bicycle in snow".into(),
+        seed: 42,
+        generated_at_unix_ms: 1_786_813_200_000,
+        request_hash: "request".into(),
+        artifact_sha256: "artifact".into(),
+    });
+    let json = serde_json::to_string(&generated).expect("serialize generated media");
+    assert!(json.contains("\"generated\":{"), "{json}");
+    assert!(json.contains("\"artifactSha256\":\"artifact\""), "{json}");
+    assert_eq!(
+        serde_json::from_str::<MediaAsset>(&json).expect("deserialize generated media"),
+        generated
+    );
 }
 
 /// `caption-<n>` is bay's own, and nothing else is.
@@ -1024,6 +1094,8 @@ fn the_captions_bay_wrote_are_not_off_token_values() {
         align: Default::default(),
         letter_spacing: 0.0,
         line_height: 1.2,
+        decorations: None,
+        karaoke: None,
         source: ElementSource::Tool,
         role: bay_project::ElementRole::Caption,
     };

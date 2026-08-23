@@ -138,8 +138,8 @@ carries the numbers; the voice carries what the picture cannot — the causation
 the "so what". Test it: read the script end to end with the video off. It should be a complete
 explanation that never speaks a single on-screen figure.
 
-- **Budget by rate, and use the measured one.** Kokoro runs about **2.99 words/second** including
-  pauses at normal speed — the figure this skill carried for a year was 2.5, a 20 % planning error
+- **Budget by rate, and use the measured one.** Kokoro runs about **3.30 words/second** including
+  pauses at normal speed — the figure this skill carried for a year was 2.5, a 24 % planning error
   that shipped a read far faster than intended. Better: give `narrate` a target words-per-second
   and let it pick `speed`, then check the returned rate and end time against the beat you wrote it
   for. Fix an overrun by starting earlier or cutting a clause the picture already carries.

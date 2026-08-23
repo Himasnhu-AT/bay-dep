@@ -38,6 +38,91 @@ pub struct MediaAsset {
     /// How loud the file itself is. See [`AssetLoudness`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loudness: Option<AssetLoudness>,
+    /// Speech recognised from this asset, persisted with the project so transcript edits are
+    /// stable and never require re-running the model merely to reopen a project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<Transcript>,
+    /// Shot-level visual embeddings used by semantic media search. The vectors are persisted so
+    /// reopening a project never requires decoding and embedding the footage again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_index: Option<SemanticMediaIndex>,
+    /// Present only when bay verified a generation receipt against this file's bytes. Optional
+    /// for backward compatibility: old projects and authored media deserialize as ungenerated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<GeneratedMediaProvenance>,
+}
+
+/// Durable disclosure attached to generated media.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedMediaProvenance {
+    pub provider: String,
+    pub model: String,
+    pub prompt: String,
+    pub seed: u64,
+    pub generated_at_unix_ms: u128,
+    pub request_hash: String,
+    pub artifact_sha256: String,
+}
+
+/// A persisted semantic index produced by bay's provisioned SigLIP encoder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticMediaIndex {
+    pub model: String,
+    #[serde(default)]
+    pub shots: Vec<SemanticShot>,
+}
+
+/// One detected shot represented by a frame sampled at its temporal midpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticShot {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub sample_seconds: f64,
+    pub embedding: Vec<f32>,
+}
+
+/// A local speech-to-text result. Word timing is the canonical edit surface; utterances retain
+/// the coarser structure emitted by the recogniser without making precise cuts depend on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transcript {
+    pub language: String,
+    pub model: String,
+    pub duration_seconds: f64,
+    #[serde(default)]
+    pub words: Vec<TranscriptWord>,
+    #[serde(default)]
+    pub utterances: Vec<TranscriptUtterance>,
+}
+
+/// One recognised word and its source-media interval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptWord {
+    pub text: String,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    /// Whisper token probability aggregated for this word, in `0..=1`.
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+}
+
+/// A recogniser segment, with an optional speaker label when the backend supplies one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptUtterance {
+    pub text: String,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// Half-open range into [`Transcript::words`].
+    pub word_start: usize,
+    pub word_end: usize,
 }
 
 /// What a file measures, independent of any gain applied to it on the timeline.
@@ -105,6 +190,9 @@ impl MediaAsset {
             width: None,
             height: None,
             loudness: None,
+            transcript: None,
+            semantic_index: None,
+            generated: None,
         }
     }
 
@@ -324,6 +412,8 @@ impl Project {
                     align: Default::default(),
                     letter_spacing: 0.0,
                     line_height: 1.2,
+                    decorations: None,
+                    karaoke: None,
                     source: ElementSource::Author,
                     role: ElementRole::Headline,
                 }),
@@ -386,6 +476,8 @@ impl Project {
                 align: Default::default(),
                 letter_spacing: 0.0,
                 line_height: 1.2,
+                decorations: None,
+                karaoke: None,
                 source: ElementSource::Author,
                 role: ElementRole::Kicker,
             })],
@@ -407,6 +499,9 @@ impl Project {
                 media_id: "media-music".into(),
                 muted: false,
                 volume: 1.0,
+                speed: 1.0,
+                prosody: None,
+                dialogue_chain: None,
                 animations: Default::default(),
                 trim_start: MediaTime::ZERO,
                 source: ElementSource::Author,
@@ -424,6 +519,7 @@ impl Project {
                 audio,
             },
             markers: Vec::new(),
+            groups: Default::default(),
         };
 
         Self {

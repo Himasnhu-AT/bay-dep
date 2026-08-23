@@ -62,13 +62,13 @@ bay/
 RELEASE=1 ./run.sh    # release build — much smoother playback
 ./build.sh            # release build of the app
 ./test.sh             # fmt + clippy -D warnings + the full Rust suite
-STRICT=1 ./test.sh    # fail on missing GPU/ffmpeg instead of skipping (what CI's mac job does)
+STRICT=1 ./test.sh    # fail on missing GPU/ffmpeg instead of skipping
 ```
 
 Cargo commands run from `rust/`, not the repo root:
 
 ```bash
-cd rust && cargo test --workspace
+cd rust && env -u CARGO_TARGET_DIR cargo test --workspace
 ```
 
 ffmpeg is required for video/audio decode, probing, waveforms, and MP4 export. bay installs it

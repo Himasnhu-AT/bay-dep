@@ -1,8 +1,9 @@
 # `check` — every code, and what it was measured on
 
-`check` is a pure pass over the project model (`bay-core/src/check.rs`). This is the register of
-what it can say, what severity each code carries, and — for every code — **whether it fires on
-the project the round-2 effort is about, and on that project's predecessors.**
+`check` is a pure pass over the project model (`bay-core/src/check.rs`), while `check_frames`
+owns checks that need the real raster/compositor. The severity registry is shared: this is the
+register of what either pass can say, what severity each code carries, and — for every code —
+**whether it fires on the project the round-2 effort is about, and on that project's predecessors.**
 
 That last column is the whole point of this document. The five perceptual checks shipped in
 round 1 were never computed against the video they were written to catch, and all five passed
@@ -61,12 +62,14 @@ R1 and R2 are hand-built from `prompt-res/12-video-teardowns.md` and
 projects. `skip` means the code could not evaluate and said so in `skipped` — **which is not a
 zero.** The previous version of this table carried a sixth column, `small`, for two short starter
 projects in one person's library; it is gone, because nothing in the repository can reproduce it.
+The JSON fixtures do not carry their media files. `missing-media` therefore measures that fact;
+the other rows remain the editorial comparison.
 
 | code | severity | wicks | p-1 | p-2 | R1 | R2 | notes |
 |---|---|---|---|---|---|---|---|
 | `zero-length` | error | 0 | 0 | 0 | 0 | 0 | structural |
 | `before-zero` | error | 0 | 0 | 0 | 0 | 0 | structural |
-| `missing-media` | error | 0 | 0 | **8** | 0 | 0 | p-2 references assets it never imported |
+| `missing-media` | error | **67** | **6** | **14** | **3** | **33** | the check now verifies both registry membership and the file on disk. The old row counted only unregistered ids, so it missed every stale narration/temp path and every deliberately absent fixture asset. |
 | `past-source-end` | error | 0 | skip | skip | 0 | 0 | skipped where nothing is probed |
 | `missing-effect-asset` | error | 0 | 0 | 0 | 0 | 0 | structural |
 | `transform-not-finite` | error | 0 | 0 | 0 | 0 | 0 | structural |
@@ -77,7 +80,9 @@ projects in one person's library; it is gone, because nothing in the repository 
 | **`empty-container`** | **error** | **2** | 0 | 0 | **0** | **0** | the same panel (7 marks over **1.8 %** of its own fill for 7.5 s) plus `sq`, 8.9 % of canvas holding one mark for 6.5 s — which used to be exempt for being drawn at under half opacity. All four numbers met. |
 | **`value-overshoot`** | **error** | **1** | 0 | 0 | **0** | **0** | `m_a`, a bar eased to **110.0 %** of its own number. All four numbers met. |
 | **`broken-continuity`** | **error** | **4** | 3 | 4 | skip | **0** | **repaired.** Was 2 / 1 / 3 / skip / **11** — 5.5× more on the reference than on the video it condemns. Now asks its question only of seams where the composition was *replaced*; see below. |
-| **`speech-masked`** | **error** | skip | skip | skip | skip | skip | **never evaluated on anything — see below.** |
+| `speech-masked` | warning | skip | skip | skip | skip | skip | **never evaluated on anything — see below.** |
+| **`text-collision`** | **error** | — | — | — | — | — | Raster-backed `check_frames` code. Positive controls: two text blocks sharing shaped ink bounds and an opaque graphic covering connected glyph ink both fire. Negative controls: a decorated lower-third over a plate and a translucent scrim fire 0. The real recursion artifact reports the `stop-disc` crossing 29% of the `hook` glyph component. |
+| `no-response` | warning | **1** | 0 | **1** | 0 | 0 | a new authored arrival leaves every incumbent authored visual unchanged |
 | `no-hook` | warning | 1 | 1 | 1 | 0 | **0** | was **1** on R2; the denominator was the video's median frame, which an accumulating video cannot match at its opening. Measured against the opening second instead — see below. |
 | `small-text` | warning | 2 | 0 | 9 | 0 | 0 | |
 | `unreadable-dwell` | warning | 0 | 1 | 0 | 0 | 0 | **ranks wicks-v2 best — see below** |
@@ -108,20 +113,21 @@ fixtures:
 | | codes | |
 |---|---|---|
 | **meet all four** | `dead-plate`, `empty-container`, `value-overshoot`, `broken-continuity` | wicks-v2 1 / 2 / 1 / 4, and 0 on both references |
-| **correctly silent** | the nine structural codes | none of the five projects has a NaN transform or a zero-length element; their silence is the right answer, and it is now measured rather than assumed |
-| **unmeasured** | `speech-masked` | `skip` on all five |
+| **correctly silent** | the remaining structural codes | none of the five projects has a NaN transform or a zero-length element; their silence is the right answer, and it is now measured rather than assumed |
+| **unmeasured warning** | `speech-masked` | `skip` on all five; it no longer occupies a gating slot |
 
-Thirteen of the fourteen are honest. One is not — `speech-masked` — and it holds the last slot in
-`MAX_GATING_CODES = 14`. The budget arithmetic is unchanged by this repair: no code was added or
-removed, so the count is still 14.
+The unmeasured `speech-masked` code is a warning. Its former gating slot now belongs to
+`text-collision`, whose positive and negative controls exercise the same cosmic-text shaping,
+connected glyph coverage and ink bounds used by preview/export. The count remains 14.
 
-### Four codes that decide the render, and why they are the four
+### The measured codes that decide the render
 
 `dead-plate`, `empty-container` and `value-overshoot` fire **on wicks-v2 and on nothing else** —
 including the two predecessors that this effort agrees are also bad, and including both
 references. `broken-continuity` fires 4 on wicks-v2, 3 and 4 on the two predecessors, and 0 on
-both references. That is the separation a gating code has to show before it is allowed to block
-an encode.
+both references. That is the craft separation a gating code has to show before it is allowed to
+block an encode. `missing-media` is the separate availability invariant: every fixture now
+correctly fails it because its referenced files are not checked in.
 
 Each names a different failure of the same object: the panel is 34.2 % of the canvas, it cannot
 be seen against the ground it sits on, and it is empty. The bar is a separate element and a
@@ -131,20 +137,19 @@ second.
 ### The mix, and the budget arithmetic that shaped it
 
 **One code left the registry and two joined it.** `gain-above-unity` was deleted; `speech-masked`
-and `bed-too-quiet` replace it.
+and `bed-too-quiet` replace it. Both are warnings now.
 
-The gating budget is `MAX_GATING_CODES = 14` and thirteen `Error` codes already existed, so
-**exactly one gating slot was free** — and `gain-above-unity` was a *warning*, so deleting it
-freed none. Both new codes cannot be errors. The slot went to `speech-masked` for a reason the
-plan states itself: a gating rule may be a difference between two measured states, and may not be
-a one-sided threshold over the project JSON. `speech-masked` is the first shape; `bed-too-quiet`
-is an absolute floor, which is the second, so it ships as a warning. **The budget is now full at
-14/14.** The next gating code requires deleting one, which is the argument the number exists to
-force.
+The gating budget remains full at **14/14**. `speech-masked` originally took the last slot, but
+every checked-in fixture skips it because none carries the required loudness measurements. A
+gate never evaluated on real work is not a gate. `text-collision` replaces it: the detector is
+observed rejecting intersecting shaped ink and opaque graphics over connected glyph ink, observed
+accepting a plate/decorated lower-third and translucent scrim, and is clean on the corrected
+podcast acceptance project. The next gating code still requires deleting one, which is the
+argument the number exists to force.
 
-*What that costs, stated:* the pair is meant to bracket the answer from both sides, and only one
-side gates. An agent that deletes its bed clears `speech-masked` and collects a warning. If that
-is ever observed, the fix is to spend a slot on `bed-too-quiet`, not to raise the budget.
+*What that costs, stated:* both sides of the mix bracket are warnings until a checked-in project
+can evaluate them. If deletion of a bed is observed clearing the stronger side, promote a measured
+mix code by spending an existing slot, not by raising the budget.
 
 **Why `gain-above-unity` went.** It fired on **22 elements** of wicks-v2 (16 of them harmless —
 six were bay's own `narrate` output at its own default), it measured a dimensionless multiplier,
@@ -328,6 +333,28 @@ contain. It is not the measurement — with the variable unset it prints "skippe
 which is how five unmeasured gating codes shipped:
 
 ```sh
-BAY_CHECK_CORPUS="$HOME/Library/Application Support/vii/projects" \
+BAY_CHECK_CORPUS="$HOME/Library/Application Support/bay/projects" \
   cargo test -p bay-core --test corpus -- --nocapture
 ```
+
+### First-party output is exempt only when the artifact proves the case
+
+Two first-party workflows add narrow structural cases to existing codes. Neither reads a caller
+flag or trusts an element's name:
+
+- `off-vocabulary-motion` treats a video crop as camera vocabulary only when `cropLeft`,
+  `cropRight`, `cropTop`, and `cropBottom` are synchronized, start at the element's authored
+  transform, use linear interpolation, preserve one fixed aperture at every key, leave the
+  orthogonal aperture open, and every changing segment still delivers four core frames.
+  Independently keyed or too-fast edges still report, as do any `x`, `scale`, or `rotation`
+  channels on the same element. This is the exact geometry `auto_reframe` emits.
+- `broken-continuity` removes only the outgoing video's area from replacement arithmetic at a
+  transcript splice. The artifact must contain butted, fade-free videos on one lane from the same
+  transcribed asset; both out/in points must match real word boundaries; and each video must have
+  a timeline- and source-identical tool-authored speech clip. Authored graphics above the footage
+  stay in the arithmetic, so replacing cards at the same seam is still an error.
+
+Measured on the saved final-acceptance projects after these cases landed: Brief B retains four
+`off-vocabulary-motion` findings for its hand-keyed `scale`, `x`, and `rotation`; Brief C has zero
+crop-motion findings. Brief C retains one `broken-continuity` finding at its opening authored hook
+replacement, while the transcript A/V splices no longer produce findings.

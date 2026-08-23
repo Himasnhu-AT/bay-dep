@@ -23,10 +23,16 @@ See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 RELEASE=1 ./run.sh    # release build — much smoother playback
 ./build.sh            # release build of the desktop app
 ./test.sh             # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
-STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures (what CI's mac job does)
+STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures for capability verification
 
-cd rust && cargo test --workspace     # cargo runs from rust/, never the repo root
+cd rust && env -u CARGO_TARGET_DIR cargo test --workspace
 ```
+
+Always remove `CARGO_TARGET_DIR` from direct Cargo invocations. The agent shell points it at a
+sandbox cache, bypassing the 89 GB warm `rust/target`; rebuilding `whisper-rs-sys` there fails
+because the cached `whisper.cpp` source is incomplete. Use
+`env -u CARGO_TARGET_DIR cargo ...`, never a second custom target directory. The repository
+scripts already do this.
 
 ffmpeg is required for decode, probing, waveforms, and MP4 export. bay installs its own when
 asked (`bay-provision`) and otherwise uses whatever is on the machine; without either, text and

@@ -134,6 +134,8 @@ fn text_element(
         align,
         letter_spacing: 0.0,
         line_height: 1.15,
+        decorations: None,
+        karaoke: None,
         source: ElementSource::Author,
         role,
     })

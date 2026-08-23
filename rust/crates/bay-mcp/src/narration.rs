@@ -37,6 +37,8 @@ pub struct NarrateArgs {
     pub volume: f32,
     pub out_path: Option<String>,
     pub peak_db: Option<f32>,
+    pub pitch_semitones: f32,
+    pub energy: f32,
     /// `None` places no captions — the audio only.
     pub captions: Option<CaptionStyle>,
 }
@@ -53,6 +55,8 @@ impl Default for NarrateArgs {
             volume: 1.0,
             out_path: None,
             peak_db: Some(-2.0),
+            pitch_semitones: 0.0,
+            energy: 1.0,
             captions: None,
         }
     }
@@ -127,6 +131,8 @@ impl Studio {
             volume,
             out_path,
             peak_db,
+            pitch_semitones,
+            energy,
             captions,
         } = args;
 
@@ -156,10 +162,24 @@ impl Studio {
                 .to_string()
         });
 
-        let utterance = self
-            .speech()
-            .speak_normalized(&text, &voice, speed, &lang_code, &out_path, peak_db)
-            .map_err(|error| err(error.to_string()))?;
+        let normalized_energy = peak_db
+            .map(|peak| 10.0_f32.powf((peak + 2.0) / 20.0))
+            .unwrap_or(energy);
+        let utterance = bay_speech::TtsProvider::synthesize(
+            self.speech(),
+            bay_speech::SynthesisRequest {
+                text: &text,
+                voice: &voice,
+                language: &lang_code,
+                output_path: &out_path,
+                prosody: bay_speech::Prosody {
+                    rate: speed,
+                    pitch_semitones,
+                    energy: normalized_energy,
+                },
+            },
+        )
+        .map_err(|error| err(error.to_string()))?;
 
         // Checked before anything is placed: a refusal must not leave half a narration on the
         // timeline for the caller to clean up.
@@ -173,13 +193,13 @@ impl Studio {
         }
 
         // Register the WAV and drop it on the audio lane where the caller asked for it.
-        let media = self.media_import(&utterance.path, None)?;
+        let media = self.media_import(&utterance.path, None, None)?;
         let media_id = media
             .get("mediaId")
             .and_then(|id| id.as_str())
             .ok_or_else(|| err("media_import did not return a mediaId"))?
             .to_string();
-        self.add_audio(
+        let audio = self.add_audio(
             None,
             media_id.clone(),
             start,
@@ -191,6 +211,16 @@ impl Studio {
             bay_project::ElementSource::Tool,
             bay_project::AudioRole::Speech,
         )?;
+        if let Some(element_id) = audio.get("elementId").and_then(|value| value.as_str()) {
+            self.set_audio_prosody(
+                element_id,
+                bay_project::SpeechProsody {
+                    rate: speed,
+                    pitch_semitones,
+                    energy: normalized_energy,
+                },
+            );
+        }
 
         let cue_style = captions
             .as_ref()
@@ -200,7 +230,11 @@ impl Studio {
         // so a full stop is only visible here.
         let cues = bay_speech::shift(&utterance.cues_for(&text, &cue_style), start);
         let placed = match &captions {
-            Some(caption_style) => Some(self.place_cues(&cues, caption_style)?),
+            Some(caption_style) => Some(self.place_cues_with_words(
+                &cues,
+                caption_style,
+                Some((&utterance.words, start)),
+            )?),
             None => None,
         };
 
@@ -242,6 +276,15 @@ impl Studio {
 
     /// Put a list of cues on the timeline as caption elements.
     pub fn place_cues(&mut self, cues: &[Cue], style: &CaptionStyle) -> Result<usize, ToolError> {
+        self.place_cues_with_words(cues, style, None)
+    }
+
+    fn place_cues_with_words(
+        &mut self,
+        cues: &[Cue],
+        style: &CaptionStyle,
+        timed_words: Option<(&[bay_speech::WordSpan], f64)>,
+    ) -> Result<usize, ToolError> {
         // Captions are the largest block of type in most of these videos, so they go through the
         // same resolution gate `add_text` does: a family that does not shape is a whole video set
         // in a face nobody chose, and captions would otherwise be the one way past it.
@@ -251,7 +294,8 @@ impl Studio {
         for cue in cues {
             let id = format!("caption-{}", self.next_caption_id());
             let duration = cue.duration().max(0.05);
-            self.add_caption_element(&id, cue, style, duration)?;
+            let karaoke = karaoke_for_cue(cue, style, timed_words);
+            self.add_caption_element(&id, cue, style, duration, Some(karaoke))?;
         }
         Ok(cues.len())
     }
@@ -266,7 +310,12 @@ impl Studio {
         } else {
             cues
         };
-        let placed = self.place_cues(&cues, style)?;
+        let timed_words = self.projected_transcript_words();
+        let placed = self.place_cues_with_words(
+            &cues,
+            style,
+            timed_words.as_deref().map(|words| (words, 0.0)),
+        )?;
         let last = cues.last().map(|cue| cue.end).unwrap_or(0.0);
         Ok(serde_json::json!({
             "path": path,
@@ -274,6 +323,58 @@ impl Studio {
             "firstSeconds": cues.first().map(|cue| cue.start).unwrap_or(0.0),
             "lastSeconds": last,
         }))
+    }
+
+    /// Project source transcript intervals through placed speech clips into timeline time.
+    ///
+    /// Transcript cuts are non-contiguous: each clip has its own source in-point and timeline
+    /// start. A word survives only when its complete half-open source interval belongs to a
+    /// placed clip. This both drops words from removed regions and prevents a word straddling a
+    /// cut boundary from being presented as fully audible.
+    fn projected_transcript_words(&self) -> Option<Vec<bay_speech::WordSpan>> {
+        let project = self.project();
+        let mut has_word_timing = false;
+        let mut projected = Vec::new();
+        for element in project.active_scene().elements() {
+            let Element::Audio(audio) = element else {
+                continue;
+            };
+            if audio.role != bay_project::AudioRole::Speech || audio.speed <= 0.0 {
+                continue;
+            }
+            let Some(transcript) = project
+                .media
+                .iter()
+                .find(|asset| asset.id == audio.media_id)
+                .and_then(|asset| asset.transcript.as_ref())
+            else {
+                continue;
+            };
+            has_word_timing |= !transcript.words.is_empty();
+            let speed = f64::from(audio.speed);
+            let source_start = audio.trim_start.to_seconds_f64();
+            let source_end = source_start + audio.duration.to_seconds_f64() * speed;
+            let timeline_start = audio.start.to_seconds_f64();
+            projected.extend(
+                transcript
+                    .words
+                    .iter()
+                    .filter(|word| {
+                        word.start_seconds >= source_start && word.end_seconds <= source_end
+                    })
+                    .map(|word| bay_speech::WordSpan {
+                        text: word.text.clone(),
+                        start: timeline_start + (word.start_seconds - source_start) / speed,
+                        end: timeline_start + (word.end_seconds - source_start) / speed,
+                    }),
+            );
+        }
+        projected.sort_by(|left, right| {
+            left.start
+                .total_cmp(&right.start)
+                .then_with(|| left.end.total_cmp(&right.end))
+        });
+        has_word_timing.then_some(projected)
     }
 
     /// Write the project's captions out as SRT or WebVTT.
@@ -320,10 +421,201 @@ impl Studio {
     }
 }
 
+fn karaoke_for_cue(
+    cue: &Cue,
+    style: &CaptionStyle,
+    timed_words: Option<(&[bay_speech::WordSpan], f64)>,
+) -> bay_project::KaraokeSpec {
+    let words = match timed_words {
+        Some((words, offset)) => words
+            .iter()
+            .filter_map(|word| {
+                let start = word.start + offset;
+                let end = word.end + offset;
+                (start >= cue.start && start < cue.end).then(|| bay_project::KaraokeWord {
+                    text: word.text.clone(),
+                    start: bay_project::MediaTime::from_seconds_f64((start - cue.start).max(0.0))
+                        .unwrap_or(bay_project::MediaTime::ZERO),
+                    end: bay_project::MediaTime::from_seconds_f64(
+                        (end - cue.start).min(cue.duration()).max(0.0),
+                    )
+                    .unwrap_or(bay_project::MediaTime::ZERO),
+                })
+            })
+            .collect(),
+        None => {
+            let tokens: Vec<&str> = cue.text.split_whitespace().collect();
+            let slice = cue.duration().max(0.05) / tokens.len().max(1) as f64;
+            tokens
+                .iter()
+                .enumerate()
+                .map(|(index, token)| bay_project::KaraokeWord {
+                    text: (*token).to_string(),
+                    start: bay_project::MediaTime::from_seconds_f64(index as f64 * slice)
+                        .unwrap_or(bay_project::MediaTime::ZERO),
+                    end: bay_project::MediaTime::from_seconds_f64((index + 1) as f64 * slice)
+                        .unwrap_or(bay_project::MediaTime::ZERO),
+                })
+                .collect()
+        }
+    };
+    bay_project::KaraokeSpec {
+        words,
+        highlight_color: style.highlight_color.clone(),
+    }
+}
+
 fn describe_cue(cue: &Cue) -> serde_json::Value {
     serde_json::json!({
         "start": (cue.start * 1000.0).round() / 1000.0,
         "end": (cue.end * 1000.0).round() / 1000.0,
         "text": cue.text,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bay_listen::SourceRange;
+    use bay_project::{MediaAsset, Transcript, TranscriptWord};
+
+    fn scratch_studio(tag: &str) -> (Studio, std::path::PathBuf) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bay-word-captions-{tag}-{stamp}"));
+        std::fs::create_dir_all(&root).unwrap();
+        (Studio::with_library_root(Some(root.clone())), root)
+    }
+
+    fn caption_words(studio: &Studio) -> Vec<Vec<bay_project::KaraokeWord>> {
+        let mut captions = studio
+            .project()
+            .active_scene()
+            .elements()
+            .filter_map(|element| match element {
+                Element::Text(text) if text.id.starts_with("caption-") => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        captions.sort_by_key(|caption| caption.start);
+        captions
+            .into_iter()
+            .map(|caption| caption.karaoke.clone().unwrap().words)
+            .collect()
+    }
+
+    #[test]
+    fn subtitle_karaoke_projects_transcript_words_across_non_contiguous_cuts() {
+        let (mut studio, root) = scratch_studio("projected");
+        let mut asset = MediaAsset::new(
+            "interview",
+            "interview.wav",
+            root.join("missing.wav").to_string_lossy(),
+        );
+        asset.duration_seconds = Some(30.0);
+        asset.transcript = Some(Transcript {
+            language: "en".into(),
+            model: "test".into(),
+            duration_seconds: 30.0,
+            words: vec![
+                TranscriptWord {
+                    text: "first".into(),
+                    start_seconds: 10.2,
+                    end_seconds: 10.5,
+                    confidence: 1.0,
+                    speaker: None,
+                },
+                TranscriptWord {
+                    text: "kept".into(),
+                    start_seconds: 11.1,
+                    end_seconds: 11.4,
+                    confidence: 1.0,
+                    speaker: None,
+                },
+                TranscriptWord {
+                    text: "removed".into(),
+                    start_seconds: 15.0,
+                    end_seconds: 15.4,
+                    confidence: 1.0,
+                    speaker: None,
+                },
+                TranscriptWord {
+                    text: "second".into(),
+                    start_seconds: 20.1,
+                    end_seconds: 20.6,
+                    confidence: 1.0,
+                    speaker: None,
+                },
+            ],
+            utterances: Vec::new(),
+        });
+        studio.editor_for_test_mut().add_media(asset);
+        studio
+            .cut_by_transcript(
+                "interview",
+                &[
+                    SourceRange {
+                        start_seconds: 10.0,
+                        end_seconds: 12.0,
+                        text: "first kept".into(),
+                    },
+                    SourceRange {
+                        start_seconds: 20.0,
+                        end_seconds: 22.0,
+                        text: "second".into(),
+                    },
+                ],
+                0.0,
+                0,
+            )
+            .unwrap();
+        let path = root.join("captions.srt");
+        std::fs::write(
+            &path,
+            "1\n00:00:00,000 --> 00:00:02,000\nfirst kept\n\n\
+             2\n00:00:02,000 --> 00:00:04,000\nsecond\n\n",
+        )
+        .unwrap();
+
+        studio
+            .subtitles_add(path.to_str().unwrap(), 0.0, &CaptionStyle::default())
+            .unwrap();
+
+        let words = caption_words(&studio);
+        assert_eq!(
+            words
+                .iter()
+                .flatten()
+                .map(|word| word.text.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "kept", "second"]
+        );
+        assert!((words[0][0].start.to_seconds_f64() - 0.2).abs() < 1e-6);
+        assert!((words[0][1].start.to_seconds_f64() - 1.1).abs() < 1e-6);
+        assert!((words[1][0].start.to_seconds_f64() - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn subtitle_karaoke_evenly_divides_cues_without_word_timings() {
+        let (mut studio, root) = scratch_studio("fallback");
+        let path = root.join("captions.srt");
+        std::fs::write(
+            &path,
+            "1\n00:00:00,000 --> 00:00:02,000\nfallback remains\n\n",
+        )
+        .unwrap();
+
+        studio
+            .subtitles_add(path.to_str().unwrap(), 0.0, &CaptionStyle::default())
+            .unwrap();
+
+        let words = caption_words(&studio);
+        assert_eq!(words[0].len(), 2);
+        assert_eq!(words[0][0].start.to_seconds_f64(), 0.0);
+        assert_eq!(words[0][0].end.to_seconds_f64(), 1.0);
+        assert_eq!(words[0][1].start.to_seconds_f64(), 1.0);
+        assert_eq!(words[0][1].end.to_seconds_f64(), 2.0);
+    }
 }

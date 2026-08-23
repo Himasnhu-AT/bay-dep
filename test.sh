@@ -9,15 +9,15 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT/rust"
 
 echo "── fmt ──"
-cargo fmt --all --check
+env -u CARGO_TARGET_DIR cargo fmt --all --check
 
 echo "── clippy ──"
-cargo clippy --workspace --all-targets -- -D warnings
+env -u CARGO_TARGET_DIR cargo clippy --workspace --all-targets -- -D warnings
 
 echo "── test ──"
 if [ "${STRICT:-0}" = "1" ]; then
-  # Turn the graceful GPU/ffmpeg skips into hard failures (what CI's mac job does).
-  BAY_REQUIRE_GPU=1 BAY_REQUIRE_FFMPEG=1 cargo test --workspace "$@"
+  # Turn the graceful GPU/ffmpeg skips into hard failures for capability verification.
+  BAY_REQUIRE_GPU=1 BAY_REQUIRE_FFMPEG=1 env -u CARGO_TARGET_DIR cargo test --workspace "$@"
 else
-  cargo test --workspace "$@"
+  env -u CARGO_TARGET_DIR cargo test --workspace "$@"
 fi

@@ -227,9 +227,19 @@ echo "── starting ──"
 open -a "$INSTALLED"
 
 SERVED=""
+TOKEN_FILE="${BAY_DATA_DIR:-$HOME/Library/Application Support/bay}/mcp-token"
 for _ in $(seq 1 40); do
+  TOKEN="${BAY_MCP_TOKEN:-}"
+  if [ -z "$TOKEN" ] && [ -r "$TOKEN_FILE" ]; then
+    TOKEN="$(<"$TOKEN_FILE")"
+  fi
+  if [ -z "$TOKEN" ]; then
+    sleep 0.5
+    continue
+  fi
   SERVED="$(curl -s -m 2 -X POST http://127.0.0.1:7333/mcp \
       -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $TOKEN" \
       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"install.sh","version":"1"}}}' \
     | sed -n 's/.*"serverInfo":{[^}]*"version":"\([^"]*\)".*/\1/p')"
   [ -n "$SERVED" ] && break
@@ -258,4 +268,6 @@ fi
 
 echo
 echo "bay $EXPECTED is installed at $INSTALLED and serving agents on http://127.0.0.1:7333/mcp"
-echo "Register it with:  claude mcp add --transport http bay http://127.0.0.1:7333/mcp"
+echo "The MCP token is at: $TOKEN_FILE"
+echo 'Export BAY_MCP_TOKEN from that file, then register with:'
+echo '  claude mcp add --transport http bay http://127.0.0.1:7333/mcp --header "Authorization: Bearer $BAY_MCP_TOKEN"'

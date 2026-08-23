@@ -529,6 +529,187 @@ fn half() -> f32 {
     0.5
 }
 
+/// A text outline drawn outside the glyph coverage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStroke {
+    /// Outline width in rendered pixels.
+    pub width: f32,
+    pub color: String,
+}
+
+/// A blurred, offset copy of a text element's glyph coverage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub color: String,
+}
+
+/// A rounded rectangle behind a text element.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextPlate {
+    pub color: String,
+    pub padding_x: f32,
+    pub padding_y: f32,
+    pub radius: f32,
+}
+
+/// Optional legibility treatments applied while text is rasterized.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextDecorations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<TextStroke>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<TextShadow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plate: Option<TextPlate>,
+}
+
+/// One word's interval relative to its text element's start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KaraokeWord {
+    pub text: String,
+    pub start: MediaTime,
+    pub end: MediaTime,
+}
+
+/// Word-level caption highlighting without splitting one cue into many timeline elements.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KaraokeSpec {
+    #[serde(default)]
+    pub words: Vec<KaraokeWord>,
+    pub highlight_color: String,
+}
+
+impl KaraokeSpec {
+    /// The word whose half-open interval contains `local_time`.
+    pub fn active_word(&self, local_time: MediaTime) -> Option<usize> {
+        self.words
+            .iter()
+            .position(|word| local_time >= word.start && local_time < word.end)
+    }
+}
+
+/// Hold one source frame while timeline time continues to advance.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreezeFrame {
+    /// Position relative to the element's start where the held frame begins.
+    pub at: MediaTime,
+    pub duration: MediaTime,
+}
+
+/// Per-clip controls retained with synthesized speech so providers can map them natively.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechProsody {
+    #[serde(default = "one")]
+    pub rate: f32,
+    #[serde(default)]
+    pub pitch_semitones: f32,
+    #[serde(default = "one")]
+    pub energy: f32,
+}
+
+impl Default for SpeechProsody {
+    fn default() -> Self {
+        Self {
+            rate: 1.0,
+            pitch_semitones: 0.0,
+            energy: 1.0,
+        }
+    }
+}
+
+/// Dialogue-oriented equalizer controls.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DialogueEq {
+    #[serde(default = "default_high_pass")]
+    pub high_pass_hz: f32,
+    #[serde(default)]
+    pub presence_db: f32,
+}
+
+fn default_high_pass() -> f32 {
+    80.0
+}
+
+impl Default for DialogueEq {
+    fn default() -> Self {
+        Self {
+            high_pass_hz: default_high_pass(),
+            presence_db: 0.0,
+        }
+    }
+}
+
+/// Dynamics control for dialogue clips.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DialogueCompressor {
+    pub threshold_db: f32,
+    pub ratio: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    #[serde(default)]
+    pub makeup_db: f32,
+}
+
+impl Default for DialogueCompressor {
+    fn default() -> Self {
+        Self {
+            threshold_db: -18.0,
+            ratio: 3.0,
+            attack_ms: 10.0,
+            release_ms: 120.0,
+            makeup_db: 0.0,
+        }
+    }
+}
+
+/// True-peak ceiling for dialogue.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DialogueLimiter {
+    pub ceiling_db: f32,
+}
+
+impl Default for DialogueLimiter {
+    fn default() -> Self {
+        Self { ceiling_db: -1.0 }
+    }
+}
+
+/// Ordered dialogue post chain: EQ, compressor, then limiter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DialogueAudioChain {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eq: Option<DialogueEq>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compressor: Option<DialogueCompressor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limiter: Option<DialogueLimiter>,
+}
+
+impl Default for DialogueAudioChain {
+    fn default() -> Self {
+        Self {
+            eq: Some(DialogueEq::default()),
+            compressor: Some(DialogueCompressor::default()),
+            limiter: Some(DialogueLimiter::default()),
+        }
+    }
+}
+
 /// A visual element's on-canvas placement. Position is the element's *anchor* as a fraction of
 /// the canvas (0..1); `scale` is the fraction of the canvas the element spans (1 = full-frame).
 ///
@@ -644,6 +825,11 @@ pub struct VideoElement {
     pub media_id: String,
     pub trim_start: MediaTime,
     pub trim_end: MediaTime,
+    /// Constant source-time multiplier. `2.0` plays twice as fast.
+    #[serde(default = "one")]
+    pub speed: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeze: Option<FreezeFrame>,
     #[serde(default)]
     pub transform: Transform,
     #[serde(default)]
@@ -733,6 +919,10 @@ pub struct TextElement {
     /// Line box height as a multiple of the font size.
     #[serde(default = "default_line_height")]
     pub line_height: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decorations: Option<TextDecorations>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub karaoke: Option<KaraokeSpec>,
     #[serde(default)]
     pub source: ElementSource,
     #[serde(default)]
@@ -826,6 +1016,15 @@ pub struct AudioElement {
     pub media_id: String,
     pub muted: bool,
     pub volume: f32,
+    /// Constant source-time multiplier. `2.0` plays twice as fast.
+    #[serde(default = "one")]
+    pub speed: f32,
+    /// Provider-neutral synthesis controls for clips created from text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prosody: Option<SpeechProsody>,
+    /// Optional speech post chain, evaluated in EQ → compressor → limiter order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialogue_chain: Option<DialogueAudioChain>,
     /// Keyframes on this clip's level, under the key `volume`. This is what makes ducking a
     /// music bed under narration a handful of keys rather than three clips and two gains.
     #[serde(default)]
@@ -992,9 +1191,8 @@ impl Element {
 
     pub fn set_duration(&mut self, duration: MediaTime) {
         with_inner!(self, e => e.duration = duration);
-        // The out-point is derived from the in-point and the length — see `set_source_start`.
         if let Element::Video(e) = self {
-            e.trim_end = e.trim_start + duration;
+            e.trim_end = e.trim_start + video_source_duration(e);
         }
     }
 
@@ -1138,11 +1336,10 @@ impl Element {
     /// would describe a clip that cannot exist. Keeping it in step here is what stops the two
     /// from drifting — the field is part of the wire format the web app reads.
     pub fn set_source_start(&mut self, trim_start: MediaTime) {
-        let duration = self.duration();
         match self {
             Element::Video(e) => {
                 e.trim_start = trim_start;
-                e.trim_end = trim_start + duration;
+                e.trim_end = trim_start + video_source_duration(e);
             }
             Element::Audio(e) => e.trim_start = trim_start,
             Element::Image(_) | Element::Text(_) | Element::Shape(_) => {}
@@ -1174,6 +1371,29 @@ impl Element {
             Element::Shape(e) => e.mask = mask,
             Element::Audio(_) => {}
         }
+    }
+
+    /// Mask values with nested animation paths (`mask.x`, `mask.feather`, …) applied.
+    pub fn sampled_mask(&self, local_time: MediaTime) -> Option<Mask> {
+        let mut mask = self.mask()?;
+        let animations = self.animations()?;
+        let sample = |name: &str| animations.get(name).and_then(|c| c.sample(local_time));
+        if let Some(value) = sample("mask.x") {
+            mask.x = value;
+        }
+        if let Some(value) = sample("mask.y") {
+            mask.y = value;
+        }
+        if let Some(value) = sample("mask.width") {
+            mask.width = value;
+        }
+        if let Some(value) = sample("mask.height") {
+            mask.height = value;
+        }
+        if let Some(value) = sample("mask.feather") {
+            mask.feather = value;
+        }
+        Some(mask)
     }
 
     /// The on-canvas transform for visual elements (`None` for audio).
@@ -1240,6 +1460,26 @@ impl Element {
         }
     }
 
+    /// Effects with `effect.<id>.<param>` animation channels sampled at element-local time.
+    pub fn sampled_effects(&self, local_time: MediaTime) -> Vec<Effect> {
+        let mut effects = self.effects().to_vec();
+        let Some(animations) = self.animations() else {
+            return effects;
+        };
+        for effect in &mut effects {
+            let prefix = format!("effect.{}.", effect.id);
+            for (path, channel) in animations {
+                let Some(param) = path.strip_prefix(&prefix) else {
+                    continue;
+                };
+                if let Some(value) = channel.sample(local_time) {
+                    effect.params.insert(param.to_string(), value);
+                }
+            }
+        }
+        effects
+    }
+
     /// Animation channels keyed by property path ("opacity"/"scale"/"x"/"y"/"rotation").
     pub fn animations(&self) -> Option<&BTreeMap<String, AnimationChannel>> {
         match self {
@@ -1290,6 +1530,27 @@ impl Element {
             if let Some(v) = animations.get("scaleY").and_then(|c| c.sample(local_time)) {
                 transform.scale_y = v;
             }
+            if let Some(v) = animations
+                .get("cropLeft")
+                .and_then(|c| c.sample(local_time))
+            {
+                transform.crop_left = v;
+            }
+            if let Some(v) = animations.get("cropTop").and_then(|c| c.sample(local_time)) {
+                transform.crop_top = v;
+            }
+            if let Some(v) = animations
+                .get("cropRight")
+                .and_then(|c| c.sample(local_time))
+            {
+                transform.crop_right = v;
+            }
+            if let Some(v) = animations
+                .get("cropBottom")
+                .and_then(|c| c.sample(local_time))
+            {
+                transform.crop_bottom = v;
+            }
         }
         Some(transform)
     }
@@ -1297,8 +1558,19 @@ impl Element {
     /// The animatable transform properties, in the order the inspector lists them. Also the
     /// set the MCP surface validates against, so an unknown channel name is a hard error
     /// rather than an animation that silently never plays.
-    pub const ANIMATABLE: [&'static str; 7] =
-        ["opacity", "scale", "x", "y", "rotation", "scaleX", "scaleY"];
+    pub const ANIMATABLE: [&'static str; 11] = [
+        "opacity",
+        "scale",
+        "x",
+        "y",
+        "rotation",
+        "scaleX",
+        "scaleY",
+        "cropLeft",
+        "cropTop",
+        "cropRight",
+        "cropBottom",
+    ];
 
     /// The only property an audio clip has to animate. Kept apart from [`Self::ANIMATABLE`]
     /// because the two sets do not overlap at all: audio has no position to move, and nothing
@@ -1345,5 +1617,85 @@ impl Element {
     /// Number of animated properties on this element.
     pub fn animated_property_count(&self) -> usize {
         self.animations().map_or(0, |a| a.len())
+    }
+
+    /// Source-media time corresponding to an element-local timeline time.
+    pub fn source_time(&self, local_time: MediaTime) -> Option<MediaTime> {
+        match self {
+            Element::Video(video) => {
+                let mut elapsed = local_time.max(MediaTime::ZERO);
+                if let Some(freeze) = video.freeze {
+                    let freeze_end = freeze.at + freeze.duration.max(MediaTime::ZERO);
+                    elapsed = if elapsed < freeze.at {
+                        elapsed
+                    } else if elapsed < freeze_end {
+                        freeze.at
+                    } else {
+                        elapsed - freeze.duration.max(MediaTime::ZERO)
+                    };
+                }
+                Some(video.trim_start + scale_time(elapsed, sane_speed(video.speed)))
+            }
+            Element::Audio(audio) => Some(
+                audio.trim_start
+                    + scale_time(local_time.max(MediaTime::ZERO), sane_speed(audio.speed)),
+            ),
+            Element::Image(_) | Element::Text(_) | Element::Shape(_) => None,
+        }
+    }
+}
+
+fn sane_speed(speed: f32) -> f32 {
+    if speed.is_finite() && speed > 0.0 {
+        speed
+    } else {
+        1.0
+    }
+}
+
+fn scale_time(time: MediaTime, multiplier: f32) -> MediaTime {
+    MediaTime::from_ticks((time.as_ticks() as f64 * f64::from(multiplier)).round() as i64)
+}
+
+fn video_source_duration(video: &VideoElement) -> MediaTime {
+    let held = video
+        .freeze
+        .map_or(MediaTime::ZERO, |freeze| {
+            freeze.duration.max(MediaTime::ZERO)
+        })
+        .min(video.duration);
+    scale_time(video.duration - held, sane_speed(video.speed))
+}
+
+#[cfg(test)]
+mod craft_tests {
+    use super::*;
+
+    fn seconds(value: f64) -> MediaTime {
+        MediaTime::from_seconds_f64(value).expect("test time")
+    }
+
+    #[test]
+    fn karaoke_active_word_uses_half_open_intervals() {
+        let spec = KaraokeSpec {
+            words: vec![
+                KaraokeWord {
+                    text: "make".into(),
+                    start: seconds(0.0),
+                    end: seconds(0.5),
+                },
+                KaraokeWord {
+                    text: "motion".into(),
+                    start: seconds(0.5),
+                    end: seconds(1.0),
+                },
+            ],
+            highlight_color: "#ffcc00".into(),
+        };
+
+        assert_eq!(spec.active_word(seconds(0.0)), Some(0));
+        assert_eq!(spec.active_word(seconds(0.499)), Some(0));
+        assert_eq!(spec.active_word(seconds(0.5)), Some(1));
+        assert_eq!(spec.active_word(seconds(1.0)), None);
     }
 }

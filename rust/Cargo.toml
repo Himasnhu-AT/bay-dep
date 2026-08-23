@@ -12,7 +12,9 @@ members = [
     "crates/bay-compositor",
     "crates/bay-agent",
     "crates/bay-core",
+    "crates/bay-repair",
     "crates/bay-mcp",
+    "crates/bay-listen",
     "crates/bay-speech",
     "crates/bay-project",
     "crates/bay-audio",
@@ -20,6 +22,7 @@ members = [
     "crates/bay-text",
     "crates/bay-ui",
     "crates/bay-stock",
+    "crates/bay-gen",
     "crates/bay-vision",
     "crates/bay-test-support",
 ]

@@ -30,9 +30,14 @@ mod encoder;
 pub mod mcp;
 mod preprocess;
 mod rank;
+mod seeing;
 
 pub use encoder::{Embedding, Encoder};
 pub use rank::{Ranked, Scored, cosine, rank};
+pub use seeing::{
+    IndexedShot, ReframeTrackingConfig, ShotRange, SubjectPoint, TrackingConfig, index_shots,
+    path_jitter, search_shots, track_subject, track_subject_siglip,
+};
 
 /// The width and height SigLIP's patch-16-224 towers expect.
 pub const IMAGE_SIZE: usize = 224;

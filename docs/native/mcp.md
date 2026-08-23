@@ -35,14 +35,27 @@ the fix for a conflict.
 Register with Claude Code:
 
 ```bash
-claude mcp add --transport http bay http://127.0.0.1:7333/mcp
+export BAY_MCP_TOKEN="$(<"$HOME/Library/Application Support/bay/mcp-token")"
+claude mcp add --transport http bay http://127.0.0.1:7333/mcp \
+  --header "Authorization: Bearer $BAY_MCP_TOKEN"
 ```
 
 MCP servers are loaded at session start, so the tools appear as `mcp__bay__*` in the **next**
 session.
 
-**The listener binds loopback only.** These tools read and write arbitrary files on this
-machine; exposing the port to the network would hand that to anyone who could reach it.
+**The listener binds loopback only and requires a bearer token.** These tools read and write
+arbitrary files. Loopback blocks remote machines, but it does not authorize local callers: any
+local process can connect, and browser-originated requests can target localhost. Origin checks
+block remote web pages; the token also blocks origin-less requests before JSON parsing or tool
+dispatch. Fixed-length token bytes are compared with a vetted constant-time primitive, avoiding
+a matching-prefix timing oracle.
+
+bay generates a random 256-bit token on first HTTP start at
+`~/Library/Application Support/bay/mcp-token` (user-only permissions), or uses
+`BAY_MCP_TOKEN` when explicitly supplied. The server prints only the credential's location or
+environment-variable name, never its value. Stdio mode has no listening port and uses the
+client-owned process pipes, so HTTP authentication does not apply there. See
+[`distribution.md`](distribution.md) for Cursor, Claude Code, and OpenClaw setup.
 
 ### Requirements
 | Need | For |
@@ -59,14 +72,19 @@ silently.
 
 | Tool | What it does |
 |---|---|
-| `runtime_status` | **What bay needs and whether this machine has it.** ffmpeg for render, Kokoro for narration. |
+| `runtime_status` | **What bay needs and whether this machine has it.** ffmpeg for render, Kokoro for narration, Whisper for transcription. |
 | `runtime_install` | **Install what is missing** — bay fetches it, the user installs nothing. Returns a job id; poll `runtime_status` (or `job_status`) with it. |
+| `runtime_remove` | **Remove one bay-managed runtime** and report actual bytes freed. Manifest-owned paths only; system tools and user media are untouched. |
 | `job_status` | **Follow background work.** One job by id, or all of them. `finished`, `fraction`, `result`, `error`. |
 | `job_cancel` | Ask a job to stop. Cooperative and best-effort — a render stops at its next frame, leaving no partial file. |
 | `project_create` | Start an empty project. 1080×1920 @ 30 for a vertical reel. |
 | `project_info` | Canvas, fps, duration, element counts. |
 | `fonts_check` | **Which families are installed, and at which weights.** A family being present says nothing: a weight it lacks drops the family. Returns the resolvable weights, the metric class and the measured cap/em per family. |
 | `media_import` | Register a file and probe its real duration/size → `mediaId`. Anything with sound is also **measured**: `loudness` comes back with `lufs`, `peakDb`, `rmsDb` and `accentSeconds`. Pass `mediaId` instead of `path` to re-measure something already imported. |
+| `transcribe` | **Hear imported video or audio locally.** Whisper attaches a persisted transcript with utterances and per-word start/end/confidence; returns a job id. |
+| `transcript_get` / `transcript_search` | Read the full word-timed transcript, or find exact word sequences and their source intervals. |
+| `cut_by_transcript` | Place selected word or time ranges consecutively as paired picture + speech clips. |
+| `remove_silence_and_fillers` | Tighten dialogue with configurable filler words and pause thresholds while retaining bounded meaningful beats. |
 | `audio_probe` | **How loud a file actually is**, in LUFS. `volume` is a multiplier and says nothing about level — two files that both sound fine alone can differ by 15 dB, and the bed in the project this comes from was 9 LU too quiet at `2.0`. |
 | `add_text` | Text, with align / tracking / line height. **Requires `role`**; the face, size, weight and colour come from the committed style kit. |
 | `add_shape` | Rect or ellipse — bars, rules, dots, panels, underlines. **Requires `role`.** |
@@ -94,6 +112,8 @@ silently.
 | `marker_add` | Mark a moment. Markers show on the ruler and clips snap to them. |
 | `timeline` | Dump every layer, element, timing, transform, in-point and animation. |
 | `snapshot` | **Render one frame to a PNG so you can look at it.** |
+| `check_frames` | **Run the picture-level gate.** Samples rendered frames for frozen arrangements, weak anchor scale and a dead lower frame. Returns `unevaluated` checks when a GPU is unavailable rather than claiming a false pass. |
+| `contact_sheet` | **Render a labelled inspection grid.** Supply exact `times`, or omit them for two reproducible jittered samples per beat. |
 | `shots_detect` | **Find the cuts in footage you have not watched.** Returns a job id. |
 | `sfx_search` | **One search over both halves of the sound library** — synthesised and installed. |
 | `sfx_list` / `sfx_add` | Whooshes, risers, clicks, impacts — synthesised at the length the edit needs, placed in one call. |
@@ -101,7 +121,7 @@ silently.
 | `looks_list` | The built-in grades, with what each is for. Apply one with `effect_add`'s `look`. |
 | `templates_list` / `template_place` | Lower thirds, kickers, end cards — and whatever the user saved. Placed in one call, with words. |
 | `check` | **What will look wrong, before you spend the encode finding out.** A fill too close in colour to what it sits on, a card with nothing legible in it, a curve that overshoots a bar past its own number, an opening emptier than the video's own median frame, off-canvas elements, illegible type, missing media, black gaps, a silent export. Answers `status` (`clean`/`findings`/`unevaluated`), at most 12 findings drawn one per code, a `rollup` of the full counts, and **`skipped`** — read that before treating anything as a pass. Every code and what it was measured on: [`check-codes.md`](check-codes.md). |
-| `render` | Encode, picture and sound. Codec, CRF, range, and `social`/`youtube`/`master` presets; the mix is normalised to −14 LUFS unless told otherwise. Returns a job id. **Runs `check` first and refuses while any error stands** — the one escape is `ignoreChecks` with a `reason` of at least 40 characters, which is written into the MP4's own comment metadata. There is no per-code suppression. |
+| `render` | Encode, picture and sound. Codec, CRF, range, and `social`/`youtube`/`master` presets; the mix is normalised to −14 LUFS unless told otherwise. Returns a job id immediately and encodes a project snapshot in the background; poll `job_status`. **Runs `check` first and refuses while any error stands** — the one escape is `ignoreChecks` with a `reason` of at least 40 characters, which is written into the MP4's own comment metadata. There is no per-code suppression. |
 | `project_save` | Save to the user's project library (no `path`), so it appears in the desktop app's launcher — or to an explicit `path`. |
 | `project_list` | The projects in the library: id, name, canvas, duration, path. |
 | `project_load` | Reopen one by `id` from the library, or by `path`. |
@@ -187,16 +207,20 @@ a named move — the same picture, without choosing a duration or a curve:
 
 ## Look at your frames
 
-`snapshot` exists because the failures that matter are invisible to any structural check: a
+`contact_sheet` and `snapshot` exist because the failures that matter are invisible to any
+structural check: a
 blank frame at a cut, type that collides, a hero number too small to read at thumb size, a
 chart whose track has no contrast. Building the reel in `docs/native/reel-recipe.md` turned up
 four such defects, and **every one of them was found by looking at a PNG**, not by a test.
 
-Snapshot paths are resolved by the **server** process, so pass absolute paths.
+Image paths are resolved by the **server** process, so pass absolute paths. Start with a
+`contact_sheet`; without explicit times it samples every beat reproducibly. Run `check_frames`
+for the matching machine-readable picture gate, then use full-size snapshots where a panel
+needs closer inspection.
 
-A cheap automated companion to eyeballing: sweep `snapshot` across the timeline and measure
-how much of each frame is not background. That catches dead air at cuts, which is easy to
-introduce and easy to miss.
+`check_frames` measures how much of each frame is not background, how that ink is clustered,
+and whether adjacent samples changed. It catches dead lower frames, weak anchors and frozen
+compositions while captions are suppressed.
 
 ---
 

@@ -3,7 +3,8 @@
 
 use bay_preview::PreviewRenderer;
 use bay_project::{
-    Effect, Element, ImageElement, MediaAsset, MediaTime, Project, Transform, VideoElement,
+    AudioRole, Effect, Element, ElementSource, ImageElement, MediaAsset, MediaTime, Project,
+    Transform, VideoElement,
 };
 use bay_test_support::{require_ffmpeg, require_ffmpeg_step, require_gpu_backed};
 
@@ -242,6 +243,8 @@ fn renders_a_real_video_frame_via_ffmpeg() {
             media_id: "v1".into(),
             trim_start: MediaTime::ZERO,
             trim_end: MediaTime::from_ticks(120_000),
+            speed: 1.0,
+            freeze: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -303,6 +306,88 @@ fn renders_a_real_video_frame_via_ffmpeg() {
 }
 
 #[test]
+fn frame_checks_match_on_cold_and_warmed_video_projects() {
+    let Some(mut cold_renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new)
+    else {
+        return;
+    };
+    let Some(mut warm_renderer) =
+        require_gpu_backed("a second PreviewRenderer", PreviewRenderer::new)
+    else {
+        return;
+    };
+    let path =
+        std::env::temp_dir().join(format!("bay-frame-check-decode-{}.mp4", std::process::id()));
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=64x64:d=2:r=10",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate frame-check video") {
+        return;
+    }
+
+    let mut project = Project::starter();
+    let mut asset = MediaAsset::new("video", "video.mp4", path.to_string_lossy());
+    asset.duration_seconds = Some(2.0);
+    project.media = vec![asset];
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements = vec![Element::Video(VideoElement {
+            id: "video".into(),
+            name: "Video".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_seconds_f64(2.0).unwrap(),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            media_id: "video".into(),
+            trim_start: MediaTime::ZERO,
+            trim_end: MediaTime::from_seconds_f64(2.0).unwrap(),
+            speed: 1.0,
+            freeze: None,
+            transform: Transform::default(),
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+
+    let cold = bay_preview::frame_check::check_frames(&project, &mut cold_renderer, None);
+    warm_renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            64,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a warm-up frame");
+    warm_renderer.await_decodes(project.active_scene(), &project.media);
+    let warm = bay_preview::frame_check::check_frames(&project, &mut warm_renderer, None);
+
+    assert_ne!(cold["status"], "unevaluated", "{cold:#}");
+    assert_eq!(cold, warm, "decode warmth must not change frame evidence");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn exports_a_short_video_via_ffmpeg() {
     let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
@@ -334,6 +419,84 @@ fn exports_a_short_video_via_ffmpeg() {
         "a successful export should leave no staging files, found {leftovers:?}"
     );
     let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn saved_narration_survives_its_temporary_source_and_exports() {
+    if !require_ffmpeg() {
+        return;
+    }
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "bay-portable-narration-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary_narration = root.join("bay-narration-temporary.wav");
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            temporary_narration.to_str().unwrap(),
+        ])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(made, "generate temporary narration") {
+        return;
+    }
+
+    let mut project = Project::starter();
+    project.media = vec![MediaAsset::new(
+        "narration",
+        "bay-narration-temporary.wav",
+        temporary_narration.to_string_lossy(),
+    )];
+    let Element::Audio(narration) = &mut project.active_scene_mut().tracks.audio[0].elements[0]
+    else {
+        panic!("starter audio lane should contain audio")
+    };
+    narration.media_id = "narration".into();
+    narration.source = ElementSource::Tool;
+    narration.role = AudioRole::Speech;
+    narration.duration = MediaTime::from_seconds_f64(1.0).unwrap();
+
+    let saved = root.join("portable.project.json");
+    bay_project::library::write_project(&saved, &project).unwrap();
+    std::fs::remove_file(&temporary_narration).unwrap();
+    let loaded = bay_project::library::read_project(&saved).unwrap();
+    assert!(
+        std::path::Path::new(&loaded.media[0].path).is_file(),
+        "reload should resolve the narration copy beside the project"
+    );
+
+    let out = root.join("portable.mp4");
+    let result = renderer.export_video(
+        loaded.active_scene(),
+        0.5,
+        10.0,
+        64,
+        36,
+        &loaded.settings.background,
+        &loaded.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
+    );
+    assert!(
+        result.is_ok(),
+        "reloaded project should export after its temporary narration is deleted: {result:?}"
+    );
+    assert!(std::fs::metadata(&out).is_ok_and(|metadata| metadata.len() > 0));
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// Any staging file sitting next to `out`. The suffix is infixed before the extension
@@ -681,6 +844,8 @@ fn decode_runs_off_the_render_path_and_is_cached() {
                 media_id: "async1".into(),
                 trim_start: MediaTime::ZERO,
                 trim_end: MediaTime::from_seconds_f64(3.0).unwrap(),
+                speed: 1.0,
+                freeze: None,
                 transform: Transform::default(),
                 effects: Vec::new(),
                 animations: Default::default(),
@@ -768,6 +933,8 @@ fn a_missing_media_file_fails_once_and_does_not_crash() {
                 media_id: "gone".into(),
                 trim_start: MediaTime::ZERO,
                 trim_end: MediaTime::from_seconds_f64(1.0).unwrap(),
+                speed: 1.0,
+                freeze: None,
                 transform: Transform::default(),
                 effects: Vec::new(),
                 animations: Default::default(),
@@ -1305,6 +1472,9 @@ fn audible_clips_skips_everything_that_would_contribute_no_sound() {
             trim_start: MediaTime::ZERO,
             muted,
             volume,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             source: Default::default(),
             role: Default::default(),
@@ -1351,6 +1521,9 @@ fn an_audio_clips_in_point_reaches_the_mixer() {
         media_id: "m-ok".into(),
         muted: false,
         volume: 1.0,
+        speed: 1.0,
+        prosody: None,
+        dialogue_chain: None,
         animations: Default::default(),
         trim_start: MediaTime::from_ticks(30 * 120_000),
         source: Default::default(),
@@ -1414,6 +1587,9 @@ fn an_exported_video_carries_its_soundtrack() {
             media_id: "media-music".into(),
             muted: false,
             volume: 1.0,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             trim_start: MediaTime::ZERO,
             source: Default::default(),
@@ -1506,6 +1682,8 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 align: Default::default(),
                 letter_spacing: 0.0,
                 line_height: 1.2,
+                decorations: None,
+                karaoke: None,
                 source: Default::default(),
                 role: Default::default(),
             }));
@@ -1704,6 +1882,8 @@ fn an_export_keeps_detail_the_preview_budget_would_have_destroyed() {
         fade_out: MediaTime::ZERO,
         media_id: "stripes".into(),
         trim_start: MediaTime::ZERO,
+        speed: 1.0,
+        freeze: None,
         transform: Transform::default(),
         effects: Vec::new(),
         animations: Default::default(),
@@ -1836,6 +2016,8 @@ fn a_trimmed_clip_exports_from_the_frame_it_was_trimmed_to() {
         media_id: "bands".into(),
         trim_start: MediaTime::from_seconds_f64(2.5).unwrap(),
         trim_end: MediaTime::ZERO,
+        speed: 1.0,
+        freeze: None,
         transform: Transform::default(),
         effects: Vec::new(),
         animations: Default::default(),
@@ -1945,6 +2127,8 @@ fn overlapping_clips_each_get_their_own_stream() {
             media_id: media.into(),
             trim_start: MediaTime::ZERO,
             trim_end: MediaTime::ZERO,
+            speed: 1.0,
+            freeze: None,
             transform: Transform {
                 x,
                 scale,
@@ -2194,6 +2378,8 @@ fn a_moving_level_becomes_an_ffmpeg_expression() {
         trim_start_seconds: 0.0,
         duration_seconds: 4.0,
         volume: 0.5,
+        speed: 1.0,
+        dialogue_chain: None,
         gain_points: vec![(0.0, 0.5)],
     };
     assert_eq!(bay_preview::volume_filter_for_test(&flat), "volume=0.5000");
@@ -2246,6 +2432,9 @@ fn a_six_line_duck_fits_inside_the_expression_budget() {
             media_id: "m".into(),
             muted: false,
             volume,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             trim_start: MT::ZERO,
             source: Default::default(),
@@ -2346,6 +2535,9 @@ fn an_audio_fade_reaches_the_export_mixer() {
             media_id: "m-ok".into(),
             muted: false,
             volume: 1.0,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             trim_start: MediaTime::ZERO,
             animations: Default::default(),
             source: Default::default(),
@@ -2408,6 +2600,8 @@ fn a_range_moves_the_sound_with_the_picture() {
         trim_start_seconds: 0.0,
         duration_seconds: duration,
         volume: 1.0,
+        speed: 1.0,
+        dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
     };
 
@@ -2455,6 +2649,8 @@ fn a_range_of_zero_leaves_every_clip_alone() {
         trim_start_seconds: 1.0,
         duration_seconds: 2.0,
         volume: 1.0,
+        speed: 1.0,
+        dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
     }];
     let kept = bay_preview::clips_in_range_for_test(clips.clone(), 0.0, 10.0);
@@ -2871,6 +3067,9 @@ fn an_export_delivers_48k_stereo_however_the_mix_was_assembled() {
             media_id: id.into(),
             muted: false,
             volume: 1.0,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             trim_start: MediaTime::ZERO,
             source: Default::default(),

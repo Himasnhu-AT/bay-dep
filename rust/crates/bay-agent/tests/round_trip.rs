@@ -28,6 +28,7 @@ fn empty_project() -> Project {
             },
             background: Default::default(),
             kit: bay_project::builtin_kit("swiss").cloned(),
+            plan: None,
         },
         scenes: vec![Scene {
             id: "scene-main".into(),
@@ -39,6 +40,7 @@ fn empty_project() -> Project {
                 audio: Vec::new(),
             },
             markers: Vec::new(),
+            groups: Default::default(),
         }],
         current_scene_id: "scene-main".into(),
         media: Vec::new(),

@@ -20,7 +20,7 @@
 //! That keeps the single-writer invariant. A worker thread that mutated the project directly
 //! would race the human dragging a clip, and its edits would not be in the undo history.
 
-use bay_project::{MediaAsset, Project};
+use bay_project::{AnimationChannel, MediaAsset, Project, Transform};
 use bay_speech::{CueStyle, Utterance};
 use serde_json::Value;
 
@@ -39,6 +39,12 @@ pub fn slow_tools() -> &'static [&'static str] {
         // Scanning for cuts decodes the whole file. On a long take that is minutes of work,
         // and it must never run on the thread drawing the window.
         "shots_detect",
+        "media_index",
+        "media_search",
+        "auto_reframe",
+        // Decodes the complete take and runs Whisper over it.
+        "transcribe",
+        "diarize",
         // A search is one HTTP round trip to an archive, plus — when the vision component is
         // installed — a preview download and a SigLIP forward pass per candidate. Seconds, on
         // somebody else's server, and never on the thread drawing the window.
@@ -51,6 +57,11 @@ pub fn slow_tools() -> &'static [&'static str] {
         "audio_beats",
         // Decoding a whole take to find the dead air in it.
         "silence_detect",
+        // Provider generation and artifact-measured SigLIP/beat verification can take minutes.
+        // It produces a file and receipt, never mutates the open document.
+        "gen_image",
+        "gen_video",
+        "gen_music",
         // Decoding a whole take to find the dead air in it.
         "silence_detect",
     ]
@@ -69,7 +80,16 @@ pub fn slow_tools() -> &'static [&'static str] {
 /// larger than the 20s meant for a file dialog, because it is the one slow tool that still
 /// answers in-band.
 pub fn job_tools() -> &'static [&'static str] {
-    &["render", "narrate", "subtitles_to_video", "shots_detect"]
+    &[
+        "render",
+        "narrate",
+        "subtitles_to_video",
+        "shots_detect",
+        "media_index",
+        "auto_reframe",
+        "transcribe",
+        "diarize",
+    ]
 }
 
 /// What the main thread should do with a finished job.
@@ -94,7 +114,13 @@ pub enum FollowUp {
         start: f64,
         volume: f32,
         cue_style: CueStyle,
-        captions: Option<crate::plan::CaptionStyle>,
+        captions: Option<Box<crate::plan::CaptionStyle>>,
+    },
+    /// Apply subject-tracked crop keyframes to the element as it exists when the job finishes.
+    ApplyReframe {
+        element_id: String,
+        transform: Transform,
+        crop_channels: Box<std::collections::BTreeMap<String, AnimationChannel>>,
     },
 }
 
@@ -185,6 +211,11 @@ pub fn run(
         "media_import" => media_import(args, context),
         "audio_probe" => audio_probe(args, context),
         "shots_detect" => shots_detect(args, context),
+        "media_index" => media_index(args, context),
+        "media_search" => media_search(args, context).map(SlowResult::value),
+        "auto_reframe" => auto_reframe(args, context),
+        "transcribe" => transcribe(args, context),
+        "diarize" => diarize(args, context),
         "narrate" => narrate(args, context, job),
         "subtitles_to_video" => subtitles_to_video(args, job),
         // These three touch the network or the encoder and never the document, so they answer
@@ -194,6 +225,15 @@ pub fn run(
         "image_rank" => bay_vision::mcp::image_rank(args).map(SlowResult::value),
         "audio_beats" => audio_beats(args).map(SlowResult::value),
         "silence_detect" => silence_detect(args).map(SlowResult::value),
+        "gen_image" => {
+            bay_gen::mcp::generate(bay_gen::GenerationKind::Image, args).map(SlowResult::value)
+        }
+        "gen_video" => {
+            bay_gen::mcp::generate(bay_gen::GenerationKind::Video, args).map(SlowResult::value)
+        }
+        "gen_music" => {
+            bay_gen::mcp::generate(bay_gen::GenerationKind::Music, args).map(SlowResult::value)
+        }
         other => Err(format!("{other} is not a background tool")),
     }
 }
@@ -207,12 +247,12 @@ fn render(
     let mut settings = export_settings(args)?;
     // A range shortens what is left to render, so the default duration is measured from where
     // the export actually starts rather than from zero.
-    let remaining = (context.timeline_duration - settings.start_seconds).max(0.0);
-    let duration = args
-        .get("duration")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(remaining)
-        .min(remaining.max(f64::MIN_POSITIVE));
+    let duration = render_duration(
+        context.timeline_duration,
+        context.project.settings.fps.as_f64(),
+        settings.start_seconds,
+        args.get("duration").and_then(|v| v.as_f64()),
+    )?;
     if duration <= 0.0 {
         return Err(
             "there is nothing on the timeline to render — add an element first, or pass an \
@@ -224,8 +264,7 @@ fn render(
     // Before anything is encoded, and after the cheaper "there is nothing here" answer: an
     // error-severity finding stops the render outright, and the one escape is stamped into the
     // file below and into the result.
-    let stamp = render_stamp(&context.project, args)?;
-    settings.metadata_comment = stamp.clone();
+    let mut stamp = render_stamp(&context.project, args)?;
 
     let project = &context.project;
     let canvas = project.settings.canvas;
@@ -241,6 +280,10 @@ fn render(
         "no GPU adapter is available, so bay cannot render — text and images still work, but \
          encoding needs a compositor",
     )?;
+    let frame_report =
+        bay_preview::frame_check::check_frames(project, &mut renderer, Some(duration));
+    stamp = frame_stamp(&frame_report, args, stamp)?;
+    settings.metadata_comment = render_metadata(project, stamp.as_deref());
 
     renderer
         .export_video_observed(
@@ -293,13 +336,169 @@ fn render(
 /// call it with the same project and the same arguments. A gate one path enforces and the other
 /// does not is not a gate, it is a preference.
 pub fn render_stamp(project: &Project, args: &Value) -> Result<Option<String>, String> {
-    bay_core::check::render_gate(
+    // Critic obligations are not ordinary check findings and have no override: a negative
+    // verdict that can be ignored is theatre, not Forced Optimization.
+    crate::trust::require_trust_ready(project.settings.plan.as_ref())?;
+    let stamp = bay_core::check::render_gate(
         project,
         args.get("ignoreChecks")
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
         args.get("reason").and_then(|value| value.as_str()),
-    )
+    )?;
+    let settings = export_settings(args)?;
+    let timeline_duration = project
+        .active_scene()
+        .tracks
+        .iter()
+        .flat_map(|track| track.elements.iter())
+        .map(|element| element.end().to_seconds_f64())
+        .fold(0.0_f64, f64::max);
+    render_duration(
+        timeline_duration,
+        project.settings.fps.as_f64(),
+        settings.start_seconds,
+        args.get("duration").and_then(|value| value.as_f64()),
+    )?;
+    Ok(stamp)
+}
+
+/// Export disclosure carried in the rendered file's comment metadata.
+///
+/// This is intentionally C2PA-shaped rather than a claim that bay signs C2PA manifests today.
+/// Generated media remains identifiable downstream with the provider/model/prompt/seed/time and
+/// artifact digest that were verified at import. Check overrides share the same receipt instead
+/// of replacing generation provenance.
+pub fn render_metadata(project: &Project, check_override: Option<&str>) -> Option<String> {
+    let used_media = project
+        .active_scene()
+        .tracks
+        .iter()
+        .flat_map(|track| track.elements.iter())
+        .filter_map(|element| element.media_id())
+        .collect::<std::collections::BTreeSet<_>>();
+    let generated = project
+        .media
+        .iter()
+        .filter(|asset| used_media.contains(asset.id.as_str()))
+        .filter_map(|asset| {
+            asset.generated.as_ref().map(|provenance| {
+                serde_json::json!({
+                    "mediaId": asset.id,
+                    "provider": provenance.provider,
+                    "model": provenance.model,
+                    "prompt": provenance.prompt,
+                    "seed": provenance.seed,
+                    "generatedAtUnixMs": provenance.generated_at_unix_ms,
+                    "requestHash": provenance.request_hash,
+                    "artifactSha256": provenance.artifact_sha256,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    if generated.is_empty() && check_override.is_none() {
+        return None;
+    }
+    serde_json::to_string(&serde_json::json!({
+        "bayReceiptVersion": 1,
+        "generatedMedia": generated,
+        "checksOverride": check_override,
+    }))
+    .ok()
+}
+
+/// Apply the same all-or-nothing render override to the compositor-backed gate.
+///
+/// `existing` is the model gate's stamp. When it is present the reason has already passed the
+/// length check; otherwise a frame-only failure validates and stamps the same arguments here.
+pub fn frame_stamp(
+    report: &Value,
+    args: &Value,
+    existing: Option<String>,
+) -> Result<Option<String>, String> {
+    if bay_preview::frame_check::require_clean(report).is_ok() {
+        return Ok(existing);
+    }
+    let failure = bay_preview::frame_check::require_clean(report)
+        .expect_err("a non-clean frame report must explain its refusal");
+    if let Some(stamp) = existing {
+        return Ok(Some(format!("{stamp}; frame checks overridden")));
+    }
+    let ignored = args
+        .get("ignoreChecks")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let Some(reason) = args
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|_| ignored)
+    else {
+        return Err(failure);
+    };
+    if reason.chars().count() < bay_core::check::MIN_OVERRIDE_REASON {
+        return Err(format!(
+            "ignoreChecks needs a reason of at least {} characters; {:?} is {}",
+            bay_core::check::MIN_OVERRIDE_REASON,
+            reason,
+            reason.chars().count()
+        ));
+    }
+    let codes = report
+        .get("findings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|finding| finding.get("code").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(format!(
+        "checks overridden ({}): {reason}",
+        if codes.is_empty() {
+            "frame checks unevaluated"
+        } else {
+            &codes
+        }
+    )))
+}
+
+/// Resolve the export length, refusing a caller-supplied duration that would silently omit the
+/// populated tail of the timeline.
+fn render_duration(
+    timeline_duration: f64,
+    fps: f64,
+    start_seconds: f64,
+    requested: Option<f64>,
+) -> Result<f64, String> {
+    let remaining = (timeline_duration - start_seconds).max(0.0);
+    let requested = match requested {
+        Some(duration) if duration.is_finite() && duration > 0.0 => Some(duration),
+        Some(_) => return Err("duration must be a finite number greater than zero".into()),
+        None => None,
+    };
+    if let Some(duration) = requested {
+        let tolerance = 1.0 / fps.max(1.0);
+        if remaining > tolerance && duration + tolerance < remaining {
+            return Err(format!(
+                "render refused: duration {duration:.2}s ends at {:.2}s, but the populated \
+                 timeline continues to {timeline_duration:.2}s ({:.2}s would be omitted). \
+                 Remove duration to render the whole timeline, or trim/delete the tail first.",
+                start_seconds + duration,
+                remaining - duration
+            ));
+        }
+    }
+    let duration = requested
+        .unwrap_or(remaining)
+        .min(remaining.max(f64::MIN_POSITIVE));
+    if duration <= 0.0 {
+        return Err(
+            "there is nothing on the timeline to render — add an element first, or pass an \
+             explicit duration"
+                .into(),
+        );
+    }
+    Ok(duration)
 }
 
 /// Read the encode settings out of a `render` call: a named preset first, then any explicit
@@ -397,6 +596,310 @@ fn shots_detect(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
     })
 }
 
+fn media_index(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let mut asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .cloned()
+        .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+    let shots = bay_preview::probe::detect_shots(
+        &asset.path,
+        bay_preview::probe::DEFAULT_SHOT_THRESHOLD,
+        0.4,
+    )
+    .map_err(|error| format!("could not detect shots in {:?}: {error}", asset.name))?;
+    let ranges = shots
+        .iter()
+        .map(|shot| bay_vision::ShotRange {
+            start_seconds: shot.start_seconds,
+            end_seconds: shot.end_seconds,
+        })
+        .collect::<Vec<_>>();
+    let encoder = bay_vision::Encoder::load().map_err(|error| error.to_string())?;
+    let indexed = bay_vision::index_shots(&encoder, &asset.path, &ranges)
+        .map_err(|error| error.to_string())?;
+    asset.semantic_index = Some(bay_project::SemanticMediaIndex {
+        model: "siglip-base-patch16-224".into(),
+        shots: indexed
+            .iter()
+            .map(|shot| bay_project::SemanticShot {
+                start_seconds: shot.range.start_seconds,
+                end_seconds: shot.range.end_seconds,
+                sample_seconds: shot.sample_seconds,
+                embedding: shot.embedding.as_slice().to_vec(),
+            })
+            .collect(),
+    });
+    Ok(SlowResult {
+        value: serde_json::json!({
+            "mediaId": media_id,
+            "model": "siglip-base-patch16-224",
+            "granularity": "one midpoint frame per detected shot",
+            "shots": indexed.len(),
+        }),
+        follow_up: FollowUp::ImportMedia(Box::new(asset)),
+    })
+}
+
+fn media_search(args: &Value, context: &SlowContext) -> Result<Value, String> {
+    let query = require_str(args, "query")?;
+    if query.trim().is_empty() {
+        return Err("media_search needs a plain-language query".into());
+    }
+    let wanted = args.get("mediaId").and_then(Value::as_str);
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
+    let encoder = bay_vision::Encoder::load().map_err(|error| error.to_string())?;
+    let text = encoder
+        .embed_text(std::slice::from_ref(&query))
+        .map_err(|error| error.to_string())?;
+    let mut matches = Vec::new();
+    for asset in &context.project.media {
+        if wanted.is_some_and(|media_id| media_id != asset.id) {
+            continue;
+        }
+        let Some(index) = &asset.semantic_index else {
+            continue;
+        };
+        for shot in &index.shots {
+            let embedding = bay_vision::Embedding::new(shot.embedding.clone());
+            if embedding.len() == bay_vision::DIMENSIONS {
+                matches.push((
+                    bay_vision::cosine(&text[0], &embedding),
+                    asset.id.clone(),
+                    asset.name.clone(),
+                    shot,
+                ));
+            }
+        }
+    }
+    if matches.is_empty() {
+        return Err("no indexed shots to search — call media_index first".into());
+    }
+    matches.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let separation = matches[0].0 - matches[matches.len() / 2].0;
+    Ok(serde_json::json!({
+        "query": query,
+        "separation": separation,
+        "hint": "SigLIP scores are not calibrated; use ranking and best-vs-median separation.",
+        "matches": matches.into_iter().take(limit.clamp(1, 100)).map(
+            |(score, media_id, media_name, shot)| serde_json::json!({
+                "mediaId": media_id,
+                "mediaName": media_name,
+                "startSeconds": shot.start_seconds,
+                "endSeconds": shot.end_seconds,
+                "sampleSeconds": shot.sample_seconds,
+                "score": score,
+            })
+        ).collect::<Vec<_>>(),
+    }))
+}
+
+fn diarize(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let speakers = args.get("speakers").and_then(Value::as_u64).unwrap_or(2) as usize;
+    let mut asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .cloned()
+        .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+    let transcript = asset
+        .transcript
+        .as_mut()
+        .ok_or_else(|| format!("media {media_id:?} has no transcript — call transcribe first"))?;
+    let summary = bay_listen::diarize_file(&asset.path, transcript, speakers)
+        .map_err(|error| error.to_string())?;
+    let transcript_value = serde_json::to_value(&*transcript).map_err(|error| error.to_string())?;
+    Ok(SlowResult {
+        value: serde_json::json!({
+            "mediaId": media_id,
+            "summary": summary,
+            "transcript": transcript_value,
+        }),
+        follow_up: FollowUp::ImportMedia(Box::new(asset)),
+    })
+}
+
+fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    let element_id = require_str(args, "elementId")?;
+    let target_width = args
+        .get("targetWidth")
+        .and_then(Value::as_u64)
+        .unwrap_or(1080) as u32;
+    let target_height = args
+        .get("targetHeight")
+        .and_then(Value::as_u64)
+        .unwrap_or(1920) as u32;
+    if target_width == 0 || target_height == 0 {
+        return Err("targetWidth and targetHeight must be greater than zero".into());
+    }
+    let video = context
+        .project
+        .active_scene()
+        .tracks
+        .iter()
+        .flat_map(|track| &track.elements)
+        .find_map(|element| match element {
+            bay_project::Element::Video(video) if video.id == element_id => Some(video.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| format!("no video element {element_id:?} on the timeline"))?;
+    let asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == video.media_id)
+        .ok_or_else(|| format!("no media {:?}", video.media_id))?;
+    let (source_width, source_height) = match (asset.width, asset.height) {
+        (Some(width), Some(height)) if width > 0 && height > 0 => (width, height),
+        _ => {
+            let metadata =
+                bay_preview::probe::probe_media(&asset.path).map_err(|error| error.to_string())?;
+            (metadata.width, metadata.height)
+        }
+    };
+    let source_start = video.trim_start.to_seconds_f64();
+    let source_end = video.trim_end.to_seconds_f64();
+    let shot_boundaries = match asset.semantic_index.as_ref() {
+        Some(index) => index
+            .shots
+            .iter()
+            .map(|shot| shot.start_seconds)
+            .filter(|time| *time > source_start && *time < source_end)
+            .collect::<Vec<_>>(),
+        None => bay_preview::probe::detect_shots(
+            &asset.path,
+            bay_preview::probe::DEFAULT_SHOT_THRESHOLD,
+            0.4,
+        )
+        .map_err(|error| format!("could not detect shot boundaries: {error}"))?
+        .into_iter()
+        .map(|shot| shot.start_seconds)
+        .filter(|time| *time > source_start && *time < source_end)
+        .collect(),
+    };
+    let sample_seconds = args
+        .get("sampleSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.5);
+    let smoothing_seconds = args
+        .get("smoothingSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.9);
+    let encoder = bay_vision::Encoder::load().map_err(|error| error.to_string())?;
+    let path = bay_vision::track_subject_siglip(
+        &encoder,
+        &asset.path,
+        source_start,
+        source_end,
+        bay_vision::ReframeTrackingConfig {
+            source_aspect: source_width as f32 / source_height.max(1) as f32,
+            target_aspect: target_width as f32 / target_height as f32,
+            shot_boundaries: &shot_boundaries,
+            tracking: bay_vision::TrackingConfig {
+                sample_seconds,
+                smoothing_seconds,
+            },
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let source_aspect = source_width as f32 / source_height.max(1) as f32;
+    let target_aspect = target_width as f32 / target_height as f32;
+    let crop_for = |point: &bay_vision::SubjectPoint| {
+        if target_aspect < source_aspect {
+            let kept = (target_aspect / source_aspect).clamp(0.01, 1.0);
+            let left = (point.x - kept * 0.5).clamp(0.0, 1.0 - kept);
+            (left, 0.0, 1.0 - kept - left, 0.0)
+        } else {
+            let kept = (source_aspect / target_aspect).clamp(0.01, 1.0);
+            let top = (point.y - kept * 0.5).clamp(0.0, 1.0 - kept);
+            (0.0, top, 0.0, 1.0 - kept - top)
+        }
+    };
+    let mut channels = std::collections::BTreeMap::new();
+    for name in ["cropLeft", "cropTop", "cropRight", "cropBottom"] {
+        channels.insert(name.to_string(), AnimationChannel::default());
+    }
+    for point in &path {
+        let local =
+            bay_project::MediaTime::from_seconds_f64((point.time_seconds - source_start).max(0.0))
+                .ok_or("tracked time is outside the representable range")?;
+        let crop = crop_for(point);
+        for (name, value) in [
+            ("cropLeft", crop.0),
+            ("cropTop", crop.1),
+            ("cropRight", crop.2),
+            ("cropBottom", crop.3),
+        ] {
+            channels
+                .get_mut(name)
+                .expect("channel exists")
+                .upsert(local, value);
+        }
+    }
+    let first_crop = path.first().map(crop_for).unwrap_or((0.0, 0.0, 0.0, 0.0));
+    let mut transform = video.transform;
+    transform.crop_left = first_crop.0;
+    transform.crop_top = first_crop.1;
+    transform.crop_right = first_crop.2;
+    transform.crop_bottom = first_crop.3;
+    let raw_x = path.iter().map(|point| point.raw_x).collect::<Vec<_>>();
+    let smooth_x = path.iter().map(|point| point.x).collect::<Vec<_>>();
+    Ok(SlowResult {
+        value: serde_json::json!({
+            "elementId": element_id,
+            "target": { "width": target_width, "height": target_height },
+        "detector": "SigLIP-ranked subject crops with local appearance prior",
+            "smoothing": {
+                "method": "exponential damping",
+                "seconds": smoothing_seconds,
+                "rawJitter": bay_vision::path_jitter(&raw_x),
+                "smoothedJitter": bay_vision::path_jitter(&smooth_x),
+            },
+            "points": path,
+        }),
+        follow_up: FollowUp::ApplyReframe {
+            element_id,
+            transform,
+            crop_channels: Box::new(channels),
+        },
+    })
+}
+
+/// Recognise an imported asset and attach the word-timed transcript on the main thread.
+fn transcribe(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let mut asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .cloned()
+        .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+    let listener = bay_listen::Listener::new(bay_listen::ListenConfig::default())
+        .map_err(|error| error.to_string())?;
+    let transcript = listener
+        .transcribe_file(&asset.path)
+        .map_err(|error| error.to_string())?;
+    asset.transcript = Some(transcript.clone());
+    Ok(SlowResult {
+        value: serde_json::json!({
+            "mediaId": media_id,
+            "language": transcript.language,
+            "model": transcript.model,
+            "durationSeconds": transcript.duration_seconds,
+            "words": transcript.words.len(),
+            "utterances": transcript.utterances.len(),
+            "transcript": transcript,
+        }),
+        follow_up: FollowUp::ImportMedia(Box::new(asset)),
+    })
+}
+
 /// Measure an asset already in the project, and remember what it measured.
 ///
 /// Shares [`loudness_of`] with the import, because a level is only comparable to another level
@@ -466,10 +969,19 @@ fn media_import(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
         .unwrap_or_else(|| format!("media-{}", context.next_id));
 
     let mut asset = MediaAsset::new(media_id.clone(), name.clone(), absolute.clone());
+    if let Some(receipt) = args.get("generationReceipt").and_then(Value::as_str) {
+        asset.generated = Some(
+            bay_gen::verify_provenance(receipt, std::path::Path::new(&absolute))
+                .map_err(|error| error.to_string())?,
+        );
+    }
 
     // A probe failure is reported but not fatal — an asset can still be placed with an explicit
     // duration. Silently defaulting is how a 3-minute clip becomes a 4-second one.
     let mut value = serde_json::json!({ "mediaId": media_id, "name": name, "path": absolute });
+    if asset.generated.is_some() {
+        value["generated"] = serde_json::json!(&asset.generated);
+    }
     match bay_preview::probe::probe_media(&absolute) {
         Ok(meta) => {
             // Kept on the asset, not only in this reply: it is what lets a trim stop at the end
@@ -646,7 +1158,7 @@ fn narrate(
             start,
             volume,
             cue_style,
-            captions,
+            captions: captions.map(Box::new),
         },
     })
 }
@@ -700,11 +1212,63 @@ pub fn plan_follow_up(follow_up: FollowUp, project: &Project) -> Result<Applied,
                 start,
                 volume,
                 &cue_style,
-                captions,
+                captions.map(|style| *style),
             )?;
             Ok(Applied {
                 media: vec![*asset],
                 planned: Some(planned),
+                replacement: None,
+            })
+        }
+        FollowUp::ApplyReframe {
+            element_id,
+            transform,
+            crop_channels,
+        } => {
+            let reference = project
+                .active_scene()
+                .tracks
+                .iter()
+                .find_map(|track| {
+                    track
+                        .elements
+                        .iter()
+                        .any(|element| element.id() == element_id)
+                        .then(|| bay_core::ElementRef::new(track.id.clone(), element_id.clone()))
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "video element {element_id:?} was removed while auto_reframe was running"
+                    )
+                })?;
+            let element = project
+                .active_scene()
+                .element(&reference)
+                .ok_or_else(|| format!("no element {element_id:?} on the active scene"))?;
+            if !matches!(element, bay_project::Element::Video(_)) {
+                return Err(format!("{element_id:?} is no longer a video element"));
+            }
+            let mut animations = element.animations().cloned().unwrap_or_default();
+            animations.extend(*crop_channels);
+            let commands = vec![
+                bay_core::Command::SetTransform {
+                    reference: reference.clone(),
+                    transform,
+                },
+                bay_core::Command::ApplyMotionPreset {
+                    reference,
+                    effects: element.effects().to_vec(),
+                    animations,
+                },
+            ];
+            Ok(Applied {
+                media: Vec::new(),
+                planned: Some(Planned::Tx {
+                    label: "auto_reframe".into(),
+                    commands,
+                    scene_id: project.current_scene_id.clone(),
+                    new_ids: Vec::new(),
+                }),
                 replacement: None,
             })
         }
@@ -934,6 +1498,70 @@ mod tests {
             !std::path::Path::new("/tmp/bay-never-written.mp4").exists(),
             "it must not have written a file"
         );
+    }
+
+    #[test]
+    fn an_explicit_duration_cannot_silently_cut_off_the_timeline() {
+        let error = render_duration(155.0, 30.0, 0.0, Some(61.0)).expect_err("must refuse");
+        assert!(error.contains("94.00s would be omitted"), "{error}");
+        assert!(error.contains("Remove duration"), "{error}");
+    }
+
+    #[test]
+    fn a_duration_within_one_frame_of_the_tail_is_not_called_truncation() {
+        assert_eq!(
+            render_duration(5.0, 30.0, 0.0, Some(4.99)).expect("rounding tolerance"),
+            4.99
+        );
+    }
+
+    #[test]
+    fn frame_findings_share_the_render_override_contract() {
+        let report = serde_json::json!({
+            "status": "findings",
+            "findings": [{"code": "frozen"}],
+        });
+        let refused = frame_stamp(&report, &serde_json::json!({}), None)
+            .expect_err("frame findings must gate");
+        assert!(refused.contains("frozen"), "{refused}");
+
+        let reason = "The static composition is intentional archival evidence.";
+        let stamp = frame_stamp(
+            &report,
+            &serde_json::json!({"ignoreChecks": true, "reason": reason}),
+            None,
+        )
+        .expect("a sufficiently explained override")
+        .expect("an override stamp");
+        assert!(stamp.contains("frozen"), "{stamp}");
+        assert!(stamp.contains(reason), "{stamp}");
+    }
+
+    #[test]
+    fn render_metadata_discloses_generated_media_used_on_the_timeline() {
+        let mut project = Project::starter();
+        let mut asset = MediaAsset::new("media-logo", "logo", "/tmp/logo.png");
+        asset.generated = Some(bay_project::GeneratedMediaProvenance {
+            provider: "fal".into(),
+            model: "fal-ai/flux/dev".into(),
+            prompt: "a geometric bay logo".into(),
+            seed: 9,
+            generated_at_unix_ms: 1_786_813_200_000,
+            request_hash: "request".into(),
+            artifact_sha256: "artifact".into(),
+        });
+        project.media.push(asset);
+
+        let metadata = render_metadata(&project, None).expect("generation disclosure");
+        let receipt: Value = serde_json::from_str(&metadata).expect("JSON metadata");
+
+        assert_eq!(receipt["bayReceiptVersion"], 1);
+        assert_eq!(receipt["generatedMedia"][0]["provider"], "fal");
+        assert_eq!(
+            receipt["generatedMedia"][0]["prompt"],
+            "a geometric bay logo"
+        );
+        assert_eq!(receipt["generatedMedia"][0]["artifactSha256"], "artifact");
     }
 
     #[test]

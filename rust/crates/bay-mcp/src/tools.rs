@@ -6,7 +6,8 @@
 
 use bay_agent::plan::EASINGS;
 use bay_project::{
-    AudioRole, ElementRole, ElementSource, Framing, ShapeKind, StyleKit, Tone, Transform,
+    AudioRole, ElementRole, ElementSource, Framing, ShapeKind, StyleKit, TextDecorations,
+    TextPlate, TextShadow, TextStroke, Tone, Transform,
 };
 use serde_json::{Value, json};
 
@@ -59,6 +60,52 @@ fn text(value: &Value, key: &str) -> Option<String> {
 
 fn required_text(value: &Value, key: &str) -> Result<String, ToolError> {
     text(value, key).ok_or_else(|| err(format!("missing required string field {key:?}")))
+}
+
+fn text_decorations(value: &Value) -> Option<TextDecorations> {
+    let stroke = value.get("stroke").and_then(|entry| {
+        Some(TextStroke {
+            width: entry.get("width")?.as_f64()? as f32,
+            color: entry
+                .get("color")
+                .and_then(Value::as_str)
+                .unwrap_or("#000000")
+                .to_string(),
+        })
+    });
+    let shadow = value.get("shadow").and_then(|entry| {
+        Some(TextShadow {
+            offset_x: entry.get("offsetX")?.as_f64()? as f32,
+            offset_y: entry.get("offsetY")?.as_f64()? as f32,
+            blur: entry.get("blur")?.as_f64()? as f32,
+            color: entry
+                .get("color")
+                .and_then(Value::as_str)
+                .unwrap_or("#00000099")
+                .to_string(),
+        })
+    });
+    let plate = value.get("plate").map(|entry| TextPlate {
+        color: entry
+            .get("color")
+            .and_then(Value::as_str)
+            .unwrap_or("#000000B3")
+            .to_string(),
+        padding_x: entry
+            .get("paddingX")
+            .and_then(Value::as_f64)
+            .unwrap_or(16.0) as f32,
+        padding_y: entry
+            .get("paddingY")
+            .and_then(Value::as_f64)
+            .unwrap_or(10.0) as f32,
+        radius: entry.get("radius").and_then(Value::as_f64).unwrap_or(12.0) as f32,
+    });
+    (stroke.is_some() || shadow.is_some() || plate.is_some()).then_some(TextDecorations {
+        stroke,
+        shadow,
+        plate,
+    })
 }
 
 /// The transform/blend block every visual tool accepts.
@@ -392,6 +439,60 @@ fn headless_job(kind: &str, label: &str, work: impl FnOnce() -> ToolResult) -> T
     }
 }
 
+/// Start a headless render on an owned project snapshot and return before encoding begins.
+///
+/// Unlike narration, render has no document follow-up: its only output is a file. That makes it
+/// safe to run concurrently with the single-writer headless studio, and means the advertised job
+/// contract can be real rather than a finished job id handed back after a two-minute encode.
+fn background_job(
+    kind: &str,
+    label: &str,
+    unit: bay_jobs::Unit,
+    total: u64,
+    work: impl FnOnce(bay_jobs::Handle) -> Result<Value, String> + Send + 'static,
+) -> ToolResult {
+    let handle = bay_jobs::start(kind, label, unit, total);
+    let id = handle.id();
+    let worker_handle = handle.clone();
+    let spawn = std::thread::Builder::new()
+        .name(format!("bay-{kind}-{id}"))
+        .spawn(move || {
+            let outcome = work(worker_handle.clone());
+            bay_jobs::finish(&worker_handle, outcome);
+        });
+    if let Err(error) = spawn {
+        let message = format!("could not start the {kind} worker: {error}");
+        bay_jobs::finish(&handle, Err(message.clone()));
+        return Err(err(message));
+    }
+    Ok(json!({
+        "job": id,
+        "status": "started",
+        "finished": false,
+        "message": format!(
+            "{kind} is running in the background — poll job_status with job {id} until \
+             finished is true"
+        ),
+    }))
+}
+
+fn headless_render_job(studio: &Studio, args: &Value) -> ToolResult {
+    // Preserve the attached transport's useful failure mode: model-gate refusals and malformed
+    // ranges come back immediately, before a caller starts polling a doomed job.
+    bay_agent::slow::render_stamp(studio.project(), args).map_err(err)?;
+    let label = required_text(args, "path")?;
+    let context = studio.slow_context();
+    let arguments = args.clone();
+    background_job("render", &label, bay_jobs::Unit::Frames, 0, move |handle| {
+        bay_agent::slow::run("render", &arguments, &context, Some(&handle)).and_then(|result| {
+            if !matches!(result.follow_up, bay_agent::slow::FollowUp::None) {
+                return Err("a render unexpectedly requested a document follow-up".into());
+            }
+            Ok(result.value)
+        })
+    })
+}
+
 /// The components `runtime_install` will accept, read from the manifest rather than listed here.
 ///
 /// This was a hardcoded `["video", "speech"]`, and by the time `sfx` shipped the list had
@@ -594,7 +695,10 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "project_info",
-            "Canvas size, fps, timeline duration and element counts for the current project.",
+            "Canvas size, fps, timeline duration and element counts for the current project. \
+             `motionSignatures` groups elements by the DISTINCT SET of named moves they use; it \
+             is not an occurrence count, so thirty non-overlapping nudges on one element still \
+             read as the single signature `nudge`.",
             json!({}),
             &[],
         ),
@@ -617,10 +721,14 @@ pub fn definitions() -> Vec<Value> {
              and `accentSeconds`. Read it before choosing a level — `volume` is a multiplier and \
              says nothing about how loud a clip will be, and two files that both sound fine on \
              their own can differ by 15 dB. Pass `mediaId` instead of `path` to re-measure \
-             something already imported.",
+             something already imported.\n\nFor accepted gen_image/gen_video/gen_music output, \
+             pass its generationReceipt. Bay re-hashes the file against its local receipt before \
+             stamping generated provenance; caller-written provenance is never trusted.",
             json!({
                 "path": { "type": "string", "description": "Path to the file on disk." },
                 "id": { "type": "string", "description": "Optional explicit media id." },
+                "generationReceipt": { "type": "string",
+                    "description": "requestHash from an accepted generation. Verified against the file bytes before provenance is stored." },
                 "mediaId": { "type": "string",
                     "description": "Measure an asset that is already in the project instead of importing a new one. Same answer as audio_probe." }
             }),
@@ -647,7 +755,9 @@ pub fn definitions() -> Vec<Value> {
              loud it is with `tone`, and the project's committed style kit answers the rest. A \
              hook and a headline come out at hero and headline size in the kit's display face; a \
              kicker comes out small, tracked out, in its mono voice. Read project_info to see \
-             the ramp you are drawing against.",
+             the ramp you are drawing against. The response includes measured `textLayout` \
+             glyph-ink bounds. Read its height after every placement: for text, `scale` is the \
+             wrap box, not the font size, so narrowing it can add lines.",
             merge(
                 json!({
                     "start": { "type": "number", "description": "Timeline start, in seconds." },
@@ -657,6 +767,21 @@ pub fn definitions() -> Vec<Value> {
                     "letterSpacing": { "type": "number",
                         "description": "Tracking in em, overriding the kit's ramp for this role. Rarely needed — the ramp already opens up an uppercase kicker and tightens display type." },
                     "lineHeight": { "type": "number", "description": "Multiple of the font size, overriding the kit's ramp for this role." },
+                    "stroke": { "type": "object", "properties": {
+                        "width": { "type": "number", "minimum": 0 },
+                        "color": { "type": "string", "default": "#000000" }
+                    }, "required": ["width"] },
+                    "shadow": { "type": "object", "properties": {
+                        "offsetX": { "type": "number" }, "offsetY": { "type": "number" },
+                        "blur": { "type": "number", "minimum": 0 },
+                        "color": { "type": "string", "default": "#00000099" }
+                    }, "required": ["offsetX", "offsetY", "blur"] },
+                    "plate": { "type": "object", "properties": {
+                        "color": { "type": "string", "default": "#000000B3" },
+                        "paddingX": { "type": "number", "default": 16 },
+                        "paddingY": { "type": "number", "default": 10 },
+                        "radius": { "type": "number", "default": 12 }
+                    } },
                     "id": { "type": "string", "description": "Optional explicit element id, for animating it later. Ids of the form caption-<number> are reserved for narrate and the subtitle tools." }
                 }),
                 merge(
@@ -713,6 +838,8 @@ pub fn definitions() -> Vec<Value> {
                     "duration": { "type": "number" },
                     "trimStart": { "type": "number", "default": 0.0,
                         "description": "Seconds to skip from the head of the source." },
+                    "speed": { "type": "number", "default": 1.0, "exclusiveMinimum": 0,
+                        "description": "Constant playback speed. 2.0 is twice as fast; 0.5 is half speed." },
                     "id": { "type": "string" }
                 }),
                 merge(visual_properties(), role_property(false)),
@@ -730,11 +857,46 @@ pub fn definitions() -> Vec<Value> {
                 "volume": { "type": "number", "default": 1.0, "description": "Linear gain; 1.0 is unity." },
                 "trimStart": { "type": "number", "default": 0.0,
                     "description": "Seconds to skip from the head of the file — start a music bed at the drop rather than at bar one." },
+                "speed": { "type": "number", "default": 1.0, "exclusiveMinimum": 0,
+                    "description": "Constant playback speed with pitch-preserving time stretch." },
                 "role": { "type": "string", "enum": AudioRole::NAMES, "default": "bed",
                     "description": "What this sound is doing: \"speech\" is narration or dialogue (narrate sets this itself), \"bed\" is music under the picture, \"sfx\" is a one-off effect. The bed is what a duck is measured against, so a voice-over placed by hand should say so." },
                 "id": { "type": "string" }
             }),
             &["mediaId", "start", "duration"],
+        ),
+        tool(
+            "group_create",
+            "Parent several visual elements to one transform. Child scale and opacity multiply \
+             with the group; rotation adds; position is transformed around the group's anchor. \
+             Animate the returned group id with animate; group keyframe times are absolute scene \
+             time rather than relative to any child.",
+            merge(
+                json!({
+                    "id": { "type": "string", "description": "Optional group id." },
+                    "elementIds": { "type": "array", "minItems": 1,
+                        "items": { "type": "string" },
+                        "description": "Visual element ids. An element may belong to one group." }
+                }),
+                visual_properties(),
+            ),
+            &["elementIds"],
+        ),
+        tool(
+            "element_retime",
+            "Change a video or audio clip's constant playback speed. Video can also hold one \
+             source frame for a timeline duration; the hold does not consume source time. \
+             Reverse playback is deliberately not offered because streamed decode cannot do it \
+             without an expensive seek/cache strategy.",
+            json!({
+                "elementId": { "type": "string" },
+                "speed": { "type": "number", "default": 1.0, "exclusiveMinimum": 0 },
+                "freezeAt": { "type": "number", "minimum": 0,
+                    "description": "Video only: seconds after the element starts where the frame hold begins." },
+                "freezeDuration": { "type": "number", "exclusiveMinimum": 0,
+                    "description": "Video only: timeline seconds to hold that frame." }
+            }),
+            &["elementId"],
         ),
         tool(
             "apply_move",
@@ -743,7 +905,9 @@ pub fn definitions() -> Vec<Value> {
              choice. A move carries its own duration, curve and amplitude, all of them chosen \
              together: the same nominal duration on two different curves gives the eye wildly \
              different amounts of visible motion, and that arithmetic has already happened here. \
-             Prefer this to hand-written keys.",
+             Prefer this to hand-written keys. A move appends only when its `at` starts after the \
+             existing channel ends; overlapping calls replace that channel. The response says \
+             `added`, `appended`, or `replaced-overlap` for every channel.",
             json!({
                 "elementId": { "type": "string" },
                 "move": { "type": "string", "enum": MOVE_IDS.as_slice(), "description": MOVE_HELP.as_str() },
@@ -763,7 +927,9 @@ pub fn definitions() -> Vec<Value> {
              together — or pass `property` and `keys` to write keyframes by hand. Hand-written \
              keys are legal and are reported per channel as \"off-vocabulary-motion\", so use \
              them for something the vocabulary does not have rather than as a default. Keyframe \
-             times are relative to the ELEMENT's start, not the timeline's.",
+             times are relative to the ELEMENT's start, not the timeline's. Named moves append \
+             only after the existing channel ends; repeating the same move at the same `at` \
+             replaces its overlapping keys, and the response reports that merge decision.",
             json!({
                 "elementId": { "type": "string" },
                 "move": { "type": "string", "enum": MOVE_IDS.as_slice(), "description": MOVE_HELP.as_str() },
@@ -772,8 +938,7 @@ pub fn definitions() -> Vec<Value> {
                 "distance": { "type": "number", "default": 1.0, "minimum": 0.25, "maximum": 4.0,
                     "description": "With `move`: a multiplier on the move's own amplitude, not a number of pixels." },
                 "property": { "type": "string",
-                    "enum": ["opacity", "scale", "x", "y", "rotation", "scaleX", "scaleY", "volume"],
-                    "description": "Hand-keyed only. Visual clips take the transform properties; an audio clip takes \"volume\" — which is how you duck a music bed under narration instead of splitting it into clips with stepped gains." },
+                    "description": "Hand-keyed only. Transform channels are opacity/scale/x/y/rotation/scaleX/scaleY; audio takes volume; masks take mask.x/mask.y/mask.width/mask.height/mask.feather; effect params take effect.<effectId>.<param>. When elementId names a group, transform-channel key times are ABSOLUTE scene time." },
                 "keys": {
                     "type": "array",
                     "description": "Hand-keyed only: at least two keyframes, e.g. [{\"t\":0,\"value\":0},{\"t\":0.5,\"value\":1}]. A value-changing segment shorter than about 7 frames is over before the eye can arrive — it is received as a cut, not as motion.",
@@ -905,7 +1070,8 @@ pub fn definitions() -> Vec<Value> {
             "Reposition, scale, rotate or fade an element already on the timeline. Give only \
              the fields you want to change — the rest keep their current values, so nudging y \
              does not reset a scale you set earlier. This is what to reach for after a snapshot \
-             shows something in the wrong place.",
+             shows something in the wrong place. When the element is text, the response includes \
+             the same measured `textLayout` as add_text; changing `scale` changes its wrap box.",
             json!({
                 "elementId": { "type": "string" },
                 "x": { "type": "number", "description": "Anchor position across the canvas, 0..1." },
@@ -926,7 +1092,8 @@ pub fn definitions() -> Vec<Value> {
              animation. Give only what changes.\n\nChanging `role` or `tone` re-resolves the \
              line against the project's style kit, which is how a label is promoted to a \
              headline. There is no fontFamily, fontSize, fontWeight or color: those come from \
-             the kit.",
+             the kit. The response includes the same measured `textLayout` as add_text, so the \
+             resulting wraps and glyph-ink bounds are visible without rendering a frame.",
             merge(
                 json!({
                     "elementId": { "type": "string" },
@@ -1212,6 +1379,42 @@ pub fn definitions() -> Vec<Value> {
             &["mediaId"],
         ),
         tool(
+            "media_index",
+            "Build and persist a semantic index for imported footage. Detects cuts, samples one \
+             midpoint frame per shot, and embeds those frames with bay's existing local SigLIP \
+             model. Returns a job id; poll job_status.",
+            json!({
+                "mediaId": { "type": "string", "description": "An id from media_import." }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "media_search",
+            "Find footage by meaning rather than filename. Searches persisted shot-level SigLIP \
+             embeddings and returns source ranges ready to place. Scores are uncalibrated; use \
+             rank and best-vs-median separation.",
+            json!({
+                "query": { "type": "string", "description": "Plain-language visual description." },
+                "mediaId": { "type": "string", "description": "Optional asset to restrict search to." },
+                "limit": { "type": "integer", "default": 10, "minimum": 1, "maximum": 100 }
+            }),
+            &["query"],
+        ),
+        tool(
+            "auto_reframe",
+            "Track the subject in a video clip and animate crop insets for a new aspect ratio. \
+             The tracked path is exponentially damped before keyframes are written, avoiding \
+             jittery per-frame camera jumps. Returns a job id; poll job_status.",
+            json!({
+                "elementId": { "type": "string", "description": "A video element on the timeline." },
+                "targetWidth": { "type": "integer", "default": 1080 },
+                "targetHeight": { "type": "integer", "default": 1920 },
+                "sampleSeconds": { "type": "number", "default": 0.5 },
+                "smoothingSeconds": { "type": "number", "default": 0.9 }
+            }),
+            &["elementId"],
+        ),
+        tool(
             "check",
             "Inspect the timeline for the mistakes that make a finished video look wrong: a \
              large fill too close in colour to what it sits on to be seen, a card with nothing \
@@ -1228,7 +1431,22 @@ pub fn definitions() -> Vec<Value> {
              finding that names a beat is numbered in it, so marker_add is how you change what \
              the per-beat checks are addressed against. render refuses while any error stands, \
              so run this first: it costs milliseconds and needs no GPU.",
-            json!({}),
+            json!({
+                "duration": { "type": "number",
+                    "description": "Inspect only the first this many seconds — use the same value you intend to render." }
+            }),
+            &[],
+        ),
+        tool(
+            "check_frames",
+            "Render low-resolution, caption-suppressed samples and inspect the picture itself. \
+             Reports frozen arrangements, an undersized visual anchor, and a dead lower frame. \
+             Unlike check this needs a GPU; without one it returns status unevaluated and names \
+             every skipped code.",
+            json!({
+                "duration": { "type": "number",
+                    "description": "Inspect only the first this many seconds. Defaults to the populated timeline." }
+            }),
             &[],
         ),
         tool(
@@ -1252,10 +1470,24 @@ pub fn definitions() -> Vec<Value> {
             &["at", "path"],
         ),
         tool(
+            "contact_sheet",
+            "Render review frames into one labelled PNG. With no times, bay chooses two seeded, \
+             jittered moments per beat so repeated reviews are reproducible without letting an \
+             author pick only flattering frames.",
+            json!({
+                "path": { "type": "string", "description": "Where to write the PNG." },
+                "times": { "type": "array", "items": { "type": "number" },
+                    "description": "Optional explicit timeline seconds. Omit for two engine-chosen samples per beat." },
+                "columns": { "type": "integer", "default": 3 }
+            }),
+            &["path"],
+        ),
+        tool(
             "render",
-            "Encode the timeline, picture and sound. Requires ffmpeg. Returns a job id — poll \
-             job_status. Defaults are the ones a vertical reel wants: H.264, CRF 20, and the \
-             mix normalised to -14 LUFS so it does not arrive quiet and get turned up along \
+            "Encode the timeline, picture and sound. Requires ffmpeg. Returns immediately with a \
+             job id while encoding continues on a project snapshot — poll job_status until \
+             finished is true. Defaults are the ones a vertical reel wants: H.264, CRF 20, and \
+             the mix normalised to -14 LUFS so it does not arrive quiet and get turned up along \
              with its noise floor. Pass a preset rather than tuning by hand unless you have a \
              reason.",
             json!({
@@ -1559,6 +1791,10 @@ pub fn definitions() -> Vec<Value> {
                         "description": "Mix gain for the narration clip. With peakDb normalization, 1.0 is already a full-strength voice." },
                     "peakDb": { "type": "number", "default": -2.0,
                         "description": "Normalize each utterance to this peak in dBFS. Kokoro's raw level swings ~5 dB line to line; leaving this on keeps delivery even. Pass null for Kokoro's untouched output." },
+                    "pitchSemitones": { "type": "number", "default": 0.0,
+                        "description": "Provider-neutral pitch control. Kokoro reports this unsupported unless zero; another TTS adapter may implement it." },
+                    "energy": { "type": "number", "default": 1.0, "exclusiveMinimum": 0,
+                        "description": "Provider-neutral vocal energy. When supplied it replaces peakDb normalization." },
                     "audioPath": { "type": "string", "description": "Where to write the WAV. Defaults to a temp file." },
                     "captions": { "type": "boolean", "default": true, "description": "Place captions as well as audio." }
                 }),
@@ -1638,7 +1874,347 @@ pub fn definitions() -> Vec<Value> {
             }),
             &[],
         ),
+        tool(
+            "transcribe",
+            "Hear an imported video or audio file locally with whisper.cpp and attach the \
+             word-timed transcript to the media asset. Returns a job id; poll job_status. The \
+             model is installed by runtime_install component \"listen\" and no media leaves the Mac.",
+            json!({
+                "mediaId": { "type": "string", "description": "An imported video or audio id." }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "diarize",
+            "Separate speakers in an existing transcript by clustering local acoustic features \
+             for each utterance. Speaker labels are written back onto the persisted utterances \
+             and words used by transcript editing. Returns a job id; poll job_status.",
+            json!({
+                "mediaId": { "type": "string" },
+                "speakers": { "type": "integer", "default": 2, "minimum": 1, "maximum": 8 }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "transcript_get",
+            "Read the persisted transcript for an imported asset: language, utterances, speakers \
+             where Whisper supplied turns, and every word's start/end/confidence.",
+            json!({
+                "mediaId": { "type": "string" }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "transcript_search",
+            "Find an exact word sequence in a transcript. Matching ignores case and edge \
+             punctuation; results carry source-media timing ready for cut_by_transcript.",
+            json!({
+                "mediaId": { "type": "string" },
+                "query": { "type": "string", "description": "One or more words to find." }
+            }),
+            &["mediaId", "query"],
+        ),
+        tool(
+            "cut_by_transcript",
+            "Build a dialogue edit by placing selected transcript ranges consecutively as paired \
+             video and speech clips. Give wordRanges for exact word-index cuts or ranges for \
+             source-second intervals. Video and audio are both placed; add_video alone is silent.",
+            json!({
+                "mediaId": { "type": "string" },
+                "wordRanges": {
+                    "type": "array",
+                    "items": { "type": "object", "properties": {
+                        "startWord": { "type": "integer", "minimum": 0 },
+                        "endWord": { "type": "integer", "minimum": 1,
+                            "description": "Exclusive word index." }
+                    }, "required": ["startWord", "endWord"] }
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": { "type": "object", "properties": {
+                        "startSeconds": { "type": "number", "minimum": 0 },
+                        "endSeconds": { "type": "number", "minimum": 0 },
+                        "text": { "type": "string" }
+                    }, "required": ["startSeconds", "endSeconds"] }
+                },
+                "timelineStart": { "type": "number", "default": 0.0 },
+                "layer": { "type": "integer", "default": 0 }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "remove_silence_and_fillers",
+            "Create a tightened transcript edit: remove configurable filler words, compress dead \
+             air, keep short conversational pauses untouched, and retain a bounded meaningful \
+             beat from long pauses. Defaults favour natural speech rhythm rather than maximum speed.",
+            json!({
+                "mediaId": { "type": "string" },
+                "timelineStart": { "type": "number", "default": 0.0 },
+                "layer": { "type": "integer", "default": 0 },
+                "sourceStart": { "type": "number", "default": 0.0,
+                    "description": "Only clean transcript words at or after this source time." },
+                "sourceEnd": { "type": "number",
+                    "description": "Only clean transcript words ending at or before this source time." },
+                "fillerWords": { "type": "array", "items": { "type": "string" },
+                    "default": ["um", "uh", "erm", "er", "ah", "like", "you know"] },
+                "deadAirThresholdSeconds": { "type": "number", "default": 0.72,
+                    "description": "Shorter gaps remain untouched." },
+                "retainedPauseSeconds": { "type": "number", "default": 0.18 },
+                "keepMeaningfulPauses": { "type": "boolean", "default": true },
+                "meaningfulPauseThresholdSeconds": { "type": "number", "default": 1.35 },
+                "meaningfulPauseSeconds": { "type": "number", "default": 0.65,
+                    "description": "How much of a long intentional beat to retain." }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "plan_create",
+            "Create the inspectable editorial promise before building: named genre format, target \
+             runtime, beat intents, and asset slots. Defaults to a draft so a human can reject it \
+             cheaply; approve=true commits it and places the beat markers used by checks and the \
+             critic. The format playbook supplies pacing, caption, sound, and failure-mode rules.",
+            json!({
+                "brief": { "type": "string" },
+                "format": { "type": "string", "enum": bay_agent::trust::format_registry().iter().map(|format| format.id).collect::<Vec<_>>() },
+                "targetRuntimeSeconds": { "type": "number", "exclusiveMinimum": 0 },
+                "approve": { "type": "boolean", "default": false },
+                "beats": { "type": "array", "minItems": 1, "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "role": { "type": "string" },
+                        "at": { "type": "number", "minimum": 0 },
+                        "intent": { "type": "string" },
+                        "assetSlots": { "type": "array", "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "purpose": { "type": "string" },
+                                "required": { "type": "boolean", "default": false }
+                            },
+                            "required": ["id", "purpose"]
+                        }}
+                    },
+                    "required": ["id", "role", "at", "intent"]
+                }}
+            }),
+            &["brief", "format", "targetRuntimeSeconds", "beats"],
+        ),
+        tool(
+            "plan_get",
+            "Read the project's plan artifact, critic obligations, tournament state, and the \
+             built-in format registry. This is the approval surface: inspect it before any build.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "variant_create",
+            "Clone the active project into the project library as one deliberate alternative. \
+             Variants stay ordinary library projects, so load the returned projectId, change \
+             hook/pacing/music, and render with the existing render tool.",
+            json!({
+                "label": { "type": "string", "description": "What this alternative changes, e.g. faster-hook." }
+            }),
+            &["label"],
+        ),
+        tool(
+            "variant_register_render",
+            "Attach a real rendered file to a variant. Bay loads the saved project and recomputes \
+             both model and pixel gates; a caller cannot self-report validity, and an invalid \
+             render receives zero reward in the tournament.",
+            json!({
+                "projectId": { "type": "string" },
+                "path": { "type": "string", "description": "Existing non-empty output from render." }
+            }),
+            &["projectId", "path"],
+        ),
+        tool(
+            "tournament_compare",
+            "Record one forced pairwise preference between two engine-verified renders. Never asks \
+             for an absolute score. Forced Optimization requires the current incumbent in every \
+             comparison, and a revision becomes incumbent only when it actually wins.",
+            json!({
+                "leftProjectId": { "type": "string" },
+                "rightProjectId": { "type": "string" },
+                "winnerProjectId": { "type": "string" },
+                "reason": { "type": "string" }
+            }),
+            &[
+                "leftProjectId",
+                "rightProjectId",
+                "winnerProjectId",
+                "reason",
+            ],
+        ),
+        tool(
+            "critic_prepare",
+            "Render an engine-seeded contact sheet and return only brief, sheet, and computed \
+             check/check_frames evidence for a fresh critic. The model gets no plan or transcript \
+             to defend. Follow with critic_submit. The loop is bounded at two rounds.",
+            json!({
+                "path": { "type": "string", "description": "Where to write the labelled critic contact sheet." }
+            }),
+            &["path"],
+        ),
+        tool(
+            "critic_submit",
+            "Submit a fresh critic's three forced choices and nine binary taste judgments. Every \
+             forced choice creates a persisted render-blocking obligation keyed by beat, exact \
+             engine sample time, and rendered content hash. Caller-supplied measurements are not accepted.",
+            json!({
+                "weakestPanel": { "type": "integer", "minimum": 1 },
+                "mostAlikePair": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1 } },
+                "thumbnailPanel": { "type": "integer", "minimum": 1 },
+                "binaries": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "type": "boolean" } },
+                "rationale": { "type": "string" }
+            }),
+            &[
+                "weakestPanel",
+                "mostAlikePair",
+                "thumbnailPanel",
+                "binaries",
+                "rationale",
+            ],
+        ),
+        tool(
+            "critic_refresh",
+            "Re-render every open critic obligation at its original timestamp. An obligation closes \
+             only when both rendered content and ICGS composition changed; hue swaps, global drift, \
+             and self-reported edits cannot clear it.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "gen_image",
+            "Generate a still through a local, fal, or Gemini adapter, then verify the actual pixels \
+             against the prompt with bay's provisioned SigLIP encoder. This is deliberately \
+             two-step: the first call only returns cost and the exact outbound payload. Cloud \
+             generation requires a second identical call with execute:true, consent:true, and the \
+             returned previewId. No consent means no cloud call. Accepted results carry model, \
+             prompt, seed, timestamp, content hash, and generated-media provenance; rejected \
+             results are not offered for media_import.",
+            json!({
+                "prompt": { "type": "string", "description": "What the pixels must show. SigLIP measures the resulting file against this." },
+                "provider": { "type": "string", "enum": ["local", "fal", "gemini"], "default": "local" },
+                "model": { "type": "string", "description": "Provider model id. Omit for bay's current default." },
+                "width": { "type": "integer", "minimum": 1, "default": 1024 },
+                "height": { "type": "integer", "minimum": 1, "default": 1024 },
+                "seed": { "type": "integer", "minimum": 0, "default": 0 },
+                "execute": { "type": "boolean", "default": false, "description": "False previews only. Repeat with true after reviewing cost and outbound data." },
+                "consent": { "type": "boolean", "default": false, "description": "Required for cloud providers and valid only with the matching previewId." },
+                "previewId": { "type": "string", "description": "Binds cloud consent to the exact payload and cost shown by the preview." }
+            }),
+            &["prompt"],
+        ),
+        tool(
+            "gen_video",
+            "Generate a short source clip through a local, fal, or Gemini adapter. Clips are capped \
+             at four seconds because coherence degrades on longer generations. Bay samples real \
+             decoded frames, SigLIP-checks prompt adherence, rejects peripheral flicker, and routes \
+             accepted placement through the existing critic obligations for physics/permanence. \
+             First call previews only; a cloud call requires execute:true, consent:true, and the \
+             matching previewId from an identical request.",
+            json!({
+                "prompt": { "type": "string", "description": "What every sampled frame must depict." },
+                "imageRef": { "type": "string", "description": "Optional local reference image. The preview lists it under outbound.localFiles before any upload." },
+                "seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 4, "default": 4 },
+                "provider": { "type": "string", "enum": ["local", "fal", "gemini"], "default": "local" },
+                "model": { "type": "string", "description": "Provider model id. Omit for bay's current default." },
+                "width": { "type": "integer", "minimum": 1 },
+                "height": { "type": "integer", "minimum": 1 },
+                "seed": { "type": "integer", "minimum": 0, "default": 0 },
+                "execute": { "type": "boolean", "default": false },
+                "consent": { "type": "boolean", "default": false },
+                "previewId": { "type": "string", "description": "Binds cloud consent to the exact payload and cost shown by the preview." }
+            }),
+            &["prompt"],
+        ),
+        tool(
+            "gen_music",
+            "Generate a music bed through a local or fal adapter. Bay decodes the returned audio \
+             and measures its beat grid; a provider-reported BPM cannot satisfy the gate. A weak \
+             pulse or BPM outside five percent of the brief is rejected. The first call only \
+             previews cost and outbound data. Cloud generation requires a second identical call \
+             with execute:true, consent:true, and its matching previewId. There is no bay credit \
+             meter: cost is the provider's estimated charge.",
+            json!({
+                "brief": { "type": "string", "description": "Mood, instrumentation, energy arc, and intended edit use." },
+                "bpm": { "type": "number", "minimum": 30, "maximum": 300, "description": "Requested tempo, verified from the generated audio." },
+                "seconds": { "type": "number", "exclusiveMinimum": 0, "default": 30 },
+                "provider": { "type": "string", "enum": ["local", "fal"], "default": "local" },
+                "model": { "type": "string", "description": "Provider model id. Omit for bay's current default." },
+                "seed": { "type": "integer", "minimum": 0, "default": 0 },
+                "execute": { "type": "boolean", "default": false },
+                "consent": { "type": "boolean", "default": false },
+                "previewId": { "type": "string", "description": "Binds cloud consent to the exact payload and cost shown by the preview." }
+            }),
+            &["brief"],
+        ),
+        tool(
+            "runtime_remove",
+            "Remove one runtime component that bay installed and report the disk space actually \
+             freed. This only deletes manifest-owned paths inside bay's managed runtime \
+             directory: a system ffmpeg, Python, or other user-installed tool is never touched. \
+             Refuses while an install of the same component is running.",
+            json!({
+                "component": { "type": "string", "enum": installable_components(),
+                    "description": installable_detail() }
+            }),
+            &["component"],
+        ),
     ]
+}
+
+fn transcript_ranges(
+    studio: &Studio,
+    media_id: &str,
+    args: &Value,
+) -> Result<Vec<bay_listen::SourceRange>, ToolError> {
+    let transcript = studio
+        .project()
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?
+        .transcript
+        .as_ref()
+        .ok_or_else(|| {
+            err(format!(
+                "media {media_id:?} has no transcript — call transcribe first"
+            ))
+        })?;
+    let mut ranges = Vec::new();
+    if let Some(entries) = args.get("wordRanges").and_then(Value::as_array) {
+        for entry in entries {
+            let start = entry
+                .get("startWord")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| err("every wordRanges entry needs integer startWord"))?
+                as usize;
+            let end = entry
+                .get("endWord")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| err("every wordRanges entry needs integer endWord"))?
+                as usize;
+            if start >= end || end > transcript.words.len() {
+                return Err(err(format!(
+                    "word range {start}..{end} is outside transcript length {}",
+                    transcript.words.len()
+                )));
+            }
+            ranges.push(bay_listen::range_for_words(transcript, start, end));
+        }
+    }
+    if let Some(entries) = args.get("ranges").and_then(Value::as_array) {
+        for entry in entries {
+            ranges.push(bay_listen::SourceRange {
+                start_seconds: required_number(entry, "startSeconds")?,
+                end_seconds: required_number(entry, "endSeconds")?,
+                text: text(entry, "text").unwrap_or_default(),
+            });
+        }
+    }
+    Ok(ranges)
 }
 
 /// Route one tool call to the studio.
@@ -1685,8 +2261,131 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         "audio_probe" => studio.audio_probe(&required_text(args, "mediaId")?),
         "media_import" => match text(args, "mediaId") {
             Some(media_id) => studio.audio_probe(&media_id),
-            None => studio.media_import(&required_text(args, "path")?, text(args, "id")),
+            None => {
+                let path = required_text(args, "path")?;
+                let generated = text(args, "generationReceipt")
+                    .map(|receipt| {
+                        bay_gen::verify_provenance(&receipt, std::path::Path::new(&path))
+                            .map_err(|error| err(error.to_string()))
+                    })
+                    .transpose()?;
+                studio.media_import(&path, text(args, "id"), generated)
+            }
         },
+        "transcribe" => {
+            let media_id = required_text(args, "mediaId")?;
+            let label = media_id.clone();
+            headless_job("transcribe", &label, || studio.transcribe(&media_id))
+        }
+        "diarize" => {
+            let media_id = required_text(args, "mediaId")?;
+            let label = media_id.clone();
+            headless_job("diarize", &label, || {
+                studio.diarize(
+                    &media_id,
+                    args.get("speakers").and_then(Value::as_u64).unwrap_or(2) as usize,
+                )
+            })
+        }
+        "transcript_get" => studio.transcript_get(&required_text(args, "mediaId")?),
+        "transcript_search" => studio.transcript_search(
+            &required_text(args, "mediaId")?,
+            &required_text(args, "query")?,
+        ),
+        "cut_by_transcript" => {
+            let media_id = required_text(args, "mediaId")?;
+            let ranges = transcript_ranges(studio, &media_id, args)?;
+            studio.cut_by_transcript(
+                &media_id,
+                &ranges,
+                number(args, "timelineStart", 0.0),
+                layer(args),
+            )
+        }
+        "remove_silence_and_fillers" => {
+            let media_id = required_text(args, "mediaId")?;
+            let transcript = studio
+                .project()
+                .media
+                .iter()
+                .find(|asset| asset.id == media_id)
+                .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?
+                .transcript
+                .as_ref()
+                .ok_or_else(|| {
+                    err(format!(
+                        "media {media_id:?} has no transcript — call transcribe first"
+                    ))
+                })?;
+            let defaults = bay_listen::CleanupConfig::default();
+            let filler_words = args
+                .get("fillerWords")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or(defaults.filler_words);
+            let config = bay_listen::CleanupConfig {
+                filler_words,
+                dead_air_threshold_seconds: number(
+                    args,
+                    "deadAirThresholdSeconds",
+                    defaults.dead_air_threshold_seconds,
+                ),
+                retained_pause_seconds: number(
+                    args,
+                    "retainedPauseSeconds",
+                    defaults.retained_pause_seconds,
+                ),
+                meaningful_pause_threshold_seconds: number(
+                    args,
+                    "meaningfulPauseThresholdSeconds",
+                    defaults.meaningful_pause_threshold_seconds,
+                ),
+                meaningful_pause_seconds: number(
+                    args,
+                    "meaningfulPauseSeconds",
+                    defaults.meaningful_pause_seconds,
+                ),
+                keep_meaningful_pauses: args
+                    .get("keepMeaningfulPauses")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(defaults.keep_meaningful_pauses),
+            };
+            let source_start = number(args, "sourceStart", 0.0);
+            let source_end = args
+                .get("sourceEnd")
+                .and_then(Value::as_f64)
+                .unwrap_or(transcript.duration_seconds);
+            if source_start < 0.0 || source_end <= source_start {
+                return Err(err(format!(
+                    "source range must be increasing and non-negative, got {source_start}..{source_end}"
+                )));
+            }
+            let selected = bay_project::Transcript {
+                words: transcript
+                    .words
+                    .iter()
+                    .filter(|word| {
+                        word.start_seconds >= source_start && word.end_seconds <= source_end
+                    })
+                    .cloned()
+                    .collect(),
+                utterances: Vec::new(),
+                ..transcript.clone()
+            };
+            let ranges = bay_listen::cleanup_ranges(&selected, &config);
+            studio.cut_by_transcript(
+                &media_id,
+                &ranges,
+                number(args, "timelineStart", 0.0),
+                layer(args),
+            )
+        }
         "sfx_list" => Ok(json!({
             "sfx": bay_audio::sfx::EFFECTS
                 .iter()
@@ -1749,6 +2448,33 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 }))
             })
         }
+        "media_index" => {
+            let media_id = required_text(args, "mediaId")?;
+            let label = media_id.clone();
+            headless_job("media_index", &label, || studio.media_index(&media_id))
+        }
+        "media_search" => studio.media_search(
+            &required_text(args, "query")?,
+            args.get("mediaId").and_then(Value::as_str),
+            args.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize,
+        ),
+        "auto_reframe" => {
+            let element_id = required_text(args, "elementId")?;
+            let label = element_id.clone();
+            headless_job("auto_reframe", &label, || {
+                studio.auto_reframe(
+                    &element_id,
+                    args.get("targetWidth")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1080) as u32,
+                    args.get("targetHeight")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1920) as u32,
+                    number(args, "sampleSeconds", 0.5),
+                    number(args, "smoothingSeconds", 0.9),
+                )
+            })
+        }
         "add_text" => {
             let role = parse_role(args.get("role").and_then(|v| v.as_str()), "add_text")?;
             let kit = studio.committed_kit()?;
@@ -1772,6 +2498,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                         .get("lineHeight")
                         .and_then(|v| v.as_f64())
                         .map(|v| v as f32),
+                    decorations: text_decorations(args),
                 },
                 visual(args, framing.as_ref())?,
             )
@@ -1848,35 +2575,34 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         // editor window plan it identically.
         "element_delete" => studio.element_delete(&required_text(args, "elementId")?),
         "timeline" => studio.timeline(),
+        "check_frames" => {
+            studio.check_frames(args.get("duration").and_then(|value| value.as_f64()))
+        }
         "snapshot" => studio.snapshot(
             required_number(args, "at")?,
             &required_text(args, "path")?,
             number(args, "scale", 0.5) as f32,
         ),
-        // The three job tools answer with an id on BOTH transports, so an agent never has to
-        // know whether a window is open. What differs is only when the work happens — see
-        // `headless_job`.
-        "render" => {
-            // The gate runs before the job is registered, so a refused render is an error the
-            // caller reads immediately rather than a job it has to poll to be told no.
-            let stamp = bay_agent::slow::render_stamp(studio.project(), args).map_err(err)?;
-            headless_job("render", &required_text(args, "path")?, || {
-                // Parsed by the same function the attached path uses, so a preset means the
-                // same thing whether a window is open or not.
-                let mut settings = bay_agent::slow::export_settings(args).map_err(err)?;
-                settings.metadata_comment = stamp.clone();
-                studio.render_video(
-                    &required_text(args, "path")?,
-                    args.get("duration").and_then(|v| v.as_f64()),
-                    settings,
-                    stamp,
-                )
-            })
+        "contact_sheet" => {
+            let times = args
+                .get("times")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_f64).collect::<Vec<_>>())
+                .unwrap_or_default();
+            studio.contact_sheet(
+                &required_text(args, "path")?,
+                &times,
+                args.get("columns").and_then(Value::as_u64).unwrap_or(3) as usize,
+            )
         }
+        // Render owns a project snapshot and is genuinely asynchronous on both transports.
+        // Polling job_status is the single contract whether or not a window is open.
+        "render" => headless_render_job(studio, args),
         "job_status" => Ok(bay_jobs::mcp::status(args)),
         "job_cancel" => bay_jobs::mcp::cancel(args).map_err(crate::studio::err),
         "runtime_status" => Ok(bay_provision::mcp::runtime_status(args)),
         "runtime_install" => bay_provision::mcp::runtime_install(args).map_err(crate::studio::err),
+        "runtime_remove" => bay_provision::mcp::runtime_remove(args).map_err(crate::studio::err),
         "speech_status" => studio.speech_status(),
         "vision_status" => Ok(bay_vision::mcp::vision_status()),
         "image_rank" => bay_vision::mcp::image_rank(args).map_err(crate::studio::err),
@@ -1930,6 +2656,67 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         "project_load" => {
             studio.project_load(text(args, "id").as_deref(), text(args, "path").as_deref())
         }
+        "variant_create" => studio.variant_create(&required_text(args, "label")?),
+        "variant_register_render" => studio.variant_register_render(
+            &required_text(args, "projectId")?,
+            &required_text(args, "path")?,
+        ),
+        "tournament_compare" => studio.tournament_compare(
+            &required_text(args, "leftProjectId")?,
+            &required_text(args, "rightProjectId")?,
+            &required_text(args, "winnerProjectId")?,
+            &required_text(args, "reason")?,
+        ),
+        "critic_prepare" => studio.critic_prepare(&required_text(args, "path")?),
+        "critic_submit" => {
+            let pair = args
+                .get("mostAlikePair")
+                .and_then(Value::as_array)
+                .ok_or_else(|| err("mostAlikePair must contain exactly two panel numbers"))?;
+            if pair.len() != 2 {
+                return Err(err("mostAlikePair must contain exactly two panel numbers"));
+            }
+            let values = args
+                .get("binaries")
+                .and_then(Value::as_array)
+                .ok_or_else(|| err("binaries must contain exactly nine booleans"))?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| err("every binary judgment must be true or false"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let binaries: [bool; 9] = values
+                .try_into()
+                .map_err(|_| err("binaries must contain exactly nine booleans"))?;
+            studio.critic_submit(
+                args.get("weakestPanel")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| err("weakestPanel must be a panel number"))?
+                    as usize,
+                (
+                    pair[0]
+                        .as_u64()
+                        .ok_or_else(|| err("mostAlikePair entries must be panel numbers"))?
+                        as usize,
+                    pair[1]
+                        .as_u64()
+                        .ok_or_else(|| err("mostAlikePair entries must be panel numbers"))?
+                        as usize,
+                ),
+                args.get("thumbnailPanel")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| err("thumbnailPanel must be a panel number"))?
+                    as usize,
+                binaries,
+                &required_text(args, "rationale")?,
+            )
+        }
+        "critic_refresh" => studio.critic_refresh(),
+        "gen_image" => bay_gen::mcp::generate(bay_gen::GenerationKind::Image, args).map_err(err),
+        "gen_video" => bay_gen::mcp::generate(bay_gen::GenerationKind::Video, args).map_err(err),
+        "gen_music" => bay_gen::mcp::generate(bay_gen::GenerationKind::Music, args).map_err(err),
         // A duck answers with the curve it wrote. 25 keyframes an agent cannot read back is the
         // black box the 13-clip hack was reaching around, so the report is derived before the
         // commands are applied and merged into the ordinary transaction result.
@@ -1973,11 +2760,17 @@ fn narrate_args(
         start: number(args, "start", 0.0),
         volume: number(args, "volume", 1.0) as f32,
         out_path: text(args, "audioPath"),
-        peak_db: match args.get("peakDb") {
-            Some(Value::Null) => None,
-            Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
-            None => Some(-2.0),
+        peak_db: if args.get("energy").is_some() {
+            None
+        } else {
+            match args.get("peakDb") {
+                Some(Value::Null) => None,
+                Some(value) => value.as_f64().map(|v| v as f32).or(Some(-2.0)),
+                None => Some(-2.0),
+            }
         },
+        pitch_semitones: number(args, "pitchSemitones", 0.0) as f32,
+        energy: number(args, "energy", 1.0) as f32,
         captions,
     }
 }
@@ -2088,4 +2881,55 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
         "encodeSeconds": render.get("encodeSeconds").cloned().unwrap_or(Value::Null),
         "overruns": overruns,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::background_job;
+    use serde_json::json;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn background_job_returns_before_work_finishes() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let before = Instant::now();
+        let started = background_job(
+            "test-background",
+            "timing",
+            bay_jobs::Unit::Steps,
+            1,
+            move |_| {
+                entered_tx.send(()).expect("test is listening");
+                release_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .map_err(|error| error.to_string())?;
+                Ok(json!({ "worked": true }))
+            },
+        )
+        .expect("worker starts");
+
+        assert_eq!(started["status"], "started");
+        assert_eq!(started["finished"], false);
+        assert!(
+            before.elapsed() < Duration::from_millis(500),
+            "dispatch waited for background work"
+        );
+        entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker entered");
+        release_tx.send(()).expect("worker is waiting");
+
+        let id = started["job"].as_u64().expect("job id");
+        for _ in 0..100 {
+            let status = bay_jobs::mcp::status(&json!({ "job": id }));
+            if status["finished"] == true {
+                assert_eq!(status["result"]["worked"], true, "{status}");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("background job did not finish");
+    }
 }

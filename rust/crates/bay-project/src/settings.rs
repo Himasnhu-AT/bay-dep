@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::kit::StyleKit;
+use crate::{kit::StyleKit, plan::PlanArtifact};
 
 /// Frames per second as an exact rational (e.g. 30000/1001 for 29.97).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,4 +73,9 @@ pub struct ProjectSettings {
     /// kit is a project from before; `add_text` commits one rather than refusing to draw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kit: Option<StyleKit>,
+    /// The approved editorial intent and any critic/tournament state attached to it.
+    ///
+    /// Optional for backward compatibility: projects saved before the trust loop have no plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanArtifact>,
 }

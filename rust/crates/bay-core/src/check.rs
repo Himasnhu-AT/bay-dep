@@ -41,7 +41,7 @@
 //! four separate motion measures depending only on whether captions are counted. Every check
 //! below that measures a population reads [`Scene::authored_elements`], never `elements`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bay_project::kit::{self, contrast_between, luminance, parse_hex};
 use bay_project::{
@@ -145,8 +145,13 @@ pub const CODES: &[(&str, Severity, &str)] = &[
     ),
     (
         "speech-masked",
-        Severity::Error,
+        Severity::Warning,
         "the gaps between the lines are as loud as the lines",
+    ),
+    (
+        "text-collision",
+        Severity::Error,
+        "simultaneously visible text or an opaque graphic overprints shaped glyph ink",
     ),
     // ------------------------------------------------------------------ judgement: warnings
     (
@@ -159,6 +164,11 @@ pub const CODES: &[(&str, Severity, &str)] = &[
         "unreadable-dwell",
         Severity::Warning,
         "text on screen for less time than it takes to read",
+    ),
+    (
+        "no-response",
+        Severity::Warning,
+        "new elements arrive without changing the composition already on screen",
     ),
     (
         "off-grid",
@@ -246,7 +256,11 @@ pub fn gating_codes() -> Vec<&'static str> {
         .collect()
 }
 
-fn severity_of(code: &str) -> Severity {
+/// Severity declared for a stable check code.
+///
+/// Compositor-backed checks live outside this crate but still read this registry, so one code
+/// cannot become a warning in `check` and an error in `check_frames`.
+pub fn severity_of(code: &str) -> Severity {
     CODES
         .iter()
         .find(|(name, _, _)| *name == code)
@@ -488,7 +502,8 @@ pub fn check(project: &Project) -> Report {
     findings.extend(lane_findings(scene));
     findings.extend(timeline_findings(scene));
     findings.extend(motion_findings(project, scene, &beats));
-    findings.extend(continuity_findings(scene, &beats, &mut skipped));
+    findings.extend(continuity_findings(project, scene, &beats, &mut skipped));
+    findings.extend(response_findings(project, scene));
     findings.extend(scene_note(project, &beats));
     // Measured once and read twice: the findings gate on it and the stats report it, and
     // sampling a 62-second mix at 10 Hz is the most expensive thing in this pass.
@@ -499,6 +514,31 @@ pub fn check(project: &Project) -> Report {
 
     let mix = mix_stats(envelope);
     report(findings, skipped, stats(scene, &composition, beats, mix))
+}
+
+/// Run the same pass against only the part of the timeline that will be delivered.
+///
+/// The render tool accepts a duration, so `check` must be able to inspect that exact population
+/// instead of silently certifying elements that begin after the exported file has already ended.
+pub fn check_duration(project: &Project, duration: MediaTime) -> Report {
+    let mut delivered = project.clone();
+    let scene = delivered.active_scene_mut();
+    for track in scene.tracks.iter_mut() {
+        track.elements.retain(|element| element.start() < duration);
+        for element in &mut track.elements {
+            let available = duration - element.start();
+            if element.duration() > available {
+                element.set_duration(available);
+                if let Some(channels) = element.animations_mut() {
+                    for channel in channels.values_mut() {
+                        channel.keys.retain(|key| key.time <= available);
+                    }
+                }
+            }
+        }
+    }
+    scene.markers.retain(|marker| marker.time < duration);
+    check(&delivered)
 }
 
 /// Assemble the envelope: sort worst-first, roll every code up, and surface at most
@@ -654,6 +694,20 @@ fn element_findings(project: &Project, scene: &Scene, skipped: &mut Vec<Skipped>
                             element.id()
                         ),
                     )),
+                    Some(asset) if !std::path::Path::new(&asset.path).is_file() => {
+                        if asset.source_duration().is_some() {
+                            probed_clips += 1;
+                        }
+                        findings.push(here(
+                            "missing-media",
+                            format!(
+                                "{:?} plays media {media_id:?}, but its file {:?} is missing — \
+                                 restore or re-import it before rendering",
+                                element.id(),
+                                asset.path
+                            ),
+                        ));
+                    }
                     Some(asset) if asset.source_duration().is_some() => probed_clips += 1,
                     Some(_) => {}
                 }
@@ -1445,6 +1499,109 @@ fn carried(before: &Held, after: &Held, drifting: bool) -> bool {
         || moved(a.rotation, b.rotation, CARRIED_ROTATION)
 }
 
+/// New work should make the composition already on screen answer it.
+///
+/// Opacity never counts: a pulse buys attention without making room. A responder must have been
+/// present for 45 frames on both sides of the arrival, occupy real canvas area, and move or scale
+/// inside the 24-frame response window. The concentration cap prevents one decorative element
+/// from pulsing for every arrival and certifying the whole video.
+fn response_findings(project: &Project, scene: &Scene) -> Vec<Finding> {
+    let fps = project.settings.fps.as_f64().max(1.0);
+    let settled = MediaTime::from_seconds_f64(45.0 / fps).unwrap_or(MediaTime::ZERO);
+    let window = MediaTime::from_seconds_f64(12.0 / fps).unwrap_or(MediaTime::ZERO);
+    let elements: Vec<&Element> = scene.authored_elements().collect();
+    let arrivals: Vec<(usize, &Element)> = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, element)| {
+            let at = element.start();
+            let replaces_something = elements.iter().any(|incumbent| {
+                incumbent.id() != element.id()
+                    && incumbent.transform().is_some()
+                    && incumbent.start() < at
+                    && incumbent.end() >= at - window
+                    && incumbent.end() <= at + window
+            });
+            (element.transform().is_some()
+                && element.start() > MediaTime::ZERO
+                && replaces_something)
+                .then_some((index, *element))
+        })
+        .collect();
+    if arrivals.len() < 3 {
+        return Vec::new();
+    }
+
+    let mut responses: Vec<Vec<usize>> = Vec::with_capacity(arrivals.len());
+    let mut usage: BTreeMap<usize, usize> = BTreeMap::new();
+    for (_, arriving) in &arrivals {
+        let at = arriving.start();
+        let mut responders = Vec::new();
+        for (candidate_index, candidate) in elements.iter().enumerate() {
+            if candidate.id() == arriving.id()
+                || candidate.role() == Some(ElementRole::Ground)
+                || candidate.start() + settled > at
+                || candidate.end() < at + settled
+            {
+                continue;
+            }
+            let before_at = if at > window {
+                at - window
+            } else {
+                MediaTime::ZERO
+            };
+            let after_at = at + window;
+            let (Some(before), Some(after), Some(at_transform)) = (
+                candidate.sampled_transform(before_at - candidate.start()),
+                candidate.sampled_transform(after_at - candidate.start()),
+                candidate.sampled_transform(at - candidate.start()),
+            ) else {
+                continue;
+            };
+            let area = Rect::of(&at_transform).map_or(0.0, |rect| rect.area());
+            if area < CARRIED_AREA {
+                continue;
+            }
+            let moved = (before.x - after.x).abs() >= CARRIED_POSITION
+                || (before.y - after.y).abs() >= CARRIED_POSITION;
+            let scaled = (before.scale - after.scale).abs() >= CARRIED_SCALE
+                || (before.scale_x - after.scale_x).abs() >= CARRIED_SCALE
+                || (before.scale_y - after.scale_y).abs() >= CARRIED_SCALE;
+            if moved || scaled {
+                responders.push(candidate_index);
+                *usage.entry(candidate_index).or_default() += 1;
+            }
+        }
+        responses.push(responders);
+    }
+
+    let concentration_cap = ((arrivals.len() as f64) * 0.40).ceil() as usize;
+    let answered = responses
+        .iter()
+        .filter(|responders| {
+            responders.iter().any(|index| {
+                usage
+                    .get(index)
+                    .is_some_and(|count| *count <= concentration_cap)
+            })
+        })
+        .count();
+    if answered * 2 >= arrivals.len() {
+        return Vec::new();
+    }
+
+    vec![finding(
+        "no-response",
+        format!(
+            "{} of {} authored arrivals ({:.0}%) make an already-present element move or scale; \
+             at least half must, and one responder may cover at most 40%",
+            answered,
+            arrivals.len(),
+            answered as f64 * 100.0 / arrivals.len() as f64
+        ),
+    )]
+}
+
 /// Whether everything this element ever does to its own geometry is one drift across the video.
 ///
 /// A channel of exactly two keys spanning more than [`DRIFT_SHARE`] of the runtime is ambient:
@@ -1510,7 +1667,12 @@ fn tokens_on_stage<'a>(
 ///
 /// One finding per seam at most — the shared-element failure first, the token failure second,
 /// because a beat pair that carries nothing at all has a bigger problem than a mismatched word.
-fn continuity_findings(scene: &Scene, beats: &Beats, skipped: &mut Vec<Skipped>) -> Vec<Finding> {
+fn continuity_findings(
+    project: &Project,
+    scene: &Scene,
+    beats: &Beats,
+    skipped: &mut Vec<Skipped>,
+) -> Vec<Finding> {
     let spans = beats.spans();
     // Fewer than two beats is not the `spans()` failure returning: the fixed fallback guarantees
     // `ceil(duration / 8)` beats whatever the tracks look like, so one beat means the video is
@@ -1552,13 +1714,20 @@ fn continuity_findings(scene: &Scene, beats: &Beats, skipped: &mut Vec<Skipped>)
     for (index, pair) in on.windows(2).enumerate() {
         let (before, after) = (&pair[0], &pair[1]);
         let (from, to) = (spans[index].0, spans[index + 1].0);
+        let editorial = transcript_splice_departures(project, scene, &elements, before, after, to);
         // How much of the earlier composition is *gone*, by rendered area. Nothing gone is an
         // accumulation: the later beat contains the earlier one, and there is no state change
-        // for anything to have to survive.
-        let staged: f64 = before.values().map(|held| held.area).sum();
+        // for anything to have to survive. A transcript-aligned, paired A/V splice is one
+        // editorial stream rather than a graphic composition being replaced, so only that
+        // outgoing video's area leaves this arithmetic. Any cards above it remain in both sums.
+        let staged: f64 = before
+            .iter()
+            .filter(|(key, _)| !editorial.contains(*key))
+            .map(|(_, held)| held.area)
+            .sum();
         let departed: f64 = before
             .iter()
-            .filter(|(key, _)| !after.contains_key(*key))
+            .filter(|(key, _)| !editorial.contains(*key) && !after.contains_key(*key))
             .map(|(_, held)| held.area)
             .sum::<f64>()
             .max(0.0);
@@ -1647,6 +1816,114 @@ fn continuity_findings(scene: &Scene, beats: &Beats, skipped: &mut Vec<Skipped>)
         }
     }
     findings
+}
+
+/// Floating Whisper boundaries are persisted as seconds and clip points as integer ticks. This
+/// tolerance is only representation slack (six ticks at bay's 120 kHz timebase), not permission
+/// to call an arbitrary nearby cut transcript-aligned.
+const TRANSCRIPT_SPLICE_EPSILON_SECONDS: f64 = 0.000_05;
+
+/// Outgoing video elements that form a transcript tool's paired A/V splice at `at`.
+///
+/// No caller assertion participates. The project must prove all of these independently:
+///
+/// - two butted hard-cut videos on the same lane and from the same transcribed asset;
+/// - out/in points that are exact transcript word boundaries (whether adjacent or selected); and
+/// - tool-authored speech clips with identical timeline and source intervals for both videos.
+///
+/// The returned set contains only the outgoing video. Subtracting that area cannot launder a
+/// carousel above the footage: those authored elements stay in the replacement numerator and
+/// denominator.
+fn transcript_splice_departures(
+    project: &Project,
+    scene: &Scene,
+    elements: &[(&Track, &Element)],
+    before: &BTreeMap<usize, Held>,
+    after: &BTreeMap<usize, Held>,
+    at: f64,
+) -> BTreeSet<usize> {
+    let Some(seam) = MediaTime::from_seconds_f64(at) else {
+        return BTreeSet::new();
+    };
+    let paired_audio = |video: &bay_project::VideoElement| {
+        scene
+            .tracks
+            .audio
+            .iter()
+            .filter(|track| !track.hidden && !track.muted)
+            .flat_map(|track| &track.elements)
+            .any(|element| {
+                let Element::Audio(audio) = element else {
+                    return false;
+                };
+                audio.media_id == video.media_id
+                    && audio.start == video.start
+                    && audio.duration == video.duration
+                    && audio.trim_start == video.trim_start
+                    && audio.source == bay_project::ElementSource::Tool
+                    && audio.role == bay_project::AudioRole::Speech
+            })
+    };
+    let boundary = |asset: &bay_project::MediaAsset, seconds: f64, start: bool| {
+        asset.transcript.as_ref().is_some_and(|transcript| {
+            transcript.words.iter().any(|word| {
+                let expected = if start {
+                    word.start_seconds
+                } else {
+                    word.end_seconds
+                };
+                (expected - seconds).abs() <= TRANSCRIPT_SPLICE_EPSILON_SECONDS
+            })
+        })
+    };
+
+    let mut editorial = BTreeSet::new();
+    for outgoing_index in before
+        .keys()
+        .filter(|key| !after.contains_key(*key))
+        .copied()
+    {
+        let (outgoing_track, Element::Video(outgoing)) = elements[outgoing_index] else {
+            continue;
+        };
+        if outgoing.start + outgoing.duration != seam
+            || outgoing.fade_in > MediaTime::ZERO
+            || outgoing.fade_out > MediaTime::ZERO
+            || !paired_audio(outgoing)
+        {
+            continue;
+        }
+        let Some(asset) = project
+            .media
+            .iter()
+            .find(|asset| asset.id == outgoing.media_id)
+        else {
+            continue;
+        };
+        if !boundary(asset, outgoing.trim_end.to_seconds_f64(), false) {
+            continue;
+        }
+        let incoming = after
+            .keys()
+            .filter(|key| !before.contains_key(*key))
+            .find_map(|incoming_index| {
+                let (incoming_track, Element::Video(incoming)) = elements[*incoming_index] else {
+                    return None;
+                };
+                (incoming_track.id == outgoing_track.id
+                    && incoming.media_id == outgoing.media_id
+                    && incoming.start == seam
+                    && incoming.fade_in == MediaTime::ZERO
+                    && incoming.fade_out == MediaTime::ZERO
+                    && boundary(asset, incoming.trim_start.to_seconds_f64(), true)
+                    && paired_audio(incoming))
+                .then_some(incoming)
+            });
+        if incoming.is_some() {
+            editorial.insert(outgoing_index);
+        }
+    }
+    editorial
 }
 
 /// A long video that never says where its beats are.
@@ -3272,7 +3549,14 @@ pub fn render_gate(
     ignore_checks: bool,
     reason: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let report = check(project);
+    gate_report(check(project), ignore_checks, reason)
+}
+
+fn gate_report(
+    report: Report,
+    ignore_checks: bool,
+    reason: Option<&str>,
+) -> Result<Option<String>, String> {
     let gating: Vec<&Finding> = report
         .findings
         .iter()
@@ -3367,6 +3651,8 @@ mod tests {
             align: Default::default(),
             letter_spacing: 0.0,
             line_height: 1.2,
+            decorations: None,
+            karaoke: None,
             source: Default::default(),
             role: Default::default(),
         })
@@ -3437,6 +3723,9 @@ mod tests {
             media_id: "m".into(),
             muted: false,
             volume,
+            speed: 1.0,
+            prosody: None,
+            dialogue_chain: None,
             animations: Default::default(),
             trim_start: MediaTime::ZERO,
             source: Default::default(),
@@ -3941,6 +4230,8 @@ mod tests {
             media_id: "never-imported".into(),
             trim_start: MediaTime::ZERO,
             trim_end: seconds(3.0),
+            speed: 1.0,
+            freeze: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -3949,6 +4240,38 @@ mod tests {
             source: Default::default(),
             role: Default::default(),
         })]);
+        let report = check(&project);
+        assert!(has(&report, "missing-media"), "{:?}", codes(&report));
+    }
+
+    #[test]
+    fn a_registered_media_asset_whose_file_is_gone_is_an_error() {
+        let mut project = project_with(vec![Element::Video(VideoElement {
+            id: "v".into(),
+            name: "v".into(),
+            start: MediaTime::ZERO,
+            duration: seconds(3.0),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            media_id: "gone".into(),
+            trim_start: MediaTime::ZERO,
+            trim_end: seconds(3.0),
+            speed: 1.0,
+            freeze: None,
+            transform: Transform::default(),
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })]);
+        project.media.push(bay_project::MediaAsset::new(
+            "gone",
+            "gone.mp4",
+            "/nonexistent/bay-media-is-gone.mp4",
+        ));
+
         let report = check(&project);
         assert!(has(&report, "missing-media"), "{:?}", codes(&report));
     }
@@ -3967,6 +4290,8 @@ mod tests {
             media_id: "clip".into(),
             trim_start: seconds(8.0),
             trim_end: seconds(13.0),
+            speed: 1.0,
+            freeze: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -4002,6 +4327,8 @@ mod tests {
             media_id: "clip".into(),
             trim_start: seconds(8.0),
             trim_end: seconds(13.0),
+            speed: 1.0,
+            freeze: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -4644,13 +4971,14 @@ mod tests {
         );
     }
 
-    /// The budget, stated as arithmetic rather than as a hope. One warning left the registry and
-    /// two codes joined it, and only one of the two could be an `Error` because there was
-    /// exactly one gating slot free — see `docs/native/check-codes.md`.
+    /// The budget, stated as arithmetic rather than as a hope. `text-collision` is measured from
+    /// shaped glyph bounds and takes the slot previously held by `speech-masked`, which remains a
+    /// warning until a checked-in fixture can evaluate it — see `docs/native/check-codes.md`.
     #[test]
-    fn the_two_new_mix_codes_spend_exactly_one_gating_slot() {
-        assert_eq!(severity_of("speech-masked"), Severity::Error);
+    fn text_collision_replaces_the_unmeasured_mix_gate() {
+        assert_eq!(severity_of("speech-masked"), Severity::Warning);
         assert_eq!(severity_of("bed-too-quiet"), Severity::Warning);
+        assert_eq!(severity_of("text-collision"), Severity::Error);
         assert_eq!(
             gating_codes().len(),
             MAX_GATING_CODES,
@@ -5366,6 +5694,101 @@ mod tests {
         project
     }
 
+    fn transcript_cut_project() -> Project {
+        let mut clips = Vec::new();
+        let mut speech = Vec::new();
+        for (index, source_start) in [10.0, 20.0, 30.0].into_iter().enumerate() {
+            let timeline_start = index as f64 * 4.0;
+            clips.push(Element::Video(VideoElement {
+                id: format!("video-{index}"),
+                name: format!("video-{index}"),
+                start: seconds(timeline_start),
+                duration: seconds(4.0),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                media_id: "interview".into(),
+                trim_start: seconds(source_start),
+                trim_end: seconds(source_start + 4.0),
+                speed: 1.0,
+                freeze: None,
+                transform: Transform::default(),
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: ElementSource::Author,
+                role: Default::default(),
+            }));
+            let mut audio = sound(&format!("speech-{index}"), timeline_start, 4.0, 1.0);
+            if let Element::Audio(audio) = &mut audio {
+                audio.media_id = "interview".into();
+                audio.trim_start = seconds(source_start);
+                audio.source = ElementSource::Tool;
+                audio.role = bay_project::AudioRole::Speech;
+            }
+            speech.push(audio);
+        }
+        let mut project = project_with(clips);
+        with_audio(&mut project, speech);
+        project.media.clear();
+        let mut asset = MediaAsset::new("interview", "interview.mp4", "/tmp/interview.mp4");
+        asset.duration_seconds = Some(40.0);
+        asset.transcript = Some(bay_project::Transcript {
+            language: "en".into(),
+            model: "test".into(),
+            duration_seconds: 40.0,
+            words: [10.0, 20.0, 30.0]
+                .into_iter()
+                .map(|start| bay_project::TranscriptWord {
+                    text: "word".into(),
+                    start_seconds: start,
+                    end_seconds: start + 4.0,
+                    confidence: 1.0,
+                    speaker: None,
+                })
+                .collect(),
+            utterances: Vec::new(),
+        });
+        project.media.push(asset);
+        project
+    }
+
+    /// The transcript tool's butted A/V clips are one editorial stream. A hard jump in source
+    /// time is intentional here; requiring a graphic element to animate across it misclassifies
+    /// ordinary dialogue editing as a carousel.
+    #[test]
+    fn transcript_aligned_av_splices_are_not_broken_composition_seams() {
+        let project = transcript_cut_project();
+        let report = check(&project);
+        assert_eq!(
+            count(&report, "broken-continuity"),
+            0,
+            "{:?}",
+            report.findings
+        );
+    }
+
+    /// A transcript splice cannot launder an unrelated card swap above the footage. Once the
+    /// outgoing video is removed from the continuity arithmetic, the authored replacement still
+    /// occupies the whole remaining composition and must be caught.
+    #[test]
+    fn transcript_splices_do_not_exempt_a_graphics_carousel_on_top() {
+        let mut project = transcript_cut_project();
+        let cards = (0..3)
+            .map(|index| {
+                let mut card = plate(&format!("card-{index}"), "#123456", 1.0, 1.0, 4.0);
+                card.set_start(seconds(index as f64 * 4.0));
+                card
+            })
+            .collect();
+        with_overlay(&mut project, cards);
+        assert_eq!(
+            count(&check(&project), "broken-continuity"),
+            2,
+            "both unrelated card replacements remain broken"
+        );
+    }
+
     #[test]
     fn eight_unrelated_cards_are_a_carousel() {
         let report = check(&carousel());
@@ -5691,5 +6114,62 @@ mod tests {
             "check took {elapsed:?} on a 66s timeline"
         );
         assert!(report.total > 0);
+    }
+
+    #[test]
+    fn arrivals_without_any_incumbent_response_are_reported() {
+        let mut elements = Vec::new();
+        for index in 0..5 {
+            let at = 2.0 + index as f64 * 2.0;
+            elements.push(shape(&format!("departure-{index}"), 0.0, at));
+            elements.push(shape(&format!("arrival-{index}"), at, 1.0));
+        }
+        let project = scene_of(elements);
+        let report = check(&project);
+        assert!(has(&report, "no-response"), "{:?}", report.findings);
+        assert!(message(&report, "no-response").contains("0 of 5"));
+    }
+
+    #[test]
+    fn responses_must_be_distributed_across_more_than_one_incumbent() {
+        let mut elements = Vec::new();
+        for index in 0..5 {
+            let at = 2.0 + index as f64 * 2.0;
+            elements.push(shape(&format!("departure-{index}"), 0.0, at));
+            elements.push(shape(&format!("arrival-{index}"), at, 1.0));
+        }
+        for (id, keys) in [
+            (
+                "responder-a",
+                vec![(0.0, 0.2), (1.6, 0.2), (2.4, 0.3), (3.6, 0.3), (4.4, 0.4)],
+            ),
+            (
+                "responder-b",
+                vec![(0.0, 0.2), (5.6, 0.2), (6.4, 0.3), (7.6, 0.3), (8.4, 0.4)],
+            ),
+            (
+                "responder-c",
+                vec![(0.0, 0.2), (9.6, 0.2), (10.4, 0.3), (12.0, 0.3)],
+            ),
+        ] {
+            let mut responder = shape(id, 0.0, 12.0);
+            animate(&mut responder, "x", &keys, Easing::Linear);
+            elements.push(responder);
+        }
+        let report = check(&scene_of(elements));
+        assert!(!has(&report, "no-response"), "{:?}", report.findings);
+    }
+
+    #[test]
+    fn duration_checks_only_the_population_that_will_ship() {
+        let mut project = scene_of(vec![
+            text_at("delivered", 0.0, 2.0, 64.0),
+            text_at("omitted", 10.0, 2.0, 64.0),
+        ]);
+        if let Element::Text(text) = &mut project.active_scene_mut().tracks.overlay[0].elements[1] {
+            text.content.clear();
+        }
+        assert!(has(&check(&project), "empty-text"));
+        assert!(!has(&check_duration(&project, seconds(5.0)), "empty-text"));
     }
 }

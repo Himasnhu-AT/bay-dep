@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use bay_project::{
-    AnimationChannel, BlendMode, Effect, Element, ElementKind, ElementRef, MediaTime, Project,
-    Scene, StyleKit, Track, TrackKind, Transform,
+    AnimationChannel, BlendMode, Effect, Element, ElementGroup, ElementKind, ElementRef, MediaTime,
+    PlanArtifact, Project, Scene, StyleKit, Track, TrackKind, Transform,
 };
 
 use crate::selection::SelectionPatch;
@@ -207,6 +207,10 @@ pub enum Command {
     /// undo history: choosing a look would otherwise throw away the user's ability to undo
     /// everything they had done before choosing it.
     SetStyleKit { kit: Box<StyleKit> },
+    /// Create or replace the inspectable editorial plan and its trust-loop state.
+    SetPlan { plan: Box<PlanArtifact> },
+    /// Create or replace a parent group in the active scene.
+    SetGroup { group: ElementGroup },
     /// Paste the clipboard elements onto the main track and select them (ids are minted).
     Paste,
 }
@@ -246,6 +250,8 @@ pub enum CommandKind {
     SetTrackHidden,
     SetTrackMuted,
     SetStyleKit,
+    SetPlan,
+    SetGroup,
     Paste,
 }
 
@@ -347,6 +353,13 @@ pub(crate) enum ProjectPatch {
     SetStyleKit {
         kit: Option<Box<StyleKit>>,
     },
+    SetPlan {
+        plan: Option<Box<PlanArtifact>>,
+    },
+    SetGroup {
+        id: String,
+        group: Option<ElementGroup>,
+    },
     AddScene {
         index: usize,
         scene: Scene,
@@ -372,6 +385,14 @@ impl ProjectPatch {
                 project.settings.kit = kit.map(|kit| *kit);
                 return ProjectPatch::SetStyleKit { kit: previous };
             }
+            ProjectPatch::SetPlan { .. } => {
+                let ProjectPatch::SetPlan { plan } = self else {
+                    unreachable!()
+                };
+                let previous = project.settings.plan.take().map(Box::new);
+                project.settings.plan = plan.map(|plan| *plan);
+                return ProjectPatch::SetPlan { plan: previous };
+            }
             _ => {}
         }
 
@@ -379,7 +400,8 @@ impl ProjectPatch {
         match self {
             ProjectPatch::AddScene { .. }
             | ProjectPatch::RemoveScene { .. }
-            | ProjectPatch::SetStyleKit { .. } => unreachable!(),
+            | ProjectPatch::SetStyleKit { .. }
+            | ProjectPatch::SetPlan { .. } => unreachable!(),
             ProjectPatch::Noop => ProjectPatch::Noop,
             ProjectPatch::InsertElement {
                 track_id,
@@ -622,6 +644,16 @@ impl ProjectPatch {
                 }
                 None => ProjectPatch::Noop,
             },
+            ProjectPatch::SetGroup { id, group } => {
+                let previous = scene.groups.remove(&id);
+                if let Some(group) = group {
+                    scene.groups.insert(id.clone(), group);
+                }
+                ProjectPatch::SetGroup {
+                    id,
+                    group: previous,
+                }
+            }
             ProjectPatch::AddTrack { lane, index, track } => {
                 let track_id = track.id.clone();
                 let lane_tracks = match lane {
@@ -1464,6 +1496,33 @@ impl Command {
                 }],
                 selection_patch: None,
             }),
+
+            Command::SetPlan { plan } => Some(Lowered {
+                kind: CommandKind::SetPlan,
+                forward: vec![ProjectPatch::SetPlan {
+                    plan: Some(plan.clone()),
+                }],
+                selection_patch: None,
+            }),
+
+            Command::SetGroup { group } => {
+                if group.id.is_empty()
+                    || group
+                        .children
+                        .iter()
+                        .any(|id| !scene.elements().any(|element| element.id() == id))
+                {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetGroup,
+                    forward: vec![ProjectPatch::SetGroup {
+                        id: group.id.clone(),
+                        group: Some(group.clone()),
+                    }],
+                    selection_patch: None,
+                })
+            }
 
             Command::Paste => None, // resolved in Editor::execute (mints ids)
         }

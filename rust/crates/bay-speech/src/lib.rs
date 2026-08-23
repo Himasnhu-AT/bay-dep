@@ -11,10 +11,12 @@
 //! synchronised to the audio rather than estimated from character counts.
 
 pub mod engine;
+pub mod provider;
 pub mod subtitles;
 pub mod voices;
 
 pub use engine::{SpeechConfig, SpeechEngine, speak_once};
+pub use provider::{Prosody, ProsodyCapabilities, SynthesisRequest, TtsProvider};
 pub use subtitles::{
     Cue, CueStyle, MIN_CUE_SECONDS, MIN_SECONDS_PER_WORD, closes_sentence, cues_from_spoken,
     cues_from_words, parse, sentence_ends, shift, to_srt, to_vtt,

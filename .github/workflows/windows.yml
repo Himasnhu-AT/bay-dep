@@ -1,10 +1,10 @@
 name: windows
 
-# The only thing this repo uses a runner for, and only when asked.
+# The only Windows runner, and only when asked.
 #
-# macOS is built locally (`./script/bundle-mac --dmg`) and tested locally (`./test.sh`), so
-# there is no push- or PR-triggered CI at all: on a private repo a macOS runner bills at 10x,
-# and duplicating checks that already run on the maintainer's machine is paying for an echo.
+# macOS bundles are built locally (`./script/bundle-mac --dmg`). Pull requests run the cheaper
+# compile-only workspace guard in `workspace-check.yml`; full tests still run locally with
+# `./test.sh`.
 #
 # Windows genuinely cannot be built locally on a Mac. Windows containers need a Windows kernel,
 # and cross-compiling with cargo-xwin dies inside gpui, whose build.rs gates HLSL shader

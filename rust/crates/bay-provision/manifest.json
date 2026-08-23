@@ -117,6 +117,15 @@
       "diskBytes": 1555479286
     },
     {
+      "id": "listen",
+      "title": "Transcription",
+      "detail": "Local speech-to-text with whisper.cpp, including word-level timing for transcript edits and captions. Optional — media remains editable without it.",
+      "artifacts": [
+        "whisper-small-en-q5"
+      ],
+      "diskBytes": 190098681
+    },
+    {
       "$comment": "Recorded interface sound. bay SYNTHESISES whooshes, risers, impacts and clicks with no download at all (bay_audio::sfx) — those are abstract sounds, and a synthesised one comes out at the length the edit needs, which a fixed file cannot. This component is for the recorded material synthesis cannot stand in for. CC0 throughout, so bay may redistribute it; see docs/native/content-packs.md for why most 'free sound' sites cannot be shipped this way.",
       "id": "sfx",
       "title": "Sound effects",
@@ -136,9 +145,63 @@
         "siglip-tokenizer"
       ],
       "diskBytes": 820000000
+    },
+    {
+      "$comment": "Adapter slot only until bay can pin a redistributable Apple-Silicon runner and weights. An empty artifact list deliberately reports unsupported instead of downloading mutable model files or inventing a second installer. BAY_GEN_LOCAL_COMMAND remains a development override; production artifacts must land in runtime/bin/bay-gen-local through this manifest.",
+      "id": "generation-local",
+      "title": "Local media generation",
+      "detail": "Open-weights image, short-video, and music generation on this machine. No pinned build is available for this platform in this release; fal and Gemini remain explicit-consent alternatives.",
+      "artifacts": [],
+      "diskBytes": 0
     }
   ],
   "artifacts": [
+    {
+      "id": "whisper-small-en-q5",
+      "name": "Whisper small.en q5_1",
+      "source": "https://huggingface.co/ggerganov/whisper.cpp",
+      "license": "MIT",
+      "format": "raw",
+      "install": "files",
+      "builds": [
+        {
+          "target": "macos-aarch64",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small.en-q5_1.bin",
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "bytes": 190098681,
+          "files": [
+            {
+              "member": "ggml-small.en-q5_1.bin",
+              "install": "models/whisper/ggml-small.en-q5_1.bin"
+            }
+          ]
+        },
+        {
+          "target": "macos-x86_64",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small.en-q5_1.bin",
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "bytes": 190098681,
+          "files": [
+            {
+              "member": "ggml-small.en-q5_1.bin",
+              "install": "models/whisper/ggml-small.en-q5_1.bin"
+            }
+          ]
+        },
+        {
+          "target": "windows-x86_64",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-small.en-q5_1.bin",
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "bytes": 190098681,
+          "files": [
+            {
+              "member": "ggml-small.en-q5_1.bin",
+              "install": "models/whisper/ggml-small.en-q5_1.bin"
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": "ffmpeg",
       "name": "FFmpeg 9.0",

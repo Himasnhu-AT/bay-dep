@@ -1,0 +1,61 @@
+name: workspace-check
+
+# Model changes in one crate can break struct literals in another. Keep this as a full
+# workspace check: a narrow per-crate build cannot protect the desktop editor.
+on:
+  pull_request:
+    paths:
+      - "rust/**"
+      - ".github/workflows/workspace-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: workspace-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: rustup update stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Check every workspace target
+        working-directory: rust
+        run: env -u CARGO_TARGET_DIR cargo check --workspace --all-targets
+
+  windows-portable:
+    name: Windows portable crates
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust and Windows target
+        run: |
+          rustup update stable
+          rustup target add x86_64-pc-windows-msvc
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # These crates are the exercised portable foundation. bay-ui/desktop remain outside this
+      # claim: GPUI generates its HLSL only when the build host itself is Windows. The manual
+      # windows.yml job is the separate, honest exercise for the desktop bundle.
+      - name: Check portable crates for Windows
+        working-directory: rust
+        run: >-
+          env -u CARGO_TARGET_DIR cargo xwin check
+          --target x86_64-pc-windows-msvc
+          -p bay-paths -p bay-time -p bay-project
+          -p bay-jobs -p bay-provision -p bay-mcp

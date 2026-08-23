@@ -10,7 +10,7 @@
 //! tested on the Mac that ships it. Resolution written behind `#[cfg]` can only be checked by
 //! building for the other platform and looking — which is how the original bug survived.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub mod tools;
 
@@ -41,7 +41,33 @@ pub fn home() -> Option<PathBuf> {
 /// The directory for data bay owns on this user's behalf — projects, the agent registry, the
 /// unpacked speech sidecar.
 pub fn data_dir() -> Option<PathBuf> {
-    resolve_data_dir(env_path, Platform::CURRENT)
+    if let Some(explicit) = env_path("BAY_DATA_DIR") {
+        return Some(explicit);
+    }
+    resolve_data_dir(env_path, Platform::CURRENT).map(migrate_legacy_dir)
+}
+
+/// Rewrite an absolute path stored while the application directory was still named `vii`.
+///
+/// Project JSON keeps media paths, including generated SFX inside the data directory. Moving the
+/// library without rewriting those references would preserve the project file while making its
+/// media look missing. A failed directory rename returns the legacy data directory and therefore
+/// deliberately leaves every stored path alone.
+pub fn remap_legacy_data_path(path: &std::path::Path) -> Option<PathBuf> {
+    remap_legacy_data_path_from(path, &data_dir()?)
+}
+
+/// As [`remap_legacy_data_path`], when the caller already knows the current data directory.
+pub fn remap_legacy_data_path_from(
+    path: &std::path::Path,
+    current: &std::path::Path,
+) -> Option<PathBuf> {
+    if current.file_name().is_none_or(|name| name != NAME) {
+        return None;
+    }
+    let legacy = current.with_file_name(LEGACY_NAME);
+    let relative = path.strip_prefix(legacy).ok()?;
+    Some(current.join(relative))
 }
 
 /// Where bay installs the runtimes it provisions for the user — ffmpeg, a Python, the Kokoro
@@ -91,31 +117,26 @@ fn resolve_home(get: impl Fn(&str) -> Option<PathBuf>, platform: Platform) -> Op
 /// path, so roaming them to another machine produces a project whose every clip is missing.
 /// That is worse than not roaming at all.
 fn resolve_data_dir(get: impl Fn(&str) -> Option<PathBuf>, platform: Platform) -> Option<PathBuf> {
-    resolve_data_dir_with(get, platform, |path| path.is_dir())
+    resolve_data_dir_with(get, platform)
 }
 
 /// The former name's directory, for a machine that used the app before it was renamed.
 const LEGACY_NAME: &str = "vii";
 const NAME: &str = "bay";
 
-/// As [`resolve_data_dir`], with the "does this directory exist" test injected.
+/// As [`resolve_data_dir`], kept separate so platform resolution stays pure.
 ///
 /// The rename from vii to bay moves this path, and the user's projects, the agent registry and
 /// a possibly multi-gigabyte runtime directory are all inside it. Changing the answer without
 /// looking would present an existing user with an empty project library and no clue where their
 /// work went — the app would be working exactly as designed and would look broken.
 ///
-/// So: the new location wins, unless it does not exist yet and the old one does, in which case
-/// the old one keeps being used. Nothing is moved. A rename here is one `fs::rename` away from
-/// being fast and one interrupted copy away from being a data-loss bug, and there is no version
-/// of that trade worth taking for a directory that works perfectly where it is.
-///
-/// `exists` is injected so the migration is tested on a machine that has neither directory —
-/// otherwise this branch is only ever exercised on the developer's own laptop, once.
+/// Resolution always names the bay directory. [`data_dir`] performs the one-time same-volume
+/// rename from the legacy directory before returning it; keeping the choice and the mutation
+/// separate makes every platform's path deterministic in tests.
 fn resolve_data_dir_with(
     get: impl Fn(&str) -> Option<PathBuf>,
     platform: Platform,
-    exists: impl Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
     if let Some(explicit) = get("BAY_DATA_DIR") {
         return Some(explicit);
@@ -129,12 +150,26 @@ fn resolve_data_dir_with(
         Platform::Unix => get("XDG_DATA_HOME").or_else(|| home().map(|h| h.join(".local/share"))),
     }?;
 
-    let current = base.join(NAME);
-    let legacy = base.join(LEGACY_NAME);
-    if !exists(&current) && exists(&legacy) {
-        return Some(legacy);
+    Some(base.join(NAME))
+}
+
+/// Move the old application directory into the current name on first use.
+///
+/// Both paths share a parent, so `rename` is atomic on the filesystems bay supports. If it fails
+/// (permissions, a read-only home, or another process winning the race), keep using the legacy
+/// directory for this run rather than presenting an empty library or risking a partial copy.
+fn migrate_legacy_dir(current: PathBuf) -> PathBuf {
+    if current.exists() || current.file_name().is_none_or(|name| name != NAME) {
+        return current;
     }
-    Some(current)
+    let legacy = current.with_file_name(LEGACY_NAME);
+    if !legacy.is_dir() {
+        return current;
+    }
+    match std::fs::rename(&legacy, &current) {
+        Ok(()) => current,
+        Err(_) => legacy,
+    }
 }
 
 /// An environment variable as a path, treating empty as unset — an exported-but-empty variable
@@ -240,27 +275,28 @@ mod tests {
         }
     }
 
-    /// A directory test where only the listed paths exist.
-    fn only(paths: &[&str]) -> impl Fn(&Path) -> bool + use<> {
-        let set: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-        move |candidate| set.iter().any(|known| known == candidate)
-    }
-
     /// Someone who used the app when it was called vii has their projects, their agent registry
     /// and possibly a gigabyte of runtime in the old directory. The rename must not present them
     /// with an empty library.
     #[test]
-    fn a_machine_that_used_the_old_name_keeps_its_data() {
-        let mac = env(&[("HOME", "/Users/ada")]);
-        assert_eq!(
-            resolve_data_dir_with(
-                &mac,
-                Platform::MacOs,
-                only(&["/Users/ada/Library/Application Support/vii"])
-            ),
-            Some(PathBuf::from("/Users/ada/Library/Application Support/vii")),
-            "the old directory is still where the work is"
+    fn the_old_directory_is_atomically_migrated_to_bay() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bay-path-migration-{stamp}"));
+        let legacy = root.join(LEGACY_NAME);
+        let current = root.join(NAME);
+        std::fs::create_dir_all(legacy.join("projects")).unwrap();
+        std::fs::write(legacy.join("projects").join("kept.json"), "{}").unwrap();
+
+        assert_eq!(migrate_legacy_dir(current.clone()), current);
+        assert!(!legacy.exists(), "the old brand path should be gone");
+        assert!(
+            current.join("projects").join("kept.json").exists(),
+            "migration must preserve the user's projects"
         );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// A fresh machine gets the new name, with no legacy directory anywhere.
@@ -268,55 +304,31 @@ mod tests {
     fn a_new_machine_uses_the_new_name() {
         let mac = env(&[("HOME", "/Users/ada")]);
         assert_eq!(
-            resolve_data_dir_with(&mac, Platform::MacOs, only(&[])),
+            resolve_data_dir_with(&mac, Platform::MacOs),
             Some(PathBuf::from("/Users/ada/Library/Application Support/bay"))
         );
     }
 
-    /// Once the new directory exists it wins outright, even beside a leftover old one — or a
-    /// user who had both would silently keep writing to the one they had stopped using.
+    /// The resolved path uses the current name on every platform; migration is a filesystem
+    /// operation after resolution, not a permanent choice to keep writing the old brand.
     #[test]
-    fn the_new_directory_wins_once_it_exists() {
-        let mac = env(&[("HOME", "/Users/ada")]);
-        assert_eq!(
-            resolve_data_dir_with(
-                &mac,
-                Platform::MacOs,
-                only(&[
-                    "/Users/ada/Library/Application Support/bay",
-                    "/Users/ada/Library/Application Support/vii",
-                ])
-            ),
-            Some(PathBuf::from("/Users/ada/Library/Application Support/bay"))
-        );
-    }
-
-    /// The fallback is not macOS-only: a Linux or Windows user is in exactly the same position.
-    #[test]
-    fn every_platform_finds_the_old_directory() {
-        for (platform, vars, legacy, current) in [
+    fn every_platform_resolves_the_bay_directory() {
+        for (platform, vars, current) in [
             (
                 Platform::Unix,
                 vec![("HOME", "/home/ada")],
-                "/home/ada/.local/share/vii",
                 "/home/ada/.local/share/bay",
             ),
             (
                 Platform::Windows,
                 vec![("LOCALAPPDATA", r"C:\Users\ada\AppData\Local")],
-                r"C:\Users\ada\AppData\Local/vii",
                 r"C:\Users\ada\AppData\Local/bay",
             ),
         ] {
             assert_eq!(
-                resolve_data_dir_with(env(&vars), platform, only(&[legacy])),
-                Some(PathBuf::from(legacy)),
-                "{platform:?} must keep using the old directory"
-            );
-            assert_eq!(
-                resolve_data_dir_with(env(&vars), platform, only(&[])),
+                resolve_data_dir_with(env(&vars), platform),
                 Some(PathBuf::from(current)),
-                "{platform:?} with nothing present takes the new name"
+                "{platform:?} must use the current application name"
             );
         }
     }
@@ -327,12 +339,23 @@ mod tests {
     fn an_override_still_beats_the_legacy_directory() {
         let with_override = env(&[("HOME", "/Users/ada"), ("BAY_DATA_DIR", "/scratch/bay")]);
         assert_eq!(
-            resolve_data_dir_with(
-                &with_override,
-                Platform::MacOs,
-                only(&["/Users/ada/Library/Application Support/vii"])
-            ),
+            resolve_data_dir_with(&with_override, Platform::MacOs),
             Some(PathBuf::from("/scratch/bay"))
+        );
+    }
+
+    #[test]
+    fn stored_media_paths_follow_the_migrated_directory() {
+        let current = PathBuf::from("/Users/ada/Library/Application Support/bay");
+        let old = PathBuf::from("/Users/ada/Library/Application Support/vii/sfx/hit.wav");
+        assert_eq!(
+            remap_legacy_data_path_from(&old, &current),
+            Some(current.join("sfx/hit.wav"))
+        );
+        assert_eq!(
+            remap_legacy_data_path_from(PathBuf::from("/Movies/source.mov").as_path(), &current),
+            None,
+            "user-owned media outside the data directory must not move"
         );
     }
 
@@ -348,7 +371,8 @@ mod tests {
 
     #[test]
     fn the_real_environment_gives_a_directory_under_the_real_home() {
-        let (Some(home), Some(data)) = (home(), data_dir()) else {
+        let (Some(home), Some(data)) = (home(), resolve_data_dir(env_path, Platform::CURRENT))
+        else {
             eprintln!("skipping: no home directory in this environment");
             return;
         };
@@ -356,18 +380,16 @@ mod tests {
             data.starts_with(&home),
             "{data:?} should sit under {home:?}"
         );
-        // Either name is correct: a machine that predates the rename keeps using the old
-        // directory, which is the whole point of the migration above. What must never happen is
-        // resolving to a directory shared with anything else.
         assert!(
-            data.ends_with(NAME) || data.ends_with(LEGACY_NAME),
+            data.ends_with(NAME),
             "{data:?} should be this app's own directory, not a shared one"
         );
     }
 
     #[test]
     fn output_goes_somewhere_the_user_will_look() {
-        let (Some(out), Some(data)) = (output_dir(), data_dir()) else {
+        let (Some(out), Some(data)) = (output_dir(), resolve_data_dir(env_path, Platform::CURRENT))
+        else {
             eprintln!("skipping: no home directory in this environment");
             return;
         };

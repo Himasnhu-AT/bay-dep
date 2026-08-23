@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::element::{AudioRole, Element, ElementSource};
 use crate::project::{Project, ProjectMetadata};
 use crate::scene::Scene;
 use crate::settings::{Background, CanvasSize, Fps, ProjectSettings};
@@ -255,6 +256,27 @@ pub fn read_project(path: &Path) -> Result<Project> {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
+    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    for asset in &mut project.media {
+        let media_path = Path::new(&asset.path);
+        if media_path.is_relative() {
+            asset.path = project_dir.join(media_path).to_string_lossy().into_owned();
+        }
+    }
+    let data_dir = path
+        .parent()
+        .filter(|directory| directory.file_name().is_some_and(|name| name == "projects"))
+        .and_then(Path::parent)
+        .filter(|directory| directory.file_name().is_some_and(|name| name == "bay"));
+    if let Some(data_dir) = data_dir {
+        for asset in &mut project.media {
+            if let Some(migrated) =
+                bay_paths::remap_legacy_data_path_from(Path::new(&asset.path), data_dir)
+            {
+                asset.path = migrated.to_string_lossy().into_owned();
+            }
+        }
+    }
     project.infer_provenance();
     Ok(project)
 }
@@ -265,13 +287,86 @@ pub fn write_project(path: &Path, project: &Project) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(io(parent))?;
     }
-    let json = serde_json::to_string_pretty(project).map_err(|e| LibraryError::Json {
+    let portable = collect_generated_media(path, project)?;
+    let json = serde_json::to_string_pretty(&portable).map_err(|e| LibraryError::Json {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
     let temp = path.with_extension("json.tmp");
     std::fs::write(&temp, json).map_err(io(&temp))?;
     std::fs::rename(&temp, path).map_err(io(path))
+}
+
+/// Copy media created by bay beside the project before serializing it.
+///
+/// Authored imports remain references to the user's originals; silently duplicating a 4K source
+/// library on every save would be surprising. Generated assets are different: bay created their
+/// only copy, so the project owns them. Tool-authored speech also covers narration made before
+/// generated-media provenance existed and narration written to a caller-supplied path.
+fn collect_generated_media(path: &Path, project: &Project) -> Result<Project> {
+    let mut portable = project.clone();
+    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let project_stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("project");
+    let media_dir_name = format!("{project_stem}.media");
+    let media_dir = project_dir.join(&media_dir_name);
+
+    for asset in &mut portable.media {
+        let tool_speech = project.scenes.iter().any(|scene| {
+            scene
+                .tracks
+                .iter()
+                .flat_map(|track| &track.elements)
+                .any(|element| {
+                    matches!(
+                        element,
+                        Element::Audio(audio)
+                            if audio.media_id == asset.id
+                                && audio.source == ElementSource::Tool
+                                && audio.role == AudioRole::Speech
+                    )
+                })
+        });
+        if asset.generated.is_none() && !tool_speech {
+            continue;
+        }
+
+        std::fs::create_dir_all(&media_dir).map_err(io(&media_dir))?;
+        let source = Path::new(&asset.path);
+        let extension = source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| !extension.is_empty());
+        let filename = match extension {
+            Some(extension) => format!("{}.{}", slug(&asset.id), extension),
+            None => slug(&asset.id),
+        };
+        let destination = media_dir.join(filename);
+        if source.is_file() && source != destination {
+            let staging = destination.with_extension("media.tmp");
+            std::fs::copy(source, &staging).map_err(io(&staging))?;
+            if destination.exists() {
+                std::fs::remove_file(&destination).map_err(io(&destination))?;
+            }
+            std::fs::rename(&staging, &destination).map_err(io(&destination))?;
+        } else if !destination.is_file() {
+            return Err(LibraryError::Io {
+                path: source.to_path_buf(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("generated media {:?} is missing", asset.id),
+                ),
+            });
+        }
+        asset.path = Path::new(&media_dir_name)
+            .join(destination.file_name().unwrap_or_default())
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    Ok(portable)
 }
 
 /// Reduce an arbitrary id to a safe single path segment.
@@ -313,6 +408,7 @@ impl Project {
                 // way in, so a project an agent builds is never kit-less; a project the desktop
                 // app makes takes one the first time type is placed on it.
                 kit: None,
+                plan: None,
             },
             scenes: vec![Scene {
                 id: "scene-main".into(),
@@ -324,6 +420,7 @@ impl Project {
                     audio: Vec::new(),
                 },
                 markers: Vec::new(),
+                groups: Default::default(),
             }],
             current_scene_id: "scene-main".into(),
             media: Vec::new(),
@@ -334,6 +431,7 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::{GeneratedMediaProvenance, MediaAsset};
 
     /// A private directory for one test, without pulling in a tempdir dependency.
     fn scratch(tag: &str) -> PathBuf {
@@ -381,6 +479,36 @@ mod tests {
     }
 
     #[test]
+    fn loading_a_migrated_library_repairs_legacy_media_paths() {
+        let root = scratch("migration").join("bay/projects");
+        let library = ProjectLibrary::with_root(&root).unwrap();
+        let mut project = Project::starter();
+        let legacy_data = root.parent().unwrap().with_file_name("vii");
+        project.media.push(MediaAsset {
+            id: "generated-sfx".into(),
+            name: "hit.wav".into(),
+            path: legacy_data
+                .join("sfx/hit.wav")
+                .to_string_lossy()
+                .into_owned(),
+            duration_seconds: Some(0.5),
+            width: None,
+            height: None,
+            loudness: None,
+            transcript: None,
+            semantic_index: None,
+            generated: None,
+        });
+        library.save(&project).unwrap();
+
+        let loaded = library.load(&project.metadata.id).unwrap();
+        assert_eq!(
+            Path::new(&loaded.media[0].path),
+            root.parent().unwrap().join("sfx/hit.wav")
+        );
+    }
+
+    #[test]
     fn creating_the_same_name_twice_yields_two_projects() {
         let library = library("dup");
         let one = library
@@ -405,6 +533,41 @@ mod tests {
         let listed = library.list().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "Final");
+    }
+
+    #[test]
+    fn provenance_bearing_generated_media_is_collected_beside_the_project() {
+        let library = library("generated");
+        let source = scratch("generated-source").join("image.png");
+        std::fs::write(&source, b"generated bytes").unwrap();
+        let mut project = Project::starter();
+        let mut asset = MediaAsset::new("generated-image", "image.png", source.to_string_lossy());
+        asset.generated = Some(GeneratedMediaProvenance {
+            provider: "test".into(),
+            model: "test".into(),
+            prompt: "test".into(),
+            seed: 1,
+            generated_at_unix_ms: 1,
+            request_hash: "request".into(),
+            artifact_sha256: "artifact".into(),
+        });
+        project.media.push(asset);
+
+        library.save(&project).unwrap();
+        std::fs::remove_file(&source).unwrap();
+        let loaded = library.load(&project.metadata.id).unwrap();
+
+        assert_eq!(
+            std::fs::read(&loaded.media.last().unwrap().path).unwrap(),
+            b"generated bytes"
+        );
+        let expected_media_dir = library
+            .path_for(&project.metadata.id)
+            .with_extension("media");
+        assert_eq!(
+            Path::new(&loaded.media.last().unwrap().path).parent(),
+            Some(expected_media_dir.as_path())
+        );
     }
 
     #[test]

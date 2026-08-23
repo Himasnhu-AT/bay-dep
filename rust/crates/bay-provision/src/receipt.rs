@@ -147,6 +147,35 @@ pub fn record(
     Ok(())
 }
 
+/// Forget receipt entries for artifacts that have been deliberately removed.
+///
+/// Filesystem probes remain the source of truth, but retaining an install receipt after
+/// `runtime_remove` would make later diagnostics report drift for an action bay performed on
+/// purpose.
+pub fn forget<'a>(
+    root: &Path,
+    artifacts: impl IntoIterator<Item = &'a str>,
+) -> Result<(), ProvisionError> {
+    let path = receipt_path(root);
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut receipt = read(root);
+    for artifact in artifacts {
+        receipt.artifacts.remove(artifact);
+    }
+    if receipt.artifacts.is_empty() {
+        return std::fs::remove_file(&path).map_err(|error| ProvisionError::at(&path, error));
+    }
+
+    let staging = path.with_extension(format!("{}.part", std::process::id()));
+    let text = serde_json::to_string_pretty(&receipt).map_err(|error| {
+        ProvisionError::Archive(format!("could not write the receipt: {error}"))
+    })?;
+    std::fs::write(&staging, text).map_err(|error| ProvisionError::at(&staging, error))?;
+    std::fs::rename(&staging, &path).map_err(|error| ProvisionError::at(&path, error))
+}
+
 /// Why an installed artifact is no longer what bay put there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Drift {

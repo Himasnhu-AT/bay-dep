@@ -6,6 +6,7 @@
 //! `RenderImage` expects. Clip textures are solid-color placeholders until native media decode
 //! lands; the compositing (background, transform, opacity, blend) is real.
 
+pub mod frame_check;
 pub mod probe;
 
 use bay_compositor::{
@@ -23,13 +24,15 @@ use bay_text::TextRaster;
 /// effect). `brightness`/`contrast`/`saturation` are single-`amount` colour adjustments; `blur`
 /// expands into a separable two-pass gaussian (horizontal then vertical). Unknown effect types
 /// are skipped so the compositor never errors on an unknown shader.
-fn effect_groups(element: &Element, luts: &mut LutCache) -> Vec<Vec<EffectPassDescriptor>> {
+fn effect_groups(
+    effects: &[bay_project::Effect],
+    luts: &mut LutCache,
+) -> Vec<Vec<EffectPassDescriptor>> {
     fn number(amount: f32) -> EffectUniformValueDescriptor {
         EffectUniformValueDescriptor::Number(amount)
     }
 
-    element
-        .effects()
+    effects
         .iter()
         .filter(|effect| effect.enabled)
         .filter_map(|effect| {
@@ -1114,15 +1117,16 @@ impl PreviewRenderer {
     /// the editor down with it.
     fn ensure_text_texture(
         &mut self,
+        element_id: &str,
         content: &str,
         font_px: f32,
         color: &str,
-        tw: u32,
-        th: u32,
+        size: (u32, u32),
         style: &bay_text::TextStyle<'_>,
     ) -> Option<String> {
+        let (tw, th) = size;
         let key = format!(
-            "text:{color}:{font}:{tw}x{th}:{style_key}:{content}",
+            "text:{element_id}:{color}:{font}:{tw}x{th}:{style_key}:{content}",
             font = font_px.to_bits(),
             style_key = style.cache_key(),
         );
@@ -1381,6 +1385,19 @@ impl PreviewRenderer {
     /// The preview can draw a placeholder while a worker decodes, but an export cannot — a
     /// placeholder would be baked into the output file. Export therefore waits.
     pub fn await_decodes(&mut self, scene: &Scene, media: &[MediaAsset]) {
+        let _ = self.await_decodes_checked(scene, media);
+    }
+
+    /// Block until every referenced preview clip is decoded, and say when one could not be.
+    ///
+    /// Measurement callers use this checked form because a placeholder is an honest interactive
+    /// preview fallback but is not evidence. Keeping the unchecked wrapper above preserves the
+    /// UI's existing fire-and-poll behaviour.
+    pub fn await_decodes_checked(
+        &mut self,
+        scene: &Scene,
+        media: &[MediaAsset],
+    ) -> Result<(), String> {
         for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
             for element in &track.elements {
                 let Element::Video(video) = element else {
@@ -1399,8 +1416,19 @@ impl PreviewRenderer {
                         _ => break,
                     }
                 }
+                if !matches!(
+                    self.video_cache.get(&video.media_id),
+                    Some(ClipState::Ready(_))
+                ) {
+                    let source = path.as_deref().unwrap_or("<unregistered media>");
+                    return Err(format!(
+                        "video media {:?} could not be decoded from {source:?}",
+                        video.media_id
+                    ));
+                }
             }
         }
+        Ok(())
     }
 
     /// Encoding needs the whole frame description; bundling these into a struct would add
@@ -1503,11 +1531,14 @@ impl PreviewRenderer {
             let mut filters = String::new();
             for (index, clip) in audio_clips.iter().enumerate() {
                 filters.push_str(&format!(
-                    "[{input}:a]atrim=start={start:.4}:duration={duration:.4},asetpts=PTS-STARTPTS,\
-                     {volume},adelay={delay_ms}:all=1[a{index}];",
+                    "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
+                     asetpts=PTS-STARTPTS,{processing}{volume},\
+                     atrim=duration={duration:.4},adelay={delay_ms}:all=1[a{index}];",
                     input = index + 1,
                     start = clip.trim_start_seconds,
+                    source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
                     duration = clip.duration_seconds,
+                    processing = clip.processing_filters(),
                     volume = clip.volume_filter(),
                     delay_ms = (clip.start_seconds * 1000.0).round() as i64,
                 ));
@@ -1736,7 +1767,7 @@ impl PreviewRenderer {
                 }
                 // Evaluate keyframe animations at the time into the clip.
                 let local = MediaTime::from_ticks(playhead.as_ticks() - element.start().as_ticks());
-                let Some(transform) = element.sampled_transform(local) else {
+                let Some(transform) = scene.sampled_transform(element, local, playhead) else {
                     continue;
                 };
                 // A non-finite transform (NaN scale from a degenerate keyframe, say) would
@@ -1745,7 +1776,7 @@ impl PreviewRenderer {
                 let transform = sanitise_transform(transform);
 
                 // Text → real glyphs; Image → decoded file (cached); others → solid placeholder.
-                let (texture_id, natural_size) = match element {
+                let (texture_id, natural_size, box_extra) = match element {
                     Element::Text(text) => {
                         // The raster box comes from the element's BASE scale, never the sampled
                         // one. Sizing it from the animated value made `scale` a text *wrap box*
@@ -1761,28 +1792,80 @@ impl PreviewRenderer {
                         let th = (base_scale * height as f32).min(height as f32).max(1.0) as u32;
                         let (tw, th) = (tw.max(1), th.max(1));
                         let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
+                        let active_word = text
+                            .karaoke
+                            .as_ref()
+                            .and_then(|karaoke| karaoke.active_word(local));
+                        let highlight = active_word
+                            .and_then(|index| word_byte_range(&text.content, index))
+                            .and_then(|(start, end)| {
+                                text.karaoke
+                                    .as_ref()
+                                    .map(|karaoke| bay_text::HighlightStyle {
+                                        start,
+                                        end,
+                                        color: karaoke.highlight_color.as_str(),
+                                    })
+                            });
                         // Cached by content/style, so static captions aren't re-shaped per frame.
-                        let style = bay_text::TextStyle {
-                            family: text.font_family.as_deref(),
-                            weight: text.font_weight,
-                            align: match text.align {
-                                bay_project::TextAlign::Left => bay_text::TextAlign::Left,
-                                bay_project::TextAlign::Center => bay_text::TextAlign::Center,
-                                bay_project::TextAlign::Right => bay_text::TextAlign::Right,
-                            },
-                            letter_spacing: text.letter_spacing,
-                            line_height: text.line_height,
-                        };
+                        let style =
+                            bay_text::TextStyle {
+                                family: text.font_family.as_deref(),
+                                weight: text.font_weight,
+                                align: match text.align {
+                                    bay_project::TextAlign::Left => bay_text::TextAlign::Left,
+                                    bay_project::TextAlign::Center => bay_text::TextAlign::Center,
+                                    bay_project::TextAlign::Right => bay_text::TextAlign::Right,
+                                },
+                                letter_spacing: text.letter_spacing,
+                                line_height: text.line_height,
+                                stroke: text.decorations.as_ref().and_then(|decorations| {
+                                    decorations.stroke.as_ref().map(|stroke| {
+                                        bay_text::StrokeStyle {
+                                            width: stroke.width,
+                                            color: stroke.color.as_str(),
+                                        }
+                                    })
+                                }),
+                                shadow: text.decorations.as_ref().and_then(|decorations| {
+                                    decorations.shadow.as_ref().map(|shadow| {
+                                        bay_text::ShadowStyle {
+                                            offset_x: shadow.offset_x,
+                                            offset_y: shadow.offset_y,
+                                            blur: shadow.blur,
+                                            color: shadow.color.as_str(),
+                                        }
+                                    })
+                                }),
+                                plate: text.decorations.as_ref().and_then(|decorations| {
+                                    decorations
+                                        .plate
+                                        .as_ref()
+                                        .map(|plate| bay_text::PlateStyle {
+                                            color: plate.color.as_str(),
+                                            padding_x: plate.padding_x,
+                                            padding_y: plate.padding_y,
+                                            radius: plate.radius,
+                                        })
+                                }),
+                                highlight,
+                            };
+                        let (margin_x, margin_y) = style.margins();
+                        let raster_size = (
+                            tw.saturating_add(margin_x.saturating_mul(2)),
+                            th.saturating_add(margin_y.saturating_mul(2)),
+                        );
                         (
                             self.ensure_text_texture(
+                                &text.id,
                                 &text.content,
                                 font_px,
                                 &text.color,
-                                tw,
-                                th,
+                                (tw, th),
                                 &style,
                             ),
-                            Some((tw, th)),
+                            Some(raster_size),
+                            (margin_x as f32 * 2.0, margin_y as f32 * 2.0),
                         )
                     }
                     Element::Shape(shape) => {
@@ -1794,12 +1877,15 @@ impl PreviewRenderer {
                         (
                             self.ensure_shape_texture(&shape.shape, &shape.color, aspect),
                             None,
+                            (0.0, 0.0),
                         )
                     }
                     Element::Image(image_element) => {
                         match self.ensure_image_texture(&image_element.media_id, media) {
-                            Some((texture_id, natural)) => (Some(texture_id), Some(natural)),
-                            None => (self.upload_solid_placeholder(element), None),
+                            Some((texture_id, natural)) => {
+                                (Some(texture_id), Some(natural), (0.0, 0.0))
+                            }
+                            None => (self.upload_solid_placeholder(element), None, (0.0, 0.0)),
                         }
                     }
                     Element::Video(video) => {
@@ -1809,9 +1895,10 @@ impl PreviewRenderer {
                             .find(|m| m.id == media_id)
                             .map(|m| m.path.clone());
                         // How far into the SOURCE this timeline moment is.
-                        let source_seconds = video.trim_start.to_seconds_f64()
-                            + (playhead.as_ticks() - video.start.as_ticks()).max(0) as f64
-                                / 120_000.0;
+                        let source_seconds = element
+                            .source_time(local)
+                            .unwrap_or(video.trim_start)
+                            .to_seconds_f64();
 
                         let uploaded = match &mut source {
                             // Decode the clip once on a WORKER THREAD, then index frames by time.
@@ -1860,12 +1947,12 @@ impl PreviewRenderer {
                             Some((texture, w, h)) => {
                                 self.compositor
                                     .upsert_texture(element.id().to_string(), texture);
-                                (Some(element.id().to_string()), Some((w, h)))
+                                (Some(element.id().to_string()), Some((w, h)), (0.0, 0.0))
                             }
-                            None => (self.upload_solid_placeholder(element), None),
+                            None => (self.upload_solid_placeholder(element), None, (0.0, 0.0)),
                         }
                     }
-                    _ => (self.upload_solid_placeholder(element), None),
+                    _ => (self.upload_solid_placeholder(element), None, (0.0, 0.0)),
                 };
 
                 // No texture means this layer could not be built. Drop the layer, keep the frame.
@@ -1878,8 +1965,8 @@ impl PreviewRenderer {
                 // Stretching every source to the box was a live rendering bug: a 16:9 clip and a
                 // square image both filled the whole canvas.
                 let (box_w, box_h) = (
-                    (transform.scale * width as f32).max(1.0),
-                    (transform.scale * height as f32).max(1.0),
+                    (transform.scale * width as f32 + box_extra.0).max(1.0),
+                    (transform.scale * height as f32 + box_extra.1).max(1.0),
                 );
                 // The visible source is what `contain` has to fit. Fitting the uncropped size
                 // would letterbox the frame to the shape of a picture the crop just removed.
@@ -1910,7 +1997,7 @@ impl PreviewRenderer {
 
                 // Rasterised before the descriptor is built: `ensure_mask_texture` borrows
                 // `self` mutably, and the descriptor below holds a borrow of the element.
-                let mask_descriptor = element.mask().and_then(|mask| {
+                let mask_descriptor = element.sampled_mask(local).and_then(|mask| {
                     let texture_id = self.ensure_mask_texture(&mask, width, height)?;
                     Some(LayerMaskDescriptor {
                         texture_id,
@@ -1919,6 +2006,7 @@ impl PreviewRenderer {
                     })
                 });
 
+                let effects = element.sampled_effects(local);
                 items.push(FrameItemDescriptor::Layer(LayerDescriptor {
                     texture_id,
                     transform: QuadTransformDescriptor {
@@ -1936,7 +2024,7 @@ impl PreviewRenderer {
                     // up while it is also animating its opacity, and neither cancels the other.
                     opacity: (transform.opacity * element.fade_gain(local)).clamp(0.0, 1.0),
                     blend_mode: blend_mode(element.blend_mode().unwrap_or_default()),
-                    effect_pass_groups: effect_groups(element, &mut self.luts),
+                    effect_pass_groups: effect_groups(&effects, &mut self.luts),
                     mask: mask_descriptor,
                 }));
             }
@@ -2032,6 +2120,8 @@ pub struct AudibleClip {
     /// How much of the source to skip, in seconds.
     pub trim_start_seconds: f64,
     pub duration_seconds: f64,
+    pub speed: f32,
+    pub dialogue_chain: Option<bay_project::DialogueAudioChain>,
     /// Linear gain. 1.0 is unity. Constant when `gain_points` holds one point or none.
     pub volume: f32,
     /// The clip's level over its own length as `(seconds, gain)` — fades and any volume
@@ -2131,6 +2221,47 @@ fn decibels_apart(a: f32, b: f32) -> f32 {
 }
 
 impl AudibleClip {
+    fn processing_filters(&self) -> String {
+        let mut filters = Vec::new();
+        let speed = if self.speed.is_finite() && self.speed > 0.0 {
+            self.speed
+        } else {
+            1.0
+        };
+        filters.extend(atempo_filters(speed));
+        if let Some(chain) = &self.dialogue_chain {
+            if let Some(eq) = chain.eq {
+                filters.push(format!(
+                    "highpass=f={:.1},equalizer=f=3000:t=q:w=1:g={:.2}",
+                    eq.high_pass_hz.clamp(20.0, 1000.0),
+                    eq.presence_db.clamp(-12.0, 12.0)
+                ));
+            }
+            if let Some(compressor) = chain.compressor {
+                filters.push(format!(
+                    "acompressor=threshold={:.2}dB:ratio={:.2}:attack={:.2}:release={:.2}:makeup={:.2}dB",
+                    compressor.threshold_db.clamp(-80.0, 0.0),
+                    compressor.ratio.clamp(1.0, 20.0),
+                    compressor.attack_ms.clamp(0.01, 2000.0),
+                    compressor.release_ms.clamp(0.01, 9000.0),
+                    compressor.makeup_db.clamp(0.0, 24.0),
+                ));
+            }
+            if let Some(limiter) = chain.limiter {
+                let ceiling = 10.0_f32.powf(limiter.ceiling_db.min(0.0) / 20.0);
+                // Oversample around the limiter so inter-sample peaks are included.
+                filters.push(format!(
+                    "aresample=192000,alimiter=limit={ceiling:.6}:attack=5:release=50,aresample=48000"
+                ));
+            }
+        }
+        if filters.is_empty() {
+            String::new()
+        } else {
+            format!("{},", filters.join(","))
+        }
+    }
+
     /// The ffmpeg filter fragment that applies this clip's level.
     ///
     /// A flat clip is a plain `volume=`. A moving one becomes a piecewise-linear expression
@@ -2167,6 +2298,23 @@ impl AudibleClip {
     }
 }
 
+fn atempo_filters(speed: f32) -> Vec<String> {
+    let mut remaining = speed.clamp(0.01, 100.0);
+    let mut filters = Vec::new();
+    while remaining < 0.5 {
+        filters.push("atempo=0.5".to_string());
+        remaining /= 0.5;
+    }
+    while remaining > 100.0 {
+        filters.push("atempo=100".to_string());
+        remaining /= 100.0;
+    }
+    if (remaining - 1.0).abs() > f32::EPSILON {
+        filters.push(format!("atempo={remaining:.6}"));
+    }
+    filters
+}
+
 /// Collect every audible clip on the scene's audio lanes, in timeline order.
 ///
 /// Skips muted tracks, muted clips, silent clips (`volume <= 0`), zero-length clips, and any
@@ -2197,6 +2345,8 @@ fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
                 start_seconds: audio.start.to_seconds_f64().max(0.0),
                 trim_start_seconds: audio.trim_start.to_seconds_f64().max(0.0),
                 duration_seconds,
+                speed: audio.speed,
+                dialogue_chain: audio.dialogue_chain.clone(),
                 volume: audio.volume,
                 gain_points: element.gain_points(),
             });
@@ -2238,7 +2388,7 @@ fn clips_in_range(clips: Vec<AudibleClip>, start_seconds: f64, duration: f64) ->
             }
             Some(AudibleClip {
                 start_seconds: (clip.start_seconds - start_seconds).max(0.0),
-                trim_start_seconds: clip.trim_start_seconds + lost,
+                trim_start_seconds: clip.trim_start_seconds + lost * f64::from(clip.speed.max(0.0)),
                 duration_seconds,
                 // The level curve is measured from the clip's own head, so the part that is
                 // still playing has to be read from where the range picked it up.
@@ -2292,6 +2442,65 @@ fn kind_color(kind: ElementKind) -> [u8; 4] {
         ElementKind::Audio => [0x2f, 0x8f, 0x63, 0xff],
         // Shapes rasterize their own fill, so this is only reached if that ever fails.
         ElementKind::Shape => [0xa0, 0xa0, 0xa8, 0xff],
+    }
+}
+
+fn word_byte_range(text: &str, word_index: usize) -> Option<(usize, usize)> {
+    let mut start = None;
+    let mut current = 0usize;
+    for (index, character) in text.char_indices() {
+        if character.is_whitespace() {
+            if let Some(word_start) = start.take() {
+                if current == word_index {
+                    return Some((word_start, index));
+                }
+                current += 1;
+            }
+        } else if start.is_none() {
+            start = Some(index);
+        }
+    }
+    start
+        .filter(|_| current == word_index)
+        .map(|word_start| (word_start, text.len()))
+}
+
+#[cfg(test)]
+mod craft_tests {
+    use super::{AudibleClip, word_byte_range};
+
+    #[test]
+    fn karaoke_word_ranges_follow_text_order() {
+        assert_eq!(word_byte_range("Craft moves fast", 0), Some((0, 5)));
+        assert_eq!(word_byte_range("Craft moves fast", 1), Some((6, 11)));
+        assert_eq!(word_byte_range("Craft moves fast", 2), Some((12, 16)));
+    }
+
+    #[test]
+    fn dialogue_chain_emits_the_complete_filter_order() {
+        let clip = AudibleClip {
+            path: "/tmp/voice.wav".into(),
+            start_seconds: 0.0,
+            trim_start_seconds: 0.0,
+            duration_seconds: 2.0,
+            speed: 1.25,
+            dialogue_chain: Some(bay_project::DialogueAudioChain::default()),
+            volume: 1.0,
+            gain_points: vec![(0.0, 1.0)],
+        };
+        let filters = clip.processing_filters();
+        let positions = [
+            filters.find("atempo=").unwrap(),
+            filters.find("highpass=").unwrap(),
+            filters.find("acompressor=").unwrap(),
+            filters.find("alimiter=").unwrap(),
+        ];
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{filters}"
+        );
+        assert!(filters.contains("equalizer="), "{filters}");
+        assert!(filters.ends_with(','), "{filters}");
     }
 }
 

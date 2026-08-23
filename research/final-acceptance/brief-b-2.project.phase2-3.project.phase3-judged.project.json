@@ -1,0 +1,2511 @@
+{
+  "metadata": {
+    "id": "project-1786822700766-4",
+    "name": "acceptance-brief-b-ox"
+  },
+  "settings": {
+    "fps": {
+      "numerator": 30,
+      "denominator": 1
+    },
+    "canvas": {
+      "width": 1080,
+      "height": 1920
+    },
+    "background": {
+      "type": "color",
+      "color": "#101014"
+    },
+    "kit": {
+      "id": "stadium",
+      "name": "Stadium",
+      "note": "Shouted against stated: a Clarendon slab at poster scale over a neo-grotesque. For sport, retail, launches and anything with a scoreline.",
+      "faces": {
+        "display": {
+          "family": "Rockwell",
+          "weight": 700
+        },
+        "body": {
+          "family": "Helvetica Neue",
+          "weight": 400
+        },
+        "mono": {
+          "family": "Menlo",
+          "weight": 700
+        }
+      },
+      "ramp": {
+        "hook": {
+          "size": 193.8,
+          "tracking": -0.02,
+          "lineHeight": 1.02
+        },
+        "headline": {
+          "size": 121.6,
+          "tracking": -0.015,
+          "lineHeight": 1.08
+        },
+        "kicker": {
+          "size": 36.2,
+          "tracking": 0.16,
+          "lineHeight": 1.2
+        },
+        "label": {
+          "size": 37.2,
+          "tracking": 0.0,
+          "lineHeight": 1.32
+        },
+        "caption": {
+          "size": 58.6,
+          "tracking": 0.0,
+          "lineHeight": 1.28
+        },
+        "lockup": {
+          "size": 73.0,
+          "tracking": 0.06,
+          "lineHeight": 1.16
+        },
+        "data": {
+          "size": 178.6,
+          "tracking": -0.01,
+          "lineHeight": 1.0
+        },
+        "ground": {
+          "size": 30.1,
+          "tracking": 0.0,
+          "lineHeight": 1.3
+        },
+        "chrome": {
+          "size": 30.1,
+          "tracking": 0.1,
+          "lineHeight": 1.2
+        }
+      },
+      "palette": {
+        "bg": "#101014",
+        "surface": "#43415A",
+        "ink": "#FFFFFF",
+        "dim": "#8A8A9B",
+        "accent": "#EE4436",
+        "accent2": "#F0B429"
+      },
+      "framings": [
+        {
+          "name": "hero",
+          "x": 0.5,
+          "y": 0.38,
+          "anchorX": 0.5,
+          "anchorY": 0.5,
+          "scale": 0.84000003
+        },
+        {
+          "name": "top-left",
+          "x": 0.08,
+          "y": 0.111999996,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.60480005
+        },
+        {
+          "name": "left-column",
+          "x": 0.08,
+          "y": 0.53999996,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.5544
+        },
+        {
+          "name": "lower-third",
+          "x": 0.08,
+          "y": 0.66,
+          "anchorX": 0.0,
+          "anchorY": 0.0,
+          "scale": 0.84000003
+        },
+        {
+          "name": "footer",
+          "x": 0.08,
+          "y": 0.92,
+          "anchorX": 0.0,
+          "anchorY": 1.0,
+          "scale": 0.84000003
+        }
+      ]
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene-main",
+      "name": "Main",
+      "isMain": true,
+      "tracks": {
+        "overlay": [
+          {
+            "id": "track-overlay-1",
+            "name": "Overlay 1",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "image",
+                "id": "floppy",
+                "name": "floppy",
+                "start": 0,
+                "duration": 3600000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "floppy",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.62,
+                  "scale": 0.72,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.72
+                      },
+                      {
+                        "time": 558000,
+                        "value": 0.72,
+                        "easing": "expo-out"
+                      },
+                      {
+                        "time": 624000,
+                        "value": 0.2
+                      },
+                      {
+                        "time": 3600000,
+                        "value": 0.2
+                      }
+                    ],
+                    "easing": "expo-out"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.4408
+                      },
+                      {
+                        "time": 616000,
+                        "value": 0.4408,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 1216000,
+                        "value": 0.5
+                      },
+                      {
+                        "time": 1232000,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 1832000,
+                        "value": 0.4408
+                      },
+                      {
+                        "time": 1848000,
+                        "value": 0.4408,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 2448000,
+                        "value": 0.5
+                      },
+                      {
+                        "time": 2464000,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 3064000,
+                        "value": 0.4408
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 37200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 125200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 141200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 229200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 245200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 333200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 349200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 437200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 453200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 541200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 557200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 645200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 661200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 749200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 765200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 853200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 869200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 957200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 973200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1061200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 1077200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1165200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 1181200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1269200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 1285200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1373200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 1389200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1477200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 1493200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1581200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 1597200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1685200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 1701200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1789200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 1805200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1893200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 1909200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1997200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 2013200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2101200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 2117200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2205200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 2221200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2309200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 2325200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2413200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 2429200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2517200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 2533200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2621200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 2637200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2725200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 2741200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2829200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 2845200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 2933200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 2949200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3037200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 3053200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3141200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 3157200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3245200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 3261200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3349200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 3365200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3453200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 3469200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 3557200,
+                        "value": 0.62
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "ground"
+              },
+              {
+                "type": "text",
+                "id": "aleph-name",
+                "name": "ALEPH",
+                "start": 2712000,
+                "duration": 512000,
+                "fadeIn": 0,
+                "fadeOut": 144000,
+                "content": "ALEPH",
+                "fontSize": 37.2,
+                "color": "#8A8A9B",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.3633812,
+                  "scale": 0.575,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 444000,
+                        "value": 0.3633812,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 452000,
+                        "value": 0.3633812,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 508000,
+                        "value": 0.3237812
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "storage",
+                "name": "STORAGE",
+                "start": 1380000,
+                "duration": 620000,
+                "fadeIn": 0,
+                "fadeOut": 144000,
+                "content": "STORAGE",
+                "fontSize": 37.2,
+                "color": "#8A8A9B",
+                "transform": {
+                  "x": 0.68,
+                  "y": 0.5483669,
+                  "scale": 0.40249997,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 552000,
+                        "value": 0.5483669,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 560000,
+                        "value": 0.5483669,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 616000,
+                        "value": 0.5087669
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-2",
+            "name": "Overlay 2",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "image",
+                "id": "icon-phone",
+                "name": "icon-phone",
+                "start": 624000,
+                "duration": 564000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "phone",
+                "transform": {
+                  "x": 0.82,
+                  "y": 0.46,
+                  "scale": 0.23650001,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0368221,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.49130002,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.46
+                      }
+                    ],
+                    "easing": "spring-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "icon-envelope",
+                "name": "icon-envelope",
+                "start": 624000,
+                "duration": 564000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "envelope",
+                "transform": {
+                  "x": 0.58,
+                  "y": 0.34,
+                  "scale": 0.15,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 28000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.3025,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.34
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "icon-folder",
+                "name": "icon-folder",
+                "start": 624000,
+                "duration": 564000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "folder",
+                "transform": {
+                  "x": 0.8305,
+                  "y": 0.78,
+                  "scale": 0.299,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 32000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.9911,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.88
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "icon-mag",
+                "name": "icon-mag",
+                "start": 624000,
+                "duration": 564000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "mag",
+                "transform": {
+                  "x": 0.44,
+                  "y": 0.22,
+                  "scale": 0.12,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 32000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.3104,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.44
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.2669,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.22
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "icon-bookmark",
+                "name": "icon-bookmark",
+                "start": 624000,
+                "duration": 564000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "bookmark",
+                "transform": {
+                  "x": 0.68,
+                  "y": 0.66,
+                  "scale": 0.18,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 40000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.69130003,
+                        "easing": "ease-in"
+                      },
+                      {
+                        "time": 16000,
+                        "value": 0.69960004,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 112000,
+                        "value": 0.66
+                      }
+                    ],
+                    "easing": "spring-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "icon-scissors",
+                "name": "icon-scissors",
+                "start": 624000,
+                "duration": 564000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "scissors",
+                "transform": {
+                  "x": 0.92,
+                  "y": 0.78,
+                  "scale": 0.23,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.8217,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 72000,
+                        "value": 0.7779,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 104000,
+                        "value": 0.78
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "cloud-0",
+                "name": "cloud-0",
+                "start": 912000,
+                "duration": 1020000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "cloud",
+                "transform": {
+                  "x": 0.4,
+                  "y": 0.78,
+                  "scale": 0.345,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 39600,
+                        "value": 0.4,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 639600,
+                        "value": 0.34080002
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 37200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 125200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 141200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 229200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 245200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 333200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 349200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 437200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 453200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 541200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 557200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 645200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 661200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 749200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 765200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 853200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 869200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 957200,
+                        "value": 0.80499995
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "headline"
+              },
+              {
+                "type": "image",
+                "id": "cloud-1",
+                "name": "cloud-1",
+                "start": 912000,
+                "duration": 1020000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "cloud",
+                "transform": {
+                  "x": 0.65,
+                  "y": 0.62,
+                  "scale": 0.32250002,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0368221,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.65,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 600000,
+                        "value": 0.5908
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 37200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 125200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 141200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 229200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 245200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 333200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 349200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 437200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 453200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 541200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 557200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 645200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 661200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 749200,
+                        "value": 0.645
+                      },
+                      {
+                        "time": 765200,
+                        "value": 0.645,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 853200,
+                        "value": 0.62
+                      },
+                      {
+                        "time": 869200,
+                        "value": 0.62,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 957200,
+                        "value": 0.645
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "headline"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-3",
+            "name": "Overlay 3",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "text",
+                "id": "aleph",
+                "name": "A",
+                "start": 1932000,
+                "duration": 1668000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "A",
+                "fontSize": 193.8,
+                "color": "#FFFFFF",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.78,
+                  "scale": 0.92,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "rotation": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0
+                      },
+                      {
+                        "time": 384000,
+                        "value": 0.0,
+                        "easing": "expo-out"
+                      },
+                      {
+                        "time": 576000,
+                        "value": 180.0
+                      },
+                      {
+                        "time": 972000,
+                        "value": 180.0,
+                        "easing": "expo-out"
+                      },
+                      {
+                        "time": 1080000,
+                        "value": 360.0
+                      },
+                      {
+                        "time": 1668000,
+                        "value": 360.0
+                      }
+                    ],
+                    "easing": "expo-out"
+                  },
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 1.0488,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.92
+                      }
+                    ],
+                    "easing": "power-out"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 13200,
+                        "value": 0.5,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 613200,
+                        "value": 0.4408
+                      },
+                      {
+                        "time": 629200,
+                        "value": 0.4408,
+                        "easing": "sine-in-out"
+                      },
+                      {
+                        "time": 1229200,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "sine-in-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 37200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 125200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 141200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 229200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 245200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 333200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 349200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 437200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 453200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 541200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 557200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 645200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 661200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 749200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 765200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 853200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 869200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 957200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 973200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1061200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 1077200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1165200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 1181200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1269200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 1285200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1373200,
+                        "value": 0.80499995
+                      },
+                      {
+                        "time": 1389200,
+                        "value": 0.80499995,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1477200,
+                        "value": 0.78
+                      },
+                      {
+                        "time": 1493200,
+                        "value": 0.78,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 1581200,
+                        "value": 0.80499995
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "Rockwell",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": -0.02,
+                "lineHeight": 1.02,
+                "source": "author",
+                "role": "hook"
+              }
+            ]
+          },
+          {
+            "id": "track-overlay-4",
+            "name": "Overlay 4",
+            "kind": "overlay",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "text",
+                "id": "date",
+                "name": "LAST MADE 2011",
+                "start": 372000,
+                "duration": 252000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "LAST MADE 2011",
+                "fontSize": 37.2,
+                "color": "#8A8A9B",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.86,
+                  "scale": 0.8,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 32000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "x": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.38889998,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 80000,
+                        "value": 0.5
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "text",
+                "id": "weather",
+                "name": "WEATHER",
+                "start": 1380000,
+                "duration": 552000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "WEATHER",
+                "fontSize": 37.2,
+                "color": "#8A8A9B",
+                "transform": {
+                  "x": 0.38,
+                  "y": 0.5483669,
+                  "scale": 0.40249997,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {},
+                "blendMode": "normal",
+                "fontFamily": "Helvetica Neue",
+                "fontWeight": 400,
+                "align": "center",
+                "letterSpacing": 0.0,
+                "lineHeight": 1.32,
+                "source": "author",
+                "role": "label"
+              },
+              {
+                "type": "image",
+                "id": "oxmarks",
+                "name": "oxmarks",
+                "start": 2508000,
+                "duration": 504000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "oxmarks",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.59769636,
+                  "scale": 0.713,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0723805,
+                  "anchorX": 0.5,
+                  "anchorY": 0.5,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 40000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "scale": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.55614,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.713
+                      }
+                    ],
+                    "easing": "spring-out"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.61019635,
+                        "easing": "power-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.59769636
+                      }
+                    ],
+                    "easing": "power-out"
+                  }
+                },
+                "blendMode": "normal",
+                "source": "author",
+                "role": "headline"
+              },
+              {
+                "type": "text",
+                "id": "alphabet",
+                "name": "ALPHABET",
+                "start": 3156000,
+                "duration": 444000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "content": "ALPHABET",
+                "fontSize": 36.2,
+                "color": "#EE4436",
+                "transform": {
+                  "x": 0.5,
+                  "y": 0.75,
+                  "scale": 0.75,
+                  "rotation": 0.0,
+                  "opacity": 1.0,
+                  "scaleX": 1.0,
+                  "scaleY": 1.0,
+                  "anchorX": 0.5,
+                  "anchorY": 0.0,
+                  "cropLeft": 0.0,
+                  "cropTop": 0.0,
+                  "cropRight": 0.0,
+                  "cropBottom": 0.0
+                },
+                "effects": [],
+                "animations": {
+                  "opacity": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.0,
+                        "easing": "linear"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 1.0
+                      }
+                    ],
+                    "easing": "linear"
+                  },
+                  "y": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 0.7813,
+                        "easing": "spring-out"
+                      },
+                      {
+                        "time": 96000,
+                        "value": 0.75
+                      }
+                    ],
+                    "easing": "spring-out"
+                  }
+                },
+                "blendMode": "normal",
+                "fontFamily": "Menlo",
+                "fontWeight": 700,
+                "align": "center",
+                "letterSpacing": 0.16,
+                "lineHeight": 1.2,
+                "source": "author",
+                "role": "kicker"
+              }
+            ]
+          }
+        ],
+        "main": {
+          "id": "track-main",
+          "name": "Main",
+          "kind": "video",
+          "hidden": false,
+          "muted": false,
+          "elements": []
+        },
+        "audio": [
+          {
+            "id": "track-audio",
+            "name": "Audio",
+            "kind": "audio",
+            "hidden": false,
+            "muted": false,
+            "elements": [
+              {
+                "type": "audio",
+                "id": "bed-b",
+                "name": "bed-b",
+                "start": 0,
+                "duration": 3600000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "bed",
+                "muted": false,
+                "volume": 34.053192,
+                "speed": 1.0,
+                "animations": {
+                  "volume": {
+                    "keys": [
+                      {
+                        "time": 0,
+                        "value": 34.053192,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 18000,
+                        "value": 34.053192,
+                        "easing": "ease-in-out"
+                      },
+                      {
+                        "time": 36000,
+                        "value": 2.1486108,
+                        "easing": "hold"
+                      },
+                      {
+                        "time": 3600000,
+                        "value": 2.1486108,
+                        "easing": "sine-in-out"
+                      }
+                    ],
+                    "easing": "linear"
+                  }
+                },
+                "trimStart": 0,
+                "source": "author",
+                "role": "bed"
+              },
+              {
+                "type": "audio",
+                "id": "audio-3",
+                "name": "audio-3",
+                "start": 48000,
+                "duration": 585000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-2",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-6",
+                "name": "audio-6",
+                "start": 624000,
+                "duration": 234000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-5",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-9",
+                "name": "audio-9",
+                "start": 912000,
+                "duration": 423000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-8",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-12",
+                "name": "audio-12",
+                "start": 1188000,
+                "duration": 291000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-11",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-15",
+                "name": "audio-15",
+                "start": 1440000,
+                "duration": 588000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-14",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-18",
+                "name": "audio-18",
+                "start": 1932000,
+                "duration": 483000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-17",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-21",
+                "name": "audio-21",
+                "start": 2508000,
+                "duration": 597000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-20",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-24",
+                "name": "audio-24",
+                "start": 3156000,
+                "duration": 519000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "media-23",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "prosody": {
+                  "rate": 0.75757575,
+                  "pitchSemitones": 0.0,
+                  "energy": 1.0
+                },
+                "dialogueChain": {
+                  "eq": {
+                    "highPassHz": 80.0,
+                    "presenceDb": 0.0
+                  },
+                  "compressor": {
+                    "thresholdDb": -18.0,
+                    "ratio": 3.0,
+                    "attackMs": 10.0,
+                    "releaseMs": 120.0,
+                    "makeupDb": 0.0
+                  },
+                  "limiter": {
+                    "ceilingDb": -1.0
+                  }
+                },
+                "animations": {},
+                "trimStart": 0,
+                "source": "tool",
+                "role": "speech"
+              },
+              {
+                "type": "audio",
+                "id": "audio-26",
+                "name": "audio-26",
+                "start": 2504000,
+                "duration": 40000,
+                "fadeIn": 0,
+                "fadeOut": 0,
+                "mediaId": "sfx-25",
+                "muted": false,
+                "volume": 1.0,
+                "speed": 1.0,
+                "animations": {},
+                "trimStart": 0,
+                "source": "author",
+                "role": "sfx"
+              }
+            ]
+          }
+        ]
+      },
+      "markers": [
+        {
+          "id": "marker-1",
+          "time": 0,
+          "label": "hook"
+        },
+        {
+          "id": "marker-2",
+          "time": 624000,
+          "label": "setup"
+        },
+        {
+          "id": "marker-3",
+          "time": 912000,
+          "label": "belief"
+        },
+        {
+          "id": "marker-4",
+          "time": 1188000,
+          "label": "turn"
+        },
+        {
+          "id": "marker-5",
+          "time": 1380000,
+          "label": "mechanism"
+        },
+        {
+          "id": "marker-6",
+          "time": 1932000,
+          "label": "reveal"
+        },
+        {
+          "id": "marker-7",
+          "time": 2508000,
+          "label": "payoff"
+        },
+        {
+          "id": "marker-8",
+          "time": 3156000,
+          "label": "landing"
+        }
+      ]
+    }
+  ],
+  "currentSceneId": "scene-main",
+  "media": [
+    {
+      "id": "floppy",
+      "name": "floppy.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/floppy.png",
+      "durationSeconds": 0.0,
+      "width": 720,
+      "height": 720
+    },
+    {
+      "id": "phone",
+      "name": "phone.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/phone.png",
+      "durationSeconds": 0.0,
+      "width": 596,
+      "height": 570
+    },
+    {
+      "id": "envelope",
+      "name": "envelope.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/envelope.png",
+      "durationSeconds": 0.0,
+      "width": 747,
+      "height": 534
+    },
+    {
+      "id": "folder",
+      "name": "folder.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/folder.png",
+      "durationSeconds": 0.0,
+      "width": 705,
+      "height": 561
+    },
+    {
+      "id": "mag",
+      "name": "mag.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/mag.png",
+      "durationSeconds": 0.0,
+      "width": 613,
+      "height": 591
+    },
+    {
+      "id": "bookmark",
+      "name": "bookmark.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/bookmark.png",
+      "durationSeconds": 0.0,
+      "width": 543,
+      "height": 646
+    },
+    {
+      "id": "scissors",
+      "name": "scissors.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/scissors.png",
+      "durationSeconds": 0.0,
+      "width": 785,
+      "height": 607
+    },
+    {
+      "id": "cloud",
+      "name": "cloud.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/cloud.png",
+      "durationSeconds": 0.0,
+      "width": 692,
+      "height": 499
+    },
+    {
+      "id": "oxmarks",
+      "name": "oxmarks.png",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/tight/oxmarks.png",
+      "durationSeconds": 0.0,
+      "width": 456,
+      "height": 168
+    },
+    {
+      "id": "bed",
+      "name": "bed_pad_c3.wav",
+      "path": "/Users/himanshu/codes/synthai/vii/assets/round2/bed_pad_c3.wav",
+      "durationSeconds": 50.0,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -22.7,
+        "rmsDb": -33.6,
+        "lufs": -32.2,
+        "accentSeconds": [
+          0.5,
+          15.2,
+          15.5,
+          39.9,
+          40.2
+        ]
+      }
+    },
+    {
+      "id": "media-2",
+      "name": "bay-narration-2.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-2.wav",
+      "durationSeconds": 4.875,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -18.2,
+        "lufs": -17.1,
+        "accentSeconds": [
+          0.7,
+          2.3,
+          2.6
+        ]
+      }
+    },
+    {
+      "id": "media-5",
+      "name": "bay-narration-5.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-5.wav",
+      "durationSeconds": 1.95,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -21.5,
+        "lufs": -18.9
+      }
+    },
+    {
+      "id": "media-8",
+      "name": "bay-narration-8.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-8.wav",
+      "durationSeconds": 3.525,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -19.7,
+        "lufs": -18.9,
+        "accentSeconds": [
+          0.8,
+          2.0
+        ]
+      }
+    },
+    {
+      "id": "media-11",
+      "name": "bay-narration-11.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-11.wav",
+      "durationSeconds": 2.425,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -19.4,
+        "lufs": -17.3
+      }
+    },
+    {
+      "id": "media-14",
+      "name": "bay-narration-14.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-14.wav",
+      "durationSeconds": 4.9,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -20.7,
+        "lufs": -20.0,
+        "accentSeconds": [
+          2.5
+        ]
+      }
+    },
+    {
+      "id": "media-17",
+      "name": "bay-narration-17.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-17.wav",
+      "durationSeconds": 4.025,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -20.3,
+        "lufs": -19.2,
+        "accentSeconds": [
+          0.8,
+          2.3
+        ]
+      }
+    },
+    {
+      "id": "media-20",
+      "name": "bay-narration-20.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-20.wav",
+      "durationSeconds": 4.975,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -18.5,
+        "lufs": -17.8,
+        "accentSeconds": [
+          2.6
+        ]
+      }
+    },
+    {
+      "id": "media-23",
+      "name": "bay-narration-23.wav",
+      "path": "/private/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-23.wav",
+      "durationSeconds": 4.325,
+      "width": 0,
+      "height": 0,
+      "loudness": {
+        "peakDb": -2.0,
+        "rmsDb": -23.7,
+        "lufs": -22.7,
+        "accentSeconds": [
+          1.2,
+          2.7
+        ]
+      }
+    },
+    {
+      "id": "sfx-25",
+      "name": "Impact (0.35s)",
+      "path": "/Users/himanshu/Library/Application Support/bay/sfx/sfx-25-impact.wav",
+      "durationSeconds": 0.35,
+      "loudness": {
+        "peakDb": -0.445528,
+        "rmsDb": -15.555332,
+        "lufs": -70.0
+      }
+    }
+  ]
+}

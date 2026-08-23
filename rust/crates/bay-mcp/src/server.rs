@@ -15,14 +15,177 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
 
 use crate::studio::Studio;
 use crate::tools;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "bay";
+const TOKEN_BYTES: usize = 32;
+const TOKEN_HEX_LEN: usize = TOKEN_BYTES * 2;
+
+/// The credential required on every HTTP request.
+///
+/// Loopback is a network boundary, not an authorization boundary: any process running as the
+/// user can connect, and browser pages can send requests to localhost. The Origin check below
+/// closes the drive-by browser case; this token also closes origin-less requests from unrelated
+/// local processes. Stdio needs no token because the client owns the child process and its pipes.
+///
+/// Deliberately has no `Debug` or `Display` implementation, so an error cannot accidentally print
+/// it. The generated value is persisted in bay's per-user data directory for legitimate clients.
+struct AuthToken {
+    value: Vec<u8>,
+    path: Option<PathBuf>,
+}
+
+impl AuthToken {
+    fn load_or_create() -> std::io::Result<Self> {
+        if let Some(value) = std::env::var_os("BAY_MCP_TOKEN").filter(|value| !value.is_empty()) {
+            let value = value.to_string_lossy().into_owned().into_bytes();
+            if value.len() != TOKEN_HEX_LEN || !value.iter().all(u8::is_ascii_hexdigit) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "BAY_MCP_TOKEN must be exactly 64 hexadecimal characters",
+                ));
+            }
+            return Ok(Self { value, path: None });
+        }
+
+        let data = bay_paths::data_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not locate bay's data directory for the MCP token",
+            )
+        })?;
+        std::fs::create_dir_all(&data)?;
+        let path = data.join("mcp-token");
+
+        match Self::read_file(&path) {
+            Ok(value) => {
+                return Ok(Self {
+                    value,
+                    path: Some(path),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let mut random = [0u8; TOKEN_BYTES];
+        getrandom::fill(&mut random).map_err(|error| {
+            std::io::Error::other(format!("could not generate MCP token: {error}"))
+        })?;
+        let encoded = hex(&random);
+        match create_secret_file(&path, encoded.as_bytes()) {
+            Ok(()) => Ok(Self {
+                value: encoded.into_bytes(),
+                path: Some(path),
+            }),
+            // A simultaneously starting process may have won the create-new race. Read the one
+            // durable credential rather than replacing it with a value no client could predict.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Self::read_file(&path).map(|value| Self {
+                    value,
+                    path: Some(path),
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn read_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        let text = std::fs::read_to_string(path)?;
+        let value = text.trim().as_bytes().to_vec();
+        if value.len() != TOKEN_HEX_LEN || !value.iter().all(u8::is_ascii_hexdigit) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "{} is not a valid bay MCP token; remove it to generate a fresh one",
+                    path.display()
+                ),
+            ));
+        }
+        secure_existing_file(path)?;
+        Ok(value)
+    }
+
+    /// Compare token bytes without exposing how many leading bytes matched.
+    fn matches(&self, candidate: &[u8]) -> bool {
+        bool::from(self.value.as_slice().ct_eq(candidate))
+    }
+
+    #[cfg(test)]
+    fn from_test(value: &str) -> Self {
+        assert_eq!(value.len(), TOKEN_HEX_LEN);
+        Self {
+            value: value.as_bytes().to_vec(),
+            path: None,
+        }
+    }
+}
+
+/// Authorization header value for bay's own local clients.
+///
+/// Kept as an explicit API so the desktop's single-instance focus request uses the same
+/// credential source as the server. Callers must treat the returned string as a secret.
+pub fn authorization_header() -> std::io::Result<String> {
+    let token = AuthToken::load_or_create()?;
+    let value = String::from_utf8(token.value).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "bay's MCP token is not valid UTF-8",
+        )
+    })?;
+    Ok(format!("Bearer {value}"))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[cfg(unix)]
+fn create_secret_file(path: &std::path::Path, value: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(value)
+}
+
+#[cfg(not(unix))]
+fn create_secret_file(path: &std::path::Path, value: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(value)
+}
+
+#[cfg(unix)]
+fn secure_existing_file(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn secure_existing_file(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 /// Handle one JSON-RPC message. Returns `None` for notifications, which take no response.
 fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
@@ -151,6 +314,7 @@ pub fn serve_listener(
     listener: TcpListener,
     bridge: Option<bay_agent::AgentBridge>,
 ) -> std::io::Result<()> {
+    let token = Arc::new(AuthToken::load_or_create()?);
     let bound = listener.local_addr()?;
     let mode = if bridge.is_some() {
         "attached to the open editor"
@@ -158,8 +322,12 @@ pub fn serve_listener(
         "headless"
     };
     println!("bay MCP server listening on http://{bound}/mcp ({mode})");
+    match &token.path {
+        Some(path) => println!("  authentication token: {}", path.display()),
+        None => println!("  authentication token: BAY_MCP_TOKEN"),
+    }
     if bridge.is_none() {
-        println!("  claude mcp add --transport http bay http://{bound}/mcp");
+        println!("  configure an Authorization: Bearer header, then register http://{bound}/mcp");
     }
     std::io::stdout().flush()?;
 
@@ -169,10 +337,11 @@ pub fn serve_listener(
                 match stream {
                     Ok(stream) => {
                         let bridge = bridge.clone();
+                        let token = Arc::clone(&token);
                         // Thread per connection: the handler blocks waiting for the editor to
                         // answer, and blocking the accept loop would stall every other client.
                         std::thread::spawn(move || {
-                            if let Err(e) = serve_attached_connection(&bridge, stream) {
+                            if let Err(e) = serve_attached_connection(&bridge, stream, &token) {
                                 eprintln!("bay-mcp: connection error: {e}");
                             }
                         });
@@ -186,7 +355,7 @@ pub fn serve_listener(
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
-                        if let Err(e) = serve_connection(&mut studio, stream) {
+                        if let Err(e) = serve_connection(&mut studio, stream, &token) {
                             eprintln!("bay-mcp: connection error: {e}");
                         }
                     }
@@ -235,8 +404,9 @@ fn timeout_for(tool: &str) -> std::time::Duration {
 fn serve_attached_connection(
     bridge: &bay_agent::AgentBridge,
     stream: TcpStream,
+    token: &AuthToken,
 ) -> std::io::Result<()> {
-    serve_with(stream, |request| handle_attached(bridge, request))
+    serve_with(stream, token, |request| handle_attached(bridge, request))
 }
 
 fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<Value> {
@@ -283,8 +453,12 @@ fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<V
     })
 }
 
-fn serve_connection(studio: &mut Studio, stream: TcpStream) -> std::io::Result<()> {
-    serve_with(stream, |request| handle(studio, request))
+fn serve_connection(
+    studio: &mut Studio,
+    stream: TcpStream,
+    token: &AuthToken,
+) -> std::io::Result<()> {
+    serve_with(stream, token, |request| handle(studio, request))
 }
 
 /// The HTTP half of the transport, shared by both modes.
@@ -315,6 +489,7 @@ fn is_loopback_origin(origin: &str) -> bool {
 
 fn serve_with(
     mut stream: TcpStream,
+    token: &AuthToken,
     mut dispatch: impl FnMut(&Value) -> Option<Value>,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -328,9 +503,10 @@ fn serve_with(
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
 
-    // Headers: the body length, and the Origin.
+    // Headers: the body length, Origin, and bearer credential.
     let mut content_length = 0usize;
     let mut origin: Option<String> = None;
+    let mut authorization: Option<String> = None;
     loop {
         let mut header = String::new();
         if reader.read_line(&mut header)? == 0 {
@@ -340,13 +516,26 @@ fn serve_with(
         if header.is_empty() {
             break;
         }
-        let lower = header.to_ascii_lowercase();
-        if let Some(value) = lower.strip_prefix("content-length:") {
+        let Some((name, value)) = header.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("content-length") {
             content_length = value.trim().parse().unwrap_or(0);
-        }
-        if let Some(value) = lower.strip_prefix("origin:") {
+        } else if name.eq_ignore_ascii_case("origin") {
             origin = Some(value.trim().to_string());
+        } else if name.eq_ignore_ascii_case("authorization") {
+            authorization = Some(value.trim().to_string());
         }
+    }
+
+    // Authenticate before reading or parsing the body, and crucially before either dispatch path.
+    // A local process that cannot read bay's user-only token file must never reach a tool.
+    let candidate = authorization
+        .as_deref()
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    if !token.matches(candidate.as_bytes()) {
+        return respond_unauthorized(&mut stream);
     }
 
     // Binding to loopback is not enough on its own. A browser on this machine can POST here
@@ -429,6 +618,8 @@ fn respond(
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         _ => "Unknown",
@@ -439,6 +630,21 @@ fn respond(
          Content-Length: {len}\r\n\
          Connection: close\r\n\r\n",
         len = body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()
+}
+
+fn respond_unauthorized(stream: &mut TcpStream) -> std::io::Result<()> {
+    let body = b"authentication required";
+    let head = format!(
+        "HTTP/1.1 401 Unauthorized\r\n\
+         Content-Type: text/plain\r\n\
+         WWW-Authenticate: Bearer\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n",
+        body.len()
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(body)?;
@@ -606,6 +812,72 @@ mod tests {
         }
     }
 
+    fn authenticated_http_round_trip(authorization: Option<&str>) -> (String, bool) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let dispatched = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&dispatched);
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept test request");
+            let token = AuthToken::from_test(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            );
+            serve_with(stream, &token, |_| {
+                observed.store(true, Ordering::SeqCst);
+                Some(json!({ "jsonrpc": "2.0", "id": 1, "result": { "ok": true } }))
+            })
+            .expect("serve test request");
+        });
+
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+        let authorization = authorization
+            .map(|value| format!("Authorization: {value}\r\n"))
+            .unwrap_or_default();
+        let request = format!(
+            "POST /mcp HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n{authorization}\r\n{body}",
+            body.len()
+        );
+        let mut client = TcpStream::connect(address).expect("connect to test listener");
+        client
+            .write_all(request.as_bytes())
+            .expect("write test request");
+        let mut response = String::new();
+        client
+            .read_to_string(&mut response)
+            .expect("read test response");
+        server.join().expect("test server should finish");
+        (response, dispatched.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn an_unauthenticated_request_is_rejected_before_dispatch() {
+        let (response, dispatched) = authenticated_http_round_trip(None);
+        assert!(
+            response.starts_with("HTTP/1.1 401 Unauthorized"),
+            "{response}"
+        );
+        assert!(!dispatched, "an unauthenticated request reached dispatch");
+    }
+
+    #[test]
+    fn a_correctly_authenticated_request_succeeds() {
+        let (response, dispatched) = authenticated_http_round_trip(Some(
+            "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ));
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains(r#""ok":true"#), "{response}");
+        assert!(
+            dispatched,
+            "an authenticated request never reached dispatch"
+        );
+    }
+
     #[test]
     fn initialize_advertises_tools() {
         let mut studio = new_studio();
@@ -672,6 +944,9 @@ mod tests {
             json!({ "elementId": "title", "y": 0.42 }),
         ));
         assert!(!is_error, "{message}");
+        let transform_result: Value =
+            serde_json::from_str(&message).expect("transform_set returns JSON");
+        assert_eq!(transform_result["textLayout"]["basis"], "glyph-ink");
 
         let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
         let timeline: Value = serde_json::from_str(&timeline).expect("timeline is json");
@@ -693,6 +968,13 @@ mod tests {
             json!({ "elementId": "title", "content": "Better hook", "role": "hook" }),
         ));
         assert!(!is_error, "{message}");
+        let update_result: Value =
+            serde_json::from_str(&message).expect("text_update returns JSON");
+        assert_eq!(update_result["textLayout"]["basis"], "glyph-ink");
+        assert!(
+            update_result["textLayout"]["height"].as_f64().unwrap() > 0.0,
+            "a typography revision must report the layout it produced: {update_result}"
+        );
         let (_, timeline) = unwrap_call(&call(&mut studio, "timeline", json!({})));
         let timeline: Value = serde_json::from_str(&timeline).expect("timeline is json");
         let element = &timeline["layers"][0]["elements"][0];
@@ -703,6 +985,54 @@ mod tests {
             "a hook is bigger than a headline in every kit's ramp: {element}"
         );
         assert!((element["transform"]["y"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn named_move_reports_replace_and_append_semantics() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        call(
+            &mut studio,
+            "add_text",
+            json!({
+                "role": "headline", "id": "title", "start": 0, "duration": 3,
+                "content": "NO"
+            }),
+        );
+
+        let (_, first) = unwrap_call(&call(
+            &mut studio,
+            "apply_move",
+            json!({ "elementId": "title", "move": "nudge", "at": 0 }),
+        ));
+        let first: Value = serde_json::from_str(&first).expect("first move JSON");
+        assert_eq!(first["motion"]["channels"][0]["action"], "added");
+
+        let (_, repeated) = unwrap_call(&call(
+            &mut studio,
+            "apply_move",
+            json!({ "elementId": "title", "move": "nudge", "at": 0 }),
+        ));
+        let repeated: Value = serde_json::from_str(&repeated).expect("repeated move JSON");
+        assert_eq!(
+            repeated["motion"]["channels"][0]["action"],
+            "replaced-overlap"
+        );
+        assert!(
+            repeated["motion"]["signatureRule"]
+                .as_str()
+                .unwrap()
+                .contains("distinct set"),
+            "{repeated}"
+        );
+
+        let (_, later) = unwrap_call(&call(
+            &mut studio,
+            "apply_move",
+            json!({ "elementId": "title", "move": "nudge", "at": 1 }),
+        ));
+        let later: Value = serde_json::from_str(&later).expect("later move JSON");
+        assert_eq!(later["motion"]["channels"][0]["action"], "appended");
     }
 
     /// `check` has to find the two failures that most often reach a finished file: nothing on
@@ -1596,6 +1926,61 @@ mod provenance_tests {
         let info: Value = serde_json::from_str(&info).expect("project_info is JSON");
         assert_eq!(info["authoredElements"], json!(1));
         assert_eq!(info["toolElements"], json!(0));
+    }
+
+    #[test]
+    fn add_text_reports_wrapped_ink_height_for_stacking() {
+        let mut studio = new_studio();
+        call(
+            &mut studio,
+            "project_create",
+            json!({ "width": 1080, "height": 1920, "kit": "stadium" }),
+        );
+        let (_, one_line) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({
+                "role": "chrome", "id": "short", "start": 0, "duration": 2, "content": "SHORT",
+                "x": 0.5, "y": 0.05, "anchorX": 0.5, "anchorY": 0.0, "scale": 0.32
+            }),
+        ));
+        let (_, wrapped) = unwrap_call(&call(
+            &mut studio,
+            "add_text",
+            json!({
+                "role": "chrome", "start": 2, "duration": 2,
+                "content": "THE GREEN INTERVIEW · CC BY 3.0",
+                "x": 0.5, "y": 0.05, "anchorX": 0.5, "anchorY": 0.0, "scale": 0.32
+            }),
+        ));
+        let one_line: Value = serde_json::from_str(&one_line).expect("add_text JSON");
+        let wrapped: Value = serde_json::from_str(&wrapped).expect("add_text JSON");
+        let one_line_height = one_line["textLayout"]["height"]
+            .as_f64()
+            .expect("measured one-line height");
+        let wrapped_height = wrapped["textLayout"]["height"]
+            .as_f64()
+            .expect("measured wrapped height");
+
+        assert_eq!(wrapped["textLayout"]["basis"], "glyph-ink");
+        assert!(
+            wrapped_height > one_line_height * 1.5,
+            "wrapping must advance a stack: one line {one_line_height}, wrapped {wrapped_height}"
+        );
+
+        let (_, revised) = unwrap_call(&call(
+            &mut studio,
+            "text_update",
+            json!({
+                "elementId": "short",
+                "content": "THE GREEN INTERVIEW · CC BY 3.0"
+            }),
+        ));
+        let revised: Value = serde_json::from_str(&revised).expect("text_update JSON");
+        assert!(
+            revised["textLayout"]["height"].as_f64().unwrap() > one_line_height * 1.5,
+            "text_update must return the wrapped layout it produced: {revised}"
+        );
     }
 
     /// A subtitle file becomes captions, and every one of them is bay's — no GPU, no speech

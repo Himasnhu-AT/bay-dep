@@ -26,6 +26,7 @@ pub mod illustrate;
 pub mod plan;
 pub mod registry;
 pub mod slow;
+pub mod trust;
 
 pub use plan::{
     Planned, available_tools, editor_tools, machine_tools, plan, plan_without_document,

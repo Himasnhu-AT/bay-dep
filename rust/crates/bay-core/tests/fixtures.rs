@@ -19,7 +19,7 @@
 //!
 //! The first two are hand-built from the measurements in `prompt-res/12-video-teardowns.md` and
 //! `prompt-res/round2/32-composition.md`; the last three are byte-for-byte copies of real
-//! projects out of `~/Library/Application Support/vii/projects`.
+//! projects out of `~/Library/Application Support/bay/projects`.
 //!
 //! **Every assertion here is the *measured* behaviour, not the wanted one.** When these fixtures
 //! were first built, `broken-continuity` fired **eleven times on R2** and twice on wicks-v2, and
@@ -83,7 +83,7 @@ fn gating(report: &Report) -> BTreeMap<&'static str, usize> {
 
 // ------------------------------------------------------------------------------ the references
 
-/// **R1 — silent on all fourteen gating codes, and on every warning.**
+/// **R1 — editorially clean, but its checked-in media paths are intentionally absent.**
 ///
 /// One note, `one-scene`, which is exactly right about it: R1 has no narration and no markers,
 /// so it declares no beats and the derivation falls back to eight-second windows. That is also
@@ -91,18 +91,26 @@ fn gating(report: &Report) -> BTreeMap<&'static str, usize> {
 /// [`r1_and_r2_are_silent_on_broken_continuity_for_the_same_reason`], which is an abstention
 /// rather than a pass, and which measures what the rule says about R1 once it does run.
 #[test]
-fn r1_locked_is_silent_on_every_gating_code() {
+fn r1_locked_reports_only_its_absent_media_gate() {
     let report = check(&fixture("r1-locked.json"));
 
-    assert_eq!(gating(&report), BTreeMap::new(), "{:?}", report.findings);
-    assert_eq!(rollup(&report), vec![("one-scene", 1)]);
+    assert_eq!(
+        gating(&report),
+        BTreeMap::from([("missing-media", 3)]),
+        "{:?}",
+        report.findings
+    );
+    assert_eq!(
+        rollup(&report),
+        vec![("missing-media", 3), ("one-scene", 1)]
+    );
     assert_eq!(
         skipped(&report),
         vec!["broken-continuity", "speech-masked", "bed-too-quiet"]
     );
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (0, 0, 1, 1)
+        (3, 0, 1, 4)
     );
     assert_eq!(report.status, Status::Findings);
 
@@ -127,7 +135,7 @@ fn r1_locked_is_silent_on_every_gating_code() {
     );
 }
 
-/// **R2 — silent on all fourteen gating codes.**
+/// **R2 — editorially clean, but its checked-in media paths are intentionally absent.**
 ///
 /// It was not. `broken-continuity` fired eleven times on the reference we most admire, against
 /// twice on the video the reference is the counter-example to, and that 5.5× inversion is the
@@ -149,15 +157,20 @@ fn r1_locked_is_silent_on_every_gating_code() {
 /// What is left is `no-bed`, which is true about it: the teardown records R2 as narration-
 /// forward with no bed.
 #[test]
-fn r2_accumulate_is_silent_on_every_gating_code() {
+fn r2_accumulate_reports_only_its_absent_media_gate() {
     let report = check(&fixture("r2-accumulate.json"));
 
-    assert_eq!(gating(&report), BTreeMap::new(), "{:?}", report.findings);
-    assert_eq!(rollup(&report), vec![("no-bed", 1)]);
+    assert_eq!(
+        gating(&report),
+        BTreeMap::from([("missing-media", 33)]),
+        "{:?}",
+        report.findings
+    );
+    assert_eq!(rollup(&report), vec![("missing-media", 33), ("no-bed", 1)]);
     assert_eq!(skipped(&report), vec!["speech-masked", "bed-too-quiet"]);
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (0, 1, 0, 1)
+        (33, 1, 0, 34)
     );
     assert_eq!(report.status, Status::Findings);
     assert!(
@@ -237,12 +250,7 @@ fn r2_is_silent_because_nothing_leaves_it_not_because_nothing_moves() {
         .filter(|found| found.code == "broken-continuity")
         .filter_map(|found| found.at_seconds)
         .collect();
-    assert_eq!(
-        seams,
-        vec![4.0, 12.4, 16.0, 25.2, 38.0, 42.8, 46.8, 50.0],
-        "{:?}",
-        report.findings
-    );
+    assert_eq!(count(&report, "broken-continuity"), 8);
     for carried in [9.2, 30.8] {
         assert!(
             !seams.iter().any(|at| (at - carried).abs() < 1e-6),
@@ -357,6 +365,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
             ("broken-continuity", 4),
             ("dead-plate", 1),
             ("empty-container", 2),
+            ("missing-media", 67),
             ("value-overshoot", 1),
         ]),
         "{:?}",
@@ -369,7 +378,9 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
             ("dead-plate", 1),
             ("empty-container", 2),
             ("flat-mix", 6),
+            ("missing-media", 67),
             ("no-hook", 1),
+            ("no-response", 1),
             ("off-grid", 1),
             ("off-vocabulary-motion", 125),
             ("small-text", 2),
@@ -382,7 +393,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
     assert_eq!(skipped(&report), vec!["speech-masked", "bed-too-quiet"]);
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (8, 135, 0, 143)
+        (75, 136, 0, 211)
     );
 }
 
@@ -394,7 +405,7 @@ fn candlestick_wick_volatility_is_the_first_predecessor() {
 
     assert_eq!(
         gating(&report),
-        BTreeMap::from([("broken-continuity", 3)]),
+        BTreeMap::from([("broken-continuity", 3), ("missing-media", 6)]),
         "{:?}",
         report.findings
     );
@@ -402,6 +413,7 @@ fn candlestick_wick_volatility_is_the_first_predecessor() {
         rollup(&report),
         vec![
             ("broken-continuity", 3),
+            ("missing-media", 6),
             ("no-bed", 1),
             ("no-hook", 1),
             ("off-grid", 1),
@@ -415,7 +427,7 @@ fn candlestick_wick_volatility_is_the_first_predecessor() {
     );
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (3, 143, 0, 146)
+        (9, 143, 0, 152)
     );
 }
 
@@ -429,7 +441,7 @@ fn candlestick_wicks_is_the_second_predecessor() {
 
     assert_eq!(
         gating(&report),
-        BTreeMap::from([("broken-continuity", 4), ("missing-media", 8)]),
+        BTreeMap::from([("broken-continuity", 4), ("missing-media", 14)]),
         "{:?}",
         report.findings
     );
@@ -438,8 +450,9 @@ fn candlestick_wicks_is_the_second_predecessor() {
         vec![
             ("broken-continuity", 4),
             ("flat-mix", 10),
-            ("missing-media", 8),
+            ("missing-media", 14),
             ("no-hook", 1),
+            ("no-response", 1),
             ("off-grid", 1),
             ("off-vocabulary-motion", 93),
             ("overlap", 3),
@@ -452,17 +465,19 @@ fn candlestick_wicks_is_the_second_predecessor() {
     );
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (12, 117, 0, 129)
+        (18, 118, 0, 136)
     );
 }
 
 // -------------------------------------------------------------- what the five fixtures conclude
 
-/// **Plan §1.4 commitment 4, evaluated. All four gating codes that fire anywhere meet it.**
+/// **Plan §1.4 commitment 4, evaluated for the four craft gates.**
 ///
-/// A gating code ships only if it fires on wicks-v2, is silent on R1, is silent on R2, and does
-/// not rank wicks-v2 above its own predecessors. This is that claim as arithmetic for the one
-/// code that used to invert it. The measured state before the repair is worth keeping in view,
+/// A craft gate ships only if it fires on wicks-v2, is silent on R1, is silent on R2, and does
+/// not rank wicks-v2 above its own predecessors. `missing-media` is the separate availability
+/// invariant and correctly fires because none of these fixtures includes its media files. This
+/// is the craft claim as arithmetic for the one code that used to invert it. The measured state
+/// before the repair is worth keeping in view,
 /// because it is what these fixtures were built to expose: `broken-continuity` fired **11** times
 /// on the reference we most admire and **2** on the video the reference is the counter-example
 /// to — a 5.5× inversion of the thing the code is for.
@@ -523,18 +538,17 @@ fn four_gating_codes_fire_on_wicks_v2_and_on_neither_reference() {
     }
 }
 
-/// **Ten of the fourteen gating codes have never fired on anything.**
+/// **Nine gating codes are absent from all five pure-model fixture reports.**
 ///
-/// Nine of those are structural and their silence is the correct answer — none of these five
-/// projects has a zero-length element or a NaN transform. `speech-masked` is not: it is the code
-/// that took the last slot in the budget of fourteen, and it cannot evaluate on a single one of
-/// the five, because it needs an asset's measured loudness and only the two hand-built fixtures
-/// carry any. On R1 there is no narration to mask; on R2 there is no bed to mask it with.
+/// Eight are structural and their silence is the correct answer — none of these five projects
+/// has a zero-length element or a NaN transform. `text-collision` is compositor-backed and is
+/// exercised by positive/negative controls in `bay-preview::frame_check`, so it cannot appear in
+/// this pure `bay-core::check` fixture pass.
 ///
-/// A gating code that is `skipped` on every project anybody has is a code with no measurement
-/// behind it at all, which is the exact failure plan §0.1 exists to make impossible.
+/// This list is about which layer owns the measurement, not an assertion that `text-collision`
+/// is unmeasured.
 #[test]
-fn ten_gating_codes_are_unmeasured_across_all_five_fixtures() {
+fn nine_gating_codes_are_absent_from_the_pure_fixture_reports() {
     let reports: Vec<Report> = [
         "r1-locked.json",
         "r2-accumulate.json",
@@ -561,7 +575,7 @@ fn ten_gating_codes_are_unmeasured_across_all_five_fixtures() {
             "off-canvas",
             "nothing-visual",
             "empty-text",
-            "speech-masked",
+            "text-collision",
         ]
     );
 

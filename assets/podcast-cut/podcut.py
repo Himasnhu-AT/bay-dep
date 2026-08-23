@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Cut a raw interview down to a clip, the way a podcast editor does.
 
 Three decisions, and every one of them is made from a measurement rather than by watching:
@@ -17,17 +16,19 @@ Three decisions, and every one of them is made from a measurement rather than by
 No voiceover, no music, no captions invented. The audio is the interview's own.
 """
 import json
+import os
 import pathlib
 import subprocess
 
 HERE = pathlib.Path(__file__).parent
 W, H, FPS = 1080, 1920, 30
+MCP_URL = os.environ.get("BAY_MCP_URL", "http://127.0.0.1:7333/mcp")
 
 # The conversation, after the titles and the b-roll sequence: host question, guest answer,
 # host question, guest answer. Chosen from the labels, not by scrubbing.
 FROM_SHOT, TO_SHOT = 32, 35
 
-PANEL_TOP = 0.30            # the video sits in the upper-middle, name below it
+PANEL_TOP = 0.55            # the video anchors the lower half, name below it
 SOURCE_ASPECT = 640 / 360
 
 
@@ -35,10 +36,10 @@ def call(tool, args, timeout=900):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": {"name": tool, "arguments": args}})
     out = subprocess.run(
-        ["curl", "-s", "--max-time", str(timeout), "-X", "POST", "http://127.0.0.1:7333/mcp",
+        ["curl", "-s", "--max-time", str(timeout), "-X", "POST", MCP_URL,
          "-H", "Content-Type: application/json",
          "-H", "Accept: application/json, text/event-stream", "-d", body],
-        capture_output=True, text=True).stdout
+        capture_output=True, text=True, check=False).stdout
     for line in out.splitlines():
         if line.startswith("data:"):
             out = line[5:].strip()
@@ -55,6 +56,25 @@ def call(tool, args, timeout=900):
 
 def frame(t):
     return round(round(t * FPS) / FPS, 5)
+
+
+def add_text_stack(blocks, top, gap=0.016):
+    """Place top-anchored text blocks using bay's shaped ink bounds.
+
+    `scale` is a wrap box, not a glyph scale. A block that wraps therefore advances this cursor
+    by its measured rendered height; no following title assumes the block stayed on one line.
+    """
+    cursor = top
+    results = []
+    for block in blocks:
+        args = {**block, "y": round(cursor, 5), "anchorY": 0.0}
+        placed = call("add_text", args)
+        layout = placed.get("textLayout") if isinstance(placed, dict) else None
+        if not layout or "bottom" not in layout:
+            raise RuntimeError("add_text did not return measured textLayout bounds")
+        cursor = float(layout["bottom"]) + gap
+        results.append(placed)
+    return results
 
 
 def main():
@@ -165,20 +185,24 @@ def main():
                           "anchorX": 0.5, "anchorY": 0.0, "align": "center", "scale": 0.94,
                           "role": "label", "tone": "ink"})
 
-    call("add_text", {"content": "JANE GOODALL ON HOPE", "start": 0.0, "duration": total,
-                      "id": "strap", "layer": 5, "x": 0.5, "y": 0.075,
-                      "anchorX": 0.5, "anchorY": 0.0, "align": "center", "scale": 0.94,
-                      "role": "label", "tone": "ink"})
-    # A wide box: `scale` sizes the layout box and never the glyph, so a narrow one wraps the
-    # line instead of shrinking it — which is exactly what happened here first time.
-    call("add_text", {"content": "THE GREEN INTERVIEW  ·  CC BY 3.0", "start": 0.0,
-                      "duration": total, "id": "lic", "layer": 5, "x": 0.5, "y": 0.905,
-                      "anchorX": 0.5, "anchorY": 0.0, "align": "center", "scale": 0.94,
-                      "role": "chrome", "tone": "dim"})
+    # A wide box: `scale` sizes the layout box and never the glyph. If the attribution wraps,
+    # its measured ink bottom becomes the next block's top instead of the title keeping a
+    # hard-coded one-line offset and overprinting the wrapped line.
+    add_text_stack([
+        {"content": "THE GREEN INTERVIEW  ·  CC BY 3.0", "start": 0.0,
+         "duration": total, "id": "lic", "layer": 5, "x": 0.5,
+         "anchorX": 0.5, "align": "center", "scale": 0.94,
+         "role": "chrome", "tone": "dim"},
+        {"content": "JANE GOODALL ON HOPE", "start": 0.0, "duration": total,
+         "id": "strap", "layer": 5, "x": 0.5,
+         "anchorX": 0.5, "align": "center", "scale": 0.94,
+         "role": "label", "tone": "ink"},
+    ], top=0.035)
 
     info = call("project_info", {})
     print(json.dumps({k: info[k] for k in
                       ("durationSeconds", "visualElements", "audioElements")}))
 
 
-main()
+if __name__ == "__main__":
+    main()

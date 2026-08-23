@@ -59,6 +59,36 @@ pub enum TextAlign {
     Right,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StrokeStyle<'a> {
+    pub width: f32,
+    pub color: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ShadowStyle<'a> {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub color: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PlateStyle<'a> {
+    pub color: &'a str,
+    pub padding_x: f32,
+    pub padding_y: f32,
+    pub radius: f32,
+}
+
+/// A byte range in the source string rendered in a second colour.
+#[derive(Debug, Clone, Copy)]
+pub struct HighlightStyle<'a> {
+    pub start: usize,
+    pub end: usize,
+    pub color: &'a str,
+}
+
 /// Typographic controls beyond size and colour. Infographic type lives or dies on these: a
 /// letterspaced mono kicker and a centred display headline are different typefaces of the same
 /// string, and neither is expressible with size alone.
@@ -73,6 +103,10 @@ pub struct TextStyle<'a> {
     pub letter_spacing: f32,
     /// Line box height as a multiple of the font size.
     pub line_height: f32,
+    pub stroke: Option<StrokeStyle<'a>>,
+    pub shadow: Option<ShadowStyle<'a>>,
+    pub plate: Option<PlateStyle<'a>>,
+    pub highlight: Option<HighlightStyle<'a>>,
 }
 
 impl Default for TextStyle<'_> {
@@ -83,6 +117,10 @@ impl Default for TextStyle<'_> {
             align: TextAlign::Left,
             letter_spacing: 0.0,
             line_height: 1.2,
+            stroke: None,
+            shadow: None,
+            plate: None,
+            highlight: None,
         }
     }
 }
@@ -92,12 +130,46 @@ impl TextStyle<'_> {
     /// styles MUST NOT collide here — a collision would serve the wrong raster from the LRU.
     pub fn cache_key(&self) -> String {
         format!(
-            "{}|{}|{:?}|{}|{}",
+            "{}|{}|{:?}|{}|{}|{:?}|{:?}|{:?}|{:?}",
             self.family.unwrap_or(""),
             self.weight,
             self.align,
             self.letter_spacing.to_bits(),
             self.line_height.to_bits(),
+            self.stroke
+                .map(|v| (v.width.to_bits(), v.color.to_string())),
+            self.shadow.map(|v| (
+                v.offset_x.to_bits(),
+                v.offset_y.to_bits(),
+                v.blur.to_bits(),
+                v.color.to_string()
+            )),
+            self.plate.map(|v| (
+                v.padding_x.to_bits(),
+                v.padding_y.to_bits(),
+                v.radius.to_bits(),
+                v.color.to_string()
+            )),
+            self.highlight
+                .map(|v| (v.start, v.end, v.color.to_string())),
+        )
+    }
+
+    /// Symmetric pixels needed around the layout box for all decorations.
+    pub fn margins(&self) -> (u32, u32) {
+        let stroke = self.stroke.map_or(0.0, |value| value.width.max(0.0));
+        let (shadow_x, shadow_y) = self.shadow.map_or((0.0, 0.0), |value| {
+            (
+                value.offset_x.abs() + value.blur.max(0.0) * 2.0,
+                value.offset_y.abs() + value.blur.max(0.0) * 2.0,
+            )
+        });
+        let (plate_x, plate_y) = self.plate.map_or((0.0, 0.0), |value| {
+            (value.padding_x.max(0.0), value.padding_y.max(0.0))
+        });
+        (
+            stroke.max(shadow_x).max(plate_x).ceil() as u32 + 2,
+            stroke.max(shadow_y).max(plate_y).ceil() as u32 + 2,
         )
     }
 }
@@ -108,6 +180,27 @@ pub struct TextImage {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// Per-pixel coverage of shaped glyph ink, before stroke, shadow, or plate decoration.
+    ///
+    /// Kept alongside [`Self::ink_bounds`] so an occlusion check can distinguish a shape that
+    /// crosses the empty corner of an ink bounding box from one that actually hides letterforms.
+    pub glyph_alpha: Vec<u8>,
+    /// Symmetric expansion around the original layout box.
+    pub margin_x: u32,
+    pub margin_y: u32,
+    /// Tight bounds of the shaped glyph ink inside this image, before stroke, shadow, or plate
+    /// decoration is applied. Collision checks use ink because two plates may intentionally
+    /// overlap while two glyph runs occupying the same pixels are not legible.
+    pub ink_bounds: Option<InkBounds>,
+}
+
+/// Tight, half-open pixel bounds of shaped glyph ink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InkBounds {
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
 }
 
 /// Owns the (expensive to build) font system + glyph cache; reuse across renders.
@@ -288,22 +381,52 @@ impl TextRaster {
             // the font size itself (~30x at display sizes) and wrapped every kicker.
             attrs = attrs.letter_spacing(style.letter_spacing);
         }
-        buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced);
-
         let align = match style.align {
             TextAlign::Left => Align::Left,
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         };
-        for line in buffer.lines.iter_mut() {
-            line.set_align(Some(align));
+        let [r, g, b, _] = hex_to_rgba(color);
+        if let Some(highlight) = style
+            .highlight
+            .filter(|highlight| highlight.start < highlight.end && highlight.end <= text.len())
+        {
+            let [hr, hg, hb, _] = hex_to_rgba(highlight.color);
+            let spans = [
+                (
+                    &text[..highlight.start],
+                    attrs.clone().color(Color::rgb(r, g, b)),
+                ),
+                (
+                    &text[highlight.start..highlight.end],
+                    attrs.clone().color(Color::rgb(hr, hg, hb)),
+                ),
+                (
+                    &text[highlight.end..],
+                    attrs.clone().color(Color::rgb(r, g, b)),
+                ),
+            ];
+            buffer.set_rich_text(
+                &mut self.font_system,
+                spans,
+                &attrs,
+                Shaping::Advanced,
+                Some(align),
+            );
+        } else {
+            buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced);
+            for line in buffer.lines.iter_mut() {
+                line.set_align(Some(align));
+            }
         }
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        let [r, g, b] = hex_to_rgb(color);
         let text_color = Color::rgb(r, g, b);
 
-        let mut rgba = vec![0u8; (width * height * 4) as usize];
+        let (margin_x, margin_y) = style.margins();
+        let out_width = width.saturating_add(margin_x.saturating_mul(2)).max(1);
+        let out_height = height.saturating_add(margin_y.saturating_mul(2)).max(1);
+        let mut glyphs = vec![0u8; (out_width * out_height * 4) as usize];
         buffer.draw(
             &mut self.font_system,
             &mut self.cache,
@@ -315,26 +438,100 @@ impl TextRaster {
                 }
                 for dy in 0..h as i32 {
                     for dx in 0..w as i32 {
-                        let px = x + dx;
-                        let py = y + dy;
-                        if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 {
+                        let px = x + dx + margin_x as i32;
+                        let py = y + dy + margin_y as i32;
+                        if px < 0 || py < 0 || px >= out_width as i32 || py >= out_height as i32 {
                             continue;
                         }
-                        let idx = ((py as u32 * width + px as u32) * 4) as usize;
+                        let idx = ((py as u32 * out_width + px as u32) * 4) as usize;
                         let a = alpha as f32 / 255.0;
-                        rgba[idx] = blend(rgba[idx], color.r(), a);
-                        rgba[idx + 1] = blend(rgba[idx + 1], color.g(), a);
-                        rgba[idx + 2] = blend(rgba[idx + 2], color.b(), a);
-                        rgba[idx + 3] = rgba[idx + 3].max(alpha);
+                        glyphs[idx] = blend(glyphs[idx], color.r(), a);
+                        glyphs[idx + 1] = blend(glyphs[idx + 1], color.g(), a);
+                        glyphs[idx + 2] = blend(glyphs[idx + 2], color.b(), a);
+                        glyphs[idx + 3] = glyphs[idx + 3].max(alpha);
                     }
                 }
             },
         );
 
+        let alpha: Vec<u8> = glyphs.chunks_exact(4).map(|pixel| pixel[3]).collect();
+        let ink_bounds =
+            alpha_bounds(&alpha, out_width, out_height).map(|(left, top, right, bottom)| {
+                InkBounds {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                }
+            });
+        let mut rgba = vec![0u8; glyphs.len()];
+
+        if let Some(plate) = style.plate
+            && let Some(InkBounds {
+                left,
+                top,
+                right,
+                bottom,
+            }) = ink_bounds
+        {
+            draw_rounded_plate(
+                &mut rgba,
+                out_width,
+                out_height,
+                (
+                    left as f32 - plate.padding_x.max(0.0),
+                    top as f32 - plate.padding_y.max(0.0),
+                    right as f32 + plate.padding_x.max(0.0),
+                    bottom as f32 + plate.padding_y.max(0.0),
+                ),
+                plate.radius.max(0.0),
+                hex_to_rgba(plate.color),
+            );
+        }
+        if let Some(shadow) = style.shadow {
+            let blurred = box_blur_alpha(
+                &alpha,
+                out_width,
+                out_height,
+                shadow.blur.max(0.0).ceil() as u32,
+            );
+            composite_mask(
+                &mut rgba,
+                out_width,
+                out_height,
+                &blurred,
+                shadow.offset_x.round() as i32,
+                shadow.offset_y.round() as i32,
+                hex_to_rgba(shadow.color),
+            );
+        }
+        if let Some(stroke) = style.stroke {
+            let expanded = dilate_alpha(
+                &alpha,
+                out_width,
+                out_height,
+                stroke.width.max(0.0).ceil() as u32,
+            );
+            composite_mask(
+                &mut rgba,
+                out_width,
+                out_height,
+                &expanded,
+                0,
+                0,
+                hex_to_rgba(stroke.color),
+            );
+        }
+        composite_rgba(&mut rgba, &glyphs);
+
         TextImage {
-            width,
-            height,
+            width: out_width,
+            height: out_height,
             rgba,
+            glyph_alpha: alpha,
+            margin_x,
+            margin_y,
+            ink_bounds,
         }
     }
 }
@@ -343,13 +540,179 @@ fn blend(dst: u8, src: u8, alpha: f32) -> u8 {
     (src as f32 * alpha + dst as f32 * (1.0 - alpha)).round() as u8
 }
 
-fn hex_to_rgb(hex: &str) -> [u8; 3] {
-    let value = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(0xffffff);
-    [
-        ((value >> 16) & 0xff) as u8,
-        ((value >> 8) & 0xff) as u8,
-        (value & 0xff) as u8,
-    ]
+fn hex_to_rgba(hex: &str) -> [u8; 4] {
+    let digits = hex.trim_start_matches('#');
+    let value = u32::from_str_radix(digits, 16).unwrap_or(0xffff_ffff);
+    if digits.len() == 8 {
+        [
+            ((value >> 24) & 0xff) as u8,
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ]
+    } else {
+        [
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+            255,
+        ]
+    }
+}
+
+fn alpha_bounds(alpha: &[u8], width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+    let mut bounds: Option<(u32, u32, u32, u32)> = None;
+    for y in 0..height {
+        for x in 0..width {
+            if alpha[(y * width + x) as usize] == 0 {
+                continue;
+            }
+            bounds = Some(match bounds {
+                None => (x, y, x + 1, y + 1),
+                Some((left, top, right, bottom)) => {
+                    (left.min(x), top.min(y), right.max(x + 1), bottom.max(y + 1))
+                }
+            });
+        }
+    }
+    bounds
+}
+
+fn composite_pixel(dst: &mut [u8], color: [u8; 4], coverage: u8) {
+    let src_alpha = (color[3] as f32 / 255.0) * (coverage as f32 / 255.0);
+    if src_alpha <= 0.0 {
+        return;
+    }
+    let dst_alpha = dst[3] as f32 / 255.0;
+    let out_alpha = src_alpha + dst_alpha * (1.0 - src_alpha);
+    for channel in 0..3 {
+        let src = color[channel] as f32 / 255.0;
+        let old = dst[channel] as f32 / 255.0;
+        let out = (src * src_alpha + old * dst_alpha * (1.0 - src_alpha)) / out_alpha.max(0.0001);
+        dst[channel] = (out * 255.0).round() as u8;
+    }
+    dst[3] = (out_alpha * 255.0).round() as u8;
+}
+
+fn composite_mask(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    mask: &[u8],
+    offset_x: i32,
+    offset_y: i32,
+    color: [u8; 4],
+) {
+    for y in 0..height {
+        for x in 0..width {
+            let coverage = mask[(y * width + x) as usize];
+            if coverage == 0 {
+                continue;
+            }
+            let dx = x as i32 + offset_x;
+            let dy = y as i32 + offset_y;
+            if dx < 0 || dy < 0 || dx >= width as i32 || dy >= height as i32 {
+                continue;
+            }
+            let index = ((dy as u32 * width + dx as u32) * 4) as usize;
+            composite_pixel(&mut rgba[index..index + 4], color, coverage);
+        }
+    }
+}
+
+fn composite_rgba(dst: &mut [u8], src: &[u8]) {
+    for (dst, src) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        composite_pixel(dst, [src[0], src[1], src[2], src[3]], 255);
+    }
+}
+
+fn dilate_alpha(alpha: &[u8], width: u32, height: u32, radius: u32) -> Vec<u8> {
+    if radius == 0 {
+        return alpha.to_vec();
+    }
+    let mut horizontal = vec![0u8; alpha.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let start = x.saturating_sub(radius);
+            let end = x.saturating_add(radius).min(width - 1);
+            horizontal[(y * width + x) as usize] = (start..=end)
+                .map(|sample_x| alpha[(y * width + sample_x) as usize])
+                .max()
+                .unwrap_or(0);
+        }
+    }
+    let mut vertical = vec![0u8; alpha.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let start = y.saturating_sub(radius);
+            let end = y.saturating_add(radius).min(height - 1);
+            vertical[(y * width + x) as usize] = (start..=end)
+                .map(|sample_y| horizontal[(sample_y * width + x) as usize])
+                .max()
+                .unwrap_or(0);
+        }
+    }
+    vertical
+}
+
+fn box_blur_alpha(alpha: &[u8], width: u32, height: u32, radius: u32) -> Vec<u8> {
+    if radius == 0 {
+        return alpha.to_vec();
+    }
+    let mut horizontal = vec![0u8; alpha.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let start = x.saturating_sub(radius);
+            let end = x.saturating_add(radius).min(width - 1);
+            let count = end - start + 1;
+            let sum: u32 = (start..=end)
+                .map(|sample_x| u32::from(alpha[(y * width + sample_x) as usize]))
+                .sum();
+            horizontal[(y * width + x) as usize] = (sum / count) as u8;
+        }
+    }
+    let mut vertical = vec![0u8; alpha.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let start = y.saturating_sub(radius);
+            let end = y.saturating_add(radius).min(height - 1);
+            let count = end - start + 1;
+            let sum: u32 = (start..=end)
+                .map(|sample_y| u32::from(horizontal[(sample_y * width + x) as usize]))
+                .sum();
+            vertical[(y * width + x) as usize] = (sum / count) as u8;
+        }
+    }
+    vertical
+}
+
+fn draw_rounded_plate(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    bounds: (f32, f32, f32, f32),
+    radius: f32,
+    color: [u8; 4],
+) {
+    let (left, top, right, bottom) = bounds;
+    let radius = radius
+        .min((right - left).max(0.0) / 2.0)
+        .min((bottom - top).max(0.0) / 2.0);
+    for y in 0..height {
+        for x in 0..width {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let qx = (px - (left + right) / 2.0).abs() - ((right - left) / 2.0 - radius);
+            let qy = (py - (top + bottom) / 2.0).abs() - ((bottom - top) / 2.0 - radius);
+            let distance =
+                (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - radius;
+            let coverage = ((0.5 - distance).clamp(0.0, 1.0) * 255.0).round() as u8;
+            if coverage > 0 {
+                let index = ((y * width + x) * 4) as usize;
+                composite_pixel(&mut rgba[index..index + 4], color, coverage);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

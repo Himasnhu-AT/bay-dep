@@ -27,6 +27,8 @@ fn text(id: &str, name: &str) -> Element {
         align: Default::default(),
         letter_spacing: 0.0,
         line_height: 1.2,
+        decorations: None,
+        karaoke: None,
         source: Default::default(),
         role: Default::default(),
     })
@@ -837,6 +839,8 @@ fn video(id: &str, start: f64, duration: f64, trim_start: f64) -> Element {
         media_id: "clip".into(),
         trim_start: seconds(trim_start),
         trim_end: seconds(trim_start + duration),
+        speed: 1.0,
+        freeze: None,
         transform: bay_project::Transform::default(),
         effects: Vec::new(),
         animations: Default::default(),

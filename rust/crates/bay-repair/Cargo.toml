@@ -1,0 +1,17 @@
+[package]
+name = "bay-repair"
+version = "0.1.0"
+edition = "2024"
+description = "Headless repair proposals and bounded convergence harness for bay projects."
+
+[dependencies]
+bay-agent = { path = "../bay-agent" }
+bay-core = { path = "../bay-core" }
+bay-project = { path = "../bay-project" }
+bay-text = { path = "../bay-text" }
+serde = { workspace = true }
+serde_json = "1"
+
+[dev-dependencies]
+bay-preview = { path = "../bay-preview" }
+image = "0.25"

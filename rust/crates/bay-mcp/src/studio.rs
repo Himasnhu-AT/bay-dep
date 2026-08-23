@@ -16,9 +16,10 @@ use bay_core::{Command, Editor, ElementRef, TrackLane};
 use bay_preview::PreviewRenderer;
 use bay_project::{
     AnimationChannel, AudioElement, AudioRole, BlendMode, CanvasSize, Easing, Element, ElementRole,
-    ElementSource, Fps, ImageElement, MediaAsset, MediaTime, Project, ShapeElement, ShapeKind,
-    StyleHistory, StyleKit, TextAlign, TextElement, Tone, TrackKind, Transform, VideoElement,
-    is_caption_id, kit as style,
+    ElementSource, Fps, ImageElement, KaraokeSpec, MediaAsset, MediaTime, Project,
+    SemanticMediaIndex, SemanticShot, ShapeElement, ShapeKind, StyleHistory, StyleKit, TextAlign,
+    TextDecorations, TextElement, Tone, TrackKind, Transform, VideoElement, is_caption_id,
+    kit as style,
 };
 
 /// Anything a tool can refuse to do. Surfaces to the caller as an MCP tool error, which the
@@ -71,6 +72,59 @@ fn secs(seconds: f64) -> Result<MediaTime, ToolError> {
     })
 }
 
+/// Explain whether a named move was added, appended, or replaced before the transaction lands.
+///
+/// Repeating a move at the same `at` is intentionally replacement: two key runs cannot both own
+/// the same channel at the same time. A caller that wants thirty accents must give thirty
+/// non-overlapping starts. Returning that decision makes the merge rule observable instead of
+/// reducing a long authoring session to one unexplained motion signature.
+fn named_move_report(project: &Project, args: &serde_json::Value) -> Option<serde_json::Value> {
+    let move_id = args.get("move")?.as_str()?;
+    let element_id = args.get("elementId")?.as_str()?;
+    let chosen = bay_project::moves::find(move_id)?;
+    let element = project
+        .active_scene()
+        .elements()
+        .find(|element| element.id() == element_id)?;
+    let at = args
+        .get("at")
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0);
+    let animations = element.animations()?;
+    let channels = chosen
+        .channels
+        .iter()
+        .map(|channel| {
+            let starts_at = at
+                + f64::from(channel.keys.first().map(|key| key.frame).unwrap_or(0.0))
+                    / bay_project::moves::REFERENCE_FPS as f64;
+            let action = match animations
+                .get(channel.property)
+                .and_then(|existing| existing.keys.last())
+            {
+                None => "added",
+                Some(last) if last.time.to_seconds_f64() <= starts_at => "appended",
+                Some(_) => "replaced-overlap",
+            };
+            serde_json::json!({
+                "property": channel.property,
+                "action": action,
+                "startsAtSeconds": starts_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    Some(serde_json::json!({
+        "move": move_id,
+        "atSeconds": at,
+        "durationSeconds": chosen.duration_seconds(),
+        "channels": channels,
+        "appendRule": "a channel appends only when its existing last key is at or before the \
+                       new move's first key; overlapping calls replace that channel",
+        "signatureRule": "motionSignatures is the distinct set of named moves on each element, \
+                          not an occurrence count; repeated nudge calls remain one signature",
+    }))
+}
+
 /// The placement + look shared by every visual element, parsed once from tool arguments.
 pub struct VisualArgs {
     pub transform: Transform,
@@ -93,6 +147,7 @@ pub struct TextArgs {
     pub letter_spacing: Option<f32>,
     /// Line box as a multiple of the size, overriding the ramp's.
     pub line_height: Option<f32>,
+    pub decorations: Option<TextDecorations>,
 }
 
 /// How a caller said which style kit it wants.
@@ -117,8 +172,14 @@ pub struct Studio {
     /// spawn and kill the model on every line of narration — the exact cost the sidecar exists
     /// to avoid.
     speech: bay_speech::SpeechEngine,
+    /// Whisper is loaded lazily because transcription is optional, then retained so a sequence
+    /// of transcript edits does not reload 190 MB of weights.
+    listener: Option<bay_listen::Listener>,
     next_id: u64,
     next_caption: u64,
+    /// Engine-measured panels from the most recent critic preparation. The caller only sends
+    /// forced choices; it cannot replace hashes or ICGS with self-reported values.
+    critic_panels: Vec<bay_agent::trust::PanelEvidence>,
     /// Where pathless saves go. `None` means the user's real project library — which is why
     /// tests always set this: a test run must never deposit projects in someone's library.
     library_root: Option<std::path::PathBuf>,
@@ -159,8 +220,10 @@ impl Studio {
             renderer_unavailable: None,
             text_probe: bay_text::TextRaster::new(),
             speech: bay_speech::SpeechEngine::new(bay_speech::SpeechConfig::default()),
+            listener: None,
             next_id: 1,
             next_caption: 0,
+            critic_panels: Vec::new(),
             library_root,
         }
     }
@@ -187,6 +250,18 @@ impl Studio {
 
     pub fn project(&self) -> &Project {
         self.editor.project()
+    }
+
+    /// Snapshot the headless document for a background job.
+    ///
+    /// The render worker owns this clone, so the single-writer studio can keep answering reads
+    /// and edits while an encode runs without sharing its editor or GPU renderer across threads.
+    pub(crate) fn slow_context(&self) -> bay_agent::slow::SlowContext {
+        bay_agent::slow::SlowContext {
+            project: self.editor.project().clone(),
+            timeline_duration: self.editor.duration().to_seconds_f64(),
+            next_id: self.next_id as usize,
+        }
     }
 
     /// Editor access for tests that assert on history. Not part of the tool surface.
@@ -274,6 +349,7 @@ impl Studio {
         cue: &bay_speech::Cue,
         style: &crate::narration::CaptionStyle,
         duration: f64,
+        karaoke: Option<KaraokeSpec>,
     ) -> Result<(), ToolError> {
         let element = Element::Text(TextElement {
             id: id.to_string(),
@@ -302,6 +378,8 @@ impl Studio {
             align: style.align,
             letter_spacing: style.letter_spacing,
             line_height: style.line_height,
+            decorations: None,
+            karaoke,
             // bay wrote this, not the author. Everything downstream that measures type size,
             // position or motion has to be able to leave it out — 38 of the 73 text elements in
             // the project that prompted provenance are exactly this call's output, and counting
@@ -427,6 +505,7 @@ impl Studio {
             Some(kit.clone()),
         ));
         self.next_id = 1;
+        self.critic_panels.clear();
         self.record_kit(&kit.id);
         let mut out = serde_json::json!({
             "name": name,
@@ -527,6 +606,12 @@ impl Studio {
             .execute(Command::SetStyleKit { kit: Box::new(kit) });
     }
 
+    fn commit_plan(&mut self, plan: bay_project::PlanArtifact) {
+        self.editor.execute(Command::SetPlan {
+            plan: Box::new(plan),
+        });
+    }
+
     fn record_kit(&self, id: &str) {
         if let Some(history) = self.history() {
             history.record(id, &style::today());
@@ -587,6 +672,7 @@ impl Studio {
     /// "eat the source" in the window and "reposition" over the wire — the two front ends must
     /// not be able to disagree about what an edit is.
     pub fn apply_planned(&mut self, name: &str, args: &serde_json::Value) -> ToolResult {
+        let motion = named_move_report(self.editor.project(), args);
         let planned = bay_agent::plan(name, args, self.editor.project()).map_err(err)?;
         match planned {
             bay_agent::Planned::Read(value) => Ok(value),
@@ -609,12 +695,35 @@ impl Studio {
                         "{label} changed nothing — re-read the timeline and check the values"
                     )));
                 }
-                Ok(serde_json::json!({
+                let revised_text = matches!(name, "text_update" | "transform_set")
+                    .then(|| args.get("elementId")?.as_str())
+                    .flatten()
+                    .and_then(|id| {
+                        self.editor
+                            .active_scene()
+                            .elements()
+                            .find(|element| element.id() == id)
+                    })
+                    .and_then(|element| match element {
+                        Element::Text(text) => Some(text.clone()),
+                        _ => None,
+                    });
+                let text_layout = revised_text
+                    .as_ref()
+                    .and_then(|text| self.text_layout(text));
+                let mut result = serde_json::json!({
                     "applied": applied,
                     "tool": label,
                     "ids": new_ids,
                     "durationSeconds": self.editor.duration().to_seconds_f64(),
-                }))
+                });
+                if let Some(layout) = text_layout {
+                    result["textLayout"] = layout;
+                }
+                if let Some(motion) = motion {
+                    result["motion"] = motion;
+                }
+                Ok(result)
             }
         }
     }
@@ -733,12 +842,18 @@ impl Studio {
             (None, None) => return Err(err("give a project id (see project_list) or a path")),
         };
         self.editor.load_project(project);
+        self.critic_panels.clear();
         self.project_info()
     }
 
     // ------------------------------------------------------------------ media
 
-    pub fn media_import(&mut self, path: &str, id: Option<String>) -> ToolResult {
+    pub fn media_import(
+        &mut self,
+        path: &str,
+        id: Option<String>,
+        generated: Option<bay_project::GeneratedMediaProvenance>,
+    ) -> ToolResult {
         let absolute = std::fs::canonicalize(path)
             .map_err(|e| err(format!("could not resolve media path {path}: {e}")))?;
         let absolute = absolute.to_string_lossy().to_string();
@@ -753,6 +868,7 @@ impl Studio {
         // reported, because silently defaulting is how a 3-minute clip became a 4-second one.
         let probed = bay_preview::probe::probe_media(&absolute);
         let mut asset = MediaAsset::new(media_id.clone(), name.clone(), absolute.clone());
+        asset.generated = generated.clone();
         if let Ok(meta) = &probed {
             // Stored, not just reported: this is what stops a trim running off the end of the
             // file, and what `check` measures a clip against.
@@ -794,6 +910,7 @@ impl Studio {
             "mediaId": media_id,
             "name": name,
             "path": absolute,
+            "generated": generated,
         });
         match probed {
             Ok(meta) => {
@@ -856,6 +973,460 @@ impl Studio {
             .iter()
             .find(|asset| asset.id == media_id)
             .and_then(|asset| Some((asset.width?, asset.height?)))
+    }
+
+    pub fn transcribe(&mut self, media_id: &str) -> ToolResult {
+        let mut asset = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .cloned()
+            .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?;
+        if self.listener.is_none() {
+            self.listener = Some(
+                bay_listen::Listener::new(bay_listen::ListenConfig::default())
+                    .map_err(|error| err(error.to_string()))?,
+            );
+        }
+        let transcript = self
+            .listener
+            .as_ref()
+            .expect("listener was initialised")
+            .transcribe_file(&asset.path)
+            .map_err(|error| err(error.to_string()))?;
+        asset.transcript = Some(transcript.clone());
+        self.editor.add_media(asset);
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "language": transcript.language,
+            "model": transcript.model,
+            "durationSeconds": transcript.duration_seconds,
+            "words": transcript.words.len(),
+            "utterances": transcript.utterances.len(),
+            "transcript": transcript,
+        }))
+    }
+
+    pub fn transcript_get(&self, media_id: &str) -> ToolResult {
+        let transcript = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?
+            .transcript
+            .as_ref()
+            .ok_or_else(|| {
+                err(format!(
+                    "media {media_id:?} has no transcript — call transcribe first"
+                ))
+            })?;
+        serde_json::to_value(transcript).map_err(|error| err(error.to_string()))
+    }
+
+    pub fn transcript_search(&self, media_id: &str, query: &str) -> ToolResult {
+        if query.trim().is_empty() {
+            return Err(err("query must contain at least one word"));
+        }
+        let transcript = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?
+            .transcript
+            .as_ref()
+            .ok_or_else(|| {
+                err(format!(
+                    "media {media_id:?} has no transcript — call transcribe first"
+                ))
+            })?;
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "query": query,
+            "matches": bay_listen::search(transcript, query).iter().map(|range| serde_json::json!({
+                "startSeconds": range.start_seconds,
+                "endSeconds": range.end_seconds,
+                "text": range.text,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Detect shot boundaries, embed one midpoint frame per shot, and persist the index.
+    pub fn media_index(&mut self, media_id: &str) -> ToolResult {
+        let mut asset = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .cloned()
+            .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?;
+        let shots = bay_preview::probe::detect_shots(
+            &asset.path,
+            bay_preview::probe::DEFAULT_SHOT_THRESHOLD,
+            0.4,
+        )
+        .map_err(|error| {
+            err(format!(
+                "could not detect shots in {:?}: {error}",
+                asset.name
+            ))
+        })?;
+        let ranges = shots
+            .iter()
+            .map(|shot| bay_vision::ShotRange {
+                start_seconds: shot.start_seconds,
+                end_seconds: shot.end_seconds,
+            })
+            .collect::<Vec<_>>();
+        let encoder = bay_vision::Encoder::load().map_err(|error| err(error.to_string()))?;
+        let indexed = bay_vision::index_shots(&encoder, &asset.path, &ranges)
+            .map_err(|error| err(error.to_string()))?;
+        asset.semantic_index = Some(SemanticMediaIndex {
+            model: "siglip-base-patch16-224".into(),
+            shots: indexed
+                .iter()
+                .map(|shot| SemanticShot {
+                    start_seconds: shot.range.start_seconds,
+                    end_seconds: shot.range.end_seconds,
+                    sample_seconds: shot.sample_seconds,
+                    embedding: shot.embedding.as_slice().to_vec(),
+                })
+                .collect(),
+        });
+        self.editor.add_media(asset);
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "model": "siglip-base-patch16-224",
+            "granularity": "one midpoint frame per detected shot",
+            "shots": indexed.len(),
+        }))
+    }
+
+    /// Search every persisted shot index with SigLIP. Scores are returned with relative
+    /// separation; no absolute score is treated as a calibrated relevance threshold.
+    pub fn media_search(&self, query: &str, media_id: Option<&str>, limit: usize) -> ToolResult {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(err("media_search needs a plain-language query"));
+        }
+        let encoder = bay_vision::Encoder::load().map_err(|error| err(error.to_string()))?;
+        let text = encoder
+            .embed_text(&[query.to_string()])
+            .map_err(|error| err(error.to_string()))?;
+        let mut matches = Vec::new();
+        for asset in &self.editor.project().media {
+            if media_id.is_some_and(|wanted| wanted != asset.id) {
+                continue;
+            }
+            let Some(index) = &asset.semantic_index else {
+                continue;
+            };
+            for shot in &index.shots {
+                let embedding = bay_vision::Embedding::new(shot.embedding.clone());
+                if embedding.len() != bay_vision::DIMENSIONS {
+                    continue;
+                }
+                matches.push((
+                    bay_vision::cosine(&text[0], &embedding),
+                    asset.id.clone(),
+                    asset.name.clone(),
+                    shot,
+                ));
+            }
+        }
+        if matches.is_empty() {
+            return Err(err(
+                "no indexed shots to search — call media_index for imported footage first",
+            ));
+        }
+        matches.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let separation = matches[0].0 - matches[matches.len() / 2].0;
+        Ok(serde_json::json!({
+            "query": query,
+            "separation": separation,
+            "hint": "SigLIP scores are not calibrated; use ranking and best-vs-median separation.",
+            "matches": matches.into_iter().take(limit.clamp(1, 100)).map(
+                |(score, media_id, media_name, shot)| serde_json::json!({
+                    "mediaId": media_id,
+                    "mediaName": media_name,
+                    "startSeconds": shot.start_seconds,
+                    "endSeconds": shot.end_seconds,
+                    "sampleSeconds": shot.sample_seconds,
+                    "score": score,
+                })
+            ).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Cluster transcript utterances acoustically and write speaker labels back into the same
+    /// persisted transcript object used by transcript editing.
+    pub fn diarize(&mut self, media_id: &str, speakers: usize) -> ToolResult {
+        let mut asset = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .cloned()
+            .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?;
+        let transcript = asset.transcript.as_mut().ok_or_else(|| {
+            err(format!(
+                "media {media_id:?} has no transcript — call transcribe first"
+            ))
+        })?;
+        let summary = bay_listen::diarize_file(&asset.path, transcript, speakers)
+            .map_err(|error| err(error.to_string()))?;
+        let transcript_value =
+            serde_json::to_value(&*transcript).map_err(|error| err(error.to_string()))?;
+        self.editor.add_media(asset);
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "summary": summary,
+            "transcript": transcript_value,
+        }))
+    }
+
+    /// Track a video's subject and convert the damped path into animated crop insets.
+    pub fn auto_reframe(
+        &mut self,
+        element_id: &str,
+        target_width: u32,
+        target_height: u32,
+        sample_seconds: f64,
+        smoothing_seconds: f64,
+    ) -> ToolResult {
+        if target_width == 0 || target_height == 0 {
+            return Err(err(
+                "targetWidth and targetHeight must be greater than zero",
+            ));
+        }
+        let reference = self
+            .find_element_ref(element_id)
+            .ok_or_else(|| err(format!("no element {element_id:?} on the timeline")))?;
+        let (video, effects, mut animations) = match self
+            .editor
+            .active_scene()
+            .element(&reference)
+            .ok_or_else(|| err(format!("no element {element_id:?} on the timeline")))?
+        {
+            Element::Video(video) => (
+                video.clone(),
+                video.effects.clone(),
+                video.animations.clone(),
+            ),
+            _ => return Err(err("auto_reframe needs a video element")),
+        };
+        let asset = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == video.media_id)
+            .cloned()
+            .ok_or_else(|| err(format!("no media {:?}", video.media_id)))?;
+        let (source_width, source_height) = match (asset.width, asset.height) {
+            (Some(width), Some(height)) if width > 0 && height > 0 => (width, height),
+            _ => {
+                let metadata = bay_preview::probe::probe_media(&asset.path)
+                    .map_err(|error| err(error.to_string()))?;
+                (metadata.width, metadata.height)
+            }
+        };
+        let source_start = video.trim_start.to_seconds_f64();
+        let source_end = video.trim_end.to_seconds_f64();
+        let shot_boundaries = match asset.semantic_index.as_ref() {
+            Some(index) => index
+                .shots
+                .iter()
+                .map(|shot| shot.start_seconds)
+                .filter(|time| *time > source_start && *time < source_end)
+                .collect::<Vec<_>>(),
+            None => bay_preview::probe::detect_shots(
+                &asset.path,
+                bay_preview::probe::DEFAULT_SHOT_THRESHOLD,
+                0.4,
+            )
+            .map_err(|error| err(format!("could not detect shot boundaries: {error}")))?
+            .into_iter()
+            .map(|shot| shot.start_seconds)
+            .filter(|time| *time > source_start && *time < source_end)
+            .collect(),
+        };
+        let encoder = bay_vision::Encoder::load().map_err(|error| err(error.to_string()))?;
+        let path = bay_vision::track_subject_siglip(
+            &encoder,
+            &asset.path,
+            source_start,
+            source_end,
+            bay_vision::ReframeTrackingConfig {
+                source_aspect: source_width as f32 / source_height.max(1) as f32,
+                target_aspect: target_width as f32 / target_height as f32,
+                shot_boundaries: &shot_boundaries,
+                tracking: bay_vision::TrackingConfig {
+                    sample_seconds,
+                    smoothing_seconds,
+                },
+            },
+        )
+        .map_err(|error| err(error.to_string()))?;
+        let source_aspect = source_width as f32 / source_height.max(1) as f32;
+        let target_aspect = target_width as f32 / target_height as f32;
+        let mut left = AnimationChannel::default();
+        let mut right = AnimationChannel::default();
+        let mut top = AnimationChannel::default();
+        let mut bottom = AnimationChannel::default();
+        let crop_for = |point: &bay_vision::SubjectPoint| {
+            if target_aspect < source_aspect {
+                let kept = (target_aspect / source_aspect).clamp(0.01, 1.0);
+                let left = (point.x - kept * 0.5).clamp(0.0, 1.0 - kept);
+                (left, 0.0, 1.0 - kept - left, 0.0)
+            } else {
+                let kept = (source_aspect / target_aspect).clamp(0.01, 1.0);
+                let top = (point.y - kept * 0.5).clamp(0.0, 1.0 - kept);
+                (0.0, top, 0.0, 1.0 - kept - top)
+            }
+        };
+        for point in &path {
+            let local = secs((point.time_seconds - source_start).max(0.0))?;
+            let crop = crop_for(point);
+            left.upsert(local, crop.0);
+            top.upsert(local, crop.1);
+            right.upsert(local, crop.2);
+            bottom.upsert(local, crop.3);
+        }
+        let first_crop = path.first().map(crop_for).unwrap_or((0.0, 0.0, 0.0, 0.0));
+        let mut transform = video.transform;
+        transform.crop_left = first_crop.0;
+        transform.crop_top = first_crop.1;
+        transform.crop_right = first_crop.2;
+        transform.crop_bottom = first_crop.3;
+        animations.insert("cropLeft".into(), left);
+        animations.insert("cropTop".into(), top);
+        animations.insert("cropRight".into(), right);
+        animations.insert("cropBottom".into(), bottom);
+        if !self.editor.execute(Command::SetTransform {
+            reference: reference.clone(),
+            transform,
+        }) {
+            return Err(err(format!("could not set crop on {element_id:?}")));
+        }
+        if !self.editor.execute(Command::ApplyMotionPreset {
+            reference,
+            effects,
+            animations,
+        }) {
+            return Err(err(format!("could not animate crop on {element_id:?}")));
+        }
+        let raw_x = path.iter().map(|point| point.raw_x).collect::<Vec<_>>();
+        let smooth_x = path.iter().map(|point| point.x).collect::<Vec<_>>();
+        Ok(serde_json::json!({
+            "elementId": element_id,
+            "target": { "width": target_width, "height": target_height },
+            "detector": "SigLIP-ranked subject crops with local appearance prior",
+            "smoothing": {
+                "method": "exponential damping",
+                "seconds": smoothing_seconds,
+                "rawJitter": bay_vision::path_jitter(&raw_x),
+                "smoothedJitter": bay_vision::path_jitter(&smooth_x),
+            },
+            "points": path,
+        }))
+    }
+
+    /// Place source ranges consecutively as paired video and speech clips.
+    pub fn cut_by_transcript(
+        &mut self,
+        media_id: &str,
+        ranges: &[bay_listen::SourceRange],
+        timeline_start: f64,
+        layer: usize,
+    ) -> ToolResult {
+        let asset = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .find(|asset| asset.id == media_id)
+            .cloned()
+            .ok_or_else(|| err(format!("no media {media_id:?} — call media_import first")))?;
+        if asset.transcript.is_none() {
+            return Err(err(format!(
+                "media {media_id:?} has no transcript — call transcribe first"
+            )));
+        }
+        if ranges.is_empty() {
+            return Err(err("give at least one transcript range"));
+        }
+        let source_end = asset.duration_seconds.unwrap_or(f64::INFINITY);
+        for range in ranges {
+            if !range.start_seconds.is_finite()
+                || !range.end_seconds.is_finite()
+                || range.start_seconds < 0.0
+                || range.end_seconds <= range.start_seconds
+                || range.end_seconds > source_end
+            {
+                return Err(err(format!(
+                    "invalid source range {:.3}..{:.3}; media duration is {}",
+                    range.start_seconds,
+                    range.end_seconds,
+                    asset
+                        .duration_seconds
+                        .map(|seconds| format!("{seconds:.3}s"))
+                        .unwrap_or_else(|| "unknown".into())
+                )));
+            }
+        }
+
+        let mut at = timeline_start;
+        let mut placed = Vec::new();
+        for range in ranges {
+            let duration = range.end_seconds - range.start_seconds;
+            let video = self.add_video(
+                layer,
+                None,
+                media_id.to_string(),
+                at,
+                duration,
+                range.start_seconds,
+                ElementRole::Label,
+                VisualArgs {
+                    transform: Transform::default(),
+                    blend_mode: BlendMode::default(),
+                },
+            )?;
+            let audio = self.add_audio(
+                None,
+                media_id.to_string(),
+                at,
+                duration,
+                1.0,
+                range.start_seconds,
+                ElementSource::Tool,
+                AudioRole::Speech,
+            )?;
+            placed.push(serde_json::json!({
+                "timelineStart": at,
+                "duration": duration,
+                "sourceStart": range.start_seconds,
+                "sourceEnd": range.end_seconds,
+                "text": range.text,
+                "videoElementId": video["elementId"],
+                "audioElementId": audio["elementId"],
+            }));
+            at += duration;
+        }
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "timelineStart": timeline_start,
+            "duration": at - timeline_start,
+            "clips": placed,
+        }))
     }
 
     pub fn audio_probe(&mut self, media_id: &str) -> ToolResult {
@@ -1001,6 +1572,112 @@ impl Studio {
         }))
     }
 
+    /// The text ink exactly as bay will place it, in canvas pixels and fractions.
+    ///
+    /// Returned by `add_text` so callers that stack type can place the next block after the
+    /// measured wrapped height instead of assuming one line. Decorations expand the texture but
+    /// not these ink bounds: layout follows glyphs, while plates and shadows are allowed to
+    /// overlap neighbouring decoration.
+    fn text_layout(&mut self, text: &TextElement) -> Option<serde_json::Value> {
+        let (canvas_width, canvas_height) = self.canvas();
+        let (canvas_width, canvas_height) = (canvas_width.max(1), canvas_height.max(1));
+        let base_scale = text.transform.scale.max(0.01);
+        let width = (base_scale * canvas_width as f32)
+            .min(canvas_width as f32)
+            .max(1.0) as u32;
+        let height = (base_scale * canvas_height as f32)
+            .min(canvas_height as f32)
+            .max(1.0) as u32;
+        let font_px = (text.font_size * canvas_height as f32 / 1080.0).max(8.0);
+        let style = bay_text::TextStyle {
+            family: text.font_family.as_deref(),
+            weight: text.font_weight,
+            align: match text.align {
+                TextAlign::Left => bay_text::TextAlign::Left,
+                TextAlign::Center => bay_text::TextAlign::Center,
+                TextAlign::Right => bay_text::TextAlign::Right,
+            },
+            letter_spacing: text.letter_spacing,
+            line_height: text.line_height,
+            stroke: text.decorations.as_ref().and_then(|decorations| {
+                decorations
+                    .stroke
+                    .as_ref()
+                    .map(|stroke| bay_text::StrokeStyle {
+                        width: stroke.width,
+                        color: stroke.color.as_str(),
+                    })
+            }),
+            shadow: text.decorations.as_ref().and_then(|decorations| {
+                decorations
+                    .shadow
+                    .as_ref()
+                    .map(|shadow| bay_text::ShadowStyle {
+                        offset_x: shadow.offset_x,
+                        offset_y: shadow.offset_y,
+                        blur: shadow.blur,
+                        color: shadow.color.as_str(),
+                    })
+            }),
+            plate: text.decorations.as_ref().and_then(|decorations| {
+                decorations
+                    .plate
+                    .as_ref()
+                    .map(|plate| bay_text::PlateStyle {
+                        color: plate.color.as_str(),
+                        padding_x: plate.padding_x,
+                        padding_y: plate.padding_y,
+                        radius: plate.radius,
+                    })
+            }),
+            highlight: None,
+        };
+        let image = self.text_probe.render_styled(
+            &text.content,
+            font_px,
+            &text.color,
+            width,
+            height,
+            &style,
+        );
+        let ink = image.ink_bounds?;
+        let box_width =
+            f64::from(text.transform.scale * canvas_width as f32 + image.margin_x as f32 * 2.0);
+        let box_height =
+            f64::from(text.transform.scale * canvas_height as f32 + image.margin_y as f32 * 2.0);
+        let fit = (box_width / f64::from(image.width))
+            .min(box_height / f64::from(image.height))
+            .max(0.0);
+        let layer_width = f64::from(image.width) * fit * f64::from(text.transform.scale_x.max(0.0));
+        let layer_height =
+            f64::from(image.height) * fit * f64::from(text.transform.scale_y.max(0.0));
+        let layer_left = f64::from(text.transform.x * canvas_width as f32)
+            - f64::from(text.transform.anchor_x) * layer_width;
+        let layer_top = f64::from(text.transform.y * canvas_height as f32)
+            - f64::from(text.transform.anchor_y) * layer_height;
+        let left = layer_left + f64::from(ink.left) / f64::from(image.width) * layer_width;
+        let top = layer_top + f64::from(ink.top) / f64::from(image.height) * layer_height;
+        let right = layer_left + f64::from(ink.right) / f64::from(image.width) * layer_width;
+        let bottom = layer_top + f64::from(ink.bottom) / f64::from(image.height) * layer_height;
+        Some(serde_json::json!({
+            "basis": "glyph-ink",
+            "left": left / f64::from(canvas_width),
+            "top": top / f64::from(canvas_height),
+            "right": right / f64::from(canvas_width),
+            "bottom": bottom / f64::from(canvas_height),
+            "width": (right - left) / f64::from(canvas_width),
+            "height": (bottom - top) / f64::from(canvas_height),
+            "pixels": {
+                "left": left,
+                "top": top,
+                "right": right,
+                "bottom": bottom,
+                "width": right - left,
+                "height": bottom - top,
+            },
+        }))
+    }
+
     /// Place type. The face, the size, the weight and the colour come from the committed kit,
     /// resolved through `role` and `tone` — they are not arguments any more, because the default
     /// beat the caller's explicit choice on 72 of 73 elements in the project this comes from.
@@ -1048,10 +1725,20 @@ impl Studio {
             align: text.align,
             letter_spacing: text.letter_spacing.unwrap_or(style.tracking),
             line_height: text.line_height.unwrap_or(style.line_height),
+            decorations: text.decorations,
+            karaoke: None,
             source: ElementSource::Author,
             role: text.role,
         });
-        self.add(layer, element)
+        let layout = self.text_layout(match &element {
+            Element::Text(text) => text,
+            _ => unreachable!("add_text constructs text"),
+        });
+        let mut result = self.add(layer, element)?;
+        if let Some(layout) = layout {
+            result["textLayout"] = layout;
+        }
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1156,6 +1843,8 @@ impl Studio {
             // to be written as zero here, which described a clip that plays backwards to
             // nowhere; nothing read it, so nothing complained.
             trim_end: secs(trim_start + duration)?,
+            speed: 1.0,
+            freeze: None,
             transform: visual.transform,
             effects: Vec::new(),
             animations: BTreeMap::new(),
@@ -1197,6 +1886,11 @@ impl Studio {
             media_id,
             muted: false,
             volume,
+            speed: 1.0,
+            prosody: (source == ElementSource::Tool && role == AudioRole::Speech)
+                .then(bay_project::SpeechProsody::default),
+            dialogue_chain: (role == AudioRole::Speech)
+                .then(bay_project::DialogueAudioChain::default),
             trim_start: secs(trim_start)?,
             animations: BTreeMap::new(),
             source,
@@ -1236,7 +1930,7 @@ impl Studio {
 
     /// Locate an element by id, as a track-qualified reference. A reference rather than a
     /// `&mut` because every mutation now goes through a `Command`.
-    fn find_element_ref(&self, element_id: &str) -> Option<ElementRef> {
+    pub(crate) fn find_element_ref(&self, element_id: &str) -> Option<ElementRef> {
         let scene = self.editor.active_scene();
         scene.tracks.iter().find_map(|track| {
             track
@@ -1245,6 +1939,25 @@ impl Studio {
                 .any(|element| element.id() == element_id)
                 .then(|| ElementRef::new(track.id.clone(), element_id.to_string()))
         })
+    }
+
+    pub(crate) fn set_audio_prosody(
+        &mut self,
+        element_id: &str,
+        prosody: bay_project::SpeechProsody,
+    ) {
+        let Some(reference) = self.find_element_ref(element_id) else {
+            return;
+        };
+        let Some(mut element) = self.editor.active_scene().element(&reference).cloned() else {
+            return;
+        };
+        if let Element::Audio(audio) = &mut element {
+            audio.prosody = Some(prosody);
+            let _ = self
+                .editor
+                .execute(Command::ReplaceElement { reference, element });
+        }
     }
 
     pub fn element_delete(&mut self, element_id: &str) -> ToolResult {
@@ -1347,7 +2060,7 @@ impl Studio {
 
         // The file is already on disk, so this is an ordinary import: the pack is a source of
         // media, not a special case in the timeline.
-        let imported = self.media_import(&sound.path.to_string_lossy(), None)?;
+        let imported = self.media_import(&sound.path.to_string_lossy(), None, None)?;
         let media_id = imported
             .get("mediaId")
             .and_then(|id| id.as_str())
@@ -1500,6 +2213,339 @@ impl Studio {
         }))
     }
 
+    pub fn variant_create(&mut self, label: &str) -> ToolResult {
+        let library = self.library()?;
+        let mut source = self.editor.project().clone();
+        let source_id = source.metadata.id.clone();
+        let mut plan = source
+            .settings
+            .plan
+            .clone()
+            .ok_or_else(|| err("create and approve a plan before making variants"))?;
+        if plan.status != bay_project::PlanStatus::Committed {
+            return Err(err("approve the plan before making variants"));
+        }
+        if !plan
+            .variants
+            .candidates
+            .iter()
+            .any(|candidate| candidate.project_id == source_id)
+        {
+            plan.variants
+                .candidates
+                .push(bay_project::VariantCandidate {
+                    project_id: source_id.clone(),
+                    parent_project_id: source_id.clone(),
+                    label: "incumbent".into(),
+                    project_hash: bay_agent::trust::project_hash(&source),
+                    render_path: None,
+                    valid_render: false,
+                });
+            plan.variants.incumbent_project_id = Some(source_id.clone());
+        }
+
+        let placeholder = library
+            .create(label, source.settings.canvas, source.settings.fps)
+            .map_err(|error| err(format!("could not reserve a variant project: {error}")))?;
+        let mut variant = source.clone();
+        variant.metadata.id = placeholder.metadata.id;
+        variant.metadata.name = format!("{} — {}", source.metadata.name, label.trim());
+        let candidate = bay_agent::trust::register_variant(&mut plan, &variant, &source_id, label)
+            .map_err(err)?;
+        source.settings.plan = Some(plan.clone());
+        variant.settings.plan = Some(plan.clone());
+        library
+            .save(&source)
+            .and_then(|_| library.save(&variant))
+            .map_err(|error| err(format!("could not save variant projects: {error}")))?;
+        self.commit_plan(plan);
+        Ok(serde_json::json!({
+            "projectId": candidate.project_id,
+            "parentProjectId": source_id,
+            "label": candidate.label,
+            "projectHash": candidate.project_hash,
+            "next": "load this projectId, make one deliberate alternative, render it, then call variant_register_render",
+        }))
+    }
+
+    fn sync_plan_to_variants(&mut self, plan: &bay_project::PlanArtifact) -> Result<(), ToolError> {
+        let library = self.library()?;
+        let active = self.editor.project().metadata.id.clone();
+        let ids = plan
+            .variants
+            .candidates
+            .iter()
+            .map(|candidate| candidate.project_id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for id in ids {
+            if id == active {
+                continue;
+            }
+            let mut project = library
+                .load(&id)
+                .map_err(|error| err(format!("could not load variant {id:?}: {error}")))?;
+            project.settings.plan = Some(plan.clone());
+            library
+                .save(&project)
+                .map_err(|error| err(format!("could not update variant {id:?}: {error}")))?;
+        }
+        self.commit_plan(plan.clone());
+        library
+            .save(self.editor.project())
+            .map_err(|error| err(format!("could not save active tournament state: {error}")))?;
+        Ok(())
+    }
+
+    pub fn variant_register_render(&mut self, project_id: &str, path: &str) -> ToolResult {
+        let metadata = std::fs::metadata(path).map_err(|error| {
+            err(format!(
+                "could not inspect rendered artifact {path:?}: {error}"
+            ))
+        })?;
+        if metadata.len() == 0 {
+            return Err(err("rendered artifact is empty"));
+        }
+        let library = self.library()?;
+        let project = if self.editor.project().metadata.id == project_id {
+            self.editor.project().clone()
+        } else {
+            library
+                .load(project_id)
+                .map_err(|error| err(format!("could not load variant {project_id:?}: {error}")))?
+        };
+        let receipt_path = format!("{path}.bay-render.json");
+        let receipt: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&receipt_path).map_err(|error| {
+                err(format!(
+                    "missing engine render receipt {receipt_path:?}: {error}; render this variant with bay"
+                ))
+            })?,
+        )
+        .map_err(|error| err(format!("invalid engine render receipt: {error}")))?;
+        let expected_hash = bay_agent::trust::project_hash(&project);
+        if receipt.get("path").and_then(serde_json::Value::as_str) != Some(path)
+            || receipt.get("projectId").and_then(serde_json::Value::as_str) != Some(project_id)
+            || receipt
+                .get("projectHash")
+                .and_then(serde_json::Value::as_str)
+                != Some(expected_hash.as_str())
+            || receipt.get("bytes").and_then(serde_json::Value::as_u64) != Some(metadata.len())
+        {
+            return Err(err(
+                "render receipt does not match this file and saved project; render the loaded variant again",
+            ));
+        }
+        let mut plan = project
+            .settings
+            .plan
+            .clone()
+            .ok_or_else(|| err("that variant has no plan artifact"))?;
+        let model_report = serde_json::to_value(bay_core::check(&project))
+            .map_err(|error| err(format!("could not serialize model checks: {error}")))?;
+        let frame_report = {
+            let renderer = self.renderer()?;
+            bay_preview::frame_check::check_frames(&project, renderer, None)
+        };
+        bay_agent::trust::record_render(&mut plan, project_id, path, &model_report, &frame_report)
+            .map_err(err)?;
+        self.sync_plan_to_variants(&plan)?;
+        Ok(serde_json::json!({
+            "projectId": project_id,
+            "path": path,
+            "valid": true,
+            "modelChecks": model_report,
+            "frameChecks": frame_report,
+        }))
+    }
+
+    pub fn tournament_compare(
+        &mut self,
+        left: &str,
+        right: &str,
+        winner: &str,
+        reason: &str,
+    ) -> ToolResult {
+        let mut plan = self
+            .editor
+            .project()
+            .settings
+            .plan
+            .clone()
+            .ok_or_else(|| err("this project has no plan artifact"))?;
+        let incumbent = bay_agent::trust::pairwise_decide(&mut plan, left, right, winner, reason)
+            .map_err(err)?;
+        self.sync_plan_to_variants(&plan)?;
+        Ok(serde_json::json!({
+            "winner": winner,
+            "incumbent": incumbent,
+            "forcedOptimization": true,
+            "comparisons": plan.variants.comparisons.len(),
+        }))
+    }
+
+    pub fn critic_prepare(&mut self, path: &str) -> ToolResult {
+        let plan = self
+            .editor
+            .project()
+            .settings
+            .plan
+            .clone()
+            .ok_or_else(|| err("create and approve a plan before running the critic"))?;
+        if plan.status != bay_project::PlanStatus::Committed {
+            return Err(err("approve the plan before running the critic"));
+        }
+        if plan.critic.rounds_completed >= 2 {
+            return Err(err("the critic loop is bounded at two rounds"));
+        }
+        let sheet = self.contact_sheet(path, &[], 3)?;
+        let times = sheet
+            .get("times")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_f64)
+            .collect::<Vec<_>>();
+        let project = self.editor.project().clone();
+        let signatures = {
+            let renderer = self.renderer()?;
+            bay_preview::frame_check::sample_signatures(&project, renderer, &times).map_err(err)?
+        };
+        self.critic_panels = signatures
+            .into_iter()
+            .enumerate()
+            .map(|(index, signature)| {
+                let beat = plan
+                    .beats
+                    .iter()
+                    .rev()
+                    .find(|beat| beat.marker_seconds <= signature.at)
+                    .unwrap_or(&plan.beats[0]);
+                bay_agent::trust::PanelEvidence {
+                    panel: index + 1,
+                    beat_id: beat.id.clone(),
+                    sample_time_seconds: signature.at,
+                    content_hash: signature.content_hash,
+                    icgs: signature.icgs,
+                }
+            })
+            .collect();
+        let model = serde_json::to_value(bay_core::check(&project))
+            .map_err(|error| err(format!("could not serialize model checks: {error}")))?;
+        let frames = self.check_frames(None)?;
+        Ok(serde_json::json!({
+            "round": plan.critic.rounds_completed + 1,
+            "brief": plan.brief,
+            "contactSheet": sheet,
+            "computed": { "model": model, "frames": frames },
+            "forcedChoices": [
+                "weakestPanel: choose exactly one panel",
+                "mostAlikePair: choose exactly two different panels",
+                "thumbnailPanel: choose exactly one panel"
+            ],
+            "binaries": [
+                "hook communicates value without context",
+                "visual hierarchy is intentional",
+                "assets are relevant to the spoken claim",
+                "pacing feels authored rather than uniform",
+                "captions remain readable over the picture",
+                "motion explains rather than decorates",
+                "audio supports the editorial emphasis",
+                "payoff resolves the opening promise",
+                "the result feels made by a person who cared"
+            ],
+            "instruction": "Use a fresh critic with only this payload. Do not provide the plan or transcript.",
+        }))
+    }
+
+    pub fn critic_submit(
+        &mut self,
+        weakest_panel: usize,
+        most_alike_pair: (usize, usize),
+        thumbnail_panel: usize,
+        binaries: [bool; 9],
+        rationale: &str,
+    ) -> ToolResult {
+        if self.critic_panels.is_empty() {
+            return Err(err("call critic_prepare immediately before critic_submit"));
+        }
+        let mut plan = self
+            .editor
+            .project()
+            .settings
+            .plan
+            .clone()
+            .ok_or_else(|| err("this project has no plan artifact"))?;
+        let obligations = bay_agent::trust::apply_critic_submission(
+            &mut plan,
+            &self.critic_panels,
+            &bay_agent::trust::CriticSubmission {
+                weakest_panel,
+                most_alike_pair,
+                thumbnail_panel,
+                binaries,
+                rationale: rationale.to_string(),
+            },
+        )
+        .map_err(err)?;
+        self.critic_panels.clear();
+        self.commit_plan(plan.clone());
+        Ok(serde_json::json!({
+            "round": plan.critic.rounds_completed,
+            "verdict": "revision-required",
+            "renderBlocked": true,
+            "obligations": obligations,
+        }))
+    }
+
+    pub fn critic_refresh(&mut self) -> ToolResult {
+        let project = self.editor.project().clone();
+        let mut plan = project
+            .settings
+            .plan
+            .clone()
+            .ok_or_else(|| err("this project has no plan artifact"))?;
+        let times = plan
+            .critic
+            .obligations
+            .iter()
+            .filter(|obligation| !obligation.closed)
+            .map(|obligation| obligation.sample_time_seconds)
+            .collect::<Vec<_>>();
+        let signatures = {
+            let renderer = self.renderer()?;
+            bay_preview::frame_check::sample_signatures(&project, renderer, &times).map_err(err)?
+        };
+        let mut current = BTreeMap::new();
+        for (obligation, signature) in plan
+            .critic
+            .obligations
+            .iter()
+            .filter(|obligation| !obligation.closed)
+            .zip(signatures)
+        {
+            current.insert(
+                format!(
+                    "{}@{:.6}",
+                    obligation.beat_id, obligation.sample_time_seconds
+                ),
+                (signature.content_hash, signature.icgs),
+            );
+        }
+        let closed = bay_agent::trust::refresh_obligations(&mut plan, &current);
+        let open = plan
+            .critic
+            .obligations
+            .iter()
+            .filter(|obligation| !obligation.closed)
+            .count();
+        self.commit_plan(plan);
+        Ok(serde_json::json!({
+            "closed": closed,
+            "open": open,
+            "renderBlocked": open > 0,
+        }))
+    }
+
     // ----------------------------------------------------------------- output
 
     /// Render a single frame to a PNG. The point of this tool is that an agent can *look* at
@@ -1544,6 +2590,118 @@ impl Studio {
         }))
     }
 
+    /// Pixel-level checks kept separate from the pure project pass.
+    pub fn check_frames(&mut self, requested_duration: Option<f64>) -> ToolResult {
+        let project = self.editor.project().clone();
+        let renderer = match self.renderer() {
+            Ok(renderer) => renderer,
+            Err(error) => return Ok(frame_unevaluated(&error.0)),
+        };
+        Ok(bay_preview::frame_check::check_frames(
+            &project,
+            renderer,
+            requested_duration,
+        ))
+    }
+
+    /// Render review frames into one labelled image.
+    pub fn contact_sheet(
+        &mut self,
+        path: &str,
+        requested_times: &[f64],
+        columns: usize,
+    ) -> ToolResult {
+        let project = self.editor.project().clone();
+        let report = bay_core::check(&project);
+        let mut times = requested_times
+            .iter()
+            .copied()
+            .filter(|time| time.is_finite() && *time >= 0.0)
+            .collect::<Vec<_>>();
+        if times.is_empty() {
+            let fallback_starts;
+            let starts = if report.stats.beats.starts.is_empty() {
+                fallback_starts = vec![0.0];
+                &fallback_starts
+            } else {
+                &report.stats.beats.starts
+            };
+            let timeline = self.editor.duration().to_seconds_f64();
+            for (index, start) in starts.iter().copied().enumerate() {
+                let end = starts
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or(report.stats.beats.end_seconds.max(timeline));
+                if end <= start {
+                    continue;
+                }
+                let span = end - start;
+                let jitter = seeded_jitter(&project.metadata.id, index) * span * 0.08;
+                times.push((start + span / 3.0 + jitter).clamp(start, end));
+                times.push((start + span * 2.0 / 3.0 - jitter).clamp(start, end));
+            }
+        }
+        if times.is_empty() {
+            return Err(err(
+                "contact_sheet needs a non-empty timeline or explicit times",
+            ));
+        }
+        let columns = columns.clamp(1, 8);
+        let thumb_height = 240u32;
+        let canvas = project.settings.canvas;
+        let thumb_width =
+            ((thumb_height as f64 * canvas.width as f64 / canvas.height.max(1) as f64).round()
+                as u32)
+                .max(16);
+        let label_height = 18u32;
+        let rows = times.len().div_ceil(columns);
+        let mut sheet = image::RgbaImage::from_pixel(
+            thumb_width * columns as u32,
+            (thumb_height + label_height) * rows as u32,
+            image::Rgba([16, 16, 18, 255]),
+        );
+        let renderer = self.renderer()?;
+        for (index, at) in times.iter().copied().enumerate() {
+            let playhead = secs(at)?;
+            let frame = renderer
+                .render(
+                    project.active_scene(),
+                    playhead,
+                    thumb_width,
+                    thumb_height,
+                    &project.settings.background,
+                    &project.media,
+                )
+                .ok_or_else(|| err(format!("the GPU could not render the panel at {at:.2}s")))?;
+            let mut rgba = frame.bgra;
+            for texel in rgba.chunks_exact_mut(4) {
+                texel.swap(0, 2);
+            }
+            let panel = image::RgbaImage::from_raw(thumb_width, thumb_height, rgba)
+                .ok_or_else(|| err("a contact-sheet panel had the wrong byte length"))?;
+            let x = (index % columns) as u32 * thumb_width;
+            let y = (index / columns) as u32 * (thumb_height + label_height);
+            image::imageops::replace(&mut sheet, &panel, i64::from(x), i64::from(y));
+            draw_label(
+                &mut sheet,
+                x + 4,
+                y + thumb_height + 4,
+                &format!("{} {:.2}s", index + 1, at),
+            );
+        }
+        sheet
+            .save(path)
+            .map_err(|error| err(format!("could not write contact sheet {path}: {error}")))?;
+        Ok(serde_json::json!({
+            "path": path,
+            "times": times,
+            "columns": columns,
+            "rows": rows,
+            "width": sheet.width(),
+            "height": sheet.height(),
+        }))
+    }
+
     /// Encode the timeline to a file, picture and sound.
     pub fn render_video(
         &mut self,
@@ -1557,6 +2715,17 @@ impl Studio {
         // A range shortens what is left, so a caller who gave a start and no duration gets the
         // rest of the timeline rather than the whole of it starting late.
         let remaining = (timeline_duration - settings.start_seconds).max(0.0);
+        if let Some(requested) = duration {
+            let tolerance = 1.0 / project.settings.fps.as_f64().max(1.0);
+            if remaining > tolerance && requested + tolerance < remaining {
+                return Err(err(format!(
+                    "render refused: duration {requested:.2}s would omit {:.2}s from the populated \
+                     end of the timeline. Remove duration to render everything, or trim/delete \
+                     the tail first.",
+                    remaining - requested
+                )));
+            }
+        }
         let duration = duration
             .unwrap_or(remaining)
             .min(remaining.max(f64::MIN_POSITIVE));
@@ -1583,6 +2752,24 @@ impl Studio {
             )
             .map_err(|reason| err(format!("could not encode {path}: {reason}")))?;
         let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let project_hash = bay_agent::trust::project_hash(&project);
+        let receipt_path = format!("{path}.bay-render.json");
+        let receipt = serde_json::json!({
+            "path": path,
+            "bytes": bytes,
+            "projectId": project.metadata.id,
+            "projectHash": project_hash,
+        });
+        std::fs::write(
+            &receipt_path,
+            serde_json::to_vec_pretty(&receipt)
+                .map_err(|error| err(format!("could not encode render receipt: {error}")))?,
+        )
+        .map_err(|error| {
+            err(format!(
+                "could not write render receipt {receipt_path}: {error}"
+            ))
+        })?;
         Ok(serde_json::json!({
             "path": path,
             "durationSeconds": duration,
@@ -1590,9 +2777,70 @@ impl Studio {
             "width": canvas.width,
             "height": canvas.height,
             "bytes": bytes,
+            "projectHash": project_hash,
+            "receipt": receipt_path,
             "encodeSeconds": started.elapsed().as_secs_f64(),
             "checksOverridden": overridden,
         }))
+    }
+}
+
+fn frame_unevaluated(reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "status": "unevaluated",
+        "gate": "unevaluated",
+        "findings": [],
+        "rollup": {},
+        "skipped": [
+            { "code": "frozen", "reason": reason },
+            { "code": "anchor-scale", "reason": reason },
+            { "code": "bottom-dead", "reason": reason },
+        ],
+        "stats": {},
+    })
+}
+
+fn seeded_jitter(seed: &str, index: usize) -> f64 {
+    let mut hash = 0xcbf29ce484222325u64 ^ index as u64;
+    for byte in seed.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash as f64 / u64::MAX as f64 * 2.0 - 1.0
+}
+
+fn draw_label(image: &mut image::RgbaImage, x: u32, y: u32, text: &str) {
+    for (column, character) in text.chars().enumerate() {
+        let glyph = match character {
+            '0' => ["111", "101", "101", "101", "111"],
+            '1' => ["010", "110", "010", "010", "111"],
+            '2' => ["111", "001", "111", "100", "111"],
+            '3' => ["111", "001", "111", "001", "111"],
+            '4' => ["101", "101", "111", "001", "001"],
+            '5' => ["111", "100", "111", "001", "111"],
+            '6' => ["111", "100", "111", "101", "111"],
+            '7' => ["111", "001", "010", "010", "010"],
+            '8' => ["111", "101", "111", "101", "111"],
+            '9' => ["111", "101", "111", "001", "111"],
+            '.' => ["000", "000", "000", "000", "010"],
+            's' => ["000", "111", "100", "001", "111"],
+            _ => ["000", "000", "000", "000", "000"],
+        };
+        let origin_x = x + column as u32 * 5;
+        for (row, bits) in glyph.iter().enumerate() {
+            for (bit, value) in bits.bytes().enumerate() {
+                if value == b'1'
+                    && origin_x + (bit as u32) < image.width()
+                    && y + (row as u32) < image.height()
+                {
+                    image.put_pixel(
+                        origin_x + bit as u32,
+                        y + row as u32,
+                        image::Rgba([240, 240, 244, 255]),
+                    );
+                }
+            }
+        }
     }
 }
 

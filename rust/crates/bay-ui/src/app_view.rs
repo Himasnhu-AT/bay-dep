@@ -1579,7 +1579,11 @@ mod agent_routing_tests {
         // Exactly what start_slow_tool hands the worker.
         let result = bay_agent::slow::run(
             "render",
-            &serde_json::json!({"path": out.to_string_lossy()}),
+            &serde_json::json!({
+                "path": out.to_string_lossy(),
+                "ignoreChecks": true,
+                "reason": "This synthetic routing fixture tests MP4 delivery, not composition quality."
+            }),
             &context,
             None,
         );
@@ -1648,7 +1652,7 @@ mod agent_routing_tests {
                     start: 1.0,
                     volume: 1.0,
                     cue_style: bay_speech::CueStyle::default(),
-                    captions: Some(bay_agent::plan::CaptionStyle::default()),
+                    captions: Some(Box::new(bay_agent::plan::CaptionStyle::default())),
                 },
             };
             app.finish_slow_tool(result, cx);

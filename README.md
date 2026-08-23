@@ -45,7 +45,9 @@ rust/
 ```bash
 ./rust/target/release/bay          # opens the editor and its agent endpoint
 bay --agents                       # is a window open, and how to reach it
-claude mcp add --transport http bay http://127.0.0.1:7333/mcp
+export BAY_MCP_TOKEN="$(<"$HOME/Library/Application Support/bay/mcp-token")"
+claude mcp add --transport http bay http://127.0.0.1:7333/mcp \
+  --header "Authorization: Bearer $BAY_MCP_TOKEN"
 ```
 
 bay is **single-window for now**: a second launch raises the window that is already open
@@ -63,15 +65,26 @@ a port your client is not configured for.
 
 ```bash
 ./rust/target/release/bay --mcp
-claude mcp add --transport http bay http://127.0.0.1:7333/mcp
+export BAY_MCP_TOKEN="$(<"$HOME/Library/Application Support/bay/mcp-token")"
+claude mcp add --transport http bay http://127.0.0.1:7333/mcp \
+  --header "Authorization: Bearer $BAY_MCP_TOKEN"
 ```
 
-21 tools: create a project, import media, place text/shapes/images/video/audio, animate with
-easing, speak a script with word-synced captions, snapshot a frame to look at it, and render
-an MP4.
+The bearer token is required by default. It protects the file-capable editor tools from other
+local processes and origin-less requests; bay prints its credential file location, never the
+secret itself.
 
 There is a skill at [`.claude/skills/bay/`](.claude/skills/bay) that teaches an agent to use
 it well — including the things that are not obvious from the schemas.
+
+An installed app bundles that skill and the CLI installer:
+
+```bash
+/Applications/bay.app/Contents/Resources/install-agent-tools
+```
+
+It links the app's binary as `~/.local/bin/bay` and installs the skill for Claude Code, Cursor,
+and OpenClaw. See [`docs/native/distribution.md`](docs/native/distribution.md).
 
 - [`docs/native/mcp.md`](docs/native/mcp.md) — the tool surface
 - [`docs/native/speech.md`](docs/native/speech.md) — narration and subtitles
@@ -96,7 +109,8 @@ it well — including the things that are not obvious from the schemas.
 Windows is the only target that needs CI, and it genuinely cannot be done here: Windows
 containers require a Windows kernel, and cross-compiling with `cargo-xwin` dies inside gpui,
 whose `build.rs` gates HLSL shader compilation on the *host* being Windows. See
-[`todo.completed.md`](todo.completed.md).
+[`docs/native/platforms.md`](docs/native/platforms.md) for the separately exercised MCP/engine
+subset and the exact limits of that claim.
 
 Both bundles are unsigned by default and still work; the OS warns once on first run. To sign:
 
