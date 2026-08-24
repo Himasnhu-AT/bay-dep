@@ -175,6 +175,42 @@ pub struct Effect {
     pub asset: Option<String>,
 }
 
+/// How a built-in grade is named in [`Effect::asset`], as opposed to a path on disk.
+///
+/// Built-in looks are generated on the machine — there is no `.cube` anywhere for them, and
+/// deliberately so, since a project naming one keeps working on a machine that has never
+/// downloaded anything. That makes `asset` two namespaces in one field, and anything reading
+/// it has to know which it is holding: `check` did not, tested every asset with
+/// `Path::exists`, and so reported every built-in look as a missing file. Since a render is
+/// refused while an error stands, the documented way to grade a clip blocked the export.
+pub const LOOK_PREFIX: &str = "look:";
+
+/// Every built-in look, by id.
+///
+/// Here rather than in `bay-effects` because `bay-core` has to validate a look id and cannot
+/// take a dependency on wgpu to do it. `bay-effects` owns what a look *is*; this owns what
+/// they are *called*, and a test in `bay-effects` pins the two lists equal in both directions,
+/// so a look added there and not here would be rejected by the very check that is meant to
+/// catch a typo.
+pub const BUILTIN_LOOKS: &[&str] = &[
+    "neutral-contrast",
+    "teal-orange",
+    "bleach-bypass",
+    "warm-film",
+    "cool-night",
+    "mono",
+];
+
+/// The look id an `asset` names, if it names one at all.
+pub fn look_id(asset: &str) -> Option<&str> {
+    asset.strip_prefix(LOOK_PREFIX)
+}
+
+/// Whether `id` is a look this build can generate.
+pub fn is_builtin_look(id: &str) -> bool {
+    BUILTIN_LOOKS.contains(&id)
+}
+
 /// A shape that limits where a clip shows.
 ///
 /// The feathering pipeline behind this (a jump-flood signed distance field) has been written

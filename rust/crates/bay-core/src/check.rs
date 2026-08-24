@@ -742,7 +742,25 @@ fn element_findings(project: &Project, scene: &Scene, skipped: &mut Vec<Skipped>
                 let Some(asset) = effect.asset.as_deref() else {
                     continue;
                 };
-                if !std::path::Path::new(asset).exists() {
+                // `asset` is two namespaces: a path, or `look:<id>` naming a grade this build
+                // generates itself. A built-in has no file and never will, so testing it with
+                // `exists` reported every graded clip as broken — and because a render is
+                // refused while an error stands, that turned the documented way to grade into
+                // one that could not be exported. The id is still worth checking: a look that
+                // does not exist renders ungraded, which is the failure this pass is for.
+                if let Some(id) = bay_project::look_id(asset) {
+                    if !bay_project::is_builtin_look(id) {
+                        findings.push(here(
+                            "missing-effect-asset",
+                            format!(
+                                "{:?} grades through the look {id:?}, which this build does not \
+                                 have — the clip renders ungraded. The looks are: {}",
+                                element.id(),
+                                bay_project::BUILTIN_LOOKS.join(", ")
+                            ),
+                        ));
+                    }
+                } else if !std::path::Path::new(asset).exists() {
                     findings.push(here(
                         "missing-effect-asset",
                         format!(
@@ -4445,6 +4463,48 @@ mod tests {
             enabled: true,
             params: Default::default(),
             asset: Some("/tmp/bay-no-such-grade.cube".into()),
+        });
+        let report = check(&project_with(vec![element]));
+        assert!(has(&report, "missing-effect-asset"), "{:?}", codes(&report));
+    }
+
+    /// A built-in look is not a file, and must not be reported as a missing one.
+    ///
+    /// `looks_list` offers six grades the machine generates itself; `effect_add` records one
+    /// as `look:<id>`. This pass used to test that string with `Path::exists`, so every clip
+    /// graded the documented way came back as "not on disk — the clip renders ungraded". A
+    /// render is refused while an error stands, so grading a timeline made it unexportable.
+    #[test]
+    fn a_built_in_look_is_not_a_missing_file() {
+        for id in bay_project::BUILTIN_LOOKS {
+            let mut element = title("t", "Hello", 96.0, Transform::default());
+            element.effects_mut().unwrap().push(bay_project::Effect {
+                id: "fx".into(),
+                effect_type: "lut".into(),
+                enabled: true,
+                params: Default::default(),
+                asset: Some(format!("{}{id}", bay_project::LOOK_PREFIX)),
+            });
+            let report = check(&project_with(vec![element]));
+            assert!(
+                !has(&report, "missing-effect-asset"),
+                "{id} is generated, not loaded: {:?}",
+                codes(&report)
+            );
+        }
+    }
+
+    /// A look that does not exist still renders ungraded, so that stays an error — the check
+    /// moved from "is there a file" to "is this a look", rather than being switched off.
+    #[test]
+    fn a_look_this_build_does_not_have_is_still_an_error() {
+        let mut element = title("t", "Hello", 96.0, Transform::default());
+        element.effects_mut().unwrap().push(bay_project::Effect {
+            id: "fx".into(),
+            effect_type: "lut".into(),
+            enabled: true,
+            params: Default::default(),
+            asset: Some("look:warm-flim".into()),
         });
         let report = check(&project_with(vec![element]));
         assert!(has(&report, "missing-effect-asset"), "{:?}", codes(&report));

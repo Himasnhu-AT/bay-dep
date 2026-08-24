@@ -7,6 +7,7 @@
 //! receives `&Editor` in an event, so nothing can re-enter and alias mid-command. No `Arc`,
 //! no `RwLock`, no `RefCell` — the borrow checker guarantees no aliasing.
 
+pub mod blocks;
 pub mod check;
 pub mod clipboard;
 pub mod command;
@@ -29,6 +30,6 @@ pub use bay_project as project;
 pub use bay_project::{
     AnimationChannel, AudioElement, Background, BlendMode, CanvasSize, Effect, Element,
     ElementKind, Fps, ImageElement, Keyframe, MediaAsset, MediaKind, MediaTime, Project,
-    ProjectMetadata, ProjectSettings, Scene, TextElement, Track, TrackKind, Tracks, Transform,
-    VideoElement,
+    ProjectMetadata, ProjectSettings, ProjectStatus, Scene, Shelf, TextElement, Track, TrackKind,
+    Tracks, Transform, VideoElement,
 };

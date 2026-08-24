@@ -13,5 +13,9 @@ bytemuck = { workspace = true }
 # precision than a 33-entry cube needs.
 half = { version = "2", features = ["bytemuck"] }
 bay-gpu = { version = "0.1.0", path = "../bay-gpu" }
+# For the look *vocabulary* only. `bay-core` has to validate a look id and cannot
+# depend on wgpu to do it, so the ids live in bay-project and a test here pins
+# them to the looks defined in this crate, in both directions.
+bay-project = { version = "0.1.0", path = "../bay-project" }
 thiserror = { workspace = true }
 wgpu = { workspace = true }

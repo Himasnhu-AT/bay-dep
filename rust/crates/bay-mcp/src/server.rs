@@ -26,8 +26,6 @@ use crate::tools;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "bay";
-const TOKEN_BYTES: usize = 32;
-const TOKEN_HEX_LEN: usize = TOKEN_BYTES * 2;
 
 /// The credential required on every HTTP request.
 ///
@@ -46,72 +44,34 @@ struct AuthToken {
 impl AuthToken {
     fn load_or_create() -> std::io::Result<Self> {
         if let Some(value) = std::env::var_os("BAY_MCP_TOKEN").filter(|value| !value.is_empty()) {
-            let value = value.to_string_lossy().into_owned().into_bytes();
-            if value.len() != TOKEN_HEX_LEN || !value.iter().all(u8::is_ascii_hexdigit) {
+            let value = value.to_string_lossy().into_owned();
+            if !bay_settings::token::is_valid(&value) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "BAY_MCP_TOKEN must be exactly 64 hexadecimal characters",
                 ));
             }
-            return Ok(Self { value, path: None });
+            return Ok(Self {
+                value: value.into_bytes(),
+                path: None,
+            });
         }
 
-        let data = bay_paths::data_dir().ok_or_else(|| {
+        // The file, its format and its 0600 mode are defined in `bay-settings` rather than
+        // here, because the settings pane has to show and rotate the same credential and the
+        // UI crate cannot depend on this one. Two definitions of "the token" would mean a
+        // rotate in the window that the server never noticed.
+        let path = bay_settings::token::default_path().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "could not locate bay's data directory for the MCP token",
             )
         })?;
-        std::fs::create_dir_all(&data)?;
-        let path = data.join("mcp-token");
-
-        match Self::read_file(&path) {
-            Ok(value) => {
-                return Ok(Self {
-                    value,
-                    path: Some(path),
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-
-        let mut random = [0u8; TOKEN_BYTES];
-        getrandom::fill(&mut random).map_err(|error| {
-            std::io::Error::other(format!("could not generate MCP token: {error}"))
-        })?;
-        let encoded = hex(&random);
-        match create_secret_file(&path, encoded.as_bytes()) {
-            Ok(()) => Ok(Self {
-                value: encoded.into_bytes(),
-                path: Some(path),
-            }),
-            // A simultaneously starting process may have won the create-new race. Read the one
-            // durable credential rather than replacing it with a value no client could predict.
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                Self::read_file(&path).map(|value| Self {
-                    value,
-                    path: Some(path),
-                })
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    fn read_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-        let text = std::fs::read_to_string(path)?;
-        let value = text.trim().as_bytes().to_vec();
-        if value.len() != TOKEN_HEX_LEN || !value.iter().all(u8::is_ascii_hexdigit) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "{} is not a valid bay MCP token; remove it to generate a fresh one",
-                    path.display()
-                ),
-            ));
-        }
-        secure_existing_file(path)?;
-        Ok(value)
+        let value = bay_settings::token::read_or_create(&path)?;
+        Ok(Self {
+            value: value.into_bytes(),
+            path: Some(path),
+        })
     }
 
     /// Compare token bytes without exposing how many leading bytes matched.
@@ -121,7 +81,7 @@ impl AuthToken {
 
     #[cfg(test)]
     fn from_test(value: &str) -> Self {
-        assert_eq!(value.len(), TOKEN_HEX_LEN);
+        assert_eq!(value.len(), bay_settings::token::TOKEN_HEX_LEN);
         Self {
             value: value.as_bytes().to_vec(),
             path: None,
@@ -144,49 +104,6 @@ pub fn authorization_header() -> std::io::Result<String> {
     Ok(format!("Bearer {value}"))
 }
 
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    encoded
-}
-
-#[cfg(unix)]
-fn create_secret_file(path: &std::path::Path, value: &[u8]) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(value)
-}
-
-#[cfg(not(unix))]
-fn create_secret_file(path: &std::path::Path, value: &[u8]) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(value)
-}
-
-#[cfg(unix)]
-fn secure_existing_file(path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn secure_existing_file(_path: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
-}
-
 /// Handle one JSON-RPC message. Returns `None` for notifications, which take no response.
 fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
     let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
@@ -206,6 +123,9 @@ fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
                 .unwrap_or("")
                 .to_string();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            if let Some(refusal) = policy_refusal(&name) {
+                return Some(tool_error(id, refusal));
+            }
             match tools::dispatch(studio, &name, &args) {
                 Ok(value) => Ok(json!({
                     "content": [{ "type": "text", "text": serde_json::to_string(&value)
@@ -229,6 +149,38 @@ fn handle(studio: &mut Studio, request: &Value) -> Option<Value> {
             "jsonrpc": "2.0", "id": id,
             "error": { "code": code, "message": message }
         }),
+    })
+}
+
+/// Why this tool call is refused by the user's settings, if it is.
+///
+/// The check lives here rather than in `tools::dispatch` so it applies to both modes with one
+/// definition: attached mode never reaches `dispatch` — it forwards to the editor — and a gate
+/// that only guarded the headless path would be a setting that worked when bay was closed.
+fn policy_refusal(tool: &str) -> Option<String> {
+    policy_refusal_with(&bay_settings::store::current().mcp, tool)
+}
+
+/// [`policy_refusal`], against an explicit policy — the form the tests drive, so they never
+/// depend on the settings of whoever is running them.
+fn policy_refusal_with(settings: &bay_settings::McpSettings, tool: &str) -> Option<String> {
+    match bay_settings::mcp::gate(settings, tool) {
+        bay_settings::mcp::Gate::Allow => None,
+        bay_settings::mcp::Gate::Deny(reason) => Some(reason),
+    }
+}
+
+/// A refusal delivered as a tool *result*, not a JSON-RPC error.
+///
+/// Same reasoning as a failing tool: the agent has to read the message and change what it does,
+/// and a protocol-level error is not something it can act on.
+fn tool_error(id: Value, message: String) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id,
+        "result": {
+            "content": [{ "type": "text", "text": message }],
+            "isError": true,
+        }
     })
 }
 
@@ -428,6 +380,9 @@ fn handle_attached(bridge: &bay_agent::AgentBridge, request: &Value) -> Option<V
                     .to_string(),
                 arguments: params.get("arguments").cloned().unwrap_or(json!({})),
             };
+            if let Some(refusal) = policy_refusal(&call.name) {
+                return Some(tool_error(id, refusal));
+            }
             let budget = timeout_for(&call.name);
             let (text, is_error) = match bridge.call(call, budget) {
                 bay_agent::AgentResponse::Ok(value) => (
@@ -686,6 +641,107 @@ pub(crate) mod tests_support {
             result["isError"].as_bool().unwrap_or(false),
             result["content"][0]["text"].as_str().unwrap_or("").into(),
         )
+    }
+}
+
+/// The user's MCP allow-list, where it meets the server.
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use bay_settings::McpSettings;
+
+    /// Shipping the allow-list must not change what any existing agent can do.
+    #[test]
+    fn the_default_policy_refuses_nothing() {
+        let settings = McpSettings::default();
+        for tool in ["project_create", "add_clip", "render", "snapshot"] {
+            assert_eq!(policy_refusal_with(&settings, tool), None, "{tool}");
+        }
+    }
+
+    /// The refusal is a tool *result*, not a JSON-RPC error: an agent can read a result and
+    /// change what it does, and cannot do anything useful with a protocol error.
+    #[test]
+    fn a_blocked_tool_is_refused_as_a_readable_result() {
+        let mut settings = McpSettings::default();
+        settings.block("render");
+        let reason =
+            policy_refusal_with(&settings, "render").expect("a blocked tool must be refused");
+
+        let response = tool_error(json!(7), reason);
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 7);
+        assert!(
+            response.get("error").is_none(),
+            "a policy refusal must not be a protocol error: {response}"
+        );
+        assert_eq!(response["result"]["isError"], true);
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(text.contains("Settings"), "say where to change it: {text}");
+
+        assert_eq!(
+            policy_refusal_with(&settings, "add_clip"),
+            None,
+            "only the blocked tool"
+        );
+    }
+
+    /// Switching the server off in settings must stop every call, not merely hide the listing.
+    #[test]
+    fn a_stopped_server_refuses_every_tool() {
+        let settings = McpSettings {
+            enabled: false,
+            ..McpSettings::default()
+        };
+        for tool in ["project_create", "timeline"] {
+            assert!(policy_refusal_with(&settings, tool).is_some(), "{tool}");
+        }
+        assert!(tools::definitions_with(&settings).is_empty());
+    }
+
+    /// A blocked tool must disappear from `tools/list` too — an agent that can still see it
+    /// plans a job around a call it will be refused at the last step.
+    #[test]
+    fn a_blocked_tool_is_absent_from_the_listing() {
+        let mut settings = McpSettings::default();
+        let all = tools::definitions_with(&settings);
+        assert!(
+            all.len() == tools::all_definitions().len(),
+            "nothing is filtered by default"
+        );
+
+        settings.block("render");
+        let filtered = tools::definitions_with(&settings);
+        assert_eq!(filtered.len(), all.len() - 1);
+        assert!(
+            !filtered
+                .iter()
+                .any(|definition| definition["name"] == "render")
+        );
+        assert!(
+            filtered
+                .iter()
+                .any(|definition| definition["name"] == "project_create")
+        );
+    }
+
+    /// The settings pane draws a switch per tool, and it draws them from this list. If it were
+    /// built from the filtered one, blocking a tool would remove the row that turns it back on.
+    #[test]
+    fn every_tool_has_a_stable_name_for_the_settings_pane() {
+        let names = tools::all_tool_names();
+        assert_eq!(
+            names.len(),
+            tools::all_definitions().len(),
+            "every definition must carry a name"
+        );
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "two tools share a name");
+        assert!(names.iter().any(|name| name == "render"));
     }
 }
 
@@ -1246,6 +1302,116 @@ mod tests {
         )
         .expect("a request gets a response");
         assert_eq!(response["error"]["code"], -32601);
+    }
+
+    /// Speech that arrives already mixed can decline bay's dialogue chain.
+    ///
+    /// `role: "speech"` attached the EQ, compressor and limiter unconditionally. That is right
+    /// for raw dialogue and wrong for a delivered mix: a bed mastered to -13.9 LUFS came back
+    /// from the encode at -19.6 with its loudness range squashed from 5.9 LU to 3.5, because
+    /// the chain ran over work that had already been done. `loudness: false` on the render is
+    /// no defence — the chain hangs off the element, not off the encode.
+    #[test]
+    fn already_mixed_speech_can_decline_the_dialogue_chain() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+        let wav = tests_support::test_library_root().join("mixed-speech.wav");
+        std::fs::create_dir_all(wav.parent().expect("a parent")).expect("scratch directory");
+        let click = bay_audio::sfx::Sfx::by_id("click").expect("bay synthesises a click");
+        let pcm = click.render(bay_audio::sfx::SfxParams {
+            seconds: 0.6,
+            tone: 0.5,
+            level: 0.5,
+        });
+        std::fs::write(&wav, bay_audio::sfx::encode_wav(&pcm)).expect("write a wav");
+        let (is_error, text) = unwrap_call(&call(
+            &mut studio,
+            "media_import",
+            json!({ "path": wav.to_string_lossy(), "id": "m" }),
+        ));
+        assert!(!is_error, "{text}");
+        let media_id = "m".to_string();
+
+        for (process, wants_chain) in [(true, true), (false, false)] {
+            let (is_error, text) = unwrap_call(&call(
+                &mut studio,
+                "add_audio",
+                json!({ "mediaId": media_id, "start": 0.0, "duration": 0.5,
+                        "role": "speech", "processDialogue": process }),
+            ));
+            assert!(!is_error, "{text}");
+            let placed: Value = serde_json::from_str(&text).expect("a JSON body");
+            let id = placed["elementId"].as_str().expect("an element id");
+            let has_chain = studio
+                .project()
+                .active_scene()
+                .tracks
+                .audio
+                .iter()
+                .flat_map(|track| track.elements.iter())
+                .any(|element| match element {
+                    bay_project::Element::Audio(audio) => {
+                        audio.id == id && audio.dialogue_chain.is_some()
+                    }
+                    _ => false,
+                });
+            assert_eq!(
+                has_chain,
+                wants_chain,
+                "processDialogue: {process} should {} the chain",
+                if wants_chain { "attach" } else { "leave off" }
+            );
+        }
+    }
+
+    /// A project may be created at a broadcast frame rate, not just a whole-number one.
+    ///
+    /// The engine has carried a rational `Fps` since the beginning and `FrameRate::FPS_23_976`
+    /// names 24000/1001 outright, but `project_create` pinned the denominator to 1, so the only
+    /// rates reachable over MCP were the whole ones. An agent handed 23.976 footage and asked to
+    /// keep its rate had to round to 24 — which is a conform, drifting a frame every 42 seconds
+    /// and about 86 frames across an hour-long episode. Silently, and only visible once the
+    /// picture has walked off the sound.
+    #[test]
+    fn a_project_can_be_created_at_a_broadcast_frame_rate() {
+        let mut studio = new_studio();
+        let (is_error, text) = unwrap_call(&call(
+            &mut studio,
+            "project_create",
+            json!({ "width": 1920, "height": 1080, "fps": 24000, "fpsDenominator": 1001 }),
+        ));
+        assert!(!is_error, "{text}");
+        let value: Value = serde_json::from_str(&text).expect("a JSON body");
+        assert_eq!(value["frameRate"]["numerator"], 24000);
+        assert_eq!(value["frameRate"]["denominator"], 1001);
+        let fps = value["fps"].as_f64().expect("a numeric fps");
+        assert!(
+            (fps - 24000.0 / 1001.0).abs() < 1e-9,
+            "23.976 must survive the round trip, got {fps}"
+        );
+
+        // The whole-number path is unchanged: no denominator means the numerator is the rate.
+        let (is_error, text) = unwrap_call(&call(
+            &mut studio,
+            "project_create",
+            json!({ "width": 1080, "height": 1920, "fps": 30 }),
+        ));
+        assert!(!is_error, "{text}");
+        let value: Value = serde_json::from_str(&text).expect("a JSON body");
+        assert_eq!(value["fps"].as_f64(), Some(30.0));
+        assert_eq!(value["frameRate"]["denominator"], 1);
+    }
+
+    /// A denominator of zero is a refusal, not a divide by zero.
+    #[test]
+    fn a_zero_frame_rate_denominator_is_refused() {
+        let mut studio = new_studio();
+        let (is_error, _) = unwrap_call(&call(
+            &mut studio,
+            "project_create",
+            json!({ "fps": 24000, "fpsDenominator": 0 }),
+        ));
+        assert!(is_error, "a zero denominator must be refused");
     }
 
     #[test]

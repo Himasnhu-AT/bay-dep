@@ -215,7 +215,19 @@ impl Studio {
     /// A studio whose pathless saves land in `root` instead of the user's project library.
     pub fn with_library_root(library_root: Option<std::path::PathBuf>) -> Self {
         Self {
-            editor: Editor::new(empty_project("Untitled", 1080, 1920, 30, "#000000", None)),
+            editor: Editor::new(empty_project(
+                "Untitled",
+                CanvasSize {
+                    width: 1080,
+                    height: 1920,
+                },
+                Fps {
+                    numerator: 30,
+                    denominator: 1,
+                },
+                "#000000",
+                None,
+            )),
             renderer: None,
             renderer_unavailable: None,
             text_probe: bay_text::TextRaster::new(),
@@ -479,38 +491,36 @@ impl Studio {
     pub fn project_create(
         &mut self,
         name: &str,
-        width: u32,
-        height: u32,
-        fps: u32,
+        canvas: CanvasSize,
+        fps: Fps,
         background: Option<&str>,
         choice: KitChoice,
     ) -> ToolResult {
+        let (width, height) = (canvas.width, canvas.height);
         if width == 0 || height == 0 {
             return Err(err("canvas width and height must both be non-zero"));
         }
-        if fps == 0 {
+        if fps.numerator == 0 {
             return Err(err("fps must be at least 1"));
+        }
+        if fps.denominator == 0 {
+            return Err(err("fpsDenominator must be at least 1"));
         }
         let (kit, alternatives) = self.resolve_kit(&choice)?;
         // The ground is the kit's, unless the caller insisted. A background chosen apart from the
         // palette is exactly the "five colours, none of them a decision" state that the kit
         // exists to close, so it is reported back rather than accepted silently.
         let ground = background.unwrap_or(&kit.palette.bg).to_string();
-        self.editor.load_project(empty_project(
-            name,
-            width,
-            height,
-            fps,
-            &ground,
-            Some(kit.clone()),
-        ));
+        self.editor
+            .load_project(empty_project(name, canvas, fps, &ground, Some(kit.clone())));
         self.next_id = 1;
         self.critic_panels.clear();
         self.record_kit(&kit.id);
         let mut out = serde_json::json!({
             "name": name,
             "canvas": { "width": width, "height": height },
-            "fps": fps,
+            "fps": self.editor.project().settings.fps.as_f64(),
+            "frameRate": { "numerator": fps.numerator, "denominator": fps.denominator },
             "background": ground,
             "kit": describe_kit(&kit),
             "alternatives": alternatives,
@@ -1409,6 +1419,7 @@ impl Studio {
                 range.start_seconds,
                 ElementSource::Tool,
                 AudioRole::Speech,
+                true,
             )?;
             placed.push(serde_json::json!({
                 "timelineStart": at,
@@ -1867,6 +1878,7 @@ impl Studio {
         trim_start: f64,
         source: ElementSource,
         role: AudioRole,
+        process_dialogue: bool,
     ) -> ToolResult {
         self.require_media(&media_id)?;
         if duration <= 0.0 {
@@ -1889,7 +1901,13 @@ impl Studio {
             speed: 1.0,
             prosody: (source == ElementSource::Tool && role == AudioRole::Speech)
                 .then(bay_project::SpeechProsody::default),
-            dialogue_chain: (role == AudioRole::Speech)
+            // Speech gets the EQ/compressor/limiter chain, because raw dialogue always wants
+            // it. Not unconditionally, though: a bed that arrives already mixed and levelled
+            // is dialogue too, and running the chain over it a second time is what took a mix
+            // mastered to -13.9 LUFS down to -19.6 with its loudness range squashed from 5.9
+            // to 3.5. `loudness: false` on the export cannot prevent that — the chain is a
+            // property of the element, not of the encode.
+            dialogue_chain: (role == AudioRole::Speech && process_dialogue)
                 .then(bay_project::DialogueAudioChain::default),
             trim_start: secs(trim_start)?,
             animations: BTreeMap::new(),
@@ -2083,6 +2101,8 @@ impl Studio {
             0.0,
             ElementSource::Author,
             AudioRole::Sfx,
+            // Not speech, so the chain does not apply either way.
+            true,
         )?;
         Ok(serde_json::json!({
             "sound": sound.id,
@@ -2169,6 +2189,8 @@ impl Studio {
             0.0,
             ElementSource::Author,
             AudioRole::Sfx,
+            // Not speech, so the chain does not apply either way.
+            true,
         )?;
         Ok(serde_json::json!({
             "sfx": effect.id,
@@ -2886,22 +2908,12 @@ fn describe_element(element: &Element) -> serde_json::Value {
 /// `Project::starter()` demo scene would otherwise leave placeholder blocks in the render.
 fn empty_project(
     name: &str,
-    width: u32,
-    height: u32,
-    fps: u32,
+    canvas: CanvasSize,
+    fps: Fps,
     background: &str,
     kit: Option<StyleKit>,
 ) -> Project {
-    let mut project = Project::empty(
-        &fresh_project_id(),
-        name,
-        CanvasSize { width, height },
-        Fps {
-            numerator: fps,
-            denominator: 1,
-        },
-        background,
-    );
+    let mut project = Project::empty(&fresh_project_id(), name, canvas, fps, background);
     project.settings.kit = kit;
     project
 }

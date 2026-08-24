@@ -16,6 +16,13 @@ use crate::track::{Track, TrackKind, Tracks};
 pub struct ProjectMetadata {
     pub id: String,
     pub name: String,
+    /// How the project is filed in the launcher: its stage, and the user's tags.
+    ///
+    /// `#[serde(default)]` because every project written before this field existed must still
+    /// load, and the default — in progress, untagged — is the honest reading of a project
+    /// nobody filed.
+    #[serde(default)]
+    pub shelf: crate::shelf::Shelf,
 }
 
 /// An imported media file the timeline references by id (image/video/audio on disk).
@@ -526,6 +533,7 @@ impl Project {
             metadata: ProjectMetadata {
                 id: "project-1".into(),
                 name: "Untitled".into(),
+                shelf: crate::shelf::Shelf::default(),
             },
             settings: ProjectSettings::default(),
             scenes: vec![scene],

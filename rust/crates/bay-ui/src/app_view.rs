@@ -9,12 +9,10 @@
 //! every time someone goes back to the list.
 
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, rgb, Context, Div, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription,
-    Window,
+    div, rgb, Context, Div, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription, Window,
 };
 
 use bay_core::project::{CanvasSize, Fps, ProjectLibrary, ProjectSummary};
@@ -22,8 +20,9 @@ use bay_core::Editor;
 use bay_preview::PreviewRenderer;
 
 use crate::editor_view::{legacy_project_path, EditorView, EditorViewEvent};
+use crate::input::{Edit, TextField};
+use crate::settings_model::Pane;
 use crate::theme;
-use crate::view_model::{HomeViewModel, ProjectCard};
 
 /// Canvas defaults offered when creating a project. Two presets cover almost everything people
 /// actually make: a 16:9 landscape video and a 9:16 vertical reel.
@@ -32,23 +31,111 @@ const PRESETS: [(&str, u32, u32); 2] = [
     ("9:16 · 1080×1920", 1080, 1920),
 ];
 
+/// The label for a preset index, clamped. The launcher renders it; the shell owns the list.
+pub(crate) fn preset_label(index: usize) -> &'static str {
+    PRESETS[index.min(PRESETS.len() - 1)].0
+}
+
+pub(crate) fn next_preset(index: usize) -> usize {
+    (index + 1) % PRESETS.len()
+}
+
+/// Which screen the shell is showing, when it is not showing the editor.
+///
+/// The editor is tracked separately (`showing_editor`) because it owns a view that outlives any
+/// one visit to it, and because an agent tool call has to know whether a document is on screen.
+///
+/// **Login is not a gate.** It is a screen you can reach from the account pane, not one you
+/// must pass through: bay edits local files and works with no account at all. Making it the
+/// first screen would turn a local video editor into something that asks a server for
+/// permission to open your own project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    Launcher,
+    Settings,
+    SignIn,
+}
+
+/// The three files the shell owns, resolved once.
+#[derive(Debug, Clone, Default)]
+pub struct ShellPaths {
+    /// `None` when there is no data directory — a container with no home.
+    pub settings: Option<bay_settings::Store>,
+    pub keys: Option<PathBuf>,
+    pub token: Option<PathBuf>,
+}
+
+impl ShellPaths {
+    /// The real locations, under bay's per-user data directory.
+    pub fn detect() -> Self {
+        Self {
+            settings: bay_settings::Store::default_location(),
+            keys: bay_settings::keys::default_path(),
+            token: bay_settings::token::default_path(),
+        }
+    }
+
+    /// Everything under one directory. What tests use.
+    pub fn under(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        Self {
+            settings: Some(bay_settings::Store::at(root.join("settings.json"))),
+            keys: Some(root.join("provider-keys.json")),
+            token: Some(root.join("mcp-token")),
+        }
+    }
+}
+
 pub struct BayApp {
     /// `None` when the projects directory could not be opened; `library_error` says why.
-    library: Option<ProjectLibrary>,
-    library_error: Option<String>,
-    projects: Vec<ProjectSummary>,
+    pub(crate) library: Option<ProjectLibrary>,
+    pub(crate) library_error: Option<String>,
+    pub(crate) projects: Vec<ProjectSummary>,
     editor: Option<Entity<EditorView>>,
     /// Handed to the editor the first time a project is opened.
     preview: Option<PreviewRenderer>,
     /// Kept alive so the editor's close events keep arriving.
     _editor_subscription: Option<Subscription>,
-    showing_editor: bool,
+    pub(crate) showing_editor: bool,
+    pub(crate) screen: Screen,
     /// The in-progress "new project" name, and which canvas preset it will use.
-    new_name: Option<String>,
-    new_preset: usize,
+    pub(crate) new_name: Option<TextField>,
+    pub(crate) new_preset: usize,
+    /// Everything the settings screen edits, and where it is persisted. `None` store means
+    /// there is no data directory — changes still work for this session and say they will not
+    /// be kept, rather than failing silently.
+    pub(crate) settings: bay_settings::Settings,
+    pub(crate) settings_store: Option<bay_settings::Store>,
+    pub(crate) settings_pane: Pane,
+    /// A complaint about the settings file itself, shown once at the top of the screen.
+    pub(crate) settings_complaint: Option<String>,
+    /// The agent credential, read from the same file `bay --mcp` uses.
+    pub(crate) mcp_token: Option<String>,
+    /// The provider whose key is being typed, and the buffer.
+    pub(crate) keying: Option<(String, TextField)>,
+    /// Narrows the MCP tool list. bay exposes about ninety tools; a grid of ninety switches
+    /// with no filter is a wall, not a control.
+    pub(crate) tool_filter: TextField,
+    /// The project whose status/tag menu is open.
+    pub(crate) menu_for: Option<String>,
+    /// The project a custom tag is being typed for, and the buffer.
+    pub(crate) tagging: Option<(String, TextField)>,
+    /// What happened the last time someone pressed Sign in.
+    pub(crate) sign_in_note: Option<String>,
+    /// Where this shell keeps settings, provider keys and the agent token.
+    ///
+    /// Held as a struct rather than reached for at each call site so a test can point the whole
+    /// shell at a temporary directory. Without it every settings test would read — and write —
+    /// the developer's own configuration, which is both rude and the kind of shared state that
+    /// makes a failure depend on who ran the suite.
+    pub(crate) paths: ShellPaths,
+    /// Whether a GPU adapter was found at launch. Captured here because `preview` is handed to
+    /// the editor the first time a project opens, and the compute pane must still be able to
+    /// say whether this Mac can composite.
+    pub(crate) gpu_available: bool,
     /// The project a delete button has been clicked on once — clicking again confirms.
-    pending_delete: Option<String>,
-    status: Option<String>,
+    pub(crate) pending_delete: Option<String>,
+    pub(crate) status: Option<String>,
     focus_handle: FocusHandle,
     needs_focus: bool,
     /// The port this window serves agent calls on, so the registry note can name the project
@@ -462,6 +549,31 @@ impl BayApp {
         preview: Option<PreviewRenderer>,
         focus_handle: FocusHandle,
     ) -> Self {
+        Self::over_at(library, preview, focus_handle, ShellPaths::detect())
+    }
+
+    /// [`BayApp::over`], with the settings, key and token files somewhere explicit.
+    pub fn over_at(
+        library: Option<ProjectLibrary>,
+        preview: Option<PreviewRenderer>,
+        focus_handle: FocusHandle,
+        paths: ShellPaths,
+    ) -> Self {
+        // Read before the view exists, so the first frame draws the user's real settings rather
+        // than the defaults followed by a flicker.
+        let settings_store = paths.settings.clone();
+        let (settings, settings_complaint) = match &settings_store {
+            Some(store) => store.load_or_default(),
+            None => (
+                bay_settings::Settings::default(),
+                Some(
+                    "bay could not find a data directory, so settings changed here will not be \
+                     kept after you quit."
+                        .to_string(),
+                ),
+            ),
+        };
+        let gpu_available = preview.is_some();
         let mut app = Self {
             library,
             library_error: None,
@@ -470,6 +582,7 @@ impl BayApp {
             preview,
             _editor_subscription: None,
             showing_editor: false,
+            screen: Screen::Launcher,
             new_name: None,
             new_preset: 0,
             pending_delete: None,
@@ -477,6 +590,21 @@ impl BayApp {
             focus_handle,
             needs_focus: true,
             agent_port: None,
+            settings,
+            settings_store,
+            settings_pane: Pane::Account,
+            settings_complaint,
+            mcp_token: paths
+                .token
+                .as_ref()
+                .and_then(|path| bay_settings::token::read_or_create(path).ok()),
+            keying: None,
+            tool_filter: TextField::new("filter tools"),
+            menu_for: None,
+            tagging: None,
+            sign_in_note: None,
+            paths,
+            gpu_available,
         };
         // No legacy adoption here — that reads a file in the real home directory, which is
         // exactly what a test handed its own library must not do. `new` does it.
@@ -519,7 +647,7 @@ impl BayApp {
         }
     }
 
-    fn create_project(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub(crate) fn create_project(&mut self, name: &str, cx: &mut Context<Self>) {
         let Some(library) = self.library.as_ref() else {
             self.status = Some("No project library available.".into());
             return;
@@ -541,7 +669,7 @@ impl BayApp {
         }
     }
 
-    fn open_project(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn open_project(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(library) = self.library.as_ref() else {
             return;
         };
@@ -568,7 +696,7 @@ impl BayApp {
     }
 
     /// Bring a project file that lives outside the library into it.
-    fn import_project(&mut self) {
+    pub(crate) fn import_project(&mut self) {
         let Some(library) = self.library.as_ref() else {
             return;
         };
@@ -635,40 +763,357 @@ impl BayApp {
         cx.notify();
     }
 
-    /// Keystrokes while the new-project name field is open. Enter creates, Escape cancels.
-    fn handle_name_key(&mut self, keystroke: &gpui::Keystroke, cx: &mut Context<Self>) {
-        match keystroke.key.as_str() {
-            "enter" => {
-                if let Some(name) = self.new_name.clone() {
+    /// Whichever text field is open, if any.
+    ///
+    /// One dispatcher rather than a handler per field: the shell has four typed buffers and
+    /// exactly one of them can be focused at a time, so "which one gets this keystroke" is a
+    /// question with a single answer and belongs in a single place.
+    /// The clipboard as a single line of text, or nothing if it holds no text.
+    ///
+    /// Split out so the four fields below share one answer, and so a paste into a field that is
+    /// not focused cannot reach the clipboard at all.
+    fn clipboard_text(cx: &mut Context<Self>) -> Option<String> {
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .filter(|text| !text.is_empty())
+    }
+
+    pub(crate) fn route_key(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let command = keystroke.modifiers.platform || keystroke.modifiers.control;
+        let key = keystroke.key.as_str();
+        let character = keystroke.key_char.as_deref();
+
+        if let Some((provider, field)) = self.keying.as_mut() {
+            let provider = provider.clone();
+            return match field.key(key, character, command) {
+                Edit::Submit => {
+                    let value = field.value().to_string();
+                    self.store_key(&provider, &value);
+                    self.keying = None;
+                    true
+                }
+                Edit::Cancel => {
+                    self.keying = None;
+                    true
+                }
+                Edit::Changed => true,
+                Edit::Paste => {
+                    if let Some(text) = Self::clipboard_text(cx) {
+                        if let Some((_, field)) = self.keying.as_mut() {
+                            field.paste(&text);
+                        }
+                    }
+                    true
+                }
+                Edit::Ignored => false,
+            };
+        }
+
+        if let Some((project, field)) = self.tagging.as_mut() {
+            let project = project.clone();
+            return match field.key(key, character, command) {
+                Edit::Submit => {
+                    let tag = field.trimmed().to_string();
+                    self.file_project(&project, move |shelf| shelf.add_tag(&tag));
+                    self.tagging = None;
+                    true
+                }
+                Edit::Cancel => {
+                    self.tagging = None;
+                    true
+                }
+                Edit::Changed => true,
+                Edit::Paste => {
+                    if let Some(text) = Self::clipboard_text(cx) {
+                        if let Some((_, field)) = self.tagging.as_mut() {
+                            field.paste(&text);
+                        }
+                    }
+                    true
+                }
+                Edit::Ignored => false,
+            };
+        }
+
+        if let Some(field) = self.new_name.as_mut() {
+            return match field.key(key, character, command) {
+                Edit::Submit => {
+                    let name = field.value().to_string();
                     self.create_project(&name, cx);
+                    true
                 }
-            }
-            "escape" => self.new_name = None,
-            "backspace" => {
-                if let Some(buffer) = self.new_name.as_mut() {
-                    buffer.pop();
+                Edit::Cancel => {
+                    self.new_name = None;
+                    true
                 }
-            }
-            "space" => {
-                if let Some(buffer) = self.new_name.as_mut() {
-                    buffer.push(' ');
+                Edit::Changed => true,
+                Edit::Paste => {
+                    if let Some(text) = Self::clipboard_text(cx) {
+                        if let Some(field) = self.new_name.as_mut() {
+                            field.paste(&text);
+                        }
+                    }
+                    true
                 }
-            }
-            _ => {
-                if let (Some(buffer), Some(ch)) =
-                    (self.new_name.as_mut(), keystroke.key_char.as_ref())
-                {
-                    buffer.push_str(ch);
+                Edit::Ignored => false,
+            };
+        }
+
+        // The tool filter has no open/closed state — it is always live on the MCP pane, so it
+        // is the last thing offered a keystroke rather than the first.
+        if self.screen == Screen::Settings && self.settings_pane == Pane::Mcp {
+            return match self.tool_filter.key(key, character, command) {
+                Edit::Cancel => {
+                    self.tool_filter.clear();
+                    true
                 }
-            }
+                Edit::Changed => true,
+                Edit::Paste => {
+                    if let Some(text) = Self::clipboard_text(cx) {
+                        self.tool_filter.paste(&text);
+                    }
+                    true
+                }
+                Edit::Submit | Edit::Ignored => false,
+            };
+        }
+
+        // Escape closes a project's status menu when nothing is being typed into.
+        if key == "escape" && self.menu_for.is_some() {
+            self.menu_for = None;
+            return true;
+        }
+        false
+    }
+
+    // ---- settings -----------------------------------------------------------------------
+
+    /// Persist the settings, and say so if that could not happen.
+    ///
+    /// Every mutation goes through here rather than writing at quit: an MCP allow-list that is
+    /// only saved on a clean exit is one a crash silently reverts, and the user would have no
+    /// way to know a tool they blocked is answering again.
+    pub(crate) fn save_settings(&mut self) {
+        let Some(store) = self.settings_store.clone() else {
+            self.settings_complaint =
+                Some("bay has no data directory, so this change lasts only until you quit.".into());
+            // Still publish, so an MCP server in this process honours it for this session.
+            bay_settings::store::publish(self.settings.clone());
+            return;
+        };
+        match store.save(&self.settings) {
+            Ok(()) => self.settings_complaint = None,
+            Err(error) => self.settings_complaint = Some(error.to_string()),
         }
     }
 
-    fn shared(text: impl Into<String>) -> SharedString {
+    /// Store a provider key in the owner-only key file, and record its hint in the settings.
+    ///
+    /// The key itself never reaches `self.settings`, so it cannot end up in `settings.json`.
+    pub(crate) fn store_key(&mut self, provider_id: &str, key: &str) {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            self.settings_complaint = Some("That key was empty, so nothing was saved.".into());
+            return;
+        }
+        let Some(path) = self.paths.keys.clone() else {
+            self.settings_complaint =
+                Some("bay has no data directory to keep a key in, so it was not saved.".into());
+            return;
+        };
+        if let Err(error) = bay_settings::keys::put(&path, provider_id, trimmed) {
+            self.settings_complaint = Some(error.to_string());
+            return;
+        }
+        let hint = bay_settings::providers::KeyHint::of(trimmed);
+        if let Err(error) = self.settings.providers.set_key_hint(provider_id, hint) {
+            self.settings_complaint = Some(error.to_string());
+            return;
+        }
+        self.save_settings();
+    }
+
+    /// Try to sign in. There is no service, so this reports why rather than pretending.
+    pub(crate) fn begin_sign_in(&mut self) {
+        use bay_settings::account::AccountService;
+        match bay_settings::account::Unconfigured.begin_sign_in() {
+            Ok(handoff) => {
+                self.sign_in_note = Some(format!("Approve the request at {}", handoff.url));
+            }
+            Err(error) => self.sign_in_note = Some(error.to_string()),
+        }
+    }
+
+    pub(crate) fn sign_out(&mut self) {
+        self.settings.session = bay_settings::Session::Offline;
+        self.sign_in_note = None;
+        self.save_settings();
+    }
+
+    // ---- settings actions ---------------------------------------------------------------
+
+    pub(crate) fn add_provider(&mut self, id: &str) {
+        let Some(entry) = bay_settings::providers::catalog_entry(id) else {
+            return;
+        };
+        self.settings
+            .providers
+            .upsert(bay_settings::Provider::from_catalog(entry));
+        self.save_settings();
+    }
+
+    /// Remove a provider, and forget its key with it.
+    ///
+    /// Leaving the key behind would mean re-adding the row silently restores a credential the
+    /// user thought they had deleted.
+    pub(crate) fn forget_provider(&mut self, id: &str) {
+        if let Some(path) = self.paths.keys.clone() {
+            let _ = bay_settings::keys::forget(&path, id);
+        }
+        self.settings.providers.remove(id);
+        if self.keying.as_ref().is_some_and(|(open, _)| open == id) {
+            self.keying = None;
+        }
+        self.save_settings();
+    }
+
+    pub(crate) fn route_component(
+        &mut self,
+        component: &str,
+        location: bay_settings::models::RunLocation,
+    ) {
+        let available = bay_settings::compute::cloud_available();
+        match self.settings.models.route(component, location, available) {
+            Ok(()) => {
+                self.settings_complaint = None;
+                self.save_settings();
+            }
+            Err(error) => self.settings_complaint = Some(error.to_string()),
+        }
+    }
+
+    pub(crate) fn choose_compute(&mut self, mode: bay_settings::compute::ComputeMode) {
+        match self.settings.compute.choose(mode) {
+            Ok(()) => {
+                self.settings_complaint = None;
+                self.save_settings();
+            }
+            Err(error) => self.settings_complaint = Some(error.to_string()),
+        }
+    }
+
+    pub(crate) fn choose_plan(&mut self, id: &str) {
+        match self.settings.compute.choose_plan(id) {
+            Ok(()) => {
+                self.settings_complaint = None;
+                self.save_settings();
+            }
+            Err(error) => self.settings_complaint = Some(error.to_string()),
+        }
+    }
+
+    /// Replace the agent credential. A real revocation, so the pane says what it broke.
+    pub(crate) fn rotate_token(&mut self) {
+        let Some(path) = self.paths.token.clone() else {
+            self.settings_complaint =
+                Some("bay has no data directory, so there is no token to rotate.".into());
+            return;
+        };
+        match bay_settings::token::rotate(&path) {
+            Ok(token) => {
+                self.mcp_token = Some(token);
+                self.settings_complaint = Some(
+                    "Token rotated. Every client configured with the old one must be updated \
+                     with the snippet below before it can reach bay again."
+                        .into(),
+                );
+            }
+            Err(error) => self.settings_complaint = Some(format!("Could not rotate: {error}")),
+        }
+    }
+
+    /// Install, cancel or remove a runtime component. All three are real operations on
+    /// `bay-provision`; none of them is a simulated progress bar.
+    pub(crate) fn run_model_action(
+        &mut self,
+        component: &str,
+        action: crate::settings_model::ModelAction,
+    ) {
+        use crate::settings_model::ModelAction;
+        match action {
+            ModelAction::Install => match bay_provision::jobs::start(component) {
+                Ok(_) => self.settings_complaint = None,
+                Err(error) => self.settings_complaint = Some(error.to_string()),
+            },
+            ModelAction::Cancel => {
+                match bay_provision::jobs::running_for(component) {
+                    Some(job) => {
+                        bay_jobs::cancel(job);
+                        // Checked between artifacts, so a cancel lands at the next boundary
+                        // rather than instantly. Saying so beats a button that looks stuck.
+                        self.settings_complaint = Some(
+                            "Asked the install to stop — it finishes the file it is on first."
+                                .into(),
+                        );
+                    }
+                    None => self.settings_complaint = Some("That install already finished.".into()),
+                }
+            }
+            ModelAction::Remove => match bay_provision::remove(component) {
+                Ok(removal) => {
+                    self.settings_complaint = Some(format!(
+                        "Removed {} — {} freed.",
+                        component,
+                        bay_provision::human_bytes(removal.bytes)
+                    ))
+                }
+                Err(error) => self.settings_complaint = Some(error.to_string()),
+            },
+            ModelAction::None => {}
+        }
+    }
+
+    /// The avatar's letter: the account's, or the machine's when there is no account.
+    pub(crate) fn account_initial(&self) -> String {
+        match self.settings.session.account() {
+            Some(account) => account.initial(),
+            None => bay_settings::account::LocalIdentity::detect().initial(),
+        }
+    }
+
+    /// First click arms the delete button, second carries it out.
+    pub(crate) fn confirm_or_delete(&mut self, id: &str) {
+        if self.pending_delete.as_deref() == Some(id) {
+            self.delete_project(id);
+        } else {
+            self.pending_delete = Some(id.to_string());
+        }
+    }
+
+    /// Change how a project is filed, and refresh the list so the card redraws.
+    pub(crate) fn file_project(
+        &mut self,
+        id: &str,
+        edit: impl FnOnce(&mut bay_core::Shelf) -> bool,
+    ) {
+        let Some(library) = self.library.as_ref() else {
+            return;
+        };
+        match library.file_project(id, edit) {
+            Ok(_) => self.refresh(),
+            Err(error) => self.status = Some(format!("Could not update that project: {error}")),
+        }
+    }
+
+    pub(crate) fn shared(text: impl Into<String>) -> SharedString {
         SharedString::from(text.into())
     }
 
-    fn button(
+    pub(crate) fn button(
         &self,
         id: &'static str,
         label: impl Into<String>,
@@ -693,269 +1138,6 @@ impl BayApp {
                 handler(this, cx);
                 cx.notify();
             }))
-    }
-
-    fn header(&self, count: usize, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .mb_6()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().text_2xl().text_color(rgb(theme::TEXT)).child("bay"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(theme::MUTED))
-                            .child(Self::shared(match count {
-                                0 => "No projects yet".to_string(),
-                                1 => "1 project".to_string(),
-                                n => format!("{n} projects"),
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(self.button("import", "Open File…", false, cx, |this, _cx| {
-                        this.import_project()
-                    }))
-                    .child(self.button("new", "New Project", true, cx, |this, _cx| {
-                        this.new_name = Some(String::new());
-                    })),
-            )
-    }
-
-    /// The inline name field shown after "New Project" — a typed buffer, like the editor's
-    /// text-clip editing, rather than a modal dialog.
-    fn new_project_row(&self, name: &str, cx: &mut Context<Self>) -> Div {
-        let preset_label = PRESETS[self.new_preset.min(PRESETS.len() - 1)].0;
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .mb_4()
-            .p_4()
-            .rounded_lg()
-            .bg(rgb(theme::PANEL))
-            .border_1()
-            .border_color(rgb(theme::ACCENT))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child("NEW PROJECT — type a name, Enter to create, Esc to cancel"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(theme::LANE))
-                            .text_color(rgb(if name.is_empty() {
-                                theme::MUTED
-                            } else {
-                                theme::TEXT
-                            }))
-                            .child(Self::shared(if name.is_empty() {
-                                "Untitled".to_string()
-                            } else {
-                                format!("{name}|")
-                            })),
-                    )
-                    .child(self.button("preset", preset_label, false, cx, |this, _cx| {
-                        this.new_preset = (this.new_preset + 1) % PRESETS.len();
-                    }))
-                    .child(self.button("create", "Create", true, cx, |this, cx| {
-                        if let Some(name) = this.new_name.clone() {
-                            this.create_project(&name, cx);
-                        }
-                    })),
-            )
-    }
-
-    fn project_row(&self, card: &ProjectCard, cx: &mut Context<Self>) -> Div {
-        let id = card.id.clone();
-        let open_id = card.id.clone();
-        let confirming = self.pending_delete.as_deref() == Some(card.id.as_str());
-
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_4()
-            .mb_2()
-            .p_4()
-            .rounded_lg()
-            .bg(rgb(theme::PANEL))
-            .border_1()
-            .border_color(rgb(theme::BORDER))
-            .child(
-                div()
-                    .id(SharedString::from(format!("open-{open_id}")))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .flex_1()
-                    .child(
-                        div()
-                            .text_lg()
-                            .text_color(rgb(theme::TEXT))
-                            .child(Self::shared(card.name.clone())),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme::MUTED))
-                            .child(Self::shared(card.detail.clone())),
-                    )
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.open_project(&open_id, cx);
-                    })),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(theme::TEXT))
-                            .child(Self::shared(card.duration.clone())),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme::MUTED))
-                            .child(Self::shared(card.modified.clone())),
-                    ),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("delete-{id}")))
-                    .px_3()
-                    .py_2()
-                    .rounded_md()
-                    .bg(rgb(if confirming {
-                        0x7a2f3a
-                    } else {
-                        theme::PANEL_ALT
-                    }))
-                    .text_sm()
-                    .text_color(rgb(if confirming { 0xffdde3 } else { theme::MUTED }))
-                    .child(if confirming { "Confirm" } else { "Delete" })
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        if this.pending_delete.as_deref() == Some(id.as_str()) {
-                            this.delete_project(&id);
-                        } else {
-                            this.pending_delete = Some(id.clone());
-                        }
-                        cx.notify();
-                    })),
-            )
-    }
-
-    fn empty_state(&self) -> Div {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .py_16()
-            .rounded_lg()
-            .border_1()
-            .border_color(rgb(theme::BORDER))
-            .child(div().text_color(rgb(theme::TEXT)).child("No projects yet"))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme::MUTED))
-                    .child("Create one to start editing, or open an existing project file."),
-            )
-    }
-
-    fn home(&mut self, cx: &mut Context<Self>) -> Div {
-        let vm = HomeViewModel::build(&self.projects, SystemTime::now());
-        let rows: Vec<Div> = vm
-            .projects
-            .iter()
-            .map(|card| self.project_row(card, cx))
-            .collect();
-
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .bg(rgb(theme::BG))
-            .text_color(rgb(theme::TEXT))
-            .track_focus(&self.focus_handle)
-            .key_context("Home")
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                if this.new_name.is_some() {
-                    this.handle_name_key(&event.keystroke, cx);
-                    cx.notify();
-                }
-            }))
-            .child(
-                div()
-                    .id("home-scroll")
-                    .w(px(880.0))
-                    .max_w_full()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .px_8()
-                    .py_10()
-                    .overflow_y_scroll()
-                    .child(self.header(self.projects.len(), cx))
-                    .children(
-                        self.library_error.clone().map(|error| {
-                            self.notice(format!("Project library unavailable: {error}"))
-                        }),
-                    )
-                    .children(self.status.clone().map(|message| self.notice(message)))
-                    .children(
-                        self.new_name
-                            .clone()
-                            .map(|name| self.new_project_row(&name, cx)),
-                    )
-                    .child(if rows.is_empty() {
-                        self.empty_state()
-                    } else {
-                        div().flex().flex_col().children(rows)
-                    }),
-            )
-    }
-
-    fn notice(&self, message: String) -> Div {
-        div()
-            .mb_4()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .bg(rgb(theme::PANEL_ALT))
-            .text_sm()
-            .text_color(rgb(theme::TEXT))
-            .child(Self::shared(message))
     }
 }
 
@@ -988,7 +1170,25 @@ impl Render for BayApp {
             self.needs_focus = false;
             window.focus(&self.focus_handle);
         }
-        root.child(self.home(cx))
+
+        // Every non-editor screen shares one focus handle and one key route, because exactly
+        // one of them is on screen and exactly one text field within it can be open.
+        let shell = div()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .key_context("Shell")
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                if this.route_key(&event.keystroke, cx) {
+                    cx.notify();
+                }
+            }));
+
+        let screen = match self.screen {
+            Screen::Launcher => self.launcher(cx),
+            Screen::Settings => self.settings_screen(cx),
+            Screen::SignIn => self.sign_in_screen(cx),
+        };
+        root.child(shell.child(screen))
     }
 }
 
@@ -997,6 +1197,7 @@ mod tests {
     use super::*;
     use bay_core::project::CanvasSize;
     use gpui::TestAppContext;
+    use std::time::SystemTime;
 
     /// A library of its own for each test — never the developer's real one.
     pub(super) fn library(tag: &str) -> ProjectLibrary {
@@ -1008,10 +1209,21 @@ mod tests {
             .unwrap()
     }
 
+    /// A data directory of its own for each test. Every settings, key and token write lands
+    /// there, so a test can never read — or rewrite — the developer's real configuration.
+    pub(super) fn data_root(tag: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("bay-app-data-{tag}-{stamp}"))
+    }
+
     pub(super) fn app(cx: &mut TestAppContext, library: ProjectLibrary) -> Entity<BayApp> {
+        let paths = ShellPaths::under(data_root("shared"));
         cx.update(|cx| {
             let focus = cx.focus_handle();
-            cx.new(|_| BayApp::over(Some(library), None, focus))
+            cx.new(|_| BayApp::over_at(Some(library), None, focus, paths))
         })
     }
 
@@ -1025,7 +1237,14 @@ mod tests {
         let preview = PreviewRenderer::new()?;
         Some(cx.update(|cx| {
             let focus = cx.focus_handle();
-            cx.new(|_| BayApp::over(Some(library), Some(preview), focus))
+            cx.new(|_| {
+                BayApp::over_at(
+                    Some(library),
+                    Some(preview),
+                    focus,
+                    ShellPaths::under(data_root("gpu")),
+                )
+            })
         }))
     }
 
@@ -1201,6 +1420,448 @@ mod tests {
         let app = app(cx, library.clone());
         app.update(cx, |app, cx| app.create_project("   ", cx));
         assert_eq!(library.list().unwrap()[0].name, "Untitled");
+    }
+}
+
+/// The screens the shell routes between, and the settings they change.
+#[cfg(test)]
+mod shell_tests {
+    use super::tests::{data_root, library};
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn shell(cx: &mut TestAppContext, tag: &str) -> (Entity<BayApp>, ShellPaths) {
+        let paths = ShellPaths::under(data_root(tag));
+        let library = library(tag);
+        let entity = {
+            let paths = paths.clone();
+            cx.update(|cx| {
+                let focus = cx.focus_handle();
+                cx.new(|_| BayApp::over_at(Some(library), None, focus, paths))
+            })
+        };
+        (entity, paths)
+    }
+
+    fn keystroke(key: &str) -> gpui::Keystroke {
+        gpui::Keystroke {
+            modifiers: Default::default(),
+            key: key.to_string(),
+            key_char: (key.chars().count() == 1).then(|| key.to_string()),
+        }
+    }
+
+    /// The load-bearing one. bay is a local editor: it must open on the user's projects, not on
+    /// a screen asking a server for permission to show them.
+    #[gpui::test]
+    fn the_app_opens_on_the_launcher_not_on_a_sign_in_screen(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "opens");
+        app.update(cx, |app, _| {
+            assert_eq!(app.screen, Screen::Launcher);
+            assert!(!app.showing_editor);
+            assert!(
+                !app.settings.session.is_signed_in(),
+                "and it is offline, which is the working state"
+            );
+        });
+    }
+
+    /// Nothing about editing may depend on an account.
+    #[gpui::test]
+    fn a_project_opens_with_no_account(cx: &mut TestAppContext) {
+        let paths = ShellPaths::under(data_root("ungated"));
+        let library = library("ungated");
+        let project = library
+            .create("Reel", CanvasSize::default(), Fps::default())
+            .unwrap();
+        let app = {
+            let paths = paths.clone();
+            cx.update(|cx| {
+                let focus = cx.focus_handle();
+                cx.new(|_| BayApp::over_at(Some(library), None, focus, paths))
+            })
+        };
+        app.update(cx, |app, cx| {
+            assert!(!app.settings.session.is_signed_in());
+            app.open_project(&project.metadata.id, cx);
+            assert!(app.showing_editor, "editing must not require signing in");
+        });
+    }
+
+    #[gpui::test]
+    fn the_screens_route_and_come_back(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "route");
+        app.update(cx, |app, _| {
+            app.screen = Screen::Settings;
+            app.settings_pane = Pane::Mcp;
+            assert_eq!(app.screen, Screen::Settings);
+
+            app.screen = Screen::SignIn;
+            app.screen = Screen::Launcher;
+            assert_eq!(app.screen, Screen::Launcher);
+            assert_eq!(app.settings_pane, Pane::Mcp, "the pane is remembered");
+        });
+    }
+
+    /// Signing in must fail, say why, and leave the app usable. If this ever reports a session,
+    /// bay has started claiming an identity nothing granted.
+    #[gpui::test]
+    fn signing_in_reports_that_there_is_no_service(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "signin");
+        app.update(cx, |app, _| {
+            app.begin_sign_in();
+            let note = app.sign_in_note.clone().expect("a note");
+            assert!(note.contains("not configured"), "{note}");
+            assert!(
+                !app.settings.session.is_signed_in(),
+                "no service, so no session"
+            );
+        });
+    }
+
+    // ---- MCP allow-list -------------------------------------------------------------------
+
+    /// The whole point of the MCP pane: blocking a tool in the window must make the gate the
+    /// server consults refuse it.
+    #[gpui::test]
+    fn blocking_a_tool_is_persisted_and_enforced(cx: &mut TestAppContext) {
+        let (app, paths) = shell(cx, "mcp-block");
+        app.update(cx, |app, _| {
+            app.settings.mcp.toggle("render");
+            app.save_settings();
+            assert!(
+                app.settings_complaint.is_none(),
+                "{:?}",
+                app.settings_complaint
+            );
+        });
+
+        // Read back from disk, the way a separate `bay --mcp` process would.
+        let store = paths.settings.clone().expect("a store");
+        let on_disk = store.load().expect("settings must be written");
+        assert!(!on_disk.mcp.allows("render"));
+        assert!(
+            !bay_settings::mcp::gate(&on_disk.mcp, "render").is_allowed(),
+            "the gate the server consults must refuse it"
+        );
+        assert!(bay_settings::mcp::gate(&on_disk.mcp, "add_clip").is_allowed());
+    }
+
+    #[gpui::test]
+    fn unblocking_puts_a_tool_back(cx: &mut TestAppContext) {
+        let (app, paths) = shell(cx, "mcp-unblock");
+        app.update(cx, |app, _| {
+            app.settings.mcp.toggle("render");
+            app.save_settings();
+            app.settings.mcp.toggle("render");
+            app.save_settings();
+        });
+        let on_disk = paths.settings.unwrap().load().unwrap();
+        assert!(on_disk.mcp.allows("render"));
+        assert!(on_disk.mcp.blocked.is_empty());
+    }
+
+    /// Rotation is a real revocation, so the pane has to say what it just broke.
+    #[gpui::test]
+    fn rotating_the_token_changes_it_and_warns(cx: &mut TestAppContext) {
+        let (app, paths) = shell(cx, "rotate");
+        let before = app
+            .update(cx, |app, _| app.mcp_token.clone())
+            .expect("a token");
+        app.update(cx, |app, _| app.rotate_token());
+
+        let after = app
+            .update(cx, |app, _| app.mcp_token.clone())
+            .expect("a token");
+        assert_ne!(before, after);
+        assert!(bay_settings::token::is_valid(&after));
+        assert_eq!(
+            bay_settings::token::read(&paths.token.unwrap()).unwrap(),
+            after,
+            "the file every client reads must hold the new value"
+        );
+
+        let complaint = app.update(cx, |app, _| app.settings_complaint.clone());
+        let complaint = complaint.expect("rotating must warn");
+        assert!(complaint.contains("must be updated"), "{complaint}");
+    }
+
+    // ---- providers ------------------------------------------------------------------------
+
+    #[gpui::test]
+    fn adding_a_provider_leaves_it_off_until_it_has_a_key(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "provider-add");
+        app.update(cx, |app, _| {
+            app.add_provider("anthropic");
+            let provider = app.settings.providers.get("anthropic").expect("added");
+            assert!(!provider.enabled, "adding must not start using it");
+            assert!(app.settings.providers.usable().is_empty());
+        });
+    }
+
+    /// The key must land in the owner-only key file and nowhere else. A key in settings.json
+    /// is a key in every backup and every screenshot of that directory.
+    #[gpui::test]
+    fn a_typed_key_is_stored_outside_the_settings_document(cx: &mut TestAppContext) {
+        let (app, paths) = shell(cx, "provider-key");
+        app.update(cx, |app, _| {
+            app.add_provider("anthropic");
+            app.store_key("anthropic", "sk-ant-api03-DO-NOT-PERSIST-4f2a");
+        });
+
+        let settings_text = std::fs::read_to_string(paths.settings.unwrap().path()).unwrap();
+        assert!(
+            !settings_text.contains("DO-NOT-PERSIST"),
+            "the key body reached settings.json: {settings_text}"
+        );
+        assert!(
+            settings_text.contains("4f2a"),
+            "but the hint should be there"
+        );
+
+        let stored = bay_settings::keys::get(&paths.keys.unwrap(), "anthropic").unwrap();
+        assert_eq!(stored.as_deref(), Some("sk-ant-api03-DO-NOT-PERSIST-4f2a"));
+        app.update(cx, |app, _| {
+            assert!(app.settings.providers.get("anthropic").unwrap().usable());
+        });
+    }
+
+    /// Removing a provider must forget its key. Otherwise re-adding the row silently restores
+    /// a credential the user believed they had deleted.
+    #[gpui::test]
+    fn forgetting_a_provider_deletes_its_key(cx: &mut TestAppContext) {
+        let (app, paths) = shell(cx, "provider-forget");
+        app.update(cx, |app, _| {
+            app.add_provider("openai");
+            app.store_key("openai", "sk-proj-secret-91cd");
+            app.forget_provider("openai");
+        });
+        assert_eq!(
+            bay_settings::keys::get(&paths.keys.unwrap(), "openai").unwrap(),
+            None,
+            "the key outlived the provider row"
+        );
+        app.update(cx, |app, _| {
+            assert!(app.settings.providers.get("openai").is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn an_empty_key_is_refused_with_a_reason(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "provider-empty");
+        app.update(cx, |app, _| {
+            app.add_provider("openai");
+            app.store_key("openai", "   ");
+            assert!(app
+                .settings_complaint
+                .as_deref()
+                .is_some_and(|c| c.contains("empty")));
+            assert!(app
+                .settings
+                .providers
+                .get("openai")
+                .unwrap()
+                .key_hint
+                .is_none());
+        });
+    }
+
+    // ---- compute --------------------------------------------------------------------------
+
+    /// The cloud does not exist in this build, so choosing it must fail loudly and leave the
+    /// mode alone rather than flipping a radio that changes nothing.
+    #[gpui::test]
+    fn choosing_the_cloud_is_refused_and_explained(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "compute");
+        app.update(cx, |app, _| {
+            app.choose_compute(bay_settings::compute::ComputeMode::Cloud);
+            assert_eq!(
+                app.settings.compute.mode,
+                bay_settings::compute::ComputeMode::ThisMachine
+            );
+            let complaint = app.settings_complaint.clone().expect("a refusal");
+            assert!(complaint.contains("this Mac"), "{complaint}");
+        });
+    }
+
+    #[gpui::test]
+    fn routing_a_model_to_the_cloud_is_refused_too(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "route-model");
+        app.update(cx, |app, _| {
+            app.route_component("listen", bay_settings::models::RunLocation::Cloud);
+            assert_eq!(
+                app.settings.models.location("listen"),
+                bay_settings::models::RunLocation::Local
+            );
+            assert!(app.settings_complaint.is_some());
+
+            // And the local choice, which is honourable, must clear the complaint.
+            app.route_component("listen", bay_settings::models::RunLocation::Local);
+            assert!(app.settings_complaint.is_none());
+        });
+    }
+
+    // ---- typing ---------------------------------------------------------------------------
+
+    /// One dispatcher, one open field. A keystroke must reach the field that is focused and no
+    /// other.
+    #[gpui::test]
+    fn keystrokes_reach_the_open_field_and_only_that_one(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "typing");
+        app.update(cx, |app, cx| {
+            app.new_name = Some(TextField::new("Untitled"));
+            for key in ["R", "e", "e", "l"] {
+                assert!(app.route_key(&keystroke(key), cx), "{key} should be taken");
+            }
+            assert_eq!(app.new_name.as_ref().unwrap().value(), "Reel");
+
+            // The key field takes precedence while it is open.
+            app.keying = Some(("anthropic".into(), TextField::new("paste key")));
+            app.route_key(&keystroke("s"), cx);
+            assert_eq!(app.keying.as_ref().unwrap().1.value(), "s");
+            assert_eq!(
+                app.new_name.as_ref().unwrap().value(),
+                "Reel",
+                "the name field must not also receive it"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn escape_closes_whatever_is_open(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "escape");
+        app.update(cx, |app, cx| {
+            app.keying = Some(("anthropic".into(), TextField::new("")));
+            app.route_key(&keystroke("escape"), cx);
+            assert!(app.keying.is_none());
+
+            app.new_name = Some(TextField::new(""));
+            app.route_key(&keystroke("escape"), cx);
+            assert!(app.new_name.is_none());
+
+            app.menu_for = Some("p1".into());
+            assert!(app.route_key(&keystroke("escape"), cx));
+            assert!(app.menu_for.is_none());
+        });
+    }
+
+    /// Enter in the name field creates the project — the path the launcher's inline field takes.
+    #[gpui::test]
+    fn enter_in_the_name_field_creates_the_project(cx: &mut TestAppContext) {
+        let paths = ShellPaths::under(data_root("enter"));
+        let library = library("enter");
+        let app = {
+            let paths = paths.clone();
+            let library = library.clone();
+            cx.update(|cx| {
+                let focus = cx.focus_handle();
+                cx.new(|_| BayApp::over_at(Some(library), None, focus, paths))
+            })
+        };
+        app.update(cx, |app, cx| {
+            app.new_name = Some(TextField::seeded("Untitled", "Field Notes"));
+            app.route_key(&keystroke("enter"), cx);
+            assert!(app.showing_editor, "creating opens it");
+            assert!(app.new_name.is_none(), "and closes the field");
+        });
+        assert_eq!(library.list().unwrap()[0].name, "Field Notes");
+    }
+
+    // ---- filing ----------------------------------------------------------------------------
+
+    /// The launcher's status menu writes to the project, not to a sidecar index.
+    #[gpui::test]
+    fn filing_a_project_from_the_launcher_persists_to_the_project(cx: &mut TestAppContext) {
+        let paths = ShellPaths::under(data_root("filing"));
+        let library = library("filing");
+        let project = library
+            .create("Reel", CanvasSize::default(), Fps::default())
+            .unwrap();
+        let id = project.metadata.id.clone();
+        let app = {
+            let paths = paths.clone();
+            let library = library.clone();
+            cx.update(|cx| {
+                let focus = cx.focus_handle();
+                cx.new(|_| BayApp::over_at(Some(library), None, focus, paths))
+            })
+        };
+
+        app.update(cx, |app, _| {
+            app.file_project(&id, |shelf| {
+                shelf.status = bay_core::ProjectStatus::Done;
+                true
+            });
+            app.file_project(&id, |shelf| shelf.add_tag("Reel"));
+            let summary = app
+                .projects
+                .iter()
+                .find(|summary| summary.id == id)
+                .expect("still listed");
+            assert_eq!(summary.shelf.status, bay_core::ProjectStatus::Done);
+            assert_eq!(summary.shelf.tags, vec!["Reel"]);
+        });
+        assert_eq!(
+            library.load(&id).unwrap().metadata.shelf.status,
+            bay_core::ProjectStatus::Done
+        );
+    }
+
+    /// A settings file bay could not read must not stop the app opening, and must not be
+    /// silently replaced with defaults either.
+    #[gpui::test]
+    fn a_corrupt_settings_file_is_reported_and_the_app_still_opens(cx: &mut TestAppContext) {
+        let root = data_root("corrupt");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("settings.json"), "{ not json").unwrap();
+        let paths = ShellPaths::under(&root);
+        let library = library("corrupt");
+        let app = cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| BayApp::over_at(Some(library), None, focus, paths))
+        });
+
+        app.update(cx, |app, _| {
+            assert_eq!(app.screen, Screen::Launcher, "the app still opens");
+            assert!(app.settings_complaint.is_some(), "and says what is wrong");
+            assert!(app.settings.mcp.enabled, "falling back to the defaults");
+        });
+        assert_eq!(
+            std::fs::read_to_string(root.join("settings.json")).unwrap(),
+            "{ not json",
+            "reading must never overwrite a file it could not parse"
+        );
+    }
+
+    /// The snapshot the settings screen draws from must describe this machine, not a mock.
+    #[gpui::test]
+    fn the_settings_snapshot_describes_this_machine(cx: &mut TestAppContext) {
+        let (app, _) = shell(cx, "snapshot");
+        let snapshot = app.update(cx, |app, _| app.settings_snapshot());
+
+        assert!(
+            !snapshot.components.is_empty(),
+            "the manifest has components, so the pane must list them"
+        );
+        assert!(
+            snapshot.components.iter().any(|c| c.id == "video"),
+            "ffmpeg is the one everything else depends on"
+        );
+        assert!(
+            !snapshot.cloud_available,
+            "there is no cloud in this build, and the pane must know"
+        );
+        assert!(
+            snapshot.tools.len() > 10,
+            "the MCP pane needs a row per tool: {}",
+            snapshot.tools.len()
+        );
+        let mut sorted = snapshot.tools.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted, snapshot.tools,
+            "tool rows must be in a stable order"
+        );
     }
 }
 

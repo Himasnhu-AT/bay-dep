@@ -16,6 +16,7 @@ fn empty_project() -> Project {
         metadata: ProjectMetadata {
             id: "p".into(),
             name: "Live".into(),
+            shelf: Default::default(),
         },
         settings: ProjectSettings {
             fps: Fps {

@@ -365,7 +365,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
             ("broken-continuity", 4),
             ("dead-plate", 1),
             ("empty-container", 2),
-            ("missing-media", 67),
+            ("missing-media", 69),
             ("value-overshoot", 1),
         ]),
         "{:?}",
@@ -378,7 +378,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
             ("dead-plate", 1),
             ("empty-container", 2),
             ("flat-mix", 6),
-            ("missing-media", 67),
+            ("missing-media", 69),
             ("no-hook", 1),
             ("no-response", 1),
             ("off-grid", 1),
@@ -393,7 +393,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
     assert_eq!(skipped(&report), vec!["speech-masked", "bed-too-quiet"]);
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (75, 136, 0, 211)
+        (77, 136, 0, 213)
     );
 }
 
@@ -405,7 +405,7 @@ fn candlestick_wick_volatility_is_the_first_predecessor() {
 
     assert_eq!(
         gating(&report),
-        BTreeMap::from([("broken-continuity", 3), ("missing-media", 6)]),
+        BTreeMap::from([("broken-continuity", 3), ("missing-media", 8)]),
         "{:?}",
         report.findings
     );
@@ -413,7 +413,7 @@ fn candlestick_wick_volatility_is_the_first_predecessor() {
         rollup(&report),
         vec![
             ("broken-continuity", 3),
-            ("missing-media", 6),
+            ("missing-media", 8),
             ("no-bed", 1),
             ("no-hook", 1),
             ("off-grid", 1),
@@ -427,7 +427,7 @@ fn candlestick_wick_volatility_is_the_first_predecessor() {
     );
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (9, 143, 0, 152)
+        (11, 143, 0, 154)
     );
 }
 
@@ -441,7 +441,7 @@ fn candlestick_wicks_is_the_second_predecessor() {
 
     assert_eq!(
         gating(&report),
-        BTreeMap::from([("broken-continuity", 4), ("missing-media", 14)]),
+        BTreeMap::from([("broken-continuity", 4), ("missing-media", 16)]),
         "{:?}",
         report.findings
     );
@@ -450,7 +450,7 @@ fn candlestick_wicks_is_the_second_predecessor() {
         vec![
             ("broken-continuity", 4),
             ("flat-mix", 10),
-            ("missing-media", 14),
+            ("missing-media", 16),
             ("no-hook", 1),
             ("no-response", 1),
             ("off-grid", 1),
@@ -465,7 +465,7 @@ fn candlestick_wicks_is_the_second_predecessor() {
     );
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (18, 118, 0, 136)
+        (20, 118, 0, 138)
     );
 }
 
@@ -585,5 +585,46 @@ fn nine_gating_codes_are_absent_from_the_pure_fixture_reports() {
             .iter()
             .all(|report| skipped(report).contains(&"speech-masked")),
         "speech-masked has never been evaluated against a real project"
+    );
+}
+
+/// No fixture may name a file by absolute path.
+///
+/// Every media path in these five projects used to be absolute, and most of them pointed into a
+/// scratch directory belonging to whichever session authored the fixture — `/var/folders/…/T/`
+/// and `/private/tmp/claude-501/…/scratchpad/`. Two of those files still existed on the machine
+/// the counts were recorded on, so `missing-media` was pinned at 67 and 6 rather than the 69 and
+/// 8 the projects actually describe. When the temp sweep took them the three fixture tests began
+/// failing, on a tree with nothing wrong with it — and they would have failed on every other
+/// machine from the day they were written, because nobody else ever had those files.
+///
+/// Relative paths are resolved against the project's own directory by
+/// `bay_project::library::read_project`, so a fixture that stays relative can only ever resolve
+/// inside the repository, and a fixture whose media is deliberately absent is absent everywhere.
+/// That is what the recorded counts now mean.
+#[test]
+fn no_fixture_reaches_outside_the_repository_for_its_media() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut offenders = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("read the fixtures directory") {
+        let path = entry.expect("a fixture directory entry").path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let project = bay_project::library::read_project(&path).expect("read the fixture");
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        for asset in &project.media {
+            // `read_project` has already joined relative paths onto the fixture directory, so
+            // the check is "did it end up inside the repository", not "was it written relative".
+            if !std::path::Path::new(&asset.path).starts_with(&dir) {
+                offenders.push(format!("{name}: {} -> {}", asset.id, asset.path));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "fixture media must live under tests/fixtures so the counts mean the same thing on \
+         every machine:\n  {}",
+        offenders.join("\n  ")
     );
 }

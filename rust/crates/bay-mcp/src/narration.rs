@@ -210,6 +210,8 @@ impl Studio {
             // ask "is the bed under the voice" without being told which clip the voice is.
             bay_project::ElementSource::Tool,
             bay_project::AudioRole::Speech,
+            // Kokoro's output is raw speech; the chain is exactly what it wants.
+            true,
         )?;
         if let Some(element_id) = audio.get("elementId").and_then(|value| value.as_str()) {
             self.set_audio_prosody(

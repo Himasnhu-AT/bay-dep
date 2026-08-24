@@ -646,7 +646,13 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 }
 
 /// Every tool the server advertises, in the order an author would use them.
-pub fn definitions() -> Vec<Value> {
+/// Every tool bay implements, before the user's MCP allow-list is applied.
+///
+/// [`definitions`] is what the wire sees; this is what exists. Split so the settings pane can
+/// list every tool with a switch beside it — a pane built from the filtered list could show a
+/// blocked tool only until you blocked it, at which point the row would vanish and there would
+/// be no way to switch it back on.
+pub fn all_definitions() -> Vec<Value> {
     vec![
         tool(
             "project_create",
@@ -664,7 +670,16 @@ pub fn definitions() -> Vec<Value> {
                     "name": { "type": "string", "default": "Untitled" },
                     "width": { "type": "integer", "default": 1080 },
                     "height": { "type": "integer", "default": 1920 },
-                    "fps": { "type": "integer", "default": 30 },
+                    "fps": { "type": "integer", "default": 30,
+                        "description": "Frame rate numerator. On its own this is the frame rate, \
+                             so 30 means 30." },
+                    "fpsDenominator": { "type": "integer", "default": 1,
+                        "description": "Frame rate denominator, for the broadcast rates that are \
+                             not whole numbers. 24000/1001 is 23.976, 30000/1001 is 29.97, \
+                             60000/1001 is 59.94. Footage shot at one of these must be edited at \
+                             it — rounding 23.976 to 24 conforms the cut, which drifts a frame \
+                             every 42 seconds and pulls the audio off the picture by the end of \
+                             an hour." },
                     "background": { "type": "string",
                         "description": "Canvas fill as #rrggbb. Defaults to the chosen kit's \
                              ground, which is what you want — a background picked apart from the \
@@ -861,6 +876,13 @@ pub fn definitions() -> Vec<Value> {
                     "description": "Constant playback speed with pitch-preserving time stretch." },
                 "role": { "type": "string", "enum": AudioRole::NAMES, "default": "bed",
                     "description": "What this sound is doing: \"speech\" is narration or dialogue (narrate sets this itself), \"bed\" is music under the picture, \"sfx\" is a one-off effect. The bed is what a duck is measured against, so a voice-over placed by hand should say so." },
+                "processDialogue": { "type": "boolean", "default": true,
+                    "description": "Whether speech gets bay's EQ, compressor and limiter. On by \
+                         default, because raw dialogue wants all three. Turn it off for audio \
+                         that arrives already mixed and levelled — a delivered mix run through \
+                         the chain a second time comes out quieter and flatter, and the \
+                         export's `loudness` flag cannot undo it, because the chain belongs to \
+                         the element rather than to the encode. Ignored unless role is speech." },
                 "id": { "type": "string" }
             }),
             &["mediaId", "start", "duration"],
@@ -1121,7 +1143,14 @@ pub fn definitions() -> Vec<Value> {
                     "description": "Path to a .cube file, required when type is \"lut\". A LUT is a whole grade in one pass — the same look lands identically on every clip you attach it to, which is how a set of shots comes to look like one film. Checked when attached, so a bad path is an error here rather than a clip that quietly looks untouched." },
                 "params": {
                     "type": "object",
-                    "description": "Scalar parameters, e.g. {\"amount\": 0.4}. Effect-specific.",
+                    "description": "Scalar parameters. Every effect calls its parameter \
+                         `amount`, and the ranges are NOT interchangeable. `lut`: 0-1, how much \
+                         of the grade to blend in, so 0 leaves the clip untouched and 1 is the \
+                         full look. `brightness`, `contrast`, `saturation`: a multiplier where \
+                         1.0 is unchanged — 1.06 is a gentle lift and 0.9 pulls it back, so \
+                         0.06 is not a six percent adjustment but a ninety-four percent \
+                         removal, which on contrast flattens the whole frame to mid-grey. \
+                         `blur`: radius in pixels.",
                 },
                 "effectId": { "type": "string", "description": "Minted if omitted." }
             }),
@@ -2165,6 +2194,44 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
+/// The tools an agent may see, after the user's MCP allow-list.
+///
+/// A blocked tool is removed from `tools/list` as well as refused at the call. Leaving it
+/// listed would have an agent plan a whole job around a call that gets refused at the last
+/// step, which reads as bay breaking rather than bay declining.
+pub fn definitions() -> Vec<Value> {
+    definitions_with(&bay_settings::store::current().mcp)
+}
+
+/// [`definitions`], against an explicit policy.
+///
+/// The injectable form exists so the filtering can be tested without the test reading — or
+/// depending on — whatever the developer running it has switched off in their own settings.
+pub fn definitions_with(settings: &bay_settings::McpSettings) -> Vec<Value> {
+    all_definitions()
+        .into_iter()
+        .filter(|definition| {
+            definition
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| settings.allows(name))
+        })
+        .collect()
+}
+
+/// The names of every tool bay implements, for a settings pane that needs a row per tool.
+pub fn all_tool_names() -> Vec<String> {
+    all_definitions()
+        .iter()
+        .filter_map(|definition| {
+            definition
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 fn transcript_ranges(
     studio: &Studio,
     media_id: &str,
@@ -2229,9 +2296,14 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 .unwrap_or_else(|| KitChoice::Brief(text(args, "brief").unwrap_or(name.clone())));
             studio.project_create(
                 &name,
-                number(args, "width", 1080.0) as u32,
-                number(args, "height", 1920.0) as u32,
-                number(args, "fps", 30.0) as u32,
+                bay_project::CanvasSize {
+                    width: number(args, "width", 1080.0) as u32,
+                    height: number(args, "height", 1920.0) as u32,
+                },
+                bay_project::Fps {
+                    numerator: number(args, "fps", 30.0) as u32,
+                    denominator: number(args, "fpsDenominator", 1.0) as u32,
+                },
                 text(args, "background").as_deref(),
                 choice,
             )
@@ -2568,6 +2640,9 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             // Only bay's own generators claim Tool.
             ElementSource::Author,
             parse_audio_role(args.get("role").and_then(|v| v.as_str()))?,
+            args.get("processDialogue")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
         ),
         // `animate` has no arm here on purpose. It used to have one, into a second headless
         // implementation that knew 8 of the 14 easings and refused `volume` outright; it now
@@ -2806,9 +2881,14 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
     });
     studio.project_create(
         "Subtitles",
-        number(args, "width", 1080.0) as u32,
-        number(args, "height", 1920.0) as u32,
-        number(args, "fps", 30.0) as u32,
+        bay_project::CanvasSize {
+            width: number(args, "width", 1080.0) as u32,
+            height: number(args, "height", 1920.0) as u32,
+        },
+        bay_project::Fps {
+            numerator: number(args, "fps", 30.0) as u32,
+            denominator: number(args, "fpsDenominator", 1.0) as u32,
+        },
         text(args, "background").as_deref(),
         choice,
     )?;

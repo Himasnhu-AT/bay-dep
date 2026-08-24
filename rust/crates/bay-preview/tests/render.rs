@@ -3115,3 +3115,127 @@ fn an_export_delivers_48k_stereo_however_the_mix_was_assembled() {
         let _ = std::fs::remove_file(path);
     }
 }
+
+/// The bug this guards: an audio clip that stops before the picture does used to truncate the
+/// whole export to the audio's end, and ffmpeg reported success.
+///
+/// A silent 0.7 s stinger at 4.85 s on an 8 s reel produced a 5.6 s file with the end card
+/// missing. Nothing failed, nothing was logged; the only way to find it was to decode the
+/// output and count. So this test decodes the output and counts.
+#[test]
+fn an_audio_clip_that_ends_early_does_not_truncate_the_export() {
+    if !require_ffmpeg() {
+        return;
+    }
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "bay-short-audio-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+
+    // A one-second tone, to sit near the head of a four-second picture.
+    let tone = root.join("stinger.wav");
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            tone.to_str().unwrap(),
+        ])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(made, "generate the stinger") {
+        return;
+    }
+
+    const PICTURE_SECONDS: f64 = 8.0;
+    const FPS: u32 = 30;
+
+    let mut project = Project::starter();
+    project.media = vec![MediaAsset::new(
+        "stinger",
+        "stinger.wav",
+        tone.to_string_lossy(),
+    )];
+    // One audio clip, one second long, finishing well before the picture does.
+    let Element::Audio(stinger) = &mut project.active_scene_mut().tracks.audio[0].elements[0]
+    else {
+        panic!("the starter audio lane should contain audio")
+    };
+    // Placed late and finishing early, which is the shape that broke: the mixed bed's last
+    // sample lands at 2.5 s on a 4 s picture.
+    stinger.media_id = "stinger".into();
+    stinger.start = MediaTime::from_seconds_f64(4.85).unwrap();
+    stinger.duration = MediaTime::from_seconds_f64(0.7).unwrap();
+    project.active_scene_mut().tracks.audio[0]
+        .elements
+        .truncate(1);
+
+    let out = root.join("short-audio.mp4");
+    let result = renderer.export_video(
+        project.active_scene(),
+        PICTURE_SECONDS,
+        f64::from(FPS),
+        1920,
+        1080,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
+    );
+    // Asserted, not gated. `require_ffmpeg_step` turns a failure into a *skip*, and the failure
+    // mode here — ffmpeg quitting early and the pipe breaking — is precisely what this test
+    // exists to catch. Gating it made the test skip on the bug and report a pass.
+    assert!(
+        result.is_ok(),
+        "the export failed outright, which is the truncation showing up as a broken pipe: \
+         {result:?}"
+    );
+
+    // Count decoded frames, not container metadata: a truncated file can still carry a header
+    // that claims the full duration, and it was the decode that exposed this in the first place.
+    let probe = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "default=nw=1:nk=1",
+            out.to_str().unwrap(),
+        ])
+        .output();
+    let Ok(probe) = probe else {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !require_ffmpeg_step(probe.status.success(), "probe the short-audio mp4") {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let frames: u32 = String::from_utf8_lossy(&probe.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0);
+
+    let expected = (PICTURE_SECONDS * f64::from(FPS)).round() as u32;
+    assert_eq!(
+        frames, expected,
+        "the export was cut to the audio clip's end: {frames} frames on disk, {expected} expected \
+         for {PICTURE_SECONDS}s at {FPS}fps"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

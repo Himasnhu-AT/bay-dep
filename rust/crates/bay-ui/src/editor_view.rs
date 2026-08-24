@@ -11,12 +11,16 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
 };
 
+use bay_core::blocks::{self, Panel};
 use bay_core::project::library;
 use bay_core::{
     AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaKind,
-    MediaTime, Project, TextElement, Transform, VideoElement,
+    MediaTime, Project, Transform, VideoElement,
 };
 use bay_preview::PreviewRenderer;
+
+use crate::view_model::MediaFolder;
+use crate::widgets::{self, text as shared_text};
 
 /// What the editor tells the shell around it. Only one thing so far: the user wants to go back
 /// to the project list, which is the shell's business, not the editor's.
@@ -80,6 +84,9 @@ gpui::actions!(
         SelectAll,
         CopyClip,
         PasteClip,
+        SelectTool,
+        RazorTool,
+        ToggleSnap,
     ]
 );
 
@@ -108,6 +115,11 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-a", SelectAll, editor),
         KeyBinding::new("cmd-c", CopyClip, editor),
         KeyBinding::new("cmd-v", PasteClip, editor),
+        // The tool keys every editor uses. Unmodified letters, which is safe here because the
+        // "Editor" context is swapped for "TextEdit" the moment a field opens.
+        KeyBinding::new("v", SelectTool, editor),
+        KeyBinding::new("c", RazorTool, editor),
+        KeyBinding::new("n", ToggleSnap, editor),
     ]
 }
 
@@ -216,6 +228,38 @@ fn describe_progress(state: &bay_provision::jobs::JobState) -> String {
     }
 }
 
+/// What a press on a clip does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    /// Select, move and trim. The default.
+    Select,
+    /// Cut a clip at the point clicked. A tool rather than a modifier because "cut here" is a
+    /// mode an editor stays in for a run of cuts, and holding a key for each one is worse.
+    Razor,
+}
+
+/// The left panel's default, minimum and maximum widths.
+///
+/// The floor is where a two-column media grid stops being legible; the ceiling is where the
+/// panel starts eating the preview, which is the thing the user is actually looking at.
+const DEFAULT_PANEL_WIDTH: f32 = 264.0;
+const MIN_PANEL_WIDTH: f32 = 180.0;
+const MAX_PANEL_WIDTH: f32 = 420.0;
+
+/// Seconds as `h:mm:ss:ff` at 30 fps.
+///
+/// The transport shows frames, not decimals: an editor picks a cut by frame number, and
+/// "2.43 s" cannot be typed back into anything.
+fn timecode(seconds: f64) -> String {
+    const FPS: i64 = 30;
+    let frames = (seconds.max(0.0) * FPS as f64).round() as i64;
+    let ff = frames % FPS;
+    let s = (frames / FPS) % 60;
+    let m = (frames / (FPS * 60)) % 60;
+    let h = frames / (FPS * 3600);
+    format!("{h}:{m:02}:{s:02}:{ff:02}")
+}
+
 /// Inspector nudge step (0.5s) and minimum element duration (0.1s), in ticks.
 const NUDGE_TICKS: i64 = TICKS_PER_SECOND / 2;
 const MIN_DURATION_TICKS: i64 = TICKS_PER_SECOND / 10;
@@ -267,6 +311,23 @@ pub struct EditorView {
     /// The install currently running, if any. At most one: the button hides itself while a job
     /// is in flight, so a user cannot start the same 1.2 GB download twice.
     provision_job: Option<bay_provision::jobs::JobId>,
+    /// Which left-panel tab is open: the library, or one of the block palettes.
+    panel: Panel,
+    /// The left panel's width. Draggable, because a media grid and a list of transitions want
+    /// very different amounts of room and neither is right for both.
+    media_width: f32,
+    /// Set while the panel divider is being dragged: the pointer x it started at, and the
+    /// width at that moment.
+    resizing_panel: Option<(f32, f32)>,
+    /// Whether a drag snaps to clip edges, markers and the playhead. On by default, because
+    /// butt-joining two clips by eye at 48 px/s is a fight; off for the moments when the
+    /// intended cut is two frames from something the snap keeps stealing it towards.
+    snapping: bool,
+    /// The pointer tool. Razor turns a click on a clip into a split at that time.
+    tool: Tool,
+    /// Library groups the user has collapsed. Stored as the closed set so a newly appearing
+    /// group is open — a folder that arrives collapsed hides the file that just landed in it.
+    collapsed_folders: std::collections::BTreeSet<String>,
 }
 
 /// Something bay can install, as the toolbar needs it.
@@ -319,6 +380,12 @@ impl EditorView {
             agent_activity: None,
             runtime_offers: runtime_offers(),
             provision_job: None,
+            snapping: true,
+            tool: Tool::Select,
+            panel: Panel::Media,
+            media_width: DEFAULT_PANEL_WIDTH,
+            resizing_panel: None,
+            collapsed_folders: std::collections::BTreeSet::new(),
         }
     }
 
@@ -864,6 +931,9 @@ impl EditorView {
     /// its neighbour's edge while dragging. A snap you only discover after letting go is
     /// indistinguishable from the editor moving your clip on its own.
     fn snapped_delta_px(&self, drag: &DragState) -> f32 {
+        if !self.snapping {
+            return drag.delta_px;
+        }
         let geometry = self.geometry();
         let raw_ticks = geometry.delta_px_to_ticks(drag.delta_px).as_ticks();
         // Which edge the pointer is carrying: the head for a move or a start-trim, the tail
@@ -968,6 +1038,15 @@ impl EditorView {
                 // The lane underneath scrubs the playhead on a press. Grabbing a clip is not
                 // also a request to move the playhead, so the event stops here.
                 cx.stop_propagation();
+                // With the razor out, a press is a cut at the point clicked — not the start of
+                // a drag. Handled here rather than in a separate handler so the razor cannot
+                // also begin a move the user did not ask for.
+                if this.tool == Tool::Razor {
+                    this.editor.select(vec![reference.clone()]);
+                    this.split_at_x(&reference, f32::from(event.position.x));
+                    cx.notify();
+                    return;
+                }
                 // Shift adds to the selection instead of replacing it, so several clips can
                 // be moved or deleted as one.
                 if event.modifiers.shift {
@@ -1405,6 +1484,40 @@ impl EditorView {
         }
     }
 
+    /// Cut `reference` at the timeline position under `window_x`.
+    ///
+    /// Refuses a cut within a frame of either end: a zero-length clip is not a cut, it is a
+    /// clip nobody can select and a hole in the timeline nobody can see.
+    fn split_at_x(&mut self, reference: &ElementRef, window_x: f32) {
+        // Quantised to a frame, like a scrub: a cut between two frames is not a cut anyone
+        // can act on, and the exported file would round it anyway.
+        let at = self.geometry().px_to_frame_time(window_x - lane_origin_x());
+        let Some(element) = self
+            .editor
+            .active_scene()
+            .tracks
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .find(|element| element.id() == reference.element_id)
+        else {
+            return;
+        };
+        let margin = MIN_DURATION_TICKS;
+        if at.as_ticks() <= element.start().as_ticks() + margin
+            || at.as_ticks() >= element.end().as_ticks() - margin
+        {
+            self.status = Some("That cut is too close to the edge of the clip.".into());
+            return;
+        }
+        self.add_counter += 1;
+        let new_id = format!("split-{}", self.add_counter);
+        self.editor.execute(Command::SplitElement {
+            reference: reference.clone(),
+            at,
+            new_id,
+        });
+    }
+
     /// Add a keyframe for `property` at the playhead using the element's current sampled value.
     fn add_keyframe(&mut self, property: &'static str) {
         let Some(reference) = self.editor.selection().first().cloned() else {
@@ -1612,71 +1725,258 @@ impl EditorView {
     }
 
     fn toolbar(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
-        let title = format!("bay — {}", vm.project_name);
-        let clipboard = format!("clipboard: {}", vm.clipboard_len);
+        let scene_line = format!(
+            "{} · {:.2}s · {}",
+            self.editor.active_scene().name,
+            vm.duration_seconds,
+            vm.tracks
+                .iter()
+                .map(|track| track.elements.len())
+                .sum::<usize>()
+        );
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
+        widgets::row()
+            .h(px(52.0))
+            .flex_none()
             .justify_between()
-            .h(px(50.0))
-            .px_3()
+            .gap(px(16.0))
+            .px(px(12.0))
             .bg(rgb(theme::PANEL))
             .border_b_1()
             .border_color(rgb(theme::BORDER))
+            .overflow_hidden()
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .text_color(rgb(theme::TEXT))
+                widgets::row()
+                    .min_w(px(0.0))
                     // Leaving saves first: an editor that drops work on the way out teaches
                     // people never to use the back button.
-                    .child(self.button("projects", "‹ Projects", true, cx, |this, cx| {
-                        match this.save_project() {
+                    .child(
+                        self.button("projects", "‹ Projects", false, cx, |this, cx| match this
+                            .save_project()
+                        {
                             Ok(_) => cx.emit(EditorViewEvent::CloseRequested),
                             Err(error) => {
                                 this.status = Some(format!("Not closing — save failed: {error}"))
                             }
-                        }
-                    }))
-                    .child(Self::shared(title))
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .text_color(rgb(theme::TEXT))
+                                    .overflow_hidden()
+                                    .child(Self::shared(vm.project_name.clone())),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(theme::MUTED))
+                                    .overflow_hidden()
+                                    .child(Self::shared(format!("{scene_line} clips"))),
+                            ),
+                    )
                     .children(self.agent_chip().map(|label| {
                         div()
                             .px_2()
                             .py(px(2.0))
-                            .rounded_sm()
+                            .rounded(px(6.0))
                             .bg(rgb(theme::SELECTED))
                             .border_1()
                             .border_color(rgb(theme::SELECTED_BORDER))
+                            .text_xs()
                             .text_color(rgb(theme::TEXT))
-                            .text_size(px(11.0))
                             .child(label)
                     }))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme::MUTED))
-                            .child(Self::shared(clipboard)),
-                    )
                     // Status line: the one place failures become visible to the user.
                     .children(self.status.clone().map(|message| {
+                        let bad = message.contains("fail")
+                            || message.contains("error")
+                            || message.contains("Not closing");
                         div()
                             .id("status")
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
+                            .max_w(px(360.0))
+                            .px(px(8.0))
+                            .py(px(3.0))
+                            .rounded(px(6.0))
                             .bg(rgb(theme::PANEL_ALT))
+                            .border_l_2()
+                            .border_color(rgb(if bad { theme::DANGER } else { theme::ACCENT }))
                             .text_xs()
                             .text_color(rgb(theme::TEXT))
+                            .overflow_hidden()
                             .child(Self::shared(message))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.status = None; // click to dismiss
                                 cx.notify();
                             }))
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .flex_none()
+                    .gap(px(10.0))
+                    .child(
+                        widgets::row()
+                            .gap(px(1.0))
+                            .child(self.tool_button("undo", "Undo", vm.can_undo, cx, |this| {
+                                this.editor.undo();
+                            }))
+                            .child(self.tool_button("redo", "Redo", vm.can_redo, cx, |this| {
+                                this.editor.redo();
+                            }))
+                            .child(self.tool_button(
+                                "copy",
+                                "Copy",
+                                vm.selected.is_some(),
+                                cx,
+                                |this| {
+                                    this.editor.copy();
+                                },
+                            ))
+                            .child(self.tool_button(
+                                "paste",
+                                "Paste",
+                                vm.clipboard_len > 0,
+                                cx,
+                                |this| {
+                                    this.editor.execute(Command::Paste);
+                                },
+                            )),
+                    )
+                    .child(self.button("save", "Save", false, cx, |this, _cx| {
+                        this.status = Some(match this.save_project() {
+                            Ok(path) => format!("Saved to {}", path.display()),
+                            Err(error) => format!("Save failed: {error}"),
+                        });
                     }))
+                    .child(
+                        widgets::row()
+                            .gap(px(1.0))
+                            .child(self.tool_button(
+                                "export-frame",
+                                "Export Frame",
+                                self.preview.is_some(),
+                                cx,
+                                |this| this.export_frame(),
+                            ))
+                            .child(
+                                div()
+                                    .id("export-video")
+                                    .h(px(22.0))
+                                    .px(px(10.0))
+                                    .flex()
+                                    .items_center()
+                                    .bg(rgb(theme::ACCENT))
+                                    .text_xs()
+                                    .text_color(rgb(theme::ON_ACCENT))
+                                    .child("Export Video")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.export_video();
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+    }
+
+    /// The strip between the panels and the timeline: scenes on the left, what the machine is
+    /// missing and what the project is on the right.
+    fn scene_bar(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let mut tabs: Vec<gpui::Stateful<Div>> = Vec::new();
+        for (index, scene) in vm.scenes.iter().enumerate() {
+            let id = scene.id.clone();
+            let active = scene.active;
+            let count = self
+                .editor
+                .scenes()
+                .iter()
+                .find(|candidate| candidate.id == scene.id)
+                .map(|scene| scene.tracks.iter().map(|t| t.elements.len()).sum::<usize>())
+                .unwrap_or(0);
+            tabs.push(
+                div()
+                    .id(("scene", index))
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .gap(px(6.0))
+                    .px(px(10.0))
+                    .py(px(3.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(if active {
+                        theme::SELECTED
+                    } else {
+                        theme::PANEL_ALT
+                    }))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(if active { theme::TEXT } else { theme::MUTED }))
+                            .child(Self::shared(scene.name.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(if active {
+                                theme::ACCENT_SOFT
+                            } else {
+                                theme::FAINT
+                            }))
+                            .child(Self::shared(if count == 0 {
+                                "empty".to_string()
+                            } else {
+                                format!("{count} clips")
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.editor.switch_scene(id.clone());
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let meta = format!(
+            "{} × {} · {} tracks",
+            vm.canvas.0,
+            vm.canvas.1,
+            vm.tracks.len()
+        );
+
+        widgets::row()
+            .h(px(40.0))
+            .flex_none()
+            .justify_between()
+            .gap(px(12.0))
+            .px(px(12.0))
+            .bg(rgb(theme::PANEL_ALT))
+            .border_t_1()
+            .border_color(rgb(theme::BORDER))
+            .child(
+                widgets::row()
+                    .gap(px(6.0))
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .child(widgets::section("SCENES"))
+                    .children(tabs)
+                    .child(self.transport_button("add-scene", "＋ Scene", cx, |this| {
+                        this.add_counter += 1;
+                        let id = format!("scene-{}", this.add_counter);
+                        let name = format!("Scene {}", this.editor.scenes().len() + 1);
+                        this.editor.execute(Command::AddScene {
+                            id: id.clone(),
+                            name,
+                        });
+                        this.editor.switch_scene(id);
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .flex_none()
+                    .gap(px(12.0))
                     // Offers to install what is missing. Present only when something is, and
                     // hidden while an install runs — the status line carries the progress, and
                     // a second press would be a second 1.2 GB download.
@@ -1688,259 +1988,426 @@ impl EditorView {
                                 let component = offer.id.clone();
                                 // A distinct element id per offer. On a clean machine both
                                 // video and speech are offered at once, and two sibling
-                                // stateful elements sharing one id share interactive state —
-                                // hover and click tracking that belongs to whichever drew last.
+                                // stateful elements sharing one id share interactive state.
                                 self.button(
                                     offer.element_id,
                                     &offer.label,
-                                    true,
+                                    false,
                                     cx,
                                     move |this, cx| this.install_runtime(&component, cx),
                                 )
                             }),
                     )
-                    .child(self.button("save", "Save", true, cx, |this, _cx| {
-                        this.status = Some(match this.save_project() {
-                            Ok(path) => format!("Saved to {}", path.display()),
-                            Err(error) => format!("Save failed: {error}"),
-                        });
-                    }))
-                    .child(self.button(
-                        "export-frame",
-                        "Export Frame",
-                        self.preview.is_some(),
-                        cx,
-                        |this, _cx| this.export_frame(),
-                    ))
-                    .child(self.button(
-                        "export-video",
-                        "Export Video",
-                        self.preview.is_some(),
-                        cx,
-                        |this, _cx| this.export_video(),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(self.button("add-text", "+ Text", true, cx, |this, cx| {
-                        this.add_counter += 1;
-                        let id = format!("text-{}", this.add_counter);
-                        let element = Element::Text(TextElement {
-                            id,
-                            name: "Text".into(),
-                            start: MediaTime::ZERO,
-                            duration: MediaTime::from_ticks(240_000),
-                            fade_in: MediaTime::ZERO,
-                            fade_out: MediaTime::ZERO,
-                            content: "New text".into(),
-                            font_size: 48.0,
-                            color: "#ffffff".into(),
-                            transform: Transform::default(),
-                            effects: Vec::new(),
-                            animations: Default::default(),
-                            blend_mode: Default::default(),
-                            mask: None,
-                            font_family: None,
-                            font_weight: 400,
-                            align: Default::default(),
-                            letter_spacing: 0.0,
-                            line_height: 1.2,
-                            decorations: None,
-                            karaoke: None,
-                            source: Default::default(),
-                            role: Default::default(),
-                        });
-                        this.editor.execute(Command::AddElement {
-                            track_id: "track-main".into(),
-                            element,
-                            select: true,
-                        });
-                        let _ = cx;
-                    }))
-                    .child(self.button(
-                        "delete",
-                        "Delete",
-                        vm.selected.is_some(),
-                        cx,
-                        |this, _cx| {
-                            if let Some(reference) = this.editor.selection().first().cloned() {
-                                this.editor.execute(Command::RemoveElement { reference });
-                            }
-                        },
-                    ))
-                    .child(
-                        self.button("split", "Split", vm.selected.is_some(), cx, |this, _cx| {
-                            this.split_selected();
-                        }),
-                    )
-                    .child(self.button(
-                        "duplicate",
-                        "Duplicate",
-                        vm.selected.is_some(),
-                        cx,
-                        |this, _cx| {
-                            if let Some(reference) = this.editor.selection().first().cloned() {
-                                this.add_counter += 1;
-                                let new_id = format!("dup-{}", this.add_counter);
-                                this.editor
-                                    .execute(Command::DuplicateElement { reference, new_id });
-                            }
-                        },
-                    ))
-                    .child(
-                        self.button("copy", "Copy", vm.selected.is_some(), cx, |this, _cx| {
-                            this.editor.copy();
-                        }),
-                    )
-                    .child(
-                        self.button("paste", "Paste", vm.clipboard_len > 0, cx, |this, _cx| {
-                            this.editor.execute(Command::Paste);
-                        }),
-                    )
-                    .child(self.button("undo", "Undo", vm.can_undo, cx, |this, _cx| {
-                        this.editor.undo();
-                    }))
-                    .child(self.button("redo", "Redo", vm.can_redo, cx, |this, _cx| {
-                        this.editor.redo();
-                    })),
+                    .child(widgets::note(format!("clipboard: {}", vm.clipboard_len)))
+                    .child(widgets::note(meta)),
             )
     }
 
-    fn scene_bar(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
-        let mut tabs: Vec<gpui::Stateful<Div>> = Vec::new();
-        for (index, scene) in vm.scenes.iter().enumerate() {
-            let id = scene.id.clone();
-            let active = scene.active;
-            tabs.push(
+    /// The 56px rail of panel tabs down the left edge.
+    fn panel_rail(&self, cx: &mut Context<Self>) -> Div {
+        let mut rail = div()
+            .w(px(56.0))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .px(px(6.0))
+            .py(px(10.0))
+            .bg(rgb(theme::RAIL))
+            .border_r_1()
+            .border_color(rgb(theme::BORDER_SOFT));
+
+        for (index, panel) in Panel::ALL.into_iter().enumerate() {
+            let on = self.panel == panel;
+            rail = rail.child(
                 div()
-                    .id(("scene", index))
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(if active {
-                        theme::SELECTED
-                    } else {
-                        theme::PANEL_ALT
-                    }))
-                    .text_sm()
-                    .text_color(rgb(if active { theme::TEXT } else { theme::MUTED }))
-                    .child(Self::shared(scene.name.clone()))
+                    .id(("panel-tab", index))
+                    .h(px(46.0))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(2.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(if on { theme::SELECTED } else { theme::RAIL }))
+                    .child(
+                        div()
+                            .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
+                            .child(panel.glyph()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(if on { theme::ACCENT_SOFT } else { theme::FAINT }))
+                            .child(panel.label()),
+                    )
                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.editor.switch_scene(id.clone());
+                        this.panel = panel;
                         cx.notify();
                     })),
             );
         }
+        rail
+    }
 
+    /// The panel itself, plus the divider that resizes it.
+    fn left_panel(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let body = match self.panel {
+            Panel::Media => self.library_panel(vm, cx),
+            other => self.blocks_panel(other, vm, cx),
+        };
         div()
             .flex()
             .flex_row()
-            .items_center()
-            .gap_2()
-            .h(px(40.0))
-            .px_3()
-            .bg(rgb(theme::PANEL_ALT))
-            .border_b_1()
-            .border_color(rgb(theme::BORDER))
+            .flex_none()
+            .h_full()
             .child(
                 div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child("SCENES"),
+                    .w(px(self.media_width))
+                    .flex_none()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .py(px(12.0))
+                    .gap(px(10.0))
+                    .bg(rgb(theme::PANEL))
+                    .child(body),
             )
-            .children(tabs)
-            .child(self.transport_button("add-scene", "＋ Scene", cx, |this| {
-                this.add_counter += 1;
-                let id = format!("scene-{}", this.add_counter);
-                let name = format!("Scene {}", this.editor.scenes().len() + 1);
-                this.editor.execute(Command::AddScene {
-                    id: id.clone(),
-                    name,
-                });
-                this.editor.switch_scene(id);
-            }))
+            .child(
+                // The divider. A press starts a drag that the root element's mouse-move handler
+                // continues, the same way clip drags and scrubbing work — a handler on this
+                // 5px strip alone would stop the moment the pointer outran it.
+                div()
+                    .id("panel-divider")
+                    .w(px(5.0))
+                    .flex_none()
+                    .h_full()
+                    .bg(rgb(theme::BORDER))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.resizing_panel =
+                                Some((f32::from(event.position.x), this.media_width));
+                            cx.notify();
+                        }),
+                    ),
+            )
     }
 
-    /// The project's media library: what the user actually imported, and nothing else.
-    fn media_panel(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
-        let mut items: Vec<gpui::Stateful<Div>> = Vec::new();
-        for (index, asset) in vm.media.iter().enumerate() {
-            let (id, name, path) = (asset.id.clone(), asset.name.clone(), asset.path.clone());
-            items.push(
+    /// The project's own media, grouped by kind.
+    fn library_panel(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let columns = self.panel_columns();
+        let cell = self.panel_cell_height(columns);
+        let media: Vec<crate::view_model::MediaItem> = vm
+            .media
+            .iter()
+            .map(|item| crate::view_model::MediaItem {
+                id: item.id.clone(),
+                name: item.name.clone(),
+                path: item.path.clone(),
+                kind: item.kind,
+            })
+            .collect();
+        let count = media.len();
+        let folders = MediaFolder::group(media);
+
+        let mut list = div()
+            .id("media-list")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .gap(px(10.0))
+            .px(px(12.0))
+            .overflow_y_scroll();
+
+        if folders.is_empty() {
+            list = list.child(widgets::note(
+                "No media yet. Import a video, image or audio file and it appears here.",
+            ));
+        }
+
+        let mut index = 0usize;
+        for folder in &folders {
+            let open = !self.collapsed_folders.contains(folder.name);
+            let name = folder.name.to_string();
+            let mut group = div().flex().flex_col().child(
                 div()
-                    .id(("media", index))
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(theme::PANEL_ALT))
-                    .border_l_2()
-                    .border_color(rgb(theme::element_color(asset.kind.label())))
-                    .text_sm()
-                    .text_color(rgb(theme::TEXT))
-                    .overflow_hidden()
-                    .child(Self::shared(asset.name.clone()))
+                    .id(SharedString::from(format!("folder-{}", folder.name)))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .py(px(3.0))
+                    .child(
+                        div()
+                            .w(px(10.0))
+                            .text_xs()
+                            .text_color(rgb(theme::FAINT))
+                            .child(if open { "▼" } else { "▶" }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(rgb(theme::TEXT))
+                            .child(folder.name),
+                    )
+                    .child(widgets::note(folder.items.len().to_string()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.place_media(&id, &name, &path);
+                        if !this.collapsed_folders.remove(&name) {
+                            this.collapsed_folders.insert(name.clone());
+                        }
                         cx.notify();
                     })),
             );
-        }
 
-        // An empty library says so. Filling it with sample names the user never imported makes
-        // the panel a lie, and clicking one drops a clip that references a file nobody has.
-        let body: Div = if items.is_empty() {
-            div()
-                .text_xs()
-                .text_color(rgb(theme::MUTED))
-                .child("No media yet. Import a video, image or audio file and it appears here.")
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .flex_1()
-                .min_h(px(0.0))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme::MUTED))
-                        .child("Click to add at playhead"),
-                )
-                .child(
-                    // A long library scrolls rather than running off the bottom of the panel.
-                    div()
-                        .id("media-list")
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .flex_1()
-                        .min_h(px(0.0))
-                        .overflow_y_scroll()
-                        .children(items),
-                )
-        };
+            if open {
+                let mut grid = div().flex().flex_col().gap(px(8.0)).mt(px(4.0));
+                let mut row = div().flex().flex_row().gap(px(8.0));
+                let mut in_row = 0usize;
+                for asset in &folder.items {
+                    row = row.child(self.media_tile(asset, cell, index, cx));
+                    index += 1;
+                    in_row += 1;
+                    if in_row == columns {
+                        grid = grid.child(row);
+                        row = div().flex().flex_row().gap(px(8.0));
+                        in_row = 0;
+                    }
+                }
+                if in_row > 0 {
+                    for _ in in_row..columns {
+                        row = row.child(div().flex_1().min_w(px(0.0)));
+                    }
+                    grid = grid.child(row);
+                }
+                group = group.child(grid);
+            }
+            list = list.child(group);
+        }
 
         div()
             .flex()
             .flex_col()
-            .w(px(200.0))
-            .h_full()
-            .p_3()
-            .gap_2()
-            .bg(rgb(theme::PANEL))
-            .border_r_1()
-            .border_color(rgb(theme::BORDER))
-            .child(div().text_xs().text_color(rgb(theme::MUTED)).child("MEDIA"))
+            .flex_1()
+            .min_h(px(0.0))
+            .gap(px(10.0))
             .child(
-                self.button("import-media", "Import Media…", true, cx, |this, _cx| {
-                    this.import_media()
-                }),
+                widgets::row()
+                    .px(px(12.0))
+                    .justify_between()
+                    .child(widgets::section("LIBRARY"))
+                    .child(widgets::note(format!("{count} items"))),
             )
-            .child(body)
+            .child(div().px(px(12.0)).child(self.button(
+                "import-media",
+                "Import Media…",
+                false,
+                cx,
+                |this, _cx| this.import_media(),
+            )))
+            .child(list)
+            .child(
+                div()
+                    .px(px(12.0))
+                    .child(widgets::note("Click a tile to add it at the playhead")),
+            )
+    }
+
+    /// One media thumbnail.
+    ///
+    /// A coloured plate with the clip-kind colour, not a decoded frame: bay has no thumbnail
+    /// cache, and decoding a poster per tile on the render path is exactly what the decode rule
+    /// forbids. The kind, name and a dot are what the panel can honestly show.
+    fn media_tile(
+        &self,
+        asset: &crate::view_model::MediaItem,
+        cell: f32,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let (id, name, path) = (asset.id.clone(), asset.name.clone(), asset.path.clone());
+        let color = theme::element_color(asset.kind.label());
+        div()
+            .id(("media-tile", index))
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(px(cell))
+                    .rounded(px(5.0))
+                    .bg(rgb(theme::LANE))
+                    .border_1()
+                    .border_color(rgb(theme::BORDER_SOFT))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().w(px(28.0)).h(px(4.0)).rounded(px(2.0)).bg(rgb(color))),
+            )
+            .child(
+                div()
+                    .mt(px(4.0))
+                    .text_xs()
+                    .text_color(rgb(theme::TEXT))
+                    .overflow_hidden()
+                    .child(shared_text(name.clone())),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme::FAINT))
+                    .child(asset.kind.label()),
+            )
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.place_media(&id, &name, &path);
+                cx.notify();
+            }))
+    }
+
+    /// Text / Transitions / Effects / Audio: a grid of tiles that each apply one edit.
+    fn blocks_panel(&self, panel: Panel, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let columns = self.panel_columns();
+        let cell = self.panel_cell_height(columns);
+        let tiles = panel.blocks();
+        let has_selection = vm.selected.is_some();
+        let hint = match (panel, has_selection) {
+            (Panel::Text, _) => "Adds a clip at the playhead.",
+            (_, true) => "Applies to the selected clip.",
+            (_, false) => "Select a clip first — these change one.",
+        };
+
+        let mut grid = div().flex().flex_col().gap(px(8.0));
+        let mut row = div().flex().flex_row().gap(px(8.0));
+        let mut in_row = 0usize;
+        for (index, tile) in tiles.iter().enumerate() {
+            let enabled = !tile.needs_selection || has_selection;
+            let id = tile.id;
+            row = row.child(
+                div()
+                    .id(("block", index))
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .h(px(cell))
+                            .rounded(px(5.0))
+                            .bg(rgb(theme::PANEL_ALT))
+                            .border_1()
+                            .border_color(rgb(theme::BORDER_SOFT))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(if enabled {
+                                theme::ACCENT_SOFT
+                            } else {
+                                theme::FAINT
+                            }))
+                            .child(panel.glyph()),
+                    )
+                    .child(
+                        div()
+                            .mt(px(4.0))
+                            .text_xs()
+                            .text_color(rgb(if enabled { theme::TEXT } else { theme::FAINT }))
+                            .overflow_hidden()
+                            .child(tile.label),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme::FAINT))
+                            .overflow_hidden()
+                            .child(tile.detail),
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.apply_block(id);
+                        cx.notify();
+                    })),
+            );
+            in_row += 1;
+            if in_row == columns {
+                grid = grid.child(row);
+                row = div().flex().flex_row().gap(px(8.0));
+                in_row = 0;
+            }
+        }
+        if in_row > 0 {
+            for _ in in_row..columns {
+                row = row.child(div().flex_1().min_w(px(0.0)));
+            }
+            grid = grid.child(row);
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .gap(px(8.0))
+            .child(
+                widgets::row()
+                    .px(px(12.0))
+                    .justify_between()
+                    .child(widgets::section(panel.title()))
+                    .child(widgets::note(format!("{} presets", tiles.len()))),
+            )
+            .child(div().px(px(12.0)).child(widgets::note(hint)))
+            .child(
+                div()
+                    .id("blocks-scroll")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .px(px(12.0))
+                    .pb(px(8.0))
+                    .overflow_y_scroll()
+                    .child(grid),
+            )
+    }
+
+    /// Two columns until the panel is wide enough for three.
+    fn panel_columns(&self) -> usize {
+        if self.media_width >= 330.0 {
+            3
+        } else {
+            2
+        }
+    }
+
+    /// A 16:9-ish tile at whatever width the columns work out to.
+    fn panel_cell_height(&self, columns: usize) -> f32 {
+        let gutters = 24.0 + (columns as f32 - 1.0) * 8.0;
+        (((self.media_width - gutters) / columns as f32) * 0.56).max(34.0)
+    }
+
+    /// Run one panel tile against the editor.
+    ///
+    /// The catalog and the commands live in `bay_core::blocks`, so an MCP client can do exactly
+    /// this without a window — and so the "does this effect exist in the compositor?" test runs
+    /// headlessly.
+    fn apply_block(&mut self, block_id: &'static str) {
+        let mut counter = self.add_counter;
+        let planned = {
+            let mut fresh = |prefix: &str| {
+                counter += 1;
+                format!("{prefix}-{counter}")
+            };
+            blocks::plan(&self.editor, block_id, &mut fresh)
+        };
+        self.add_counter = counter;
+        match planned {
+            Ok(commands) => {
+                for command in commands {
+                    self.editor.execute(command);
+                }
+                self.status = None;
+            }
+            Err(error) => self.status = Some(error.to_string()),
+        }
     }
 
     fn preview(&self, vm: &EditorViewModel) -> Div {
@@ -2724,6 +3191,143 @@ impl EditorView {
             }))
     }
 
+    /// The bar under the preview: transport, timecode, and the zoom the timeline reads.
+    ///
+    /// It used to live in the timeline's header. Moving it here is not tidying — the transport
+    /// drives the picture, and having "play" half a screen from the frame it plays is the kind
+    /// of layout that makes an editor feel like a form.
+    fn transport(&self, vm: &EditorViewModel, lane_width: f32, cx: &mut Context<Self>) -> Div {
+        let now = timecode(vm.playhead_seconds);
+        let total = timecode(vm.duration_seconds);
+
+        widgets::row()
+            .h(px(54.0))
+            .flex_none()
+            .justify_center()
+            .gap(px(14.0))
+            .px(px(16.0))
+            .bg(rgb(theme::PANEL))
+            .border_t_1()
+            .border_color(rgb(theme::BORDER))
+            .child(
+                widgets::row()
+                    .gap(px(2.0))
+                    .child(self.transport_button("seek-start", "|◀", cx, |this| {
+                        this.editor.seek(MediaTime::ZERO)
+                    }))
+                    .child(self.transport_button("seek-back", "◀◀", cx, |this| {
+                        let ticks = this.editor.playhead().as_ticks();
+                        this.editor
+                            .seek(MediaTime::from_ticks(ticks - TICKS_PER_SECOND));
+                    })),
+            )
+            .child(
+                div()
+                    .id("play")
+                    .w(px(44.0))
+                    .h(px(32.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::ACCENT))
+                    .text_color(rgb(theme::ON_ACCENT))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(if self.playing { "❚❚" } else { "▶" })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.toggle_play();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .gap(px(2.0))
+                    .child(self.transport_button("seek-fwd", "▶▶", cx, |this| {
+                        let ticks = this.editor.playhead().as_ticks();
+                        this.editor
+                            .seek(MediaTime::from_ticks(ticks + TICKS_PER_SECOND));
+                    }))
+                    .child(self.transport_button("seek-end", "▶|", cx, |this| {
+                        this.editor.seek(this.editor.duration())
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .gap(px(6.0))
+                    .ml(px(6.0))
+                    .child(
+                        div()
+                            .font_family("ui-monospace")
+                            .text_color(rgb(theme::TEXT))
+                            .child(shared_text(now)),
+                    )
+                    .child(
+                        div()
+                            .font_family("ui-monospace")
+                            .text_xs()
+                            .text_color(rgb(theme::FAINT))
+                            .child(shared_text(format!("/ {total}"))),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(
+                widgets::row()
+                    .gap(px(2.0))
+                    .child(self.transport_button("zoom-out", "−", cx, move |this| {
+                        let anchor = this.playhead_anchor_x(lane_width);
+                        this.zoom_by(1.0 / 1.5, anchor, lane_width);
+                    }))
+                    .child(
+                        div()
+                            .font_family("ui-monospace")
+                            .text_xs()
+                            .text_color(rgb(theme::MUTED))
+                            .child(shared_text(format!(
+                                "{} px/s",
+                                self.pixels_per_second.round() as i64
+                            ))),
+                    )
+                    .child(self.transport_button("zoom-in", "+", cx, move |this| {
+                        let anchor = this.playhead_anchor_x(lane_width);
+                        this.zoom_by(1.5, anchor, lane_width);
+                    }))
+                    .child(self.transport_button("fit", "Fit", cx, move |this| {
+                        this.fit_to_window(lane_width);
+                    })),
+            )
+    }
+
+    /// Duplicate the selection, one clip length later.
+    fn duplicate_selected(&mut self) {
+        let Some(reference) = self.editor.selection().first().cloned() else {
+            return;
+        };
+        self.add_counter += 1;
+        let new_id = format!("dup-{}", self.add_counter);
+        self.editor
+            .execute(Command::DuplicateElement { reference, new_id });
+    }
+
+    /// Add an empty overlay lane.
+    fn add_overlay_track(&mut self) {
+        self.add_counter += 1;
+        let count = self.editor.active_scene().tracks.overlay.len() + 1;
+        self.editor.execute(Command::AddTrack {
+            lane: bay_core::command::TrackLane::Overlay,
+            id: format!("track-overlay-{}", self.add_counter),
+            name: format!("Overlay {count}"),
+        });
+    }
+
+    /// Set the zoom so the whole timeline fits the lane.
+    fn fit_to_window(&mut self, lane_width: f32) {
+        let duration = self.editor.duration().to_seconds_f64() as f32;
+        if duration <= 0.0 {
+            return;
+        }
+        self.pixels_per_second = ((lane_width - 20.0) / duration).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.scroll_x = 0.0;
+    }
+
     fn timeline(&self, vm: &EditorViewModel, lane_width: f32, cx: &mut Context<Self>) -> Div {
         let mut rows: Vec<Div> = Vec::new();
         let mut block_index: usize = 0;
@@ -2731,59 +3335,10 @@ impl EditorView {
             rows.push(self.track_row(track, vm.playhead_seconds, &mut block_index, cx));
         }
 
-        let readout = format!("{:.2}s / {:.2}s", vm.playhead_seconds, vm.duration_seconds);
-        let transport = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .child(self.transport_button(
-                "play",
-                if self.playing {
-                    "⏸ Pause"
-                } else {
-                    "▶ Play"
-                },
-                cx,
-                |this| this.toggle_play(),
-            ))
-            .child(self.transport_button("seek-start", "|◀", cx, |this| {
-                this.editor.seek(MediaTime::ZERO)
-            }))
-            .child(self.transport_button("seek-back", "◀ 1s", cx, |this| {
-                let ticks = this.editor.playhead().as_ticks();
-                this.editor
-                    .seek(MediaTime::from_ticks(ticks - TICKS_PER_SECOND));
-            }))
-            .child(self.transport_button("seek-fwd", "1s ▶", cx, |this| {
-                let ticks = this.editor.playhead().as_ticks();
-                this.editor
-                    .seek(MediaTime::from_ticks(ticks + TICKS_PER_SECOND));
-            }))
-            .child(self.transport_button("seek-end", "▶|", cx, |this| {
-                this.editor.seek(this.editor.duration())
-            }))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .child(Self::shared(readout)),
-            )
-            .child(
-                self.transport_button("zoom-out", "− zoom", cx, move |this| {
-                    let anchor = this.playhead_anchor_x(lane_width);
-                    this.zoom_by(1.0 / 1.5, anchor, lane_width);
-                }),
-            )
-            .child(self.transport_button("zoom-in", "zoom +", cx, move |this| {
-                let anchor = this.playhead_anchor_x(lane_width);
-                this.zoom_by(1.5, anchor, lane_width);
-            }));
-
         div()
             .flex()
             .flex_col()
-            // Tall enough for the transport, the ruler and five lanes. Past that the track list
+            // Tall enough for the tool row, the ruler and five lanes. Past that the track list
             // scrolls — projects with a stack of overlays are normal, not exceptional.
             .h(px(300.0))
             .p(px(TIMELINE_PADDING))
@@ -2802,7 +3357,7 @@ impl EditorView {
                     }
                 },
             ))
-            .child(transport)
+            .child(self.timeline_tools(vm, cx))
             .child(self.ruler(vm, lane_width, cx))
             .child(
                 // The tracks scroll: a project with a stack of overlays is taller than the
@@ -2817,6 +3372,119 @@ impl EditorView {
                     .overflow_y_scroll()
                     .children(rows),
             )
+    }
+
+    /// The row of edit tools above the ruler.
+    fn timeline_tools(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let selected = vm.selected.is_some();
+        let razor = self.tool == Tool::Razor;
+        widgets::row()
+            .gap(px(10.0))
+            .child(widgets::section("TIMELINE"))
+            .child(
+                widgets::row()
+                    .gap(px(1.0))
+                    .child(
+                        self.mode_button("tool-select", "➤ Select", !razor, cx, |this| {
+                            this.tool = Tool::Select
+                        }),
+                    )
+                    .child(self.mode_button("tool-razor", "✂ Cut", razor, cx, |this| {
+                        this.tool = Tool::Razor
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .gap(px(1.0))
+                    .child(
+                        self.tool_button("split", "Split", selected, cx, |this| {
+                            this.split_selected()
+                        }),
+                    )
+                    .child(
+                        self.tool_button("duplicate", "Duplicate", selected, cx, |this| {
+                            this.duplicate_selected()
+                        }),
+                    )
+                    .child(self.tool_button("delete", "Delete", selected, cx, |this| {
+                        this.delete_selected()
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .gap(px(1.0))
+                    .child(
+                        self.tool_button("marker", "◆ Marker", true, cx, |this| {
+                            this.add_marker()
+                        }),
+                    )
+                    .child(self.tool_button("add-track", "＋ Track", true, cx, |this| {
+                        this.add_overlay_track()
+                    }))
+                    .child(self.mode_button("snap", "Snap", self.snapping, cx, |this| {
+                        this.snapping = !this.snapping
+                    })),
+            )
+            .child(div().flex_1())
+            .child(widgets::note(format!(
+                "{} tracks · {} markers",
+                vm.tracks.len(),
+                vm.markers.len()
+            )))
+    }
+
+    /// A toolbar button that is either on or off, rather than enabled or disabled.
+    fn mode_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        div()
+            .id(id)
+            .h(px(22.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .bg(rgb(if on {
+                theme::SELECTED
+            } else {
+                theme::PANEL_ALT
+            }))
+            .text_xs()
+            .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
+            .child(label)
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                action(this);
+                cx.notify();
+            }))
+    }
+
+    /// A small toolbar button that greys out when it has nothing to act on.
+    fn tool_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        enabled: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        div()
+            .id(id)
+            .h(px(22.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .bg(rgb(theme::PANEL_ALT))
+            .text_xs()
+            .text_color(rgb(if enabled { theme::TEXT } else { theme::MUTED }))
+            .child(label)
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                action(this);
+                cx.notify();
+            }))
     }
 
     /// The time ruler above the lanes: ticks, timecode labels, and the playhead's handle. This
@@ -3240,6 +3908,18 @@ impl Render for EditorView {
                 this.add_marker();
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &SelectTool, _window, cx| {
+                this.tool = Tool::Select;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &RazorTool, _window, cx| {
+                this.tool = Tool::Razor;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSnap, _window, cx| {
+                this.snapping = !this.snapping;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &SelectAll, _window, cx| {
                 let all: Vec<ElementRef> = this
                     .editor
@@ -3273,7 +3953,11 @@ impl Render for EditorView {
                 cx.notify();
             }))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                if let Some(drag) = this.dragging.as_mut() {
+                if let Some((start_x, start_width)) = this.resizing_panel {
+                    let wanted = start_width + f32::from(event.position.x) - start_x;
+                    this.media_width = wanted.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
+                    cx.notify();
+                } else if let Some(drag) = this.dragging.as_mut() {
                     drag.delta_px = f32::from(event.position.x) - drag.pointer_start_x;
                     cx.notify();
                 } else if this.scrubbing {
@@ -3294,20 +3978,35 @@ impl Render for EditorView {
                         this.scrubbing = false;
                         cx.notify();
                     }
+                    if this.resizing_panel.take().is_some() {
+                        cx.notify();
+                    }
                 }),
             )
             .child(self.toolbar(&vm, cx))
-            .child(self.scene_bar(&vm, cx))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .min_h(px(0.0))
-                    .child(self.media_panel(&vm, cx))
-                    .child(self.preview(&vm))
+                    .child(self.panel_rail(cx))
+                    .child(self.left_panel(&vm, cx))
+                    .child(
+                        // Preview and transport are one column: the transport belongs under the
+                        // picture it drives, not buried in the timeline header where it used to
+                        // sit half a screen away from the frame it is scrubbing.
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(self.preview(&vm))
+                            .child(self.transport(&vm, lane_width, cx)),
+                    )
                     .child(self.inspector(&vm, cx)),
             )
+            .child(self.scene_bar(&vm, cx))
             .child(self.timeline(&vm, lane_width, cx))
     }
 }
@@ -3517,6 +4216,386 @@ mod timeline_tests {
                 "the playhead moved from {before} to {}",
                 this.playhead_anchor_x(LANE)
             );
+        });
+    }
+}
+
+/// The left panel: its tabs, the tiles in them, and the divider that resizes it.
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn view(cx: &mut TestAppContext) -> gpui::Entity<EditorView> {
+        cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        })
+    }
+
+    /// The library is what opens, because it is the panel a project starts in.
+    #[gpui::test]
+    fn the_panel_opens_on_the_library(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            assert_eq!(view.panel, Panel::Media);
+            assert_eq!(view.media_width, DEFAULT_PANEL_WIDTH);
+            assert!(view.collapsed_folders.is_empty(), "groups start open");
+        });
+    }
+
+    /// A tile on the Text panel adds a clip with nothing selected — that is the whole point of
+    /// it — and the new clip is what ends up selected.
+    #[gpui::test]
+    fn a_text_tile_adds_a_clip_and_selects_it(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(Vec::new());
+            view.panel = Panel::Text;
+            view.apply_block("text.headline");
+
+            let selected = view.editor.selected_element().expect("the new clip");
+            assert_eq!(selected.name(), "Headline");
+            assert!(view.status.is_none(), "no complaint: {:?}", view.status);
+        });
+    }
+
+    /// A tile that needs a clip must explain itself in the status line rather than doing
+    /// nothing — a dead-looking button is the failure this replaces.
+    #[gpui::test]
+    fn a_tile_that_needs_a_clip_says_so_in_the_status_line(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(Vec::new());
+            view.panel = Panel::Effects;
+            view.apply_block("fx.blur");
+
+            let status = view.status.clone().expect("a complaint");
+            assert!(status.contains("Select a clip"), "{status}");
+        });
+    }
+
+    /// And with a clip selected it applies, undoably, and clears the complaint.
+    #[gpui::test]
+    fn an_effect_tile_applies_to_the_selection_and_undoes(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.editor
+                .select(vec![ElementRef::new("track-main", "el-title")]);
+            view.status = Some("stale".into());
+            view.apply_block("fx.blur");
+
+            assert!(view.status.is_none(), "a success must clear the complaint");
+            let effects = view.editor.selected_element().unwrap().effects().len();
+            assert_eq!(effects, 1);
+            assert_eq!(
+                view.editor.selected_element().unwrap().effects()[0].effect_type,
+                "blur"
+            );
+
+            view.editor.undo();
+            assert!(view.editor.selected_element().unwrap().effects().is_empty());
+        });
+    }
+
+    /// Every tile has to mint its own ids. Two clicks that produce the same element id would
+    /// make the second clip unaddressable.
+    #[gpui::test]
+    fn two_clicks_produce_two_distinct_clips(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.apply_block("text.caption");
+            let first = view.editor.selection().first().cloned().unwrap();
+            view.apply_block("text.caption");
+            let second = view.editor.selection().first().cloned().unwrap();
+            assert_ne!(first.element_id, second.element_id);
+        });
+    }
+
+    /// The divider must clamp. Dragged far enough left the panel would reach zero width and
+    /// become impossible to grab again.
+    #[gpui::test]
+    fn the_panel_divider_clamps_at_both_ends(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.resizing_panel = Some((100.0, DEFAULT_PANEL_WIDTH));
+
+            // Simulate the root handler's arithmetic at both extremes.
+            let dragged = |view: &mut EditorView, to: f32| {
+                let (start_x, start_width) = view.resizing_panel.unwrap();
+                view.media_width =
+                    (start_width + to - start_x).clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
+            };
+            dragged(view, -5000.0);
+            assert_eq!(view.media_width, MIN_PANEL_WIDTH);
+            dragged(view, 5000.0);
+            assert_eq!(view.media_width, MAX_PANEL_WIDTH);
+        });
+    }
+
+    /// The grid gains a column once there is room for one, and never fewer than two.
+    #[gpui::test]
+    fn the_panel_grid_gains_a_column_when_it_is_wide_enough(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.media_width = MIN_PANEL_WIDTH;
+            assert_eq!(view.panel_columns(), 2);
+            assert!(view.panel_cell_height(2) > 0.0);
+
+            view.media_width = MAX_PANEL_WIDTH;
+            assert_eq!(view.panel_columns(), 3);
+        });
+    }
+
+    /// Collapsing is stored as the closed set, so a group that appears later is open — a folder
+    /// that arrives collapsed hides the file that just landed in it.
+    #[gpui::test]
+    fn collapsing_a_group_is_remembered_and_reversible(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.collapsed_folders.insert("Audio".into());
+            assert!(view.collapsed_folders.contains("Audio"));
+            assert!(
+                !view.collapsed_folders.contains("Video"),
+                "a group nobody touched stays open"
+            );
+            view.collapsed_folders.remove("Audio");
+            assert!(view.collapsed_folders.is_empty());
+        });
+    }
+
+    /// The transport reads in frames, because that is how a cut is chosen.
+    #[test]
+    fn the_transport_timecode_counts_frames() {
+        assert_eq!(timecode(0.0), "0:00:00:00");
+        assert_eq!(timecode(1.0), "0:00:01:00");
+        assert_eq!(timecode(2.5), "0:00:02:15");
+        assert_eq!(timecode(61.0), "0:01:01:00");
+        assert_eq!(timecode(3661.0), "1:01:01:00");
+        assert_eq!(
+            timecode(-5.0),
+            "0:00:00:00",
+            "a negative time is not a crash"
+        );
+    }
+
+    /// Fit must survive an empty timeline rather than dividing by zero.
+    #[gpui::test]
+    fn fitting_an_empty_timeline_changes_nothing(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.editor = Editor::new(bay_core::Project::empty(
+                "p",
+                "Empty",
+                bay_core::CanvasSize::default(),
+                bay_core::Fps::default(),
+                "#000000",
+            ));
+            let before = view.pixels_per_second;
+            view.fit_to_window(1200.0);
+            assert_eq!(view.pixels_per_second, before);
+        });
+    }
+
+    #[gpui::test]
+    fn fitting_a_real_timeline_brings_it_into_view(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.scroll_x = 500.0;
+            view.fit_to_window(1200.0);
+            let duration = view.editor.duration().to_seconds_f64() as f32;
+            assert!(view.pixels_per_second * duration <= 1200.0);
+            assert!(view.pixels_per_second >= MIN_ZOOM);
+            assert_eq!(view.scroll_x, 0.0, "fitting starts at the beginning");
+        });
+    }
+
+    /// Adding an overlay lane must add exactly one, named for its position.
+    #[gpui::test]
+    fn adding_a_track_adds_one_overlay_lane(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let before = view.editor.active_scene().tracks.overlay.len();
+            view.add_overlay_track();
+            assert_eq!(view.editor.active_scene().tracks.overlay.len(), before + 1);
+        });
+    }
+
+    #[gpui::test]
+    fn duplicating_needs_a_selection_and_then_copies_the_clip(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(Vec::new());
+            let before = view.editor.active_scene().tracks.main.elements.len();
+            view.duplicate_selected();
+            assert_eq!(
+                view.editor.active_scene().tracks.main.elements.len(),
+                before,
+                "nothing selected, nothing duplicated"
+            );
+
+            view.editor
+                .select(vec![ElementRef::new("track-main", "el-title")]);
+            view.duplicate_selected();
+            assert_eq!(
+                view.editor.active_scene().tracks.main.elements.len(),
+                before + 1
+            );
+        });
+    }
+}
+
+/// The two timeline modes the design adds: snapping, and the razor.
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn view(cx: &mut TestAppContext) -> gpui::Entity<EditorView> {
+        cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        })
+    }
+
+    /// Snapping is on by default: butt-joining two clips by eye at 48 px/s is a fight.
+    #[gpui::test]
+    fn snapping_starts_on_and_can_be_switched_off(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            assert!(view.snapping);
+            assert_eq!(view.tool, Tool::Select);
+            view.snapping = false;
+            assert!(!view.snapping);
+        });
+    }
+
+    /// With snapping on, a drag that lands near a clip edge is pulled to it; with it off, the
+    /// same drag lands exactly where the pointer did. A toggle that changes neither is decor.
+    #[gpui::test]
+    fn the_snap_toggle_actually_changes_where_a_drag_lands(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let reference = ElementRef::new("track-main", "el-title");
+            let element = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|element| element.id() == "el-title")
+                .expect("the starter title")
+                .clone();
+            view.editor.select(vec![reference.clone()]);
+
+            // Nudge the head to a couple of pixels short of the clip that follows it, which is
+            // inside the snap tolerance.
+            let next_start = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|other| other.start() > element.start())
+                .map(|other| other.start())
+                .expect("the starter project has a second clip on the main lane");
+            let target_px = view.geometry().delta_ticks_to_px(MediaTime::from_ticks(
+                next_start.as_ticks() - element.start().as_ticks(),
+            ));
+            let drag = DragState {
+                reference,
+                mode: DragMode::Move,
+                origin_start_ticks: element.start().as_ticks(),
+                origin_duration_ticks: element.duration().as_ticks(),
+                pointer_start_x: 0.0,
+                delta_px: target_px - 3.0,
+            };
+
+            let snapped = view.snapped_delta_px(&drag);
+            assert!(
+                (snapped - target_px).abs() < 0.01,
+                "snapping should pull the head onto the next clip: {snapped} vs {target_px}"
+            );
+
+            view.snapping = false;
+            assert_eq!(
+                view.snapped_delta_px(&drag),
+                drag.delta_px,
+                "with snapping off, the drag must land where the pointer did"
+            );
+        });
+    }
+
+    /// The razor cuts where it is clicked, and produces two clips that still add up to one.
+    #[gpui::test]
+    fn the_razor_cuts_a_clip_in_two_at_the_point_clicked(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.tool = Tool::Razor;
+            let reference = ElementRef::new("track-main", "el-title");
+            let before = view.editor.active_scene().tracks.main.elements.len();
+            let original = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|element| element.id() == "el-title")
+                .expect("the starter title")
+                .clone();
+
+            // One second in: 48 px/s at the default zoom, plus the label gutter.
+            view.split_at_x(&reference, lane_origin_x() + 48.0);
+
+            let elements = &view.editor.active_scene().tracks.main.elements;
+            assert_eq!(elements.len(), before + 1, "the razor should add a clip");
+            let halves: Vec<_> = elements
+                .iter()
+                .filter(|element| element.name() == original.name())
+                .collect();
+            assert_eq!(halves.len(), 2);
+            let total: i64 = halves.iter().map(|half| half.duration().as_ticks()).sum();
+            assert_eq!(
+                total,
+                original.duration().as_ticks(),
+                "the two halves must add up to the clip that was cut"
+            );
+            assert!(view.status.is_none(), "no complaint: {:?}", view.status);
+        });
+    }
+
+    /// A cut on the very edge would leave a clip of no length: unselectable, and a hole nobody
+    /// can see. It must be refused with a reason rather than made.
+    #[gpui::test]
+    fn a_cut_at_the_edge_is_refused_with_a_reason(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.tool = Tool::Razor;
+            let reference = ElementRef::new("track-main", "el-title");
+            let before = view.editor.active_scene().tracks.main.elements.len();
+
+            view.split_at_x(&reference, lane_origin_x() + 0.5);
+            assert_eq!(
+                view.editor.active_scene().tracks.main.elements.len(),
+                before,
+                "nothing should have been cut"
+            );
+            let status = view.status.clone().expect("a reason");
+            assert!(status.contains("too close"), "{status}");
+        });
+    }
+
+    /// A razor cut on a clip that has since gone must not panic.
+    #[gpui::test]
+    fn cutting_a_clip_that_is_gone_does_nothing(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let ghost = ElementRef::new("track-main", "el-not-here");
+            view.split_at_x(&ghost, lane_origin_x() + 48.0);
+            assert!(view.status.is_none());
         });
     }
 }

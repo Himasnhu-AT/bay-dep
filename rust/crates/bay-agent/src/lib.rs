@@ -29,8 +29,8 @@ pub mod slow;
 pub mod trust;
 
 pub use plan::{
-    Planned, available_tools, editor_tools, machine_tools, plan, plan_without_document,
-    planned_tools, window_tools,
+    Planned, all_tool_names, available_tools, editor_tools, machine_tools, plan,
+    plan_without_document, planned_tools, server_only_tools, window_tools,
 };
 pub use registry::Instance;
 

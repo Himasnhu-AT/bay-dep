@@ -7,8 +7,14 @@
 pub mod app_view;
 pub mod editor_view;
 pub mod geometry;
+pub mod input;
+pub mod launcher_view;
+pub mod login_view;
+pub mod settings_model;
+pub mod settings_view;
 pub mod theme;
 pub mod view_model;
+pub mod widgets;
 
 pub use app_view::BayApp;
 pub use editor_view::{key_bindings, EditorView};

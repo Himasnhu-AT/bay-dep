@@ -136,6 +136,53 @@ pub fn window_tools() -> &'static [&'static str] {
     &["project_create", "project_list", "project_load"]
 }
 
+/// Tools the headless MCP server answers that never reach an open window.
+///
+/// They exist because `bay-mcp`'s `Studio` owns capabilities the attached editor does not route
+/// — sound-effect libraries, transcript editing, variant tournaments, critic passes. Listed
+/// here, in the crate both the server and the UI can see, for one reason: the MCP settings pane
+/// draws a switch per tool and cannot depend on `bay-mcp`. A tool absent from this list would be
+/// served with no way to switch it off, which is a permission control with a hole in it.
+///
+/// `bay-mcp`'s `tool_vocabulary` test asserts this list and its own definitions agree in both
+/// directions, so adding a tool there without adding it here fails the suite rather than
+/// quietly shipping an unswitchable tool.
+pub fn server_only_tools() -> &'static [&'static str] {
+    &[
+        "check_frames",
+        "contact_sheet",
+        "critic_prepare",
+        "critic_refresh",
+        "critic_submit",
+        "cut_by_transcript",
+        "remove_silence_and_fillers",
+        "runtime_remove",
+        "sfx_add",
+        "sfx_list",
+        "sfx_search",
+        "sound_add",
+        "style_pick",
+        "tournament_compare",
+        "transcript_get",
+        "transcript_search",
+        "variant_create",
+        "variant_register_render",
+    ]
+}
+
+/// Every tool bay implements anywhere, sorted.
+///
+/// [`available_tools`] answers "what can an agent call right now?"; this answers "what exists?".
+/// The settings pane needs the second: a pane built from the first would have no switch for a
+/// tool that only the headless server serves.
+pub fn all_tool_names() -> Vec<&'static str> {
+    let mut all = available_tools();
+    all.extend_from_slice(server_only_tools());
+    all.sort_unstable();
+    all.dedup();
+    all
+}
+
 /// Every tool that works while the editor is open, for an error message that tells an agent
 /// what to do instead of only what it cannot.
 pub fn available_tools() -> Vec<&'static str> {
@@ -2705,6 +2752,7 @@ mod tests {
             metadata: bay_project::ProjectMetadata {
                 id: "p".into(),
                 name: "Test".into(),
+                shelf: Default::default(),
             },
             settings: ProjectSettings {
                 fps: Fps {

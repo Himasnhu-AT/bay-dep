@@ -639,6 +639,7 @@ name = "bay-effects"
 version = "0.1.0"
 dependencies = [
  "bay-gpu",
+ "bay-project",
  "bytemuck",
  "half",
  "thiserror 2.0.18",
@@ -717,6 +718,7 @@ dependencies = [
  "bay-preview",
  "bay-project",
  "bay-provision",
+ "bay-settings",
  "bay-speech",
  "bay-stock",
  "bay-test-support",
@@ -796,6 +798,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bay-settings"
+version = "0.1.0"
+dependencies = [
+ "bay-paths",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "bay-speech"
 version = "0.1.0"
 dependencies = [
@@ -854,6 +867,7 @@ dependencies = [
  "bay-paths",
  "bay-preview",
  "bay-provision",
+ "bay-settings",
  "bay-speech",
  "gpui",
  "image",

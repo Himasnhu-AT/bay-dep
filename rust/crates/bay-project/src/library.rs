@@ -81,6 +81,9 @@ pub struct ProjectSummary {
     pub duration_seconds: f64,
     pub scene_count: usize,
     pub element_count: usize,
+    /// The stage and tags the launcher draws on the card. Read from the project rather than a
+    /// sidecar index, so a project copied between machines brings its filing with it.
+    pub shelf: crate::shelf::Shelf,
 }
 
 impl ProjectSummary {
@@ -105,6 +108,7 @@ impl ProjectSummary {
             duration_seconds: bay_time::MediaTime::from_ticks(duration_ticks).to_seconds_f64(),
             scene_count: project.scenes.len(),
             element_count,
+            shelf: project.metadata.shelf.clone(),
         }
     }
 }
@@ -224,6 +228,25 @@ impl ProjectLibrary {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(io(path)(error)),
         }
+    }
+
+    /// Change how a project is filed, without opening it in an editor.
+    ///
+    /// Read-modify-write on the one file, so the launcher does not have to instantiate an
+    /// `Editor` — and, more importantly, so setting a tag on a project cannot disturb whatever
+    /// is currently open. The closure is handed the shelf and returns whether it changed
+    /// anything; returning `false` skips the write entirely, which is what keeps clicking a tag
+    /// that is already on a project from bumping the "modified" time on every card.
+    pub fn file_project(
+        &self,
+        id: &str,
+        edit: impl FnOnce(&mut crate::shelf::Shelf) -> bool,
+    ) -> Result<crate::shelf::Shelf> {
+        let mut project = self.load(id)?;
+        if edit(&mut project.metadata.shelf) {
+            self.save(&project)?;
+        }
+        Ok(project.metadata.shelf)
     }
 
     /// Copy a loose project file into the library, keeping its id unless that slot is taken.
@@ -397,6 +420,7 @@ impl Project {
             metadata: ProjectMetadata {
                 id: id.to_string(),
                 name: name.to_string(),
+                shelf: crate::shelf::Shelf::default(),
             },
             settings: ProjectSettings {
                 fps,
@@ -640,5 +664,104 @@ mod tests {
         // Importing the same file again keeps both rather than overwriting the first.
         library.import(&loose).unwrap();
         assert_eq!(library.list().unwrap().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod shelf_tests {
+    use super::*;
+    use crate::shelf::ProjectStatus;
+
+    fn library(tag: &str) -> ProjectLibrary {
+        let stamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        ProjectLibrary::with_root(std::env::temp_dir().join(format!("bay-shelf-{tag}-{stamp}")))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_new_project_is_listed_as_in_progress_and_untagged() {
+        let library = library("fresh");
+        library
+            .create("Reel", CanvasSize::default(), Fps::default())
+            .unwrap();
+        let summary = &library.list().unwrap()[0];
+        assert_eq!(summary.shelf.status, ProjectStatus::InProgress);
+        assert!(summary.shelf.tags.is_empty());
+    }
+
+    /// The launcher edits filing without opening the project, and the change must survive.
+    #[test]
+    fn filing_a_project_persists_and_shows_up_in_the_listing() {
+        let library = library("file");
+        let project = library
+            .create("Reel", CanvasSize::default(), Fps::default())
+            .unwrap();
+        let id = project.metadata.id;
+
+        library
+            .file_project(&id, |shelf| {
+                shelf.status = ProjectStatus::ClientReview;
+                shelf.add_tag("Priority")
+            })
+            .unwrap();
+
+        let summary = &library.list().unwrap()[0];
+        assert_eq!(summary.shelf.status, ProjectStatus::ClientReview);
+        assert_eq!(summary.shelf.tags, vec!["Priority"]);
+        // And on the document itself, so a copy of the file carries its filing.
+        assert_eq!(
+            library.load(&id).unwrap().metadata.shelf.status,
+            ProjectStatus::ClientReview
+        );
+    }
+
+    /// Clicking a tag that is already there must not rewrite the file — every card in the
+    /// launcher shows a "modified" time, and a no-op that bumps it makes the list reorder for
+    /// no reason.
+    ///
+    /// Proved by making the library directory read-only: a skipped write succeeds, a real one
+    /// cannot. Comparing modification times would pass on a filesystem with coarse timestamps
+    /// whether or not the write happened, and the file itself is no good either — `write_project`
+    /// renames a temp file into place, and a rename does not need the target to be writable.
+    #[cfg(unix)]
+    #[test]
+    fn a_no_op_edit_does_not_rewrite_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let library = library("noop");
+        let project = library
+            .create("Reel", CanvasSize::default(), Fps::default())
+            .unwrap();
+        let id = project.metadata.id;
+        library
+            .file_project(&id, |shelf| shelf.add_tag("Reel"))
+            .unwrap();
+
+        let root = library.root().to_path_buf();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let shelf = library
+            .file_project(&id, |shelf| shelf.add_tag("Reel"))
+            .expect("a duplicate tag must not need a write");
+        assert_eq!(shelf.tags, vec!["Reel"]);
+
+        assert!(
+            library
+                .file_project(&id, |shelf| shelf.add_tag("Priority"))
+                .is_err(),
+            "a real change to a read-only file must fail — otherwise this test proves nothing"
+        );
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn filing_a_project_that_is_not_there_is_an_error() {
+        let library = library("missing");
+        assert!(
+            library
+                .file_project("no-such-project", |shelf| shelf.add_tag("x"))
+                .is_err()
+        );
     }
 }

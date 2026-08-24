@@ -8786,43 +8786,43 @@
     {
       "id": "media-1",
       "name": "bay-narration-1.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-1.wav",
+      "path": "media/bay-narration-1.wav",
       "durationSeconds": 5.0
     },
     {
       "id": "media-2",
       "name": "bay-narration-2.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-2.wav",
+      "path": "media/bay-narration-2.wav",
       "durationSeconds": 6.975
     },
     {
       "id": "media-3",
       "name": "bay-narration-3.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-3.wav",
+      "path": "media/bay-narration-3.wav",
       "durationSeconds": 3.875
     },
     {
       "id": "media-4",
       "name": "bay-narration-4.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-4.wav",
+      "path": "media/bay-narration-4.wav",
       "durationSeconds": 5.375
     },
     {
       "id": "media-5",
       "name": "bay-narration-5.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-5.wav",
+      "path": "media/bay-narration-5.wav",
       "durationSeconds": 10.3
     },
     {
       "id": "media-6",
       "name": "bay-narration-6.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-6.wav",
+      "path": "media/bay-narration-6.wav",
       "durationSeconds": 4.625
     },
     {
       "id": "m_bed",
       "name": "bed.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/bed.wav",
+      "path": "media/bed.wav",
       "durationSeconds": 62.0,
       "width": 0,
       "height": 0
@@ -8830,7 +8830,7 @@
     {
       "id": "m_whoosh",
       "name": "whoosh.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/whoosh.wav",
+      "path": "media/whoosh.wav",
       "durationSeconds": 0.55,
       "width": 0,
       "height": 0
@@ -8838,7 +8838,7 @@
     {
       "id": "m_wrev",
       "name": "whoosh_rev.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/whoosh_rev.wav",
+      "path": "media/whoosh_rev.wav",
       "durationSeconds": 0.5,
       "width": 0,
       "height": 0
@@ -8846,7 +8846,7 @@
     {
       "id": "m_impact",
       "name": "impact.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/impact.wav",
+      "path": "media/impact.wav",
       "durationSeconds": 0.7,
       "width": 0,
       "height": 0
@@ -8854,7 +8854,7 @@
     {
       "id": "m_sub",
       "name": "subdrop.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/subdrop.wav",
+      "path": "media/subdrop.wav",
       "durationSeconds": 0.9,
       "width": 0,
       "height": 0
@@ -8862,7 +8862,7 @@
     {
       "id": "m_riser",
       "name": "riser.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/riser.wav",
+      "path": "media/riser.wav",
       "durationSeconds": 1.3,
       "width": 0,
       "height": 0
@@ -8870,7 +8870,7 @@
     {
       "id": "m_chime",
       "name": "chime.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/chime.wav",
+      "path": "media/chime.wav",
       "durationSeconds": 1.1,
       "width": 0,
       "height": 0
@@ -8878,7 +8878,7 @@
     {
       "id": "m_click",
       "name": "click.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/click.wav",
+      "path": "media/click.wav",
       "durationSeconds": 0.06,
       "width": 0,
       "height": 0
@@ -8886,7 +8886,7 @@
     {
       "id": "m_tick",
       "name": "tick.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/tick.wav",
+      "path": "media/tick.wav",
       "durationSeconds": 0.045,
       "width": 0,
       "height": 0
@@ -8894,7 +8894,7 @@
     {
       "id": "m_pop",
       "name": "pop.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2/scratchpad/audio/pop.wav",
+      "path": "media/pop.wav",
       "durationSeconds": 0.16,
       "width": 0,
       "height": 0

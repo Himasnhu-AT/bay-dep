@@ -1564,6 +1564,14 @@ impl PreviewRenderer {
             // mix to mono. Both were measured in shipped files. Pin the delivery format here,
             // after everything that could have changed it, rather than trusting the chain.
             filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
+            // Pad the bed with silence, forever. `-shortest` below ends the file at the
+            // shortest stream, and without this that stream is the audio whenever the last
+            // audible clip stops before the picture does — an eight-second reel with a
+            // 0.7 s stinger at 4.85 s came out 5.6 s long, missing its whole end card, and
+            // ffmpeg reported success. Padding makes the audio effectively infinite, so the
+            // picture is always the shortest stream and always the one that sets the length.
+            // Placed after `loudnorm`, which must measure the real mix and not the silence.
+            filters.push_str(",apad");
             filters.push_str("[aout]");
 
             args.push("-filter_complex".into());
@@ -1576,7 +1584,8 @@ impl PreviewRenderer {
             args.push("aac".into());
             args.push("-b:a".into());
             args.push(format!("{}k", settings.audio_bitrate_kbps.clamp(32, 512)));
-            // The mixed bed can outlast the picture; the video track defines the duration.
+            // The picture defines the duration, in both directions: a bed that outlasts it is
+            // cut here, and one that stops early was padded above so it cannot cut the picture.
             args.push("-shortest".into());
         }
 

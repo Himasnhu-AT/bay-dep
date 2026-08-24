@@ -17,6 +17,7 @@ members = [
     "crates/bay-listen",
     "crates/bay-speech",
     "crates/bay-project",
+    "crates/bay-settings",
     "crates/bay-audio",
     "crates/bay-preview",
     "crates/bay-text",
