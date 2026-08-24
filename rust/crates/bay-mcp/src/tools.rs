@@ -1228,6 +1228,33 @@ pub fn all_definitions() -> Vec<Value> {
             &["bedId"],
         ),
         tool(
+            "audio_smooth",
+            "Crossfade every place two sounds meet, so a dialogue edit stops ticking at its \
+             joins.\n\nA cut in the dialogue is not a cut in the ROOM. Butt two takes \
+             together and the noise floor, the reverb tail and the timbre change between one \
+             sample and the next. There is no click to find — nothing in the waveform is \
+             discontinuous — but the room appears to teleport, and it reads as a fault in the \
+             recording rather than as an edit. Measured across one such cut: 7.5 dB of level \
+             at one join, 20 dB of top end at another, instantly.\n\nThis overlaps each pair \
+             by a few tens of milliseconds and fades one down as the other comes up, extending \
+             the outgoing clip into the source it was cut from so the overlap is the room \
+             continuing rather than silence. Both sides move: summing a full-level outgoing \
+             with a fading-in incoming makes the overlap up to 6 dB LOUDER, which is why an \
+             audio crossfade is not a picture dissolve. Call it after cut_by_transcript, \
+             remove_silence_and_fillers, or any hand-built run of speech clips.",
+            json!({
+                "joinMs": { "type": "number", "default": 30,
+                    "description": "How long each crossfade is. Tens of milliseconds is a \
+                         smoothing, not a transition — long enough to hide the seam in the room \
+                         tone, short enough that no word is doubled. Shortened automatically \
+                         where the source runs out." },
+                "elementIds": { "type": "array", "items": { "type": "string" },
+                    "description": "Restrict to these audio clips. Omit for every one on the \
+                         timeline, which is what you usually want." }
+            }),
+            &[],
+        ),
+        tool(
             "fade_set",
             "Fade a clip up at its head and down at its tail. On picture this fades opacity, \
              on audio it fades level — the same field, so a shot and its sound fade together. \
@@ -2629,6 +2656,16 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 visual,
             )
         }
+        "audio_smooth" => studio.audio_smooth(
+            number(args, "joinMs", 30.0),
+            args.get("elementIds")
+                .and_then(|v| v.as_array())
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_string))
+                        .collect()
+                }),
+        ),
         "add_audio" => studio.add_audio(
             text(args, "id"),
             required_text(args, "mediaId")?,

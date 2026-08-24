@@ -1287,6 +1287,20 @@ impl Element {
     /// Eased keyframe segments are subdivided rather than taken at their endpoints — an
     /// `expo-out` duck sampled only at its two keys is a straight line, which is not what the
     /// author asked for. A flat clip returns a single point.
+    /// The same polyline, with the head and tail fades left out.
+    ///
+    /// For a mixer that applies fades itself. The export does: an ffmpeg `volume` expression is
+    /// evaluated once per audio *frame* — about 21 ms — and held, so a fade folded into it is
+    /// quantised to that grid and its first frame is multiplied by exactly zero. On a fade of a
+    /// second nobody notices; on the tens of milliseconds a dialogue join wants, the fade *is*
+    /// the first frame, and what reaches the file is a hole rather than a ramp. The export
+    /// emits `afade` for these instead, which is sample-accurate.
+    pub fn gain_points_without_fades(&self) -> Vec<(f64, f32)> {
+        let mut bare = self.clone();
+        bare.set_fades(MediaTime::ZERO, MediaTime::ZERO);
+        bare.gain_points()
+    }
+
     pub fn gain_points(&self) -> Vec<(f64, f32)> {
         if !matches!(self, Element::Audio(_)) {
             return Vec::new();

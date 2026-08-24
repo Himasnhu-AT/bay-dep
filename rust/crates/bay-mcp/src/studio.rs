@@ -1350,6 +1350,157 @@ impl Studio {
     }
 
     /// Place source ranges consecutively as paired video and speech clips.
+    /// Crossfade every place two sounds meet, so a dialogue edit stops ticking at its joins.
+    ///
+    /// A cut in dialogue is not a cut in the *room*. Butt two takes together and the noise
+    /// floor, the reverb tail and the timbre all change between one sample and the next —
+    /// measured across one such edit: +7.5 dB of level at one join and -20.8 dB of top end at
+    /// another, instantaneously. There is no click to find, because nothing is discontinuous
+    /// in the waveform; what the ear hears is the room teleporting, and it reads as a fault in
+    /// the recording rather than as an edit.
+    ///
+    /// The fix is the one every editor makes by hand: overlap the two clips by a few tens of
+    /// milliseconds and fade one down as the other comes up. The material for the overlap is
+    /// real — the outgoing clip is extended into the source it was cut from, so the tail is
+    /// the room continuing, not silence.
+    ///
+    /// **Both sides move, which is where this parts company with a picture dissolve.**
+    /// [`Command::SetFades`] documents a dissolve as the incoming clip alone fading over an
+    /// outgoing one still at full, and for opacity that is right. Sum two sounds that way and
+    /// the overlap is *louder* than either — up to 6 dB for uncorrelated room tone. So the
+    /// outgoing fades down as the incoming fades up.
+    pub fn audio_smooth(&mut self, join_ms: f64, element_ids: Option<Vec<String>>) -> ToolResult {
+        let join = secs(join_ms.clamp(0.0, 500.0) / 1000.0)?;
+        if join <= MediaTime::ZERO {
+            return Err(err("joinMs must be greater than zero"));
+        }
+        let wanted: Option<std::collections::BTreeSet<String>> =
+            element_ids.map(|ids| ids.into_iter().collect());
+
+        // (id, track, start, duration, source room left after the out-point)
+        let mut clips: Vec<(String, String, MediaTime, MediaTime, MediaTime)> = Vec::new();
+        {
+            let project = self.editor.project();
+            let scene = project.active_scene();
+            for track in &scene.tracks.audio {
+                for element in &track.elements {
+                    let bay_project::Element::Audio(audio) = element else {
+                        continue;
+                    };
+                    if wanted.as_ref().is_some_and(|ids| !ids.contains(&audio.id)) {
+                        continue;
+                    }
+                    // How much source lies past this clip's out-point — the material the
+                    // overlap is made of. Without it there is nothing to fade *through*.
+                    let room = project
+                        .media
+                        .iter()
+                        .find(|asset| asset.id == audio.media_id)
+                        .and_then(|asset| asset.source_duration())
+                        .map(|length| {
+                            (length - (audio.trim_start + audio.duration)).max(MediaTime::ZERO)
+                        })
+                        .unwrap_or(MediaTime::ZERO);
+                    clips.push((
+                        audio.id.clone(),
+                        track.id.clone(),
+                        audio.start,
+                        audio.duration,
+                        room,
+                    ));
+                }
+            }
+        }
+        clips.sort_by_key(|(_, _, start, _, _)| *start);
+        if clips.is_empty() {
+            return Err(err("no audio clips to smooth"));
+        }
+
+        // A join is two clips that meet: touching, or overlapping already, or with a gap too
+        // short to be a deliberate silence.
+        let tolerance = join;
+        let mut fades: std::collections::BTreeMap<String, (MediaTime, MediaTime)> =
+            std::collections::BTreeMap::new();
+        let mut extend: std::collections::BTreeMap<String, MediaTime> =
+            std::collections::BTreeMap::new();
+        let mut joins = Vec::new();
+        for pair in clips.windows(2) {
+            let (a_id, _, a_start, a_duration, a_room) = &pair[0];
+            let (b_id, _, b_start, _, _) = &pair[1];
+            let a_end = *a_start + *a_duration;
+            let gap = *b_start - a_end;
+            if gap > tolerance || gap < -tolerance {
+                continue;
+            }
+            // Overlap by as much as the source allows, up to the asked-for join.
+            let overlap = join.min(*a_room + (a_end - *b_start).max(MediaTime::ZERO));
+            if overlap <= MediaTime::ZERO {
+                continue;
+            }
+            let grow = (*b_start + overlap - a_end).max(MediaTime::ZERO);
+            if grow > MediaTime::ZERO {
+                extend.insert(a_id.clone(), grow);
+            }
+            fades.entry(a_id.clone()).or_default().1 = overlap;
+            fades.entry(b_id.clone()).or_default().0 = overlap;
+            joins.push(serde_json::json!({
+                "from": a_id, "to": b_id,
+                "atSeconds": b_start.to_seconds_f64(),
+                "crossfadeSeconds": overlap.to_seconds_f64(),
+                "grewOutgoingBySeconds": grow.to_seconds_f64(),
+            }));
+        }
+
+        // The two open ends. A clip that starts at full level on the first sample ticks just as
+        // audibly as a join does, and nothing is overlapping there to hide it.
+        let edge = join.min(secs(0.010)?);
+        fades.entry(clips[0].0.clone()).or_default().0 = fades
+            .get(&clips[0].0)
+            .map(|f| f.0)
+            .unwrap_or(MediaTime::ZERO)
+            .max(edge);
+        let last = clips[clips.len() - 1].0.clone();
+        let existing = fades.get(&last).map(|f| f.1).unwrap_or(MediaTime::ZERO);
+        fades.entry(last).or_default().1 = existing.max(edge);
+
+        let mut changed = 0usize;
+        for (id, grow) in &extend {
+            let Some((_, _, start, duration, _)) = clips.iter().find(|(c, ..)| c == id) else {
+                continue;
+            };
+            let Some(reference) = self.find_element_ref(id) else {
+                continue;
+            };
+            if self.editor.execute(Command::TrimElement {
+                reference,
+                start: *start,
+                duration: *duration + *grow,
+            }) {
+                changed += 1;
+            }
+        }
+        for (id, (fade_in, fade_out)) in &fades {
+            let Some(reference) = self.find_element_ref(id) else {
+                continue;
+            };
+            if self.editor.execute(Command::SetFades {
+                reference,
+                fade_in: *fade_in,
+                fade_out: *fade_out,
+            }) {
+                changed += 1;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "joinMs": join.to_seconds_f64() * 1000.0,
+            "clips": clips.len(),
+            "joinsSmoothed": joins.len(),
+            "edits": changed,
+            "joins": joins,
+        }))
+    }
+
     pub fn cut_by_transcript(
         &mut self,
         media_id: &str,

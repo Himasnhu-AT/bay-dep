@@ -2381,11 +2381,15 @@ fn a_moving_level_becomes_an_ffmpeg_expression() {
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 0.5)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
     };
     assert_eq!(bay_preview::volume_filter_for_test(&flat), "volume=0.5000");
 
     let ducked = bay_preview::AudibleClip {
         gain_points: vec![(0.0, 1.0), (1.0, 0.2), (3.0, 0.2), (4.0, 1.0)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
         ..flat
     };
     let filter = bay_preview::volume_filter_for_test(&ducked);
@@ -2518,6 +2522,12 @@ fn interpolate(points: &[(f64, f32)], at: f64) -> f32 {
 }
 
 /// A fade on an audio clip has to reach the export, not only the preview.
+///
+/// It arrives as `fade_in_seconds`/`fade_out_seconds` rather than inside `gain_points`, which
+/// is what it used to be. Folding it into the gain polyline meant it was applied by the ffmpeg
+/// `volume` expression, evaluated once per ~21 ms audio frame — fine for a fade of a second,
+/// and a hole rather than a ramp for the tens of milliseconds a dialogue join wants. The
+/// numbers are the same; only the resolution they are applied at changed.
 #[test]
 fn an_audio_fade_reaches_the_export_mixer() {
     use bay_project::{AudioElement, MediaAsset, Track, TrackKind};
@@ -2553,13 +2563,20 @@ fn an_audio_fade_reaches_the_export_mixer() {
     let media = vec![MediaAsset::new("m-ok", "ok.mp3", "/tmp/ok.mp3")];
     let clips = bay_preview::audible_clips_for_test(project.active_scene(), &media);
     assert_eq!(clips.len(), 1);
-    assert!(
-        clips[0].gain_points.len() > 1,
-        "the fade reached the mixer: {:?}",
-        clips[0].gain_points
+    assert_eq!(
+        clips[0].fade_in_seconds, 1.0,
+        "the head fade reached the mixer"
     );
-    assert_eq!(clips[0].gain_points.first(), Some(&(0.0, 0.0)));
-    assert_eq!(clips[0].gain_points.last(), Some(&(4.0, 0.0)));
+    assert_eq!(
+        clips[0].fade_out_seconds, 1.0,
+        "the tail fade reached the mixer"
+    );
+    // And it is not *also* in the gain polyline, which would apply it twice.
+    assert_eq!(
+        clips[0].gain_points,
+        vec![(0.0, 1.0)],
+        "a clip with no volume keyframes carries a flat gain; the fades are separate"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2603,6 +2620,8 @@ fn a_range_moves_the_sound_with_the_picture() {
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
     };
 
     // Exporting 5s..15s of a timeline.
@@ -2652,6 +2671,8 @@ fn a_range_of_zero_leaves_every_clip_alone() {
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
     }];
     let kept = bay_preview::clips_in_range_for_test(clips.clone(), 0.0, 10.0);
     assert_eq!(kept, clips);
@@ -3238,4 +3259,146 @@ fn an_audio_clip_that_ends_early_does_not_truncate_the_export() {
          for {PICTURE_SECONDS}s at {FPS}fps"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A short audio fade must reach the file as a ramp, not as a hole.
+///
+/// Fades used to be folded into the `volume` expression, which the export evaluates once per
+/// audio frame — about 21 ms — and holds. A fade of a second survives that; a fade of a few
+/// tens of milliseconds *is* one frame, and the frame it lands on is multiplied by the value
+/// at the very start of the curve, which for a fade-in is zero. So the crossfade that smooths
+/// a dialogue join arrived as ~21 ms of digital silence on each side of it: two clips butt
+/// joined with 35 ms fades measured 67 ms of exact zero, and the same two clips with the fades
+/// removed measured none. A smoothing that produces a hole is worse than the seam it replaced.
+///
+/// The fades are `afade` now, which works on samples. This renders the shape that broke and
+/// asserts the file has no digital silence in it at all.
+#[test]
+fn a_short_audio_fade_renders_as_a_ramp_rather_than_a_hole() {
+    let Some(mut renderer) = bay_test_support::require_gpu_backed(
+        "a PreviewRenderer",
+        bay_preview::PreviewRenderer::new,
+    ) else {
+        return;
+    };
+    let dir = std::env::temp_dir().join("bay-short-fade");
+    let _ = std::fs::create_dir_all(&dir);
+    let tone = dir.join("tone.wav");
+    let out = dir.join("short-fade.mp4");
+
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            tone.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(made, "synthesize a test tone") {
+        return;
+    }
+
+    // 35 ms, the length a dialogue join wants — and under two audio frames.
+    let fade = MediaTime::from_seconds_f64(0.035).expect("35 ms");
+    let mut project = Project::starter();
+    project.media = vec![bay_project::MediaAsset::new(
+        "tone",
+        "tone.wav",
+        tone.to_str().unwrap(),
+    )];
+    {
+        let scene = project.active_scene_mut();
+        let one = |id: &str, start: f64, trim: f64, fade_in, fade_out| {
+            Element::Audio(bay_project::AudioElement {
+                id: id.into(),
+                name: id.into(),
+                start: MediaTime::from_seconds_f64(start).expect("a start"),
+                duration: MediaTime::from_seconds_f64(1.0).expect("a second"),
+                fade_in,
+                fade_out,
+                media_id: "tone".into(),
+                muted: false,
+                volume: 1.0,
+                speed: 1.0,
+                prosody: None,
+                dialogue_chain: None,
+                animations: Default::default(),
+                trim_start: MediaTime::from_seconds_f64(trim).expect("a trim"),
+                source: Default::default(),
+                role: Default::default(),
+            })
+        };
+        scene.tracks.audio[0].elements = vec![
+            one("a", 0.0, 0.0, MediaTime::ZERO, fade),
+            one("b", 1.0, 2.0, fade, MediaTime::ZERO),
+        ];
+    }
+
+    let rendered = renderer.export_video(
+        project.active_scene(),
+        2.0,
+        30.0,
+        320,
+        180,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings {
+            loudness_lufs: None,
+            ..Default::default()
+        },
+    );
+    assert!(rendered.is_ok(), "the export failed: {rendered:?}");
+
+    // Decode and look for exact zero. A sine through a linear crossfade never reaches it.
+    let pcm = std::process::Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-i",
+            out.to_str().unwrap(),
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "-",
+        ])
+        .output()
+        .expect("decode the rendered audio");
+    let samples: Vec<f32> = pcm
+        .stdout
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    assert!(!samples.is_empty(), "the render carried no audio at all");
+
+    // The longest run of silence anywhere but the very ends.
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for (index, sample) in samples.iter().enumerate() {
+        if sample.abs() < 1e-7 {
+            run += 1;
+            if index + 1 < samples.len() && index > 480 {
+                longest = longest.max(run);
+            }
+        } else {
+            run = 0;
+        }
+    }
+    let seconds = longest as f64 / 48000.0;
+    assert!(
+        seconds < 0.005,
+        "a {:.0} ms hole in the middle of a crossfade — the fade was quantised to an audio \
+         frame instead of applied to samples",
+        seconds * 1000.0
+    );
 }

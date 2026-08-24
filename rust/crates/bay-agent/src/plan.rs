@@ -149,6 +149,7 @@ pub fn window_tools() -> &'static [&'static str] {
 /// quietly shipping an unswitchable tool.
 pub fn server_only_tools() -> &'static [&'static str] {
     &[
+        "audio_smooth",
         "check_frames",
         "contact_sheet",
         "critic_prepare",

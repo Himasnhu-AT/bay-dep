@@ -1095,6 +1095,47 @@ pub static MOVES: &[Move] = &[
         }],
         group: None,
     },
+    Move {
+        id: "push-in",
+        kind: MoveKind::Ambient,
+        lead: "scale",
+        summary: "A slow push toward the subject across a held shot — the punch-in an editor \
+                  puts under a line that matters. Six percent over eight seconds, which reads \
+                  as attention rather than as a zoom; on a locked-off interview it is the only \
+                  camera move there is. Scale alone: the entrances that also carry opacity are \
+                  for something arriving, and this is for something already on screen.",
+        directions: &[Direction::In],
+        channels: &[MoveChannel {
+            property: "scale",
+            easing: Easing::SineInOut,
+            directional: false,
+            keys: &[
+                key(0.0, KeyValue::Target, Easing::SineInOut),
+                last(240.0, KeyValue::Offset(0.06)),
+            ],
+        }],
+        group: None,
+    },
+    Move {
+        id: "pull-back",
+        kind: MoveKind::Ambient,
+        lead: "scale",
+        summary: "The opposite of push-in: the frame opens out over eight seconds, letting the \
+                  room back in. Use it to release after a push, or under a wide that follows a \
+                  long single. Starting a shot already punched in and pulling back is how a cut \
+                  to the same angle twice stops reading as the same shot.",
+        directions: &[Direction::Out],
+        channels: &[MoveChannel {
+            property: "scale",
+            easing: Easing::SineInOut,
+            directional: false,
+            keys: &[
+                key(0.0, KeyValue::Target, Easing::SineInOut),
+                last(240.0, KeyValue::Offset(-0.06)),
+            ],
+        }],
+        group: None,
+    },
     // ------------------------------------------------------------------ exits
     Move {
         id: "duck",

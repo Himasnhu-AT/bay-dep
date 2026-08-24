@@ -1533,13 +1533,16 @@ impl PreviewRenderer {
                 filters.push_str(&format!(
                     "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
                      asetpts=PTS-STARTPTS,{processing}{volume},\
-                     atrim=duration={duration:.4},adelay={delay_ms}:all=1[a{index}];",
+                     atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
                     input = index + 1,
                     start = clip.trim_start_seconds,
                     source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
                     duration = clip.duration_seconds,
                     processing = clip.processing_filters(),
                     volume = clip.volume_filter(),
+                    // After the trim, so the tail fade is measured against the clip's real
+                    // length, and before the delay, so `st` is clip-relative.
+                    fades = clip.fade_filters(),
                     delay_ms = (clip.start_seconds * 1000.0).round() as i64,
                 ));
             }
@@ -2133,10 +2136,19 @@ pub struct AudibleClip {
     pub dialogue_chain: Option<bay_project::DialogueAudioChain>,
     /// Linear gain. 1.0 is unity. Constant when `gain_points` holds one point or none.
     pub volume: f32,
-    /// The clip's level over its own length as `(seconds, gain)` — fades and any volume
-    /// keyframes, taken from the same model function the preview mixer reads, so the export
-    /// cannot duck in a different place than the room did.
+    /// The clip's level over its own length as `(seconds, gain)` — volume keyframes, taken
+    /// from the same model function the preview mixer reads, so the export cannot duck in a
+    /// different place than the room did.
+    ///
+    /// **Without the head and tail fades**, which [`AudibleClip::fade_filters`] applies
+    /// separately. They are the same numbers either way; what differs is the resolution they
+    /// are applied at, and a fade is the one thing here that cannot survive being rounded to
+    /// an audio frame.
     pub gain_points: Vec<(f64, f32)>,
+    /// Head fade, in seconds.
+    pub fade_in_seconds: f64,
+    /// Tail fade, in seconds.
+    pub fade_out_seconds: f64,
 }
 
 /// How many points an ffmpeg `volume` expression may carry.
@@ -2281,6 +2293,35 @@ impl AudibleClip {
     /// Decimated on the way in, because the expression parser has a hard limit the model does
     /// not — see [`MAX_GAIN_EXPRESSION_POINTS`]. The preview mixer keeps the full polyline;
     /// what the two share is the description, not the sample count.
+    /// Head and tail fades, as `afade` — sample-accurate, unlike the `volume` expression.
+    ///
+    /// `volume` is evaluated once per audio frame (`eval=frame`, ~21 ms) and held for that
+    /// frame. Fold a fade into it and the first frame of the fade is multiplied by whatever the
+    /// curve reads at its very start, which for a fade-in is exactly zero — so a 35 ms
+    /// crossfade reached the file as ~21 ms of digital silence on each side of the join, a hole
+    /// where a smoothing was asked for. Measured on a two-clip repro: butt-joined with 35 ms
+    /// fades produced 67 ms of exact zero, and the same two clips with no fades produced none.
+    ///
+    /// `afade` works on samples, so the ramp is the ramp however short it is. Linear, matching
+    /// [`bay_project::Element::fade_gain`], so the export and the preview agree.
+    fn fade_filters(&self) -> String {
+        let mut out = String::new();
+        if self.fade_in_seconds > 0.0 {
+            out.push_str(&format!(
+                "afade=t=in:curve=tri:st=0:d={:.4},",
+                self.fade_in_seconds
+            ));
+        }
+        if self.fade_out_seconds > 0.0 {
+            let start = (self.duration_seconds - self.fade_out_seconds).max(0.0);
+            out.push_str(&format!(
+                "afade=t=out:curve=tri:st={start:.4}:d={:.4},",
+                self.fade_out_seconds
+            ));
+        }
+        out
+    }
+
     fn volume_filter(&self) -> String {
         let decimated = decimate_gain_points(&self.gain_points, MAX_GAIN_EXPRESSION_POINTS);
         let points: Vec<&(f64, f32)> = decimated.iter().collect();
@@ -2357,7 +2398,9 @@ fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
                 speed: audio.speed,
                 dialogue_chain: audio.dialogue_chain.clone(),
                 volume: audio.volume,
-                gain_points: element.gain_points(),
+                gain_points: element.gain_points_without_fades(),
+                fade_in_seconds: audio.fade_in.to_seconds_f64().max(0.0),
+                fade_out_seconds: audio.fade_out.to_seconds_f64().max(0.0),
             });
         }
     }
@@ -2496,6 +2539,8 @@ mod craft_tests {
             dialogue_chain: Some(bay_project::DialogueAudioChain::default()),
             volume: 1.0,
             gain_points: vec![(0.0, 1.0)],
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
         };
         let filters = clip.processing_filters();
         let positions = [
