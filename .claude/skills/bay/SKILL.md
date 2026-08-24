@@ -80,6 +80,8 @@ it never removes a system ffmpeg, Python, or user media.
    can land *on* the music. Read `confidence` before `bpm`, and `candidates` before you commit to
    a grid that has to end on the last beat.
 
+   **A recorded conversation is its own format** — see
+   [references/multicam-podcast.md](references/multicam-podcast.md) before cutting one.
    **`silence_detect`** finds the dead air in a recorded take — the first thing anyone does to an
    interview. Its threshold is measured off the material, not typed. `keepRanges` is the shape of
    the edit. Note that **`add_video` carries no audio**: the picture and the sound are separate
@@ -161,6 +163,10 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 - **Only transforms are animatable** (`opacity, scale, x, y, rotation, scaleX, scaleY`, and
   `volume` on audio). Colour, blur, letter-spacing and mask geometry are one-shot state changes,
   so plan the move around what is a channel.
+- **A dialogue edit ticks at every join until you smooth it.** Consecutive speech clips are
+  butt-joined, and a cut in the dialogue is not a cut in the room: the noise floor and the timbre
+  change between one sample and the next. There is no click to find, which is why it survives a
+  listen on speakers and not headphones. `audio_smooth` crossfades every seam.
 - **Edit in place.** `element_trim`, `element_source`, `element_split`, `element_move`,
   `transform_set` and `text_update` all keep the id and the animation. Deleting and re-adding
   loses both, and the id is what continuity is measured on.
@@ -170,6 +176,7 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 | [references/structure.md](references/structure.md) | beats, roles, the hold, the turn, the landing |
 | [references/craft.md](references/craft.md) | what a move, a kit and an asset are FOR; audio; narration |
 | [references/archive-reel.md](references/archive-reel.md) | the **archive reel** — a named format: portrait, no voice, archival stills cut to a beat grid. Every number, and the six things that go wrong |
+| [references/multicam-podcast.md](references/multicam-podcast.md) | the **multicam podcast** — a named format: two or three locked-off cameras on one conversation, a mic per speaker, an hour of it. Speaker attribution, switching rules, matching the cameras, and which of `check`'s complaints to believe |
 | [references/tools.md](references/tools.md) | the generated tool index |
 
 ## When NOT to use bay

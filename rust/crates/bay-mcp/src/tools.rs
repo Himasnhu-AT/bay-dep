@@ -729,6 +729,25 @@ pub fn all_definitions() -> Vec<Value> {
             &["families"],
         ),
         tool(
+            "fonts_list",
+            "Every typeface installed on this machine.\n\n`fonts_check` answers \"is this one \
+             here?\", which needs a name already in mind. This answers \"what is there?\", which \
+             is the question when choosing a kit. Naming a family that is not installed is not \
+             refused at render time — the shaper drops it and substitutes another face, so the \
+             project comes out in a typeface nobody chose and nothing downstream can tell. \
+             Italic-only and condensed-only cuts are left out, because bay never sets style or \
+             stretch and so cannot reach them.",
+            json!({
+                "contains": { "type": "string",
+                    "description": "Case-insensitive substring filter on the family name." },
+                "weight": { "type": "integer",
+                    "description": "Only families that actually shape at this CSS weight — the \
+                         shaper's answer, not the database's. The weight a kit names is the one \
+                         that has to exist." }
+            }),
+            &[],
+        ),
+        tool(
             "media_import",
             "Register a media file (image, video or audio) and probe its real duration and \
              dimensions. Returns a mediaId to pass to add_image / add_video / add_audio.\n\nAn \
@@ -2339,6 +2358,12 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             studio.style_pick(&text(args, "brief").unwrap_or_default(), kit_choice(args)?)
         }
         "project_info" => studio.project_info(),
+        "fonts_list" => studio.fonts_list(
+            text(args, "contains").as_deref(),
+            args.get("weight")
+                .and_then(|v| v.as_u64())
+                .map(|w| w as u16),
+        ),
         "fonts_check" => {
             let families: Vec<String> = args
                 .get("families")

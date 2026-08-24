@@ -152,6 +152,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "audio_smooth",
         "check_frames",
         "contact_sheet",
+        "fonts_list",
         "critic_prepare",
         "critic_refresh",
         "critic_submit",
