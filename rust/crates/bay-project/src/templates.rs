@@ -136,6 +136,7 @@ fn text_element(
         line_height: 1.15,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Author,
         role,
     })

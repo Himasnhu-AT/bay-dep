@@ -1437,6 +1437,7 @@ mod tests {
             line_height: 1.1,
             decorations: None,
             karaoke: None,
+            type_on: None,
             source: ElementSource::Author,
             role,
         })

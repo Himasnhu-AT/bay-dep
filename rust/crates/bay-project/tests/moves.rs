@@ -215,6 +215,7 @@ fn text_at(id: &str, y: f32) -> Element {
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Author,
         role: ElementRole::Headline,
     })

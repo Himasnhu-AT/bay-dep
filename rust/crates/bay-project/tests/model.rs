@@ -627,6 +627,7 @@ fn provenance_and_role_keep_their_wire_names() {
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Author,
         role: ElementRole::Hook,
     });
@@ -1098,6 +1099,7 @@ fn the_captions_bay_wrote_are_not_off_token_values() {
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Tool,
         role: bay_project::ElementRole::Caption,
     };

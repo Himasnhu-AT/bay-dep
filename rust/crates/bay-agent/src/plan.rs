@@ -322,6 +322,8 @@ fn transform_framed(args: &Value, framing: Option<&bay_project::Framing>) -> Tra
         scale_y: number(args, "scaleY", 1.0) as f32,
         anchor_x: number(args, "anchorX", f64::from(anchor_x)) as f32,
         anchor_y: number(args, "anchorY", f64::from(anchor_y)) as f32,
+        tilt_x: number(args, "tiltX", 0.0) as f32,
+        tilt_y: number(args, "tiltY", 0.0) as f32,
         ..Transform::default()
     }
 }
@@ -1278,6 +1280,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 line_height: number(args, "lineHeight", f64::from(style.line_height)) as f32,
                 decorations: text_decorations(args),
                 karaoke: None,
+                type_on: None,
                 source: ElementSource::Author,
                 role,
             });
@@ -1890,11 +1893,13 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 take("opacity", &mut transform.opacity)?;
                 take("anchorX", &mut transform.anchor_x)?;
                 take("anchorY", &mut transform.anchor_y)?;
+                take("tiltX", &mut transform.tilt_x)?;
+                take("tiltY", &mut transform.tilt_y)?;
             }
             if !touched {
                 return Err(
-                    "give at least one of x, y, scale, scaleX, scaleY, rotation, opacity, \
-                     anchorX, anchorY"
+                    "give at least one of x, y, scale, scaleX, scaleY, rotation, tiltX, tiltY, \
+                     opacity, anchorX, anchorY"
                         .into(),
                 );
             }
@@ -2905,6 +2910,7 @@ mod tests {
             line_height: 1.2,
             decorations: None,
             karaoke: None,
+            type_on: None,
             source: Default::default(),
             role: Default::default(),
         })];
@@ -3840,6 +3846,7 @@ mod tests {
                     line_height: 1.2,
                     decorations: None,
                     karaoke: None,
+                    type_on: None,
                     source: Default::default(),
                     role: Default::default(),
                 }));
@@ -4543,6 +4550,7 @@ fn caption_commands(
                 line_height: style.line_height,
                 decorations: None,
                 karaoke: Some(karaoke_for_cue(project, cue, &style.highlight_color)),
+                type_on: None,
                 // bay wrote this, not the author — the same stamp the headless path applies,
                 // so a caption means the same thing whichever front end placed it.
                 source: ElementSource::Tool,

@@ -633,6 +633,60 @@ impl KaraokeSpec {
     }
 }
 
+/// Reveal a line one character at a time, the way a terminal does.
+///
+/// **Why this is a property of the text and not a mask animation.** A wipe over a finished
+/// raster reveals *half a glyph* at the wipe edge, which reads as a rectangle sliding over
+/// words; typing reveals whole characters, and the difference is the whole effect. It also has
+/// to re-shape as it goes, because a line that will wrap does not know where it wraps until it
+/// gets there — revealing a pre-wrapped raster puts the break in the wrong place for every
+/// frame before the last.
+///
+/// The cost is real and worth stating: each distinct prefix is a separate raster, so a 60
+/// character line at 24 cps is 60 cache entries over two and a half seconds. That is fine for
+/// the one or two lines in a shot that are *about* being typed, and it is the reason this is
+/// not something to put on body copy.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeOn {
+    /// Characters per second. Around 24 reads as a fast confident typist; much past 40 and the
+    /// eye stops resolving individual characters and it becomes a wipe with extra steps.
+    pub chars_per_second: f32,
+    /// Draw a block caret at the leading edge while the line is still arriving.
+    #[serde(default)]
+    pub caret: bool,
+}
+
+/// The caret glyph. A full block rather than an underscore or a bar: at the sizes type appears
+/// at in a film it is the only one of the three that is still visible.
+pub const CARET: char = '▌';
+
+impl TypeOn {
+    /// How long `content` takes to arrive in full.
+    pub fn duration_seconds(&self, content: &str) -> f64 {
+        let rate = self.chars_per_second.max(0.1) as f64;
+        content.chars().count() as f64 / rate
+    }
+
+    /// What is on screen at `local` seconds into the element.
+    ///
+    /// Counted in `char`s rather than bytes, so a line containing an em dash or an accent does
+    /// not reveal half a code point and render a replacement box.
+    pub fn revealed(&self, content: &str, local_seconds: f64) -> String {
+        let rate = self.chars_per_second.max(0.1) as f64;
+        let total = content.chars().count();
+        let shown = (local_seconds.max(0.0) * rate).floor() as usize;
+        if shown >= total {
+            return content.to_string();
+        }
+        let mut out: String = content.chars().take(shown).collect();
+        if self.caret {
+            out.push(CARET);
+        }
+        out
+    }
+}
+
 /// Hold one source frame while timeline time continues to advance.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -787,6 +841,21 @@ pub struct Transform {
     pub crop_right: f32,
     #[serde(default)]
     pub crop_bottom: f32,
+    /// Tilt about the element's own horizontal axis, in degrees: the card leans out of the
+    /// screen rather than spinning in it.
+    ///
+    /// `rotation` already existed and is not this. Rotation keeps every edge the same length —
+    /// it is a 2D spin. A tilt foreshortens: the edge that leans away gets shorter and the one
+    /// leaning towards the eye gets longer, which is the only way a flat composition acquires a
+    /// front and a back. Held here rather than as an effect because it is geometry, so it
+    /// composes with position and scale instead of being applied to the finished picture.
+    ///
+    /// Zero is flat, which is what every project written before tilt existed deserializes to.
+    #[serde(default)]
+    pub tilt_x: f32,
+    /// Tilt about the element's own vertical axis, in degrees. See [`Transform::tilt_x`].
+    #[serde(default)]
+    pub tilt_y: f32,
 }
 
 impl Transform {
@@ -834,6 +903,8 @@ impl Default for Transform {
             crop_top: 0.0,
             crop_right: 0.0,
             crop_bottom: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
         }
     }
 }
@@ -959,6 +1030,9 @@ pub struct TextElement {
     pub decorations: Option<TextDecorations>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub karaoke: Option<KaraokeSpec>,
+    /// Reveal the line character by character from the element's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_on: Option<TypeOn>,
     #[serde(default)]
     pub source: ElementSource,
     #[serde(default)]
@@ -1656,6 +1730,12 @@ impl Element {
             {
                 transform.crop_bottom = v;
             }
+            if let Some(v) = animations.get("tiltX").and_then(|c| c.sample(local_time)) {
+                transform.tilt_x = v;
+            }
+            if let Some(v) = animations.get("tiltY").and_then(|c| c.sample(local_time)) {
+                transform.tilt_y = v;
+            }
         }
         Some(transform)
     }
@@ -1663,7 +1743,7 @@ impl Element {
     /// The animatable transform properties, in the order the inspector lists them. Also the
     /// set the MCP surface validates against, so an unknown channel name is a hard error
     /// rather than an animation that silently never plays.
-    pub const ANIMATABLE: [&'static str; 11] = [
+    pub const ANIMATABLE: [&'static str; 13] = [
         "opacity",
         "scale",
         "x",
@@ -1675,6 +1755,8 @@ impl Element {
         "cropTop",
         "cropRight",
         "cropBottom",
+        "tiltX",
+        "tiltY",
     ];
 
     /// The only property an audio clip has to animate. Kept apart from [`Self::ANIMATABLE`]

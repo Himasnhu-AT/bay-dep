@@ -1698,6 +1698,7 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 line_height: 1.2,
                 decorations: None,
                 karaoke: None,
+                type_on: None,
                 source: Default::default(),
                 role: Default::default(),
             }));
@@ -3607,5 +3608,204 @@ fn a_stroked_shape_does_not_borrow_a_filled_one_s_texture() {
             8,
             8
         ),
+    );
+}
+
+/// A tilted card is a trapezoid, and which end is wide says which way it leans.
+///
+/// The check that matters is the *asymmetry*, not the presence of an edge: a renderer that
+/// ignored the tilt entirely would still draw a rectangle with a top and a bottom, and every
+/// row would be the same width. Measuring both ends and comparing them is what distinguishes
+/// "the projection ran" from "the uniform was uploaded and never read".
+///
+/// The rows are found rather than assumed, because a tilt also *shortens* the card — leaning
+/// away foreshortens by the cosine of the angle — so a pair of fixed rows that framed the flat
+/// card falls outside the tilted one and reads as a renderer that drew nothing.
+#[test]
+fn a_tilted_card_foreshortens_the_edge_that_leans_away() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+
+    // The width of the card at its top and bottom edges, and the rows they were found on.
+    let mut ends = |tilt_x: f32| -> (u32, u32) {
+        let mut shape = bar(0.6, 0.5);
+        shape.transform.scale_y = 0.6;
+        shape.transform.tilt_x = tilt_x;
+        let project = shape_scene(shape);
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                320,
+                180,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("a frame");
+        let width_at = |y: u32| {
+            (0..frame.width)
+                .filter(|x| pixel(&frame, *x, y) != [0, 0, 0])
+                .count() as u32
+        };
+        let rows: Vec<u32> = (0..frame.height).filter(|y| width_at(*y) > 0).collect();
+        assert!(
+            rows.len() > 8,
+            "tilt {tilt_x} left only {} rows of card to measure",
+            rows.len()
+        );
+        // Two rows in from each edge, so a single row of antialiasing cannot decide the test.
+        (width_at(rows[2]), width_at(rows[rows.len() - 3]))
+    };
+
+    let (flat_top, flat_bottom) = ends(0.0);
+    assert!(
+        flat_top.abs_diff(flat_bottom) <= 2,
+        "an untilted card is a rectangle: {flat_top} vs {flat_bottom}"
+    );
+
+    // Leaning the top away from the eye: the top edge must come out narrower than the bottom.
+    let (top, bottom) = ends(30.0);
+    assert!(
+        bottom > top + 4,
+        "a card leaning away at the top should be narrower there: top {top}, bottom {bottom}"
+    );
+
+    // The opposite sign is the mirror image, which rules out a one-way fudge in the shader.
+    let (top_b, bottom_b) = ends(-30.0);
+    assert!(
+        top_b > bottom_b + 4,
+        "the opposite tilt should widen the top: top {top_b}, bottom {bottom_b}"
+    );
+    assert!(
+        top_b.abs_diff(bottom) <= 3 && bottom_b.abs_diff(top) <= 3,
+        "equal and opposite tilts should mirror: {top}/{bottom} vs {top_b}/{bottom_b}"
+    );
+}
+
+/// A tilt past edge-on cannot be projected, and a NaN one is not a number the shader can
+/// compare against. Both have to land somewhere harmless rather than painting the layer over
+/// the whole canvas or crashing the editor.
+#[test]
+fn an_impossible_tilt_still_renders_a_card() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    for tilt in [f32::NAN, f32::INFINITY, 179.0, -4000.0] {
+        let mut shape = bar(0.6, 0.5);
+        shape.transform.scale_y = 0.6;
+        shape.transform.tilt_x = tilt;
+        let project = shape_scene(shape);
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                320,
+                180,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("a frame even for a tilt that cannot be projected");
+        let covered = (0..frame.width * frame.height)
+            .filter(|i| pixel(&frame, i % frame.width, i / frame.width) != [0, 0, 0])
+            .count();
+        let share = covered as f64 / (frame.width * frame.height) as f64;
+        assert!(
+            share < 0.9,
+            "tilt {tilt} painted {:.0}% of the canvas — a non-finite angle reached the shader",
+            share * 100.0
+        );
+    }
+}
+
+/// A typed line arrives a character at a time, and the picture proves it.
+///
+/// Asserted on rendered ink rather than on the string the model returns, because the two can
+/// disagree in the one way that matters: the raster cache is keyed by content, and a cache that
+/// ignored the prefix would serve the finished line at every frame while `revealed()` kept
+/// returning the right substring. Ink at three moments, strictly increasing, is what rules that
+/// out.
+#[test]
+fn a_typed_line_reaches_the_frame_one_character_at_a_time() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements = vec![Element::Text(bay_project::TextElement {
+            id: "typed".into(),
+            name: "typed".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000 * 8),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            content: "the editor is the api".into(),
+            font_size: 64.0,
+            color: "#ffffff".into(),
+            transform: Transform {
+                scale: 0.9,
+                ..Transform::default()
+            },
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            font_family: None,
+            font_weight: 400,
+            align: bay_project::TextAlign::Left,
+            letter_spacing: 0.0,
+            line_height: 1.2,
+            decorations: None,
+            karaoke: None,
+            type_on: Some(bay_project::TypeOn {
+                chars_per_second: 10.0,
+                caret: false,
+            }),
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+    project.settings.background = bay_project::Background::Color {
+        color: "#000000".into(),
+    };
+
+    let mut ink_at = |seconds: f64| -> usize {
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::from_seconds_f64(seconds).expect("a playhead"),
+                320,
+                180,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("a frame");
+        (0..frame.width * frame.height)
+            .filter(|i| pixel(&frame, i % frame.width, i / frame.width) != [0, 0, 0])
+            .count()
+    };
+
+    // 21 characters at 10/s: nothing at all before the first lands, a fraction mid-way, the
+    // whole line once it has run.
+    let early = ink_at(0.05);
+    let middle = ink_at(1.0);
+    let full = ink_at(2.5);
+    assert_eq!(
+        early, 0,
+        "nothing should be typed yet at 0.05s, found {early}"
+    );
+    assert!(
+        middle > 0 && middle < full,
+        "half-typed should be some but not all of the line: {middle} of {full}"
+    );
+    assert!(full > 0, "the finished line should have ink");
+
+    // And it stays finished — a reveal that wrapped back to nothing would still pass the above.
+    let later = ink_at(7.0);
+    assert_eq!(
+        later, full,
+        "a line that has finished typing should stay whole"
     );
 }

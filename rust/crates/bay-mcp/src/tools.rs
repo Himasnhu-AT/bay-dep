@@ -62,6 +62,30 @@ fn required_text(value: &Value, key: &str) -> Result<String, ToolError> {
     text(value, key).ok_or_else(|| err(format!("missing required string field {key:?}")))
 }
 
+/// The typing spec, if the call asked for one.
+///
+/// A rate that is zero or negative is refused rather than clamped: it means the line never
+/// finishes arriving, and a title that silently never appears is the most expensive kind of
+/// wrong — it costs a render to find.
+fn type_on(value: &Value) -> Result<Option<bay_project::TypeOn>, ToolError> {
+    let Some(spec) = value.get("typeOn") else {
+        return Ok(None);
+    };
+    let Some(rate) = spec.get("charsPerSecond").and_then(|v| v.as_f64()) else {
+        return Err(err("typeOn needs charsPerSecond"));
+    };
+    if !rate.is_finite() || rate <= 0.0 {
+        return Err(err(
+            "typeOn.charsPerSecond must be greater than zero — at zero the line never finishes \
+             arriving and nothing is ever on screen",
+        ));
+    }
+    Ok(Some(bay_project::TypeOn {
+        chars_per_second: rate as f32,
+        caret: spec.get("caret").and_then(|v| v.as_bool()).unwrap_or(false),
+    }))
+}
+
 fn text_decorations(value: &Value) -> Option<TextDecorations> {
     let stroke = value.get("stroke").and_then(|entry| {
         Some(TextStroke {
@@ -128,6 +152,11 @@ fn visual(args: &Value, framing: Option<&Framing>) -> Result<VisualArgs, ToolErr
         scale_y: number(args, "scaleY", 1.0) as f32,
         anchor_x: number(args, "anchorX", f64::from(anchor_x)) as f32,
         anchor_y: number(args, "anchorY", f64::from(anchor_y)) as f32,
+        // Read here as well as in `transform_set`. A placement argument that is accepted and
+        // then dropped by `..Default` is the gradient bug again: the call succeeds, the picture
+        // is flat, and nothing says why until somebody looks at a frame.
+        tilt_x: number(args, "tiltX", 0.0) as f32,
+        tilt_y: number(args, "tiltY", 0.0) as f32,
         ..Transform::default()
     };
     Ok(VisualArgs {
@@ -249,6 +278,10 @@ fn visual_properties() -> Value {
             "description": "Vertical position of the element's anchor, as a fraction of canvas height (0 = top, 1 = bottom)." },
         "scale": { "type": "number", "default": 1.0,
             "description": "Size as a fraction of the canvas. 1.0 spans the full frame. For text this is the box the type is laid out in." },
+        "tiltX": { "type": "number", "default": 0,
+            "description": "Degrees of lean out of the screen about the horizontal axis — positive tips the top away, as CSS rotateX does, and the far edge foreshortens. This is depth, not rotation: use it to make a panel read as a screen standing in a room. 6-12 is a room; past 30 is a special effect. Foreshortening costs legibility, so tilt the panel, not the words on it." },
+        "tiltY": { "type": "number", "default": 0,
+            "description": "Degrees of lean about the vertical axis: positive turns the right edge away. Same scale as tiltX." },
         "scaleX": { "type": "number", "default": 1.0,
             "description": "Extra horizontal-only multiplier on top of `scale`. Animate this to grow a bar sideways." },
         "scaleY": { "type": "number", "default": 1.0,
@@ -636,6 +669,19 @@ fn shape_fill(
             ));
         }
     };
+    // A stroke is a fraction of the SHORTER side, so half of it is already a solid shape with a
+    // hole the width of a hairline, and anything past that is a fill. Refused rather than
+    // drawn: a panel asked for as an outline and delivered as a slab is a call that reported
+    // success and produced the opposite picture, and it costs a render to notice.
+    if let Some(width) = args.get("strokeWidth").and_then(Value::as_f64)
+        && width >= 0.5
+    {
+        return Err(err(format!(
+            "strokeWidth {width} is a fraction of the shape's shorter side, so this is a filled \
+             shape rather than an outline — a border is normally 0.005 to 0.03. Leave strokeWidth \
+             out for a solid fill."
+        )));
+    }
     let stroke = match args.get("strokeWidth").and_then(Value::as_f64) {
         Some(width) if width > 0.0 => Some(bay_project::Stroke {
             color: match text(args, "strokeTone") {
@@ -885,6 +931,14 @@ pub fn all_definitions() -> Vec<Value> {
                         "paddingY": { "type": "number", "default": 10 },
                         "radius": { "type": "number", "default": 12 }
                     } },
+                    "typeOn": { "type": "object",
+                        "description": "Reveal the line character by character from the element's start, the way a terminal does. For a shot that is ABOUT text arriving — a command, a payload, a log. Not for a headline: a title that types is a title the viewer finishes reading before it finishes appearing. The line must be on screen long enough to finish typing; check charsPerSecond against its length.",
+                        "properties": {
+                            "charsPerSecond": { "type": "number", "minimum": 1,
+                                "description": "Around 24 reads as a fast confident typist. Past 40 the eye stops resolving characters and it is a wipe with extra steps." },
+                            "caret": { "type": "boolean", "default": false,
+                                "description": "Draw a block caret at the leading edge while the line is still arriving." }
+                        }, "required": ["charsPerSecond"] },
                     "id": { "type": "string", "description": "Optional explicit element id, for animating it later. Ids of the form caption-<number> are reserved for narrate and the subtitle tools." }
                 }),
                 merge(
@@ -1214,7 +1268,9 @@ pub fn all_definitions() -> Vec<Value> {
                 "scale": { "type": "number", "description": "Fraction of the canvas the element spans." },
                 "scaleX": { "type": "number" },
                 "scaleY": { "type": "number" },
-                "rotation": { "type": "number", "description": "Degrees." },
+                "rotation": { "type": "number", "description": "Degrees. Spins the element in the plane of the screen — every edge keeps its length." },
+                "tiltX": { "type": "number", "description": "Degrees of lean out of the screen about the horizontal axis: positive tips the top away from the eye, as CSS rotateX does, and the far edge foreshortens. This is depth, not rotation. 6-12 reads as a card standing in space; past 30 it is a special effect." },
+                "tiltY": { "type": "number", "description": "Degrees of lean about the vertical axis: positive turns the right edge away. Same scale as tiltX." },
                 "opacity": { "type": "number", "description": "0 is invisible, 1 is solid." },
                 "anchorX": { "type": "number", "description": "Which point of the layer sits at (x,y). 0.5 is its centre." },
                 "anchorY": { "type": "number" }
@@ -2796,15 +2852,30 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                         .and_then(|v| v.as_f64())
                         .map(|v| v as f32),
                     decorations: text_decorations(args),
+                    type_on: type_on(args)?,
                 },
                 visual(args, framing.as_ref())?,
             )
         }
         "add_shape" => {
             let shape = match args.get("shape").and_then(|v| v.as_str()).unwrap_or("rect") {
-                "rect" => ShapeKind::Rect {
-                    radius: number(args, "radius", 0.0) as f32,
-                },
+                "rect" => {
+                    // A radius is a fraction of the shorter side and the rasteriser clamps it to
+                    // 0.5, so anything larger silently becomes a pill. That is nearly always a
+                    // caller who meant pixels — and the difference between a 12 px corner and a
+                    // stadium is not subtle, so it is refused rather than clamped.
+                    let radius = number(args, "radius", 0.0);
+                    if radius > 0.5 {
+                        return Err(err(format!(
+                            "radius {radius} is a fraction of the shape's shorter side, where 0.5 \
+                             is already a fully rounded pill — a panel corner is usually 0.01 to \
+                             0.05. This is not a pixel value."
+                        )));
+                    }
+                    ShapeKind::Rect {
+                        radius: radius as f32,
+                    }
+                }
                 "ellipse" => ShapeKind::Ellipse,
                 other => return Err(err(format!("unknown shape {other:?} — rect or ellipse"))),
             };

@@ -148,6 +148,8 @@ pub struct TextArgs {
     /// Line box as a multiple of the size, overriding the ramp's.
     pub line_height: Option<f32>,
     pub decorations: Option<TextDecorations>,
+    /// Reveal the line a character at a time instead of showing it whole.
+    pub type_on: Option<bay_project::TypeOn>,
 }
 
 /// How a caller said which style kit it wants.
@@ -405,6 +407,7 @@ impl Studio {
             line_height: style.line_height,
             decorations: None,
             karaoke,
+            type_on: None,
             // bay wrote this, not the author. Everything downstream that measures type size,
             // position or motion has to be able to leave it out — 38 of the 73 text elements in
             // the project that prompted provenance are exactly this call's output, and counting
@@ -2309,6 +2312,7 @@ impl Studio {
             line_height: text.line_height.unwrap_or(style.line_height),
             decorations: text.decorations,
             karaoke: None,
+            type_on: text.type_on,
             source: ElementSource::Author,
             role: text.role,
         });

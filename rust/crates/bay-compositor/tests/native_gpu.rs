@@ -91,6 +91,8 @@ fn native_render_frame_to_texture_fills_with_layer_color() {
                 flip_x: false,
                 flip_y: false,
                 crop: (0.0, 0.0, 1.0, 1.0),
+                tilt_x_degrees: 0.0,
+                tilt_y_degrees: 0.0,
             },
             opacity: 1.0,
             blend_mode: BlendMode::Normal,

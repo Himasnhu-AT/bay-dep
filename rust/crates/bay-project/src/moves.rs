@@ -433,6 +433,10 @@ pub fn amplitude_floor(kind: MoveKind, property: &str) -> f32 {
             "scale" => 0.10,
             "rotation" => 2.0,
             "scaleX" | "scaleY" => 1.0,
+            // Higher than `rotation` because a degree buys less. A rotation swings the corners
+            // through an arc the eye tracks directly; a tilt of the same size only changes the
+            // ratio between two edges, and the change is second-order in the angle.
+            "tiltX" | "tiltY" => 4.0,
             _ => 0.0,
         },
         MoveKind::Exit => match property {
@@ -441,6 +445,7 @@ pub fn amplitude_floor(kind: MoveKind, property: &str) -> f32 {
             "scale" => 0.05,
             "rotation" => 2.0,
             "scaleX" | "scaleY" => 0.5,
+            "tiltX" | "tiltY" => 3.0,
             _ => 0.0,
         },
         MoveKind::Accent | MoveKind::Secondary => match property {
@@ -448,6 +453,7 @@ pub fn amplitude_floor(kind: MoveKind, property: &str) -> f32 {
             "scale" => 0.030,
             "rotation" => 2.0,
             "scaleX" | "scaleY" => 0.05,
+            "tiltX" | "tiltY" => 3.0,
             _ => 0.0,
         },
         MoveKind::Response | MoveKind::Ambient => match property {
@@ -455,6 +461,7 @@ pub fn amplitude_floor(kind: MoveKind, property: &str) -> f32 {
             "scale" => 0.025,
             "rotation" => 1.0,
             "scaleX" | "scaleY" => 0.5,
+            "tiltX" | "tiltY" => 2.0,
             _ => 0.0,
         },
     }
@@ -462,7 +469,9 @@ pub fn amplitude_floor(kind: MoveKind, property: &str) -> f32 {
 
 /// The channels a move may lead with. `opacity` is not one of them, at any amplitude, in any
 /// kind of move — which is the single most consequential line in this file.
-pub const LEAD_CHANNELS: [&str; 6] = ["x", "y", "scale", "scaleX", "scaleY", "rotation"];
+pub const LEAD_CHANNELS: [&str; 8] = [
+    "x", "y", "scale", "scaleX", "scaleY", "rotation", "tiltX", "tiltY",
+];
 
 // --------------------------------------------------------------------------- the registry
 
@@ -1326,6 +1335,70 @@ pub static MOVES: &[Move] = &[
         group: None,
     },
     Move {
+        id: "stand-up",
+        kind: MoveKind::Entrance,
+        lead: "tiltX",
+        summary: "A card that arrives leaning and settles upright: 14 degrees of lean flattening \
+                  to none over two thirds of a second, so it reads as an object with a back \
+                  rather than a rectangle that faded in. For a panel that stands for a *thing* — \
+                  an interface, a document, a screen. Wrong for body copy, which the eye reads \
+                  slower when the baseline is foreshortened, and wrong twice on a headline, \
+                  where it costs the word its authority.",
+        directions: &[Direction::Up, Direction::Down],
+        channels: &[
+            MoveChannel {
+                property: "tiltX",
+                easing: Easing::PowerOut,
+                directional: true,
+                keys: &[
+                    key(0.0, KeyValue::Offset(14.0), Easing::PowerOut),
+                    last(20.0, KeyValue::Target),
+                ],
+            },
+            MoveChannel {
+                property: "y",
+                easing: Easing::PowerOut,
+                directional: true,
+                keys: &[
+                    key(0.0, KeyValue::Offset(0.018), Easing::PowerOut),
+                    last(20.0, KeyValue::Target),
+                ],
+            },
+            MoveChannel {
+                property: "opacity",
+                easing: Easing::Linear,
+                directional: false,
+                keys: &[
+                    key(0.0, KeyValue::Absolute(0.0), Easing::Linear),
+                    last(9.0, KeyValue::Absolute(1.0)),
+                ],
+            },
+        ],
+        group: None,
+    },
+    Move {
+        id: "turn",
+        kind: MoveKind::Ambient,
+        lead: "tiltY",
+        summary: "A slow swing through vertical: 5 degrees to one side and back over four \
+                  seconds, the depth equivalent of `drift`. Under a shot that has to hold while \
+                  a sentence is spoken, this is what stops the frame reading as a still. One \
+                  element per shot — two cards turning independently is a room with two \
+                  vanishing points, and the eye finds it before it can say why.",
+        directions: &[Direction::Right, Direction::Left],
+        channels: &[MoveChannel {
+            property: "tiltY",
+            easing: Easing::SineInOut,
+            directional: true,
+            keys: &[
+                key(0.0, KeyValue::Target, Easing::SineInOut),
+                key(60.0, KeyValue::Offset(5.0), Easing::SineInOut),
+                last(120.0, KeyValue::Target),
+            ],
+        }],
+        group: None,
+    },
+    Move {
         id: "z-in",
         kind: MoveKind::Seam,
         lead: "scale",
@@ -1435,6 +1508,8 @@ pub fn rest_value(
                 "rotation" => transform.rotation,
                 "scaleX" => transform.scale_x,
                 "scaleY" => transform.scale_y,
+                "tiltX" => transform.tilt_x,
+                "tiltY" => transform.tilt_y,
                 _ => return None,
             })
         }

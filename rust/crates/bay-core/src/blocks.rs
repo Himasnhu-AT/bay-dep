@@ -489,6 +489,7 @@ fn plan_text(
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: Default::default(),
         role,
     });

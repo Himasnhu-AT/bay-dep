@@ -102,7 +102,7 @@ fn r1_locked_reports_only_its_absent_media_gate() {
     );
     assert_eq!(
         rollup(&report),
-        vec![("missing-media", 3), ("one-scene", 1)]
+        vec![("missing-media", 3), ("one-scene", 1), ("sparse-events", 1),]
     );
     assert_eq!(
         skipped(&report),
@@ -110,7 +110,7 @@ fn r1_locked_reports_only_its_absent_media_gate() {
     );
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (3, 0, 1, 4)
+        (3, 1, 1, 5)
     );
     assert_eq!(report.status, Status::Findings);
 
@@ -166,11 +166,14 @@ fn r2_accumulate_reports_only_its_absent_media_gate() {
         "{:?}",
         report.findings
     );
-    assert_eq!(rollup(&report), vec![("missing-media", 33), ("no-bed", 1)]);
+    assert_eq!(
+        rollup(&report),
+        vec![("missing-media", 33), ("no-bed", 1), ("sparse-events", 1),]
+    );
     assert_eq!(skipped(&report), vec!["speech-masked", "bed-too-quiet"]);
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (33, 1, 0, 34)
+        (33, 2, 0, 35)
     );
     assert_eq!(report.status, Status::Findings);
     assert!(
@@ -384,6 +387,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
             ("off-grid", 1),
             ("off-vocabulary-motion", 125),
             ("small-text", 2),
+            ("sparse-events", 1),
             ("value-overshoot", 1),
         ]
     );
@@ -393,7 +397,7 @@ fn wicks_v2_fires_the_five_errors_this_round_is_about() {
     assert_eq!(skipped(&report), vec!["speech-masked", "bed-too-quiet"]);
     assert_eq!(
         (report.errors, report.warnings, report.notes, report.total),
-        (77, 136, 0, 213)
+        (77, 137, 0, 214)
     );
 }
 

@@ -83,6 +83,9 @@ fn effect_groups(
         .collect()
 }
 
+/// How far a card may lean before the projection stops being a picture.
+pub const MAX_TILT_DEGREES: f32 = 85.0;
+
 /// Map the project's GPU-free blend mode onto the compositor's WGSL blend set. The two enums
 /// are deliberately separate so the data model carries no render dependency.
 fn blend_mode(mode: bay_project::BlendMode) -> BlendMode {
@@ -290,6 +293,10 @@ fn sanitise_transform(t: bay_project::Transform) -> bay_project::Transform {
         crop_top: finite(t.crop_top, 0.0).clamp(0.0, 1.0),
         crop_right: finite(t.crop_right, 0.0).clamp(0.0, 1.0),
         crop_bottom: finite(t.crop_bottom, 0.0).clamp(0.0, 1.0),
+        // Past 90 degrees a card is edge-on and every point on it projects onto a line — the
+        // picture is gone whatever the renderer does — so the lean is capped short of that.
+        tilt_x: finite(t.tilt_x, 0.0).clamp(-MAX_TILT_DEGREES, MAX_TILT_DEGREES),
+        tilt_y: finite(t.tilt_y, 0.0).clamp(-MAX_TILT_DEGREES, MAX_TILT_DEGREES),
     }
 }
 
@@ -1970,10 +1977,21 @@ impl PreviewRenderer {
                             tw.saturating_add(margin_x.saturating_mul(2)),
                             th.saturating_add(margin_y.saturating_mul(2)),
                         );
+                        // What is on screen this frame. A typing line re-shapes per prefix —
+                        // it has to, because a line that will wrap does not know where until
+                        // it gets there — so the raster cache holds one entry per character
+                        // revealed. Bounded by the line's own length, and only for lines that
+                        // asked to be typed.
+                        let shown = match &text.type_on {
+                            Some(spec) => std::borrow::Cow::Owned(
+                                spec.revealed(&text.content, local.to_seconds_f64()),
+                            ),
+                            None => std::borrow::Cow::Borrowed(text.content.as_str()),
+                        };
                         (
                             self.ensure_text_texture(
                                 &text.id,
-                                &text.content,
+                                shown.as_ref(),
                                 font_px,
                                 &text.color,
                                 (tw, th),
@@ -2139,6 +2157,8 @@ impl PreviewRenderer {
                         flip_x: false,
                         flip_y: false,
                         crop: transform.crop_rect(),
+                        tilt_x_degrees: transform.tilt_x,
+                        tilt_y_degrees: transform.tilt_y,
                     },
                     // The clip's own fade multiplies whatever opacity the transform (and any
                     // keyframes on it) asked for, rather than replacing it — a title can fade
