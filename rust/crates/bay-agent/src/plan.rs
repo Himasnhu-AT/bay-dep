@@ -149,6 +149,7 @@ pub fn window_tools() -> &'static [&'static str] {
 /// quietly shipping an unswitchable tool.
 pub fn server_only_tools() -> &'static [&'static str] {
     &[
+        "audio_react",
         "audio_smooth",
         "check_frames",
         "contact_sheet",
@@ -1342,6 +1343,27 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     );
                 }
             };
+            // An outline instead of a fill, again from a tone. `strokeWidth` alone is enough:
+            // the colour falls back to the shape's own tone, which is what an outlined version
+            // of the same mark should be.
+            let stroke = match args.get("strokeWidth").and_then(|v| v.as_f64()) {
+                Some(width) if width > 0.0 => Some(bay_project::Stroke {
+                    color: match args.get("strokeTone").and_then(|v| v.as_str()) {
+                        Some(name) => kit.color(parse_tone(name)?).to_string(),
+                        None => color.clone(),
+                    },
+                    width: width as f32,
+                    dash: args
+                        .get("dash")
+                        .and_then(|v| v.as_f64())
+                        .map(|dash| dash as f32),
+                    gap: args
+                        .get("gap")
+                        .and_then(|v| v.as_f64())
+                        .map(|gap| gap as f32),
+                }),
+                _ => None,
+            };
             let framing = framing_for(args, &kit)?;
             let id = text(args, "id").unwrap_or_else(|| mint_id(project, "shape"));
             reject_reserved_id(&id)?;
@@ -1361,6 +1383,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     shape,
                     color,
                     gradient,
+                    stroke,
                     transform: transform_framed(args, framing),
                     effects: Vec::new(),
                     animations: BTreeMap::new(),
@@ -3402,6 +3425,7 @@ mod tests {
                 shape: ShapeKind::Ellipse,
                 color: "#ffffff".into(),
                 gradient: None,
+                stroke: None,
                 transform: Transform::default(),
                 effects: Vec::new(),
                 animations: Default::default(),
@@ -3878,6 +3902,7 @@ mod tests {
                     shape: Default::default(),
                     color: "#FF5B5B".into(),
                     gradient: None,
+                    stroke: None,
                     transform: Default::default(),
                     effects: Vec::new(),
                     animations: Default::default(),

@@ -159,6 +159,7 @@ fn bar(
         shape: ShapeKind::Rect { radius: 0.0 },
         color: color.into(),
         gradient: None,
+        stroke: None,
         transform,
         effects: Vec::new(),
         animations: Default::default(),

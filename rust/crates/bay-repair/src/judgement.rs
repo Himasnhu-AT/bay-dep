@@ -1077,6 +1077,7 @@ mod tests {
             shape: ShapeKind::Rect { radius: 0.0 },
             color: "#ffffff".into(),
             gradient: None,
+            stroke: None,
             transform: Transform {
                 x: 0.5,
                 y,

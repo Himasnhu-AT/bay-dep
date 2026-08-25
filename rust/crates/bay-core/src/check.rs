@@ -3247,6 +3247,14 @@ fn observe(frame: &Frame<'_>, plates: &mut Vec<Plate>, canvas: (f64, f64), at: f
         if !one.element.is_authored() {
             continue;
         }
+        // An outlined shape is not a plate. Both checks below are about a large FILL — one
+        // that reads as a slightly different background, or as a panel that failed to load —
+        // and a stroke draws a thin band on the boundary and nothing in the middle. Judging a
+        // border by the area it encloses reports the frame's furniture as a dead plate, which
+        // is how a correctly drawn panel comes back as a defect.
+        if shape.stroke.is_some() {
+            continue;
+        }
         let area = one.rect.area();
         if area < AGGREGATE_AREA {
             continue;
@@ -3719,6 +3727,7 @@ mod tests {
             shape: Default::default(),
             color: "#ffffff".into(),
             gradient: None,
+            stroke: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -5127,6 +5136,55 @@ mod tests {
 
     /// The same plate lifted to 2.4:1 is a design element, and the layout rules then apply to
     /// it. Every escape from this check is a better video.
+    /// An outlined shape is not a plate, however large the area it encloses.
+    ///
+    /// `dead-plate` and `empty-container` are both about a large FILL — one that reads as a
+    /// slightly different background, or as a panel whose contents failed to load. A stroke
+    /// draws a band on the boundary and nothing inside it, so judging one by the area it
+    /// encloses reports the frame's own furniture as a defect: the interface panels a composed
+    /// film is built out of are outlines, and they came back as dead plates.
+    #[test]
+    fn an_outlined_shape_is_not_judged_as_a_fill() {
+        let filled = |stroke: Option<bay_project::Stroke>| {
+            let mut project = project_with(vec![shape("panel", 0.0, 4.0)]);
+            if let Some(Element::Shape(panel)) =
+                project.active_scene_mut().tracks.main.elements.first_mut()
+            {
+                panel.color = "#0E0E12".into();
+                panel.transform.scale = 0.9;
+                panel.transform.scale_x = 1.0;
+                panel.transform.scale_y = 0.7;
+                panel.stroke = stroke;
+            }
+            with_audio(&mut project, vec![sound("bed", 0.0, 4.0, 1.0)]);
+            check(&project)
+        };
+
+        let plate = filled(None);
+        assert!(
+            has(&plate, "dead-plate") || has(&plate, "empty-container"),
+            "a large low-contrast fill is the thing these checks are for: {:?}",
+            codes(&plate)
+        );
+
+        let outline = filled(Some(bay_project::Stroke {
+            color: "#0E0E12".into(),
+            width: 0.01,
+            dash: None,
+            gap: None,
+        }));
+        assert!(
+            !has(&outline, "dead-plate"),
+            "an outline encloses area but does not fill it: {:?}",
+            codes(&outline)
+        );
+        assert!(
+            !has(&outline, "empty-container"),
+            "and it is not a container that failed to load: {:?}",
+            codes(&outline)
+        );
+    }
+
     #[test]
     fn a_plate_that_can_be_seen_is_not_reported() {
         let mut project = project_with(vec![plate("panel", "#4A4A58", 0.9, 0.38, 10.0)]);

@@ -886,6 +886,7 @@ mod tests {
             shape: ShapeKind::default(),
             color: "#ffffff".into(),
             gradient: None,
+            stroke: None,
             transform: Transform {
                 scale: 0.1,
                 scale_x: 0.1,

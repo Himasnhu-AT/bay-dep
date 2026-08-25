@@ -1077,6 +1077,7 @@ mod tests {
             shape: ShapeKind::Rect { radius: 0.0 },
             color: "#ff4f4f".into(),
             gradient: None,
+            stroke: None,
             transform,
             effects: Vec::new(),
             animations: Default::default(),
@@ -1237,6 +1238,7 @@ mod tests {
             shape: ShapeKind::Rect { radius: 12.0 },
             color: "#101010".into(),
             gradient: None,
+            stroke: None,
             transform: Transform {
                 x: 0.05,
                 y: 0.64,

@@ -1025,6 +1025,30 @@ pub struct Gradient {
     pub angle: f32,
 }
 
+/// An outline instead of a fill, optionally broken into dashes.
+///
+/// Both fall out of the signed distance field the rasteriser already builds: an outline is the
+/// band where the distance to the boundary is small, and that is true for a rounded rect and an
+/// ellipse alike without either being special-cased.
+///
+/// `dash` breaks the shape along its LONGER axis, which is what a connector is. A dash pattern
+/// that walked the perimeter would be the general answer and is not the one anybody needs here;
+/// the thing this exists for is the dashed line between two nodes in a diagram.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stroke {
+    /// `#rrggbb`. Resolved by the tool from a tone, like every other colour on an element.
+    pub color: String,
+    /// Line width as a fraction of the shape's shorter side.
+    pub width: f32,
+    /// Dash length as a fraction of the shape's LONGER side. `None` draws a continuous line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<f32>,
+    /// Gap length, same units as `dash`. Ignored when `dash` is `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f32>,
+}
+
 /// A solid-colour vector primitive. Carries the same transform/effect/animation surface as
 /// every other visual element, so a bar can be eased, blended and effected like any layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1048,6 +1072,10 @@ pub struct ShapeElement {
     /// loads and renders exactly as it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gradient: Option<Gradient>,
+    /// Draw the outline rather than the fill. `None` fills, which is what a shape did before
+    /// this existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<Stroke>,
     #[serde(default)]
     pub transform: Transform,
     #[serde(default)]

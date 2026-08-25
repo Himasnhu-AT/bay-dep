@@ -332,6 +332,7 @@ fn rasterize_shape(
     shape: &bay_project::ShapeKind,
     color: &str,
     gradient: Option<&bay_project::Gradient>,
+    stroke: Option<&bay_project::Stroke>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
@@ -383,12 +384,38 @@ fn rasterize_shape(
                 }
             };
             // One-texel-wide linear ramp across the boundary.
-            let coverage = (0.5 - distance).clamp(0.0, 1.0);
+            let mut coverage = (0.5 - distance).clamp(0.0, 1.0);
+            // An outline is the band either side of the boundary. Same distance field, so a
+            // rounded rect and an ellipse both get one without either being special-cased.
+            if let Some(stroke) = stroke {
+                let half = (stroke.width.max(0.0) * short).max(0.5);
+                coverage = (0.5 - (distance.abs() - half)).clamp(0.0, 1.0);
+                // Dashes run along the longer axis, which is what a connector is.
+                if let Some(dash) = stroke.dash.filter(|dash| *dash > 0.0) {
+                    let gap = stroke.gap.unwrap_or(dash).max(0.0);
+                    let period = dash + gap;
+                    if period > 0.0 {
+                        let (along, extent) = if half_w >= half_h {
+                            (dx + half_w, half_w * 2.0)
+                        } else {
+                            (dy + half_h, half_h * 2.0)
+                        };
+                        let phase = (along / extent / period).fract().abs();
+                        if phase > dash / period {
+                            coverage = 0.0;
+                        }
+                    }
+                }
+            }
             if coverage <= 0.0 {
                 continue;
             }
             let alpha = (coverage * 255.0).round() as u8;
             let index = ((py * width + px) * 4) as usize;
+            let [r, g, b] = match stroke {
+                Some(stroke) => hex_to_rgb8(&stroke.color),
+                None => [r, g, b],
+            };
             let [fr, fg, fb] = match ramp {
                 None => [r, g, b],
                 Some(([ar, ag, ab], [br, bg, bb], cos, sin)) => {
@@ -421,10 +448,11 @@ pub fn rasterize_shape_for_test(
     shape: &bay_project::ShapeKind,
     color: &str,
     gradient: Option<&bay_project::Gradient>,
+    stroke: Option<&bay_project::Stroke>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
-    rasterize_shape(shape, color, gradient, width, height)
+    rasterize_shape(shape, color, gradient, stroke, width, height)
 }
 
 /// Test hook for [`shape_raster_dimensions`].
@@ -1188,6 +1216,7 @@ impl PreviewRenderer {
         shape: &bay_project::ShapeKind,
         color: &str,
         gradient: Option<&bay_project::Gradient>,
+        stroke: Option<&bay_project::Stroke>,
         aspect: f32,
     ) -> Option<String> {
         use bay_project::ShapeKind;
@@ -1222,7 +1251,7 @@ impl PreviewRenderer {
         if self.raster_keys.contains(&key) {
             return Some(key);
         }
-        let rgba = rasterize_shape(shape, color, gradient, raster_w, raster_h);
+        let rgba = rasterize_shape(shape, color, gradient, stroke, raster_w, raster_h);
         let texture = self
             .ctx
             .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape")?;
@@ -1935,6 +1964,7 @@ impl PreviewRenderer {
                                 &shape.shape,
                                 &shape.color,
                                 shape.gradient.as_ref(),
+                                shape.stroke.as_ref(),
                                 aspect,
                             ),
                             None,

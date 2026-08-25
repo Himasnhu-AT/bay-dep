@@ -606,6 +606,53 @@ fn silence_detect(studio: &Studio, args: &Value) -> Result<Value, ToolError> {
     Ok(value)
 }
 
+/// A shape's gradient and stroke, resolved from TONES against the committed kit.
+///
+/// Tones, not colours, for the same reason `tone` itself is: the kit is the only place a value
+/// comes from. Both stops are required together — one stop is a solid fill, which `tone`
+/// already gives you, and accepting a half-specified ramp would silently ignore it.
+fn shape_fill(
+    args: &Value,
+    kit: &bay_project::StyleKit,
+    role: bay_project::ElementRole,
+) -> Result<crate::studio::ShapeFill, ToolError> {
+    let tone_colour = |name: &str| -> Result<String, ToolError> {
+        Ok(kit.color(parse_tone(Some(name), role)?).to_string())
+    };
+    let gradient = match (
+        text(args, "gradientFrom").as_deref().map(str::to_string),
+        text(args, "gradientTo").as_deref().map(str::to_string),
+    ) {
+        (Some(from), Some(to)) => Some(bay_project::Gradient {
+            from: tone_colour(&from)?,
+            to: tone_colour(&to)?,
+            angle: number(args, "gradientAngle", 0.0) as f32,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(err(
+                "a gradient needs both gradientFrom and gradientTo — one stop is a solid fill, \
+                 which is what `tone` already gives you",
+            ));
+        }
+    };
+    let stroke = match args.get("strokeWidth").and_then(Value::as_f64) {
+        Some(width) if width > 0.0 => Some(bay_project::Stroke {
+            color: match text(args, "strokeTone") {
+                Some(name) => tone_colour(&name)?,
+                None => kit
+                    .color(parse_tone(args.get("tone").and_then(|v| v.as_str()), role)?)
+                    .to_string(),
+            },
+            width: width as f32,
+            dash: args.get("dash").and_then(Value::as_f64).map(|v| v as f32),
+            gap: args.get("gap").and_then(Value::as_f64).map(|v| v as f32),
+        }),
+        _ => None,
+    };
+    Ok(crate::studio::ShapeFill { gradient, stroke })
+}
+
 /// An imported `mediaId` or a bare `path`, for the tools that only read a file.
 fn source_path(studio: &Studio, args: &Value) -> Result<String, ToolError> {
     match text(args, "mediaId") {
@@ -867,6 +914,20 @@ pub fn all_definitions() -> Vec<Value> {
                     "gradientAngle": { "type": "number", "default": 0,
                         "description": "Direction of the ramp in degrees clockwise from \
                              left-to-right, so 90 runs top to bottom." },
+                    "strokeWidth": { "type": "number",
+                        "description": "Draw the OUTLINE instead of the fill, this wide as a \
+                             fraction of the shape's shorter side. This is how a diagram gets \
+                             its connectors and a panel its border." },
+                    "strokeTone": { "type": "string",
+                        "description": "Tone for the outline. Defaults to the shape's own tone, \
+                             which is what an outlined version of the same mark should be." },
+                    "dash": { "type": "number",
+                        "description": "Break the outline into dashes this long, as a fraction \
+                             of the shape's LONGER side. Runs along that axis, which is what a \
+                             connector between two nodes is. Omit for a continuous line." },
+                    "gap": { "type": "number",
+                        "description": "Gap between dashes, same units. Defaults to the dash \
+                             length." },
                     "start": { "type": "number" },
                     "duration": { "type": "number" },
                     "shape": { "type": "string", "enum": ["rect", "ellipse"], "default": "rect" },
@@ -1291,6 +1352,38 @@ pub fn all_definitions() -> Vec<Value> {
              describe it, each with a reason you can read and disagree with.",
             json!({}),
             &[],
+        ),
+        tool(
+            "audio_react",
+            "Drive an element's scale from how loud the sound is, moment to moment — the orb \
+             that pulses with the voice.\n\nIt samples the sound ONCE and writes ordinary \
+             keyframes, rather than adding a channel the renderer would have to re-derive every \
+             frame. So the result is a normal animation: editable, visible on the timeline, and \
+             identical in the preview and the export because there is nothing left to \
+             recompute. The window sampled is the element's own, mapped through wherever that \
+             audio actually sits, so an orb over the back half of a bed reacts to the back half \
+             of it.\n\nLevels are normalised against what the sound actually does rather than \
+             against full scale — speech peaking well below 0 dB would otherwise barely move \
+             it. `check` reports the result as off-vocabulary-motion, correctly: the move \
+             vocabulary has nothing for this, and a pulse driven by a voice is the one case \
+             where hand-keying is the point rather than a shortcut.",
+            json!({
+                "elementId": { "type": "string", "description": "The element to move." },
+                "mediaId": { "type": "string",
+                    "description": "The sound to read. Normally the voice or bed already on the \
+                         timeline." },
+                "channel": { "type": "string", "enum": ["scale", "scaleX", "scaleY", "opacity"],
+                    "default": "scale",
+                    "description": "What the sound moves. Scale is the orb; opacity is a glow." },
+                "depth": { "type": "number", "default": 0.08,
+                    "description": "How far it moves at the loudest moment, as a fraction of the \
+                         element's own value. Small: this is a pulse, and past about a fifth it \
+                         stops reading as breathing and starts reading as a bounce." },
+                "floorDb": { "type": "number", "default": -45,
+                    "description": "The level treated as silence. Raise it towards the speech \
+                         level to make the pulse react only to the loud parts." }
+            }),
+            &["elementId", "mediaId"],
         ),
         tool(
             "room_tone",
@@ -2727,6 +2820,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 shape,
                 role,
                 parse_tone(args.get("tone").and_then(|v| v.as_str()), role)?,
+                shape_fill(args, &kit, role)?,
                 visual(args, framing.as_ref())?,
             )
         }
@@ -2762,6 +2856,13 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             )
         }
         "formats_list" => studio.formats_list(),
+        "audio_react" => studio.audio_react(
+            &required_text(args, "elementId")?,
+            &required_text(args, "mediaId")?,
+            &text(args, "channel").unwrap_or_else(|| "scale".into()),
+            number(args, "depth", 0.08),
+            number(args, "floorDb", -45.0),
+        ),
         "room_tone" => studio.room_tone(
             &required_text(args, "mediaId")?,
             args.get("seconds").and_then(Value::as_f64),

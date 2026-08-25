@@ -1070,6 +1070,7 @@ fn bar(scale_x: f32, anchor_x: f32) -> bay_project::ShapeElement {
         shape: bay_project::ShapeKind::Rect { radius: 0.0 },
         color: "#ff0000".into(),
         gradient: None,
+        stroke: None,
         transform: Transform {
             x: 0.5,
             y: 0.5,
@@ -1244,6 +1245,7 @@ fn a_rounded_rect_has_transparent_corners_and_a_solid_middle() {
         &bay_project::ShapeKind::Rect { radius: 0.5 },
         "#ffffff",
         None,
+        None,
         64,
         64,
     );
@@ -1259,6 +1261,7 @@ fn a_square_rect_fills_its_corners() {
         &bay_project::ShapeKind::Rect { radius: 0.0 },
         "#ffffff",
         None,
+        None,
         16,
         16,
     );
@@ -1272,6 +1275,7 @@ fn an_ellipse_is_round() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Ellipse,
         "#ffffff",
+        None,
         None,
         64,
         64,
@@ -1299,6 +1303,7 @@ fn a_wide_pill_has_a_flat_top_not_a_pointed_lens() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.5 },
         "#ffffff",
+        None,
         None,
         w,
         h,
@@ -1707,6 +1712,7 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 // A unique colour per shape forces a unique cache key.
                 color: format!("#{:02x}20a0", 40 + i * 3),
                 gradient: None,
+                stroke: None,
                 transform: Transform {
                     x: 0.5,
                     y: (i as f32 % 10.0) / 10.0,
@@ -2793,6 +2799,7 @@ fn a_lut_actually_grades_the_frame() {
             shape: bay_project::ShapeKind::Rect { radius: 0.0 },
             color: "#ff0000".into(),
             gradient: None,
+            stroke: None,
             transform: bay_project::Transform::default(),
             effects: vec![bay_project::Effect {
                 id: "fx".into(),
@@ -2976,6 +2983,7 @@ fn a_mask_hides_what_falls_outside_it() {
             shape: bay_project::ShapeKind::Rect { radius: 0.0 },
             color: "#ffffff".into(),
             gradient: None,
+            stroke: None,
             transform: bay_project::Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -3438,7 +3446,7 @@ fn a_gradient_fills_across_the_shape_and_is_not_shared_between_ramps() {
         angle: 0.0,
     };
     let shape = ShapeKind::Rect { radius: 0.0 };
-    let filled = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&ramp), w, h);
+    let filled = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&ramp), None, w, h);
 
     let mid_y = h / 2;
     let left = read(&filled, 2, mid_y);
@@ -3470,7 +3478,8 @@ fn a_gradient_fills_across_the_shape_and_is_not_shared_between_ramps() {
         angle: 90.0,
         ..ramp.clone()
     };
-    let vertical = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&down), w, h);
+    let vertical =
+        bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&down), None, w, h);
     let top = read(&vertical, w / 2, 2);
     let bottom = read(&vertical, w / 2, h - 3);
     assert!(
@@ -3487,7 +3496,65 @@ fn a_gradient_fills_across_the_shape_and_is_not_shared_between_ramps() {
     );
 
     // The flat fill is untouched when no gradient is given.
-    let solid = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", None, w, h);
+    let solid = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", None, None, w, h);
     assert_eq!(read(&solid, 2, mid_y)[..3], [255, 0, 0]);
     assert_eq!(read(&solid, w - 3, mid_y)[..3], [255, 0, 0]);
+}
+
+/// A stroke draws the outline, and a dash breaks it along the long axis.
+///
+/// Both fall out of the distance field the rasteriser already builds — an outline is the band
+/// either side of the boundary — which is why a rounded rect and an ellipse both get one
+/// without either being special-cased. The dash exists for one thing: the connector between two
+/// nodes in a diagram, which is a long thin rect.
+#[test]
+fn a_stroke_outlines_the_shape_and_a_dash_breaks_it_up() {
+    use bay_project::{ShapeKind, Stroke};
+
+    let (w, h) = (64u32, 64u32);
+    let alpha = |rgba: &[u8], x: u32, y: u32| rgba[((y * w + x) * 4 + 3) as usize];
+    let square = ShapeKind::Rect { radius: 0.0 };
+
+    // Outlined: the edge is drawn, the middle is not.
+    let outline = Stroke {
+        color: "#ffffff".into(),
+        width: 0.06,
+        dash: None,
+        gap: None,
+    };
+    let stroked =
+        bay_preview::rasterize_shape_for_test(&square, "#ff0000", None, Some(&outline), w, h);
+    assert!(alpha(&stroked, w / 2, 1) > 200, "the top edge is drawn");
+    assert!(alpha(&stroked, 1, h / 2) > 200, "the left edge is drawn");
+    assert_eq!(alpha(&stroked, w / 2, h / 2), 0, "the middle is hollow");
+
+    // The same shape with no stroke is solid through the middle.
+    let solid = bay_preview::rasterize_shape_for_test(&square, "#ff0000", None, None, w, h);
+    assert!(alpha(&solid, w / 2, h / 2) > 200, "a fill is still a fill");
+
+    // A long thin bar, dashed: the run along it alternates rather than being continuous.
+    let (bw, bh) = (256u32, 8u32);
+    let dashed = Stroke {
+        color: "#ffffff".into(),
+        width: 0.9,
+        dash: Some(0.05),
+        gap: Some(0.05),
+    };
+    let bar =
+        bay_preview::rasterize_shape_for_test(&square, "#ffffff", None, Some(&dashed), bw, bh);
+    let row: Vec<u8> = (0..bw)
+        .map(|x| bar[(((bh / 2) * bw + x) * 4 + 3) as usize])
+        .collect();
+    let on = row.iter().filter(|a| **a > 128).count();
+    let off = row.iter().filter(|a| **a < 32).count();
+    assert!(on > 20, "some of the line is drawn: {on} of {bw}");
+    assert!(off > 20, "and some of it is gap: {off} of {bw}");
+    let changes = row
+        .windows(2)
+        .filter(|w| (w[0] > 128) != (w[1] > 128))
+        .count();
+    assert!(
+        changes >= 6,
+        "a dashed line alternates several times, not once: {changes}"
+    );
 }

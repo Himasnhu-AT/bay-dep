@@ -1393,6 +1393,179 @@ impl Studio {
         }))
     }
 
+    /// Drive an element's scale from how loud the sound is, moment to moment.
+    ///
+    /// The orb that pulses with the voice is this genre's one piece of life, and without it a
+    /// circle on a ground is a circle on a ground. bay has no audio-reactive *channel* — a
+    /// channel would have to be sampled every frame by the renderer, which is a decode on the
+    /// render path — so this samples the sound once, here, and writes ordinary keyframes. The
+    /// result is a normal animation: editable, visible in the timeline, and identical in the
+    /// preview and the export because there is nothing left to re-derive.
+    ///
+    /// The window sampled is the element's own, mapped through wherever that audio actually
+    /// sits on the timeline, so an orb over the second half of a bed reacts to the second half
+    /// of the bed rather than to its opening.
+    pub fn audio_react(
+        &mut self,
+        element_id: &str,
+        media_id: &str,
+        channel: &str,
+        depth: f64,
+        floor_db: f64,
+    ) -> ToolResult {
+        if !matches!(channel, "scale" | "scaleX" | "scaleY" | "opacity") {
+            return Err(err(format!(
+                "cannot drive {channel:?} from sound — scale, scaleX, scaleY or opacity"
+            )));
+        }
+        let path = self
+            .media_path(media_id)
+            .ok_or_else(|| err(format!("no media with id {media_id:?}")))?;
+
+        let (start, duration, base) = {
+            let element = self
+                .editor
+                .project()
+                .active_scene()
+                .elements()
+                .find(|element| element.id() == element_id)
+                .ok_or_else(|| err(format!("no element with id {element_id:?}")))?;
+            let transform = element.transform().unwrap_or_default();
+            let base = match channel {
+                "scale" => transform.scale,
+                "scaleX" => transform.scale_x,
+                "scaleY" => transform.scale_y,
+                _ => transform.opacity,
+            };
+            (element.start(), element.duration(), base)
+        };
+        if duration <= MediaTime::ZERO {
+            return Err(err("that element has no duration to animate over"));
+        }
+
+        // Where this media sits on the timeline, so the element's window maps onto the right
+        // part of the sound. Without this an orb placed at 20s reacts to the first second.
+        let placed = self
+            .editor
+            .project()
+            .active_scene()
+            .tracks
+            .audio
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .find_map(|element| match element {
+                bay_project::Element::Audio(audio) if audio.media_id == media_id => {
+                    Some((audio.start, audio.trim_start))
+                }
+                _ => None,
+            });
+        let (audio_start, audio_trim) = placed.unwrap_or((MediaTime::ZERO, MediaTime::ZERO));
+
+        let pcm = bay_audio::decode_pcm(&path, 16000).ok_or_else(|| {
+            err(format!(
+                "could not read audio from {path}. Decoding needs ffmpeg — runtime_install \
+                 with component \"video\" installs it."
+            ))
+        })?;
+        let rate = pcm.sample_rate.max(1) as f64;
+        let channels = pcm.channels.max(1) as usize;
+
+        // 20 Hz: fast enough that a syllable moves it, slow enough that a five-second element
+        // is a hundred keys rather than a thousand.
+        const HZ: f64 = 20.0;
+        let steps = ((duration.to_seconds_f64() * HZ).round() as usize).clamp(2, 2000);
+        let window = (rate / HZ) as usize * channels;
+
+        let mut levels = Vec::with_capacity(steps);
+        for step in 0..steps {
+            let local = duration.to_seconds_f64() * step as f64 / (steps - 1).max(1) as f64;
+            let source = (audio_trim.to_seconds_f64() + (start.to_seconds_f64() + local)
+                - audio_start.to_seconds_f64())
+            .max(0.0);
+            let at = (source * rate) as usize * channels;
+            let slice = pcm
+                .samples
+                .get(at..(at + window).min(pcm.samples.len()))
+                .unwrap_or(&[]);
+            let rms = if slice.is_empty() {
+                0.0
+            } else {
+                (slice
+                    .iter()
+                    .map(|s| f64::from(*s) * f64::from(*s))
+                    .sum::<f64>()
+                    / slice.len() as f64)
+                    .sqrt()
+            };
+            levels.push(20.0 * (rms.max(1e-9)).log10());
+        }
+
+        // Normalise against what this sound actually does, not against full scale: speech
+        // peaking at -12 dB would otherwise never move the orb more than a fraction of the
+        // depth asked for.
+        let loudest = levels.iter().copied().fold(f64::MIN, f64::max);
+        let quietest = floor_db.min(loudest - 1.0);
+        let span = (loudest - quietest).max(1.0);
+
+        let keys: Vec<bay_project::Keyframe> = levels
+            .iter()
+            .enumerate()
+            .map(|(step, level)| {
+                let amount = ((level - quietest) / span).clamp(0.0, 1.0);
+                let local = duration.to_seconds_f64() * step as f64 / (steps - 1).max(1) as f64;
+                bay_project::Keyframe {
+                    time: MediaTime::from_seconds_f64(local).unwrap_or(MediaTime::ZERO),
+                    value: (base as f64 * (1.0 + depth * amount)) as f32,
+                    easing: None,
+                }
+            })
+            .collect();
+
+        let reference = self
+            .find_element_ref(element_id)
+            .ok_or_else(|| err(format!("no element with id {element_id:?}")))?;
+        let mut element = self
+            .editor
+            .project()
+            .active_scene()
+            .elements()
+            .find(|element| element.id() == element_id)
+            .cloned()
+            .ok_or_else(|| err("the element went away"))?;
+        if let Some(animations) = element.animations_mut() {
+            animations.insert(
+                channel.to_string(),
+                bay_project::AnimationChannel {
+                    keys: keys.clone(),
+                    easing: bay_project::Easing::Linear,
+                },
+            );
+        } else {
+            return Err(err(format!("{element_id:?} cannot be animated")));
+        }
+        if !self
+            .editor
+            .execute(Command::ReplaceElement { reference, element })
+        {
+            return Err(err("could not write the animation"));
+        }
+
+        Ok(serde_json::json!({
+            "elementId": element_id,
+            "mediaId": media_id,
+            "channel": channel,
+            "keys": keys.len(),
+            "baseValue": base,
+            "depth": depth,
+            "quietestDb": (quietest * 10.0).round() / 10.0,
+            "loudestDb": (loudest * 10.0).round() / 10.0,
+            "note": "Ordinary keyframes, sampled from the sound once. `check` reports a \
+                     hand-keyed channel as off-vocabulary-motion, which this is — the \
+                     vocabulary has no move for it, and a pulse driven by a voice is the one \
+                     case where that is the point rather than a shortcut.",
+        }))
+    }
+
     /// Lay the room itself under the whole cut, lifted from a pause in the recording.
     ///
     /// The companion to [`Studio::audio_smooth`], and the half of the problem a crossfade does
@@ -2139,6 +2312,7 @@ impl Studio {
         shape: ShapeKind,
         role: ElementRole,
         tone: Tone,
+        fill: ShapeFill,
         visual: VisualArgs,
     ) -> ToolResult {
         if duration <= 0.0 {
@@ -2151,7 +2325,8 @@ impl Studio {
             id,
             start: secs(start)?,
             duration: secs(duration)?,
-            gradient: None,
+            gradient: fill.gradient,
+            stroke: fill.stroke,
             fade_in: MediaTime::ZERO,
             fade_out: MediaTime::ZERO,
             shape,
@@ -3280,6 +3455,17 @@ fn describe_element(element: &Element) -> serde_json::Value {
         out["color"] = serde_json::json!(shape.color);
     }
     out
+}
+
+/// How a shape is painted, beyond the flat tone every shape has always had.
+///
+/// A struct rather than two more arguments because `add_shape` already carries eight, and
+/// because the two travel together: a stroked shape with a gradient is an outline drawn in the
+/// ramp, which is one decision rather than two.
+#[derive(Debug, Clone, Default)]
+pub struct ShapeFill {
+    pub gradient: Option<bay_project::Gradient>,
+    pub stroke: Option<bay_project::Stroke>,
 }
 
 /// What a caller needs to choose a format, and to see what one is doing to their report.

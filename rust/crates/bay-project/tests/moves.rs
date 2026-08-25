@@ -231,6 +231,7 @@ fn shape_at(id: &str) -> Element {
         shape: ShapeKind::Rect { radius: 0.0 },
         color: "#ffffff".into(),
         gradient: None,
+        stroke: None,
         transform: Transform::default(),
         effects: Vec::new(),
         animations: BTreeMap::new(),
