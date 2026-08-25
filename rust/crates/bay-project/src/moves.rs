@@ -1100,10 +1100,13 @@ pub static MOVES: &[Move] = &[
         kind: MoveKind::Ambient,
         lead: "scale",
         summary: "A slow push toward the subject across a held shot — the punch-in an editor \
-                  puts under a line that matters. Six percent over eight seconds, which reads \
+                  puts under a line that matters. Five percent over five seconds, which reads \
                   as attention rather than as a zoom; on a locked-off interview it is the only \
-                  camera move there is. Scale alone: the entrances that also carry opacity are \
-                  for something arriving, and this is for something already on screen.",
+                  camera move there is. Five and not eight because a move has to finish inside \
+                  its own clip, and the shots this is for run three to seven seconds — on a \
+                  longer single it lands early and holds, which is what a push does anyway. \
+                  Scale alone: the entrances that also carry opacity are for something \
+                  arriving, and this is for something already on screen.",
         directions: &[Direction::In],
         channels: &[MoveChannel {
             property: "scale",
@@ -1111,7 +1114,7 @@ pub static MOVES: &[Move] = &[
             directional: false,
             keys: &[
                 key(0.0, KeyValue::Target, Easing::SineInOut),
-                last(240.0, KeyValue::Offset(0.06)),
+                last(150.0, KeyValue::Offset(0.05)),
             ],
         }],
         group: None,
@@ -1120,7 +1123,7 @@ pub static MOVES: &[Move] = &[
         id: "pull-back",
         kind: MoveKind::Ambient,
         lead: "scale",
-        summary: "The opposite of push-in: the frame opens out over eight seconds, letting the \
+        summary: "The opposite of push-in: the frame opens out over five seconds, letting the \
                   room back in. Use it to release after a push, or under a wide that follows a \
                   long single. Starting a shot already punched in and pulling back is how a cut \
                   to the same angle twice stops reading as the same shot.",
@@ -1131,7 +1134,7 @@ pub static MOVES: &[Move] = &[
             directional: false,
             keys: &[
                 key(0.0, KeyValue::Target, Easing::SineInOut),
-                last(240.0, KeyValue::Offset(-0.06)),
+                last(150.0, KeyValue::Offset(-0.05)),
             ],
         }],
         group: None,

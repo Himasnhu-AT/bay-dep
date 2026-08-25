@@ -1442,7 +1442,9 @@ impl Studio {
         let mut index = 0usize;
         // A cap, so a bad chunk length cannot carpet the timeline with thousands of clips.
         while at < cover && index < 4000 {
-            let duration = chunk.min(cover - at + fade);
+            // Never past the end: a bed that outlasts the picture lengthens the timeline and
+            // leaves black on the end of the video.
+            let duration = chunk.min(cover - at);
             if duration <= 0.02 {
                 break;
             }
