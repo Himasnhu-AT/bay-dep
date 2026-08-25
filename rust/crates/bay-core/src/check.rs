@@ -6267,6 +6267,33 @@ mod tests {
         assert!(report.total > 0);
     }
 
+    /// The registry's response move has to clear the amount of motion the checks read as a
+    /// response. It did not: `make-room` travelled 0.0198 of the canvas against a 0.02
+    /// threshold, so the one move whose entire purpose is to satisfy `no-response` could not,
+    /// and neither could it carry a seam for `broken-continuity`. Nothing reported this,
+    /// because each side was correct on its own — the registry against its own amplitude floor,
+    /// the check against its own definition. This is the assertion that they are the same
+    /// question.
+    #[test]
+    fn a_positional_response_clears_what_the_checks_ask_of_it() {
+        let make_room =
+            bay_project::moves::find("make-room").expect("make-room is in the registry");
+        let lead = make_room.lead_channel();
+        assert_eq!(lead.property, "y");
+        let travel = lead
+            .keys
+            .iter()
+            .filter_map(|key| match key.value {
+                bay_project::moves::KeyValue::Offset(offset) => Some(offset.abs()),
+                _ => None,
+            })
+            .fold(0.0_f32, f32::max);
+        assert!(
+            travel >= CARRIED_POSITION,
+            "make-room travels {travel} but a response has to move {CARRIED_POSITION} to count"
+        );
+    }
+
     #[test]
     fn arrivals_without_any_incumbent_response_are_reported() {
         let mut elements = Vec::new();

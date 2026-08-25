@@ -22,8 +22,8 @@ it, which is a narrated piece and a different shape.
 
 ```
 audio_beats(path)                  → bpm, firstBeatSeconds, beatTimes, candidates, confidence
-project_create(portrait, 30, kit)
-marker_add × 6-8                    the story beats, on card starts
+project_create(portrait, source fps, kit)
+marker_add per beat                 the story beats, on card starts
 stock_search(query, describe) ×N    keywords for the archive, a sentence for the ranker
 stock_fetch → library_save          keep what you chose, with its licence
 media_import → add_image(cover:)    no ffmpeg, no plates

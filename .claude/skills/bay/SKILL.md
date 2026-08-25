@@ -189,5 +189,7 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 
 - **The deliverable is a web page, not a file.** bay emits MP4s.
 - **You need a browser to render something** — a live site, a DOM screenshot, a WebGL scene.
-- **You need per-character text animation, gradients, text stroke, or a group/parent transform.**
-  bay has none of these. Say so rather than approximating them with dozens of elements.
+- **You need per-character text animation, text stroke, or an animatable blur.** bay has none of
+  these. Say so rather than approximating them with dozens of elements. (Shape gradients, shape
+  strokes and dashes, and a group transform all *do* exist now — `gradientFrom`/`gradientTo`,
+  `strokeTone`/`dash`, and `group_create`.)

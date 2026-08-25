@@ -79,16 +79,28 @@ Say so rather than approximating. Each of these was a real element in the refere
 
 | The reference does | bay | Do instead |
 |---|---|---|
-| Gradient fills and gradient overlays | no gradients | import one as an image and mask it, or pick a flat palette and commit to it |
-| Scale driven continuously by audio amplitude | no audio-reactive channel | `media_import` reports accent times, and `audio_beats` the grid; key the pulses to those |
 | A blur that grows as an element leaves | effects are one-shot, not animatable | fade and scale it away instead |
 | A border radius morphing into another shape | radius is not a channel | cross-dissolve the two shapes, or accept the cut |
 | A plate flipping on the x-axis | rotation is z-only | scale one edge with `scaleY` and swap at the midpoint |
-| Dashed connectors | shapes have no stroke or dash | a row of small rectangles, placed once |
+| Per-character text animation | there is no per-glyph channel | a mask over the text with its width animated — the same effect, one element instead of forty |
+| A real camera move through 3D space, or a particle simulation | neither exists | say so. This is the case where the honest answer is that a different tool makes this shot |
 
-The first two are the ones that most change how the result looks. If a reference leans on
-gradients throughout, say that up front — a flat-palette version of it is a different film, and
-the person asking should get to decide that rather than discover it in the render.
+**Three rows left this table and it is worth knowing which**, because documents like this one go
+stale in exactly one direction — they keep saying no after the answer became yes:
+
+- **Gradients exist.** `add_shape` takes `gradientFrom`, `gradientTo` and `gradientAngle`, and
+  they are **tones, not colours**, so the kit stays the only place a value comes from. A ramp
+  that half-specifies is refused rather than silently ignored.
+- **Strokes and dashes exist.** `strokeTone`, `strokeWidth`, `dash` and `gap`. A dashed connector
+  is one shape now, not a row of rectangles placed by hand.
+- **Audio-reactive scale exists.** `audio_react` samples the sound once and writes ordinary
+  keyframes, so the pulse is editable and identical in preview and export. It **rides** the
+  curve already on the element rather than replacing it — that bug shipped once and cost a hero
+  moment. `check` reports it as `off-vocabulary-motion`, correctly.
+
+The row that most changes how a result looks is the blur. If a reference leans on animated blur
+for its transitions, say that up front — a version without it is a different film, and the person
+asking should get to decide that rather than discover it in the render.
 
 ---
 

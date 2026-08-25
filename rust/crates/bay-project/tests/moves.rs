@@ -476,7 +476,7 @@ fn a_later_move_extends_the_channel_instead_of_erasing_the_entrance() {
     );
     // …and the response is measured from where the element actually is, not from its authored
     // transform, so the two compose.
-    assert!((y.keys[4].value - (0.4 - 0.0198)).abs() < 1e-5, "{y:?}");
+    assert!((y.keys[4].value - (0.4 - 0.0278)).abs() < 1e-5, "{y:?}");
 
     let scene = scene_of(vec![{
         let mut e = element.clone();

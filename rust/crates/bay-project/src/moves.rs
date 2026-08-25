@@ -998,13 +998,19 @@ pub static MOVES: &[Move] = &[
                   couple of frames before the arrival.",
         directions: &[Direction::Up, Direction::Down],
         channels: &[MoveChannel {
+            // 30 px of 1080. It was 0.0198 — two ten-thousandths under the 0.02 that
+            // `bay_core`'s `no-response` and `broken-continuity` both read as "this element
+            // did something", so the registry's own response move could not satisfy the check
+            // that exists to demand one. That is a near-miss, not a decision about subtlety:
+            // a move meant to be imperceptible would have been written at a third of this.
+            // `a_positional_response_clears_what_the_checks_ask_of_it` pins the two together.
             property: "y",
             easing: Easing::PowerOut,
             directional: true,
             keys: &[
                 key(0.0, KeyValue::Target, Easing::Hold),
                 key(2.0, KeyValue::Target, Easing::PowerOut),
-                last(16.0, KeyValue::Offset(-0.0198)),
+                last(16.0, KeyValue::Offset(-0.0278)),
             ],
         }],
         group: None,

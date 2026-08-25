@@ -455,6 +455,53 @@ pub fn rasterize_shape_for_test(
     rasterize_shape(shape, color, gradient, stroke, width, height)
 }
 
+/// The cache key for one rasterised shape.
+///
+/// **Everything that changes the pixels has to be in here.** The fill was, once the gradient
+/// arrived; the stroke was not, and the failure that produced is worse than a wrong ramp. An
+/// outlined panel and a filled bar of the same colour, kind and raster size hashed identically,
+/// so whichever rasterised first served both: a red boundary box drew as a solid red plate over
+/// the whole frame, and a solid mark came out as a hollow ring. Nothing errored — the picture
+/// was simply wrong, and only in a project that happened to contain both.
+pub fn shape_raster_key(
+    shape: &bay_project::ShapeKind,
+    color: &str,
+    gradient: Option<&bay_project::Gradient>,
+    stroke: Option<&bay_project::Stroke>,
+    raster_w: u32,
+    raster_h: u32,
+) -> String {
+    use bay_project::ShapeKind;
+    let fill = match gradient {
+        None => color.to_string(),
+        Some(gradient) => format!(
+            "{}>{}@{}",
+            gradient.from,
+            gradient.to,
+            gradient.angle.to_bits()
+        ),
+    };
+    let fill = match stroke {
+        None => fill,
+        Some(stroke) => format!(
+            "{fill}|stroke:{}:{}:{}:{}",
+            stroke.color,
+            stroke.width.to_bits(),
+            stroke.dash.map_or(0, f32::to_bits),
+            stroke.gap.map_or(0, f32::to_bits),
+        ),
+    };
+    match shape {
+        ShapeKind::Rect { radius } => {
+            format!(
+                "shape:rect:{}:{fill}:{raster_w}x{raster_h}",
+                radius.to_bits()
+            )
+        }
+        ShapeKind::Ellipse => format!("shape:ellipse:{fill}:{raster_w}x{raster_h}"),
+    }
+}
+
 /// Test hook for [`shape_raster_dimensions`].
 pub fn shape_raster_dimensions_for_test(aspect: f32) -> (u32, u32) {
     shape_raster_dimensions(aspect)
@@ -1222,32 +1269,15 @@ impl PreviewRenderer {
         use bay_project::ShapeKind;
         // A square-cornered rect has no curvature at all, so one tiny tile serves every size
         // and aspect. Anything curved must be rasterized at the layer's own aspect or the
-        // quad's non-uniform stretch turns its round corners into ellipses.
+        // quad's non-uniform stretch turns its round corners into ellipses. An OUTLINE has
+        // curvature everywhere — its border is a fraction of the shorter side, and an 8x8 tile
+        // stretched to a full-width panel would draw a border hundreds of pixels thick on two
+        // sides and hairline on the other two.
         let (raster_w, raster_h) = match shape {
-            ShapeKind::Rect { radius } if *radius <= 0.0 => (8, 8),
+            ShapeKind::Rect { radius } if *radius <= 0.0 && stroke.is_none() => (8, 8),
             _ => shape_raster_dimensions(aspect),
         };
-        // The fill is part of the key. Without the gradient in it, two shapes that differ only
-        // in their ramp would share the first one's texture — a cache that answers the wrong
-        // question is worse than no cache.
-        let fill = match gradient {
-            None => color.to_string(),
-            Some(gradient) => format!(
-                "{}>{}@{}",
-                gradient.from,
-                gradient.to,
-                gradient.angle.to_bits()
-            ),
-        };
-        let key = match shape {
-            ShapeKind::Rect { radius } => {
-                format!(
-                    "shape:rect:{}:{fill}:{raster_w}x{raster_h}",
-                    radius.to_bits()
-                )
-            }
-            ShapeKind::Ellipse => format!("shape:ellipse:{fill}:{raster_w}x{raster_h}"),
-        };
+        let key = shape_raster_key(shape, color, gradient, stroke, raster_w, raster_h);
         if self.raster_keys.contains(&key) {
             return Some(key);
         }

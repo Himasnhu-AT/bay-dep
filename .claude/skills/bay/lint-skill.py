@@ -22,7 +22,9 @@ import re
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+# Every skill in the tree, not just this one: the rule is about what an agent copies out of a
+# fenced block, and that is true of any skill it reads.
+HERE = Path(__file__).resolve().parent.parent
 GENERATED = {"tools.md"}
 
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -42,7 +44,9 @@ Rockwell, San Francisco, Savoye, Seravek, SF Mono, SF Pro, SignPainter, Skia, Sn
 Superclarendon, Tahoma, Times, Times New Roman, Trattatello, Trebuchet, Verdana, Zapfino
 """
 FAMILY = re.compile(
-    "|".join(sorted((re.escape(f.strip()) for f in FAMILIES.split(",")), key=len, reverse=True))
+    r"\b(?:"
+    + "|".join(sorted((re.escape(f.strip()) for f in FAMILIES.split(",")), key=len, reverse=True))
+    + r")\b"
 )
 
 HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")

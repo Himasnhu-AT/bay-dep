@@ -3558,3 +3558,54 @@ fn a_stroke_outlines_the_shape_and_a_dash_breaks_it_up() {
         "a dashed line alternates several times, not once: {changes}"
     );
 }
+
+/// A stroked shape and a filled one of the same colour must not share a cached texture.
+///
+/// This shipped broken: `shape_raster_key` carried the shape, its radius, its fill and the
+/// raster size, but not the stroke. In the film that found it, a red rule and an outlined red
+/// boundary box were both square-cornered rects on an 8x8 tile, so the boundary drew as a solid
+/// red plate across the whole frame; a stroked ellipse and a solid one of the same red swapped
+/// the other way and the solid mark rendered as a ring. No error, no warning — just the wrong
+/// picture, and only when a project contained both.
+#[test]
+fn a_stroked_shape_does_not_borrow_a_filled_one_s_texture() {
+    use bay_preview::shape_raster_key;
+    use bay_project::{ShapeKind, Stroke};
+
+    let outline = Stroke {
+        color: "#C42A18".into(),
+        width: 0.004,
+        dash: None,
+        gap: None,
+    };
+    for shape in [ShapeKind::Rect { radius: 0.0 }, ShapeKind::Ellipse] {
+        let filled = shape_raster_key(&shape, "#C42A18", None, None, 8, 8);
+        let stroked = shape_raster_key(&shape, "#C42A18", None, Some(&outline), 8, 8);
+        assert_ne!(filled, stroked, "{shape:?}: fill and outline share a key");
+    }
+
+    // And a dash is a different picture from a continuous line of the same width.
+    let dashed = Stroke {
+        dash: Some(0.02),
+        gap: Some(0.01),
+        ..outline.clone()
+    };
+    assert_ne!(
+        shape_raster_key(
+            &ShapeKind::Rect { radius: 0.0 },
+            "#C42A18",
+            None,
+            Some(&outline),
+            8,
+            8
+        ),
+        shape_raster_key(
+            &ShapeKind::Rect { radius: 0.0 },
+            "#C42A18",
+            None,
+            Some(&dashed),
+            8,
+            8
+        ),
+    );
+}
