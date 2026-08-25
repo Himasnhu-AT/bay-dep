@@ -1304,6 +1304,120 @@ mod tests {
         assert_eq!(response["error"]["code"], -32601);
     }
 
+    /// A reactive pulse rides an authored curve instead of deleting it.
+    ///
+    /// The first version wrote its keys from the element's static transform value, which meant
+    /// adding a pulse silently discarded every scale move already on the channel — an orb's
+    /// whole arc through a film vanished the moment it was made to breathe, with nothing said.
+    #[test]
+    fn a_reactive_pulse_rides_the_curve_that_is_already_there() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let wav = tests_support::test_library_root().join("pulse.wav");
+        std::fs::create_dir_all(wav.parent().expect("a parent")).expect("scratch directory");
+        let rate = 48_000u32;
+        let samples: Vec<f32> = (0..(rate as usize * 4))
+            .map(|i| {
+                let t = i as f32 / rate as f32;
+                let phase = t * 300.0 * std::f32::consts::TAU;
+                // Loud for the first half, near-silent for the second.
+                phase.sin() * if t < 2.0 { 0.4 } else { 0.001 }
+            })
+            .collect();
+        std::fs::write(
+            &wav,
+            bay_audio::sfx::encode_wav(&bay_audio::AudioPcm {
+                sample_rate: rate,
+                channels: 1,
+                samples,
+            }),
+        )
+        .expect("write a wav");
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "media_import",
+            json!({ "path": wav.to_string_lossy(), "id": "snd" }),
+        ));
+        assert!(!is_error, "{body}");
+        call(
+            &mut studio,
+            "add_audio",
+            json!({ "mediaId": "snd", "start": 0.0, "duration": 4.0, "role": "speech" }),
+        );
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "id": "orb", "start": 0, "duration": 4.0, "role": "data",
+                    "shape": "ellipse", "x": 0.5, "y": 0.5, "scale": 0.2 }),
+        );
+        // An authored arc: small, then large.
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "animate",
+            json!({ "elementId": "orb", "property": "scale",
+                    "keys": [{"t": 0.0, "value": 0.2}, {"t": 4.0, "value": 0.6}] }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "audio_react",
+            json!({ "elementId": "orb", "mediaId": "snd", "channel": "scale", "depth": 0.1 }),
+        ));
+        assert!(!is_error, "{body}");
+        let out: Value = serde_json::from_str(&body).expect("a JSON body");
+        assert_eq!(out["rodeExistingCurve"], true);
+
+        let keys: Vec<(f64, f32)> = studio
+            .project()
+            .active_scene()
+            .elements()
+            .find(|element| element.id() == "orb")
+            .and_then(|element| element.animations())
+            .and_then(|animations| animations.get("scale"))
+            .map(|channel| {
+                channel
+                    .keys
+                    .iter()
+                    .map(|key| (key.time.to_seconds_f64(), key.value))
+                    .collect()
+            })
+            .expect("a scale channel");
+
+        let at = |want: f64| {
+            keys.iter()
+                .min_by(|a, b| (a.0 - want).abs().total_cmp(&(b.0 - want).abs()))
+                .map(|(_, value)| *value)
+                .expect("a key")
+        };
+        // The arc survives: still small at the head and large at the tail.
+        assert!(
+            at(0.2) < 0.3,
+            "the authored start is still small: {}",
+            at(0.2)
+        );
+        assert!(
+            at(3.8) > 0.5,
+            "and the authored end is still large: {}",
+            at(3.8)
+        );
+        // And the loud half sits above the arc, the quiet half on it.
+        let loud = at(1.0);
+        let quiet = at(3.0);
+        let arc = |t: f32| 0.2f32 + (0.6f32 - 0.2f32) * (t / 4.0);
+        assert!(
+            loud > arc(1.0) * 1.02,
+            "the pulse lifts the curve where the sound is: {loud} vs {}",
+            arc(1.0)
+        );
+        assert!(
+            (quiet - arc(3.0)).abs() < 0.02,
+            "and leaves it alone where there is none: {quiet} vs {}",
+            arc(3.0)
+        );
+    }
+
     /// Room tone is lifted from the recording's own quietest pause, and loops without ticking.
     ///
     /// The companion to `audio_smooth`, and the half a crossfade cannot fix: it changes how

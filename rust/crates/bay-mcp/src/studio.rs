@@ -1422,6 +1422,20 @@ impl Studio {
             .media_path(media_id)
             .ok_or_else(|| err(format!("no media with id {media_id:?}")))?;
 
+        // If the channel is already animated, the pulse rides ON that curve rather than
+        // replacing it. Overwriting is what the first version did, and it silently deleted
+        // every authored scale move on the element — the orb's whole arc through the film
+        // vanished the moment the pulse was added, with nothing said.
+        let existing = {
+            let project = self.editor.project();
+            project
+                .active_scene()
+                .elements()
+                .find(|element| element.id() == element_id)
+                .and_then(|element| element.animations())
+                .and_then(|animations| animations.get(channel))
+                .cloned()
+        };
         let (start, duration, base) = {
             let element = self
                 .editor
@@ -1513,9 +1527,15 @@ impl Studio {
             .map(|(step, level)| {
                 let amount = ((level - quietest) / span).clamp(0.0, 1.0);
                 let local = duration.to_seconds_f64() * step as f64 / (steps - 1).max(1) as f64;
+                let time = MediaTime::from_seconds_f64(local).unwrap_or(MediaTime::ZERO);
+                // The value the element would have had here without the pulse.
+                let under = existing
+                    .as_ref()
+                    .and_then(|channel| channel.sample(time))
+                    .unwrap_or(base);
                 bay_project::Keyframe {
-                    time: MediaTime::from_seconds_f64(local).unwrap_or(MediaTime::ZERO),
-                    value: (base as f64 * (1.0 + depth * amount)) as f32,
+                    time,
+                    value: (f64::from(under) * (1.0 + depth * amount)) as f32,
                     easing: None,
                 }
             })
@@ -1556,6 +1576,7 @@ impl Studio {
             "channel": channel,
             "keys": keys.len(),
             "baseValue": base,
+            "rodeExistingCurve": existing.is_some(),
             "depth": depth,
             "quietestDb": (quietest * 10.0).round() / 10.0,
             "loudestDb": (loudest * 10.0).round() / 10.0,
