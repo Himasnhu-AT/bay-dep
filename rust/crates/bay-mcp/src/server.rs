@@ -1304,6 +1304,216 @@ mod tests {
         assert_eq!(response["error"]["code"], -32601);
     }
 
+    /// Room tone is lifted from the recording's own quietest pause, and loops without ticking.
+    ///
+    /// The companion to `audio_smooth`, and the half a crossfade cannot fix: it changes how
+    /// fast you cross a join, not what the two sides sound like. A continuous bed of the room
+    /// stops the background being something that changes at cuts.
+    #[test]
+    fn room_tone_is_lifted_from_the_recording_and_crossfaded_into_itself() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        // Loud, then a long quiet stretch: the quiet is what the tool has to find.
+        let wav = tests_support::test_library_root().join("with-a-pause.wav");
+        std::fs::create_dir_all(wav.parent().expect("a parent")).expect("scratch directory");
+        // Two seconds of real level, then four of a real floor — not digital zero, because
+        // room tone is not silence and the detector is looking for the quietest *sound*.
+        let rate = 48_000u32;
+        let mut samples = Vec::new();
+        for index in 0..(rate as usize * 2) {
+            let phase = index as f32 / rate as f32 * 440.0 * std::f32::consts::TAU;
+            samples.push(phase.sin() * 0.35);
+        }
+        for index in 0..(rate as usize * 4) {
+            let phase = index as f32 / rate as f32 * 90.0 * std::f32::consts::TAU;
+            samples.push(phase.sin() * 0.0009);
+        }
+        let pcm = bay_audio::AudioPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples,
+        };
+        std::fs::write(&wav, bay_audio::sfx::encode_wav(&pcm)).expect("write a wav");
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "media_import",
+            json!({ "path": wav.to_string_lossy(), "id": "room" }),
+        ));
+        assert!(!is_error, "{body}");
+        // Something to lay it under.
+        call(
+            &mut studio,
+            "add_shape",
+            json!({ "start": 0, "duration": 6.0, "role": "ground", "tone": "surface" }),
+        );
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "room_tone",
+            json!({ "mediaId": "room", "seconds": 6.0, "crossfadeMs": 200 }),
+        ));
+        assert!(!is_error, "{body}");
+        let out: Value = serde_json::from_str(&body).expect("a JSON body");
+
+        let lifted = out["liftedFrom"]["startSeconds"]
+            .as_f64()
+            .expect("a source start");
+        assert!(
+            lifted >= 1.5,
+            "the tone came from the quiet stretch, not the loud head: {out}"
+        );
+        let clips = out["clips"].as_u64().expect("a clip count");
+        assert!(clips >= 2, "the bed loops to cover the timeline: {out}");
+
+        // Every copy carries fades, so the loop cannot tick where it hands over.
+        let beds: Vec<_> = studio
+            .project()
+            .active_scene()
+            .tracks
+            .audio
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .filter_map(|element| match element {
+                bay_project::Element::Audio(audio) if audio.id.starts_with("room-tone-") => {
+                    Some(audio)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(beds.len() as u64, clips, "every clip is on the timeline");
+        assert!(
+            beds.iter()
+                .all(|bed| bed.fade_in > bay_time::MediaTime::ZERO
+                    && bed.fade_out > bay_time::MediaTime::ZERO),
+            "a loop butt-joined to itself ticks: {:?}",
+            beds.iter()
+                .map(|bed| (bed.fade_in, bed.fade_out))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            beds.iter().all(|bed| bed.volume < 1.0),
+            "the dialogue already carries the room; a bed at unity doubles it"
+        );
+    }
+
+    /// Captions name the speaker when the floor changes, and only then.
+    ///
+    /// A clip where two people talk, captioned without them, says the words and loses who said
+    /// them — on a social cut that is most of the point of an exchange. Labelling every line
+    /// instead spends a line of frame on something nobody reads after the second one, so the
+    /// name goes on the first caption after a change and the colour carries the rest.
+    #[test]
+    fn captions_name_a_speaker_only_where_the_floor_changes() {
+        let mut studio = new_studio();
+        call(&mut studio, "project_create", json!({}));
+
+        let wav = tests_support::test_library_root().join("two-handed.wav");
+        std::fs::create_dir_all(wav.parent().expect("a parent")).expect("scratch directory");
+        let click = bay_audio::sfx::Sfx::by_id("click").expect("bay synthesises a click");
+        let pcm = click.render(bay_audio::sfx::SfxParams {
+            seconds: 4.0,
+            tone: 0.5,
+            level: 0.5,
+        });
+        std::fs::write(&wav, bay_audio::sfx::encode_wav(&pcm)).expect("write a wav");
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "media_import",
+            json!({ "path": wav.to_string_lossy(), "id": "m" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        // A transcript with two speakers, and the speech clip the captions are projected through.
+        {
+            let asset = studio
+                .project()
+                .media
+                .iter()
+                .find(|asset| asset.id == "m")
+                .cloned();
+            let mut asset = asset.expect("the imported asset");
+            let word =
+                |text: &str, start: f64, end: f64, speaker: &str| bay_project::TranscriptWord {
+                    text: text.into(),
+                    start_seconds: start,
+                    end_seconds: end,
+                    confidence: 1.0,
+                    speaker: Some(speaker.into()),
+                };
+            asset.transcript = Some(bay_project::Transcript {
+                language: "en".into(),
+                model: "test".into(),
+                duration_seconds: 4.0,
+                words: vec![
+                    word("one", 0.0, 0.4, "speaker-1"),
+                    word("two", 0.5, 0.9, "speaker-1"),
+                    word("three", 1.2, 1.6, "speaker-2"),
+                    word("four", 1.7, 2.1, "speaker-2"),
+                ],
+                utterances: Vec::new(),
+            });
+            studio.replace_media_for_test(asset);
+        }
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "add_audio",
+            json!({ "mediaId": "m", "start": 0.0, "duration": 4.0, "role": "speech" }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let srt = tests_support::test_library_root().join("two-handed.srt");
+        std::fs::create_dir_all(srt.parent().expect("a parent")).expect("scratch directory");
+        std::fs::write(
+            &srt,
+            "1\n00:00:00,000 --> 00:00:01,000\none two\n\n             2\n00:00:01,200 --> 00:00:02,200\nthree four\n\n             3\n00:00:02,300 --> 00:00:03,000\nfive\n\n",
+        )
+        .expect("write an srt");
+
+        let (is_error, body) = unwrap_call(&call(
+            &mut studio,
+            "subtitles_add",
+            json!({
+                "path": srt.to_string_lossy(),
+                "speakerLabels": { "speaker-1": "JULIE", "speaker-2": "GALE" },
+                "speakerColors": { "speaker-1": "#FFFFFF", "speaker-2": "#E5C158" },
+            }),
+        ));
+        assert!(!is_error, "{body}");
+
+        let captions: Vec<(String, String)> = studio
+            .project()
+            .active_scene()
+            .elements()
+            .filter_map(|element| match element {
+                bay_project::Element::Text(text) => {
+                    Some((text.content.clone(), text.color.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(captions.len(), 3, "{captions:?}");
+        assert!(
+            captions[0].0.starts_with("JULIE:"),
+            "the first speaker is named: {captions:?}"
+        );
+        assert!(
+            captions[1].0.starts_with("GALE:"),
+            "the floor changed, so the new speaker is named: {captions:?}"
+        );
+        assert_ne!(
+            captions[0].1, captions[1].1,
+            "the two speakers are different colours: {captions:?}"
+        );
+        // Nothing is said over the third cue, so it keeps the previous speaker's look and is
+        // not labelled again.
+        assert!(
+            !captions[2].0.contains(':'),
+            "a cue with no speaker change is not re-labelled: {captions:?}"
+        );
+    }
+
     /// Speech that arrives already mixed can decline bay's dialogue chain.
     ///
     /// `role: "speech"` attached the EQ, compressor and limiter unconditionally. That is right

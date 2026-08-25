@@ -166,7 +166,9 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 - **A dialogue edit ticks at every join until you smooth it.** Consecutive speech clips are
   butt-joined, and a cut in the dialogue is not a cut in the room: the noise floor and the timbre
   change between one sample and the next. There is no click to find, which is why it survives a
-  listen on speakers and not headphones. `audio_smooth` crossfades every seam.
+  listen on speakers and not headphones. `audio_smooth` crossfades every seam, and `room_tone`
+  lays the room under the whole cut — the first fixes how fast you cross a join, the second what
+  the two sides sound like, and an edit that only got one of them still sounds wrong.
 - **Edit in place.** `element_trim`, `element_source`, `element_split`, `element_move`,
   `transform_set` and `text_update` all keep the id and the animation. Deleting and re-adding
   loses both, and the id is what continuity is measured on.

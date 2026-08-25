@@ -358,7 +358,20 @@ fn caption_properties() -> Value {
                  the kit's lower-third framing, which clears the platform caption band." },
         "captionAlign": { "type": "string", "enum": ["left", "center", "right"],
             "description": "Defaults to whatever the kit's lower-third framing hangs off — left \
-                 on a grid kit, centred on a centred one." }
+                 on a grid kit, centred on a centred one." },
+        "speakerLabels": { "type": "object",
+            "description": "Display name per speaker id, e.g. {\"speaker-1\": \"JULIE\"}. The ids \
+                 are the ones `diarize` writes into the transcript. Use this whenever more than \
+                 one person talks in a clip: without it the captions say the words and lose who \
+                 said them, and a two-hander reads as one person contradicting themselves. The \
+                 name is written only on the FIRST caption after the floor changes — prefixing \
+                 every line eats the frame and stops being read after the second one." },
+        "speakerColors": { "type": "object",
+            "description": "Caption colour per speaker id, e.g. {\"speaker-1\": \"#RRGGBB\"}. This \
+                 is what carries who is talking on the lines that are not labelled, and it \
+                 spends none of the frame to do it. Two speakers want two colours that still \
+                 read apart at thumbnail size; past three, the labels are doing the work and \
+                 the colour is noise." }
     })
 }
 
@@ -1245,6 +1258,39 @@ pub fn all_definitions() -> Vec<Value> {
                 duck_properties(),
             ),
             &["bedId"],
+        ),
+        tool(
+            "room_tone",
+            "Lay the room itself under the whole cut, lifted from a pause in the \
+             recording.\n\nThe companion to audio_smooth, and the half of the problem a \
+             crossfade cannot solve: a crossfade fixes how FAST you cross a join, not what the \
+             two sides sound like. Two moments of one recording still differ in noise floor and \
+             timbre — about 18 dB in the worst band across a real edit — so at every cut the \
+             listener hears the background change even when the change is smooth. A continuous \
+             bed of the room's own tone masks it, because the background stops being something \
+             that changes at cuts and becomes something that is simply there.\n\nThe material \
+             is the recording's own silence: whichever pause is longest and sits closest to the \
+             measured noise floor, which is what makes it room tone rather than a clipped word \
+             or a breath. Nothing is synthesised and nothing is imported. Laid down as \
+             overlapping copies with crossfades, because a loop butt-joined to itself ticks for \
+             the same reason a dialogue edit does. Call it after the dialogue is placed.",
+            json!({
+                "mediaId": { "type": "string",
+                    "description": "The recording to lift the tone from — normally the same one \
+                         the dialogue was cut from, because it is the same room." },
+                "seconds": { "type": "number",
+                    "description": "How much timeline to cover. Defaults to all of it." },
+                "levelDb": { "type": "number", "default": -6,
+                    "description": "Level of the bed. The dialogue already carries the room, so \
+                         unity would lay a second copy of it over the first and raise the floor; \
+                         a few dB down fills the gaps without doubling. Raise it only if the \
+                         cuts are still audible." },
+                "crossfadeMs": { "type": "number", "default": 250,
+                    "description": "How long each copy takes to hand over to the next. Long \
+                         enough that the loop is not a rhythm — this is the one place a fade \
+                         should be slow." }
+            }),
+            &["mediaId"],
         ),
         tool(
             "audio_smooth",
@@ -2681,6 +2727,12 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 visual,
             )
         }
+        "room_tone" => studio.room_tone(
+            &required_text(args, "mediaId")?,
+            args.get("seconds").and_then(Value::as_f64),
+            number(args, "levelDb", -6.0),
+            number(args, "crossfadeMs", 250.0),
+        ),
         "audio_smooth" => studio.audio_smooth(
             number(args, "joinMs", 30.0),
             args.get("elementIds")

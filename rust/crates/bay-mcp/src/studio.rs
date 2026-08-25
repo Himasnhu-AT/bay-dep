@@ -260,6 +260,14 @@ impl Studio {
         .map_err(|e| err(format!("could not open the project library: {e}")))
     }
 
+    /// Replace a media asset, for tests that need a transcript the recogniser would have
+    /// written. Diarised speaker labels are the input to speaker-aware captions, and standing
+    /// up a real recogniser to get two of them is a slower test that checks less.
+    #[cfg(test)]
+    pub(crate) fn replace_media_for_test(&mut self, asset: bay_project::MediaAsset) {
+        self.editor.add_media(asset);
+    }
+
     pub fn project(&self) -> &Project {
         self.editor.project()
     }
@@ -355,6 +363,10 @@ impl Studio {
 
     /// Place one caption: centred text across the content width, fading in and out so a cut
     /// between neighbouring captions does not read as a flicker.
+    /// Place one caption. `colour` overrides the style's own, which is how a speaker-coloured
+    /// caption carries who is talking without spending any of the frame; `None` keeps the
+    /// style's.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_caption_element(
         &mut self,
         id: &str,
@@ -362,6 +374,7 @@ impl Studio {
         style: &crate::narration::CaptionStyle,
         duration: f64,
         karaoke: Option<KaraokeSpec>,
+        colour: Option<String>,
     ) -> Result<(), ToolError> {
         let element = Element::Text(TextElement {
             id: id.to_string(),
@@ -372,7 +385,7 @@ impl Studio {
             fade_out: MediaTime::ZERO,
             content: cue.text.clone(),
             font_size: style.font_size,
-            color: style.color.clone(),
+            color: colour.unwrap_or_else(|| style.color.clone()),
             transform: Transform {
                 x: style.x,
                 y: style.y,
@@ -1350,6 +1363,147 @@ impl Studio {
     }
 
     /// Place source ranges consecutively as paired video and speech clips.
+    /// Lay the room itself under the whole cut, lifted from a pause in the recording.
+    ///
+    /// The companion to [`Studio::audio_smooth`], and the half of the problem a crossfade does
+    /// not solve. A crossfade fixes how *fast* you cross a join; it cannot change what the two
+    /// sides sound like. Two moments of the same recording still differ in noise floor and
+    /// timbre — measured across one edit, about 18 dB in the worst band — and at every cut the
+    /// listener hears the background change even when the change is smooth.
+    ///
+    /// A continuous bed of the room's own tone masks that, because the background stops being
+    /// something that changes at cuts and becomes something that is simply there. The material
+    /// is the recording's own silence: whichever pause is longest and sits closest to the
+    /// measured noise floor, which is what makes it room tone rather than a clipped word. So
+    /// nothing is synthesised and nothing is imported — the room under the edit is the room.
+    ///
+    /// Laid down as overlapping copies with crossfades, because a loop butt-joined to itself
+    /// ticks for exactly the reason a dialogue edit does.
+    pub fn room_tone(
+        &mut self,
+        media_id: &str,
+        seconds: Option<f64>,
+        level_db: f64,
+        crossfade_ms: f64,
+    ) -> ToolResult {
+        let path = self
+            .media_path(media_id)
+            .ok_or_else(|| err(format!("no media with id {media_id:?}")))?;
+        let pcm = bay_audio::decode_pcm(&path, 16000).ok_or_else(|| {
+            err(format!(
+                "could not read audio from {path}. Decoding needs ffmpeg — runtime_install \
+                 with component \"video\" installs it."
+            ))
+        })?;
+        let scan = bay_audio::silence::detect(
+            &pcm,
+            bay_audio::silence::Options {
+                threshold_db: None,
+                minimum_seconds: 0.35,
+                pad_seconds: 0.0,
+            },
+        )
+        .ok_or_else(|| err(format!("{path} has no audio to measure")))?;
+
+        // The best chunk is long *and* quiet: a long pause with a peak well above the floor is
+        // a breath or the tail of a word, and looping one puts a heartbeat under the cut.
+        let floor = scan.noise_floor_db;
+        let best = scan
+            .silences
+            .iter()
+            .filter(|silence| silence.duration_seconds >= 0.35)
+            .min_by(|a, b| {
+                let cost = |s: &bay_audio::silence::Silence| {
+                    (s.peak_db - floor) - 6.0 * s.duration_seconds.min(2.0)
+                };
+                cost(a)
+                    .partial_cmp(&cost(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .ok_or_else(|| {
+                err(format!(
+                    "no pause in {path} is long enough to lift room tone from — the quietest \
+                     run is under 0.35s. Record a few seconds of the empty room, or pass a \
+                     different file."
+                ))
+            })?;
+
+        let chunk = best.duration_seconds.min(4.0);
+        let cover = seconds.unwrap_or_else(|| self.editor.duration().to_seconds_f64());
+        if cover <= 0.0 {
+            return Err(err("there is no timeline to lay room tone under"));
+        }
+        let fade = (crossfade_ms.clamp(0.0, 1000.0) / 1000.0).min(chunk / 3.0);
+        let gain = 10f32.powf((level_db as f32) / 20.0);
+
+        let step = (chunk - fade).max(0.05);
+        let mut placed = Vec::new();
+        let mut at = 0.0f64;
+        let mut index = 0usize;
+        // A cap, so a bad chunk length cannot carpet the timeline with thousands of clips.
+        while at < cover && index < 4000 {
+            let duration = chunk.min(cover - at + fade);
+            if duration <= 0.02 {
+                break;
+            }
+            let id = format!("room-tone-{index}");
+            self.add_audio(
+                Some(id.clone()),
+                media_id.to_string(),
+                at,
+                duration,
+                gain,
+                best.start_seconds,
+                ElementSource::Tool,
+                AudioRole::Bed,
+                false,
+            )?;
+            placed.push(id);
+            at += step;
+            index += 1;
+        }
+
+        // Crossfade the loop into itself, and ease the two open ends.
+        let fade_time = secs(fade)?;
+        for (position, id) in placed.iter().enumerate() {
+            let Some(reference) = self.find_element_ref(id) else {
+                continue;
+            };
+            let fade_in = if position == 0 {
+                secs(fade.min(0.25))?
+            } else {
+                fade_time
+            };
+            let fade_out = if position + 1 == placed.len() {
+                secs(fade.min(0.25))?
+            } else {
+                fade_time
+            };
+            self.editor.execute(Command::SetFades {
+                reference,
+                fade_in,
+                fade_out,
+            });
+        }
+
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "liftedFrom": {
+                "startSeconds": best.start_seconds,
+                "durationSeconds": best.duration_seconds,
+                "peakDb": best.peak_db,
+            },
+            "noiseFloorDb": floor,
+            "speechDb": scan.speech_db,
+            "chunkSeconds": chunk,
+            "crossfadeSeconds": fade,
+            "levelDb": level_db,
+            "clips": placed.len(),
+            "coversSeconds": cover,
+            "elementIds": placed,
+        }))
+    }
+
     /// Crossfade every place two sounds meet, so a dialogue edit stops ticking at its joins.
     ///
     /// A cut in dialogue is not a cut in the *room*. Butt two takes together and the noise

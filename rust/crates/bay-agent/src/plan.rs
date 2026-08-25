@@ -158,6 +158,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "critic_submit",
         "cut_by_transcript",
         "remove_silence_and_fillers",
+        "room_tone",
         "runtime_remove",
         "sfx_add",
         "sfx_list",
@@ -4092,6 +4093,20 @@ pub struct CaptionStyle {
     pub layer: usize,
     /// Fade in/out seconds. A hard cut on every caption reads as a flicker.
     pub fade: f64,
+    /// Display name per speaker id, for a clip where more than one person talks.
+    ///
+    /// Without one, a two-hander reads as a single person contradicting themselves — the
+    /// captions say the words and lose who said them, which on a social cut is most of the
+    /// point of the exchange. The name is written **only on the first caption after the floor
+    /// changes**, because prefixing every line eats the frame and stops being read after the
+    /// second one.
+    pub speaker_labels: std::collections::BTreeMap<String, String>,
+    /// Caption colour per speaker id.
+    ///
+    /// Carries who is talking without spending any of the frame, which is why it does the work
+    /// on the lines that are not labelled. Two speakers want two colours that survive a
+    /// thumbnail; more than three, and the labels are doing the work and the colour is noise.
+    pub speaker_colors: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for CaptionStyle {
@@ -4111,6 +4126,8 @@ impl Default for CaptionStyle {
             line_height: 1.2,
             layer: CAPTION_LAYER,
             fade: CAPTION_FADE_SECONDS,
+            speaker_labels: std::collections::BTreeMap::new(),
+            speaker_colors: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -4157,6 +4174,8 @@ impl CaptionStyle {
             line_height: style.line_height,
             layer: CAPTION_LAYER,
             fade: CAPTION_FADE_SECONDS,
+            speaker_labels: std::collections::BTreeMap::new(),
+            speaker_colors: std::collections::BTreeMap::new(),
         }
     }
 
@@ -4252,13 +4271,39 @@ pub fn caption_style_from(
             None => None,
         },
     };
+    // Who is talking, if the caller said. Both maps are keyed by the speaker id `diarize`
+    // writes into the transcript, which is also what `transcript_get` reports.
+    let map_of_strings = |key: &str| -> std::collections::BTreeMap<String, String> {
+        args.get(key)
+            .and_then(|value| value.as_object())
+            .map(|object| {
+                object
+                    .iter()
+                    .filter_map(|(speaker, value)| {
+                        value
+                            .as_str()
+                            .map(|text| (speaker.clone(), text.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let speaker_labels = map_of_strings("speakerLabels");
+    let speaker_colors = map_of_strings("speakerColors");
+
     Ok(match kit {
-        Some(kit) => CaptionStyle::from_kit(kit, preset, placement),
+        Some(kit) => CaptionStyle {
+            speaker_labels,
+            speaker_colors,
+            ..CaptionStyle::from_kit(kit, preset, placement)
+        },
         None => CaptionStyle {
             preset,
             x: placement.x.unwrap_or(CaptionStyle::default().x),
             y: placement.y.unwrap_or(CaptionStyle::default().y),
             align: placement.align.unwrap_or(TextAlign::Left),
+            speaker_labels,
+            speaker_colors,
             ..CaptionStyle::default()
         },
     })

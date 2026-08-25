@@ -123,9 +123,18 @@ setting. Two things to know:
   Squeezing it with a compressor collapsed the loudness range; oversampling around the limiter
   is what keeps inter-sample peaks under a true-peak ceiling.
 
-**Then call `audio_smooth`.** Every place two sounds meet needs a crossfade — see its own tool
-description for why a butt-joined dialogue edit ticks at every seam even though nothing in the
-waveform is discontinuous.
+**Then call `audio_smooth`, then `room_tone`.** They fix different halves of the same
+complaint, and only doing one of them is why an edit still sounds wrong after being "fixed":
+
+- `audio_smooth` crossfades every place two sounds meet. Butt-joined, a dialogue edit ticks at
+  each seam even though nothing in the waveform is discontinuous — see its own tool description.
+  On the reel this came from it took the abruptness at a join from about 16 dB per 5 ms to 5.
+- `room_tone` lays the room under the whole cut, lifted from the recording's own longest pause
+  closest to the measured noise floor. A crossfade changes how *fast* you cross a join and
+  cannot change what the two sides sound like — that step measured about 18 dB in the worst
+  band and is inherent to the edit. A continuous bed masks it, because the background stops
+  being something that changes at cuts. On a real episode the tool found a two-and-a-half second
+  pause 29 minutes in, sitting about a decibel above the floor with speech 30 dB above that.
 
 ---
 
@@ -152,6 +161,12 @@ overlap and the hole there.
 Choose the excerpt for a complete arc, not a good line: a question, a surprising answer, and a
 confirmation reads as self-contained in well under a minute. Cut the filler out of the setup —
 the question as asked is usually twice as long as the question that plays.
+
+**Say who is talking.** A two-hander captioned without speakers says the words and loses who
+said them, and reads as one person contradicting themselves — which on an exchange is most of
+the point. `diarize` writes the speaker onto each word; `speakerLabels` and `speakerColors` on
+the caption tools turn that into a name on the first line after the floor changes, and a colour
+on all the rest. Name every line and it eats the frame and stops being read after the second one.
 
 Reframe rather than letterbox (`cover`). Captions continuous, held until the next one takes over
 rather than timed to the words alone, or they blink out in every gap. Merge only the lines that
