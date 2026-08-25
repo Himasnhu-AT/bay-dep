@@ -35,7 +35,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use bay_core::check::{Report, Status, check, gating_codes};
+use bay_core::check::{Report, Severity, Status, check, gating_codes};
 use bay_project::Project;
 
 /// Load a checked-in fixture through the same path the editor and the MCP server load a project
@@ -627,4 +627,70 @@ fn no_fixture_reaches_outside_the_repository_for_its_media() {
          every machine:\n  {}",
         offenders.join("\n  ")
     );
+}
+
+/// A format downgrades the checks it does not apply to, and drops none of them.
+///
+/// The multicam case forced this. A hard cut between locked-off camera angles shares no
+/// element, so `broken-continuity` fires on every cut, and the only way to export was
+/// `ignoreChecks` — which silences *every* code, including the ones nobody meant to relax, on
+/// every render. Declaring what the project is relaxes exactly the codes that do not describe
+/// it, and the finding still has to appear: a report that quietly loses a check is one nobody
+/// can audit.
+#[test]
+fn a_format_downgrades_what_it_suspends_and_hides_nothing() {
+    let project = fixture("wicks-v2.json");
+    let general = check(&project);
+    let gated = count(&general, "broken-continuity");
+    assert!(
+        gated > 0,
+        "the fixture fires the code: {:?}",
+        rollup(&general)
+    );
+
+    let mut multicam = project.clone();
+    multicam.settings.format = Some("multicam-conversation".into());
+    let report = check(&multicam);
+
+    assert_eq!(
+        count(&report, "broken-continuity"),
+        gated,
+        "still reported, only downgraded"
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "broken-continuity"
+                && finding.severity == Severity::Note
+                && finding.message.contains("not gating")
+                && finding.message.contains("locked-off")),
+        "the note carries the format's reason: {:?}",
+        report
+            .findings
+            .iter()
+            .filter(|finding| finding.code == "broken-continuity")
+            .map(|finding| (finding.severity, finding.message.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        report.errors < general.errors,
+        "a suspended code stops blocking: {} vs {}",
+        report.errors,
+        general.errors
+    );
+
+    // A code the format did not name is untouched — this fixture is full of missing media.
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "missing-media" && finding.severity == Severity::Error),
+        "missing-media is not suspended and must still gate"
+    );
+
+    // And the genre the checks were written for relaxes nothing.
+    let mut film = project.clone();
+    film.settings.format = Some("product-film".into());
+    assert_eq!(check(&film).errors, general.errors);
 }

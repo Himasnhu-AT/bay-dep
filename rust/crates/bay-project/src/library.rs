@@ -433,6 +433,8 @@ impl Project {
                 // app makes takes one the first time type is placed on it.
                 kit: None,
                 plan: None,
+                // Undeclared until someone says what this is; `general` suspends nothing.
+                format: None,
             },
             scenes: vec![Scene {
                 id: "scene-main".into(),

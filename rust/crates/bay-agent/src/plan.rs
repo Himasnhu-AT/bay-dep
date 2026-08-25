@@ -153,6 +153,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "check_frames",
         "contact_sheet",
         "fonts_list",
+        "formats_list",
         "critic_prepare",
         "critic_refresh",
         "critic_submit",
@@ -2771,6 +2772,7 @@ mod tests {
                 // and colour a role resolves to, and the picker is seeded by the date.
                 kit: bay_project::builtin_kit("swiss").cloned(),
                 plan: None,
+                format: None,
             },
             scenes: vec![Scene {
                 id: "scene-main".into(),

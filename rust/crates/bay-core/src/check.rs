@@ -513,7 +513,39 @@ pub fn check(project: &Project) -> Report {
     findings.append(&mut composition.findings);
 
     let mix = mix_stats(envelope);
+    let findings = apply_format(project, findings);
     report(findings, skipped, stats(scene, &composition, beats, mix))
+}
+
+/// Downgrade the checks this project's format does not apply to.
+///
+/// **Downgrade, never drop.** A suspended check still ran and still says what it saw; it is
+/// reported as a note carrying the format's reason, so it stops blocking an export without
+/// stopping being visible. The alternative — removing the finding — makes a report that cannot
+/// be audited, and the whole reason formats exist is that the previous answer was
+/// `ignoreChecks` on every render, which silences everything including the codes nobody meant
+/// to relax.
+fn apply_format(project: &Project, findings: Vec<Finding>) -> Vec<Finding> {
+    let format = bay_project::format::resolve(project.settings.format.as_deref());
+    if format.suspends.is_empty() {
+        return findings;
+    }
+    findings
+        .into_iter()
+        .map(|mut finding| {
+            if finding.severity == Severity::Note {
+                return finding;
+            }
+            if let Some(why) = format.suspends(finding.code) {
+                finding.message = format!(
+                    "{} [not gating: this project is a {} — {}]",
+                    finding.message, format.name, why
+                );
+                finding.severity = Severity::Note;
+            }
+            finding
+        })
+        .collect()
 }
 
 /// Run the same pass against only the part of the timeline that will be delivered.

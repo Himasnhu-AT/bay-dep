@@ -53,7 +53,10 @@ it never removes a system ffmpeg, Python, or user media.
 
 ## The loop
 
-1. **`project_create`** — canvas, and the **kit**. A vertical reel is portrait at 30; landscape is
+1. **`project_create`** — canvas, the **kit**, and the **format**. `formats_list` says what
+   bay knows and what declaring one changes: a format only ever relaxes checks, only ones it
+   names a reason for, and a relaxed check still runs and still reports — as a note carrying
+   that reason. Undeclared suspends nothing, which is the right answer when none of them fits. A vertical reel is portrait at 30; landscape is
    the other way up. The kit is committed to the project before anything is placed.
 2. **Write the beats before the elements.** `marker_add` every beat, the turn and the payoff.
    Beats are how `check` reads the piece and how the mix is judged. See
@@ -178,6 +181,7 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 | [references/structure.md](references/structure.md) | beats, roles, the hold, the turn, the landing |
 | [references/craft.md](references/craft.md) | what a move, a kit and an asset are FOR; audio; narration |
 | [references/archive-reel.md](references/archive-reel.md) | the **archive reel** — a named format: portrait, no voice, archival stills cut to a beat grid. Every number, and the six things that go wrong |
+| [references/product-film.md](references/product-film.md) | the **product film** — a named format: type, shapes and rebuilt interfaces on a flat canvas, cut to music. What the genre is made of, how to build each piece, and the six things it does that bay cannot |
 | [references/multicam-podcast.md](references/multicam-podcast.md) | the **multicam podcast** — a named format: two or three locked-off cameras on one conversation, a mic per speaker, an hour of it. Speaker attribution, switching rules, matching the cameras, and which of `check`'s complaints to believe |
 | [references/tools.md](references/tools.md) | the generated tool index |
 

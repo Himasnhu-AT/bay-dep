@@ -686,6 +686,15 @@ pub fn all_definitions() -> Vec<Value> {
                     "fps": { "type": "integer", "default": 30,
                         "description": "Frame rate numerator. On its own this is the frame rate, \
                              so 30 means 30." },
+                    "format": { "type": "string",
+                        "description": "What KIND of video this is — call formats_list to see \
+                             them. It only ever relaxes checks, and only ones it names a reason \
+                             for: a hard cut between two locked-off cameras shares no element, \
+                             so `broken-continuity` describes a composed film and not a \
+                             recorded conversation. A suspended check still runs and is still \
+                             reported, as a note carrying the reason, so it stops blocking an \
+                             export without stopping being visible. Leave it out if none of \
+                             them fits: undeclared suspends nothing." },
                     "fpsDenominator": { "type": "integer", "default": 1,
                         "description": "Frame rate denominator, for the broadcast rates that are \
                              not whole numbers. 24000/1001 is 23.976, 30000/1001 is 29.97, \
@@ -1258,6 +1267,19 @@ pub fn all_definitions() -> Vec<Value> {
                 duck_properties(),
             ),
             &["bedId"],
+        ),
+        tool(
+            "formats_list",
+            "What kinds of video bay knows, what each is built out of, and which checks each \
+             one relaxes and why.\n\nThe gating checks were written against composed motion \
+             graphics, where a beat is an arrangement of elements and consecutive beats carry \
+             something across the seam. They are right for that and wrong for a recorded \
+             conversation, where every cut shares nothing by design — which used to mean \
+             `ignoreChecks` on every render, silencing every code including the ones nobody \
+             meant to relax. Declaring the format relaxes exactly the codes that do not \
+             describe it, each with a reason you can read and disagree with.",
+            json!({}),
+            &[],
         ),
         tool(
             "room_tone",
@@ -2398,6 +2420,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 },
                 text(args, "background").as_deref(),
                 choice,
+                text(args, "format").as_deref(),
             )
         }
         "style_pick" => {
@@ -2727,6 +2750,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 visual,
             )
         }
+        "formats_list" => studio.formats_list(),
         "room_tone" => studio.room_tone(
             &required_text(args, "mediaId")?,
             args.get("seconds").and_then(Value::as_f64),
@@ -3005,6 +3029,8 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
         },
         text(args, "background").as_deref(),
         choice,
+        // Burned-in subtitles over a picture are a composed piece; nothing is relaxed.
+        None,
     )?;
 
     let style = caption_style_for(studio, args, "subtitles_to_video")?;

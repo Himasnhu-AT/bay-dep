@@ -30,6 +30,7 @@ fn empty_project() -> Project {
             background: Default::default(),
             kit: bay_project::builtin_kit("swiss").cloned(),
             plan: None,
+            format: None,
         },
         scenes: vec![Scene {
             id: "scene-main".into(),

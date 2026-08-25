@@ -19,6 +19,7 @@
 
 pub mod duck;
 mod element;
+pub mod format;
 pub mod kit;
 pub mod library;
 pub mod mix;

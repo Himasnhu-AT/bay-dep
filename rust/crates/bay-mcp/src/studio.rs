@@ -508,6 +508,7 @@ impl Studio {
         fps: Fps,
         background: Option<&str>,
         choice: KitChoice,
+        format: Option<&str>,
     ) -> ToolResult {
         let (width, height) = (canvas.width, canvas.height);
         if width == 0 || height == 0 {
@@ -519,13 +520,22 @@ impl Studio {
         if fps.denominator == 0 {
             return Err(err("fpsDenominator must be at least 1"));
         }
+        if let Some(id) = format
+            && bay_project::format::by_id(id).is_none()
+        {
+            return Err(err(format!(
+                "unknown format {id:?} — one of: {}",
+                bay_project::format::ids().join(", ")
+            )));
+        }
         let (kit, alternatives) = self.resolve_kit(&choice)?;
         // The ground is the kit's, unless the caller insisted. A background chosen apart from the
         // palette is exactly the "five colours, none of them a decision" state that the kit
         // exists to close, so it is reported back rather than accepted silently.
         let ground = background.unwrap_or(&kit.palette.bg).to_string();
-        self.editor
-            .load_project(empty_project(name, canvas, fps, &ground, Some(kit.clone())));
+        let mut project = empty_project(name, canvas, fps, &ground, Some(kit.clone()));
+        project.settings.format = format.map(str::to_string);
+        self.editor.load_project(project);
         self.next_id = 1;
         self.critic_panels.clear();
         self.record_kit(&kit.id);
@@ -534,6 +544,7 @@ impl Studio {
             "canvas": { "width": width, "height": height },
             "fps": self.editor.project().settings.fps.as_f64(),
             "frameRate": { "numerator": fps.numerator, "denominator": fps.denominator },
+            "format": describe_format(bay_project::format::resolve(format)),
             "background": ground,
             "kit": describe_kit(&kit),
             "alternatives": alternatives,
@@ -1363,6 +1374,25 @@ impl Studio {
     }
 
     /// Place source ranges consecutively as paired video and speech clips.
+    /// What kinds of video bay knows, and what declaring one changes.
+    pub fn formats_list(&self) -> ToolResult {
+        let declared = self.editor.project().settings.format.clone();
+        Ok(serde_json::json!({
+            "current": declared,
+            "resolved": describe_format(bay_project::format::resolve(declared.as_deref())),
+            "formats": bay_project::format::FORMATS
+                .iter()
+                .map(|format| describe_format(*format))
+                .collect::<Vec<_>>(),
+            "note": "A format only ever relaxes checks, and only ones it names a reason for. \
+                     A suspended check still runs and is still reported — as a note carrying \
+                     that reason — so it stops blocking an export without stopping being \
+                     visible. If none of these describes what you are making, leave it \
+                     undeclared: `general` suspends nothing, and one justified `ignoreChecks` \
+                     is better than a format that quietly relaxes a check you needed.",
+        }))
+    }
+
     /// Lay the room itself under the whole cut, lifted from a pause in the recording.
     ///
     /// The companion to [`Studio::audio_smooth`], and the half of the problem a crossfade does
@@ -3249,6 +3279,20 @@ fn describe_element(element: &Element) -> serde_json::Value {
         out["color"] = serde_json::json!(shape.color);
     }
     out
+}
+
+/// What a caller needs to choose a format, and to see what one is doing to their report.
+fn describe_format(format: bay_project::format::Format) -> serde_json::Value {
+    serde_json::json!({
+        "id": format.id,
+        "name": format.name,
+        "note": format.note,
+        "builtFrom": format.built_from,
+        "suspends": format.suspends
+            .iter()
+            .map(|(code, why)| serde_json::json!({ "code": code, "why": why }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// A project with one empty scene — the starting point every reel is built up from. The
