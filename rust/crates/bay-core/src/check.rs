@@ -3718,6 +3718,7 @@ mod tests {
             fade_out: MediaTime::ZERO,
             shape: Default::default(),
             color: "#ffffff".into(),
+            gradient: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),

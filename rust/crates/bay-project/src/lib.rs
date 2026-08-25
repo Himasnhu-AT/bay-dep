@@ -37,8 +37,8 @@ pub use duck::{Duck, DuckKey, DuckParams};
 pub use element::{
     AnimationChannel, AudioElement, AudioRole, BUILTIN_LOOKS, BlendMode, DialogueAudioChain,
     DialogueCompressor, DialogueEq, DialogueLimiter, Easing, Effect, Element, ElementKind,
-    ElementRole, ElementSource, FreezeFrame, ImageElement, KaraokeSpec, KaraokeWord, Keyframe,
-    LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody, TextAlign,
+    ElementRole, ElementSource, FreezeFrame, Gradient, ImageElement, KaraokeSpec, KaraokeWord,
+    Keyframe, LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody, TextAlign,
     TextDecorations, TextElement, TextPlate, TextShadow, TextStroke, Transform, VideoElement,
     is_builtin_look, is_caption_id, look_id,
 };

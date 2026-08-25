@@ -2151,6 +2151,7 @@ impl Studio {
             id,
             start: secs(start)?,
             duration: secs(duration)?,
+            gradient: None,
             fade_in: MediaTime::ZERO,
             fade_out: MediaTime::ZERO,
             shape,

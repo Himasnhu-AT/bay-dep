@@ -1004,6 +1004,27 @@ impl Default for ShapeKind {
     }
 }
 
+/// A two-stop linear gradient fill.
+///
+/// Stored as resolved colours, the same way `color` is, because the element is what the
+/// renderer reads and the kit is what the *tool* consults — an element carrying a tone name
+/// would make every renderer a kit resolver.
+///
+/// Two stops and a linear ramp, deliberately. The genre that wants gradients wants a ground
+/// that is not flat and an orb that is not a disc; it does not want a gradient editor, and a
+/// stop list is the first step towards one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Gradient {
+    /// `#rrggbb` at the start of the ramp.
+    pub from: String,
+    /// `#rrggbb` at the end of it.
+    pub to: String,
+    /// Direction of the ramp, in degrees clockwise from left-to-right.
+    #[serde(default)]
+    pub angle: f32,
+}
+
 /// A solid-colour vector primitive. Carries the same transform/effect/animation surface as
 /// every other visual element, so a bar can be eased, blended and effected like any layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1019,8 +1040,14 @@ pub struct ShapeElement {
     pub fade_out: MediaTime,
     #[serde(default)]
     pub shape: ShapeKind,
-    /// `#rrggbb` fill.
+    /// `#rrggbb` fill. Ignored when `gradient` is set.
     pub color: String,
+    /// A gradient fill, which replaces `color` when present.
+    ///
+    /// Optional and `skip_serializing_if`, so every project written before gradients existed
+    /// loads and renders exactly as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Gradient>,
     #[serde(default)]
     pub transform: Transform,
     #[serde(default)]

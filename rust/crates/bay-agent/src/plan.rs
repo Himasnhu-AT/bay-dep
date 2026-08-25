@@ -1319,6 +1319,29 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 None => bay_project::Tone::default_for(role),
             };
             let color = kit.color(tone).to_string();
+            // A gradient names two TONES, not two colours: the kit stays the only place a
+            // value comes from, exactly as `tone` already works for the solid fill.
+            let gradient = match (
+                args.get("gradientFrom").and_then(|v| v.as_str()),
+                args.get("gradientTo").and_then(|v| v.as_str()),
+            ) {
+                (Some(from), Some(to)) => Some(bay_project::Gradient {
+                    from: kit.color(parse_tone(from)?).to_string(),
+                    to: kit.color(parse_tone(to)?).to_string(),
+                    angle: args
+                        .get("gradientAngle")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32,
+                }),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "a gradient needs both gradientFrom and gradientTo — one stop is a \
+                         solid fill, which is what `tone` already gives you"
+                            .into(),
+                    );
+                }
+            };
             let framing = framing_for(args, &kit)?;
             let id = text(args, "id").unwrap_or_else(|| mint_id(project, "shape"));
             reject_reserved_id(&id)?;
@@ -1337,6 +1360,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     fade_out: MediaTime::ZERO,
                     shape,
                     color,
+                    gradient,
                     transform: transform_framed(args, framing),
                     effects: Vec::new(),
                     animations: BTreeMap::new(),
@@ -3377,6 +3401,7 @@ mod tests {
                 fade_out: MediaTime::ZERO,
                 shape: ShapeKind::Ellipse,
                 color: "#ffffff".into(),
+                gradient: None,
                 transform: Transform::default(),
                 effects: Vec::new(),
                 animations: Default::default(),
@@ -3852,6 +3877,7 @@ mod tests {
                     fade_out: MediaTime::ZERO,
                     shape: Default::default(),
                     color: "#FF5B5B".into(),
+                    gradient: None,
                     transform: Default::default(),
                     effects: Vec::new(),
                     animations: Default::default(),

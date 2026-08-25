@@ -849,13 +849,24 @@ pub fn all_definitions() -> Vec<Value> {
         ),
         tool(
             "add_shape",
-            "Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines. To make \
-             a bar chart, set anchorX to 0 and animate scaleX from 0 to its final value.\n\nThe \
-             fill comes from `tone` against the project's style kit — a data mark takes the \
-             accent, a plate takes the surface colour, which is the one that sits far enough \
-             above the ground to actually be seen.",
+            "Place a rectangle or ellipse: bars, rules, dots, panels, underlines, and the orbs \
+             and grounds a composed film is built out of. To make a bar chart, set anchorX to 0 \
+             and animate scaleX from 0 to its final value.\n\nThe fill comes from `tone` \
+             against the project's style kit — a data mark takes the accent, a plate takes the \
+             surface colour, which is the one that sits far enough above the ground to actually \
+             be seen. For a ramp instead of a flat fill, give `gradientFrom` and `gradientTo`: \
+             two more TONES, not colours, so the kit stays the only place a value comes from.",
             merge(
                 json!({
+                    "gradientFrom": { "type": "string",
+                        "description": "Tone at the start of a gradient ramp — ink, dim, accent, \
+                             accent2 or surface. Needs `gradientTo` as well; one stop is a solid \
+                             fill, which is what `tone` already gives you." },
+                    "gradientTo": { "type": "string",
+                        "description": "Tone at the end of the ramp." },
+                    "gradientAngle": { "type": "number", "default": 0,
+                        "description": "Direction of the ramp in degrees clockwise from \
+                             left-to-right, so 90 runs top to bottom." },
                     "start": { "type": "number" },
                     "duration": { "type": "number" },
                     "shape": { "type": "string", "enum": ["rect", "ellipse"], "default": "rect" },

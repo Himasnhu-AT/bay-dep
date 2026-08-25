@@ -331,12 +331,24 @@ fn shape_raster_dimensions(aspect: f32) -> (u32, u32) {
 fn rasterize_shape(
     shape: &bay_project::ShapeKind,
     color: &str,
+    gradient: Option<&bay_project::Gradient>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
     use bay_project::ShapeKind;
 
     let [r, g, b] = hex_to_rgb8(color);
+    // A gradient replaces the flat fill. Resolved once here rather than per texel: the ramp is
+    // two colours and an angle, and the per-texel work is one dot product and a lerp.
+    let ramp = gradient.map(|gradient| {
+        let radians = gradient.angle.to_radians();
+        (
+            hex_to_rgb8(&gradient.from),
+            hex_to_rgb8(&gradient.to),
+            radians.cos(),
+            radians.sin(),
+        )
+    });
     let (width, height) = (width.max(2), height.max(2));
     let mut rgba = vec![0u8; (width * height * 4) as usize];
 
@@ -377,9 +389,27 @@ fn rasterize_shape(
             }
             let alpha = (coverage * 255.0).round() as u8;
             let index = ((py * width + px) * 4) as usize;
-            rgba[index] = r;
-            rgba[index + 1] = g;
-            rgba[index + 2] = b;
+            let [fr, fg, fb] = match ramp {
+                None => [r, g, b],
+                Some(([ar, ag, ab], [br, bg, bb], cos, sin)) => {
+                    // Project the texel onto the ramp's axis and normalise to 0..1 across the
+                    // shape's extent along that axis, so the ramp spans the shape whatever its
+                    // aspect and whichever way it points.
+                    let extent = (half_w * cos).abs() + (half_h * sin).abs();
+                    let t = if extent > 0.0 {
+                        ((dx * cos + dy * sin) / (2.0 * extent) + 0.5).clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+                    let mix = |a: u8, b: u8| {
+                        (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8
+                    };
+                    [mix(ar, br), mix(ag, bg), mix(ab, bb)]
+                }
+            };
+            rgba[index] = fr;
+            rgba[index + 1] = fg;
+            rgba[index + 2] = fb;
             rgba[index + 3] = alpha;
         }
     }
@@ -390,10 +420,11 @@ fn rasterize_shape(
 pub fn rasterize_shape_for_test(
     shape: &bay_project::ShapeKind,
     color: &str,
+    gradient: Option<&bay_project::Gradient>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
-    rasterize_shape(shape, color, width, height)
+    rasterize_shape(shape, color, gradient, width, height)
 }
 
 /// Test hook for [`shape_raster_dimensions`].
@@ -1156,6 +1187,7 @@ impl PreviewRenderer {
         &mut self,
         shape: &bay_project::ShapeKind,
         color: &str,
+        gradient: Option<&bay_project::Gradient>,
         aspect: f32,
     ) -> Option<String> {
         use bay_project::ShapeKind;
@@ -1166,19 +1198,31 @@ impl PreviewRenderer {
             ShapeKind::Rect { radius } if *radius <= 0.0 => (8, 8),
             _ => shape_raster_dimensions(aspect),
         };
+        // The fill is part of the key. Without the gradient in it, two shapes that differ only
+        // in their ramp would share the first one's texture — a cache that answers the wrong
+        // question is worse than no cache.
+        let fill = match gradient {
+            None => color.to_string(),
+            Some(gradient) => format!(
+                "{}>{}@{}",
+                gradient.from,
+                gradient.to,
+                gradient.angle.to_bits()
+            ),
+        };
         let key = match shape {
             ShapeKind::Rect { radius } => {
                 format!(
-                    "shape:rect:{}:{color}:{raster_w}x{raster_h}",
+                    "shape:rect:{}:{fill}:{raster_w}x{raster_h}",
                     radius.to_bits()
                 )
             }
-            ShapeKind::Ellipse => format!("shape:ellipse:{color}:{raster_w}x{raster_h}"),
+            ShapeKind::Ellipse => format!("shape:ellipse:{fill}:{raster_w}x{raster_h}"),
         };
         if self.raster_keys.contains(&key) {
             return Some(key);
         }
-        let rgba = rasterize_shape(shape, color, raster_w, raster_h);
+        let rgba = rasterize_shape(shape, color, gradient, raster_w, raster_h);
         let texture = self
             .ctx
             .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape")?;
@@ -1887,7 +1931,12 @@ impl PreviewRenderer {
                         let aspect = (transform.scale_x * width as f32)
                             / (transform.scale_y * height as f32).max(f32::EPSILON);
                         (
-                            self.ensure_shape_texture(&shape.shape, &shape.color, aspect),
+                            self.ensure_shape_texture(
+                                &shape.shape,
+                                &shape.color,
+                                shape.gradient.as_ref(),
+                                aspect,
+                            ),
                             None,
                             (0.0, 0.0),
                         )

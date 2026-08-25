@@ -657,6 +657,7 @@ fn provenance_and_role_keep_their_wire_names() {
         fade_out: MediaTime::ZERO,
         shape: ShapeKind::Rect { radius: 0.0 },
         color: "#15151C".into(),
+        gradient: None,
         transform: Default::default(),
         effects: Vec::new(),
         animations: Default::default(),

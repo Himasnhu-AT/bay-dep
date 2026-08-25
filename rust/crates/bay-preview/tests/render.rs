@@ -1069,6 +1069,7 @@ fn bar(scale_x: f32, anchor_x: f32) -> bay_project::ShapeElement {
         fade_out: MediaTime::ZERO,
         shape: bay_project::ShapeKind::Rect { radius: 0.0 },
         color: "#ff0000".into(),
+        gradient: None,
         transform: Transform {
             x: 0.5,
             y: 0.5,
@@ -1242,6 +1243,7 @@ fn a_rounded_rect_has_transparent_corners_and_a_solid_middle() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.5 },
         "#ffffff",
+        None,
         64,
         64,
     );
@@ -1256,6 +1258,7 @@ fn a_square_rect_fills_its_corners() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.0 },
         "#ffffff",
+        None,
         16,
         16,
     );
@@ -1266,8 +1269,13 @@ fn a_square_rect_fills_its_corners() {
 
 #[test]
 fn an_ellipse_is_round() {
-    let rgba =
-        bay_preview::rasterize_shape_for_test(&bay_project::ShapeKind::Ellipse, "#ffffff", 64, 64);
+    let rgba = bay_preview::rasterize_shape_for_test(
+        &bay_project::ShapeKind::Ellipse,
+        "#ffffff",
+        None,
+        64,
+        64,
+    );
     let alpha = |x: u32, y: u32| rgba[((y * 64 + x) * 4 + 3) as usize];
     assert_eq!(alpha(32, 32), 255, "centre is filled");
     assert_eq!(alpha(1, 1), 0, "corners are outside the circle");
@@ -1291,6 +1299,7 @@ fn a_wide_pill_has_a_flat_top_not_a_pointed_lens() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.5 },
         "#ffffff",
+        None,
         w,
         h,
     );
@@ -1697,6 +1706,7 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 shape: bay_project::ShapeKind::Rect { radius: 0.4 },
                 // A unique colour per shape forces a unique cache key.
                 color: format!("#{:02x}20a0", 40 + i * 3),
+                gradient: None,
                 transform: Transform {
                     x: 0.5,
                     y: (i as f32 % 10.0) / 10.0,
@@ -2782,6 +2792,7 @@ fn a_lut_actually_grades_the_frame() {
             fade_out: MediaTime::ZERO,
             shape: bay_project::ShapeKind::Rect { radius: 0.0 },
             color: "#ff0000".into(),
+            gradient: None,
             transform: bay_project::Transform::default(),
             effects: vec![bay_project::Effect {
                 id: "fx".into(),
@@ -2964,6 +2975,7 @@ fn a_mask_hides_what_falls_outside_it() {
             fade_out: MediaTime::ZERO,
             shape: bay_project::ShapeKind::Rect { radius: 0.0 },
             color: "#ffffff".into(),
+            gradient: None,
             transform: bay_project::Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -3401,4 +3413,81 @@ fn a_short_audio_fade_renders_as_a_ramp_rather_than_a_hole() {
          frame instead of applied to samples",
         seconds * 1000.0
     );
+}
+
+/// A gradient fill reaches the pixels, and the texture cache tells two ramps apart.
+///
+/// Both halves matter. The ramp is the point — a flat orb on a flat ground is what this format
+/// looks like without it — and the cache is where it would silently go wrong: shape textures are
+/// keyed and reused, so a key that does not carry the fill hands the second shape the first
+/// one's picture, which looks like the gradient working until the moment two of them differ.
+#[test]
+fn a_gradient_fills_across_the_shape_and_is_not_shared_between_ramps() {
+    use bay_project::{Gradient, ShapeKind};
+
+    let (w, h) = (64u32, 64u32);
+    let read = |rgba: &[u8], x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    };
+
+    // Black to white, left to right, across a square-cornered rect that fills the raster.
+    let ramp = Gradient {
+        from: "#000000".into(),
+        to: "#FFFFFF".into(),
+        angle: 0.0,
+    };
+    let shape = ShapeKind::Rect { radius: 0.0 };
+    let filled = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&ramp), w, h);
+
+    let mid_y = h / 2;
+    let left = read(&filled, 2, mid_y);
+    let centre = read(&filled, w / 2, mid_y);
+    let right = read(&filled, w - 3, mid_y);
+    assert!(
+        left[3] > 0 && right[3] > 0,
+        "the shape is opaque where it is filled"
+    );
+    assert!(
+        left[0] < centre[0] && centre[0] < right[0],
+        "the ramp runs dark to light across the shape: {left:?} {centre:?} {right:?}"
+    );
+    assert!(
+        left[0] < 40,
+        "the near edge is close to the first stop: {left:?}"
+    );
+    assert!(
+        right[0] > 215,
+        "the far edge is close to the second stop: {right:?}"
+    );
+    assert!(
+        (i16::from(centre[0]) - 128).abs() < 24,
+        "the middle is about halfway: {centre:?}"
+    );
+
+    // Turned 90 degrees the ramp runs down the frame instead, and across it is flat.
+    let down = Gradient {
+        angle: 90.0,
+        ..ramp.clone()
+    };
+    let vertical = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&down), w, h);
+    let top = read(&vertical, w / 2, 2);
+    let bottom = read(&vertical, w / 2, h - 3);
+    assert!(
+        top[0] < bottom[0],
+        "90 degrees runs top to bottom: {top:?} {bottom:?}"
+    );
+    let across = (
+        read(&vertical, 2, mid_y)[0],
+        read(&vertical, w - 3, mid_y)[0],
+    );
+    assert!(
+        (i16::from(across.0) - i16::from(across.1)).abs() < 8,
+        "and is flat across the other axis: {across:?}"
+    );
+
+    // The flat fill is untouched when no gradient is given.
+    let solid = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", None, w, h);
+    assert_eq!(read(&solid, 2, mid_y)[..3], [255, 0, 0]);
+    assert_eq!(read(&solid, w - 3, mid_y)[..3], [255, 0, 0]);
 }

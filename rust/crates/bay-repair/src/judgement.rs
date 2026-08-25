@@ -1076,6 +1076,7 @@ mod tests {
             fade_out: MediaTime::ZERO,
             shape: ShapeKind::Rect { radius: 0.0 },
             color: "#ffffff".into(),
+            gradient: None,
             transform: Transform {
                 x: 0.5,
                 y,

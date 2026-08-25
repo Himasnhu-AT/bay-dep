@@ -158,6 +158,7 @@ fn bar(
         fade_out: secs(0.2),
         shape: ShapeKind::Rect { radius: 0.0 },
         color: color.into(),
+        gradient: None,
         transform,
         effects: Vec::new(),
         animations: Default::default(),
