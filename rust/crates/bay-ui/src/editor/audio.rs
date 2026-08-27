@@ -1911,7 +1911,7 @@ mod audio_tests {
     // -- paint ---------------------------------------------------------------------------
 
     fn windowed(cx: &mut TestAppContext) -> (gpui::Entity<EditorView>, &mut VisualTestContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             let focus = cx.focus_handle();
             let mut view = EditorView::new(Editor::starter(), focus, None, None);
             view.page = Page::Audio;

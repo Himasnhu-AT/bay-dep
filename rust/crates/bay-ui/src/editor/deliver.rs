@@ -977,7 +977,7 @@ mod tests {
     /// Set In and Set Out take the playhead and leave the other end alone.
     #[gpui::test]
     fn the_range_buttons_take_the_playhead_one_end_at_a_time(cx: &mut TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             EditorView::new(Editor::starter(), cx.focus_handle(), None, None)
         });
         view.update(cx, |view, _| {
@@ -1014,7 +1014,7 @@ mod tests {
     /// Set In.
     #[gpui::test]
     fn a_render_the_form_refuses_never_becomes_a_queue_row(cx: &mut TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             EditorView::new(Editor::starter(), cx.focus_handle(), None, None)
         });
         let expected = view.update(cx, |view, cx| {
@@ -1045,7 +1045,7 @@ mod tests {
     }
 
     fn windowed(cx: &mut TestAppContext) -> (gpui::Entity<EditorView>, &mut VisualTestContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             let mut editor = EditorView::new(Editor::starter(), cx.focus_handle(), None, None);
             editor.show_page(Page::Deliver);
             editor

@@ -16,6 +16,16 @@ bay-paths = { path = "../bay-paths" }
 bay-settings = { path = "../bay-settings" }
 bay-jobs = { path = "../bay-jobs" }
 gpui = "0.2.2"
+# The component set bay stopped hand-building. Registry, deliberately not the git dependency:
+# `resizable` — which the panel layout is built on — has moved out of `crates/ui` into a separate
+# `gpui-base` crate on zed's main branch, and cargo treats a git `gpui` and a registry `gpui` as
+# different crates, so their `Hsla` would not unify with the one bay already links.
+gpui-component = "0.5.1"
+# The icons. `gpui-component` itself ships zero SVGs while `IconName::path()` returns
+# "icons/*.svg", so without an `AssetSource` every chevron, arrow and close glyph is invisible —
+# and silently so, because `impl AssetSource for ()` returns `Ok(None)` rather than erroring.
+# `TestAppContext` has no assets either, so no paint test can ever catch it.
+gpui-component-assets = "0.5.1"
 image = "0.25"
 bay-agent = { version = "0.1.0", path = "../bay-agent" }
 bay-audio = { version = "0.1.0", path = "../bay-audio" }

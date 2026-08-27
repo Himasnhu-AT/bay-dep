@@ -13,7 +13,30 @@
 //! layout is impossible, a path built from a NaN, or an element id that collides all fail here,
 //! and none of them are visible to a test that only drives state.
 
-use gpui::{px, size, Entity, IntoElement, Render, VisualTestContext};
+use gpui::{
+    px, size, Context, Entity, IntoElement, Render, TestAppContext, VisualTestContext, Window,
+};
+
+/// Open a test window, with the component set's globals registered first.
+///
+/// `gpui_component::init` is what installs the theme, popover, menu, tooltip and notification
+/// globals. The real app calls it in `run_with_agent`; a test builds its view straight through
+/// `TestAppContext` and never goes near that path, so without this any page that renders a
+/// component would fail on a missing global — and it would fail as a panic deep inside the
+/// library rather than as anything that names the cause.
+///
+/// Guarded on the theme global so a test that opens two windows does not re-register.
+pub(crate) fn window<V: Render>(
+    cx: &mut TestAppContext,
+    build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
+) -> (Entity<V>, &mut VisualTestContext) {
+    cx.update(|cx| {
+        if !cx.has_global::<gpui_component::Theme>() {
+            gpui_component::init(cx);
+        }
+    });
+    cx.add_window_view(build)
+}
 
 /// Resize the window and run one full layout → prepaint → paint pass over `view`.
 ///

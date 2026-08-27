@@ -1456,7 +1456,7 @@ mod paint_tests {
     /// A window with an editor in it, the lab panel forced on so every widget and every drawing
     /// primitive is in the tree.
     fn windowed(cx: &mut TestAppContext) -> (gpui::Entity<EditorView>, &mut VisualTestContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             let focus = cx.focus_handle();
             let mut editor = EditorView::new(Editor::starter(), focus, None, None);
             editor.lab = Some(crate::lab::Lab::default());
@@ -1527,7 +1527,7 @@ mod paint_tests {
     /// And with the lab off — the shipping configuration — nothing of it is constructed or drawn.
     #[gpui::test]
     fn the_editor_paints_without_the_lab(cx: &mut TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             let focus = cx.focus_handle();
             EditorView::new(Editor::starter(), focus, None, None)
         });

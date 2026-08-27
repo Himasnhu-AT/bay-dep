@@ -1658,7 +1658,7 @@ mod paint_tests {
     /// unprobed one (the "unknown" path), a still whose file is not on disk (the `img` fallback)
     /// and an audio file.
     fn windowed(cx: &mut TestAppContext) -> (gpui::Entity<EditorView>, &mut VisualTestContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             let focus = cx.focus_handle();
             let mut editor = Editor::starter();
             let mut probed = MediaAsset::new(
@@ -1771,7 +1771,7 @@ mod paint_tests {
     /// on screen at once here.
     #[gpui::test]
     fn the_media_page_paints_with_an_empty_pool(cx: &mut TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_window, cx| {
+        let (view, cx) = crate::paint_harness::window(cx, |_window, cx| {
             let focus = cx.focus_handle();
             let mut view = EditorView::new(Editor::starter(), focus, None, None);
             view.page = Page::Media;

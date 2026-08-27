@@ -31,6 +31,9 @@ pub use view_model::{EditorViewModel, HomeViewModel};
 
 mod menus;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gpui::prelude::*;
 use gpui::{px, size, App, Application, Bounds, WindowBounds, WindowOptions};
 
@@ -55,40 +58,64 @@ pub fn run_with_agent(
     // Build the GPU compositor preview up front (None if no adapter → layout-rect fallback).
     let preview = bay_preview::PreviewRenderer::new();
 
-    Application::new().run(move |cx: &mut App| {
-        cx.bind_keys(key_bindings());
-        cx.bind_keys(menus::key_bindings());
-        // The menu bar has to exist before the window: GPUI only calls AppKit's `setMainMenu:`
-        // from here, and without it there is no Cmd+Q, no Cmd+W, no Services and no OS Edit
-        // menu — which is exactly the "doesn't feel like a Mac app" this fixes.
-        menus::register_actions(cx);
-        cx.set_menus(menus::menus());
-        menus::quit_when_last_window_closes(cx);
-        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
-        let window = cx
-            .open_window(
+    // `with_assets` is not optional. `gpui-component`'s icons are referenced by path
+    // ("icons/chevron-down.svg") and resolved through the app's `AssetSource`; the default
+    // source answers `Ok(None)` to everything, so without this every glyph in the component set
+    // is simply absent and nothing says so.
+    Application::new()
+        .with_assets(gpui_component_assets::Assets)
+        .run(move |cx: &mut App| {
+            // Registers the component set's own globals — theme, root, popover, menu, table,
+            // tooltip, notification and the rest. It must run before any of them is constructed.
+            gpui_component::init(cx);
+            cx.bind_keys(key_bindings());
+            cx.bind_keys(menus::key_bindings());
+            // The menu bar has to exist before the window: GPUI only calls AppKit's `setMainMenu:`
+            // from here, and without it there is no Cmd+Q, no Cmd+W, no Services and no OS Edit
+            // menu — which is exactly the "doesn't feel like a Mac app" this fixes.
+            menus::register_actions(cx);
+            cx.set_menus(menus::menus());
+            menus::quit_when_last_window_closes(cx);
+            let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+            // The window's root view is `gpui_component::Root`, with `BayApp` inside it. That is
+            // a requirement of the component set, not a preference: `Root` is what hosts the
+            // tooltip, dialog, sheet and notification overlays, and without it those simply do
+            // not render — a tooltip would be dropped on the floor with nothing to say so.
+            //
+            // `BayApp`'s own handle is carried back out through `app_slot`, because the quit hook
+            // below needs the *editor*, not the root. Reading it off the `WindowHandle` would now
+            // hand back a `Root`.
+            let app_slot: Rc<RefCell<Option<gpui::Entity<BayApp>>>> = Rc::new(RefCell::new(None));
+            let slot = app_slot.clone();
+            cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                move |_, cx| {
+                move |window, cx| {
                     let focus_handle = cx.focus_handle();
-                    cx.new(|cx| {
+                    let app = cx.new(|cx| {
                         BayApp::new(focus_handle, preview, pump, agent_port, agent_note, cx)
-                    })
+                    });
+                    *slot.borrow_mut() = Some(app.clone());
+                    cx.new(|cx| gpui_component::Root::new(app, window, cx))
                 },
             )
             .expect("failed to open editor window");
+            let app = app_slot
+                .borrow_mut()
+                .take()
+                .expect("the window builder always fills the slot");
 
-        // Cmd+Q does not route through the "‹ Projects" button, which was the only path that
-        // saved. Without this, the menu bar this commit adds would introduce a way to lose work
-        // that did not exist before it.
-        cx.on_app_quit(move |cx| {
-            let _ = window.update(cx, |app, _, cx| app.save_before_quit(cx));
-            async move {}
-        })
-        .detach();
+            // Cmd+Q does not route through the "‹ Projects" button, which was the only path that
+            // saved. Without this, the menu bar this commit adds would introduce a way to lose work
+            // that did not exist before it.
+            cx.on_app_quit(move |cx| {
+                app.update(cx, |app, cx| app.save_before_quit(cx));
+                async move {}
+            })
+            .detach();
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }
