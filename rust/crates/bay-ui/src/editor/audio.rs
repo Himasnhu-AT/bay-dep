@@ -238,7 +238,10 @@ fn automation_polyline(
     if points.len() < 2 || duration_seconds <= 0.0 || !(width.is_finite() && height.is_finite()) {
         return Vec::new();
     }
-    let step = (points.len() / MAX_AUTOMATION_POINTS).max(1);
+    // `div_ceil`, not integer division: 5,000 points over a 240-point budget divides to a
+    // stride of 20 and yields 250 shapes, which is over budget by the amount the truncation
+    // threw away. Rounding the stride up is what makes the budget a budget.
+    let step = points.len().div_ceil(MAX_AUTOMATION_POINTS).max(1);
     let mut plotted: Vec<Point<Pixels>> = points
         .iter()
         .step_by(step)
@@ -259,26 +262,36 @@ fn gain_point(
     width: f32,
     height: f32,
 ) -> Point<Pixels> {
-    let x = (seconds / duration_seconds).clamp(0.0, 1.0) as f32 * width;
-    let level = if gain.is_finite() {
-        (gain / AUTOMATION_MAX_GAIN).clamp(0.0, 1.0)
+    let x = unit(seconds / duration_seconds) as f32 * width;
+    let level = unit(f64::from(gain) / f64::from(AUTOMATION_MAX_GAIN)) as f32;
+    point(px(x), px(height - level * height))
+}
+
+/// Clamp to 0..=1, and send anything that is not a number to the bottom.
+///
+/// `f64::clamp` **passes NaN straight through** — it is `self.max(min).min(max)` and NaN
+/// propagates through both. Every scale on this page runs a user-supplied or engine-supplied
+/// number through a fraction, and one NaN reaching a `Shape` makes `draw` refuse the *whole*
+/// polyline, so a single unmeasurable sample would delete the contour rather than dent it.
+/// `drawing.md`: bad numbers draw nothing, they do not panic and they do not lie — which means
+/// they have to be caught here, one value at a time, and not at the shape.
+fn unit(fraction: f64) -> f64 {
+    if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
     } else {
         0.0
-    };
-    point(px(x), px(height - level * height))
+    }
 }
 
 /// Where a LUFS value sits in the contour plot, as a y in a box `height` tall.
 fn contour_y(lufs: f64, height: f32) -> f32 {
     let span = CONTOUR_TOP_LUFS - CONTOUR_BOTTOM_LUFS;
-    let fraction = ((CONTOUR_TOP_LUFS - lufs) / span).clamp(0.0, 1.0) as f32;
-    fraction * height
+    unit((CONTOUR_TOP_LUFS - lufs) / span) as f32 * height
 }
 
 /// Where a dB value sits along a meter `width` wide.
 fn meter_x(db: f32, width: f32) -> f32 {
-    let fraction = ((db - METER_FLOOR_DB) / -METER_FLOOR_DB).clamp(0.0, 1.0);
-    fraction * width
+    unit(f64::from(db - METER_FLOOR_DB) / f64::from(-METER_FLOOR_DB)) as f32 * width
 }
 
 /// `−14.2 LUFS`, or an em dash where there is no measurement. Never `0.0` for "unknown": a mixer
@@ -1704,9 +1717,12 @@ mod audio_tests {
             "{} points would be tessellated",
             plotted.len()
         );
-        // The last point survives decimation: it is where a fade-out reaches zero.
+        // The last point survives decimation, wherever it falls: it is where a fade-out
+        // reaches zero, which is the one value of the curve a mixer most wants to see, and a
+        // stride that skips it draws a fade that does not end.
         let last = plotted.last().expect("a curve");
-        assert!((f32::from(last.x) - 300.0).abs() < 0.01);
+        let (seconds, gain) = *points.last().expect("input");
+        assert_eq!(*last, gain_point(seconds, gain, 50.0, 300.0, 90.0));
     }
 
     /// A curve stays inside its own box, and a degenerate clip draws nothing rather than a line
@@ -1746,7 +1762,25 @@ mod audio_tests {
         assert_eq!(meter_x(-30.0, 100.0), 50.0);
         // Above full scale is pinned at full scale, not drawn off the end of the trough.
         assert_eq!(meter_x(6.0, 100.0), 100.0);
-        assert!(meter_x(f32::NAN, 100.0).is_finite());
+        // A NaN goes to the floor rather than through the clamp — `f32::clamp` propagates NaN,
+        // and one NaN in a shape makes `draw` refuse the whole polyline.
+        assert_eq!(meter_x(f32::NAN, 100.0), 0.0);
+    }
+
+    /// The shared guard. `f64::clamp` is `max(min).min(max)`, so it hands NaN back unchanged —
+    /// which is the whole reason this function exists rather than a bare `.clamp(0.0, 1.0)`.
+    #[test]
+    fn a_fraction_that_is_not_a_number_goes_to_the_floor() {
+        assert_eq!(unit(0.5), 0.5);
+        assert_eq!(unit(-3.0), 0.0);
+        assert_eq!(unit(7.0), 1.0);
+        assert_eq!(unit(f64::NAN), 0.0);
+        assert_eq!(unit(f64::INFINITY), 0.0);
+        assert_eq!(unit(f64::NEG_INFINITY), 0.0);
+        assert!(
+            f64::NAN.clamp(0.0, 1.0).is_nan(),
+            "if clamp ever starts catching NaN, `unit` can go"
+        );
     }
 
     #[test]
@@ -1754,7 +1788,8 @@ mod audio_tests {
         assert_eq!(contour_y(CONTOUR_TOP_LUFS, 100.0), 0.0);
         assert_eq!(contour_y(CONTOUR_BOTTOM_LUFS, 100.0), 100.0);
         assert!(contour_y(-14.0, 100.0) > 0.0 && contour_y(-14.0, 100.0) < 100.0);
-        assert!(contour_y(f64::NAN, 100.0).is_finite());
+        assert_eq!(contour_y(f64::NAN, 100.0), 0.0);
+        assert_eq!(contour_y(f64::INFINITY, 100.0), 0.0);
     }
 
     /// A peak run is a *magnitude*, so it is drawn about its own axis and labelled `peaks`, not
