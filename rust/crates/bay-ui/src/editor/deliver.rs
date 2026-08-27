@@ -63,6 +63,10 @@ const QUEUE_BAND: f32 = 240.0;
 #[cfg(test)]
 const CUT_BANDS_BELOW_TRANSPORT: f32 = 340.0;
 
+/// GPUI debug selector for the Render button, so a test can assert *where it is* and not only
+/// that the page painted. See [`tests::the_render_button_is_on_screen_at_every_window_size`].
+const RENDER_BUTTON: &str = "deliver-render-action";
+
 /// The reduced transport's height, matching `transport()`'s own.
 const TRANSPORT_HEIGHT: f32 = 54.0;
 
@@ -164,25 +168,23 @@ impl EditorView {
     // Settings
     // ------------------------------------------------------------------------------------
 
-    fn deliver_settings(&self, cx: &mut Context<Self>) -> Div {
+    /// The editable fields. Shrinks and clips before the footer does.
+    fn deliver_settings_fields(&self, cx: &mut Context<Self>) -> Div {
         let form = &self.deliver;
         let preset_index = form
             .preset
             .and_then(|preset| PRESETS.iter().position(|candidate| *candidate == preset));
         let codec_index = CODECS.iter().position(|candidate| *candidate == form.codec);
 
+        // The fields, which are allowed to be clipped when the window is short. The Render
+        // button is NOT in here — see the footer at the end of this function.
         let mut column = div()
-            .w(px(SETTINGS_WIDTH))
-            .flex_none()
+            .flex_1()
+            .min_h(px(0.0))
             .flex()
             .flex_col()
             .gap(px(14.0))
-            .p(px(14.0))
-            .bg(rgb(theme::PANEL))
-            .border_r_1()
-            .border_color(rgb(theme::BORDER))
             .overflow_hidden()
-            .child(widgets::section("Render settings"))
             .child(
                 self.deliver_field(
                     "Preset",
@@ -330,35 +332,65 @@ impl EditorView {
             );
 
         let canvas = self.editor.project().settings.canvas;
-        column
+        column.child(
+            widgets::card()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    widgets::row().justify_between().gap(px(8.0)).child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme::MUTED))
+                            .child("Writes"),
+                    ),
+                )
+                .child(widgets::readout(form.file_name(), false))
+                // The resolution line, because the button this replaced quietly capped the
+                // export at 1280px wide and said nothing. It renders the canvas now, and
+                // the canvas is what it says.
+                .child(widgets::note(format!(
+                    "{}×{} · {} · {}",
+                    canvas.width,
+                    canvas.height,
+                    self.editor.project().settings.fps.as_f64(),
+                    output_directory().display()
+                ))),
+        )
+    }
+
+    /// The settings column: a heading, the fields, and a footer that cannot be pushed off.
+    ///
+    /// **The footer is `flex_none` and the fields are `flex_1`, and that order is the whole
+    /// point.** The first version of this was one column with a `flex_1()` spacer before the
+    /// button, which reads correctly and is wrong: with the content taller than the column the
+    /// spacer collapses to nothing, the overflow is hidden, and the button — the only control
+    /// on the page that does anything — is clipped away entirely. Every paint test passed,
+    /// because painting a clipped tree does not panic. It was found by looking at the window,
+    /// which is exactly what `pages.md` says a page milestone is not done without.
+    fn deliver_settings(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .w(px(SETTINGS_WIDTH))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p(px(14.0))
+            .bg(rgb(theme::PANEL))
+            .border_r_1()
+            .border_color(rgb(theme::BORDER))
+            .overflow_hidden()
+            .child(widgets::section("Render settings"))
+            .child(self.deliver_settings_fields(cx))
             .child(
-                widgets::card()
+                div()
+                    .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        widgets::row().justify_between().gap(px(8.0)).child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme::MUTED))
-                                .child("Writes"),
-                        ),
-                    )
-                    .child(widgets::readout(form.file_name(), false))
-                    // The resolution line, because the button this replaced quietly capped the
-                    // export at 1280px wide and said nothing. It renders the canvas now, and
-                    // the canvas is what it says.
-                    .child(widgets::note(format!(
-                        "{}×{} · {} · {}",
-                        canvas.width,
-                        canvas.height,
-                        self.editor.project().settings.fps.as_f64(),
-                        output_directory().display()
-                    ))),
+                    .gap(px(8.0))
+                    .children(self.deliver_alpha_note())
+                    .child(self.deliver_render_button(cx)),
             )
-            .child(div().flex_1())
-            .children(self.deliver_alpha_note())
-            .child(self.deliver_render_button(cx))
     }
 
     /// One labelled row of the settings form.
@@ -439,6 +471,9 @@ impl EditorView {
             .flex()
             .flex_col()
             .gap(px(6.0))
+            // Named so `the_render_button_is_on_screen_at_every_window_size` can ask GPUI where
+            // this actually landed rather than only that it did not panic. A no-op in release.
+            .debug_selector(|| RENDER_BUTTON.to_string())
             .children(refusal.map(|reason| widgets::banner(reason, theme::WARN)))
             .child(
                 widgets::pressable(
@@ -1036,6 +1071,49 @@ mod tests {
         paint(&view, cx, 1440.0, 900.0);
         paint(&view, cx, 640.0, 420.0);
         paint(&view, cx, 320.0, 240.0);
+    }
+
+    /// **The defect the paint tests could not see.**
+    ///
+    /// The first version of the settings column was one flex column with a `flex_1()` spacer
+    /// before the Render button. On a tall window that looks right. On the window the app
+    /// actually opened, the fields were taller than the column, the spacer collapsed to
+    /// nothing, `overflow_hidden` did its job — and the button, the only control on the page
+    /// that does anything, was **not on screen at all**. Every paint test passed, because
+    /// painting a clipped tree does not panic.
+    ///
+    /// So this asks GPUI where the button landed instead of only whether it drew. It is the
+    /// difference between "the page rendered" and "the page is usable", and it is the assertion
+    /// that would have failed before the footer was pinned.
+    #[gpui::test]
+    fn the_render_button_is_on_screen_at_every_window_size(cx: &mut TestAppContext) {
+        let (view, cx) = windowed(cx);
+        for (width, height) in [
+            (1440.0, 900.0),
+            (1280.0, 800.0),
+            (1024.0, 700.0),
+            (900.0, 600.0),
+        ] {
+            paint(&view, cx, width, height);
+            let bounds = cx.debug_bounds(RENDER_BUTTON).unwrap_or_else(|| {
+                panic!("the Render button did not lay out at all at {width}x{height}")
+            });
+            assert!(
+                bounds.size.width > px(0.0) && bounds.size.height > px(0.0),
+                "the Render button collapsed to nothing at {width}x{height}: {bounds:?}"
+            );
+            // The page bar owns the bottom 44px, and the button must clear it.
+            assert!(
+                bounds.bottom() <= px(height),
+                "the Render button is off the bottom of a {width}x{height} window \
+                 ({:?} > {height}) — the page's only action is unreachable",
+                bounds.bottom()
+            );
+            assert!(
+                bounds.origin.y >= px(0.0),
+                "the Render button is above the top of a {width}x{height} window: {bounds:?}"
+            );
+        }
     }
 
     /// A queue with rows in it is a different tree from an empty one, and the row carries the

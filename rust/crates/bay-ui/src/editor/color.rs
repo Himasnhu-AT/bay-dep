@@ -11,7 +11,6 @@
 //! cannot back is drawn **disabled** rather than hidden — the disabled controls are the map of
 //! the remaining engine work.
 
-use gpui::prelude::*;
 use gpui::Div;
 
 use super::EditorView;

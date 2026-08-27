@@ -93,6 +93,10 @@ const KEY_RADIUS: f32 = 3.5;
 const HANDLE_RADIUS: f32 = 2.5;
 const HIT: f32 = 13.0;
 
+/// Breathing room left either side of a clip fitted to the pane, so its first and last keys
+/// are grabbable rather than glued to the edge.
+const FIT_INSET: f32 = 16.0;
+
 /// How far past the pane's left edge a key is still built. There is no right-hand bound because
 /// the pane's width is not known here; the count is bounded by the number of keys, not by the
 /// width, so there is nothing to cull.
@@ -1049,25 +1053,38 @@ impl EditorView {
         let rows = selected
             .map(|reference| self.motion_rows(reference))
             .unwrap_or_default();
+        // Where the curve pane lands, filled during prepaint and read back by the mouse
+        // handlers built in this same pass. The header's "Fit" needs it as much as the pane's
+        // own hit-testing does: fitting a clip to the pane means knowing how wide the pane is,
+        // and that is not a number an element tree being *built* can have.
+        let bounds: std::rc::Rc<Cell<Bounds<Pixels>>> =
+            std::rc::Rc::new(Cell::new(Bounds::default()));
 
         div()
             .h(px(BAND_HEIGHT))
-            .flex_none()
+            // Not `flex_none`. On a window too short for the three bands the curve band gives
+            // way instead of pushing the picture off the top — at 560px of window height the
+            // fixed chrome alone is 440 of it, and a band that refuses to shrink overlaps the
+            // panel above rather than losing its own last rows.
+            .flex_shrink()
             .flex()
             .flex_col()
+            .overflow_hidden()
             .bg(rgb(theme::PANEL))
             .border_t_1()
             .border_color(rgb(theme::BORDER))
-            .child(self.motion_band_header(selected, &rows, cx))
+            .child(self.motion_band_header(selected, &rows, &bounds, cx))
             .child(
                 div()
                     .h(px(BAND_BODY))
-                    .flex_none()
+                    .flex_shrink()
                     .flex()
                     .flex_row()
                     .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .overflow_hidden()
                     .child(self.motion_param_list(&rows, cx))
-                    .child(self.motion_curve_pane(&rows, cx)),
+                    .child(self.motion_curve_pane(&rows, &bounds, cx)),
             )
     }
 
@@ -1075,6 +1092,7 @@ impl EditorView {
         &self,
         selected: Option<&ElementRef>,
         rows: &[CurveRow],
+        bounds: &std::rc::Rc<Cell<Bounds<Pixels>>>,
         cx: &mut Context<Self>,
     ) -> Div {
         let name = selected
@@ -1103,6 +1121,20 @@ impl EditorView {
                 format!("{animated} animated · {keys} keys"),
                 true,
             ))
+            .child({
+                // Without this the pane is a clip's four seconds inside half a minute of
+                // timeline: the curves land in a tenth of the width and the rest is empty.
+                let reference = selected.cloned();
+                let bounds = bounds.clone();
+                self.motion_button(("motion-fit", 0), "Fit clip", reference.is_some(), cx, {
+                    move |view, _cx| {
+                        let Some(reference) = reference.clone() else {
+                            return;
+                        };
+                        view.fit_clip_to_pane(&reference, bounds.get());
+                    }
+                })
+            })
             .child(
                 div()
                     .flex_1()
@@ -1398,7 +1430,12 @@ struct Placed {
 }
 
 impl EditorView {
-    fn motion_curve_pane(&self, rows: &[CurveRow], cx: &mut Context<Self>) -> Div {
+    fn motion_curve_pane(
+        &self,
+        rows: &[CurveRow],
+        bounds: &std::rc::Rc<Cell<Bounds<Pixels>>>,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let geometry = self.geometry();
         let mut shapes = pane_grid(&geometry, self.editor.duration());
         let mut placed: Vec<Placed> = Vec::new();
@@ -1500,8 +1537,7 @@ impl EditorView {
             theme::ACCENT,
         ));
 
-        let bounds: std::rc::Rc<Cell<Bounds<Pixels>>> =
-            std::rc::Rc::new(Cell::new(Bounds::default()));
+        let bounds = bounds.clone();
         let mut pane = div()
             .flex_1()
             .min_w(px(0.0))
@@ -1663,6 +1699,39 @@ fn pane_grid(geometry: &crate::geometry::TimelineGeometry, duration: MediaTime) 
 // ---------------------------------------------------------------------------------------------
 
 impl EditorView {
+    /// Zoom and scroll so the clip fills the curve pane.
+    ///
+    /// The one control that needs the pane's laid-out width, which is why the band mints the
+    /// measured bounds and hands them to both halves. Without it a four-second clip on a
+    /// half-minute timeline draws its curves into a tenth of the pane and leaves the rest
+    /// empty — technically correct, and useless to aim a keyframe in.
+    fn fit_clip_to_pane(&mut self, reference: &ElementRef, pane: Bounds<Pixels>) {
+        let width = f32::from(pane.size.width);
+        let Some(element) = self.motion_element(reference) else {
+            return;
+        };
+        let seconds =
+            element.duration().as_ticks() as f32 / crate::geometry::TICKS_PER_SECOND as f32;
+        // A pane narrower than its own inset, or a zero-length clip, has no fit to compute.
+        // Both tests are written positively and include `is_finite`, because the negated form
+        // (`width <= inset`) is *false* for NaN and would let a NaN through into
+        // `pixels_per_second`, which poisons the timeline zoom for the rest of the session.
+        let pane_is_wide_enough = width.is_finite() && width > FIT_INSET * 4.0;
+        let clip_has_duration = seconds.is_finite() && seconds > 0.0;
+        if !pane_is_wide_enough || !clip_has_duration {
+            return;
+        }
+        let pixels_per_second = (width - FIT_INSET * 2.0) / seconds;
+        let start = element.start().as_ticks() as f32 / crate::geometry::TICKS_PER_SECOND as f32;
+        // Set the zoom first: the scroll is measured in pixels, so it means nothing until the
+        // pixels are worth what they will be worth.
+        self.timeline = self.timeline.with_pixels_per_second(pixels_per_second);
+        let pixels_per_second = self.timeline.pixels_per_second();
+        self.timeline = self
+            .timeline
+            .with_scroll_x(start * pixels_per_second - FIT_INSET);
+    }
+
     /// Drop a key on an element property at the playhead, holding the value it already has.
     ///
     /// The value matters: keying at the rest value is what makes a second key somewhere else

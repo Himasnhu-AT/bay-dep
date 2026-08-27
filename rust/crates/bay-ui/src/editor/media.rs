@@ -196,7 +196,10 @@ pub struct MetaRow {
 
 /// Everything the metadata panel can honestly say about one asset.
 ///
-/// The order is fixed so the panel does not reshuffle when a probe fills a field in.
+/// The order is fixed so the panel does not reshuffle when a probe fills a field in, and it puts
+/// the *measured* rows first. Location is last because it is the only unbounded one: an absolute
+/// path wraps to five lines in a 232px panel, and at the top it pushed every number the panel
+/// exists to show below the fold.
 pub fn metadata_rows(asset: &MediaAsset) -> Vec<MetaRow> {
     let kind = MediaKind::of_path(&asset.path);
     let timed = kind.is_timed();
@@ -208,7 +211,6 @@ pub fn metadata_rows(asset: &MediaAsset) -> Vec<MetaRow> {
         // the same one the importer, the timeline and the compositor already use, so the label
         // cannot disagree with what the file is treated as.
         row("Kind", MetaValue::Known(kind.label().to_string())),
-        row("Location", MetaValue::Known(parent_folder(&asset.path))),
         row(
             "Duration",
             match (timed, asset.duration_seconds) {
@@ -240,6 +242,7 @@ pub fn metadata_rows(asset: &MediaAsset) -> Vec<MetaRow> {
     ];
 
     if kind == MediaKind::Image {
+        rows.push(location_row(asset));
         return rows;
     }
 
@@ -268,7 +271,17 @@ pub fn metadata_rows(asset: &MediaAsset) -> Vec<MetaRow> {
             None => MetaValue::Unknown,
         },
     ));
+    rows.push(location_row(asset));
     rows
+}
+
+/// The directory the file is in. Its own function only because both returns of
+/// [`metadata_rows`] end with it.
+fn location_row(asset: &MediaAsset) -> MetaRow {
+    MetaRow {
+        label: "Location",
+        value: MetaValue::Known(parent_folder(&asset.path)),
+    }
 }
 
 /// The three operations a media page is expected to offer and this engine cannot perform.
@@ -856,18 +869,17 @@ impl EditorView {
     fn media_bins(&self, cx: &mut gpui::Context<Self>) -> Div {
         let assets = &self.editor.project().media;
         let state = self.media_state();
+        // The rail scrolls. Seven rows and three reason lines are taller than the 340px pool
+        // band at a 900px window, and a bin list that silently loses its last entry off the
+        // bottom edge is a control that is on screen in this file and not on screen in the app.
         let mut rail = div()
-            .w(px(BIN_RAIL))
-            .min_w(px(BIN_RAIL_MIN))
+            .id("media-bins-scroll")
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
             .gap(px(2.0))
-            .p(px(10.0))
-            .bg(rgb(theme::PANEL_ALT))
-            .border_r_1()
-            .border_color(rgb(theme::BORDER))
-            .overflow_hidden()
-            .child(widgets::section("BINS"))
+            .overflow_y_scroll()
             .child(self.bin_row(
                 "bin-master",
                 "Master",
@@ -903,7 +915,20 @@ impl EditorView {
         for (id, label, reason) in UNBUILT_BINS {
             rail = rail.child(disabled_control(id, label, reason));
         }
-        rail
+
+        div()
+            .w(px(BIN_RAIL))
+            .min_w(px(BIN_RAIL_MIN))
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .p(px(10.0))
+            .bg(rgb(theme::PANEL_ALT))
+            .border_r_1()
+            .border_color(rgb(theme::BORDER))
+            .overflow_hidden()
+            .child(widgets::section("BINS"))
+            .child(rail)
     }
 
     /// One selectable bin row.
@@ -959,9 +984,13 @@ impl EditorView {
             .filter(|asset| state.admits(asset))
             .collect();
 
+        // `flex_col`, not the default row. In a row the grid and the list are flex *items*
+        // sized to their own content, so `flex_1` on the list's name column got no width and
+        // the four columns bunched against the left edge of a 1,200px pool.
         let mut body = div()
             .id("media-pool-scroll")
             .flex()
+            .flex_col()
             .flex_1()
             .min_h(px(0.0))
             .overflow_y_scroll();
@@ -973,13 +1002,18 @@ impl EditorView {
                 "Nothing in this bin."
             }));
         } else if state.view == PoolView::Thumbnails {
-            let mut grid = div().flex().flex_row().flex_wrap().gap(px(8.0));
+            let mut grid = div().w_full().flex().flex_row().flex_wrap().gap(px(8.0));
             for (index, asset) in shown.iter().enumerate() {
                 grid = grid.child(self.pool_tile(asset, index, cx));
             }
             body = body.child(grid);
         } else {
-            let mut list = div().flex().flex_col().gap(px(1.0)).child(pool_list_head());
+            let mut list = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .child(pool_list_head());
             for (index, asset) in shown.iter().enumerate() {
                 list = list.child(self.pool_row(asset, index, cx));
             }
