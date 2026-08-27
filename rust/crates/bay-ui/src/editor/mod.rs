@@ -14,6 +14,7 @@ use gpui::{
 use gpui_component::button::Button;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::Disableable as _;
+use gpui_component::WindowExt as _;
 
 use bay_core::blocks::{self, Panel};
 use bay_core::project::library;
@@ -1130,6 +1131,23 @@ impl EditorView {
     /// it. `pages.md` rules out a blank panel — the map of remaining work is worth having on
     /// screen, which is the same reason a control the engine cannot back is drawn and disabled
     /// rather than hidden.
+    /// Whether a status message is reporting a failure rather than progress.
+    ///
+    /// Crude on purpose, and honest about it: `status` is one `Option<String>` shared by thirty
+    /// call sites that carry no severity, so the words are all there is to go on. The cost of
+    /// being wrong is a red toast where a grey one belonged, not a lost message.
+    fn status_is_a_failure(message: &str) -> bool {
+        const FAILURES: [&str; 6] = [
+            "Could not",
+            "Cannot",
+            "fail",
+            "error",
+            "not over that clip",
+            "too close to the edge",
+        ];
+        FAILURES.iter().any(|needle| message.contains(needle))
+    }
+
     fn placeholder_page(&self, page: Page) -> Div {
         div()
             .flex_1()
@@ -1164,6 +1182,18 @@ impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lane_width = Self::lane_width(window);
         let window_width = f32::from(window.viewport_size().width);
+        // Failures used to land in a 360px strip in the toolbar, in the same grey as everything
+        // around it, and were routinely missed. They are notifications now — `Root` hosts the
+        // list, which is one of the reasons it wraps the app at all. Taken rather than read, so
+        // one failure produces one toast instead of a new one on every frame.
+        if let Some(message) = self.status.take() {
+            let notification = if Self::status_is_a_failure(&message) {
+                gpui_component::notification::Notification::error(message)
+            } else {
+                gpui_component::notification::Notification::info(message)
+            };
+            window.push_notification(notification, cx);
+        }
         // Mirror the split's width back onto `media_width` before anything reads it. The
         // resizable group owns the number now, but `panel_columns` still has to decide how many
         // media tiles fit across, and that decision happens further down this same frame.

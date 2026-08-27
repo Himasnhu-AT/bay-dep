@@ -315,7 +315,28 @@ fn format_lu(value: Option<f64>) -> String {
 // ---------------------------------------------------------------------------------------------
 
 impl EditorView {
+    /// Whether the built mixer is shown instead of the placeholder.
+    ///
+    /// The mixer below is finished and tested, and it is *not* what a user should meet: its
+    /// faders reach the export and the next press of play but are inaudible during playback,
+    /// and its meters are dark, because the streaming block mixer exists and nothing calls it
+    /// (`fixes.md` entry 15). A page full of controls that move and do nothing you can hear is
+    /// worse than a page that says it is not ready.
+    ///
+    /// Kept behind a flag rather than deleted, following `lab.rs`: the work stands, it compiles,
+    /// and it comes back the moment the transport runs the block mixer.
+    pub(super) fn audio_mixer_enabled() -> bool {
+        std::env::var("BAY_UI_AUDIO").is_ok_and(|value| value != "0" && !value.is_empty())
+    }
+
     pub(super) fn audio_page(&self, cx: &mut gpui::Context<Self>) -> Div {
+        if !Self::audio_mixer_enabled() {
+            return self.placeholder_page(crate::page::Page::Audio);
+        }
+        self.audio_mixer(cx)
+    }
+
+    fn audio_mixer(&self, cx: &mut gpui::Context<Self>) -> Div {
         let vm = EditorViewModel::build(&self.editor);
         // Where the lanes landed this frame. `draw::measure` fills it at prepaint, which runs
         // before any event for this frame is dispatched, so the zoom and scroll handlers built

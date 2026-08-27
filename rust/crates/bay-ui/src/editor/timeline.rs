@@ -413,10 +413,17 @@ impl EditorView {
         else {
             return;
         };
+        // Two different refusals, and they used to share one message. A playhead *outside* the
+        // clip is not "too close to the edge" — it is not on the clip at all, and telling
+        // someone to move away from an edge they are nowhere near is worse than saying nothing.
         let margin = MIN_DURATION_TICKS;
-        if at.as_ticks() <= element.start().as_ticks() + margin
-            || at.as_ticks() >= element.end().as_ticks() - margin
-        {
+        let (start, end) = (element.start().as_ticks(), element.end().as_ticks());
+        if at.as_ticks() < start || at.as_ticks() > end {
+            self.status =
+                Some("The playhead is not over that clip, so there is nothing to cut.".into());
+            return;
+        }
+        if at.as_ticks() <= start + margin || at.as_ticks() >= end - margin {
             self.status = Some("That cut is too close to the edge of the clip.".into());
             return;
         }
@@ -565,6 +572,12 @@ impl EditorView {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
+                    // The razor gets a crosshair. A tool that changes what a click *does* and
+                    // not what the pointer looks like is a mode you can be in without knowing
+                    // it — and the click it eats is a cut, which is undoable but startling.
+                    .when(self.tool == Tool::Razor, |lanes| {
+                        lanes.cursor(gpui::CursorStyle::Crosshair)
+                    })
                     .children(rows),
             )
     }

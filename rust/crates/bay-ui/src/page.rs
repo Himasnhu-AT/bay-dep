@@ -127,9 +127,16 @@ impl Page {
                  operations compile to a shader today; the qualifier and windows need a \
                  per-effect mask the compositor does not have.",
             ),
+            // This used to say pan, track gain and solo did not exist. They do — all three
+            // shipped. The truth is worse and more specific: the streaming block mixer is built
+            // and **nothing calls it**, so a fader moves the next press of play rather than the
+            // sound you are hearing, and the meters have no signal to show. `fixes.md` entry 15.
             Page::Audio => Some(
-                "Waiting on the engine: there is no real-time audio path, no pan anywhere in the \
-                 codebase, and no track-level gain or solo.",
+                "Waiting on the engine: the transport to run the streaming block mixer. The \
+                 mixer is built and faders, pans, solo and loudness all reach the export — but \
+                 playback still submits one pre-mixed buffer, so nothing is audible mid-play and \
+                 the meters have no signal. The page is hidden until it is; BAY_UI_AUDIO=1 shows \
+                 it anyway.",
             ),
             // Deliver's gap is closed: the encode runs on a worker with its own GPU device,
             // through the same `render` the MCP server calls, so the queue's bars move and both

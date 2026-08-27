@@ -375,9 +375,17 @@ impl EditorView {
         })
     }
 
-    pub(super) fn inspector(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+    pub(super) fn inspector(
+        &self,
+        vm: &EditorViewModel,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
         // No fixed width: the resizable split in `edit_page` sizes this panel now.
+        // Scrollable: the inspector is a column of every property a clip has, and on a short
+        // window the transform rows fell off the bottom with no way to reach them.
         let panel = div()
+            .id("inspector")
+            .overflow_y_scroll()
             .flex()
             .flex_col()
             .size_full()
