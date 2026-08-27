@@ -94,47 +94,17 @@ impl EditorView {
             Panel::Media => self.library_panel(vm, cx),
             other => self.blocks_panel(other, vm, cx),
         };
+        // No width and no divider here any more: the resizable split in `edit_page` owns both.
+        // `media_width` is still read for the media grid's column count, but it is now a mirror
+        // of the split's size rather than a number this panel sets for itself.
         div()
+            .size_full()
             .flex()
-            .flex_row()
-            .flex_none()
-            .h_full()
-            .child(
-                div()
-                    .w(px(self.media_width))
-                    .flex_none()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .py(px(12.0))
-                    .gap(px(10.0))
-                    .bg(rgb(theme::PANEL))
-                    .child(body),
-            )
-            .child(
-                // The divider. A press starts a drag that the root element's mouse-move handler
-                // continues, the same way clip drags and scrubbing work — a handler on this
-                // 5px strip alone would stop the moment the pointer outran it.
-                div()
-                    .id("panel-divider")
-                    .w(px(5.0))
-                    .flex_none()
-                    .h_full()
-                    .bg(rgb(theme::BORDER))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            this.widgets.begin(Drag::new(
-                                EditorDrag::PanelWidth {
-                                    start_width: this.media_width,
-                                },
-                                event.position,
-                                event.modifiers,
-                            ));
-                            cx.notify();
-                        }),
-                    ),
-            )
+            .flex_col()
+            .py(px(12.0))
+            .gap(px(10.0))
+            .bg(rgb(theme::PANEL))
+            .child(body)
     }
 
     /// The project's own media, grouped by kind.
@@ -551,37 +521,11 @@ mod panel_tests {
         });
     }
 
-    /// The divider must clamp. Dragged far enough left the panel would reach zero width and
-    /// become impossible to grab again.
-    ///
-    /// Driven through the real handlers rather than by reproducing their arithmetic: this test
-    /// used to recompute the clamp itself, which meant it could not have caught a change to the
-    /// root handler at all.
-    #[gpui::test]
-    fn the_panel_divider_clamps_at_both_ends(cx: &mut TestAppContext) {
-        let view = view(cx);
-        view.update(cx, |view, cx| {
-            let press = gpui::point(px(100.0), px(300.0));
-            view.widgets.begin(Drag::new(
-                EditorDrag::PanelWidth {
-                    start_width: DEFAULT_PANEL_WIDTH,
-                },
-                press,
-                gpui::Modifiers::default(),
-            ));
-
-            view.pointer_moved(gpui::point(px(-5000.0), px(300.0)), false, cx);
-            assert_eq!(view.media_width, MIN_PANEL_WIDTH);
-            view.pointer_moved(gpui::point(px(5000.0), px(300.0)), false, cx);
-            assert_eq!(view.media_width, MAX_PANEL_WIDTH);
-
-            view.pointer_released(gpui::point(px(5000.0), px(300.0)), false, cx);
-            assert!(!view.widgets.is_dragging(), "the release has to end it");
-            // And a move after the release must not keep resizing the panel.
-            view.pointer_moved(gpui::point(px(-5000.0), px(300.0)), false, cx);
-            assert_eq!(view.media_width, MAX_PANEL_WIDTH);
-        });
-    }
+    // The divider's clamp test lived here. The divider is gone: `edit_page` hands the split a
+    // `size_range(MIN_PANEL_WIDTH..MAX_PANEL_WIDTH)` and the library enforces it, so there is no
+    // bay-side arithmetic left to assert on. `render` still clamps what it mirrors back into
+    // `media_width`, which is what `the_panel_grid_gains_a_column_when_it_is_wide_enough` below
+    // depends on, and that one still runs.
 
     /// The grid gains a column once there is room for one, and never fewer than two.
     #[gpui::test]

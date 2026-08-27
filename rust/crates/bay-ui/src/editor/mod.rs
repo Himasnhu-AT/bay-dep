@@ -11,6 +11,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, RenderImage,
     SharedString, Window,
 };
+use gpui_component::resizable::{h_resizable, resizable_panel};
 
 use bay_core::blocks::{self, Panel};
 use bay_core::project::library;
@@ -83,8 +84,6 @@ pub enum EditorDrag {
     Block(BlockDrag),
     /// Dragging the playhead. Started by a press on the ruler or on empty lane space.
     Scrub,
-    /// Dragging the left panel's divider. Carries the width at the moment of the press.
-    PanelWidth { start_width: f32 },
     /// A slider or a drag-number. The widget layer owns what it means; the editor only holds it.
     Value(ValueDrag<EditorView>),
 }
@@ -321,6 +320,9 @@ enum Tool {
 const DEFAULT_PANEL_WIDTH: f32 = 264.0;
 const MIN_PANEL_WIDTH: f32 = 180.0;
 const MAX_PANEL_WIDTH: f32 = 420.0;
+/// The inspector's resting width. It was a hard `w(px(260.0))` on the panel itself until the
+/// split took ownership of panel sizes.
+const INSPECTOR_WIDTH: f32 = 260.0;
 
 /// Seconds as `h:mm:ss:ff` at 30 fps.
 ///
@@ -395,7 +397,16 @@ pub struct EditorView {
     panel: Panel,
     /// The left panel's width. Draggable, because a media grid and a list of transitions want
     /// very different amounts of room and neither is right for both.
+    ///
+    /// Owned by [`Self::panel_resize`] now, and mirrored here at the top of every `render`.
+    /// It is not only a layout number: `panel_columns` derives the media grid's column count
+    /// from it, so the panel has to know its own width during render, not merely be given one.
     media_width: f32,
+    /// Where the resizable split between left panel, viewer and inspector keeps its sizes.
+    ///
+    /// Lazily built because `EditorView::new` has no `Context` to make an entity with, and
+    /// giving it one would touch every construction site in the crate's tests for no gain.
+    panel_resize: Option<gpui::Entity<gpui_component::resizable::ResizableState>>,
     /// Whether a drag snaps to clip edges, markers and the playhead. On by default, because
     /// butt-joining two clips by eye at 48 px/s is a fight; off for the moments when the
     /// intended cut is two frames from something the snap keeps stealing it towards.
@@ -496,6 +507,7 @@ impl EditorView {
             tool: Tool::Select,
             panel: Panel::Media,
             media_width: DEFAULT_PANEL_WIDTH,
+            panel_resize: None,
             collapsed_folders: std::collections::BTreeSet::new(),
             lab: crate::lab::enabled().then(crate::lab::Lab::default),
             page: Page::default(),
@@ -1075,21 +1087,47 @@ impl EditorView {
                     .flex_row()
                     .flex_1()
                     .min_h(px(0.0))
+                    // The rail is not in the split. It is a fixed strip of tabs, not a panel —
+                    // there is nothing in it a user would want more or less room for.
                     .child(self.panel_rail(cx))
-                    .child(self.left_panel(vm, cx))
                     .child(
-                        // Preview and transport are one column: the transport belongs under the
-                        // picture it drives, not buried in the timeline header where it used to
-                        // sit half a screen away from the frame it is scrubbing.
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(self.preview(vm))
-                            .child(self.transport(vm, lane_width, cx)),
-                    )
-                    .child(self.inspector(vm, cx)),
+                        // The three panels the user can actually size. The handles between them
+                        // replace the hand-rolled 5px divider that used to drive
+                        // `EditorDrag::PanelWidth` through the root mouse handlers.
+                        h_resizable("editor-panels")
+                            .with_state(
+                                self.panel_resize
+                                    .as_ref()
+                                    .expect("render sets this before building the tree"),
+                            )
+                            .child(
+                                resizable_panel()
+                                    .size(px(self.media_width))
+                                    .size_range(px(MIN_PANEL_WIDTH)..px(MAX_PANEL_WIDTH))
+                                    .child(self.left_panel(vm, cx)),
+                            )
+                            .child(
+                                // Preview and transport are one column: the transport belongs
+                                // under the picture it drives, not buried in the timeline header
+                                // where it used to sit half a screen away from the frame it is
+                                // scrubbing.
+                                resizable_panel().child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .size_full()
+                                        .min_w(px(0.0))
+                                        .child(self.preview(vm))
+                                        .child(self.transport(vm, lane_width, cx)),
+                                ),
+                            )
+                            .child(
+                                resizable_panel()
+                                    .size(px(INSPECTOR_WIDTH))
+                                    .size_range(px(200.0)..px(420.0))
+                                    .child(self.inspector(vm, cx)),
+                            ),
+                    ),
             )
             .child(self.scene_bar(vm, cx))
             .child(self.timeline(vm, lane_width, cx))
@@ -1133,6 +1171,21 @@ impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lane_width = Self::lane_width(window);
         let window_width = f32::from(window.viewport_size().width);
+        // Mirror the split's width back onto `media_width` before anything reads it. The
+        // resizable group owns the number now, but `panel_columns` still has to decide how many
+        // media tiles fit across, and that decision happens further down this same frame.
+        if self.panel_resize.is_none() {
+            self.panel_resize = Some(cx.new(|_| Default::default()));
+        }
+        if let Some(width) = self
+            .panel_resize
+            .as_ref()
+            .and_then(|state| state.read(cx).sizes().first().copied())
+            .map(f32::from)
+            .filter(|width| *width > 0.0)
+        {
+            self.media_width = width.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
+        }
         if self.playing {
             self.advance_playback();
             self.follow_playhead(lane_width);

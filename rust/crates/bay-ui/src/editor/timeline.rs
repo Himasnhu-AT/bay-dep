@@ -159,15 +159,8 @@ impl EditorView {
             return;
         };
         // Read what the gesture needs before touching `self` — the gesture lives in it.
-        let panel_width = match &drag.kind {
-            EditorDrag::PanelWidth { start_width } => Some(start_width + drag.dx()),
-            _ => None,
-        };
         let scrub_x = matches!(drag.kind, EditorDrag::Scrub).then(|| f32::from(position.x));
 
-        if let Some(wanted) = panel_width {
-            self.media_width = wanted.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
-        }
         if let Some(x) = scrub_x {
             self.scrub_to(x);
         }
@@ -1304,30 +1297,55 @@ mod tool_tests {
 
     /// Only one gesture can be in flight. A press on a clip while the playhead is being scrubbed
     /// used to leave both fields set and let an `else if` decide which one the pointer meant.
+    ///
+    /// Written Block-then-Scrub since the panel-width gesture moved to the resizable split. The
+    /// invariant under test is `pointer_moved`'s dispatch, not which two gestures collide.
     #[gpui::test]
     fn a_second_press_replaces_the_gesture_rather_than_joining_it(cx: &mut TestAppContext) {
         let view = view(cx);
         view.update(cx, |view, cx| {
+            view.snapping = false;
+            let reference = ElementRef::new("track-main", "el-title");
+            let element = view
+                .editor
+                .active_scene()
+                .element(&reference)
+                .expect("the starter title")
+                .clone();
+            let origin = element.start().as_ticks();
+
             view.widgets.begin(Drag::new(
-                EditorDrag::Scrub,
+                EditorDrag::Block(BlockDrag {
+                    reference: reference.clone(),
+                    mode: DragMode::Move,
+                    origin_start_ticks: origin,
+                    origin_duration_ticks: element.duration().as_ticks(),
+                }),
                 gpui::point(px(200.0), px(400.0)),
                 gpui::Modifiers::default(),
             ));
             view.widgets.begin(Drag::new(
-                EditorDrag::PanelWidth {
-                    start_width: DEFAULT_PANEL_WIDTH,
-                },
+                EditorDrag::Scrub,
                 gpui::point(px(300.0), px(400.0)),
                 gpui::Modifiers::default(),
             ));
-            let before = view.editor.playhead();
+
             view.pointer_moved(gpui::point(px(360.0), px(400.0)), false, cx);
-            assert_eq!(
-                view.media_width,
-                DEFAULT_PANEL_WIDTH + 60.0,
-                "the live gesture is the panel"
+
+            assert!(
+                view.block_drag().is_none(),
+                "the live gesture is the scrub, so nothing reads as a block drag"
             );
-            assert_eq!(view.editor.playhead(), before, "and it is not also a scrub");
+            assert_eq!(
+                view.editor
+                    .active_scene()
+                    .element(&reference)
+                    .expect("still there")
+                    .start()
+                    .as_ticks(),
+                origin,
+                "and the clip the first press grabbed did not move with it"
+            );
         });
     }
 

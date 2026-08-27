@@ -376,11 +376,11 @@ impl EditorView {
     }
 
     pub(super) fn inspector(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        // No fixed width: the resizable split in `edit_page` sizes this panel now.
         let panel = div()
             .flex()
             .flex_col()
-            .w(px(260.0))
-            .h_full()
+            .size_full()
             .p_3()
             .gap_3()
             .bg(rgb(theme::PANEL))
