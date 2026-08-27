@@ -630,6 +630,27 @@ impl EditorView {
                             .max_w(gpui::relative(1.0))
                             .max_h(gpui::relative(1.0)),
                     ),
+                // A video shows its poster frame if one has been decoded. Still a picture and
+                // not playback — the note below says so rather than letting a still frame imply
+                // a transport that does not exist.
+                MediaKind::Video if self.poster_image(&asset.id).is_some() => div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.0))
+                    .overflow_hidden()
+                    .children(self.poster_image(&asset.id).map(|image| {
+                        img(ImageSource::Render(image))
+                            .max_w(gpui::relative(1.0))
+                            .max_h(gpui::relative(1.0))
+                    }))
+                    .child(widgets::note(
+                        "Poster frame. Source playback is not built: a decode cannot run on the \
+                         interactive render path, and this page has no source decode target.",
+                    )),
                 kind => viewer_plate(
                     theme::element_color(kind.label()),
                     &asset.name,
