@@ -481,6 +481,38 @@ fn scope_cost_is_reported() {
         ("+ parade", ScopeSet::PARADE),
         ("+ vectorscope", ScopeSet::VECTORSCOPE),
         ("+ histogram", ScopeSet::HISTOGRAM),
+        // Leave-one-out, because the alone-figures above are not additive: this pass is bound by
+        // the walk over the buffer, and a scope's arithmetic partly hides under memory latency
+        // that a second scope would have waited on anyway. What a page can actually act on is
+        // what turning one off *saves*, which is this block against "all four".
+        (
+            "all but waveform",
+            ScopeSet {
+                waveform: false,
+                ..ScopeSet::ALL
+            },
+        ),
+        (
+            "all but parade",
+            ScopeSet {
+                parade: false,
+                ..ScopeSet::ALL
+            },
+        ),
+        (
+            "all but vectorscope",
+            ScopeSet {
+                vectorscope: false,
+                ..ScopeSet::ALL
+            },
+        ),
+        (
+            "all but histogram",
+            ScopeSet {
+                histogram: false,
+                ..ScopeSet::ALL
+            },
+        ),
         ("all four", ScopeSet::ALL),
     ];
 
