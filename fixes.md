@@ -1,4 +1,4 @@
-# fixes — fifteen defects: ten from an audit, five found while building on it
+# fixes — sixteen defects: ten from an audit, six found while building on it
 
 Every one of these is the same failure in a different place: **a control that does not do what
 it says.** A tile that adds an effect nothing renders, a validator that accepts a channel
@@ -6,7 +6,7 @@ nothing reads, a schema that hides an effect the engine has, an import that succ
 nothing — none of them fail. They all return success and produce no change, which is the only
 kind of bug a person cannot find by looking at the screen.
 
-Six are fixed here. Nine are open, with what would verify each one, so nobody has to
+Eight are fixed here. Eight are open, with what would verify each one, so nobody has to
 re-discover them.
 
 **State at time of writing:** every fix below is covered by a named test, and each entry says
@@ -220,6 +220,108 @@ lie about itself. On investigation it is not a defect:
 The real defect was next to it, in the profile rather than the depth. Recorded here so the
 bit-depth question is answered once.
 
+### 6. `export_video` ran the whole encode on the UI thread, and was the one ungated output path
+
+`export_video` called `renderer.export_video(…)` straight through, on the main thread, inside
+the event handler. The window froze for the length of the encode — no progress, no cancel. And
+it was ungated, which was the more serious half. bay had two ways to produce a file:
+
+| | `render` over MCP | the window's Export button |
+|---|---|---|
+| `render_gate` | yes, via `bay-agent/src/slow.rs` | **no** |
+| `frame_check` | yes | **no** |
+| resolution | the project's canvas | **capped at 1280px wide** |
+| thread | a worker with its own GPU device | **the UI thread** |
+
+Everything `render_gate` refuses — off-canvas elements, type below legibility, missing media,
+black gaps, a silent export — was refused for an agent and shipped for a person clicking the
+button, at a lower resolution than they asked for and with no note that it was reduced.
+
+**Fixed by deleting the second path rather than gating it.** Both toolbar buttons are gone, and
+the Deliver page starts renders by handing arguments to `bay_agent::slow::run("render", …)` on
+`cx.background_executor()` — the identical call `app_view.rs` makes for an agent. That matters
+more than it sounds: the gate is reached because *that function* reaches it, not because the
+page remembered to. There is no second implementation left to drift.
+
+The worker builds its own `PreviewRenderer`, which is what `slow.rs` already decided and says
+why: *"a second adapter is what makes rendering concurrent with editing rather than instead of
+it."* Borrowing the editor's would have darkened the preview for the length of the encode and
+would still have been a third way to encode.
+
+- `rust/crates/bay-ui/src/editor/deliver.rs` — the page, `queue_render`, and the cancel button.
+- `rust/crates/bay-ui/src/editor/toolbar.rs` — where the two exports used to be; the header
+  says what was there and why it is not.
+- `rust/crates/bay-agent/src/deliver.rs` — the form as a headless value. `pages.md` rule 4: if
+  a headless test cannot reach a behaviour it is in the wrong crate, and "does every control on
+  this page reach the encoder?" must be answerable without a window.
+
+Verified by, with real exit codes:
+
+- `bay-ui` `deliver::tests::no_ui_call_site_encodes_for_itself` — walks every `.rs` in the
+  crate and fails on any `export_video(` / `export_video_observed(` call site. **This is the
+  test that stops the shape growing back**, which deleting the button alone would not. It
+  asserts it scanned at least ten files first, so a scan broken by a layout change fails rather
+  than passes; the needle is assembled from two halves so the test's own source is not a hit.
+- `bay-mcp` `render_queue::a_render_the_frame_check_refuses_does_not_write_a_file` — the gate,
+  on the path the page uses: a still-frame project comes back refused by name, names the
+  override, and leaves no file. Its twin
+  `the_override_is_a_real_escape_and_not_a_refusal_in_disguise` writes the file with
+  `ignoreChecks` and stamps the reason into the result, so the first is measuring the gate
+  rather than an unrelated failure to encode.
+- `bay-mcp` `render_queue::a_render_answers_with_a_job_before_it_has_encoded_anything` —
+  dispatch returns in under two seconds with a job id already in the queue. This is the
+  property a progress bar needs and the old button structurally could not have.
+- `bay-mcp` `render_queue::a_render_reports_frames_while_it_encodes_and_a_path_when_it_is_done`
+  — asserts the result is the project's own 320×180, which is the 1280 cap being gone rather
+  than merely believed gone.
+- `bay-mcp` `render_queue::a_queued_render_can_be_cancelled_while_it_runs`.
+
+Found while fixing it, and worth keeping: the first version of the progress test **failed**
+with `render refused by frame checks (frozen, anchor-scale, bottom-dead)`. The same project
+through the old button wrote the file and said nothing. That is this entry, observed.
+
+### 16. There was no out point, so a range could not be rendered at all
+
+Found while building the Deliver page's range control, and it had to be fixed before the
+control could exist.
+
+`render_duration` (`rust/crates/bay-agent/src/slow.rs`) refused any explicit `duration` that
+ended before the populated timeline:
+
+> render refused: duration 61.00s ends at 61.00s, but the populated timeline continues to
+> 155.00s (94.00s would be omitted).
+
+Correct, and for the caller it was written for. `duration` is a convenience — "encode this much
+from the in point" — and an agent passing one that stops short has almost always forgotten the
+tail, which is a defect that produces a plausible file nobody inspects.
+
+But `duration` was the *only* way to say how much to render, so the guard also meant bay had no
+out point. Exporting the first thirty seconds of a two-minute film required deleting ninety
+seconds of it. A range control drawn on top of that would have been a control the engine
+refuses — the same class as everything else in this file, arriving from the opposite direction.
+
+**Fixed by separating the two meanings rather than weakening the guard.** `duration` and
+`endSeconds` compute the same number and mean opposite things, so they are two arguments with a
+`Requested` enum between them: `Duration` keeps the check, `Until` is an out point and the tail
+it leaves out is the point. Passing both is refused rather than guessed — picking one silently
+is how a render comes back the wrong length with nothing on screen to explain it. The
+`duration` refusal now names `endSeconds`, so the way out is discoverable from the error.
+
+- `rust/crates/bay-agent/src/slow.rs` — `Requested`, `requested_range`, `render_duration`.
+- `rust/crates/bay-mcp/src/tools.rs` — the `render` schema, so an agent can find it too.
+
+Verified by:
+- `bay-agent` `an_out_point_renders_a_section_the_duration_guard_would_refuse` — the same 61
+  seconds, refused as a duration and allowed as an out point.
+- `bay-agent` `an_explicit_duration_cannot_silently_cut_off_the_timeline` — the pre-existing
+  guard, still refusing, and now asserted to name the escape.
+- `bay-agent` `duration_and_an_out_point_together_are_refused_rather_than_guessed`,
+  `an_out_point_before_the_in_point_is_refused_by_name`,
+  `an_out_point_never_runs_past_the_end_of_the_timeline`,
+  `no_range_argument_still_means_the_rest_of_the_timeline`.
+- `bay-mcp` `render_queue::an_out_point_is_accepted_where_a_short_duration_is_refused` — both
+  halves over the dispatcher, which is where the two callers actually meet.
+
 
 ## Open
 
@@ -349,38 +451,6 @@ Verified when: importing audio into a scene with no audio lane places a clip (or
 cannot); placing any media on a non-starter scene lands on that scene's own main track; and
 `Command::AddElement` against a track that does not exist is a visible failure rather than a
 `None`. A test naming a track id that is not `track-main` is the one that would have caught this.
-
-### 6. `export_video` runs the whole encode on the UI thread, and is the one ungated output path
-
-`export_video` (`rust/crates/bay-ui/src/editor_view.rs:1352`) calls `renderer.export_video(…)`
-straight through, on the main thread, inside the event handler. The window is frozen for the
-length of the encode — no progress, no cancel, and a spinning cursor on any timeline long enough
-to be worth exporting. Compare the preview rule the project already keeps: decode never runs on
-the interactive render path. An encode is that rule's own argument, several orders of magnitude
-larger.
-
-It is also ungated, and this is the more serious half. bay has two ways to produce a file:
-
-| | `render` over MCP | the window's Export button |
-|---|---|---|
-| `render_gate` (`bay-core/src/check.rs:3707`) | yes, via `bay-agent/src/slow.rs:342` | **no** |
-| `frame_check` (`bay-preview`) | yes, `slow.rs:284` | **no** |
-| resolution | the project's canvas | **capped at 1280px wide** |
-
-`render_gate` is reached from exactly one place in the workspace. Everything it refuses —
-off-canvas elements, type below legibility, missing media, black gaps, a silent export — is
-refused for an agent and shipped for a person clicking the button, at a lower resolution than
-they asked for and with no note that it was reduced. The comment on `render_stamp` says it
-plainly: *"a gate one path enforces and the other does not is not a gate, it is a preference."*
-
-Would be fixed by moving the encode onto the existing slow-job path — `slow_context` /
-`apply_slow_result` (`editor_view.rs:1389`) already exist and already carry a background job's
-project across the thread — so both output paths run the same gate and the same check, and the
-window stays alive.
-
-Verified when: a `grep` for `render_gate` finds two call sites; a project that `render` refuses
-is refused by the button with the same message; the button exports at the project's canvas size,
-or says why not; and the UI thread is not blocked for the duration of an encode.
 
 ### 7. `SceneEffect` is fully implemented and constructed nowhere
 
