@@ -11,9 +11,8 @@
 use std::path::PathBuf;
 
 use gpui::prelude::*;
-use gpui::{
-    div, Context, Div, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription, Window,
-};
+use gpui::{div, Context, Entity, FocusHandle, KeyDownEvent, Subscription, Window};
+use gpui_component::button::{Button, ButtonVariants as _};
 
 use bay_core::project::{CanvasSize, Fps, ProjectLibrary, ProjectSummary};
 use bay_core::Editor;
@@ -1108,10 +1107,6 @@ impl BayApp {
         }
     }
 
-    pub(crate) fn shared(text: impl Into<String>) -> SharedString {
-        SharedString::from(text.into())
-    }
-
     pub(crate) fn button(
         &self,
         id: &'static str,
@@ -1119,27 +1114,22 @@ impl BayApp {
         primary: bool,
         cx: &mut Context<Self>,
         handler: impl Fn(&mut BayApp, &mut Context<BayApp>) + 'static,
-    ) -> gpui::Stateful<Div> {
-        let kind = if primary {
-            crate::widgets::ButtonKind::Primary
+    ) -> Button {
+        let label: String = label.into();
+        let button =
+            Button::new(id)
+                .label(label)
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    handler(this, cx);
+                    cx.notify();
+                }));
+        // `primary` is a kind, not a colour argument — the call site cannot invent a fourth
+        // accent. That rule came from `widgets::ButtonKind` and survives the swap.
+        if primary {
+            button.primary()
         } else {
-            crate::widgets::ButtonKind::Normal
-        };
-        crate::widgets::pressable(
-            kind,
-            crate::widgets::button_face(kind, true)
-                .id(id)
-                .px_3()
-                .py_2()
-                .rounded_md()
-                .text_sm()
-                .child(Self::shared(label)),
-        )
-        .cursor_pointer()
-        .on_click(cx.listener(move |this, _event, _window, cx| {
-            handler(this, cx);
-            cx.notify();
-        }))
+            button
+        }
     }
 }
 

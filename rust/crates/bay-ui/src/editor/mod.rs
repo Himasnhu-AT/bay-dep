@@ -11,7 +11,9 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, RenderImage,
     SharedString, Window,
 };
+use gpui_component::button::Button;
 use gpui_component::resizable::{h_resizable, resizable_panel};
+use gpui_component::Disableable as _;
 
 use bay_core::blocks::{self, Panel};
 use bay_core::project::library;
@@ -875,24 +877,16 @@ impl EditorView {
         enabled: bool,
         cx: &mut Context<Self>,
         handler: impl Fn(&mut EditorView, &mut Context<EditorView>) + 'static,
-    ) -> gpui::Stateful<Div> {
-        let base = widgets::button_face(widgets::ButtonKind::Normal, enabled)
-            .id(id)
-            .px_3()
-            .py_1()
-            .rounded_md()
-            .text_sm()
-            .child(Self::shared(label.to_string()));
-        if enabled {
-            widgets::pressable(widgets::ButtonKind::Normal, base)
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    handler(this, cx);
-                    cx.notify();
-                }))
-        } else {
-            base
-        }
+    ) -> Button {
+        // A disabled button is still a button: drawn, refusing, and saying so by its fill. That
+        // was already bay's rule; `Disableable` is the library's spelling of it.
+        Button::new(id)
+            .label(label.to_string())
+            .disabled(!enabled)
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                handler(this, cx);
+                cx.notify();
+            }))
     }
 
     /// How long the "Claude is editing" chip stays up after the last agent edit.
@@ -1047,26 +1041,25 @@ impl EditorView {
         tooltip: &'static str,
         cx: &mut Context<Self>,
         action: impl Fn(&mut EditorView, &mut Context<EditorView>) + 'static,
-    ) -> gpui::Stateful<Div> {
-        let _ = tooltip;
-        widgets::pressable(
-            widgets::ButtonKind::Normal,
-            widgets::button_face(widgets::ButtonKind::Normal, true)
-                .id(id)
-                .w(px(BAR_ICON))
-                .h(px(24.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(4.0))
-                .child(glyph),
-        )
-        .cursor_pointer()
-        .on_click(cx.listener(move |this, _event, _window, cx| {
-            action(this, cx);
-            cx.notify();
-        }))
+    ) -> Button {
+        // The tooltip used to be taken and thrown away (`let _ = tooltip;`) because the crate had
+        // no tooltip to show it in. It has one now, and an icon-only control is exactly the case
+        // that cannot do without: the glyph is the whole label.
+        Button::new(id)
+            .label(glyph)
+            .tooltip(tooltip)
+            .compact()
+            // Kept explicit rather than letting the button size itself. `BarLayout::for_width`
+            // budgets 92px for the bar's right-hand cluster and the ladder is asserted down to a
+            // 320px window; a button that quietly chose its own width would break that with no
+            // test to catch it, because the ladder's tests assert on `BarLayout`'s arithmetic,
+            // not on what actually rendered.
+            .w(px(BAR_ICON))
+            .h(px(24.0))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                action(this, cx);
+                cx.notify();
+            }))
     }
 
     /// The editor as it has always been: toolbar, panels, preview, transport, scenes, timeline.
