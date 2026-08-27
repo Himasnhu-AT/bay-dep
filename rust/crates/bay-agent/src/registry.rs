@@ -384,7 +384,13 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Self {
             let guard = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
-            let dir = std::env::temp_dir().join(format!("bay-registry-{name}"));
+            // Per-process, for the same reason `private_port` is: two test binaries — a second
+            // checkout, or a worktree building alongside this one — otherwise share this
+            // directory by name, and `remove_dir_all` below wipes the other run's registry
+            // mid-test. That surfaced as `live()` returning 0 notes it had just written, which
+            // reads as a real failure and is a property of the machine.
+            let dir =
+                std::env::temp_dir().join(format!("bay-registry-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).expect("scratch dir");
             unsafe {

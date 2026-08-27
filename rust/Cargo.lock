@@ -741,6 +741,7 @@ version = "0.1.0"
 name = "bay-preview"
 version = "0.1.0"
 dependencies = [
+ "bay-audio",
  "bay-compositor",
  "bay-core",
  "bay-effects",

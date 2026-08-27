@@ -17,6 +17,7 @@ use bay_core::{
     AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaKind,
     MediaTime, Project, Transform, VideoElement,
 };
+use bay_preview::waveform::WaveformCache;
 use bay_preview::{CollectedFrame, PreviewRenderer};
 
 use crate::view_model::MediaFolder;
@@ -144,6 +145,11 @@ const TIMELINE_PADDING: f32 = 8.0;
 const TRACK_GAP: f32 = 8.0;
 /// Height of the ruler strip above the lanes — the scrub target.
 const RULER_HEIGHT: f32 = 22.0;
+
+/// Peaks drawn per audio clip. One bar every couple of pixels at a typical clip width — fine
+/// enough to read the shape, coarse enough that the extraction is cheap. It is also half the
+/// cache key: asking for a different count is a different waveform, not a reuse of this one.
+const WAVEFORM_BUCKETS: usize = 48;
 
 /// Window-space x of the left edge of every lane (and of the ruler). The timeline spans the
 /// window, so its own left edge is zero.
@@ -298,8 +304,9 @@ pub struct EditorView {
     retired_images: Vec<Arc<RenderImage>>,
     preview_sig: Option<u64>,
     presets: Vec<MotionPreset>,
-    /// media id → cached waveform peaks (empty vec = decoded but no audio / failed).
-    waveforms: std::collections::HashMap<String, Vec<f32>>,
+    /// Waveform peaks for the audio lanes. The cache itself lives in `bay-preview`; this is a
+    /// handle. Extraction runs on workers, so a clip draws bare until its peaks arrive.
+    waveforms: WaveformCache,
     /// Audio output (kept alive) + the current playing sink + decoded-PCM cache.
     audio_output: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
     audio_sink: Option<rodio::Sink>,
@@ -386,7 +393,7 @@ impl EditorView {
             retired_images: Vec::new(),
             preview_sig: None,
             presets: Vec::new(),
-            waveforms: std::collections::HashMap::new(),
+            waveforms: WaveformCache::new(),
             audio_output: rodio::OutputStream::try_default().ok(),
             audio_sink: None,
             audio_cache: std::collections::HashMap::new(),
@@ -707,27 +714,16 @@ impl EditorView {
         }
     }
 
-    /// Extract waveform peaks (once) for audio clips whose media resolves to a file.
-    fn ensure_waveforms(&mut self) {
-        let mut todo: Vec<(String, String)> = Vec::new();
-        {
-            let project = self.editor.project();
-            for track in &self.editor.active_scene().tracks.audio {
-                for element in &track.elements {
-                    if let bay_core::Element::Audio(audio) = element {
-                        if !self.waveforms.contains_key(&audio.media_id) {
-                            if let Some(path) = project.media_path(&audio.media_id) {
-                                todo.push((audio.media_id.clone(), path.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for (media_id, path) in todo {
-            let peaks = bay_audio::waveform_peaks(&path, 48).unwrap_or_default();
-            self.waveforms.insert(media_id, peaks);
-        }
+    /// Ask for a waveform for every audio clip on the timeline, and collect any that finished.
+    ///
+    /// Called from `render`, so it must not decode: extraction spawns ffmpeg and reads the whole
+    /// file, which on a long clip froze the frame for seconds. The cache starts a worker and
+    /// returns; `render` draws whatever has arrived. Same contract as the video decode path.
+    fn request_waveforms(&mut self) {
+        // Disjoint field borrows: &mut self.waveforms and &self.editor.
+        let scene = self.editor.active_scene();
+        let media = self.editor.media();
+        self.waveforms.request_scene(scene, media, WAVEFORM_BUCKETS);
     }
 
     /// Save the selected clip's effects + animations as an in-memory motion preset.
@@ -3724,7 +3720,7 @@ impl EditorView {
                 block
                     .media_id
                     .as_ref()
-                    .and_then(|m| self.waveforms.get(m))
+                    .and_then(|m| self.waveforms.peaks(m, WAVEFORM_BUCKETS))
                     .filter(|peaks| !peaks.is_empty())
             } else {
                 None
@@ -3899,6 +3895,12 @@ impl Render for EditorView {
         {
             window.request_animation_frame();
         }
+        // Waveform extraction is the same obligation on the audio side: it finishes on a worker
+        // and is collected by a later `request_waveforms`, so without a tick the peaks would
+        // appear only when something unrelated repainted.
+        if self.waveforms.has_pending() {
+            window.request_animation_frame();
+        }
         if self.needs_focus {
             self.needs_focus = false;
             window.focus(&self.focus_handle);
@@ -3908,7 +3910,7 @@ impl Render for EditorView {
         // than lingering until whatever repaints next — which, once playback stops, may be
         // nothing at all.
         self.release_retired_images(window);
-        self.ensure_waveforms();
+        self.request_waveforms();
         let vm = EditorViewModel::build(&self.editor);
 
         div()

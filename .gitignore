@@ -41,3 +41,6 @@ assets/podcast-cut/*.webm
 # third-party media scraped from public accounts — provenance in each index.json,
 # and not ours to redistribute, so it stays out of the repo
 downloaded-assets/
+
+# Agent worktrees — isolated checkouts, never part of a commit
+.claude/worktrees/

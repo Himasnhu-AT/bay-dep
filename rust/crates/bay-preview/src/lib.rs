@@ -8,6 +8,7 @@
 
 pub mod frame_check;
 pub mod probe;
+pub mod waveform;
 
 use bay_compositor::{
     BlendMode, CanvasClearDescriptor, Compositor, EffectPassDescriptor,

@@ -5,9 +5,15 @@
 //! "Sharpen" effect and a "Denoise" audio tool, and bay has a shader for none of them; a tile
 //! that adds an effect the compositor ignores is a control that does nothing, discovered only
 //! after an export comes back looking unchanged. So the catalog is derived from what exists:
-//! five effects because [`bay_effects`] compiles five shaders, transitions built from fades and
+//! six effects because [`bay_effects`] compiles six shaders, transitions built from fades and
 //! animation channels because there is no transition object, and audio tools built from fades
 //! and the `volume` channel.
+//!
+//! The converse is just as much a defect and is quieter: `lut` was implemented, translated by
+//! `bay-preview`, validated by `check` and reachable over MCP, and had no tile — a whole
+//! grading capability that could not be reached by clicking. A shader with no tile is not a
+//! dead control, it is a missing one, and only a person reading both lists side by side would
+//! ever find it.
 //!
 //! It lives in `bay-core` rather than the UI crate for the workspace rule — an MCP client and a
 //! test must be able to ask for "cross dissolve on the selection" without a window.
@@ -199,7 +205,26 @@ const EFFECT_BLOCKS: &[Block] = &[
         detail: "drop shadow",
         needs_selection: true,
     },
+    Block {
+        id: "fx.lut",
+        label: "Look",
+        detail: "neutral contrast grade",
+        needs_selection: true,
+    },
 ];
+
+/// The grade the Look tile attaches.
+///
+/// A built-in rather than a file picker, because a `lut` effect with no `asset` behind it is
+/// dropped by the render path entirely — the tile would add a row to the inspector and change
+/// no pixel, which is the exact failure this module exists to prevent. Built-ins are generated
+/// on the machine, so the tile works on a install that has never downloaded anything, and the
+/// grade can be swapped for a `.cube` afterwards without removing the effect.
+///
+/// Neutral Contrast because it is the only look in the set that is a *finish* rather than a
+/// statement: a tile in a palette is reached for before anyone has decided what the film looks
+/// like, and Teal & Orange arriving on one click is a decision made on the user's behalf.
+const TILE_LOOK: &str = "neutral-contrast";
 
 const AUDIO_BLOCKS: &[Block] = &[
     Block {
@@ -367,6 +392,14 @@ pub fn plan(
             reference,
             "drop-shadow",
             default_effect_params("drop-shadow"),
+            None,
+            fresh_id,
+        )]),
+        "fx.lut" => Ok(vec![add_effect_with(
+            reference,
+            "lut",
+            default_effect_params("lut"),
+            Some(format!("{}{TILE_LOOK}", bay_project::LOOK_PREFIX)),
             fresh_id,
         )]),
 
@@ -566,22 +599,29 @@ pub fn default_effect_params(effect_type: &str) -> BTreeMap<String, f32> {
         ]),
         // Sigma in pixels.
         "blur" => BTreeMap::from([("amount".to_string(), 4.0)]),
+        // How much of the grade to apply, so 1.0 is the *full* look, not "no change" —
+        // the opposite of what the same number means on the colour adjustments below.
+        // A grade that arrives at 0 is a control that did nothing, and telling that from a
+        // subtle look by eye is exactly what nobody can do.
+        "lut" => BTreeMap::from([("amount".to_string(), 1.0)]),
         // The colour adjustments seed at 1.0, which is no change, so adding one is visible in
         // the inspector without altering the frame until it is tuned.
         _ => BTreeMap::from([("amount".to_string(), 1.0)]),
     }
 }
 
-/// An effect whose contract is several named scalars rather than one `amount`.
+/// An effect whose contract is several named scalars, or a grade it cannot render without.
 ///
-/// `add_effect` writes a single `amount`, which is the whole contract for the colour
-/// adjustments and for blur's sigma. A drop shadow has five parameters and ignores `amount`
-/// entirely, so building it through `add_effect` would put a param on the element that
-/// nothing reads.
+/// `add_effect` writes a single `amount` and no asset, which is the whole contract for the
+/// colour adjustments and for blur's sigma. A drop shadow has five more parameters, and a
+/// `lut` is nothing at all without an `asset` — the render path drops a grade with no table
+/// behind it — so building either through `add_effect` would produce an effect the compositor
+/// skips.
 fn add_effect_with(
     reference: ElementRef,
     effect_type: &str,
     params: impl IntoIterator<Item = (String, f32)>,
+    asset: Option<String>,
     fresh_id: &mut dyn FnMut(&str) -> String,
 ) -> Command {
     Command::AddEffect {
@@ -591,7 +631,7 @@ fn add_effect_with(
             effect_type: effect_type.to_string(),
             enabled: true,
             params: params.into_iter().collect(),
-            asset: None,
+            asset,
         },
     }
 }
@@ -680,19 +720,22 @@ mod tests {
         reference
     }
 
+    /// The set `bay-preview` translates and `bay-agent` validates against. Pinned equal to
+    /// `bay_agent::plan::SUPPORTED_EFFECTS` by `bay-mcp`'s `tool_vocabulary` tests, which can
+    /// see both crates; this one cannot, since `bay-agent` depends on it and not the reverse.
+    const IMPLEMENTED: [&str; 6] = [
+        "brightness",
+        "contrast",
+        "saturation",
+        "blur",
+        "lut",
+        "drop-shadow",
+    ];
+
     /// The reason this module exists. Every effect tile must name a shader the compositor
     /// actually compiles, or the tile is a control that silently does nothing.
     #[test]
     fn every_effect_tile_names_a_shader_the_engine_implements() {
-        // The set `bay-preview` translates and `bay-agent` validates against.
-        const IMPLEMENTED: [&str; 6] = [
-            "brightness",
-            "contrast",
-            "saturation",
-            "blur",
-            "lut",
-            "drop-shadow",
-        ];
         let mut editor = Editor::starter();
         select_title(&mut editor);
         let mut next = ids();
@@ -713,7 +756,50 @@ mod tests {
                 "{} must set an amount the inspector can nudge",
                 tile.id
             );
+            // A grade is the one effect that needs more than a shader name: the render path
+            // drops a `lut` whose asset resolves to no table, so a tile that attached one
+            // without a grade would pass every assertion above and still change nothing.
+            if effect.effect_type == "lut" {
+                let asset = effect.asset.as_deref().unwrap_or_else(|| {
+                    panic!("{} adds a lut with no grade behind it", tile.id);
+                });
+                let id = bay_project::look_id(asset).unwrap_or_else(|| {
+                    panic!("{tile:?} must name a built-in look, not a path that may not exist")
+                });
+                assert!(
+                    bay_project::is_builtin_look(id),
+                    "{} names look {id:?}, which this build cannot generate",
+                    tile.id
+                );
+            }
         }
+    }
+
+    /// The converse, and the quieter defect: a shader with no tile is a capability that cannot
+    /// be reached by clicking. `lut` was implemented, translated, validated and exposed over
+    /// MCP with no tile in the palette for its whole life.
+    #[test]
+    fn every_shader_the_engine_implements_has_a_tile() {
+        let mut editor = Editor::starter();
+        select_title(&mut editor);
+        let mut next = ids();
+
+        let mut offered: Vec<String> = Vec::new();
+        for tile in Panel::Effects.blocks() {
+            if let Some(Command::AddEffect { effect, .. }) =
+                plan(&editor, tile.id, &mut next).expect(tile.id).first()
+            {
+                offered.push(effect.effect_type.clone());
+            }
+        }
+        let missing: Vec<&str> = IMPLEMENTED
+            .into_iter()
+            .filter(|shader| !offered.iter().any(|offered| offered == shader))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the compositor renders {missing:?} and no tile adds them — unreachable by clicking"
+        );
     }
 
     #[test]

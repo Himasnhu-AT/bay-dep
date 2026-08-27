@@ -115,6 +115,7 @@ Provisioning additionally has two network-backed tests that are skipped unless
 | **Masks activation** | the JFA SDF feather pipeline is written and tested but `mask: None` is hardcoded; it needs a mask model on `Element` first |
 | **Zero-copy preview** | blocked by wgpu 29's Metal hal exposing no `texture_from_raw` to import an external IOSurface-backed texture |
 | **Transcription, multicam, semantic search** | on the plan's explicit cut list — outside the "except the AI assistant side" scope |
+| **`Rgba16Float` intermediates** | every source is 8-bit at upload, so a wider intermediate carries nothing extra, and the flip would silently change output because the unorm target's hardware clamp is load-bearing in `brightness.wgsl`. Decision, evidence and the trigger that reopens it: [`intermediate-format.md`](intermediate-format.md) |
 
 ---
 

@@ -40,6 +40,19 @@ static MOVE_HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     )
 });
 
+/// The `type` enum on `effect_add`, read off the same list `plan` validates against.
+///
+/// Written out longhand beside the validator, the two drifted: `drop-shadow` was renderable
+/// and legal, and missing from this enum, so the shader an agent reaches for most was
+/// undiscoverable from the tool definition. A `LazyLock` rather than the slice inlined because
+/// the enum is sorted for a stable schema — a tool definition that reorders between builds is
+/// a diff in every client that caches it.
+static EFFECT_TYPES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let mut types = bay_agent::plan::SUPPORTED_EFFECTS.to_vec();
+    types.sort_unstable();
+    types
+});
+
 fn number(value: &Value, key: &str, fallback: f64) -> f64 {
     value.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
 }
@@ -1301,11 +1314,11 @@ pub fn all_definitions() -> Vec<Value> {
             "effect_add",
             "Add a picture effect to a clip. Returns the effect id, which effect_set and \
              effect_remove take. `amount` is the usual parameter: 1.0 is unchanged for the \
-             colour adjustments, sigma in pixels for blur, and how much of the grade to apply \
-             for a lut.",
+             colour adjustments, sigma in pixels for blur, how much of the grade to apply for \
+             a lut, and the shadow's opacity for drop-shadow.",
             json!({
                 "elementId": { "type": "string" },
-                "type": { "type": "string", "enum": ["brightness", "contrast", "saturation", "blur", "lut"] },
+                "type": { "type": "string", "enum": EFFECT_TYPES.as_slice() },
                 "look": { "type": "string",
                     "description": "A built-in grade by id — call looks_list first. Generated on the machine, so there is nothing to download and nothing to go missing." },
                 "lut": { "type": "string",
@@ -1319,7 +1332,13 @@ pub fn all_definitions() -> Vec<Value> {
                          1.0 is unchanged — 1.06 is a gentle lift and 0.9 pulls it back, so \
                          0.06 is not a six percent adjustment but a ninety-four percent \
                          removal, which on contrast flattens the whole frame to mid-grey. \
-                         `blur`: radius in pixels.",
+                         `blur`: radius in pixels. `drop-shadow` is the one effect with more \
+                         than one dial: `amount` is the shadow's opacity (0.18 is a card \
+                         sitting on a page), `offsetX`/`offsetY` its displacement in pixels, \
+                         `blur` its softness in pixels, `spread` how much it grows before \
+                         blurring, and `colorR`/`colorG`/`colorB` its colour in 0-1. Omitted \
+                         parameters take those defaults rather than zero, so a shadow added \
+                         with no params is already visible.",
                 },
                 "effectId": { "type": "string", "description": "Minted if omitted." }
             }),

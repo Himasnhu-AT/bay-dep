@@ -1,0 +1,332 @@
+# fixes — eleven defects: ten from an audit, one found while running it
+
+Every one of these is the same failure in a different place: **a control that does not do what
+it says.** A tile that adds an effect nothing renders, a validator that accepts a channel
+nothing reads, a schema that hides an effect the engine has, an import that succeeds and places
+nothing — none of them fail. They all return success and produce no change, which is the only
+kind of bug a person cannot find by looking at the screen.
+
+Five are fixed here. Six are open, with what would verify each one, so nobody has to
+re-discover them.
+
+**State at time of writing:** `./test.sh` clean — fmt, `clippy --workspace --all-targets
+-D warnings`, and the full test suite. Line numbers in `bay-ui/src/editor_view.rs` were read
+on 2026-08-27; that file is under concurrent edit and they move.
+
+---
+
+## Fixed
+
+### 1. A group accepted six animation channels it could not carry
+
+`bay-agent`'s `animate` validated a group `animate` against `Element::ANIMATABLE` — all thirteen
+transform properties — while `ElementGroup::sampled_transform`
+(`rust/crates/bay-project/src/scene.rs:90`) read seven of them. An agent that keyed `cropLeft`
+or `tiltY` on a group got a written channel, a successful tool result, a project file that
+round-tripped it, and a frame that never moved.
+
+Sampling the other six would not have helped, and that is the part worth recording:
+`compose_group_transform` (`rust/crates/bay-project/src/scene.rs:240`) folds a group's transform
+into each child's and carries exactly seven fields — x, y, scale, scaleX, scaleY, rotation,
+opacity. Crop and tilt are dropped there too. Even a group whose *static* `crop_left` is 0.3
+crops nothing.
+
+**Chosen: narrow the validator, and refuse the six by name.** Not because sampling is hard, but
+because there is no honest thing for it to mean. Cropping a group is one rectangle losing its
+left edge, which needs the group rasterised to its own surface and cut — a pass the compositor
+does not have. Applying the group's crop to each child instead is four elements each losing
+their own left edge, a different picture that happens to be reachable. Implementing the wrong
+one of those quietly is worse than refusing both loudly, and the refusal now says where the
+channel does work: on the child element, where all thirteen are real.
+
+- `rust/crates/bay-project/src/scene.rs:70` — `ElementGroup::ANIMATABLE`, the seven, with why
+  the six are not there.
+- `rust/crates/bay-agent/src/plan.rs:1496` — validates against it, and the message tells an
+  agent to animate crop on the child instead of leaving it guessing.
+
+Verified by:
+- `bay-project` `every_group_animatable_channel_changes_the_sampled_transform` — each of the
+  seven, sampled, moves the transform. Nothing is offered that does nothing.
+- `bay-project` `the_channels_a_group_refuses_would_have_sampled_into_nowhere` — the six really
+  are inert. If a later build teaches composition to carry crop or tilt, **this test fails**,
+  and `ElementGroup::ANIMATABLE` is what has to grow.
+- `bay-project` `group_crop_and_tilt_do_not_compose_onto_a_child` — the fact the decision rests
+  on, tested at the composition function rather than inferred from it.
+- `bay-agent` `a_group_takes_every_channel_that_composes_onto_its_children`,
+  `a_group_refuses_the_channels_it_cannot_carry_by_name`,
+  `the_channels_a_group_refuses_still_animate_on_an_element`.
+
+### 2. `drop-shadow` was renderable, legal, and missing from `effect_add`'s schema
+
+`SUPPORTED_EFFECTS` (`rust/crates/bay-agent/src/plan.rs:619`) listed six effects; `effect_add`'s
+`type` enum in `bay-mcp/src/tools.rs` wrote out five. The two lists were maintained by hand next
+to each other and drifted. An agent reading the tool definition could not discover `drop-shadow`
+at all — the effect it most obviously wants for a card or a title — and a call naming it looked
+like a schema violation going in while being perfectly legal going through.
+
+Fixed by deriving the enum, so the drift cannot recur:
+
+- `rust/crates/bay-agent/src/plan.rs:619` — `SUPPORTED_EFFECTS` is now `pub`. It is the one list.
+- `rust/crates/bay-mcp/src/tools.rs:43` — `EFFECT_TYPES`, a `LazyLock` reading it (sorted, so a
+  cached tool definition does not churn between builds), following `MOVE_IDS` at
+  `tools.rs:25`.
+- `rust/crates/bay-mcp/src/tools.rs:1321` — the schema uses it.
+- `rust/crates/bay-mcp/src/tools.rs:1335` — and the `params` description now documents
+  drop-shadow's six parameters, which no surface stated. Offering an effect whose parameters are
+  undocumented is only half a fix.
+
+Verified by, in `bay-mcp/tests/tool_vocabulary.rs`, both directions — read off the *published*
+`definitions()` JSON, not off the const, so re-inlining a literal fails the test:
+- `every_effect_the_engine_renders_is_offered_by_effect_add`
+- `every_effect_effect_add_offers_is_one_the_engine_renders`
+
+### 3. `lut` had no tile — a whole grading capability unreachable by clicking
+
+The quieter half of the same rule. `EFFECT_BLOCKS` (`rust/crates/bay-core/src/blocks.rs:177`)
+named five of the six shaders the compositor compiles. `lut` was implemented in the shader,
+translated by `bay-preview`, validated by `check`, exposed over MCP — and had no tile, so it
+could not be reached from the app at all. A tile naming a missing shader is a dead control and
+is caught by a test; a shader with *no* tile is a missing control, and only a person reading
+both lists side by side would ever find it.
+
+- `rust/crates/bay-core/src/blocks.rs:209` — the `fx.lut` tile ("Look").
+- `rust/crates/bay-core/src/blocks.rs:398` — its `plan` arm, seeded from `default_effect_params`.
+- `rust/crates/bay-core/src/blocks.rs:606` — an explicit `lut` arm in `default_effect_params`.
+  It seeds the same 1.0 the fallback did, but `amount` on a lut is *how much of the grade to
+  apply*, not "no change" as it is for the colour adjustments; a grade arriving at 0 would be
+  another silent control, and telling that from a subtle look by eye is exactly what nobody can
+  do.
+
+The tile attaches the built-in **Neutral Contrast** grade rather than opening a file picker,
+because a `lut` effect with no `asset` behind it is dropped by the render path
+(`bay-preview/src/lib.rs:48`) — a tile that added one would add a row to the inspector and change
+no pixel, the exact failure this module exists to prevent. Built-ins are generated on the
+machine, so it works on an install that has never downloaded anything, and a `.cube` can replace
+it afterwards without removing the effect. Neutral Contrast because it is a finish rather than a
+statement; a tile reached for before anyone has decided what the film looks like should not
+decide that on their behalf.
+
+Verified by:
+- `bay-core` `every_effect_tile_names_a_shader_the_engine_implements` — the pre-existing test,
+  still passing, now also asserting that a `lut` tile carries a grade the build can generate.
+- `bay-core` `every_shader_the_engine_implements_has_a_tile` — new, and the converse. This is
+  the test whose absence let `lut` go missing.
+- `bay-mcp` `the_effect_palette_and_the_planner_name_the_same_shaders` — pins the palette equal
+  to `SUPPORTED_EFFECTS` in both directions. It lives in `bay-mcp` because that is the only
+  crate that can see both `bay-core` and `bay-agent`; `bay-core` cannot check this itself, which
+  is why the two drifted.
+
+### 4. Waveform extraction decoded synchronously inside `render()`
+
+Owned by another agent in this change; recorded here for completeness. `ensure_waveforms` ran
+ffmpeg decodes on the UI thread inside `render()`, so opening a project with audio froze the
+window for as long as the decode took — the same defect as "decode never runs on the interactive
+render path", on the audio side.
+
+**In progress.** At the time of writing it has become `request_waveforms`
+(`rust/crates/bay-ui/src/editor_view.rs:722`), dispatching to a worker, with the render tick
+requesting an animation frame while `self.waveforms.has_pending()`
+(`editor_view.rs:3901`) so finished peaks appear without waiting for an unrelated repaint. The
+verification belongs to that agent, not to this document — do not read the code shape above as a
+passing test.
+
+---
+
+### 11. Two test binaries shared one scratch directory, so concurrent runs failed each other
+
+`registry::tests::Scratch::new` built its directory as `temp_dir()/bay-registry-{name}` and
+opened by calling `remove_dir_all` on it. The name carries the test's name and nothing else, so a
+second test binary running the same test — another checkout, or an agent building in a git
+worktree alongside this one — resolved the same path and wiped the first run's registry between
+its `register()` and its `live()`. The symptom was
+`a_headless_server_is_never_the_window_to_focus` asserting one live instance and finding zero:
+notes the test had written itself, gone.
+
+The port beside it already had this exact fix, with the reasoning written down at
+`registry.rs:369` — *"Derived from the pid, so two test binaries — or two checkouts building at
+once — cannot pick the same one"*. The directory never got the same treatment, so the collision
+moved from the port to the path and stopped being visible.
+
+This is the rule in `CLAUDE.md` that names these tests by name: *a test that fails for reasons
+outside the repository teaches people to re-run until green, which is how a real failure gets
+ignored.* It failed once in a full-workspace run and then passed 73/73 five times in a row when
+run alone — which is exactly the shape that gets filed as flake and re-run.
+
+- `rust/crates/bay-agent/src/registry.rs:392` — the scratch directory is now per-process, for the
+  same stated reason the port beside it is.
+
+Measured by running two copies of the test binary concurrently and counting failed runs:
+
+| | failed runs |
+|---|---|
+| before | 11 of 12 |
+| after | 0 of 16 |
+
+Found by running the suite under a worktree-parallel agent team, which is what put two test
+binaries on the machine at once. Worth keeping in mind: this class of defect is invisible to a
+single-threaded developer and routine under parallel agents.
+
+## Open
+
+### 5. Importing audio into a project with no audio lane succeeds and places nothing
+
+`place_media` (`rust/crates/bay-ui/src/editor_view.rs:1235`) chooses a lane by media kind and
+names it with a **string literal**: `"track-audio"` for audio, `"track-main"` for video and
+images. It then executes `Command::AddElement` and ignores the result. Lowering that command is
+`scene.tracks.track(track_id)?` (`rust/crates/bay-core/src/command.rs:880`) — a `?` on an
+`Option`, so a track that does not exist produces `None`: no patch, no undo entry, no error, no
+status line. The file imports, the media panel lists it, the timeline does not change, and
+nothing anywhere says why.
+
+Two bugs share the literal:
+
+- **No audio lane.** `Scene::empty` (`bay-core`) creates one video track and no audio lane, so
+  any project that has not yet grown one swallows every audio import.
+- **Any scene after the first.** `Scene::empty` names its main track `{scene_id}-main`. Only the
+  starter scene's track is literally `track-main`. On scene two, video and image placement miss
+  as silently as audio does.
+
+Would be fixed by resolving the lane from `scene.tracks` — the audio lane if there is one, else
+creating one in the same transaction as the element, the way `add_shape` already creates the
+overlay lanes it needs (`bay-agent/src/plan.rs`, tested by
+`a_high_layer_creates_the_lanes_it_needs_in_one_transaction`). The resolution belongs in
+`bay-core`, not in the view: an MCP client placing media has exactly the same problem.
+
+Verified when: importing audio into a scene with no audio lane places a clip (or reports why it
+cannot); placing any media on a non-starter scene lands on that scene's own main track; and
+`Command::AddElement` against a track that does not exist is a visible failure rather than a
+`None`. A test naming a track id that is not `track-main` is the one that would have caught this.
+
+### 6. `export_video` runs the whole encode on the UI thread, and is the one ungated output path
+
+`export_video` (`rust/crates/bay-ui/src/editor_view.rs:1352`) calls `renderer.export_video(…)`
+straight through, on the main thread, inside the event handler. The window is frozen for the
+length of the encode — no progress, no cancel, and a spinning cursor on any timeline long enough
+to be worth exporting. Compare the preview rule the project already keeps: decode never runs on
+the interactive render path. An encode is that rule's own argument, several orders of magnitude
+larger.
+
+It is also ungated, and this is the more serious half. bay has two ways to produce a file:
+
+| | `render` over MCP | the window's Export button |
+|---|---|---|
+| `render_gate` (`bay-core/src/check.rs:3707`) | yes, via `bay-agent/src/slow.rs:342` | **no** |
+| `frame_check` (`bay-preview`) | yes, `slow.rs:284` | **no** |
+| resolution | the project's canvas | **capped at 1280px wide** |
+
+`render_gate` is reached from exactly one place in the workspace. Everything it refuses —
+off-canvas elements, type below legibility, missing media, black gaps, a silent export — is
+refused for an agent and shipped for a person clicking the button, at a lower resolution than
+they asked for and with no note that it was reduced. The comment on `render_stamp` says it
+plainly: *"a gate one path enforces and the other does not is not a gate, it is a preference."*
+
+Would be fixed by moving the encode onto the existing slow-job path — `slow_context` /
+`apply_slow_result` (`editor_view.rs:1389`) already exist and already carry a background job's
+project across the thread — so both output paths run the same gate and the same check, and the
+window stays alive.
+
+Verified when: a `grep` for `render_gate` finds two call sites; a project that `render` refuses
+is refused by the button with the same message; the button exports at the project's canvas size,
+or says why not; and the UI thread is not blocked for the duration of an encode.
+
+### 7. `SceneEffect` is fully implemented and constructed nowhere
+
+`FrameItemDescriptor::SceneEffect` (`rust/crates/bay-compositor/src/frame.rs:26`) is handled by
+the compositor in **both** render paths — offscreen at `compositor.rs:333` and onscreen at
+`compositor.rs:389`. Nothing in the workspace ever builds one. Grep finds three hits: the
+definition and the two arms that consume it.
+
+This is not dead code in the ordinary sense. It is a working adjustment-layer / master-grade
+capability — effect passes applied to the composited scene rather than to one clip — with no
+model field, no tool, and no tile to reach it. A colour grade over the whole film is currently
+done by attaching the same effect to every clip, which drifts the moment a clip is added.
+
+Would be fixed by a scene-level `effects` list in `bay-project` (kebab-case wire format,
+`#[serde(default)]` so older projects load), lowered into a `SceneEffect` item after the last
+element, plus the tool and the tile. The engine half is already written and already tested by
+the compositor's own paths — this is model and surface work, not render work.
+
+Verified when: a project with a scene-level grade renders differently from the same project
+without one, at the GPU; the field round-trips through serde by name; and `check` treats a
+scene-level `lut` with a missing `.cube` the way it treats a clip-level one.
+
+### 8. Three geometry helpers are written, tested, and called by nothing
+
+`rust/crates/bay-ui/src/geometry.rs`:
+
+- `fit_rect` (line 440) — letterbox a canvas into a viewport with zoom and pan.
+- `track_y_offsets` (line 471) — cumulative lane tops.
+- `track_at_y` (line 483) — which lane a y coordinate is in.
+
+All three are `pub`, all three have thorough tests (`geometry.rs:1022`–`1090`, including a
+zero-sized viewport and a NaN aspect), and none has a caller outside its own tests. The tests
+make them look maintained, which is the reason to write this down rather than to assume someone
+knows.
+
+Two honest resolutions, and the choice is a product one:
+
+- **Delete them.** Nothing is worse off, and the tests stop asserting things nobody depends on.
+- **Use them.** `fit_rect` is what a preview pane with zoom and pan needs, and
+  `track_y_offsets`/`track_at_y` are what timeline hit-testing needs — both are on the roadmap
+  (M2, M4). If they are being kept for that, they should say so in a doc comment naming the
+  milestone, so the next reader does not spend the same half hour.
+
+Deferred deliberately rather than guessed at: deleting a helper the six-page editor is about to
+need is not a cleanup.
+
+### 9. `GPU_TEXTURE_FORMAT` is a public constant nothing reads
+
+`rust/crates/bay-gpu/src/lib.rs:8`:
+
+```rust
+pub const GPU_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
+```
+
+Grep the workspace: the definition is the only hit. The format that actually governs every
+render target is chosen at runtime in `GpuContext::new` (`bay-gpu/src/context.rs:172-176`,
+`Rgba8Unorm` on GL, `Bgra8Unorm` everywhere else) and read back through
+`GpuContext::texture_format()` (`:441`).
+
+This is a trap rather than mere dead code, and it is aimed at one specific future reader: the
+next person to widen the intermediate format. The constant is public, is named as though it were
+authoritative, and sits in `lib.rs` where a newcomer looks first. Changing it compiles, changes
+nothing, and looks done.
+
+Would be fixed by deleting it. If a name for "the format bay renders into" is wanted, it has to
+be the runtime accessor, because the GL fallback means there is no single compile-time answer.
+
+Verified when: `rg GPU_TEXTURE_FORMAT` returns nothing, and `./test.sh` is clean.
+
+### 10. The JFA mask shaders pack coordinates into colour, and take their format from the global accessor
+
+`rust/crates/bay-masks/src/shaders/jfa_init.wgsl` encodes integer seed coordinates as colour
+channels:
+
+```wgsl
+return vec4f(x_hi / 255.0, x_lo / 255.0, y_hi / 255.0, y_lo / 255.0);
+```
+
+and `jfa_distance.wgsl` decodes them by undoing exactly that:
+
+```wgsl
+let x = floor(encoded.r * 255.0 + 0.5) * 256.0 + floor(encoded.g * 255.0 + 0.5);
+```
+
+with `is_no_seed` sentinelling on `> 0.99` in all four channels. The scheme is correct and
+tested. The problem is that it is a hard dependency on an **8-bit unorm** render target, and the
+pipelines it runs on take their format from the same global accessor as everything else —
+`bay-masks/src/sdf.rs:101` and `:109` both pass `context.texture_format()`.
+
+Not a bug today. It is a landmine on the widening path: a future move to `Rgba16Float` (see
+[`docs/native/intermediate-format.md`](docs/native/intermediate-format.md)) would carry these
+shaders along silently. They would still compile, still run, and still produce a plausible
+alpha ramp — with mask distances quietly wrong at the edges, which is the hardest class of
+error to notice, because a feathered mask has no crisp reference to disagree with.
+
+Would be fixed by pinning the JFA textures to an explicitly 8-bit format independent of
+`texture_format()`, or by re-encoding seeds as real floats and dropping the packing. The first
+is smaller; the second is what the data actually wants.
+
+Verified when: the JFA pipelines name their own format rather than inheriting one, and a test
+rasterizes a known mask, feathers it, and asserts the alpha ramp — so that a format change to
+the *rest* of the compositor cannot move the result at all.

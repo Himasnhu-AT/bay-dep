@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use bay_core::{Command, ElementRef, TrackLane};
 use bay_project::moves::{self, Direction, Move, MoveParams};
 use bay_project::{
-    AnimationChannel, Easing, Effect, Element, ElementRole, ElementSource, MediaTime, Project,
-    ShapeElement, ShapeKind, TextAlign, TextElement, Transform, is_caption_id,
+    AnimationChannel, Easing, Effect, Element, ElementGroup, ElementRole, ElementSource, MediaTime,
+    Project, ShapeElement, ShapeKind, TextAlign, TextElement, Transform, is_caption_id,
 };
 use serde_json::Value;
 
@@ -610,7 +610,13 @@ fn easing_name(easing: Easing) -> &'static str {
 
 /// The effects the compositor actually renders. Naming one it does not know would attach a
 /// no-op the agent then cannot see the absence of — worse than refusing it.
-const SUPPORTED_EFFECTS: &[&str] = &[
+///
+/// Public because it is the *only* list: `effect_add`'s JSON Schema `enum` is read off this
+/// slice rather than written out beside it. Written out, the two drifted — `drop-shadow` was
+/// validated here and absent from the schema, so an agent reading the tool definition could
+/// not discover the one effect it most obviously wanted, and a call naming it looked like a
+/// schema violation on the way in while being perfectly legal on the way through.
+pub const SUPPORTED_EFFECTS: &[&str] = &[
     "brightness",
     "contrast",
     "saturation",
@@ -1488,10 +1494,25 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
             }
 
             if let Some(group) = project.active_scene().groups.get(&element_id) {
-                if !Element::ANIMATABLE.contains(&property.as_str()) {
+                // Against the *group's* list, not the element's. A group is a transform parent
+                // and `compose_group_transform` carries seven channels; validating against all
+                // thirteen of `Element::ANIMATABLE` accepted crop and tilt, wrote the channel,
+                // returned success — and nothing moved, because nothing downstream reads them.
+                // See `ElementGroup::ANIMATABLE` for why the six cannot simply be sampled.
+                if !ElementGroup::ANIMATABLE.contains(&property.as_str()) {
+                    let element_only: Vec<&str> = Element::ANIMATABLE
+                        .into_iter()
+                        .filter(|name| !ElementGroup::ANIMATABLE.contains(name))
+                        .collect();
+                    let hint = if element_only.contains(&property.as_str()) {
+                        " — a group is a transform parent and carries no crop or tilt onto its \
+                         children; animate it on the child element instead"
+                    } else {
+                        ""
+                    };
                     return Err(format!(
-                        "{property:?} cannot be animated on a group — pick one of {:?}",
-                        Element::ANIMATABLE
+                        "{property:?} cannot be animated on a group{hint}. A group takes {:?}",
+                        ElementGroup::ANIMATABLE
                     ));
                 }
                 let mut group = group.clone();
@@ -3710,6 +3731,112 @@ mod tests {
             &commands[..],
             [Command::SetGroup { group }] if group.id == "hero" && group.children == ["v1"]
         ));
+    }
+
+    /// A project with one clip in a group, which is what a group `animate` needs.
+    fn project_with_group() -> Project {
+        let mut project = project_with_clip();
+        project.active_scene_mut().groups.insert(
+            "hero".into(),
+            ElementGroup {
+                id: "hero".into(),
+                children: vec!["v1".into()],
+                transform: Transform::default(),
+                animations: BTreeMap::new(),
+            },
+        );
+        project
+    }
+
+    fn animate_group(property: &str, project: &Project) -> Result<Planned, String> {
+        plan(
+            "animate",
+            &serde_json::json!({
+                "elementId": "hero",
+                "property": property,
+                "keys": [{ "t": 0.0, "value": 0.0 }, { "t": 1.0, "value": 1.0 }],
+            }),
+            project,
+        )
+    }
+
+    /// The seven channels `compose_group_transform` carries are the seven a group accepts.
+    #[test]
+    fn a_group_takes_every_channel_that_composes_onto_its_children() {
+        let project = project_with_group();
+        for property in ElementGroup::ANIMATABLE {
+            let (_, commands, _) =
+                tx(animate_group(property, &project).unwrap_or_else(|e| panic!("{property}: {e}")));
+            let [Command::SetGroup { group }] = &commands[..] else {
+                panic!("{property} should set the group: {commands:?}");
+            };
+            assert!(
+                group.animations.contains_key(property),
+                "{property} planned without writing its channel"
+            );
+        }
+    }
+
+    /// And the six it does not carry are refused by name, rather than written into a channel
+    /// nothing downstream reads.
+    ///
+    /// This is the whole defect: `animate` validated a group against `Element::ANIMATABLE`, so
+    /// keying `cropLeft` on a group returned success, wrote the channel, round-tripped through
+    /// the project file — and moved nothing, because a group's crop never reaches a child.
+    /// `bay-project`'s `the_channels_a_group_refuses_would_have_sampled_into_nowhere` pins the
+    /// other half: that these six really are inert there.
+    #[test]
+    fn a_group_refuses_the_channels_it_cannot_carry_by_name() {
+        let project = project_with_group();
+        let refused: Vec<&str> = Element::ANIMATABLE
+            .into_iter()
+            .filter(|name| !ElementGroup::ANIMATABLE.contains(name))
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                "cropLeft",
+                "cropTop",
+                "cropRight",
+                "cropBottom",
+                "tiltX",
+                "tiltY"
+            ],
+            "the refused set changed — the error message and the docs have to change with it"
+        );
+
+        for property in refused {
+            let error = animate_group(property, &project)
+                .err()
+                .unwrap_or_else(|| panic!("{property} on a group must be refused, not accepted"));
+            assert!(
+                error.contains(property) && error.contains("group"),
+                "{property} was refused without saying what was refused: {error}"
+            );
+            // The refusal has to point somewhere: the same channel on the child element works.
+            assert!(
+                Element::ANIMATABLE.contains(&property),
+                "{property} should still be animatable on an element"
+            );
+        }
+    }
+
+    /// The refusal is about the group, not about the name: the same six are legal on a child.
+    #[test]
+    fn the_channels_a_group_refuses_still_animate_on_an_element() {
+        let project = project_with_group();
+        for property in ["cropLeft", "tiltY"] {
+            let planned = plan(
+                "animate",
+                &serde_json::json!({
+                    "elementId": "v1",
+                    "property": property,
+                    "keys": [{ "t": 0.0, "value": 0.0 }, { "t": 1.0, "value": 0.2 }],
+                }),
+                &project,
+            );
+            assert!(planned.is_ok(), "{property} on an element: {planned:?}");
+        }
     }
 
     /// A layer above the last overlay must carry the AddTrack commands with it, in the same
