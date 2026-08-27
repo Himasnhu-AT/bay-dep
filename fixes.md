@@ -1,4 +1,4 @@
-# fixes — twelve defects: ten from an audit, two found while running it
+# fixes — fourteen defects: ten from an audit, four found while building on it
 
 Every one of these is the same failure in a different place: **a control that does not do what
 it says.** A tile that adds an effect nothing renders, a validator that accepts a channel
@@ -6,7 +6,7 @@ nothing reads, a schema that hides an effect the engine has, an import that succ
 nothing — none of them fail. They all return success and produce no change, which is the only
 kind of bug a person cannot find by looking at the screen.
 
-Six are fixed here. Six are open, with what would verify each one, so nobody has to
+Six are fixed here. Eight are open, with what would verify each one, so nobody has to
 re-discover them.
 
 **State at time of writing:** every fix below is covered by a named test, and each entry says
@@ -222,6 +222,32 @@ bit-depth question is answered once.
 
 
 ## Open
+
+### 14. The inspector's add-effect row is a hand-written list, and it is now 5 of 7
+
+`bay-ui/src/editor/inspector.rs:733` declares `[(&str, &str, &str); 5]` — brightness, contrast,
+saturation, blur, drop-shadow. It has never offered `lut`, and it does not offer
+`lift-gamma-gain`. Both of those *work*: the shader compiles, the palette tile plans them, the
+MCP tool exposes them, `check` validates their assets.
+
+The comment directly above that array already makes the right argument for the *seed* — that
+`default_effect_params` belongs in `bay-core` because "when this view owned its own copy the same
+effect arrived with different parameters depending on whether a person clicked a button or an
+agent called a tool". The same reasoning applies to the *list* and was not carried through, which
+is why it drifted the moment an effect was added.
+
+This is the inverse of the usual entry here: not a control that lies, but a capability with no
+control. Nothing is enforcing the pairing, so it will drift again on the next effect.
+
+Fix: derive the row from `Panel::Effects.blocks()` and lower each button through
+`bay_core::blocks::plan()` — the path the palette already takes. Then a button and a tile produce
+*identical* commands by construction, which is the property
+`every_effect_tile_names_a_shader_the_engine_implements` already guards, and adding an effect
+surfaces it in both places at once. `SUPPORTED_EFFECTS` → `EFFECT_TYPES` was the same fix applied
+to the MCP schema in entry 2.
+
+Verified when: adding an effect to `blocks.rs` makes it appear in the inspector with no second
+edit, and a test asserts the inspector's set equals the palette's.
 
 ### 13. The narration tests hardcode two ports, so a second test binary fails them
 

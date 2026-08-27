@@ -518,7 +518,10 @@ fn scope_cost_is_reported() {
 
     println!("scope cost — release build, best of {runs}, milliseconds:");
     for (label, width, height) in [
-        ("854x480 preview", 854u32, 480u32),
+        // The size bay's preview actually composites: `PREVIEW_RENDER_W/H` in bay-ui is a fixed
+        // 640x360, so this is the buffer a scopes panel reads however large the window is.
+        ("640x360 (bay's preview)", 640u32, 360u32),
+        ("854x480", 854, 480),
         ("1920x1080", 1920, 1080),
         ("3840x2160 source", 3840, 2160),
     ] {
