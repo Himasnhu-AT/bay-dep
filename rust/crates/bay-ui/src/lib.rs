@@ -42,6 +42,49 @@ pub fn run() {
     run_with_agent(None, None, None)
 }
 
+/// bay's palette, in the component set's own theme format.
+///
+/// Every colour in it is one of `theme.rs`'s tokens, mapped onto the field the library reads for
+/// the same job — so a `gpui_component::Button` and a `widgets::button_face` beside it are the
+/// same grey rather than two greys that happen to be close.
+///
+/// The one mapping worth stating out loud: bay's `ACCENT` is `primary.background`, **not**
+/// `accent.background`. In this library's vocabulary — shadcn's — `accent` is the *hover
+/// surface*, a neutral. Mapping bay's blue onto it would turn every hover state in the app blue.
+const BAY_DARK_THEME: &str = include_str!("../themes/bay-dark.json");
+
+/// Parse [`BAY_DARK_THEME`] into the config the component set applies.
+///
+/// Separate from [`install_theme`] so a test can prove the file parses without opening a window.
+/// It is `include_str!`'d, so a typo is a compile-time constant that fails at *runtime*, and the
+/// failure mode is the quietest kind there is: the library keeps its own default palette and the
+/// app merely looks wrong.
+fn bay_dark_theme() -> Result<gpui_component::ThemeConfig, String> {
+    let set: gpui_component::ThemeSet =
+        serde_json::from_str(BAY_DARK_THEME).map_err(|error| error.to_string())?;
+    set.themes
+        .into_iter()
+        .next()
+        .ok_or_else(|| "the theme file declares no themes".to_string())
+}
+
+/// Make bay's palette the active theme.
+fn install_theme(cx: &mut App) {
+    match bay_dark_theme() {
+        Ok(config) => {
+            let config = Rc::new(config);
+            let theme = gpui_component::Theme::global_mut(cx);
+            theme.dark_theme = config.clone();
+            theme.mode = gpui_component::ThemeMode::Dark;
+            theme.apply_config(&config);
+        }
+        // A malformed theme must not stop the editor opening; the library's default stays.
+        Err(error) => {
+            eprintln!("bay: could not load the bundled theme ({error}); using the default")
+        }
+    }
+}
+
 /// Launch the app, optionally draining agent tool calls from `pump`.
 ///
 /// The pump is handed in rather than created here so `rust/desktop` owns the wiring: `bay-ui`
@@ -68,6 +111,7 @@ pub fn run_with_agent(
             // Registers the component set's own globals — theme, root, popover, menu, table,
             // tooltip, notification and the rest. It must run before any of them is constructed.
             gpui_component::init(cx);
+            install_theme(cx);
             cx.bind_keys(key_bindings());
             cx.bind_keys(menus::key_bindings());
             // The menu bar has to exist before the window: GPUI only calls AppKit's `setMainMenu:`
@@ -118,4 +162,89 @@ pub fn run_with_agent(
 
             cx.activate(true);
         });
+}
+
+#[cfg(test)]
+mod theme_file_tests {
+    use super::*;
+
+    /// The hex a token is written as in `themes/bay-dark.json`.
+    fn hex(token: u32) -> String {
+        format!("#{token:06x}")
+    }
+
+    /// A parse failure here is silent in production: [`install_theme`] logs to stderr and the
+    /// library's own palette stays. Someone who double-clicked the app sees no terminal, so
+    /// without this test the only symptom of a broken theme is "the colours look wrong".
+    #[test]
+    fn the_bundled_theme_parses() {
+        let config = bay_dark_theme().expect("themes/bay-dark.json should parse");
+        assert_eq!(config.name.as_ref(), "bay Dark");
+        assert!(config.is_default);
+        assert!(matches!(config.mode, gpui_component::ThemeMode::Dark));
+    }
+
+    /// The theme file and `theme.rs` must agree, or a library widget and bay's own chrome sitting
+    /// beside it are two different greys — which is exactly the inconsistency adopting the
+    /// library was meant to remove. Asserted per role rather than wholesale, so a failure names
+    /// the token that drifted.
+    #[test]
+    fn the_theme_file_says_what_theme_rs_says() {
+        let c = bay_dark_theme().expect("parses").colors;
+        for (role, token, actual) in [
+            ("background", theme::BG, c.background),
+            ("foreground", theme::TEXT, c.foreground),
+            ("border", theme::BORDER, c.border),
+            ("muted.foreground", theme::MUTED, c.muted_foreground),
+            ("muted.background", theme::PANEL_ALT, c.muted),
+            ("primary.background", theme::ACCENT, c.primary),
+            ("primary.foreground", theme::ON_ACCENT, c.primary_foreground),
+            ("ring", theme::FOCUS_RING, c.ring),
+            ("sidebar.background", theme::PANEL, c.sidebar),
+            ("sidebar.border", theme::BORDER_SOFT, c.sidebar_border),
+            ("list.background", theme::LANE, c.list),
+            ("list.active.background", theme::SELECTED, c.list_active),
+            (
+                "list.active.border",
+                theme::SELECTED_BORDER,
+                c.list_active_border,
+            ),
+            ("list.hover.background", theme::HOVER, c.list_hover),
+            ("danger.background", theme::DANGER, c.danger),
+            ("danger.foreground", theme::DANGER_TEXT, c.danger_foreground),
+            ("success.background", theme::OK, c.success),
+            ("warning.background", theme::WARN, c.warning),
+        ] {
+            assert_eq!(
+                actual.map(|value| value.to_string()),
+                Some(hex(token)),
+                "{role} should be theme::{role}'s hex"
+            );
+        }
+    }
+
+    /// The one mapping that produces a wrong-looking app rather than an error.
+    ///
+    /// In this library's vocabulary `accent` is the *hover surface* — a neutral — and `primary`
+    /// is the primary-action colour. bay's `ACCENT` is a blue primary action. Wiring it to
+    /// `accent.background` compiles, parses, and turns every hover state in all six pages blue.
+    #[test]
+    fn accent_is_the_hover_surface_not_bays_blue() {
+        let c = bay_dark_theme().expect("parses").colors;
+        assert_eq!(
+            c.accent.clone().map(|v| v.to_string()),
+            Some(hex(theme::HOVER)),
+            "accent.background is the neutral hover surface, so it takes theme::HOVER"
+        );
+        assert_eq!(
+            c.primary.clone().map(|v| v.to_string()),
+            Some(hex(theme::ACCENT)),
+            "theme::ACCENT is a primary action, so it belongs in primary.background"
+        );
+        assert_ne!(
+            c.accent.map(|v| v.to_string()),
+            c.primary.map(|v| v.to_string()),
+            "if these are ever equal the two roles have been collapsed"
+        );
+    }
 }

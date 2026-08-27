@@ -141,6 +141,7 @@ impl Drop for Sidecar {
 /// succeeds forever and the pid watchdog never fires; a pipe closes when the process does,
 /// whatever killed it.
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn the_sidecar_exits_when_its_parent_pipe_closes() {
     let Some(mut sidecar) = Sidecar::spawn(
         PIPE_PORT,
@@ -173,6 +174,7 @@ fn the_sidecar_exits_when_its_parent_pipe_closes() {
 /// This is the layer that would actually have prevented the observed failure, whatever went
 /// wrong with the parent watchdog.
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn the_sidecar_exits_after_its_idle_timeout() {
     let Some(mut sidecar) = Sidecar::spawn(IDLE_PORT, &[("BAY_KOKORO_IDLE_TIMEOUT", "2")], false)
     else {
@@ -192,6 +194,7 @@ fn the_sidecar_exits_after_its_idle_timeout() {
 /// Without this the previous test could be satisfied by a sidecar that exits on a timer
 /// regardless of whether anyone is using it — which would end a narration mid-script.
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn a_request_resets_the_idle_clock() {
     let Some(sidecar) = Sidecar::spawn(RESET_PORT, &[("BAY_KOKORO_IDLE_TIMEOUT", "3")], false)
     else {
@@ -217,6 +220,7 @@ fn a_request_resets_the_idle_clock() {
 /// It used to start silently when `BAY_KOKORO_PARENT_PID` was missing or non-numeric, so a
 /// process that would run until something killed it looked exactly like a healthy one.
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn a_sidecar_with_nothing_watching_it_warns() {
     let Some(mut sidecar) = Sidecar::spawn(
         UNSUPERVISED_PORT,

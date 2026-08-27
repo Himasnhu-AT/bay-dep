@@ -1902,6 +1902,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn subtitles_add_places_one_caption_per_cue() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-subs");
@@ -1935,6 +1936,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn subtitles_round_trip_through_the_timeline() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-subs-rt");
@@ -1961,6 +1963,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn exporting_with_no_captions_says_so() {
         let mut studio = new_studio();
         let (is_error, message) = unwrap_call(&call(
@@ -1973,6 +1976,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn a_subtitle_file_that_is_not_one_is_rejected() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-badsubs");
@@ -1988,6 +1992,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn an_offset_shifts_every_caption() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-offset");
@@ -2003,6 +2008,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn speech_status_answers_without_throwing_however_the_machine_is_set_up() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
@@ -2026,6 +2032,7 @@ mod narration_tests {
     /// on any machine — including one where nothing is installed, which is exactly when it is
     /// called — and it must never start a download by being asked a question.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn runtime_status_reports_without_installing_anything() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(&mut studio, "runtime_status", json!({})));
@@ -2046,6 +2053,7 @@ mod narration_tests {
     /// A component that does not exist must come back as a tool error the agent can correct,
     /// not a panic and not a silent success.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn runtime_install_refuses_a_component_it_does_not_have() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(
@@ -2058,6 +2066,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn runtime_install_requires_a_component() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(&mut studio, "runtime_install", json!({})));
@@ -2069,6 +2078,7 @@ mod narration_tests {
     /// re-download — an agent that calls this defensively before every render should cost
     /// nothing on a provisioned machine.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn installing_what_is_already_there_starts_no_job() {
         let mut studio = new_studio();
         let (_, status) = unwrap_call(&call(&mut studio, "runtime_status", json!({})));
@@ -2096,6 +2106,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn narrating_reuses_one_hot_sidecar_across_calls() {
         // A port of its own, never the product's 7334. Sharing it meant this test failed
         // whenever anything else on the machine held that port — another test binary spawning a
@@ -2160,6 +2171,7 @@ mod narration_tests {
     /// §1.4 end to end, on real speech: the read is planned as a rate and measured as one, and
     /// every cue it places clears both reading floors.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn a_real_narration_reports_its_rate_and_places_readable_cues() {
         let mut studio = Studio::for_test(test_library_root(), 7452);
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));

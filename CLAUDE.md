@@ -23,11 +23,34 @@ See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 RELEASE=1 ./run.sh    # release build — much smoother playback
 ./build.sh            # release build of the desktop app
 ./test.sh             # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
+SLOW=1 ./test.sh      # also run the 40 tests that drive the Kokoro sidecar or load SigLIP
 STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures for capability verification
 BAY_ONLINE=1 ./test.sh   # let cargo reach the network — only needed after changing a dependency
 
 cd rust && env -u CARGO_TARGET_DIR cargo test --workspace
 ```
+
+**Forty tests are `#[ignore]`d and run only under `SLOW=1`** — `bay-speech/tests/{kokoro,lifecycle}.rs`,
+`bay-mcp/tests/captions.rs`, `bay-vision/tests/encode.rs`, and `bay-mcp`'s `narration_tests`. They
+drive the Kokoro TTS sidecar or load the SigLIP model. The reason is **flakiness, not speed**:
+`fixes.md` entry 13 records that the narration tests hardcode ports 7451/7452 and fail whenever a
+`bay --mcp` is already running, and a test that fails for reasons outside the repository teaches
+people to re-run until green. `cargo test` prints them in its own `ignored` count, so this never
+reads as a pass. **Run `SLOW=1 ./test.sh` before anything ships, and after touching `bay-speech`,
+`bay-vision` or the MCP server.**
+
+The saving is smaller than it looks and the numbers are worth knowing before optimising further:
+the whole suite spends only **111 s executing** (94 binaries; the two heaviest are
+`bay-speech/tests/kokoro.rs` at 30 s and `bay-preview/tests/render.rs` at 21 s). A gate run is
+dominated by **compilation**, not by tests, so deferring the sidecar set is worth about 7% of wall
+clock. `render.rs` deliberately stays in every run — 70 tests at 0.3 s each, and it is what
+verifies the render path.
+
+**`cargo nextest` is not a speedup here — it is 3.5× slower.** Measured on `bay-ui`:
+`cargo test` 34.9 s wall / 3.3 s sys, `cargo nextest run` 122.6 s wall / 330.8 s sys. It forks a
+process per test, so each of bay-ui's 311 GPUI tests pays a full app startup that `cargo test`
+amortises across the binary. The 100× system time is that cost. Do not reach for it again without
+re-measuring.
 
 `test.sh` runs **`--offline`** and **`CARGO_INCREMENTAL=0`** by default, and both defaults exist
 for a reason. Cargo's `.package-cache` lock lives in `$CARGO_HOME` and is shared by *every*
