@@ -125,10 +125,11 @@ impl Page {
                 "Waiting on the engine: there is no real-time audio path, no pan anywhere in the \
                  codebase, and no track-level gain or solo.",
             ),
-            Page::Deliver => Some(
-                "Waiting on the engine: export runs synchronously on the UI thread, so a progress \
-                 bar cannot move.",
-            ),
+            // Deliver's gap is closed: the encode runs on a worker with its own GPU device,
+            // through the same `render` the MCP server calls, so the queue's bars move and both
+            // output paths meet the same gate. Leaving the warning up after the fix would make
+            // the map of remaining engine work lie in the other direction.
+            Page::Deliver => None,
         }
     }
 

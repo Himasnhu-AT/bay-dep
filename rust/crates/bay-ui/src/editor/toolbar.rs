@@ -1,86 +1,19 @@
-//! The top chrome: the toolbar row, the scene bar, and the two exports its buttons run.
+//! The top chrome: the toolbar row and the scene bar.
 //!
 //! A child module of [`super`], so it can reach `EditorView`'s private fields; a sibling
 //! could not.
+//!
+//! **It used to run two exports, and both are gone.** `export_frame` and `export_video` lived
+//! here and were called straight from their buttons, on the main thread. The video one was
+//! `fixes.md` entry 6: it reached neither `render_gate` nor `frame_check`, capped the result at
+//! 1280px wide without saying so, and froze the window for the length of the encode. Both are
+//! now the Deliver page's, queued through `bay_agent::slow::run` — the same call an agent
+//! makes, so one gate covers both callers. `editor::deliver::tests::
+//! no_ui_call_site_encodes_for_itself` is what keeps them from coming back here.
 
 use super::*;
 
 impl EditorView {
-    /// Render the composited frame at the playhead at full canvas resolution and save it as a PNG.
-    pub(super) fn export_frame(&mut self) {
-        if self.preview.is_none() {
-            return;
-        }
-        let canvas = self.editor.project().settings.canvas;
-        let playhead = self.editor.playhead();
-        let background = self.editor.project().settings.background.clone();
-        let renderer = self.preview.as_mut().unwrap();
-        let scene = self.editor.active_scene();
-        let media = self.editor.media();
-        let frame = renderer.render(
-            scene,
-            playhead,
-            canvas.width,
-            canvas.height,
-            &background,
-            media,
-        );
-
-        let Some(frame) = frame else {
-            self.status = Some("Frame export failed: the GPU could not render a frame".to_string());
-            return;
-        };
-        let mut rgba = frame.bgra;
-        for texel in rgba.chunks_exact_mut(4) {
-            texel.swap(0, 2); // BGRA → RGBA for PNG
-        }
-        if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, rgba) {
-            let path = export_frame_path();
-            self.status = Some(match buffer.save(&path) {
-                Ok(()) => format!("Exported frame to {}", path.display()),
-                Err(error) => format!("Frame export failed: {error}"),
-            });
-        }
-    }
-
-    /// Encode the whole timeline to an MP4 (via the ffmpeg sidecar), capped at 1280px wide.
-    pub(super) fn export_video(&mut self) {
-        if self.preview.is_none() {
-            return;
-        }
-        let canvas = self.editor.project().settings.canvas;
-        let fps = self.editor.project().settings.fps.as_f64().max(1.0);
-        let duration = self.editor.duration().to_seconds_f64().max(0.1);
-        let background = self.editor.project().settings.background.clone();
-
-        // Even dimensions (yuv420p), capped for reasonable export time.
-        let scale = (1280.0 / canvas.width as f32).min(1.0);
-        let width = (((canvas.width as f32 * scale) as u32) / 2) * 2;
-        let height = (((canvas.height as f32 * scale) as u32) / 2) * 2;
-
-        let renderer = self.preview.as_mut().unwrap();
-        let scene = self.editor.active_scene();
-        let media = self.editor.media();
-        let out = export_video_path();
-        let result = renderer.export_video(
-            scene,
-            duration,
-            fps,
-            width.max(2),
-            height.max(2),
-            &background,
-            media,
-            &out.to_string_lossy(),
-            &bay_preview::ExportSettings::default(),
-        );
-        self.status = Some(match result {
-            Ok(()) => format!("Exported video to {}", out.display()),
-            // The old text asked "is ffmpeg installed?" for every failure, including the ones
-            // where ffmpeg ran fine and said exactly what was wrong.
-            Err(reason) => format!("Video export failed: {reason}"),
-        });
-    }
-
     /// Whether an agent has touched the project recently enough to still be worth showing.
     pub(super) fn agent_chip(&self) -> Option<String> {
         self.agent_activity
@@ -218,33 +151,12 @@ impl EditorView {
                             Err(error) => format!("Save failed: {error}"),
                         });
                     }))
-                    .child(
-                        widgets::row()
-                            .gap(px(1.0))
-                            .child(self.tool_button(
-                                "export-frame",
-                                "Export Frame",
-                                self.preview.is_some(),
-                                cx,
-                                |this| this.export_frame(),
-                            ))
-                            .child(
-                                div()
-                                    .id("export-video")
-                                    .h(px(22.0))
-                                    .px(px(10.0))
-                                    .flex()
-                                    .items_center()
-                                    .bg(rgb(theme::ACCENT))
-                                    .text_xs()
-                                    .text_color(rgb(theme::ON_ACCENT))
-                                    .child("Export Video")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.export_video();
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
+                    // Where Export Frame and Export Video used to be. Output is the Deliver
+                    // page's, and it is one button rather than two because there is one way to
+                    // encode now — see this module's own header.
+                    .child(self.button("go-deliver", "Deliver ⇧", true, cx, |this, _cx| {
+                        this.show_page(crate::page::Page::Deliver);
+                    })),
             )
     }
 
