@@ -1522,6 +1522,23 @@ impl EditorView {
                     .left(px(0.0))
                     .right(px(0.0))
                     .h(px(PANE_HEIGHT)),
+            )
+            // A press moves the playhead to the time under it, and stops there.
+            //
+            // Deliberately not a scrub: continuing one would mean an `EditorDrag::Scrub`, whose
+            // move handler converts x through `lane_origin_x()` — the timeline's lane origin,
+            // not this pane's — so the playhead would jump the width of the track labels the
+            // moment the hand moved. A press that lands exactly is better than a drag that lies.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |view, event: &MouseDownEvent, _window, cx| {
+                    let origin = f32::from(bounds.get().origin.x);
+                    let time = view
+                        .geometry()
+                        .px_to_frame_time(f32::from(event.position.x) - origin);
+                    view.editor.seek(time.max(MediaTime::ZERO));
+                    cx.notify();
+                }),
             );
 
         if rows.is_empty() {
@@ -1540,7 +1557,7 @@ impl EditorView {
         }
 
         for (index, spot) in placed.into_iter().enumerate() {
-            pane = pane.child(self.motion_hit_target(index, spot, rows, bounds.clone(), cx));
+            pane = pane.child(self.motion_hit_target(index, spot, rows, cx));
         }
         pane
     }
@@ -1555,7 +1572,6 @@ impl EditorView {
         index: usize,
         spot: Placed,
         rows: &[CurveRow],
-        bounds: std::rc::Rc<Cell<Bounds<Pixels>>>,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<Div> {
         let id = ("motion-hit", index);
@@ -1590,7 +1606,6 @@ impl EditorView {
                         spot.key_index,
                         spot.handle_out,
                         axis,
-                        bounds.get(),
                         event,
                         cx,
                     );
@@ -1716,7 +1731,6 @@ impl EditorView {
         key_index: usize,
         handle_out: Option<bool>,
         axis: ValueAxis,
-        pane: Bounds<Pixels>,
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
@@ -1739,7 +1753,7 @@ impl EditorView {
         }
 
         match handle_out {
-            None => self.begin_key_drag(owner, path, key, axis, pane, event),
+            None => self.begin_key_drag(owner, path, key, axis, event),
             // No pane origin: a handle is normalised to its own segment, so what moves it is the
             // pointer's *travel*, not where in the pane it landed.
             Some(out) => self.begin_handle_drag(owner, path, channel, key_index, out, axis, event),
@@ -1753,7 +1767,6 @@ impl EditorView {
         path: &str,
         key: bay_core::Keyframe,
         axis: ValueAxis,
-        pane: Bounds<Pixels>,
         event: &MouseDownEvent,
     ) {
         let geometry = self.geometry();
@@ -1783,6 +1796,10 @@ impl EditorView {
         let origin_ticks = key.time.as_ticks();
         let fine = event.modifiers.alt;
         let start_y = f32::from(event.position.y);
+        // The key's *drawn* y, not the pointer's. The grab target is 13px across, so a press
+        // near its edge would otherwise snap the key six pixels the moment the hand moved —
+        // and it means this gesture needs nothing from the pane's window position at all.
+        let origin_y = axis.y_of(key.value, PANE_HEIGHT);
         let gesture = Gesture::new();
 
         controls::begin_rate_drag(
@@ -1800,8 +1817,7 @@ impl EditorView {
                 };
                 let dy = f32::from(drag.position().y) - start_y;
                 let dy = if fine { dy * FINE_FACTOR } else { dy };
-                let local_y = start_y - f32::from(pane.origin.y) - PANE_PAD + dy;
-                let value = axis.value_of_y(local_y, PANE_HEIGHT);
+                let value = axis.value_of_y(origin_y + dy, PANE_HEIGHT);
                 let target_ticks = owner.owner_ticks(scene.round() as i64);
                 let owner_for_probe = owner.clone();
                 let path_for_run = path.clone();
@@ -2311,7 +2327,438 @@ mod tests {
 
     #[test]
     fn the_pane_leaves_room_for_its_own_padding() {
-        assert!(PANE_HEIGHT > 0.0);
         assert_eq!(PANE_HEIGHT, BAND_BODY - PANE_PAD * 2.0);
+        // And the plot it leaves actually holds an axis: every value on a bounded channel has
+        // to land inside the pane, or the content mask cuts the curve the page is drawing.
+        let axis = ValueAxis::fit(Some((0.0, 1.0)), 0.0, &[]);
+        for value in [0.0_f32, 0.5, 1.0] {
+            let y = axis.y_of(value, PANE_HEIGHT);
+            assert!(
+                (0.0..=PANE_HEIGHT).contains(&y),
+                "{value} plots at {y}, outside a {PANE_HEIGHT}px pane"
+            );
+        }
+    }
+}
+
+/// Drawing the page for real: layout, prepaint and paint, at three window sizes.
+///
+/// The editor's own `paint_tests` open the *Cut* page, so none of this file is in the tree they
+/// walk. These are what catch a canvas painting outside its phase, a path built from a NaN, a
+/// colliding element id, or a plot squeezed to a negative width — none of which a state test can
+/// see, and all of which this page has more of than any other.
+///
+/// Still not a substitute for looking at the app. This is the part of looking at it that runs on
+/// every commit.
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use crate::page::Page;
+    use bay_core::Editor;
+    use gpui::{size, Modifiers, MouseButton, TestAppContext, VisualTestContext};
+
+    fn title() -> ElementRef {
+        ElementRef::new("track-main", "el-title")
+    }
+
+    fn motion_editor(
+        cx: &mut TestAppContext,
+    ) -> (gpui::Entity<EditorView>, &mut VisualTestContext) {
+        let (view, cx) = cx.add_window_view(|_window, cx| {
+            let focus = cx.focus_handle();
+            let mut view = EditorView::new(Editor::starter(), focus, None, None);
+            view.show_page(Page::Motion);
+            view
+        });
+        (view, cx)
+    }
+
+    /// The starter project with the title selected, two keys on opacity, a hand-drawn curve on
+    /// the first of them, and a group over the clip — so every branch of the pane is in the
+    /// tree at once: keyed rows, unkeyed rows, bezier handles, and the other timebase.
+    fn arrange(view: &mut EditorView) {
+        let reference = title();
+        view.editor.select(vec![reference.clone()]);
+        for (ticks, value) in [(0_i64, 0.0_f32), (60_000, 1.0)] {
+            assert!(
+                view.editor.execute(Command::AddKeyframe {
+                    reference: reference.clone(),
+                    property: "opacity".to_string(),
+                    time: MediaTime::from_ticks(ticks),
+                    value,
+                }),
+                "opacity is animatable on a text element"
+            );
+        }
+        let key_id = opacity(view).keys[0].identity();
+        assert!(view.editor.execute(Command::SetKeyframeCurve {
+            reference,
+            property: "opacity".to_string(),
+            keyframe_id: key_id,
+            curve: KeyframeCurve::Drawn {
+                handles: BezierHandles::default(),
+            },
+        }));
+
+        let mut channel = AnimationChannel::default();
+        // Scene time, not element-local — which is the whole point of putting a group here.
+        channel.upsert(MediaTime::from_ticks(0), 0.4);
+        channel.upsert(MediaTime::from_ticks(240_000), 0.6);
+        view.editor.execute(Command::SetGroup {
+            group: ElementGroup {
+                id: "grp-1".to_string(),
+                children: vec!["el-title".to_string()],
+                transform: Transform::default(),
+                animations: std::collections::BTreeMap::from([("x".to_string(), channel)]),
+            },
+        });
+    }
+
+    fn opacity(view: &EditorView) -> AnimationChannel {
+        view.motion_element(&title())
+            .and_then(|element| element.animations())
+            .and_then(|map| map.get("opacity"))
+            .cloned()
+            .expect("the opacity channel that was just written")
+    }
+
+    fn paint(view: &gpui::Entity<EditorView>, cx: &mut VisualTestContext, width: f32, height: f32) {
+        cx.simulate_resize(size(px(width), px(height)));
+        let view = view.clone();
+        cx.draw(
+            gpui::point(px(0.0), px(0.0)),
+            size(px(width), px(height)),
+            |_, _| view.into_any_element(),
+        );
+    }
+
+    /// With nothing selected — the state the page opens in, and the one where a curve editor
+    /// most easily draws an empty frame.
+    #[gpui::test]
+    fn the_page_paints_with_no_clip_selected(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| view.editor.select(Vec::new()));
+        paint(&view, cx, 1440.0, 900.0);
+        paint(&view, cx, 640.0, 420.0);
+    }
+
+    /// A clip that nobody has keyed. Every row is a rest line, and this is the case the page is
+    /// judged on — an empty pane here is a curve *viewer*.
+    #[gpui::test]
+    fn the_page_paints_for_a_clip_with_no_keys(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(vec![title()]);
+            let rows = view.motion_rows(&title());
+            assert!(
+                rows.len() >= 13,
+                "a text clip offers its thirteen transform channels and its font size"
+            );
+            assert!(
+                rows.iter().all(|row| !row.is_animated()),
+                "nothing has been keyed yet"
+            );
+        });
+        paint(&view, cx, 1440.0, 900.0);
+    }
+
+    #[gpui::test]
+    fn the_page_paints_with_keys_handles_and_a_group(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            arrange(view);
+            let rows = view.motion_rows(&title());
+            assert!(
+                rows.iter()
+                    .any(|row| matches!(row.owner, ChannelOwner::Group { .. }) && row.is_animated()),
+                "the group's animated channel has to reach the pane"
+            );
+        });
+        paint(&view, cx, 1440.0, 900.0);
+    }
+
+    /// A window small enough that the toolbar already collides with itself. `pages.md` requires
+    /// every page milestone to be looked at here; this is the half of that a test can do.
+    #[gpui::test]
+    fn the_page_paints_in_a_small_window(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| arrange(view));
+        paint(&view, cx, 640.0, 420.0);
+        paint(&view, cx, 320.0, 240.0);
+    }
+
+    /// A curve drawn at a zoom where the whole clip is a few pixels wide, and at one where a
+    /// frame is. Both put the plot somewhere a naive mapping divides by zero.
+    #[gpui::test]
+    fn the_page_paints_at_both_ends_of_the_zoom(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            arrange(view);
+            view.timeline = view
+                .timeline
+                .with_pixels_per_second(crate::geometry::MIN_PIXELS_PER_SECOND);
+        });
+        paint(&view, cx, 1440.0, 900.0);
+        view.update(cx, |view, _| {
+            view.timeline = view
+                .timeline
+                .with_pixels_per_second(crate::geometry::MAX_PIXELS_PER_SECOND);
+        });
+        paint(&view, cx, 1440.0, 900.0);
+    }
+
+    fn press(x: f32, y: f32) -> gpui::MouseDownEvent {
+        gpui::MouseDownEvent {
+            button: MouseButton::Left,
+            position: gpui::point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        }
+    }
+
+    /// The gesture, end to end, without a window drawing it: press, two moves, release.
+    ///
+    /// And the thing the page would be unusable without — the whole drag is **one** undo entry,
+    /// not one per pointer move.
+    #[gpui::test]
+    fn dragging_a_key_along_time_leaves_one_undo_entry(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, cx| {
+            arrange(view);
+            let before = opacity(view);
+            let rows = view.motion_rows(&title());
+            let row = rows
+                .iter()
+                .find(|row| row.property.path == "opacity")
+                .expect("opacity is a row");
+            let (owner, axis) = (row.owner.clone(), row.axis);
+            let key = before.keys[1];
+
+            view.begin_key_drag(&owner, "opacity", key, axis, &press(500.0, 600.0));
+            // The default zoom is 48 px/s, so 24 px of travel is half a second. y is held, so
+            // the value does not change and the move is one command.
+            controls::drive_value_drag(view, gpui::point(px(512.0), px(600.0)), false, cx);
+            controls::end_value_drag(view, gpui::point(px(524.0), px(600.0)), false, cx);
+
+            let after = opacity(view);
+            assert!(
+                after.keys[1].time > before.keys[1].time,
+                "the key did not move: {:?} → {:?}",
+                before.keys[1].time,
+                after.keys[1].time
+            );
+            assert_eq!(after.keys[1].value, before.keys[1].value, "y was held");
+            assert_eq!(
+                after.keys.len(),
+                before.keys.len(),
+                "a key was created or lost"
+            );
+            assert!(
+                after.keys[1].identity() == before.keys[1].identity(),
+                "the key lost its name mid-drag, so the selection would have lost it too"
+            );
+
+            assert!(view.editor.undo(), "the drag left nothing to undo");
+            assert_eq!(
+                opacity(view),
+                before,
+                "two pointer moves left more than one undo entry"
+            );
+        });
+    }
+
+    /// A key dragged in both axes at once. Two commands, because moving a key and revaluing it
+    /// are two verbs and `bay-core` has none that carries both — so it is **two** undo entries,
+    /// pinned here rather than left to be discovered. The first ⌘Z is a coherent state (the
+    /// move, without the value change), which is why the order is move-then-value.
+    #[gpui::test]
+    fn dragging_a_key_diagonally_takes_two(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, cx| {
+            arrange(view);
+            let before = opacity(view);
+            let rows = view.motion_rows(&title());
+            let row = rows
+                .iter()
+                .find(|row| row.property.path == "opacity")
+                .expect("opacity is a row");
+            let (owner, axis) = (row.owner.clone(), row.axis);
+
+            view.begin_key_drag(
+                &owner,
+                "opacity",
+                before.keys[1],
+                axis,
+                &press(500.0, 600.0),
+            );
+            controls::end_value_drag(view, gpui::point(px(524.0), px(660.0)), false, cx);
+
+            let after = opacity(view);
+            assert!(after.keys[1].time > before.keys[1].time);
+            assert!(
+                after.keys[1].value < before.keys[1].value,
+                "dragging down has to lower the value"
+            );
+            assert!(view.editor.undo());
+            assert!(view.editor.undo());
+            assert_eq!(opacity(view), before);
+        });
+    }
+
+    /// A handle drag writes the segment's curve, and the same collapse applies.
+    #[gpui::test]
+    fn dragging_a_bezier_handle_writes_one_curve(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, cx| {
+            arrange(view);
+            let before = opacity(view);
+            let handles = before.keys[0].handles.expect("arrange drew a curve");
+            let rows = view.motion_rows(&title());
+            let row = rows
+                .iter()
+                .find(|row| row.property.path == "opacity")
+                .expect("opacity is a row");
+            let (owner, axis) = (row.owner.clone(), row.axis);
+
+            view.begin_handle_drag(
+                &owner,
+                "opacity",
+                &before,
+                0,
+                true,
+                axis,
+                &press(500.0, 600.0),
+            );
+            controls::drive_value_drag(view, gpui::point(px(520.0), px(600.0)), false, cx);
+            controls::end_value_drag(view, gpui::point(px(540.0), px(590.0)), false, cx);
+
+            let after = opacity(view);
+            let moved = after.keys[0].handles.expect("still a drawn curve");
+            assert!(
+                moved.out_x > handles.out_x,
+                "the handle did not move along x"
+            );
+            assert!(
+                (0.0..=1.0).contains(&moved.out_x),
+                "x outside the segment makes the curve run backwards"
+            );
+            assert!(view.editor.undo());
+            assert_eq!(opacity(view), before, "one entry for the whole handle drag");
+        });
+    }
+
+    /// ⌥-click is how a segment gets handles at all — a named easing has no tangents to show,
+    /// so without this the handle drag above is unreachable from the app.
+    #[gpui::test]
+    fn alt_click_gives_a_segment_a_drawn_curve_and_takes_it_back(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(vec![title()]);
+            for (ticks, value) in [(0_i64, 0.0_f32), (60_000, 1.0)] {
+                view.editor.execute(Command::AddKeyframe {
+                    reference: title(),
+                    property: "opacity".to_string(),
+                    time: MediaTime::from_ticks(ticks),
+                    value,
+                });
+            }
+            let channel = opacity(view);
+            let owner = ChannelOwner::Element {
+                reference: title(),
+                start_ticks: 0,
+            };
+            assert!(
+                channel.keys[0].handles.is_none(),
+                "a fresh key has no curve"
+            );
+
+            view.toggle_drawn_curve(&owner, "opacity", &channel, 0);
+            assert!(opacity(view).keys[0].handles.is_some());
+
+            let channel = opacity(view);
+            view.toggle_drawn_curve(&owner, "opacity", &channel, 0);
+            assert!(
+                opacity(view).keys[0].handles.is_none(),
+                "the same gesture has to hand the segment back to the channel's easing"
+            );
+
+            // The last key leaves no segment, so there is nothing to curve and the page says so
+            // rather than writing handles nothing evaluates.
+            let channel = opacity(view);
+            view.toggle_drawn_curve(&owner, "opacity", &channel, 1);
+            assert!(opacity(view).keys[1].handles.is_none());
+            assert!(view.status.is_some(), "and it says why");
+        });
+    }
+
+    /// Keying at the playhead holds the value the property already has, so a second key
+    /// elsewhere produces a move *from here* — which is how anyone actually builds one.
+    #[gpui::test]
+    fn keying_at_the_playhead_holds_the_value_it_already_had(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(vec![title()]);
+            view.editor.seek(MediaTime::from_ticks(60_000));
+            let rest = view
+                .motion_element(&title())
+                .and_then(|element| element.transform())
+                .expect("a text element has a transform")
+                .opacity;
+
+            view.key_property_at_playhead(&title(), "opacity");
+            let channel = opacity(view);
+            assert_eq!(channel.keys.len(), 1);
+            assert_eq!(channel.keys[0].time, MediaTime::from_ticks(60_000));
+            assert_eq!(channel.keys[0].value, rest);
+        });
+    }
+
+    /// The playhead outside the clip is the one case where ◆ has nothing to write, and it has
+    /// to say so rather than silently doing nothing.
+    #[gpui::test]
+    fn keying_outside_the_clip_refuses_out_loud(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            view.editor.select(vec![title()]);
+            let end = view
+                .motion_element(&title())
+                .expect("the title clip")
+                .end()
+                .as_ticks();
+            view.editor.seek(MediaTime::from_ticks(end + 120_000));
+            view.key_property_at_playhead(&title(), "opacity");
+            assert!(view
+                .motion_element(&title())
+                .and_then(|element| element.animations())
+                .map(|map| !map.contains_key("opacity"))
+                .unwrap_or(true));
+            assert!(view.status.is_some(), "a refusal nobody is told about");
+        });
+    }
+
+    /// A group key is written in scene time, through `SetGroup` — the group has no keyframe
+    /// command of its own.
+    #[gpui::test]
+    fn a_group_key_lands_in_scene_time(cx: &mut TestAppContext) {
+        let (view, cx) = motion_editor(cx);
+        view.update(cx, |view, _| {
+            arrange(view);
+            view.editor.seek(MediaTime::from_ticks(96_000));
+            view.key_group_property_at_playhead("grp-1", "y");
+            let group = view
+                .editor
+                .active_scene()
+                .groups
+                .get("grp-1")
+                .expect("the group")
+                .clone();
+            let channel = group.animations.get("y").expect("the y channel");
+            assert_eq!(
+                channel.keys[0].time,
+                MediaTime::from_ticks(96_000),
+                "a group key is scene time, not element-local"
+            );
+        });
     }
 }
