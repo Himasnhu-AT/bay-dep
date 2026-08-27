@@ -1628,28 +1628,28 @@ mod paint_tests {
             let focus = cx.focus_handle();
             let mut editor = Editor::starter();
             let mut probed = MediaAsset::new(
-                "m1".into(),
-                "probed.mp4".into(),
-                "/Volumes/Card/DCIM/probed.mp4".into(),
+                "m1".to_string(),
+                "probed.mp4".to_string(),
+                "/Volumes/Card/DCIM/probed.mp4".to_string(),
             );
             probed.duration_seconds = Some(12.5);
             probed.width = Some(3840);
             probed.height = Some(2160);
             editor.add_media(probed);
             editor.add_media(MediaAsset::new(
-                "m2".into(),
-                "unprobed.mov".into(),
-                "/Volumes/Card/DCIM/unprobed.mov".into(),
+                "m2".to_string(),
+                "unprobed.mov".to_string(),
+                "/Volumes/Card/DCIM/unprobed.mov".to_string(),
             ));
             editor.add_media(MediaAsset::new(
-                "m3".into(),
-                "still.png".into(),
-                "/does/not/exist/still.png".into(),
+                "m3".to_string(),
+                "still.png".to_string(),
+                "/does/not/exist/still.png".to_string(),
             ));
             editor.add_media(MediaAsset::new(
-                "m4".into(),
-                "score.wav".into(),
-                "/Users/me/Music/score.wav".into(),
+                "m4".to_string(),
+                "score.wav".to_string(),
+                "/Users/me/Music/score.wav".to_string(),
             ));
             let mut view = EditorView::new(editor, focus, None, None);
             view.page = Page::Media;
