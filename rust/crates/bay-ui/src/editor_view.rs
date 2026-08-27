@@ -17,7 +17,7 @@ use bay_core::{
     AudioElement, Command, Editor, Element, ElementRef, ImageElement, MediaAsset, MediaKind,
     MediaTime, Project, Transform, VideoElement,
 };
-use bay_preview::PreviewRenderer;
+use bay_preview::{CollectedFrame, PreviewRenderer};
 
 use crate::view_model::MediaFolder;
 use crate::widgets::{self, text as shared_text};
@@ -282,6 +282,20 @@ pub struct EditorView {
     /// GPU compositor preview (None if no adapter); the rendered image + a change signature.
     preview: Option<PreviewRenderer>,
     preview_image: Option<Arc<RenderImage>>,
+    /// Preview frames that have left the screen and whose sprite-atlas tiles still have to be
+    /// released.
+    ///
+    /// GPUI keys its atlas on `RenderImage::id`, which is a fresh monotonic counter value per
+    /// image, and it *never* evicts on drop — `Window::drop_image` is the only thing that calls
+    /// `PlatformAtlas::remove`. A new image per composited frame therefore misses the cache
+    /// every time, allocates another 640x360 polychrome tile, and pushes a new 1024x1024 atlas
+    /// texture roughly every second frame, none of which is ever freed. That is a few tens of
+    /// MB of VRAM per second of playback until allocation starts failing.
+    ///
+    /// Retiring through a queue rather than dropping inline is what lets a windowless caller
+    /// (`open_project`) release a frame: it parks the `Arc` here and the next render, which does
+    /// have a `Window`, drains it.
+    retired_images: Vec<Arc<RenderImage>>,
     preview_sig: Option<u64>,
     presets: Vec<MotionPreset>,
     /// media id → cached waveform peaks (empty vec = decoded but no audio / failed).
@@ -369,6 +383,7 @@ impl EditorView {
             scrubbing: false,
             preview,
             preview_image: None,
+            retired_images: Vec::new(),
             preview_sig: None,
             presets: Vec::new(),
             waveforms: std::collections::HashMap::new(),
@@ -449,7 +464,12 @@ impl EditorView {
         self.editing_text = None;
         self.waveforms.clear();
         self.audio_cache.clear();
-        self.preview_image = None;
+        self.retire_preview_image();
+        // A composite of the *previous* project may still be on the GPU. Collected, it would be
+        // installed as this project's first frame.
+        if let Some(preview) = self.preview.as_mut() {
+            preview.discard_composite();
+        }
         self.preview_sig = None;
         self.status = None;
         self.needs_focus = true;
@@ -874,14 +894,67 @@ impl EditorView {
         hasher.finish()
     }
 
-    /// Re-composite the preview if anything affecting it changed since the last frame.
+    /// Move the on-screen preview frame to the retirement queue. Not a drop: the atlas tile it
+    /// owns outlives the `Arc` and is only released by [`Self::release_retired_images`].
+    fn retire_preview_image(&mut self) {
+        if let Some(image) = self.preview_image.take() {
+            self.retired_images.push(image);
+        }
+    }
+
+    /// Release the sprite-atlas tiles of every frame that has left the screen.
+    ///
+    /// Called at the top of `render`, before the element tree is rebuilt, so the only image this
+    /// can free is one that was last painted in a frame already submitted — never the one this
+    /// frame is about to draw.
+    fn release_retired_images(&mut self, window: &mut Window) {
+        for image in self.retired_images.drain(..) {
+            let _ = window.drop_image(image);
+        }
+    }
+
+    /// Collect a finished composite and submit a new one if anything affecting it changed.
+    ///
+    /// Two halves, in that order, because the compositor is pipelined: the frame shown now was
+    /// submitted on an earlier tick. Collecting first also frees the single staging buffer that
+    /// the submit below needs.
     fn update_preview(&mut self) {
         if self.preview.is_none() {
             return;
         }
+
+        // --- collect ---
+        let collected = self.preview.as_mut().unwrap().collect_composite();
+        match collected {
+            CollectedFrame::Ready(frame) => {
+                if let Some(buffer) =
+                    image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
+                {
+                    let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
+                    // The frame being replaced has to give its atlas tile back. Assigning over
+                    // it would drop the `Arc` and leak the tile — see `retired_images`.
+                    self.retire_preview_image();
+                    self.preview_image = Some(Arc::new(render_image));
+                }
+            }
+            // A frame the GPU could not produce (device loss on a laptop that slept) leaves the
+            // last good one on screen. Showing nothing, or a black rectangle, would look like
+            // the project is empty rather than like the GPU hiccuped.
+            //
+            // Clearing the signature is what makes that a hiccup rather than a permanent freeze:
+            // leaving it set means this scene counts as already drawn and every later tick
+            // returns early — forever, even after the GPU recovers.
+            CollectedFrame::Failed => self.preview_sig = None,
+            // Still compositing. `render` keeps asking for frames while a readback is pending,
+            // so this is a tick to wait, not a reason to give up on the frame.
+            CollectedFrame::Pending => return,
+            CollectedFrame::Idle => {}
+        }
+
+        // --- submit ---
         let signature = self.preview_signature();
         // A decode finishing on a worker thread does NOT change the signature (the project is
-        // unchanged), so while any decode is in flight we must re-render unconditionally —
+        // unchanged), so while any decode is in flight we must re-composite unconditionally —
         // otherwise the placeholder would never be replaced by the real frame.
         let awaiting_decode = self
             .preview
@@ -890,7 +963,6 @@ impl EditorView {
         if self.preview_sig == Some(signature) && !awaiting_decode {
             return;
         }
-        self.preview_sig = Some(signature);
 
         let playhead = self.editor.playhead();
         let background = self.editor.project().settings.background.clone();
@@ -898,7 +970,7 @@ impl EditorView {
         let renderer = self.preview.as_mut().unwrap();
         let scene = self.editor.active_scene();
         let media = self.editor.media();
-        let frame = renderer.render(
+        let submitted = renderer.submit_composite(
             scene,
             playhead,
             PREVIEW_RENDER_W,
@@ -906,22 +978,9 @@ impl EditorView {
             &background,
             media,
         );
-
-        // A frame the GPU could not produce (device loss on a laptop that slept) leaves the last
-        // good one on screen. Showing nothing, or a black rectangle, would look like the project
-        // is empty rather than like the GPU hiccuped.
-        //
-        // Clearing the signature is what makes that a hiccup rather than a permanent freeze: it
-        // was recorded before the render, so leaving it set means this scene is considered
-        // already drawn and the next tick returns early — forever, even after the GPU recovers.
-        let Some(frame) = frame else {
-            self.preview_sig = None;
-            return;
-        };
-        if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra) {
-            let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
-            self.preview_image = Some(Arc::new(render_image));
-        }
+        // Only claim this scene is drawn once its composite is actually on the GPU. Recording
+        // the signature for a submit that never happened would mean no later tick re-tries it.
+        self.preview_sig = submitted.then_some(signature);
     }
 
     /// The edge a drag is actually moving, after snapping — and the delta in pixels that
@@ -3077,25 +3136,28 @@ impl EditorView {
                         .child(controls),
                 );
             }
-            // One add-button per supported effect type. Blur seeds a 4px sigma; the colour
-            // adjustments seed amount 1.0 (no change), then the ± stepper tunes them.
-            let add_effects: [(&'static str, &'static str, &'static str); 4] = [
+            // One add-button per supported effect type. What each is born with comes from
+            // `bay_core::blocks::default_effect_params`, not from here — the seed is engine
+            // logic a headless client needs too, and when this view owned its own copy the
+            // same effect arrived with different parameters depending on whether a person
+            // clicked a button or an agent called a tool.
+            let add_effects: [(&'static str, &'static str, &'static str); 5] = [
                 ("add-fx-brightness", "brightness", "+ Bright"),
                 ("add-fx-contrast", "contrast", "+ Contrast"),
                 ("add-fx-saturation", "saturation", "+ Sat"),
                 ("add-fx-blur", "blur", "+ Blur"),
+                ("add-fx-shadow", "drop-shadow", "+ Shadow"),
             ];
             let mut add_row = div().flex().flex_row().flex_wrap().gap_1();
             for (id, effect_type, label) in add_effects {
                 let reference = selected.reference.clone();
                 add_row = add_row.child(self.button(id, label, true, cx, move |this, _cx| {
                     this.add_counter += 1;
-                    let amount = if effect_type == "blur" { 4.0 } else { 1.0 };
                     let effect = bay_core::Effect {
                         id: format!("fx-{}", this.add_counter),
                         effect_type: effect_type.into(),
                         enabled: true,
-                        params: [("amount".to_string(), amount)].into_iter().collect(),
+                        params: bay_core::blocks::default_effect_params(effect_type),
                         asset: None,
                     };
                     this.editor.execute(Command::AddEffect {
@@ -3826,10 +3888,14 @@ impl Render for EditorView {
         }
         // Video decodes run on worker threads. Keep asking for frames while any are in flight so
         // the finished clip actually appears, even when playback is paused.
+        //
+        // A composite waiting on the GPU is the same obligation: it is collected by a later
+        // `update_preview`, so without a tick to collect it the last edit before the window goes
+        // idle would stay off screen.
         if self
             .preview
             .as_ref()
-            .is_some_and(|p| p.has_pending_decodes())
+            .is_some_and(|p| p.has_pending_decodes() || p.has_pending_readback())
         {
             window.request_animation_frame();
         }
@@ -3838,6 +3904,10 @@ impl Render for EditorView {
             window.focus(&self.focus_handle);
         }
         self.update_preview();
+        // After `update_preview`, so the frame it just replaced gives its tile back now rather
+        // than lingering until whatever repaints next — which, once playback stops, may be
+        // nothing at all.
+        self.release_retired_images(window);
         self.ensure_waveforms();
         let vm = EditorViewModel::build(&self.editor);
 

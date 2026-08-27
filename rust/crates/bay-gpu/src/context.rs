@@ -37,6 +37,112 @@ const FULLSCREEN_QUAD_POSITIONS: [[f32; 2]; 6] = [
     [1.0, 1.0],
 ];
 
+/// A staging buffer reused across texture readbacks.
+///
+/// [`GpuContext::read_texture_native`] allocates and frees a `MAP_READ` buffer per call. That is
+/// the right shape for a one-off — an export still, a test — and the wrong one for the live
+/// preview, which reads back a fixed-size texture on every composited frame and so paid for a
+/// GPU allocation and free sixty times a second. A caller on that path keeps one of these and
+/// pays once.
+///
+/// Sized in bytes of *padded* rows, so it is indexed by the same arithmetic the copy uses.
+#[derive(Default)]
+pub struct ReadbackPool {
+    buffer: Option<wgpu::Buffer>,
+    capacity: u64,
+}
+
+impl ReadbackPool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop the staging buffer. For when its mapping state is no longer known to be sound and
+    /// the cheap way out is to let the next [`Self::acquire`] start over.
+    fn reset(&mut self) {
+        self.buffer = None;
+        self.capacity = 0;
+    }
+
+    /// A buffer of at least `size` bytes, allocating only when the current one is too small.
+    ///
+    /// Grows but never shrinks: the preview holds one canvas size for its whole life, and a
+    /// single larger read has no business forcing the next preview frame to reallocate.
+    fn acquire(&mut self, device: &wgpu::Device, size: u64) -> &wgpu::Buffer {
+        if self.capacity < size {
+            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu-readback-buffer"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }));
+            self.capacity = size;
+        }
+        self.buffer
+            .as_ref()
+            .expect("buffer is allocated above whenever capacity is short")
+    }
+}
+
+/// The outcome of polling a [`PipelinedReadback`].
+pub enum ReadbackPoll {
+    /// Nothing has been submitted since the last frame was taken.
+    Idle,
+    /// The GPU is still working. The caller should keep showing the previous frame and ask
+    /// again — see `PreviewRenderer::has_pending_readback`.
+    Pending,
+    /// Tightly-packed pixels in the context's native texture order.
+    Ready {
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    },
+    /// The copy or the mapping failed. Device loss is the realistic cause.
+    Failed,
+}
+
+/// A readback that is submitted on one frame and collected on a later one.
+///
+/// [`GpuContext::read_texture_native`] blocks on `poll(wait_indefinitely())`, which serialises
+/// the CPU against work it submitted microseconds earlier: the thread sits idle for the whole
+/// composite. That is the correct trade for an export or a test, where the pixels are the only
+/// product. On the interactive path it costs a stall every frame for a picture that could just
+/// as well be collected on the next tick.
+///
+/// One buffer is enough because the pipeline is one deep: a new copy is only submitted after the
+/// previous one has been collected and unmapped, so the buffer is never read and written at once.
+#[derive(Default)]
+pub struct PipelinedReadback {
+    pool: ReadbackPool,
+    in_flight: Option<InFlight>,
+}
+
+struct InFlight {
+    width: u32,
+    height: u32,
+    padded_bytes_per_row: usize,
+    needed: u64,
+    /// Set by the `map_async` callback. `None` until the callback runs.
+    mapped_ok: std::sync::Arc<std::sync::atomic::AtomicU8>,
+}
+
+/// `mapped_ok` states. `map_async`'s callback can report failure while `poll` reports success,
+/// so "did it finish" and "did it work" are two different questions and need three states.
+const MAP_PENDING: u8 = 0;
+const MAP_OK: u8 = 1;
+const MAP_FAILED: u8 = 2;
+
+impl PipelinedReadback {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether a copy has been submitted whose pixels have not been collected yet.
+    pub fn is_pending(&self) -> bool {
+        self.in_flight.is_some()
+    }
+}
+
 pub struct GpuContext {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -768,16 +874,23 @@ impl GpuContext {
         width: u32,
         height: u32,
     ) -> Option<Vec<u8>> {
+        self.read_texture_native_pooled(&mut ReadbackPool::new(), texture, width, height)
+    }
+
+    /// [`Self::read_texture_native`], reusing `pool`'s staging buffer instead of allocating one.
+    fn read_texture_native_pooled(
+        &self,
+        pool: &mut ReadbackPool,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Option<Vec<u8>> {
         let unpadded_bytes_per_row = (width as usize) * 4;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+        let needed = (padded_bytes_per_row * height as usize) as u64;
 
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu-readback-buffer"),
-            size: (padded_bytes_per_row * height as usize) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let buffer = pool.acquire(&self.device, needed).clone();
 
         let mut encoder = self
             .device
@@ -807,7 +920,10 @@ impl GpuContext {
         );
         self.queue.submit([encoder.finish()]);
 
-        let slice = buffer.slice(..);
+        // Bounded to what this read needs, not to the whole buffer: a pooled buffer is sized to
+        // the largest read it has served, and mapping the tail would both stall on bytes nobody
+        // wants and misalign the row indexing below.
+        let slice = buffer.slice(..needed);
         // The mapping result has to be captured, not discarded. `poll` can return Ok while the
         // map itself failed, and `get_mapped_range` then panics — the exact abort-on-a-bad-frame
         // behaviour this signature exists to remove.
@@ -871,12 +987,193 @@ impl GpuContext {
         height: u32,
     ) -> Option<Vec<u8>> {
         let mut out = self.read_texture_native(texture, width, height)?;
+        self.swizzle_to_bgra(&mut out);
+        Some(out)
+    }
+
+    /// [`Self::read_texture_bgra`], reusing `pool`'s staging buffer rather than allocating one
+    /// per call. This is the live-preview entry point — see [`ReadbackPool`].
+    ///
+    /// `None` means the readback failed — see [`Self::read_texture_native`].
+    pub fn read_texture_bgra_pooled(
+        &self,
+        pool: &mut ReadbackPool,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Option<Vec<u8>> {
+        let mut out = self.read_texture_native_pooled(pool, texture, width, height)?;
+        self.swizzle_to_bgra(&mut out);
+        Some(out)
+    }
+
+    /// Copy `texture` into `readback`'s staging buffer and start mapping it, **without waiting**.
+    ///
+    /// Returns `false` and does nothing if a readback is already outstanding — the caller must
+    /// collect that one first, which is what keeps the single buffer safe to reuse.
+    pub fn begin_readback(
+        &self,
+        readback: &mut PipelinedReadback,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        if readback.in_flight.is_some() {
+            return false;
+        }
+
+        let unpadded_bytes_per_row = (width as usize) * 4;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+        let needed = (padded_bytes_per_row * height as usize) as u64;
+
+        let buffer = readback.pool.acquire(&self.device, needed).clone();
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gpu-pipelined-readback-encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row as u32),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+
+        let mapped_ok = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(MAP_PENDING));
+        let reported = std::sync::Arc::clone(&mapped_ok);
+        buffer
+            .slice(..needed)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let state = if result.is_ok() { MAP_OK } else { MAP_FAILED };
+                reported.store(state, std::sync::atomic::Ordering::SeqCst);
+            });
+
+        readback.in_flight = Some(InFlight {
+            width,
+            height,
+            padded_bytes_per_row,
+            needed,
+            mapped_ok,
+        });
+        true
+    }
+
+    /// Collect an outstanding [`Self::begin_readback`] if the GPU has finished with it.
+    ///
+    /// Never blocks: `PollType::Poll` checks the device once and returns. A `Pending` result is
+    /// the normal case on the frame the copy was submitted.
+    pub fn poll_readback(&self, readback: &mut PipelinedReadback) -> ReadbackPoll {
+        let Some(in_flight) = readback.in_flight.as_ref() else {
+            return ReadbackPoll::Idle;
+        };
+
+        // Drives the `map_async` callback. Errors here are device loss, not "not ready yet".
+        if self.device.poll(wgpu::wgt::PollType::Poll).is_err() {
+            readback.in_flight = None;
+            return ReadbackPoll::Failed;
+        }
+
+        match in_flight
+            .mapped_ok
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            MAP_PENDING => return ReadbackPoll::Pending,
+            MAP_OK => {}
+            _ => {
+                // The buffer was never mapped, so it must not be unmapped — just release it.
+                readback.in_flight = None;
+                return ReadbackPoll::Failed;
+            }
+        }
+
+        let InFlight {
+            width,
+            height,
+            padded_bytes_per_row,
+            needed,
+            ..
+        } = *in_flight;
+        let Some(buffer) = readback.pool.buffer.as_ref() else {
+            readback.in_flight = None;
+            return ReadbackPoll::Failed;
+        };
+
+        let unpadded_bytes_per_row = (width as usize) * 4;
+        let slice = buffer.slice(..needed);
+        let mapped = slice.get_mapped_range();
+        let mut pixels = vec![0u8; unpadded_bytes_per_row * height as usize];
+        for row in 0..height as usize {
+            let src = row * padded_bytes_per_row;
+            let dst = row * unpadded_bytes_per_row;
+            pixels[dst..dst + unpadded_bytes_per_row]
+                .copy_from_slice(&mapped[src..src + unpadded_bytes_per_row]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        readback.in_flight = None;
+
+        ReadbackPoll::Ready {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    /// Wait for an outstanding readback and throw its pixels away, leaving `readback` idle.
+    ///
+    /// For when what the composite depicts has stopped being what belongs on screen — a
+    /// different project was opened — so its pixels must not be presented as the new scene's.
+    /// Blocking is fine here: this is not the per-frame path.
+    pub fn discard_readback(&self, readback: &mut PipelinedReadback) {
+        let Some(in_flight) = readback.in_flight.take() else {
+            return;
+        };
+        if self
+            .device
+            .poll(wgpu::wgt::PollType::wait_indefinitely())
+            .is_err()
+        {
+            // Whether the buffer ended up mapped is now unknowable, and handing a mapped buffer
+            // to the next `copy_texture_to_buffer` is a validation error. Start over instead.
+            readback.pool.reset();
+            return;
+        }
+        let mapped = in_flight
+            .mapped_ok
+            .load(std::sync::atomic::Ordering::SeqCst);
+        if mapped == MAP_OK
+            && let Some(buffer) = readback.pool.buffer.as_ref()
+        {
+            buffer.unmap();
+        }
+    }
+
+    /// Put a native-order readback into BGRA. A no-op on Metal and DX12, whose textures are
+    /// already BGRA — only GL backends pay for the pass.
+    fn swizzle_to_bgra(&self, out: &mut [u8]) {
         if self.texture_format == wgpu::TextureFormat::Rgba8Unorm {
             for texel in out.chunks_exact_mut(4) {
                 texel.swap(0, 2);
             }
         }
-        Some(out)
     }
 
     /// Swaps R and B when the native texture format is BGRA so a caller-supplied RGBA buffer

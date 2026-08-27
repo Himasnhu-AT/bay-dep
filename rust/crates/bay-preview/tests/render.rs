@@ -1,7 +1,7 @@
 //! The preview renderer composites scenes to non-empty BGRA frames on a real GPU (skips if
 //! none — set `BAY_REQUIRE_GPU=1` / `BAY_REQUIRE_FFMPEG=1` to turn those skips into failures).
 
-use bay_preview::PreviewRenderer;
+use bay_preview::{CollectedFrame, PreviewRenderer};
 use bay_project::{
     AudioRole, Effect, Element, ElementSource, ImageElement, MediaAsset, MediaTime, Project,
     Transform, VideoElement,
@@ -101,19 +101,23 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
 }
 
 #[test]
-fn renders_contrast_saturation_and_blur_on_gpu() {
+fn renders_contrast_saturation_blur_and_drop_shadow_on_gpu() {
     // Exercises the new effect shaders end-to-end (WGSL compiles + runs on the real GPU).
     let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
-    for effect_type in ["contrast", "saturation", "blur"] {
+    for effect_type in ["contrast", "saturation", "blur", "drop-shadow"] {
         let mut project = Project::starter();
         if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
             title.effects.push(Effect {
                 id: format!("fx-{effect_type}"),
                 effect_type: effect_type.into(),
                 enabled: true,
-                params: [("amount".to_string(), 1.5)].into_iter().collect(),
+                params: if effect_type == "drop-shadow" {
+                    bay_core::blocks::default_effect_params("drop-shadow")
+                } else {
+                    [("amount".to_string(), 1.5)].into_iter().collect()
+                },
                 asset: None,
             });
         }
@@ -3808,4 +3812,261 @@ fn a_typed_line_reaches_the_frame_one_character_at_a_time() {
         later, full,
         "a line that has finished typing should stay whole"
     );
+}
+
+/// The shadow has to be *visible*, and its dial has to move it.
+///
+/// The GPU test above only proves the shader compiles and the pass runs; a shadow that packed
+/// its uniforms perfectly and composited nothing would pass it. This renders the same frame
+/// twice with only `amount` changed and compares total luminance, so it needs no knowledge of
+/// where the layer landed — a black shadow can only ever make the frame darker, and a stronger
+/// one has to make it darker still.
+#[test]
+fn a_stronger_drop_shadow_darkens_the_frame() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+
+    let luminance_at = |renderer: &mut PreviewRenderer, amount: f32| -> f64 {
+        let mut project = Project::starter();
+        // A black shadow on the starter's black background is invisible, and the test would
+        // pass or fail on rounding noise. White ground, ink shadow — which is also the only
+        // arrangement in which anyone would notice a shadow at all.
+        project.settings.background = bay_project::Background::Color {
+            color: "#ffffff".to_string(),
+        };
+        if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
+            let mut params = bay_core::blocks::default_effect_params("drop-shadow");
+            params.insert("amount".to_string(), amount);
+            title.effects.push(Effect {
+                id: "fx-shadow".into(),
+                effect_type: "drop-shadow".into(),
+                enabled: true,
+                params,
+                asset: None,
+            });
+        }
+        // Sampled after the title's fade-in, not at zero. At t=0 the starter title's gain is
+        // still 0, so the compositor multiplies the whole layer — shadow included — down to
+        // nothing, and both renders come back as bare background.
+        let (width, height) = (160, 90);
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::from_seconds_f64(1.0).expect("one second is representable"),
+                width,
+                height,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
+        // Luminance from the colour bytes only. BGRA's fourth byte is alpha, and a shadow
+        // raises alpha while lowering colour, so summing all four can cancel the very thing
+        // this asserts.
+        frame
+            .bgra
+            .chunks_exact(4)
+            .map(|px| px[0] as f64 + px[1] as f64 + px[2] as f64)
+            .sum()
+    };
+
+    let faint = luminance_at(&mut renderer, 0.05);
+    let strong = luminance_at(&mut renderer, 0.9);
+    assert!(
+        strong < faint,
+        "a stronger shadow should darken the frame: faint={faint}, strong={strong}"
+    );
+}
+
+/// Render a project file to a PNG so a migration can be *looked at*.
+///
+/// Gated on env vars, and inert without them. A project that deserializes is not a project that
+/// renders correctly — geometry, text metrics and effect params can all be well-formed and
+/// still put the type in the wrong place, which is only visible in a frame.
+///
+/// `BAY_LOAD_PROJECT=p.json BAY_RENDER_FRAME=195 BAY_RENDER_OUT=out.png \
+///   cargo test -p bay-preview --test render render_external_project -- --nocapture`
+#[test]
+fn render_external_project() {
+    let (Ok(path), Ok(out)) = (
+        std::env::var("BAY_LOAD_PROJECT"),
+        std::env::var("BAY_RENDER_OUT"),
+    ) else {
+        return;
+    };
+    let frame: i64 = std::env::var("BAY_RENDER_FRAME")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let raw = std::fs::read_to_string(&path).expect("the project file is readable");
+    let project: bay_project::Project = serde_json::from_str(&raw).expect("it is a project");
+    let (width, height) = (
+        project.settings.canvas.width,
+        project.settings.canvas.height,
+    );
+    let rendered = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::from_ticks(frame * 4_000),
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
+
+    // The compositor hands back BGRA; PNG wants RGBA.
+    let mut rgba = rendered.bgra.clone();
+    for px in rgba.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    image::save_buffer(&out, &rgba, width, height, image::ColorType::Rgba8)
+        .expect("the PNG is written");
+    println!("RENDERED {out} at frame {frame} ({width}x{height})");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The pipelined preview path: composite on one tick, collect on a later one.
+// ---------------------------------------------------------------------------------------------
+
+/// Drive `collect_composite` until it stops saying `Pending`, the way the editor's
+/// animation-frame loop does. Bounded so a wedged readback fails the test instead of hanging it.
+fn collect_until_ready(renderer: &mut PreviewRenderer) -> bay_preview::PreviewFrame {
+    for _ in 0..10_000 {
+        match renderer.collect_composite() {
+            CollectedFrame::Ready(frame) => return frame,
+            CollectedFrame::Pending => continue,
+            CollectedFrame::Idle => panic!("nothing was in flight to collect"),
+            CollectedFrame::Failed => panic!("the readback failed"),
+        }
+    }
+    panic!("the composite never finished");
+}
+
+#[test]
+fn a_pipelined_composite_produces_the_same_pixels_as_a_blocking_one() {
+    // The whole point of the pipelined path is that it is only a *timing* change. If it ever
+    // renders something different from `render`, the preview has stopped showing what an export
+    // of the same frame would produce.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    let (width, height) = (128, 72);
+
+    let blocking = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
+
+    assert!(
+        renderer.submit_composite(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        ),
+        "the composite went to the GPU"
+    );
+    let pipelined = collect_until_ready(&mut renderer);
+
+    assert_eq!((pipelined.width, pipelined.height), (width, height));
+    assert_eq!(
+        pipelined.bgra, blocking.bgra,
+        "the pipelined path composited a different picture than the blocking one"
+    );
+}
+
+#[test]
+fn a_second_composite_is_refused_while_one_is_still_in_flight() {
+    // There is one staging buffer. Submitting again before collecting would have the GPU writing
+    // into the buffer the previous frame is being read out of.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    let submit = |renderer: &mut PreviewRenderer| {
+        renderer.submit_composite(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            36,
+            &project.settings.background,
+            &project.media,
+        )
+    };
+
+    assert!(submit(&mut renderer), "the first composite was accepted");
+    assert!(renderer.has_pending_readback());
+    assert!(
+        !submit(&mut renderer),
+        "a second composite must be refused while the first is uncollected"
+    );
+
+    let _ = collect_until_ready(&mut renderer);
+    assert!(!renderer.has_pending_readback());
+    assert!(
+        submit(&mut renderer),
+        "once collected, the renderer accepts work again"
+    );
+}
+
+#[test]
+fn collecting_nothing_is_idle_rather_than_a_failure() {
+    // `Idle` and `Failed` drive different behaviour in the editor — one is "nothing to do", the
+    // other clears the frame signature to force a re-composite. A fresh renderer is the former.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    assert!(matches!(renderer.collect_composite(), CollectedFrame::Idle));
+    assert!(!renderer.has_pending_readback());
+}
+
+#[test]
+fn a_discarded_composite_is_not_delivered_to_the_next_collect() {
+    // Opening a different project discards whatever is in flight. If those pixels survived, the
+    // previous project's last frame would appear as the new project's first.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    assert!(renderer.submit_composite(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    ));
+
+    renderer.discard_composite();
+    assert!(!renderer.has_pending_readback());
+    assert!(
+        matches!(renderer.collect_composite(), CollectedFrame::Idle),
+        "a discarded composite must not be collectable"
+    );
+
+    // The staging buffer must be reusable afterwards, not left mapped.
+    assert!(renderer.submit_composite(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    ));
+    let frame = collect_until_ready(&mut renderer);
+    assert_eq!(frame.bgra.len(), 64 * 36 * 4);
 }

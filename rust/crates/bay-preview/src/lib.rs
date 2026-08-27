@@ -16,7 +16,7 @@ use bay_compositor::{
 };
 use std::collections::HashSet;
 
-use bay_gpu::GpuContext;
+use bay_gpu::{GpuContext, PipelinedReadback, ReadbackPoll, ReadbackPool, wgpu};
 use bay_project::{Background, Element, ElementKind, MediaAsset, MediaTime, Scene};
 use bay_text::TextRaster;
 
@@ -553,6 +553,20 @@ pub fn shape_raster_dimensions_for_test(aspect: f32) -> (u32, u32) {
     shape_raster_dimensions(aspect)
 }
 
+/// What [`PreviewRenderer::collect_composite`] found waiting.
+pub enum CollectedFrame {
+    /// Pixels arrived. Show them.
+    Ready(PreviewFrame),
+    /// A composite is still on the GPU. Keep the frame already on screen and tick again — this
+    /// is the normal result on the tick a composite was submitted, not a failure.
+    Pending,
+    /// Nothing was outstanding to collect.
+    Idle,
+    /// The readback failed; device loss is the realistic cause. The caller should keep the last
+    /// good frame on screen and let the composite be re-submitted.
+    Failed,
+}
+
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
 pub struct PreviewFrame {
     pub width: u32,
@@ -1022,7 +1036,7 @@ impl ExportStreams {
     }
 }
 
-/// Where [`PreviewRenderer::render_inner`] gets video pixels from. Named rather than a bare
+/// Where [`PreviewRenderer::composite_inner`] gets video pixels from. Named rather than a bare
 /// `Option` because the two are a real policy choice, not a present/absent flag.
 enum FrameSource<'a> {
     /// Preview: the whole clip, decoded once at preview size, indexed by time.
@@ -1065,6 +1079,11 @@ pub struct PreviewRenderer {
     /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
     raster_keys: HashSet<String>,
     raster_order: std::collections::VecDeque<String>,
+    /// Staging buffer for the per-frame readback, kept across frames so compositing a preview
+    /// does not allocate and free a GPU buffer sixty times a second.
+    readback: ReadbackPool,
+    /// The interactive preview's readback, submitted on one tick and collected on a later one.
+    pipelined: PipelinedReadback,
 }
 
 /// The container the picture and sound are wrapped in — as opposed to what is on the timeline.
@@ -1257,6 +1276,8 @@ impl PreviewRenderer {
             video_lru: std::collections::VecDeque::new(),
             raster_keys: HashSet::new(),
             raster_order: std::collections::VecDeque::new(),
+            readback: ReadbackPool::new(),
+            pipelined: PipelinedReadback::new(),
         })
     }
 
@@ -1803,7 +1824,7 @@ impl PreviewRenderer {
             streams.retain_only(&live_video_elements(scene, playhead));
             // A frame the GPU could not produce must not be silently skipped: doing so would
             // shorten the output and shift every later frame's timing.
-            let Some(frame) = self.render_inner(
+            let Some(frame) = self.composite_and_read(
                 scene,
                 playhead,
                 width,
@@ -1883,7 +1904,7 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
     ) -> Option<PreviewFrame> {
-        self.render_inner(
+        self.composite_and_read(
             scene,
             playhead,
             width,
@@ -1894,14 +1915,126 @@ impl PreviewRenderer {
         )
     }
 
+    /// Composite and wait for the pixels. The blocking path: an export has nothing to do until
+    /// the frame exists, and a still has nowhere to put a frame that arrives later.
+    #[allow(clippy::too_many_arguments)]
+    fn composite_and_read(
+        &mut self,
+        scene: &Scene,
+        playhead: MediaTime,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+        source: FrameSource<'_>,
+    ) -> Option<PreviewFrame> {
+        let texture =
+            self.composite_inner(scene, playhead, width, height, background, media, source)?;
+        // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
+        // native order, so there is no channel swizzle.
+        let bgra =
+            self.ctx
+                .read_texture_bgra_pooled(&mut self.readback, &texture, width, height)?;
+        Some(PreviewFrame {
+            width,
+            height,
+            bgra,
+        })
+    }
+
+    /// Take the pixels of a composite submitted by an earlier [`Self::submit_composite`], if the
+    /// GPU has finished with it. Never blocks.
+    ///
+    /// Collecting and submitting are separate calls on purpose. Fused into one "render" the
+    /// preview could not idle: every collect would submit the next composite, which would owe
+    /// another collect, and a window with nothing happening in it would spin at full frame rate.
+    pub fn collect_composite(&mut self) -> CollectedFrame {
+        match self.ctx.poll_readback(&mut self.pipelined) {
+            ReadbackPoll::Ready {
+                width,
+                height,
+                pixels,
+            } => CollectedFrame::Ready(PreviewFrame {
+                width,
+                height,
+                bgra: pixels,
+            }),
+            ReadbackPoll::Pending => CollectedFrame::Pending,
+            ReadbackPoll::Idle => CollectedFrame::Idle,
+            ReadbackPoll::Failed => CollectedFrame::Failed,
+        }
+    }
+
+    /// Composite the scene and start reading it back, **without waiting for the GPU**.
+    ///
+    /// [`Self::render`] waits for the frame it just submitted, idling the thread for the length
+    /// of a composite on every tick of the interactive preview. This submits and leaves; the
+    /// pixels arrive at a later [`Self::collect_composite`], so a frame reaches the screen one
+    /// tick after the edit that caused it.
+    ///
+    /// That one-tick lag is only invisible if the caller keeps ticking. Callers **must** drive
+    /// another frame while [`Self::has_pending_readback`] is true — exactly as they already do
+    /// for [`Self::has_pending_decodes`] — or the last edit before the window goes idle will sit
+    /// composited-but-uncollected and the preview will keep showing the state before it.
+    ///
+    /// Returns `false` if nothing was submitted: either a readback is still outstanding (the
+    /// single staging buffer has nowhere to put a second frame) or the composite itself failed.
+    pub fn submit_composite(
+        &mut self,
+        scene: &Scene,
+        playhead: MediaTime,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+    ) -> bool {
+        if self.pipelined.is_pending() {
+            return false;
+        }
+        let Some(texture) = self.composite_inner(
+            scene,
+            playhead,
+            width,
+            height,
+            background,
+            media,
+            FrameSource::Cache,
+        ) else {
+            return false;
+        };
+        self.ctx
+            .begin_readback(&mut self.pipelined, &texture, width, height)
+    }
+
+    /// Whether a composite is on the GPU waiting to be collected. While this is true the caller
+    /// owes another tick — see [`Self::submit_composite`]'s note on the one-tick lag.
+    pub fn has_pending_readback(&self) -> bool {
+        self.pipelined.is_pending()
+    }
+
+    /// Throw away a composite still on the GPU, because what it depicts is no longer what should
+    /// be on screen.
+    ///
+    /// Loading a different project is the case that needs this: the composite in flight is of
+    /// the *old* project, and collecting it would put the previous project's last frame up as
+    /// the new one's first.
+    pub fn discard_composite(&mut self) {
+        self.ctx.discard_readback(&mut self.pipelined);
+    }
+
     /// The one compositing implementation, shared by the preview and the export.
     ///
     /// Only where **video pixels** come from differs between the two, so that is the only thing
-    /// `source` selects. Everything else — layer order, transforms, effects, masks, the readback
-    /// — is common by construction rather than by discipline, which is what keeps an export from
-    /// quietly diverging from what the preview showed.
+    /// `source` selects. Everything else — layer order, transforms, effects, masks — is common by
+    /// construction rather than by discipline, which is what keeps an export from quietly
+    /// diverging from what the preview showed.
+    ///
+    /// Returns the composited texture; how its pixels are collected is the caller's choice, and
+    /// is the one place preview and export legitimately differ. An export wants them now
+    /// ([`Self::render`]); the interactive preview would rather not stall for them
+    /// ([`Self::render_pipelined`]).
     #[allow(clippy::too_many_arguments)]
-    fn render_inner(
+    fn composite_inner(
         &mut self,
         scene: &Scene,
         playhead: MediaTime,
@@ -1910,7 +2043,7 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
         mut source: FrameSource<'_>,
-    ) -> Option<PreviewFrame> {
+    ) -> Option<wgpu::Texture> {
         let clear = match background {
             Background::Color { color } => hex_to_rgba(color),
             Background::Blur { .. } => [0.06, 0.06, 0.08, 1.0],
@@ -2234,22 +2367,16 @@ impl PreviewRenderer {
             items,
         };
 
-        // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
-        // native order, so there is no per-frame channel swizzle on the hot path.
-        let bgra = match self.compositor.render_frame_to_texture(&self.ctx, &frame) {
-            Ok(texture) => self.ctx.read_texture_bgra(&texture, width, height),
-            Err(_) => None,
-        };
+        let texture = self
+            .compositor
+            .render_frame_to_texture(&self.ctx, &frame)
+            .ok();
 
         // Evict before the early return, so a failed frame cannot strand this frame's rasters
         // in the cache and shrink the budget available to the next one.
         self.evict_rasters(&in_use);
 
-        Some(PreviewFrame {
-            width,
-            height,
-            bgra: bgra?,
-        })
+        texture
     }
 }
 
