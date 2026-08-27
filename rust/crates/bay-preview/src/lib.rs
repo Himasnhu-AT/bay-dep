@@ -8,6 +8,7 @@
 
 pub mod frame_check;
 pub mod probe;
+pub mod scopes;
 pub mod waveform;
 
 use bay_compositor::{
@@ -33,7 +34,7 @@ fn effect_groups(
         EffectUniformValueDescriptor::Number(amount)
     }
 
-    effects
+    let groups = effects
         .iter()
         .filter(|effect| effect.enabled)
         .filter_map(|effect| {
@@ -120,7 +121,94 @@ fn effect_groups(
                 _ => None,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    coalesce_color_runs(groups)
+}
+
+/// Fuse consecutive per-pixel colour effects into a single `color-stack` pass.
+///
+/// Runs on the *lowered* form rather than on `Effect`s, which is what keeps this cheap: every
+/// collapsible effect has already been reduced to one descriptor carrying one `u_amount` and,
+/// for a grade, its resolved table — so defaults, the look vocabulary and the drop-a-missing-
+/// `.cube` rule all keep working untouched, and this step only has to recognise the shape.
+///
+/// A run ends at anything that is not a per-pixel colour op, because `gaussian-blur` and
+/// `drop-shadow` read neighbouring texels and cannot be folded into a per-texel loop. It also
+/// ends at a second grade (one cube is bound per pass) and at
+/// [`MAX_COLOR_STACK_STAGES`](bay_effects::MAX_COLOR_STACK_STAGES). Order is preserved
+/// throughout: `brightness → blur → contrast` stays three groups, because the blur genuinely
+/// sits between them.
+///
+/// A run of one is left exactly as it was. Collapsing it would buy no quantisation back and
+/// would cost it a LUT bind group it has no use for.
+fn coalesce_color_runs(groups: Vec<Vec<EffectPassDescriptor>>) -> Vec<Vec<EffectPassDescriptor>> {
+    /// The `(op, amount)` of a group that is a lone collapsible colour pass, or `None`.
+    fn collapsible(group: &[EffectPassDescriptor]) -> Option<(f32, f32)> {
+        let [pass] = group else { return None };
+        let op = bay_effects::color_stack_op(&pass.shader)?;
+        // `u_amount` alone: the shape every collapsible pass is lowered into above. Anything
+        // richer is a pass this fusion does not understand, and guessing at it is how a
+        // parameter goes quietly missing.
+        if pass.uniforms.len() != 1 {
+            return None;
+        }
+        let Some(EffectUniformValueDescriptor::Number(amount)) = pass.uniforms.get("u_amount")
+        else {
+            return None;
+        };
+        Some((op, *amount))
+    }
+
+    let mut out: Vec<Vec<EffectPassDescriptor>> = Vec::with_capacity(groups.len());
+    let mut run: Vec<Vec<EffectPassDescriptor>> = Vec::new();
+
+    // Emit whatever has accumulated: unchanged if it is a single group, fused if it is a run.
+    fn flush(run: &mut Vec<Vec<EffectPassDescriptor>>, out: &mut Vec<Vec<EffectPassDescriptor>>) {
+        match run.len() {
+            0 => {}
+            1 => out.push(run.remove(0)),
+            _ => {
+                let mut stages = Vec::with_capacity(run.len() * 2);
+                let mut lut = None;
+                for group in run.iter() {
+                    let pass = &group[0];
+                    let (op, amount) =
+                        collapsible(group).expect("a run only ever holds collapsible groups");
+                    stages.push(op);
+                    stages.push(amount);
+                    if pass.lut.is_some() {
+                        lut = pass.lut.clone();
+                    }
+                }
+                out.push(vec![EffectPassDescriptor {
+                    shader: "color-stack".to_string(),
+                    uniforms: [(
+                        "u_stages".to_string(),
+                        EffectUniformValueDescriptor::Vector(stages),
+                    )]
+                    .into(),
+                    lut,
+                }]);
+                run.clear();
+            }
+        }
+    }
+
+    for group in groups {
+        let Some((op, _)) = collapsible(&group) else {
+            flush(&mut run, &mut out);
+            out.push(group);
+            continue;
+        };
+        let second_grade =
+            op == bay_effects::COLOR_STACK_OP_LUT && run.iter().any(|held| held[0].lut.is_some());
+        if run.len() == bay_effects::MAX_COLOR_STACK_STAGES || second_grade {
+            flush(&mut run, &mut out);
+        }
+        run.push(group);
+    }
+    flush(&mut run, &mut out);
+    out
 }
 
 /// How far a card may lean before the projection stops being a picture.
@@ -1091,7 +1179,15 @@ pub struct PreviewRenderer {
 ///
 /// Before this existed the encoder was invoked with `-pix_fmt yuv420p` and nothing else, so
 /// every export took libx264's defaults whatever it was for: no way to ask for a smaller file,
-/// a better one, an alpha-capable codec, or a level a phone would play at a sensible volume.
+/// a better one, an editing codec, or a level a phone would play at a sensible volume.
+///
+/// **No export carries alpha.** H.264 and HEVC go out as `yuv420p` and ProRes as `yuv444p10le`,
+/// none of which has an alpha channel, so the composite's alpha is discarded at the encoder
+/// however transparent the timeline was. Nothing is lost today because
+/// [`bay_project::Background`] has only `Color` and `Blur` — a transparent canvas cannot be
+/// authored, so there is no alpha to keep. Both halves would have to change together, and
+/// naming the codec half here is what stops someone shipping one of them and believing it
+/// worked.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportSettings {
     pub codec: VideoCodec,
@@ -1142,6 +1238,13 @@ pub enum VideoCodec {
     Hevc,
     /// An editing codec: huge files, no generation loss, what you hand to someone else's
     /// timeline.
+    ///
+    /// bay asks for **ProRes 4444**, not the 422 HQ an editor would pick for camera footage.
+    /// The difference is chroma resolution, and it matters here because bay's output is
+    /// synthetic: 4:2:2 halves the horizontal chroma, which is invisible on a photographed
+    /// image and destructive on a one-pixel coloured stem. Measured, on 1px coloured strokes:
+    /// 4:2:2 is off by up to **61** code values, 4:4:4 by **0**. Two-pixel detail is fine
+    /// either way — the cliff is sharp and it lands exactly where small text lives.
     ProRes,
 }
 
@@ -1164,8 +1267,16 @@ impl VideoCodec {
     }
 
     /// The encoder arguments for this codec at `quality`, and the pixel format that goes with
-    /// it. `yuv420p` is what every consumer player expects; ProRes wants a 10-bit 4:2:2 layout
-    /// and would otherwise be pointless.
+    /// it. `yuv420p` is what every consumer player expects.
+    ///
+    /// **ProRes is 10-bit whatever we ask for** — `prores_ks` offers `yuv422p10le`,
+    /// `yuv444p10le` and `yuva444p10le` and nothing else. That is a property of the codec, not
+    /// a claim about where the pixels came from, and transcoding 8-bit sources into it is the
+    /// ordinary case rather than a deception: the extra headroom is what stops the *encode*
+    /// adding a second rounding on top of the one the source already has. There is no 8-bit
+    /// ProRes to fall back to and asking for one is not a thing the format permits.
+    ///
+    /// What is a real choice is the chroma layout, and that is why the profile is 4444.
     fn encoder_args(self, quality: u32) -> Vec<String> {
         let quality = quality.min(51).to_string();
         match self {
@@ -1199,9 +1310,15 @@ impl VideoCodec {
                 "-c:v".into(),
                 "prores_ks".into(),
                 "-profile:v".into(),
-                "3".into(), // 422 HQ
+                // 4444, not 422 HQ. 4444 is the profile ProRes has for graphics and
+                // compositing handoff; 422 is the one for camera originals. bay produces the
+                // former. The cost is roughly 1.4x the file, on a format chosen for fidelity.
+                "4".into(),
                 "-pix_fmt".into(),
-                "yuv422p10le".into(),
+                // 4:4:4, so a coloured pixel survives as the colour it was. The alpha-carrying
+                // sibling `yuva444p10le` is the same profile and would be the one to reach for
+                // if a transparent background ever becomes authorable — see `Background`.
+                "yuv444p10le".into(),
             ],
         }
     }
@@ -3013,5 +3130,243 @@ mod staging_collision_tests {
             );
             assert!(path.contains(".part."), "{path} must look temporary");
         }
+    }
+}
+
+#[cfg(test)]
+mod effect_group_tests {
+    use super::*;
+
+    fn fx(effect_type: &str) -> bay_project::Effect {
+        bay_project::Effect {
+            id: format!("fx-{effect_type}"),
+            effect_type: effect_type.to_string(),
+            enabled: true,
+            params: [("amount".to_string(), 1.0)].into(),
+            asset: None,
+        }
+    }
+
+    /// A built-in look, so the mapper resolves a real table without touching the disk.
+    fn grade(id: &str) -> bay_project::Effect {
+        let mut effect = fx("lut");
+        effect.id = id.to_string();
+        effect.asset = Some(format!("{LOOK_PREFIX}neutral-contrast"));
+        effect
+    }
+
+    fn shaders(groups: &[Vec<EffectPassDescriptor>]) -> Vec<&str> {
+        groups
+            .iter()
+            .map(|group| group[0].shader.as_str())
+            .collect()
+    }
+
+    fn stages(pass: &EffectPassDescriptor) -> Vec<f32> {
+        match pass.uniforms.get("u_stages") {
+            Some(EffectUniformValueDescriptor::Vector(values)) => values.clone(),
+            other => panic!("expected a stage program, got {other:?}"),
+        }
+    }
+
+    /// The headline case, and the one the whole change exists for: four colour operations that
+    /// used to cost four draws and three quantisations now cost one of each.
+    #[test]
+    fn a_four_effect_grade_becomes_one_pass() {
+        let effects = [
+            fx("brightness"),
+            fx("contrast"),
+            fx("saturation"),
+            grade("g"),
+        ];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["color-stack"]);
+        assert_eq!(
+            stages(&groups[0][0]),
+            [
+                bay_effects::COLOR_STACK_OP_BRIGHTNESS,
+                1.0,
+                bay_effects::COLOR_STACK_OP_CONTRAST,
+                1.0,
+                bay_effects::COLOR_STACK_OP_SATURATION,
+                1.0,
+                bay_effects::COLOR_STACK_OP_LUT,
+                1.0,
+            ]
+        );
+        assert!(groups[0][0].lut.is_some(), "the run carries its cube");
+    }
+
+    /// The saving, counted rather than claimed.
+    ///
+    /// A pass is a full-screen draw *and* a fresh render target (`bay-effects` allocates one
+    /// per pass at `pipeline.rs`, unpooled), so the pass count is simultaneously the draw count
+    /// and the allocation count. Every stack here is a shape a real grade takes.
+    #[test]
+    fn the_pass_count_is_what_the_fusion_claims_it_is() {
+        let count = |effects: &[bay_project::Effect]| -> usize {
+            effect_groups(effects, &mut LutCache::default())
+                .iter()
+                .map(Vec::len)
+                .sum()
+        };
+
+        // The headline grade: was 4 passes, is 1. Three draws and three 1080p targets saved
+        // per layer per frame, and three quantisations of the intermediate.
+        assert_eq!(
+            count(&[
+                fx("brightness"),
+                fx("contrast"),
+                fx("saturation"),
+                grade("g")
+            ]),
+            1
+        );
+        // A colour grade around a blur: was 5 (2 colour + 2 blur + 1 colour), is 4.
+        assert_eq!(
+            count(&[
+                fx("brightness"),
+                fx("contrast"),
+                fx("blur"),
+                fx("saturation"),
+                grade("g"),
+            ]),
+            4
+        );
+        // Nothing to fuse: unchanged, and that is the point of leaving runs of one alone.
+        assert_eq!(count(&[fx("brightness")]), 1);
+        assert_eq!(count(&[fx("blur")]), 2);
+    }
+
+    /// Order is the user's list order. Reversing the effects must reverse the program, or the
+    /// fusion has quietly reordered someone's grade.
+    #[test]
+    fn the_stage_program_follows_list_order() {
+        let forward = effect_groups(
+            &[fx("brightness"), fx("saturation")],
+            &mut LutCache::default(),
+        );
+        let backward = effect_groups(
+            &[fx("saturation"), fx("brightness")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(
+            stages(&forward[0][0])[0],
+            bay_effects::COLOR_STACK_OP_BRIGHTNESS
+        );
+        assert_eq!(
+            stages(&backward[0][0])[0],
+            bay_effects::COLOR_STACK_OP_SATURATION
+        );
+    }
+
+    /// A blur reads neighbouring texels, so it cannot join a run — and, more importantly, it
+    /// genuinely sits *between* the two colour ops here. Fusing across it would compute a
+    /// different picture, not a cheaper one.
+    #[test]
+    fn a_blur_splits_a_colour_run_rather_than_being_absorbed() {
+        let effects = [
+            fx("brightness"),
+            fx("contrast"),
+            fx("blur"),
+            fx("saturation"),
+            grade("g"),
+        ];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(
+            shaders(&groups),
+            ["color-stack", "gaussian-blur", "color-stack"]
+        );
+        // The blur is still its own two-pass separable group.
+        assert_eq!(groups[1].len(), 2);
+    }
+
+    /// A drop shadow reads a 7x7 neighbourhood; same rule.
+    #[test]
+    fn a_drop_shadow_splits_a_colour_run() {
+        let effects = [fx("brightness"), fx("drop-shadow"), fx("contrast")];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["brightness", "drop-shadow", "contrast"]);
+    }
+
+    /// Nothing to fuse: a lone effect keeps the pass it always had. Wrapping it in a stack
+    /// would buy no quantisation back and cost it a LUT bind group it has no use for.
+    #[test]
+    fn a_lone_colour_effect_is_left_exactly_as_it_was() {
+        let groups = effect_groups(&[fx("brightness")], &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["brightness"]);
+        assert!(groups[0][0].uniforms.contains_key("u_amount"));
+    }
+
+    /// One cube is bound per pass, so a second grade has to start a new run.
+    #[test]
+    fn a_second_grade_starts_a_new_run() {
+        let effects = [fx("brightness"), grade("a"), grade("b"), fx("contrast")];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["color-stack", "color-stack"]);
+        assert_eq!(
+            stages(&groups[0][0]).len(),
+            4,
+            "brightness + the first grade"
+        );
+        assert_eq!(
+            stages(&groups[1][0]).len(),
+            4,
+            "the second grade + contrast"
+        );
+    }
+
+    /// A run longer than the shader's array splits rather than losing its tail.
+    #[test]
+    fn a_run_past_the_stage_limit_splits_and_keeps_every_stage() {
+        let effects: Vec<_> = (0..bay_effects::MAX_COLOR_STACK_STAGES + 2)
+            .map(|_| fx("contrast"))
+            .collect();
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["color-stack", "color-stack"]);
+        let total: usize = groups.iter().map(|g| stages(&g[0]).len() / 2).sum();
+        assert_eq!(
+            total,
+            bay_effects::MAX_COLOR_STACK_STAGES + 2,
+            "splitting a long run must not drop a stage"
+        );
+    }
+
+    /// A disabled effect is not in the run at all, so it cannot silently join two neighbours
+    /// that the user still sees as separated by it.
+    #[test]
+    fn a_disabled_effect_leaves_the_run_it_was_in() {
+        let mut blur = fx("blur");
+        blur.enabled = false;
+        let groups = effect_groups(
+            &[fx("brightness"), blur, fx("contrast")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(shaders(&groups), ["color-stack"]);
+    }
+
+    /// A grade whose `.cube` is missing is dropped by the lowering above — and dropping it
+    /// must join the effects on either side of it, exactly as a disabled one does.
+    #[test]
+    fn a_missing_cube_drops_its_stage_without_breaking_the_run() {
+        let mut missing = fx("lut");
+        missing.asset = Some("/definitely/not/here.cube".to_string());
+        let groups = effect_groups(
+            &[fx("brightness"), missing, fx("contrast")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(shaders(&groups), ["color-stack"]);
+        assert_eq!(stages(&groups[0][0]).len(), 4, "two stages, no grade");
+        assert!(groups[0][0].lut.is_none());
+    }
+
+    /// An effect type nothing renders is skipped, and skipping it joins its neighbours.
+    #[test]
+    fn an_unknown_effect_is_skipped_and_does_not_split_a_run() {
+        let groups = effect_groups(
+            &[fx("brightness"), fx("not-an-effect"), fx("contrast")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(shaders(&groups), ["color-stack"]);
     }
 }

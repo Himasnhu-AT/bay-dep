@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use gpui::prelude::*;
 use gpui::{
-    div, rgb, Context, Div, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription, Window,
+    div, Context, Div, Entity, FocusHandle, KeyDownEvent, SharedString, Subscription, Window,
 };
 
 use bay_core::project::{CanvasSize, Fps, ProjectLibrary, ProjectSummary};
@@ -22,7 +22,6 @@ use bay_preview::PreviewRenderer;
 use crate::editor_view::{legacy_project_path, EditorView, EditorViewEvent};
 use crate::input::{Edit, TextField};
 use crate::settings_model::Pane;
-use crate::theme;
 
 /// Canvas defaults offered when creating a project. Two presets cover almost everything people
 /// actually make: a 16:9 landscape video and a 9:16 vertical reel.
@@ -1121,23 +1120,26 @@ impl BayApp {
         cx: &mut Context<Self>,
         handler: impl Fn(&mut BayApp, &mut Context<BayApp>) + 'static,
     ) -> gpui::Stateful<Div> {
-        div()
-            .id(id)
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .bg(rgb(if primary {
-                theme::ACCENT
-            } else {
-                theme::PANEL_ALT
-            }))
-            .text_sm()
-            .text_color(rgb(if primary { 0xffffff } else { theme::TEXT }))
-            .child(Self::shared(label))
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                handler(this, cx);
-                cx.notify();
-            }))
+        let kind = if primary {
+            crate::widgets::ButtonKind::Primary
+        } else {
+            crate::widgets::ButtonKind::Normal
+        };
+        crate::widgets::pressable(
+            kind,
+            crate::widgets::button_face(kind, true)
+                .id(id)
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .text_sm()
+                .child(Self::shared(label)),
+        )
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            handler(this, cx);
+            cx.notify();
+        }))
     }
 }
 

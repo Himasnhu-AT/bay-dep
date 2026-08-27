@@ -17,6 +17,7 @@
 //! Time is [`bay_time::MediaTime`] (i64 ticks, 120 000/s) — the one time type shared with the
 //! compositor and the web/wasm core.
 
+pub mod animatable;
 pub mod duck;
 mod element;
 pub mod format;
@@ -33,14 +34,15 @@ pub mod shelf;
 pub mod templates;
 mod track;
 
+pub use animatable::{AnimatableProperty, PropertyKind, Unit, describe_path};
 pub use duck::{Duck, DuckKey, DuckParams};
 pub use element::{
-    AnimationChannel, AudioElement, AudioRole, BUILTIN_LOOKS, BlendMode, DialogueAudioChain,
-    DialogueCompressor, DialogueEq, DialogueLimiter, Easing, Effect, Element, ElementKind,
-    ElementRole, ElementSource, FreezeFrame, Gradient, ImageElement, KaraokeSpec, KaraokeWord,
-    Keyframe, LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody, Stroke,
-    TextAlign, TextDecorations, TextElement, TextPlate, TextShadow, TextStroke, Transform, TypeOn,
-    VideoElement, is_builtin_look, is_caption_id, look_id,
+    AnimationChannel, AudioElement, AudioRole, BUILTIN_LOOKS, BezierHandles, BlendMode,
+    DialogueAudioChain, DialogueCompressor, DialogueEq, DialogueLimiter, Easing, Effect, Element,
+    ElementKind, ElementRole, ElementSource, FreezeFrame, Gradient, ImageElement, KaraokeSpec,
+    KaraokeWord, Keyframe, LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody,
+    Stroke, TextAlign, TextDecorations, TextElement, TextPlate, TextShadow, TextStroke, Transform,
+    TypeOn, VideoElement, is_builtin_look, is_caption_id, look_id,
 };
 pub use kit::{
     Framing, OffToken, Palette, ResolvedStyle, StyleHistory, StyleKit, Tone, TypeFace, TypeRamp,

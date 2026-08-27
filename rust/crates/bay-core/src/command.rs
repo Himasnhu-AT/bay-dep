@@ -8,12 +8,29 @@
 use serde::{Deserialize, Serialize};
 
 use bay_project::{
-    AnimationChannel, BlendMode, Effect, Element, ElementGroup, ElementKind, ElementRef, MediaTime,
-    PlanArtifact, Project, Scene, StyleKit, Track, TrackKind, Transform,
+    AnimationChannel, BezierHandles, BlendMode, Easing, Effect, Element, ElementGroup, ElementKind,
+    ElementRef, MediaTime, PlanArtifact, Project, Scene, StyleKit, Track, TrackKind, Transform,
 };
 
 use crate::selection::SelectionPatch;
 use crate::state::EditorState;
+
+/// What curve the segment leaving a keyframe travels on.
+///
+/// The three states of one setting, so they cannot contradict. A key that carried both a named
+/// easing and drawn handles would be resolved by the sampler's precedence rule rather than by
+/// what the author last chose, and the inspector would show one while the frame showed the
+/// other.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum KeyframeCurve {
+    /// Clear the override: travel on the channel's own easing.
+    Channel,
+    /// One of the named curves from the vocabulary.
+    Named { easing: Easing },
+    /// A curve drawn by hand in the curve editor.
+    Drawn { handles: BezierHandles },
+}
 
 /// Which addable/removable lane a track lives in (the `main` lane is fixed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +181,40 @@ pub enum Command {
         property: String,
         time: MediaTime,
     },
+    /// Move one keyframe along the time axis, keeping its value, curve and identity.
+    ///
+    /// One command rather than remove-plus-add, which is what dragging a key used to be: two
+    /// commands, so two undo entries for one drag, and the key ceased to exist in between —
+    /// so whatever was holding it (a selection, a pointer) was holding nothing by the time the
+    /// second landed.
+    ///
+    /// `keyframe_id` is [`bay_project::Keyframe::identity`], the same string
+    /// [`crate::KeyframeRef`] carries.
+    MoveKeyframe {
+        reference: ElementRef,
+        property: String,
+        keyframe_id: String,
+        time: MediaTime,
+    },
+    /// Set the curve for the segment leaving one keyframe.
+    ///
+    /// One command for both a named easing and a drawn one, because they are one setting with
+    /// three states — inherit, named, drawn — and two commands writing two fields could leave
+    /// a key claiming both, which the sampler would resolve by precedence rather than by what
+    /// the author last did.
+    SetKeyframeCurve {
+        reference: ElementRef,
+        property: String,
+        keyframe_id: String,
+        curve: KeyframeCurve,
+    },
+    /// Set the whole channel's default easing — the curve every key that does not override it
+    /// travels on.
+    SetChannelEasing {
+        reference: ElementRef,
+        property: String,
+        easing: Easing,
+    },
     /// Apply a motion preset (a bundle of effects + animation channels) to an element in one
     /// undoable step. Effect ids should be pre-minted by the caller to avoid collisions.
     ApplyMotionPreset {
@@ -239,6 +290,9 @@ pub enum CommandKind {
     SetEffectParam,
     AddKeyframe,
     RemoveKeyframe,
+    MoveKeyframe,
+    SetKeyframeCurve,
+    SetChannelEasing,
     ApplyMotionPreset,
     AddTrack,
     RemoveTrack,
@@ -1267,9 +1321,11 @@ impl Command {
                 value,
             } => {
                 let element = scene.element(reference)?;
-                // Checked against the kind: a music bed has a level and no position, and a
-                // key on a property it does not have would be stored and never read.
-                if !element.animatable().contains(&property.as_str()) {
+                // Against everything this element actually reads, not against the flat
+                // thirteen. The old check refused `mask.x` and `effect.<id>.<param>` — which
+                // `animate` over MCP accepts and the renderer samples — so the same edit
+                // worked from an agent and silently vanished from the editor.
+                if !element.can_animate(property) {
                     return None;
                 }
                 let animations = element.animations()?;
@@ -1301,6 +1357,91 @@ impl Command {
                         reference: reference.clone(),
                         property: property.clone(),
                         channel,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::MoveKeyframe {
+                reference,
+                property,
+                keyframe_id,
+                time,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                // Give the channel names before moving, so a key from a project written
+                // before ids existed acquires one on its first drag rather than being
+                // addressable only until it moves.
+                channel.assign_missing_ids();
+                if !channel.move_key(keyframe_id, *time) {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::MoveKeyframe,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetKeyframeCurve {
+                reference,
+                property,
+                keyframe_id,
+                curve,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                let index = channel.index_of(keyframe_id)?;
+                let key = &mut channel.keys[index];
+                // Set as a unit: whichever state is chosen, the other two are cleared, so the
+                // key cannot end up claiming a named curve and a drawn one at once.
+                match curve {
+                    KeyframeCurve::Channel => {
+                        key.easing = None;
+                        key.handles = None;
+                    }
+                    KeyframeCurve::Named { easing } => {
+                        key.easing = Some(*easing);
+                        key.handles = None;
+                    }
+                    KeyframeCurve::Drawn { handles } => {
+                        key.easing = None;
+                        key.handles = Some(*handles);
+                    }
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetKeyframeCurve,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetChannelEasing {
+                reference,
+                property,
+                easing,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                if channel.easing == *easing {
+                    return None;
+                }
+                channel.easing = *easing;
+                Some(Lowered {
+                    kind: CommandKind::SetChannelEasing,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
                     }],
                     selection_patch: None,
                 })

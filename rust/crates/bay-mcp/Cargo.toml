@@ -32,4 +32,6 @@ subtle = "2.6.1"
 [dev-dependencies]
 # T-002 capability gate: the mix tests measure real files, so they skip on a box with no
 # ffmpeg and panic under BAY_REQUIRE_FFMPEG.
-bay-test-support = { version = "0.1.0", path = "../bay-test-support" }
+# `gpu` is on so the scope test can gate on an adapter: it skips without one and panics under
+# BAY_REQUIRE_GPU, rather than a missing GPU reading as a passing measurement.
+bay-test-support = { version = "0.1.0", path = "../bay-test-support", features = ["gpu"] }

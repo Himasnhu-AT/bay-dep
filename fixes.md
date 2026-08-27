@@ -1,4 +1,4 @@
-# fixes — eleven defects: ten from an audit, one found while running it
+# fixes — twelve defects: ten from an audit, two found while running it
 
 Every one of these is the same failure in a different place: **a control that does not do what
 it says.** A tile that adds an effect nothing renders, a validator that accepts a channel
@@ -6,12 +6,17 @@ nothing reads, a schema that hides an effect the engine has, an import that succ
 nothing — none of them fail. They all return success and produce no change, which is the only
 kind of bug a person cannot find by looking at the screen.
 
-Five are fixed here. Six are open, with what would verify each one, so nobody has to
+Six are fixed here. Six are open, with what would verify each one, so nobody has to
 re-discover them.
 
-**State at time of writing:** `./test.sh` clean — fmt, `clippy --workspace --all-targets
--D warnings`, and the full test suite. Line numbers in `bay-ui/src/editor_view.rs` were read
-on 2026-08-27; that file is under concurrent edit and they move.
+**State at time of writing:** every fix below is covered by a named test, and each entry says
+which. `./test.sh` was last seen fully green mid-change; while several of these were being
+written in parallel it stops at `cargo fmt --check` on files belonging to work still in flight,
+so run it once the tree is quiet and do not take an entry's word for a green gate. A skip is
+never a pass, and neither is a stale one.
+
+Line numbers were read on 2026-08-27. Several of these files are under concurrent edit and the
+numbers move; the surrounding names are what to search for.
 
 ---
 
@@ -166,7 +171,103 @@ Found by running the suite under a worktree-parallel agent team, which is what p
 binaries on the machine at once. Worth keeping in mind: this class of defect is invisible to a
 single-threaded developer and routine under parallel agents.
 
+### 12. ProRes mastering used the profile meant for camera footage
+
+`ExportSettings` offers ProRes as the handoff format and `ExportPreset::Master` promises "no
+generation loss". It asked `prores_ks` for **profile 3, ProRes 422 HQ**, at `yuv422p10le`
+(`rust/crates/bay-preview/src/lib.rs`, `VideoCodec::encoder_args`).
+
+422 is the ProRes profile for camera originals, and its 4:2:2 layout halves horizontal chroma
+resolution. That is invisible on a photographed image, whose chroma is smooth. bay does not
+produce photographed images — it renders type, rules and flat colour, where a coloured stem can
+be one pixel wide and its chroma is the signal.
+
+Measured by encoding a known frame and decoding it back, max error in code values per channel:
+
+| content | 422 HQ (before) | 4444 (after) |
+|---|---|---|
+| one hard red/blue edge | 2 | 0 |
+| 2px coloured strokes on white | 2 | 0 |
+| **1px coloured strokes on white** | **61** | **0** |
+| 1px red-on-blue, maximum chroma swing | 153 | 0 |
+
+The cliff is sharp and it lands exactly where small text lives. Anything coarser than one pixel
+survived either profile, which is why nothing caught it: a test using a big coloured rectangle
+would have passed on both.
+
+Fixed by asking for **profile 4, ProRes 4444**, at `yuv444p10le` — the profile ProRes has for
+graphics and compositing handoff. It round-trips 8-bit RGB exactly. The cost is roughly 1.4x the
+file size, on a format chosen for fidelity and already an order of magnitude larger than the
+delivery codecs.
+
+Verified when: `a_prores_master_returns_the_pixels_it_was_given`
+(`bay-preview/tests/render.rs`) composites 1px coloured stripes, exports through the `Master`
+preset, decodes the result and asserts **exact** equality — not a tolerance, because 4:4:4
+10-bit round-trips 8-bit RGB losslessly, so any drift means the profile or pixel format moved.
+
+**A note on the thing that led here, because it is worth not re-raising.** This was opened as
+"bay ships a 10-bit ProRes container carrying 8-bit content", which sounds like a file telling a
+lie about itself. On investigation it is not a defect:
+
+- **ProRes has no 8-bit form.** `prores_ks` and `prores_aw` accept `yuv422p10le`,
+  `yuv444p10le`, `yuva444p10le` and nothing else. There is no flag that would make the container
+  match an 8-bit source, so "stop advertising 10-bit" is not an available move.
+- **A codec's bit depth is not a provenance claim.** Transcoding 8-bit sources into ProRes is
+  the ordinary post-production case, not an unusual one. The headroom is what stops the *encode*
+  adding a second rounding on top of the one the source already carries; encoding 8-bit content
+  into a hypothetical 8-bit ProRes would be worse, not more honest.
+
+The real defect was next to it, in the profile rather than the depth. Recorded here so the
+bit-depth question is answered once.
+
+
 ## Open
+
+### 13. The narration tests hardcode two ports, so a second test binary fails them
+
+`Studio::for_test(library_root, speech_port)` exists precisely to keep the narration tests off a
+shared machine resource. Its own doc comment says so: *"`CLAUDE.md` requires that a test never
+depend on a shared machine resource. Driving the narration tests through the real port made them
+fail whenever anything else on the machine — another test binary, a `bay --mcp` someone left
+running — held it, which is precisely how a real failure gets dismissed as flake."*
+
+The two callers then pass **literals**:
+
+- `rust/crates/bay-mcp/src/server.rs:2104` — `Studio::for_test(test_library_root(), 7451)`
+- `rust/crates/bay-mcp/src/server.rs:2164` — `Studio::for_test(test_library_root(), 7452)`
+
+So the fix moved off the product's fixed port 7334 and onto two different fixed ports. Any second
+test binary — another checkout, an agent building in a worktree, a concurrent `cargo test` — takes
+the same two. The property that caused the original bug survived the fix that was meant to remove
+it, which is the same thing that happened to the registry scratch directory in entry 11: one axis
+was made per-process and the other was left global.
+
+Measured, on a quiet machine with 91 GiB free and load ~2:
+
+| how the tests were run | result |
+|---|---|
+| `a_real_narration…` alone | ok, 39.02 s |
+| the whole `narration_tests` module, 12 tests | ok, 14.72 s |
+| the full `bay-mcp --lib` binary, 61 tests | **FAILED, 300.78 s** |
+
+The failure is `could not reach the sidecar: Resource temporarily unavailable`. That string is
+**EAGAIN, errno 35** — and it is worth writing down what it is *not*, because it cost most of a
+day. It is not ENOSPC (errno 28), so it is not a full disk. It is not a spawn failure, because
+`TcpStream::connect_timeout` is a separate 3-second call that succeeded — something was listening.
+It is what `read` returns when the `SO_RCVTIMEO` set by `set_read_timeout`
+(`bay-speech/src/engine.rs:556`) expires, and `/speak` is called with `SPEAK_TIMEOUT = 300 s`
+(`:39`, used at `:469`). The 300.78 s in the table is that one timeout elapsing once, not retries.
+
+Would be fixed by binding an OS-assigned port — `TcpListener::bind((Ipv4Addr::LOCALHOST, 0))`,
+read the port, drop the listener — which is what `bay-agent`'s registry tests already do for the
+same reason. Verified when the full `bay-mcp --lib` binary passes while a second copy of it runs
+concurrently; a test that only passes when run alone is the thing being fixed.
+
+Worth noting for whoever picks this up: this is the third shared-resource test defect found in one
+session, after the registry scratch directory and this. All three were invisible to a single
+developer working alone and routine under parallel agents. The class is worth a sweep rather than
+three more individual fixes.
+
 
 ### 5. Importing audio into a project with no audio lane succeeds and places nothing
 

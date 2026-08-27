@@ -8,7 +8,8 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::{
     div, img, px, rgb, App, Context, Div, EventEmitter, FocusHandle, ImageSource, KeyBinding,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, SharedString, Window,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, RenderImage,
+    SharedString, Window,
 };
 
 use bay_core::blocks::{self, Panel};
@@ -20,6 +21,8 @@ use bay_core::{
 use bay_preview::waveform::WaveformCache;
 use bay_preview::{CollectedFrame, PreviewRenderer};
 
+use crate::controls::{self, ValueDrag, WidgetGesture, WidgetHost};
+use crate::drag::{Drag, WidgetState};
 use crate::view_model::MediaFolder;
 use crate::widgets::{self, text as shared_text};
 
@@ -43,14 +46,62 @@ enum DragMode {
     TrimEnd,
 }
 
-/// In-progress drag of a timeline element.
-struct DragState {
+/// In-progress drag of a timeline element. What the gesture *means*; where the pointer is comes
+/// from the [`Drag`] that carries it.
+pub struct BlockDrag {
     reference: ElementRef,
     mode: DragMode,
     origin_start_ticks: i64,
     origin_duration_ticks: i64,
-    pointer_start_x: f32,
-    delta_px: f32,
+}
+
+/// Everything the editor can be in the middle of dragging.
+///
+/// One enum in one slot, rather than the three parallel `Option`/`bool` fields this replaced
+/// (`dragging`, `scrubbing`, `resizing_panel`) and the `if/else if` chain that had to order them.
+/// The pages coming next add keyframe XY, box-select, level ride and colour wheel; each is a
+/// variant and one match arm, and none of them can be live at the same time as another.
+pub enum EditorDrag {
+    /// Moving or trimming a clip on the timeline.
+    Block(BlockDrag),
+    /// Dragging the playhead. Started by a press on the ruler or on empty lane space.
+    Scrub,
+    /// Dragging the left panel's divider. Carries the width at the moment of the press.
+    PanelWidth { start_width: f32 },
+    /// A slider or a drag-number. The widget layer owns what it means; the editor only holds it.
+    Value(ValueDrag<EditorView>),
+}
+
+impl WidgetGesture<EditorView> for EditorDrag {
+    fn from_value_drag(drag: ValueDrag<EditorView>) -> Self {
+        EditorDrag::Value(drag)
+    }
+
+    fn as_value_drag(&self) -> Option<&ValueDrag<EditorView>> {
+        match self {
+            EditorDrag::Value(drag) => Some(drag),
+            _ => None,
+        }
+    }
+
+    fn as_value_drag_mut(&mut self) -> Option<&mut ValueDrag<EditorView>> {
+        match self {
+            EditorDrag::Value(drag) => Some(drag),
+            _ => None,
+        }
+    }
+}
+
+impl WidgetHost for EditorView {
+    type Gesture = EditorDrag;
+
+    fn widgets(&self) -> &WidgetState<EditorDrag> {
+        &self.widgets
+    }
+
+    fn widgets_mut(&mut self) -> &mut WidgetState<EditorDrag> {
+        &mut self.widgets
+    }
 }
 
 /// Minimum on-screen width of a clip block, and its trim handle width.
@@ -277,31 +328,19 @@ pub struct EditorView {
     last_frame: Option<std::time::Instant>,
     focus_handle: FocusHandle,
     needs_focus: bool,
-    dragging: Option<DragState>,
+    /// The one gesture in flight, and the one popover open. See [`crate::drag`].
+    widgets: WidgetState<EditorDrag>,
     pixels_per_second: f32,
     /// Horizontal scroll of the timeline, in px. One offset for every lane and the ruler: they
     /// are reading the same time axis, so they scroll as one or they lie about where a clip is.
     scroll_x: f32,
-    /// True while the pointer is dragging the playhead. Set by a press on the ruler or on empty
-    /// lane space, cleared on release.
-    scrubbing: bool,
     /// GPU compositor preview (None if no adapter); the rendered image + a change signature.
     preview: Option<PreviewRenderer>,
     preview_image: Option<Arc<RenderImage>>,
     /// Preview frames that have left the screen and whose sprite-atlas tiles still have to be
-    /// released.
-    ///
-    /// GPUI keys its atlas on `RenderImage::id`, which is a fresh monotonic counter value per
-    /// image, and it *never* evicts on drop — `Window::drop_image` is the only thing that calls
-    /// `PlatformAtlas::remove`. A new image per composited frame therefore misses the cache
-    /// every time, allocates another 640x360 polychrome tile, and pushes a new 1024x1024 atlas
-    /// texture roughly every second frame, none of which is ever freed. That is a few tens of
-    /// MB of VRAM per second of playback until allocation starts failing.
-    ///
-    /// Retiring through a queue rather than dropping inline is what lets a windowless caller
-    /// (`open_project`) release a frame: it parks the `Arc` here and the next render, which does
-    /// have a `Window`, drains it.
-    retired_images: Vec<Arc<RenderImage>>,
+    /// released. The rule, and why it is not optional, is on [`crate::draw::RetiredImages`] —
+    /// stated once there because the scope panels are about to inherit it.
+    retired_images: crate::draw::RetiredImages,
     preview_sig: Option<u64>,
     presets: Vec<MotionPreset>,
     /// Waveform peaks for the audio lanes. The cache itself lives in `bay-preview`; this is a
@@ -337,9 +376,6 @@ pub struct EditorView {
     /// The left panel's width. Draggable, because a media grid and a list of transitions want
     /// very different amounts of room and neither is right for both.
     media_width: f32,
-    /// Set while the panel divider is being dragged: the pointer x it started at, and the
-    /// width at that moment.
-    resizing_panel: Option<(f32, f32)>,
     /// Whether a drag snaps to clip edges, markers and the playhead. On by default, because
     /// butt-joining two clips by eye at 48 px/s is a fight; off for the moments when the
     /// intended cut is two frames from something the snap keeps stealing it towards.
@@ -349,6 +385,15 @@ pub struct EditorView {
     /// Library groups the user has collapsed. Stored as the closed set so a newly appearing
     /// group is open — a folder that arrives collapsed hides the file that just landed in it.
     collapsed_folders: std::collections::BTreeSet<String>,
+    /// The widget and drawing spike panel. `Some` only when `BAY_UI_LAB=1` is set, so with the
+    /// variable unset none of it is constructed and none of it is drawn.
+    lab: Option<crate::lab::Lab>,
+}
+
+impl crate::lab::LabHost for EditorView {
+    fn lab_mut(&mut self) -> &mut crate::lab::Lab {
+        self.lab.get_or_insert_with(Default::default)
+    }
 }
 
 /// Something bay can install, as the toolbar needs it.
@@ -384,13 +429,12 @@ impl EditorView {
             last_frame: None,
             focus_handle,
             needs_focus: true,
-            dragging: None,
+            widgets: WidgetState::new(),
             pixels_per_second: DEFAULT_PIXELS_PER_SECOND,
             scroll_x: 0.0,
-            scrubbing: false,
             preview,
             preview_image: None,
-            retired_images: Vec::new(),
+            retired_images: crate::draw::RetiredImages::new(),
             preview_sig: None,
             presets: Vec::new(),
             waveforms: WaveformCache::new(),
@@ -406,8 +450,8 @@ impl EditorView {
             tool: Tool::Select,
             panel: Panel::Media,
             media_width: DEFAULT_PANEL_WIDTH,
-            resizing_panel: None,
             collapsed_folders: std::collections::BTreeSet::new(),
+            lab: crate::lab::enabled().then(crate::lab::Lab::default),
         }
     }
 
@@ -467,7 +511,7 @@ impl EditorView {
         self.project_path = path;
         self.playing = false;
         self.last_frame = None;
-        self.dragging = None;
+        self.widgets.cancel();
         self.editing_text = None;
         self.waveforms.clear();
         self.audio_cache.clear();
@@ -894,7 +938,7 @@ impl EditorView {
     /// owns outlives the `Arc` and is only released by [`Self::release_retired_images`].
     fn retire_preview_image(&mut self) {
         if let Some(image) = self.preview_image.take() {
-            self.retired_images.push(image);
+            self.retired_images.retire(image);
         }
     }
 
@@ -904,9 +948,7 @@ impl EditorView {
     /// can free is one that was last painted in a frame already submitted — never the one this
     /// frame is about to draw.
     fn release_retired_images(&mut self, window: &mut Window) {
-        for image in self.retired_images.drain(..) {
-            let _ = window.drop_image(image);
-        }
+        self.retired_images.release(window);
     }
 
     /// Collect a finished composite and submit a new one if anything affecting it changed.
@@ -928,9 +970,9 @@ impl EditorView {
                 {
                     let render_image = RenderImage::new(vec![image::Frame::new(buffer)]);
                     // The frame being replaced has to give its atlas tile back. Assigning over
-                    // it would drop the `Arc` and leak the tile — see `retired_images`.
-                    self.retire_preview_image();
-                    self.preview_image = Some(Arc::new(render_image));
+                    // it would drop the `Arc` and leak the tile — see `draw::RetiredImages`.
+                    self.retired_images
+                        .replace(&mut self.preview_image, Some(Arc::new(render_image)));
                 }
             }
             // A frame the GPU could not produce (device loss on a laptop that slept) leaves the
@@ -985,12 +1027,12 @@ impl EditorView {
     /// Snapping is applied here rather than at the drop so the user *sees* the clip jump onto
     /// its neighbour's edge while dragging. A snap you only discover after letting go is
     /// indistinguishable from the editor moving your clip on its own.
-    fn snapped_delta_px(&self, drag: &DragState) -> f32 {
+    fn snapped_delta_px(&self, drag: &BlockDrag, delta_px: f32) -> f32 {
         if !self.snapping {
-            return drag.delta_px;
+            return delta_px;
         }
         let geometry = self.geometry();
-        let raw_ticks = geometry.delta_px_to_ticks(drag.delta_px).as_ticks();
+        let raw_ticks = geometry.delta_px_to_ticks(delta_px).as_ticks();
         // Which edge the pointer is carrying: the head for a move or a start-trim, the tail
         // for an end-trim.
         let moving_edge = match drag.mode {
@@ -1010,18 +1052,27 @@ impl EditorView {
             self.pixels_per_second,
         );
         if !did_snap {
-            return drag.delta_px;
+            return delta_px;
         }
         let corrected_ticks = snapped.as_ticks() - moving_edge;
-        drag.delta_px + geometry.delta_ticks_to_px(MediaTime::from_ticks(corrected_ticks))
+        delta_px + geometry.delta_ticks_to_px(MediaTime::from_ticks(corrected_ticks))
     }
 
-    /// Finish a drag: commit a single undoable edit (move or edge-trim) from origin to drop point.
-    fn finish_drag(&mut self) {
-        let Some(drag) = self.dragging.take() else {
-            return;
-        };
-        let delta_px = self.snapped_delta_px(&drag);
+    /// The snapped delta of whichever block gesture is live, if one is. The single reader of the
+    /// drag slot for timeline geometry, so the block being drawn and the edit that commits are
+    /// computed the same way.
+    fn block_drag(&self) -> Option<(&BlockDrag, f32)> {
+        let drag = self.widgets.active()?;
+        match &drag.kind {
+            EditorDrag::Block(block) => Some((block, self.snapped_delta_px(block, drag.dx()))),
+            _ => None,
+        }
+    }
+
+    /// Finish a block drag: commit a single undoable edit (move or edge-trim) from origin to
+    /// drop point.
+    fn finish_drag(&mut self, drag: BlockDrag, delta_px: f32) {
+        let delta_px = self.snapped_delta_px(&drag, delta_px);
         let delta_ticks = (delta_px / self.pixels_per_second * TICKS_PER_SECOND as f32) as i64;
         if delta_ticks == 0 {
             return;
@@ -1078,6 +1129,74 @@ impl EditorView {
         }
     }
 
+    /// Begin a playhead scrub, and seek to where the press landed.
+    ///
+    /// The ruler and the empty lane both do this; the *continuation* is the root's move handler,
+    /// not either of them, because the pointer leaves the ruler's few pixels almost immediately
+    /// and a scrub that stops when it does is unusable.
+    fn begin_scrub(&mut self, event: &MouseDownEvent) {
+        self.widgets.begin(Drag::new(
+            EditorDrag::Scrub,
+            event.position,
+            event.modifiers,
+        ));
+        self.scrub_to(f32::from(event.position.x));
+    }
+
+    /// The one place a moving pointer is interpreted.
+    ///
+    /// `fine` is the live Alt state rather than the one from the press: it changes a widget's
+    /// rate from here on and must not be frozen at the moment the button went down.
+    fn pointer_moved(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        fine: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if controls::drive_value_drag(self, position, fine, cx) {
+            return;
+        }
+        let Some(drag) = self.widgets.pointer_moved(position) else {
+            return;
+        };
+        // Read what the gesture needs before touching `self` — the gesture lives in it.
+        let panel_width = match &drag.kind {
+            EditorDrag::PanelWidth { start_width } => Some(start_width + drag.dx()),
+            _ => None,
+        };
+        let scrub_x = matches!(drag.kind, EditorDrag::Scrub).then(|| f32::from(position.x));
+
+        if let Some(wanted) = panel_width {
+            self.media_width = wanted.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
+        }
+        if let Some(x) = scrub_x {
+            self.scrub_to(x);
+        }
+        // A block drag needs nothing committed until release; the redraw is what moves it.
+        cx.notify();
+    }
+
+    /// The one place a released pointer is interpreted. Committing happens here, so a gesture
+    /// that was never released has changed nothing undoable.
+    fn pointer_released(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        fine: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if controls::end_value_drag(self, position, fine, cx) {
+            return;
+        }
+        let Some(drag) = self.widgets.end(position) else {
+            return;
+        };
+        let delta_px = drag.dx();
+        if let EditorDrag::Block(block) = drag.kind {
+            self.finish_drag(block, delta_px);
+        }
+        cx.notify();
+    }
+
     /// Build the mouse-down listener that begins a drag in `mode` for `reference`.
     #[allow(clippy::type_complexity)]
     fn begin_drag(
@@ -1118,14 +1237,16 @@ impl EditorView {
                     // drag moves all of it.
                     this.editor.select(vec![reference.clone()]);
                 }
-                this.dragging = Some(DragState {
-                    reference: reference.clone(),
-                    mode,
-                    origin_start_ticks,
-                    origin_duration_ticks,
-                    pointer_start_x: f32::from(event.position.x),
-                    delta_px: 0.0,
-                });
+                this.widgets.begin(Drag::new(
+                    EditorDrag::Block(BlockDrag {
+                        reference: reference.clone(),
+                        mode,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                    }),
+                    event.position,
+                    event.modifiers,
+                ));
                 cx.notify();
             }),
         )
@@ -1746,20 +1867,20 @@ impl EditorView {
         cx: &mut Context<Self>,
         handler: impl Fn(&mut EditorView, &mut Context<EditorView>) + 'static,
     ) -> gpui::Stateful<Div> {
-        let base = div()
+        let base = widgets::button_face(widgets::ButtonKind::Normal, enabled)
             .id(id)
             .px_3()
             .py_1()
             .rounded_md()
-            .bg(rgb(theme::PANEL_ALT))
             .text_sm()
-            .text_color(rgb(if enabled { theme::TEXT } else { theme::MUTED }))
             .child(Self::shared(label.to_string()));
         if enabled {
-            base.on_click(cx.listener(move |this, _event, _window, cx| {
-                handler(this, cx);
-                cx.notify();
-            }))
+            widgets::pressable(widgets::ButtonKind::Normal, base)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    handler(this, cx);
+                    cx.notify();
+                }))
         } else {
             base
         }
@@ -2141,8 +2262,13 @@ impl EditorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            this.resizing_panel =
-                                Some((f32::from(event.position.x), this.media_width));
+                            this.widgets.begin(Drag::new(
+                                EditorDrag::PanelWidth {
+                                    start_width: this.media_width,
+                                },
+                                event.position,
+                                event.modifiers,
+                            ));
                             cx.notify();
                         }),
                     ),
@@ -2584,21 +2710,23 @@ impl EditorView {
         cx: &mut Context<Self>,
         handler: impl Fn(&mut EditorView) + 'static,
     ) -> gpui::Stateful<Div> {
-        div()
-            .id(id)
-            .w(px(22.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .bg(rgb(theme::PANEL_ALT))
-            .text_sm()
-            .text_color(rgb(theme::TEXT))
-            .child(Self::shared(label.to_string()))
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                handler(this);
-                cx.notify();
-            }))
+        widgets::pressable(
+            widgets::ButtonKind::Normal,
+            widgets::button_face(widgets::ButtonKind::Normal, true)
+                .id(id)
+                .w(px(22.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .text_sm()
+                .child(Self::shared(label.to_string())),
+        )
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            handler(this);
+            cx.notify();
+        }))
     }
 
     /// A button that adds a keyframe for `property` at the playhead.
@@ -3234,19 +3362,21 @@ impl EditorView {
         cx: &mut Context<Self>,
         handler: impl Fn(&mut EditorView) + 'static,
     ) -> gpui::Stateful<Div> {
-        div()
-            .id(id)
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(theme::PANEL_ALT))
-            .text_xs()
-            .text_color(rgb(theme::TEXT))
-            .child(Self::shared(label.to_string()))
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                handler(this);
-                cx.notify();
-            }))
+        widgets::pressable(
+            widgets::ButtonKind::Normal,
+            widgets::button_face(widgets::ButtonKind::Normal, true)
+                .id(id)
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .text_xs()
+                .child(Self::shared(label.to_string())),
+        )
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            handler(this);
+            cx.notify();
+        }))
     }
 
     /// The bar under the preview: transport, timecode, and the zoom the timeline reads.
@@ -3500,24 +3630,30 @@ impl EditorView {
         cx: &mut Context<Self>,
         action: impl Fn(&mut EditorView) + 'static,
     ) -> gpui::Stateful<Div> {
-        div()
-            .id(id)
-            .h(px(22.0))
-            .px(px(8.0))
-            .flex()
-            .items_center()
-            .bg(rgb(if on {
-                theme::SELECTED
-            } else {
-                theme::PANEL_ALT
-            }))
-            .text_xs()
-            .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
-            .child(label)
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                action(this);
-                cx.notify();
-            }))
+        let kind = if on {
+            widgets::ButtonKind::On
+        } else {
+            widgets::ButtonKind::Normal
+        };
+        widgets::pressable(
+            kind,
+            widgets::button_face(kind, true)
+                .id(id)
+                .h(px(22.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .text_xs()
+                // An "off" toggle is not a disabled one: it is available, just not currently
+                // true, so it keeps a readable label and only loses the fill.
+                .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
+                .child(label),
+        )
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            action(this);
+            cx.notify();
+        }))
     }
 
     /// A small toolbar button that greys out when it has nothing to act on.
@@ -3529,16 +3665,21 @@ impl EditorView {
         cx: &mut Context<Self>,
         action: impl Fn(&mut EditorView) + 'static,
     ) -> gpui::Stateful<Div> {
-        div()
+        let base = widgets::button_face(widgets::ButtonKind::Normal, enabled)
             .id(id)
             .h(px(22.0))
             .px(px(8.0))
             .flex()
             .items_center()
-            .bg(rgb(theme::PANEL_ALT))
             .text_xs()
-            .text_color(rgb(if enabled { theme::TEXT } else { theme::MUTED }))
-            .child(label)
+            .child(label);
+        if !enabled {
+            // It already did nothing — the handler used to be attached anyway, so the pointer
+            // said "button" and the click said nothing. Now the fill says it first.
+            return base;
+        }
+        widgets::pressable(widgets::ButtonKind::Normal, base)
+            .cursor_pointer()
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 action(this);
                 cx.notify();
@@ -3615,8 +3756,7 @@ impl EditorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            this.scrubbing = true;
-                            this.scrub_to(f32::from(event.position.x));
+                            this.begin_scrub(event);
                             cx.notify();
                         }),
                     )
@@ -3660,11 +3800,10 @@ impl EditorView {
             let base_width =
                 (block.duration_seconds as f32 * self.pixels_per_second).max(MIN_BLOCK_WIDTH);
             let (mut left, mut width) = (base_left, base_width);
-            if let Some(drag) = &self.dragging {
+            if let Some((drag, delta)) = self.block_drag() {
                 // The dragged clip shows the snapped position; the rest of the selection moves
                 // with it, so a group drag looks like one gesture rather than one clip
                 // detaching from its neighbours.
-                let delta = self.snapped_delta_px(drag);
                 if drag.reference == block.reference {
                     match drag.mode {
                         DragMode::Move => left = (base_left + delta).max(zero_x),
@@ -3847,8 +3986,7 @@ impl EditorView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            this.scrubbing = true;
-                            this.scrub_to(f32::from(event.position.x));
+                            this.begin_scrub(event);
                             cx.notify();
                         }),
                     )
@@ -4024,35 +4162,24 @@ impl Render for EditorView {
                 this.editor.execute(Command::Paste);
                 cx.notify();
             }))
+            // One press handler, one move handler, one release handler, for every gesture the
+            // editor has. See `crate::drag` for why there is exactly one slot behind them.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
+                    // Anything that must survive a press stops the event before it reaches here,
+                    // so by definition this press landed elsewhere — which dismisses an open
+                    // list.
+                    controls::dismiss_popover(this, cx);
+                }),
+            )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                if let Some((start_x, start_width)) = this.resizing_panel {
-                    let wanted = start_width + f32::from(event.position.x) - start_x;
-                    this.media_width = wanted.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
-                    cx.notify();
-                } else if let Some(drag) = this.dragging.as_mut() {
-                    drag.delta_px = f32::from(event.position.x) - drag.pointer_start_x;
-                    cx.notify();
-                } else if this.scrubbing {
-                    // Handled here, not on the ruler: the pointer leaves the ruler's few pixels
-                    // almost immediately, and a scrub that stops when it does is unusable.
-                    this.scrub_to(f32::from(event.position.x));
-                    cx.notify();
-                }
+                this.pointer_moved(event.position, event.modifiers.alt, cx);
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _event, _window, cx| {
-                    if this.dragging.is_some() {
-                        this.finish_drag();
-                        cx.notify();
-                    }
-                    if this.scrubbing {
-                        this.scrubbing = false;
-                        cx.notify();
-                    }
-                    if this.resizing_panel.take().is_some() {
-                        cx.notify();
-                    }
+                cx.listener(|this, event: &MouseUpEvent, _window, cx| {
+                    this.pointer_released(event.position, event.modifiers.alt, cx);
                 }),
             )
             .child(self.toolbar(&vm, cx))
@@ -4080,6 +4207,14 @@ impl Render for EditorView {
             )
             .child(self.scene_bar(&vm, cx))
             .child(self.timeline(&vm, lane_width, cx))
+            // Absolutely positioned and last, so the spike panel sits over the editor rather
+            // than beside it. Not `deferred`: a `Select` inside it defers its own popover, and
+            // GPUI aborts on a `defer_draw` during deferred drawing — see `controls::Select`.
+            .children(
+                self.lab
+                    .as_ref()
+                    .map(|lab| crate::lab::panel(self, lab, cx)),
+            )
     }
 }
 
@@ -4386,21 +4521,32 @@ mod panel_tests {
 
     /// The divider must clamp. Dragged far enough left the panel would reach zero width and
     /// become impossible to grab again.
+    ///
+    /// Driven through the real handlers rather than by reproducing their arithmetic: this test
+    /// used to recompute the clamp itself, which meant it could not have caught a change to the
+    /// root handler at all.
     #[gpui::test]
     fn the_panel_divider_clamps_at_both_ends(cx: &mut TestAppContext) {
         let view = view(cx);
-        view.update(cx, |view, _| {
-            view.resizing_panel = Some((100.0, DEFAULT_PANEL_WIDTH));
+        view.update(cx, |view, cx| {
+            let press = gpui::point(px(100.0), px(300.0));
+            view.widgets.begin(Drag::new(
+                EditorDrag::PanelWidth {
+                    start_width: DEFAULT_PANEL_WIDTH,
+                },
+                press,
+                gpui::Modifiers::default(),
+            ));
 
-            // Simulate the root handler's arithmetic at both extremes.
-            let dragged = |view: &mut EditorView, to: f32| {
-                let (start_x, start_width) = view.resizing_panel.unwrap();
-                view.media_width =
-                    (start_width + to - start_x).clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
-            };
-            dragged(view, -5000.0);
+            view.pointer_moved(gpui::point(px(-5000.0), px(300.0)), false, cx);
             assert_eq!(view.media_width, MIN_PANEL_WIDTH);
-            dragged(view, 5000.0);
+            view.pointer_moved(gpui::point(px(5000.0), px(300.0)), false, cx);
+            assert_eq!(view.media_width, MAX_PANEL_WIDTH);
+
+            view.pointer_released(gpui::point(px(5000.0), px(300.0)), false, cx);
+            assert!(!view.widgets.is_dragging(), "the release has to end it");
+            // And a move after the release must not keep resizing the panel.
+            view.pointer_moved(gpui::point(px(-5000.0), px(300.0)), false, cx);
             assert_eq!(view.media_width, MAX_PANEL_WIDTH);
         });
     }
@@ -4576,16 +4722,15 @@ mod tool_tests {
             let target_px = view.geometry().delta_ticks_to_px(MediaTime::from_ticks(
                 next_start.as_ticks() - element.start().as_ticks(),
             ));
-            let drag = DragState {
+            let drag = BlockDrag {
                 reference,
                 mode: DragMode::Move,
                 origin_start_ticks: element.start().as_ticks(),
                 origin_duration_ticks: element.duration().as_ticks(),
-                pointer_start_x: 0.0,
-                delta_px: target_px - 3.0,
             };
+            let dragged_px = target_px - 3.0;
 
-            let snapped = view.snapped_delta_px(&drag);
+            let snapped = view.snapped_delta_px(&drag, dragged_px);
             assert!(
                 (snapped - target_px).abs() < 0.01,
                 "snapping should pull the head onto the next clip: {snapped} vs {target_px}"
@@ -4593,10 +4738,103 @@ mod tool_tests {
 
             view.snapping = false;
             assert_eq!(
-                view.snapped_delta_px(&drag),
-                drag.delta_px,
+                view.snapped_delta_px(&drag, dragged_px),
+                dragged_px,
                 "with snapping off, the drag must land where the pointer did"
             );
+        });
+    }
+
+    /// The whole clip-drag gesture, through the same three entry points the root element uses:
+    /// press on the block, move the pointer, release. This is what the drag refactor had to keep
+    /// working — the old test suite reached the commit path only through `snapped_delta_px`, so
+    /// nothing checked that a press installed a gesture or that a release committed one.
+    #[gpui::test]
+    fn a_clip_drag_presses_moves_and_commits(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.snapping = false;
+            let reference = ElementRef::new("track-main", "el-title");
+            let element = view
+                .editor
+                .active_scene()
+                .element(&reference)
+                .expect("the starter title")
+                .clone();
+            let origin = element.start().as_ticks();
+
+            view.editor.select(vec![reference.clone()]);
+            view.widgets.begin(Drag::new(
+                EditorDrag::Block(BlockDrag {
+                    reference: reference.clone(),
+                    mode: DragMode::Move,
+                    origin_start_ticks: origin,
+                    origin_duration_ticks: element.duration().as_ticks(),
+                }),
+                gpui::point(px(200.0), px(400.0)),
+                gpui::Modifiers::default(),
+            ));
+
+            // Mid-drag the clip has moved on screen but nothing is committed yet.
+            view.pointer_moved(gpui::point(px(296.0), px(400.0)), false, cx);
+            assert_eq!(
+                view.editor
+                    .active_scene()
+                    .element(&reference)
+                    .unwrap()
+                    .start()
+                    .as_ticks(),
+                origin,
+                "a drag in flight must not have edited anything"
+            );
+            let (_, delta) = view.block_drag().expect("a live block gesture");
+            assert!((delta - 96.0).abs() < 0.01, "delta was {delta}");
+
+            view.pointer_released(gpui::point(px(296.0), px(400.0)), false, cx);
+            assert!(!view.widgets.is_dragging());
+            // 96px at the default 48 px/s is two seconds.
+            assert_eq!(
+                view.editor
+                    .active_scene()
+                    .element(&reference)
+                    .unwrap()
+                    .start()
+                    .as_ticks(),
+                origin + 2 * TICKS_PER_SECOND,
+            );
+            assert!(
+                view.editor.can_undo(),
+                "the drop has to be one undoable edit"
+            );
+        });
+    }
+
+    /// Only one gesture can be in flight. A press on a clip while the playhead is being scrubbed
+    /// used to leave both fields set and let an `else if` decide which one the pointer meant.
+    #[gpui::test]
+    fn a_second_press_replaces_the_gesture_rather_than_joining_it(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.widgets.begin(Drag::new(
+                EditorDrag::Scrub,
+                gpui::point(px(200.0), px(400.0)),
+                gpui::Modifiers::default(),
+            ));
+            view.widgets.begin(Drag::new(
+                EditorDrag::PanelWidth {
+                    start_width: DEFAULT_PANEL_WIDTH,
+                },
+                gpui::point(px(300.0), px(400.0)),
+                gpui::Modifiers::default(),
+            ));
+            let before = view.editor.playhead();
+            view.pointer_moved(gpui::point(px(360.0), px(400.0)), false, cx);
+            assert_eq!(
+                view.media_width,
+                DEFAULT_PANEL_WIDTH + 60.0,
+                "the live gesture is the panel"
+            );
+            assert_eq!(view.editor.playhead(), before, "and it is not also a scrub");
         });
     }
 
@@ -4669,5 +4907,110 @@ mod tool_tests {
             view.split_at_x(&ghost, lane_origin_x() + 48.0);
             assert!(view.status.is_none());
         });
+    }
+}
+
+/// Drawing the editor for real: layout, prepaint and paint, at two window sizes.
+///
+/// Every other test in this file drives state and asserts on it, which never touches the element
+/// tree. These call GPUI's whole pipeline through `VisualTestContext::draw`, so a canvas that
+/// paints outside its phase, a `deferred` popover whose layout is impossible, a path built from a
+/// NaN, or an element id that collides all fail here — none of which a state test can see.
+///
+/// This is not a substitute for looking at the app. It is the part of "looking at it" that can be
+/// checked on every run.
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use gpui::{size, TestAppContext, VisualTestContext};
+
+    /// A window with an editor in it, the lab panel forced on so every widget and every drawing
+    /// primitive is in the tree.
+    fn windowed(cx: &mut TestAppContext) -> (gpui::Entity<EditorView>, &mut VisualTestContext) {
+        let (view, cx) = cx.add_window_view(|_window, cx| {
+            let focus = cx.focus_handle();
+            let mut editor = EditorView::new(Editor::starter(), focus, None, None);
+            editor.lab = Some(crate::lab::Lab::default());
+            editor
+        });
+        (view, cx)
+    }
+
+    fn paint(view: &gpui::Entity<EditorView>, cx: &mut VisualTestContext, width: f32, height: f32) {
+        cx.simulate_resize(size(px(width), px(height)));
+        let view = view.clone();
+        cx.draw(
+            gpui::point(px(0.0), px(0.0)),
+            size(px(width), px(height)),
+            |_, _| view.into_any_element(),
+        );
+    }
+
+    /// The window the app actually opens.
+    #[gpui::test]
+    fn the_editor_and_every_widget_paint_at_1440_by_900(cx: &mut TestAppContext) {
+        let (view, cx) = windowed(cx);
+        paint(&view, cx, 1440.0, 900.0);
+    }
+
+    /// A window small enough that the toolbar already collides with itself. Nothing here may
+    /// panic on it — a curve editor whose plot has been squeezed to a negative width is exactly
+    /// the shape of bug this catches.
+    #[gpui::test]
+    fn the_editor_and_every_widget_paint_in_a_small_window(cx: &mut TestAppContext) {
+        let (view, cx) = windowed(cx);
+        paint(&view, cx, 640.0, 420.0);
+        paint(&view, cx, 320.0, 240.0);
+    }
+
+    /// The popover path: `deferred` + `anchored`, with the list actually open. This is the only
+    /// place in the app that defers an element, and an anchored child with no room to sit in is
+    /// a real case at 320px.
+    #[gpui::test]
+    fn an_open_select_paints_at_both_sizes(cx: &mut TestAppContext) {
+        let (view, cx) = windowed(cx);
+        view.update(cx, |view, _| {
+            view.widgets.toggle_popover("lab-easing".into());
+        });
+        paint(&view, cx, 1440.0, 900.0);
+        paint(&view, cx, 320.0, 240.0);
+    }
+
+    /// A slider being dragged draws its thumb from the live gesture rather than the model, and a
+    /// gesture that has been dragged far off the control still has to paint inside it.
+    #[gpui::test]
+    fn a_widget_mid_drag_paints(cx: &mut TestAppContext) {
+        let (view, cx) = windowed(cx);
+        view.update(cx, |view, cx| {
+            let track = gpui::Bounds {
+                origin: gpui::point(px(1100.0), px(300.0)),
+                size: size(px(300.0), px(18.0)),
+            };
+            crate::controls::begin_track_drag(
+                view,
+                "lab-opacity".into(),
+                crate::controls::ScrubMap::track(0.0, 1.0, 0.0, 1.0),
+                track,
+                gpui::point(px(1200.0), px(309.0)),
+                gpui::Modifiers::default(),
+                1.0,
+                std::rc::Rc::new(|view: &mut EditorView, value, _| {
+                    view.lab.as_mut().unwrap().opacity = value
+                }),
+            );
+            crate::controls::drive_value_drag(view, gpui::point(px(-4000.0), px(2000.0)), true, cx);
+        });
+        paint(&view, cx, 1440.0, 900.0);
+    }
+
+    /// And with the lab off — the shipping configuration — nothing of it is constructed or drawn.
+    #[gpui::test]
+    fn the_editor_paints_without_the_lab(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_window, cx| {
+            let focus = cx.focus_handle();
+            EditorView::new(Editor::starter(), focus, None, None)
+        });
+        view.update(cx, |view, _| assert!(view.lab.is_none()));
+        paint(&view, cx, 1440.0, 900.0);
     }
 }

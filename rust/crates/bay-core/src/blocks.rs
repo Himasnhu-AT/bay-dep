@@ -437,16 +437,8 @@ pub fn plan(
                     "volume".to_string(),
                     AnimationChannel {
                         keys: vec![
-                            Keyframe {
-                                time: MediaTime::ZERO,
-                                value: 0.355,
-                                easing: None,
-                            },
-                            Keyframe {
-                                time: end,
-                                value: 0.355,
-                                easing: None,
-                            },
+                            Keyframe::new(MediaTime::ZERO, 0.355),
+                            Keyframe::new(end, 0.355),
                         ],
                         easing: Easing::Linear,
                     },
@@ -675,16 +667,8 @@ fn motion(
             property.to_string(),
             AnimationChannel {
                 keys: vec![
-                    Keyframe {
-                        time: MediaTime::ZERO,
-                        value: from,
-                        easing: None,
-                    },
-                    Keyframe {
-                        time: MediaTime::from_ticks(span),
-                        value: to,
-                        easing: None,
-                    },
+                    Keyframe::new(MediaTime::ZERO, from),
+                    Keyframe::new(MediaTime::from_ticks(span), to),
                 ],
                 easing,
             },

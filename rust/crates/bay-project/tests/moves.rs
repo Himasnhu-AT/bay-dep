@@ -264,11 +264,7 @@ fn tracked_crop(id: &str, right_values: [f32; 3]) -> Element {
         keys: times
             .into_iter()
             .zip(values)
-            .map(|(time, value)| Keyframe {
-                time: MediaTime::from_seconds_f64(time).unwrap(),
-                value,
-                easing: None,
-            })
+            .map(|(time, value)| Keyframe::new(MediaTime::from_seconds_f64(time).unwrap(), value))
             .collect(),
         easing: Easing::Linear,
     };

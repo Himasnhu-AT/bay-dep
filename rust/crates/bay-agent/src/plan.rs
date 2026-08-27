@@ -162,6 +162,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "remove_silence_and_fillers",
         "room_tone",
         "runtime_remove",
+        "scopes_read",
         "sfx_add",
         "sfx_list",
         "sfx_search",
@@ -598,6 +599,20 @@ fn round4(value: f64) -> f64 {
     (value * 10_000.0).round() / 10_000.0
 }
 
+/// The wire spelling of a unit. Named rather than numbered so a client reading the table does
+/// not have to know the enum's declaration order.
+fn unit_name(unit: bay_project::Unit) -> &'static str {
+    use bay_project::Unit;
+    match unit {
+        Unit::Fraction => "fraction",
+        Unit::CanvasFraction => "canvas-fraction",
+        Unit::Degrees => "degrees",
+        Unit::Pixels => "pixels",
+        Unit::Multiplier => "multiplier",
+        Unit::Scalar => "scalar",
+    }
+}
+
 /// The wire spelling of an easing, from the same table the parser reads — so a curve reported
 /// back can be passed straight into `animate` without a translation step.
 fn easing_name(easing: Easing) -> &'static str {
@@ -780,7 +795,11 @@ fn text_decorations(args: &Value) -> Option<bay_project::TextDecorations> {
     )
 }
 
-fn describe_element(element: &Element) -> Value {
+/// One element, as an agent reads it.
+///
+/// `include_animatable` adds the property table — see the note at its use below for why it is
+/// a choice rather than always on.
+fn describe_element(element: &Element, include_animatable: bool) -> Value {
     let mut out = serde_json::json!({
         "id": element.id(),
         "kind": element.kind().label(),
@@ -814,6 +833,78 @@ fn describe_element(element: &Element) -> Value {
         && !animations.is_empty()
     {
         out["animated"] = serde_json::json!(animations.keys().collect::<Vec<_>>());
+        // Alongside `animated`, never instead of it. `animated` is a list of channel names
+        // and anything already reading it keeps working unchanged; `keys` is what you need to
+        // revise one — the keyframes themselves, each addressable by id, with the curve
+        // leaving it spelled the way `animate` would take it back.
+        out["keyframes"] = serde_json::json!(
+            animations
+                .iter()
+                .map(|(property, channel)| {
+                    serde_json::json!({
+                        "property": property,
+                        "channelEasing": easing_name(channel.easing),
+                        "keys": channel
+                            .keys
+                            .iter()
+                            .map(|key| {
+                                let mut entry = serde_json::json!({
+                                    "id": key.identity(),
+                                    "t": round4(key.time.to_seconds_f64()),
+                                    "value": round4(f64::from(key.value)),
+                                });
+                                // Only when the key overrides the channel, so the absence of
+                                // a curve here means "travels on the channel's" rather than
+                                // "linear" — which are different answers.
+                                if let Some(easing) = key.easing {
+                                    entry["easing"] = serde_json::json!(easing_name(easing));
+                                }
+                                // A drawn curve has no name to report. Reporting the nearest
+                                // named easing would be a lie an agent would then write back.
+                                if let Some(handles) = key.handles {
+                                    entry["curve"] = serde_json::json!([
+                                        round4(f64::from(handles.out_x)),
+                                        round4(f64::from(handles.out_y)),
+                                        round4(f64::from(handles.in_x)),
+                                        round4(f64::from(handles.in_y)),
+                                    ]);
+                                }
+                                entry
+                            })
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+    // What this element *could* carry — a different question, and the one an agent asks
+    // before its first `animate` call.
+    //
+    // Behind a flag because `timeline` describes **every** element and this is thirteen
+    // near-identical rows on each of them whether or not anything is animated. `keyframes`
+    // above is not gated: it is proportional to work someone actually did, and it is the only
+    // form of the answer that can be acted on — `animated` names a channel and cannot say
+    // where its keys are.
+    if include_animatable {
+        out["animatable"] = serde_json::json!(
+            element
+                .animatable_paths()
+                .into_iter()
+                .map(|property| {
+                    let mut entry = serde_json::json!({
+                        "path": property.path,
+                        "label": property.label,
+                        "unit": unit_name(property.unit),
+                        "default": round4(f64::from(property.default)),
+                    });
+                    if let Some((low, high)) = property.range {
+                        entry["range"] =
+                            serde_json::json!([round4(f64::from(low)), round4(f64::from(high))]);
+                    }
+                    entry
+                })
+                .collect::<Vec<_>>()
+        );
     }
     if !element.effects().is_empty() {
         out["effects"] = serde_json::json!(
@@ -1209,6 +1300,12 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
 
         "timeline" => {
             let scene = project.active_scene();
+            // Off by default: the property table is thirteen near-identical rows per element,
+            // and this read returns every element on the timeline.
+            let animatable = args
+                .get("animatable")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
             let layers: Vec<Value> = std::iter::once(&scene.tracks.main)
                 .chain(scene.tracks.overlay.iter())
                 .enumerate()
@@ -1216,7 +1313,11 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     serde_json::json!({
                         "layer": index,
                         "trackId": track.id,
-                        "elements": track.elements.iter().map(describe_element).collect::<Vec<_>>(),
+                        "elements": track
+                            .elements
+                            .iter()
+                            .map(|element| describe_element(element, animatable))
+                            .collect::<Vec<_>>(),
                     })
                 })
                 .collect();
@@ -1225,7 +1326,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 .audio
                 .iter()
                 .flat_map(|t| t.elements.iter())
-                .map(describe_element)
+                .map(|element| describe_element(element, animatable))
                 .collect();
             let duration = scene
                 .tracks
@@ -1531,29 +1632,24 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 .active_scene()
                 .element(&reference)
                 .ok_or_else(|| format!("no element {element_id:?} on the timeline"))?;
-            // Checked against the kind, not one global list: audio has `volume` and no
-            // position, everything visual has a position and no level. Accepting `x` on a
-            // music bed and then quietly doing nothing with the keys is worse than refusing.
-            let nested_mask = matches!(
-                property.as_str(),
-                "mask.x" | "mask.y" | "mask.width" | "mask.height" | "mask.feather"
-            ) && element.mask().is_some();
-            let nested_effect = property
-                .strip_prefix("effect.")
-                .and_then(|rest| rest.split_once('.'))
-                .is_some_and(|(id, param)| {
-                    element
-                        .effects()
-                        .iter()
-                        .any(|effect| effect.id == id && effect.params.contains_key(param))
-                });
-            if !element.animatable().contains(&property.as_str()) && !nested_mask && !nested_effect
-            {
+            // Checked against what this element actually reads, not against a list. Audio has
+            // `volume` and no position; a clip with no mask has no `mask.x`; only the effects
+            // attached contribute `effect.<id>.<param>`. Accepting `x` on a music bed and then
+            // quietly doing nothing with the keys is worse than refusing.
+            //
+            // This check used to be assembled inline from three conditions and was missing
+            // `shape.radius`, `stroke.width` and `fontSize` — all three sampled by the
+            // renderer, none reachable from any surface. `AddKeyframe` assembled a *different*
+            // subset and was missing five more.
+            if !element.can_animate(&property) {
+                let offered: Vec<String> = element
+                    .animatable_paths()
+                    .into_iter()
+                    .map(|path| path.path)
+                    .collect();
                 return Err(format!(
-                    "{property:?} cannot be animated on a {} — pick a transform channel, an \
-                     existing mask field, or effect.<id>.<param>; transform channels are {:?}",
+                    "{property:?} cannot be animated on a {} — it takes {offered:?}",
                     element.kind().label().to_lowercase(),
-                    element.animatable()
                 ));
             }
             let mut animations = element
@@ -3837,6 +3933,155 @@ mod tests {
             );
             assert!(planned.is_ok(), "{property} on an element: {planned:?}");
         }
+    }
+
+    fn animate(element_id: &str, property: &str, project: &Project) -> Result<Planned, String> {
+        plan(
+            "animate",
+            &serde_json::json!({
+                "elementId": element_id,
+                "property": property,
+                "keys": [{ "t": 0.0, "value": 0.0 }, { "t": 1.0, "value": 1.0 }],
+            }),
+            project,
+        )
+    }
+
+    /// Three channels the renderer has sampled all along and no surface would let anyone
+    /// write. `animate` assembled its check from three inline conditions covering transform,
+    /// mask and effect params, and simply did not know about these.
+    #[test]
+    fn the_channels_the_renderer_samples_and_nothing_accepted_now_plan() {
+        assert!(
+            animate("t1", "fontSize", &title_project()).is_ok(),
+            "sampled_font_size has read fontSize since it was written"
+        );
+
+        let mut project = project();
+        project.active_scene_mut().tracks.main.elements = vec![Element::Shape(ShapeElement {
+            id: "s1".into(),
+            name: "Card".into(),
+            start: MediaTime::ZERO,
+            duration: secs(3.0).unwrap(),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            shape: ShapeKind::Rect { radius: 0.1 },
+            color: "#ffffff".into(),
+            gradient: None,
+            stroke: Some(bay_project::Stroke {
+                color: "#000000".into(),
+                width: 0.02,
+                dash: None,
+                gap: None,
+            }),
+            transform: Transform::default(),
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })];
+        assert!(animate("s1", "shape.radius", &project).is_ok());
+        assert!(animate("s1", "stroke.width", &project).is_ok());
+    }
+
+    /// And the refusal still refuses, with the paths this element actually takes rather than
+    /// a fixed list that was wrong for most elements.
+    #[test]
+    fn a_path_with_nothing_behind_it_is_refused_and_the_message_says_what_is_offered() {
+        let project = title_project();
+        let error = animate("t1", "wobble", &project).expect_err("refused");
+        assert!(error.contains("wobble"), "{error}");
+        assert!(
+            error.contains("fontSize"),
+            "the offer must be real: {error}"
+        );
+
+        // A mask field on an element with no mask: the path is known, the element has nothing
+        // behind it, and a channel there would be stored and never read. The refusal names it
+        // — that is the point — so the check is that the *offer* does not.
+        let error = animate("t1", "mask.x", &project).expect_err("refused");
+        let (_, offered) = error.split_once("it takes").expect("the offer: {error}");
+        assert!(
+            !offered.contains("mask.x"),
+            "offered what it just refused: {error}"
+        );
+        assert!(
+            offered.contains("opacity"),
+            "the offer must be real: {error}"
+        );
+    }
+
+    /// `animated` is a list of channel names and cannot be acted on; `keyframes` is the same
+    /// channels with their keys, each addressable. Both, because anything already reading
+    /// `animated` keeps working.
+    #[test]
+    fn the_timeline_read_reports_keys_beside_the_channel_names() {
+        let mut project = title_project();
+        let (_, commands, _) = tx(animate("t1", "opacity", &project).expect("plans"));
+        for command in commands {
+            if let Command::ApplyMotionPreset { animations, .. } = command {
+                let Some(Element::Text(text)) =
+                    project.active_scene_mut().tracks.main.elements.first_mut()
+                else {
+                    panic!("the title");
+                };
+                text.animations = animations;
+            }
+        }
+
+        let Planned::Read(read) = plan("timeline", &serde_json::json!({}), &project).unwrap()
+        else {
+            panic!("timeline is a read");
+        };
+        let element = &read["layers"][0]["elements"][0];
+
+        assert_eq!(
+            element["animated"],
+            serde_json::json!(["opacity"]),
+            "the old key must be untouched — something is already reading it"
+        );
+        let channel = &element["keyframes"][0];
+        assert_eq!(channel["property"], "opacity");
+        assert_eq!(channel["keys"].as_array().unwrap().len(), 2);
+        assert_eq!(channel["keys"][1]["t"], 1.0);
+        assert!(
+            channel["keys"][0]["id"].is_string(),
+            "a key has to be addressable to be moved"
+        );
+    }
+
+    /// The property table is a request, not a default: `timeline` describes every element and
+    /// the table is thirteen near-identical rows on each.
+    #[test]
+    fn the_property_table_is_asked_for_rather_than_always_sent() {
+        let project = title_project();
+        let read = |args| {
+            let Planned::Read(read) = plan("timeline", &args, &project).unwrap() else {
+                panic!("timeline is a read");
+            };
+            read
+        };
+
+        let lean = read(serde_json::json!({}));
+        assert!(lean["layers"][0]["elements"][0]["animatable"].is_null());
+
+        let full = read(serde_json::json!({ "animatable": true }));
+        let table = full["layers"][0]["elements"][0]["animatable"]
+            .as_array()
+            .expect("the table");
+        let opacity = table
+            .iter()
+            .find(|entry| entry["path"] == "opacity")
+            .expect("opacity is animatable on a title");
+        assert_eq!(opacity["label"], "Opacity");
+        assert_eq!(opacity["unit"], "fraction");
+        assert_eq!(opacity["range"], serde_json::json!([0.0, 1.0]));
+        assert!(
+            table.iter().any(|entry| entry["path"] == "fontSize"),
+            "the table has to name what animate will accept"
+        );
     }
 
     /// A layer above the last overlay must carry the AddTrack commands with it, in the same

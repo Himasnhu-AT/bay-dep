@@ -1608,6 +1608,11 @@ pub fn apply(
                 time,
                 value: key.value.resolve(rest, scaled),
                 easing: key.easing,
+                // A move is a named curve from the vocabulary. Its keys carry no hand-drawn
+                // handles by construction — drawing one is what leaves the vocabulary — and
+                // `upsert_key` mints the id.
+                handles: None,
+                id: 0,
             });
         }
         merge_channel(&mut animations, channel.property, fresh);

@@ -12,6 +12,9 @@ use bay_project::{
 };
 
 use crate::PreviewRenderer;
+// One definition of relative luminance, shared with the scopes. The contrast gate below and a
+// waveform read the same pixels; they must not disagree about how bright one is.
+use crate::scopes::relative_luminance;
 
 const SAMPLE_FPS: f64 = 4.0;
 const SAMPLE_HEIGHT: u32 = 240;
@@ -894,18 +897,6 @@ fn ink_frame(at: f64, width: u32, height: u32, bgra: &[u8]) -> InkFrame {
         clusters,
         bottom_alive: substantial_low_cluster && total > 0 && bottom as f64 / total as f64 >= 0.05,
     }
-}
-
-fn relative_luminance(rgb: [u8; 3]) -> f32 {
-    let channel = |value: u8| {
-        let value = f32::from(value) / 255.0;
-        if value <= 0.04045 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2])
 }
 
 fn ink_clusters(mask: &[bool], width: u32, height: u32) -> Vec<InkCluster> {

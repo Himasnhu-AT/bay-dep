@@ -2718,9 +2718,17 @@ fn each_codec_asks_for_itself() {
 
     let prores = args(VideoCodec::ProRes);
     assert!(prores.contains("prores"), "{prores}");
+    // 4:4:4, not the 4:2:2 this asserted until the chroma was actually measured. 422 is the
+    // profile for camera originals; bay renders type, where a coloured stem is a pixel wide and
+    // halving the chroma costs up to 61 code values. What the picture survives is pinned by
+    // `a_prores_master_returns_the_pixels_it_was_given`; this only pins the flags.
     assert!(
-        prores.contains("yuv422p10le"),
-        "10-bit 4:2:2, or ProRes is pointless: {prores}"
+        prores.contains("yuv444p10le"),
+        "ProRes mastering must keep full chroma: {prores}"
+    );
+    assert!(
+        prores.contains("-profile:v 4"),
+        "profile 4 is 4444, the graphics profile: {prores}"
     );
 }
 
@@ -4069,4 +4077,255 @@ fn a_discarded_composite_is_not_delivered_to_the_next_collect() {
     ));
     let frame = collect_until_ready(&mut renderer);
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
+}
+
+/// A fused colour run has to survive the whole preview path, not just the effects pipeline.
+///
+/// The stack-vs-staged comparison lives in `bay-effects/tests/color_stack.rs`, where both paths
+/// are still reachable. What that cannot check is the wiring on the way in: the mapper building
+/// a stage program, the compositor handing it to `apply_effect_groups`, and the pass finding a
+/// LUT bind group even though its run contains no grade. Every other multi-effect test applies
+/// one effect at a time, so a run of two was never rendered through this path at all.
+///
+/// A full-canvas shape rather than the starter title, because effects apply to the *element*:
+/// the background is a separate clear that no layer effect touches, so a frame-wide assertion
+/// would be reading the backdrop rather than the grade.
+///
+/// Relational, because fusing changes bytes by design: a saturation of 0 must leave the shape
+/// grey whatever else is in the run, and a brightness of 1.6 must leave it brighter than 0.4
+/// does. A dropped stage, an empty program or a reordered one each fail one of the two.
+#[test]
+fn a_fused_colour_run_renders_through_the_whole_preview_path() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+
+    let mut render_with = |amount: f32| {
+        let mut project = Project::starter();
+        project.settings.canvas = bay_project::CanvasSize {
+            width: 64,
+            height: 64,
+        };
+        {
+            let scene = project.active_scene_mut();
+            scene.tracks.overlay.clear();
+            scene.tracks.audio.clear();
+            // Three consecutive per-pixel colour ops: one run, one pass, and no grade in it —
+            // the case that needs the identity cube bound.
+            let effects = [
+                ("brightness", amount),
+                ("contrast", 1.1),
+                ("saturation", 0.0),
+            ]
+            .into_iter()
+            .map(|(effect_type, value)| Effect {
+                id: format!("fx-{effect_type}"),
+                effect_type: effect_type.into(),
+                enabled: true,
+                params: [("amount".to_string(), value)].into_iter().collect(),
+                asset: None,
+            })
+            .collect();
+            scene.tracks.main.elements = vec![Element::Shape(bay_project::ShapeElement {
+                id: "s".into(),
+                name: "s".into(),
+                start: MediaTime::ZERO,
+                duration: MediaTime::from_ticks(120_000),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                shape: bay_project::ShapeKind::Rect { radius: 0.0 },
+                // Fully saturated, so "did saturation reach the frame" is unambiguous.
+                color: "#c02020".into(),
+                gradient: None,
+                stroke: None,
+                transform: bay_project::Transform::default(),
+                effects,
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
+            })];
+        }
+        renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                64,
+                64,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame")
+    };
+
+    let dim = render_with(0.4);
+    let bright = render_with(1.6);
+
+    // Centre of the shape, BGRA.
+    let centre = ((32 * 64) + 32) * 4;
+    let grey_at = |frame: &bay_preview::PreviewFrame| {
+        let (b, g, r) = (
+            frame.bgra[centre] as i32,
+            frame.bgra[centre + 1] as i32,
+            frame.bgra[centre + 2] as i32,
+        );
+        (r - g).abs() <= 2 && (g - b).abs() <= 2
+    };
+    assert!(
+        grey_at(&bright) && grey_at(&dim),
+        "a saturation of 0 in a fused run left colour behind: dim={:?} bright={:?}",
+        &dim.bgra[centre..centre + 3],
+        &bright.bgra[centre..centre + 3]
+    );
+
+    // And the brightness stage, which sits before it, still moved the level.
+    assert!(
+        bright.bgra[centre + 2] > dim.bgra[centre + 2],
+        "the brightness stage did not reach the frame: dim={}, bright={}",
+        dim.bgra[centre + 2],
+        bright.bgra[centre + 2]
+    );
+}
+
+/// Decode a file's first frame back to tightly-packed RGBA.
+fn first_frame_rgba(path: &std::path::Path) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            path.to_str()?,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "pipe:1",
+        ])
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// A ProRes master must return the pixels it was given.
+///
+/// `Master` promises "no generation loss" and ProRes is chosen to deliver it, but nothing
+/// asserted any relationship between the frames bay pipes in and the frames that come back —
+/// which is how the export sat on ProRes **422** HQ, a profile whose 4:2:2 chroma is right for
+/// camera originals and wrong for a tool that renders type. Measured before the switch to
+/// 4444: one-pixel coloured strokes came back off by up to 61 code values, and a 1px red/blue
+/// alternation by 153. Two-pixel detail survived either profile, so nothing coarse would have
+/// revealed it — the test has to use fine coloured detail or it proves nothing.
+///
+/// Exact equality, not a tolerance: 4:4:4 10-bit round-trips 8-bit RGB losslessly, so any
+/// drift at all means the pixel format or the profile moved.
+#[test]
+fn a_prores_master_returns_the_pixels_it_was_given() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir().join("bay-prores-fidelity");
+    let _ = std::fs::create_dir_all(&dir);
+    let out = dir.join("master.mov");
+    let _ = std::fs::remove_file(&out);
+
+    // Vertical 1px red stripes on white: the finest coloured detail real type produces, and
+    // the exact regime 4:2:2 destroys. Even dimensions — yuv cannot encode an odd side.
+    let (width, height) = (64u32, 64u32);
+    let source = dir.join("stripes.png");
+    let mut image = image::RgbaImage::new(width, height);
+    for (x, _y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = if x % 4 == 0 {
+            image::Rgba([200, 30, 30, 255])
+        } else {
+            image::Rgba([255, 255, 255, 255])
+        };
+    }
+    image.save(&source).expect("write the stripes");
+
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize { width, height };
+    let mut asset = MediaAsset::new("m", "stripes.png", source.to_string_lossy());
+    asset.duration_seconds = Some(1.0);
+    asset.width = Some(width);
+    asset.height = Some(height);
+    project.media = vec![asset];
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.audio.clear();
+        scene.tracks.main.elements = vec![Element::Image(ImageElement {
+            id: "i".into(),
+            name: "stripes".into(),
+            media_id: "m".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            transform: Transform::default(),
+            effects: vec![],
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+
+    // The frame bay composites, before it reaches the encoder.
+    let composited = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
+
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.2,
+        10.0,
+        width,
+        height,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportPreset::Master.settings(),
+    );
+    assert!(result.is_ok(), "prores master export failed: {result:?}");
+
+    let Some(decoded) = first_frame_rgba(&out) else {
+        panic!("the exported master could not be decoded back");
+    };
+    assert_eq!(decoded.len(), (width * height * 4) as usize);
+
+    // `composited` is BGRA; the decode is RGBA. Compare colour channels only — alpha is not
+    // carried by any export and is not what this asserts.
+    let worst = composited
+        .bgra
+        .chunks_exact(4)
+        .zip(decoded.chunks_exact(4))
+        .map(|(src, got)| {
+            let r = src[2].abs_diff(got[0]);
+            let g = src[1].abs_diff(got[1]);
+            let b = src[0].abs_diff(got[2]);
+            r.max(g).max(b)
+        })
+        .max()
+        .expect("the frame is not empty");
+
+    assert_eq!(
+        worst, 0,
+        "a ProRes master altered the picture by {worst} code values; 4:4:4 10-bit round-trips \
+         8-bit RGB exactly, so the profile or the pixel format has moved"
+    );
 }

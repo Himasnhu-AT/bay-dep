@@ -114,6 +114,7 @@ silently.
 | `snapshot` | **Render one frame to a PNG so you can look at it.** |
 | `check_frames` | **Run the picture-level gate.** Samples rendered frames for frozen arrangements, weak anchor scale and a dead lower frame. Returns `unevaluated` checks when a GPU is unavailable rather than claiming a false pass. |
 | `contact_sheet` | **Render a labelled inspection grid.** Supply exact `times`, or omit them for two reproducible jittered samples per beat. |
+| `scopes_read` | **Measure one frame the way a colourist reads it** — luma waveform, RGB parade, vectorscope and histogram, reduced to where the exposure sits, what is clipped and which way the colour leans. Answers what a PNG cannot: whether the blacks are crushed or the shot is simply dark, whether a cast is in the file or in the monitor. `unevaluated` without a GPU. |
 | `shots_detect` | **Find the cuts in footage you have not watched.** Returns a job id. |
 | `sfx_search` | **One search over both halves of the sound library** — synthesised and installed. |
 | `sfx_list` / `sfx_add` | Whooshes, risers, clicks, impacts — synthesised at the length the edit needs, placed in one call. |
@@ -221,6 +222,13 @@ needs closer inspection.
 `check_frames` measures how much of each frame is not background, how that ink is clustered,
 and whether adjacent samples changed. It catches dead lower frames, weak anchors and frozen
 compositions while captions are suppressed.
+
+`scopes_read` is the other half of looking: numbers where a PNG gives an impression. A frame
+that reads as muddy on one screen and fine on another has a `luma.mean` and a
+`clipping.blackShare` that do not care which screen you are on. It waits for decodes before
+measuring — a placeholder is an honest preview fallback and would be a lying histogram — and
+reports `sampledPixels`, because at 4K it must be given a `stride` to fit any sane budget and
+every share it returns is a share of what it actually read.
 
 ---
 

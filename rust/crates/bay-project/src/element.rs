@@ -275,6 +275,131 @@ pub struct Keyframe {
     /// this field existed says, and why it deserializes and renders identically.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub easing: Option<Easing>,
+    /// A hand-drawn curve for the segment leaving this key, overriding [`Self::easing`].
+    ///
+    /// The named easings are a vocabulary of good defaults, and a curve editor exists because
+    /// a vocabulary is not the whole language. Handles win over the key's easing, which wins
+    /// over the channel's — the more specific statement of intent wins, at every level.
+    ///
+    /// `None` on every key in every project written before handles existed, which is why they
+    /// still sample through their named easing and render identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handles: Option<BezierHandles>,
+    /// Identity that survives being moved.
+    ///
+    /// A drag changes a key's time, so time cannot be its identity — the selection would jump
+    /// to a different key halfway through, or to none. `KeyframeRef::keyframe_id` in
+    /// `bay-core` has always wanted this and had nothing to point at.
+    ///
+    /// Zero means "never assigned", which is what every key written before this field says.
+    /// [`Self::identity`] falls back to the key's time there, so a legacy project is
+    /// addressable without a migration pass — it just cannot survive a move until something
+    /// rewrites it, and every mutator here assigns one on the way through.
+    #[serde(default, skip_serializing_if = "is_zero_id")]
+    pub id: u32,
+}
+
+fn is_zero_id(id: &u32) -> bool {
+    *id == 0
+}
+
+/// Cubic-bezier control points for the segment *leaving* a key, in normalized segment space —
+/// the same four numbers CSS `cubic-bezier(x1, y1, x2, y2)` takes.
+///
+/// Normalized rather than in seconds and values, so a curve keeps its shape when the segment
+/// is stretched: dragging the second key later should slow the motion down, not re-shape it.
+/// The x pair is clamped into 0..=1 on evaluation because a control point outside it makes the
+/// curve non-monotonic in time, which is a curve that runs backwards. The y pair is
+/// deliberately unclamped — overshoot past the destination and undershoot below the origin are
+/// both things an author draws on purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BezierHandles {
+    pub out_x: f32,
+    pub out_y: f32,
+    pub in_x: f32,
+    pub in_y: f32,
+}
+
+impl Default for BezierHandles {
+    /// The straight line — the curve a key has before anyone drags a handle.
+    fn default() -> Self {
+        Self {
+            out_x: 1.0 / 3.0,
+            out_y: 1.0 / 3.0,
+            in_x: 2.0 / 3.0,
+            in_y: 2.0 / 3.0,
+        }
+    }
+}
+
+impl BezierHandles {
+    /// Remap normalized progress `x` through the curve, matching [`Easing::apply`]'s contract
+    /// so a segment can take either without the sampler caring which.
+    ///
+    /// The curve is parametric — x and y are both functions of an unknown t — so evaluating it
+    /// at a given x means solving for t first. Newton-Raphson converges in a few steps for the
+    /// shapes a person draws; the bisection fallback is for the ones they draw at the extremes,
+    /// where the derivative goes flat and Newton walks off the segment.
+    pub fn apply(self, x: f32) -> f32 {
+        let x = x.clamp(0.0, 1.0);
+        // Exactly the endpoints, without spending iterations to rediscover them.
+        if x <= 0.0 {
+            return 0.0;
+        }
+        if x >= 1.0 {
+            return 1.0;
+        }
+        let x1 = self.out_x.clamp(0.0, 1.0);
+        let x2 = self.in_x.clamp(0.0, 1.0);
+        let t = Self::solve_t(x, x1, x2);
+        Self::bezier(t, self.out_y, self.in_y)
+    }
+
+    /// One coordinate of the curve at parameter `t`, with P0 = 0 and P3 = 1.
+    fn bezier(t: f32, p1: f32, p2: f32) -> f32 {
+        let u = 1.0 - t;
+        3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t
+    }
+
+    /// d/dt of [`Self::bezier`].
+    fn slope(t: f32, p1: f32, p2: f32) -> f32 {
+        let u = 1.0 - t;
+        3.0 * u * u * p1 + 6.0 * u * t * (p2 - p1) + 3.0 * t * t * (1.0 - p2)
+    }
+
+    fn solve_t(x: f32, x1: f32, x2: f32) -> f32 {
+        const EPSILON: f32 = 1e-6;
+        let mut t = x;
+        for _ in 0..8 {
+            let error = Self::bezier(t, x1, x2) - x;
+            if error.abs() < EPSILON {
+                return t;
+            }
+            let slope = Self::slope(t, x1, x2);
+            // A flat derivative means Newton's next step is a division by nearly zero, which
+            // lands anywhere. Hand the rest to bisection rather than to chance.
+            if slope.abs() < EPSILON {
+                break;
+            }
+            t -= error / slope;
+        }
+        let (mut low, mut high) = (0.0_f32, 1.0_f32);
+        let mut t = x;
+        for _ in 0..32 {
+            let value = Self::bezier(t, x1, x2);
+            if (value - x).abs() < EPSILON {
+                break;
+            }
+            if value > x {
+                high = t;
+            } else {
+                low = t;
+            }
+            t = (low + high) / 2.0;
+        }
+        t
+    }
 }
 
 impl Keyframe {
@@ -284,6 +409,8 @@ impl Keyframe {
             time,
             value,
             easing: None,
+            handles: None,
+            id: 0,
         }
     }
 
@@ -293,7 +420,48 @@ impl Keyframe {
             time,
             value,
             easing: Some(easing),
+            handles: None,
+            id: 0,
         }
+    }
+
+    /// A key whose leaving segment is a hand-drawn curve.
+    pub fn curved(time: MediaTime, value: f32, handles: BezierHandles) -> Self {
+        Self {
+            time,
+            value,
+            easing: None,
+            handles: Some(handles),
+            id: 0,
+        }
+    }
+
+    /// How to address this key. Its assigned id, or — for a key from before ids existed — its
+    /// time, which is unique within a channel by construction.
+    pub fn identity(&self) -> String {
+        match self.id {
+            0 => format!("t{}", self.time.as_ticks()),
+            id => format!("k{id}"),
+        }
+    }
+
+    /// The progress remap for the segment leaving this key, given the channel's own easing.
+    ///
+    /// The one place the precedence lives: hand-drawn handles beat this key's named easing,
+    /// which beats the channel's. Three call sites read it — the sampler, the polyline
+    /// densifier, and the audio gain expression — and when each decided for itself, the
+    /// exported audio took a straight line through a curve the preview drew.
+    pub fn progress(&self, channel: Easing, fraction: f32) -> f32 {
+        match self.handles {
+            Some(handles) => handles.apply(fraction),
+            None => self.easing.unwrap_or(channel).apply(fraction),
+        }
+    }
+
+    /// Whether the segment leaving this key is a straight line, and so needs no subdivision
+    /// to be described faithfully by its two endpoints.
+    pub fn segment_is_straight(&self, channel: Easing) -> bool {
+        self.handles.is_none() && self.easing.unwrap_or(channel) == Easing::Linear
     }
 }
 
@@ -409,12 +577,81 @@ impl Easing {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnimationChannel {
+    /// Kept sorted by time, ascending, with one key per time.
+    ///
+    /// [`Self::sample`] walks `keys.windows(2)` and every consumer assumes the order, but the
+    /// field is public and serde neither sorts nor checks — so a hand-edited project file, or
+    /// a command that rebuilt a channel out of order, produced a channel that samples wrong
+    /// rather than one that fails to load. The invariant is now enforced where unordered keys
+    /// actually enter: [`Self::keys_in_time_order`] on the way in from serde, and
+    /// [`Self::sort_keys`] for anything that mutates the vector directly.
+    #[serde(deserialize_with = "AnimationChannel::keys_in_time_order")]
     pub keys: Vec<Keyframe>,
     #[serde(default)]
     pub easing: Easing,
 }
 
 impl AnimationChannel {
+    /// Steps an eased segment is cut into when it has to be described as a polyline.
+    ///
+    /// Straight segments need none. A curve needs enough that the ramp reads as a curve
+    /// rather than as a staircase — and sixteen is what the audio gain expression has used
+    /// since it was the only densifier in the codebase.
+    const EASED_STEPS: i64 = 16;
+
+    /// Sort keys ascending by time and drop any duplicate time.
+    ///
+    /// Stable, so the first key at a given time wins — which is what the sampler already did
+    /// with a duplicate, since a zero-length segment interpolates to its own start.
+    pub fn sort_keys(&mut self) {
+        self.keys.sort_by_key(|key| key.time.as_ticks());
+        self.keys.dedup_by_key(|key| key.time.as_ticks());
+    }
+
+    /// serde entry point for [`Self::keys`]. See the field's note.
+    fn keys_in_time_order<'de, D>(deserializer: D) -> Result<Vec<Keyframe>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut keys = Vec::<Keyframe>::deserialize(deserializer)?;
+        keys.sort_by_key(|key| key.time.as_ticks());
+        keys.dedup_by_key(|key| key.time.as_ticks());
+        Ok(keys)
+    }
+
+    /// An id no key in this channel is using.
+    ///
+    /// Ids are per channel, not global: a channel is the scope a `KeyframeRef` already
+    /// narrows to before it needs one, and a project-wide counter would have to be threaded
+    /// through every constructor to keep.
+    pub fn mint_key_id(&self) -> u32 {
+        self.keys.iter().map(|key| key.id).max().unwrap_or(0) + 1
+    }
+
+    /// Give every key an id, leaving the ones that already have one alone.
+    ///
+    /// For a channel loaded from a project written before ids existed, at the moment
+    /// something needs to address its keys across an edit.
+    pub fn assign_missing_ids(&mut self) {
+        let mut next = self.mint_key_id();
+        for key in &mut self.keys {
+            if key.id == 0 {
+                key.id = next;
+                next += 1;
+            }
+        }
+    }
+
+    /// The index of the key `id` addresses, by [`Keyframe::identity`].
+    pub fn index_of(&self, id: &str) -> Option<usize> {
+        self.keys.iter().position(|key| key.identity() == id)
+    }
+
+    /// The key `id` addresses.
+    pub fn key(&self, id: &str) -> Option<&Keyframe> {
+        self.index_of(id).map(|index| &self.keys[index])
+    }
+
     /// Sample the animated value at `time` (relative to element start), or `None` if no keys.
     pub fn sample(&self, time: MediaTime) -> Option<f32> {
         let t = time.as_ticks();
@@ -437,7 +674,7 @@ impl AnimationChannel {
                 };
                 // The key's own curve wins over the channel's, so one channel can arrive
                 // fast, hold, and leave slowly — which is what most real motion does.
-                let eased = a.easing.unwrap_or(self.easing).apply(fraction);
+                let eased = a.progress(self.easing, fraction);
                 return Some(a.value + (b.value - a.value) * eased);
             }
         }
@@ -461,9 +698,17 @@ impl AnimationChannel {
     /// Replacing carries the incoming key's easing across as well as its value: a caller
     /// re-writing a key with a new curve means the new curve, and one re-writing it through
     /// [`Self::upsert`] means "no override", which is the value it is asking for.
-    pub fn upsert_key(&mut self, key: Keyframe) {
+    pub fn upsert_key(&mut self, mut key: Keyframe) {
+        if key.id == 0 {
+            key.id = self.mint_key_id();
+        }
         match self.keys.iter().position(|k| k.time == key.time) {
-            Some(index) => self.keys[index] = key,
+            // The key that was there keeps its id: something may already be pointing at it,
+            // and "the key at 0.5s took a new value" is not "a different key arrived".
+            Some(index) => {
+                key.id = self.keys[index].id;
+                self.keys[index] = key;
+            }
             None => {
                 let position = self
                     .keys
@@ -473,6 +718,87 @@ impl AnimationChannel {
                 self.keys.insert(position, key);
             }
         }
+    }
+
+    /// Move the key `id` addresses to `time`, keeping its value, curve and identity.
+    ///
+    /// Returns whether anything moved. A move onto another key's time *replaces* that key, the
+    /// same as dragging one key onto another in any curve editor — two keys at one time is not
+    /// a state the sampler has an answer for.
+    ///
+    /// This exists because moving a key was remove-plus-add: two commands, so two undo entries
+    /// for one drag, and the key lost its identity in between.
+    pub fn move_key(&mut self, id: &str, time: MediaTime) -> bool {
+        let Some(index) = self.index_of(id) else {
+            return false;
+        };
+        if self.keys[index].time == time {
+            return false;
+        }
+        let mut moved = self.keys.remove(index);
+        moved.time = time;
+        // Not `upsert_key`: that would adopt the id of whatever key it lands on, and this key
+        // is the one being dragged — it keeps its own name and the one underneath is the one
+        // that goes.
+        self.keys.retain(|key| key.time != time);
+        let position = self
+            .keys
+            .iter()
+            .position(|key| key.time.as_ticks() > time.as_ticks())
+            .unwrap_or(self.keys.len());
+        self.keys.insert(position, moved);
+        true
+    }
+
+    /// The channel as a polyline over `range`: `(time, value)` in ascending order.
+    ///
+    /// The one densifier. A curve editor drawing a channel, a scope plotting one, and the
+    /// export's audio gain expression all need the same thing — a curve turned into segments
+    /// short enough that drawing them straight is honest — and the audio path was the only one
+    /// that had it, buried in `gain_points`.
+    ///
+    /// Every key inside the range is a point, both range ends are points, and each non-straight
+    /// segment is subdivided. A straight segment is not, because two endpoints describe it
+    /// exactly and interpolating between them adds nothing but points.
+    ///
+    /// Empty for a channel with no keys: there is no curve to draw, which is different from a
+    /// flat one at zero.
+    pub fn polyline(&self, range: std::ops::RangeInclusive<MediaTime>) -> Vec<(MediaTime, f32)> {
+        if self.keys.is_empty() {
+            return Vec::new();
+        }
+        let (from, to) = (range.start().as_ticks(), range.end().as_ticks());
+        if to < from {
+            return Vec::new();
+        }
+
+        let mut ticks = vec![from, to];
+        for key in &self.keys {
+            ticks.push(key.time.as_ticks());
+        }
+        // Per segment, not per channel: a key carrying its own curve has to be subdivided even
+        // when the channel it sits on is linear, or that segment is reported as the straight
+        // line the author specifically asked it not to be.
+        for pair in self.keys.windows(2) {
+            if pair[0].segment_is_straight(self.easing) {
+                continue;
+            }
+            let (a, b) = (pair[0].time.as_ticks(), pair[1].time.as_ticks());
+            for step in 1..Self::EASED_STEPS {
+                ticks.push(a + (b - a) * step / Self::EASED_STEPS);
+            }
+        }
+
+        ticks.retain(|tick| *tick >= from && *tick <= to);
+        ticks.sort_unstable();
+        ticks.dedup();
+        ticks
+            .into_iter()
+            .filter_map(|tick| {
+                let time = MediaTime::from_ticks(tick);
+                Some((time, self.sample(time)?))
+            })
+            .collect()
     }
 }
 
@@ -1440,30 +1766,21 @@ impl Element {
             return Vec::new();
         }
 
-        /// Steps an eased segment is cut into. Linear segments need none; an ease needs
-        /// enough that the ramp reads as a curve rather than a staircase.
-        const EASED_STEPS: i64 = 16;
-
+        // The fade corners are this function's own business — they are geometry of the clip,
+        // not of the channel — but everywhere the *curve* needs describing is
+        // `AnimationChannel::polyline`. Two densifiers subdividing the same curve to different
+        // densities is how the file and the room came to disagree about where a duck sat.
         let mut ticks: Vec<i64> = vec![0, duration.as_ticks()];
         ticks.push(self.fade_in().as_ticks());
         ticks.push(duration.as_ticks() - self.fade_out().as_ticks());
 
         if let Some(channel) = self.animations().and_then(|a| a.get("volume")) {
-            for key in &channel.keys {
-                ticks.push(key.time.as_ticks());
-            }
-            // Per segment, not per channel: a key carrying its own curve has to be subdivided
-            // even when the channel it sits on is linear, or that segment reaches the file as
-            // the straight line the author specifically asked it not to be.
-            for pair in channel.keys.windows(2) {
-                if pair[0].easing.unwrap_or(channel.easing) == Easing::Linear {
-                    continue;
-                }
-                let (a, b) = (pair[0].time.as_ticks(), pair[1].time.as_ticks());
-                for step in 1..EASED_STEPS {
-                    ticks.push(a + (b - a) * step / EASED_STEPS);
-                }
-            }
+            ticks.extend(
+                channel
+                    .polyline(MediaTime::ZERO..=duration)
+                    .into_iter()
+                    .map(|(time, _)| time.as_ticks()),
+            );
         }
 
         ticks.retain(|t| *t >= 0 && *t <= duration.as_ticks());

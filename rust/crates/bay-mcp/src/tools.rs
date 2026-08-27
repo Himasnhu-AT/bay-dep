@@ -1772,10 +1772,41 @@ pub fn all_definitions() -> Vec<Value> {
             &[],
         ),
         tool(
+            "scopes_read",
+            "Measure one frame the way a colourist reads it: luma waveform, RGB parade, \
+             vectorscope and histogram, reduced to where the exposure sits, what is clipped and \
+             which way the colour leans. Answers questions a PNG cannot — whether the blacks are \
+             crushed, whether a cast is real or the monitor, how far off neutral a grade drifted. \
+             Needs a GPU; without one it returns status unevaluated and says why.",
+            json!({
+                "at": { "type": "number", "description": "Timeline position to measure, in seconds." },
+                "scale": { "type": "number", "default": 0.5,
+                    "description": "Fraction of full canvas resolution to composite. Downscaling \
+                                    resamples, which invents code values the frame never had; for \
+                                    a faithful read of a large canvas use scale 1 with a stride." },
+                "stride": { "type": "integer", "default": 1,
+                    "description": "Sample every Nth pixel in each axis. 1 reads every pixel. A \
+                                    4K frame costs ~60ms at stride 1 and ~4ms at stride 4; the \
+                                    reply always reports sampledPixels so shares are readable as \
+                                    shares of what was measured." }
+            }),
+            &["at"],
+        ),
+        tool(
             "timeline",
-            "Dump the whole timeline: every layer, its elements, their timings, transforms and \
-             which properties are animated. Use this to re-read your own work between edits.",
-            json!({}),
+            "Dump the whole timeline: every layer, its elements, their timings, transforms, \
+             effects, and the animation on them. Use this to re-read your own work between \
+             edits. `animated` lists the channel names; `keyframes` gives the keys themselves, \
+             each with an `id` you can pass back to move or re-curve it, and a `t` in seconds \
+             from the ELEMENT's start.",
+            json!({
+                "animatable": { "type": "boolean", "default": false,
+                    "description": "Also list what each element COULD be animated on — every \
+                         property path with its label, unit, default and drawable range. Off by \
+                         default because it is a dozen near-identical rows per element and this \
+                         read returns every element. Ask for it once before your first animate \
+                         call on an unfamiliar element, not on every re-read." }
+            }),
             &[],
         ),
         tool(
@@ -2989,7 +3020,11 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         // falls through to `apply_planned` like every other revising tool, so the wire and the
         // editor window plan it identically.
         "element_delete" => studio.element_delete(&required_text(args, "elementId")?),
-        "timeline" => studio.timeline(),
+        // `timeline` has no arm here either, and for the same reason. It had one, into a
+        // second `describe_element` that had fallen behind the planner's: it reported no
+        // effects, no trim in-point and no media id. An agent that added a blur over the wire
+        // and re-read the timeline could not see it, and nothing failed — the two copies just
+        // quietly described different timelines.
         "check_frames" => {
             studio.check_frames(args.get("duration").and_then(|value| value.as_f64()))
         }
@@ -2997,6 +3032,11 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             required_number(args, "at")?,
             &required_text(args, "path")?,
             number(args, "scale", 0.5) as f32,
+        ),
+        "scopes_read" => studio.scopes_read(
+            required_number(args, "at")?,
+            number(args, "scale", 0.5) as f32,
+            number(args, "stride", 1.0).max(1.0) as usize,
         ),
         "contact_sheet" => {
             let times = args

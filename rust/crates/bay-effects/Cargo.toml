@@ -19,3 +19,7 @@ bay-gpu = { version = "0.1.0", path = "../bay-gpu" }
 bay-project = { version = "0.1.0", path = "../bay-project" }
 thiserror = { workspace = true }
 wgpu = { workspace = true }
+
+[dev-dependencies]
+# T-002 capability gate: hands out a real GpuContext, or skips (panics under BAY_REQUIRE_GPU).
+bay-test-support = { version = "0.1.0", path = "../bay-test-support", features = ["gpu"] }

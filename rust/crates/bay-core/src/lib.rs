@@ -18,7 +18,7 @@ pub mod selection;
 pub mod state;
 
 pub use check::{Finding, Report, Severity, check};
-pub use command::{Command, CommandKind, TrackLane};
+pub use command::{Command, CommandKind, KeyframeCurve, TrackLane};
 pub use editor::Editor;
 pub use event::{Domain, DomainSet, EditorEvent, EventBus};
 pub use refs::{ElementRef, KeyframeRef, MaskPointSelection};

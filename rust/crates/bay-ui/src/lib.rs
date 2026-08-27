@@ -5,9 +5,13 @@
 //! [`editor_view`]. [`run`] opens the editor window.
 
 pub mod app_view;
+pub mod controls;
+pub mod drag;
+pub mod draw;
 pub mod editor_view;
 pub mod geometry;
 pub mod input;
+pub mod lab;
 pub mod launcher_view;
 pub mod login_view;
 pub mod settings_model;

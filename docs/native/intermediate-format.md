@@ -53,9 +53,18 @@ Points 4 and 5 are colour-management decisions. The repo already has tasks that 
 Bgra8 compositor path") and **`P4-HW-02`** ([`phase-4.md`](phase-4.md)).
 [`plan.md`](plan.md) lists it as risk #8 by name.
 
-## Do this instead
+## Do this instead — done, and measured
 
-**Collapse consecutive scalar effects into one pass. Size: S–M.**
+**Collapse consecutive scalar effects into one pass. Size: S–M. Landed.**
+
+The measured result is the part worth carrying forward: a squeeze-and-stretch
+(`contrast 0.25` then `contrast 4.0`) over a 256-level ramp came back from the staged path with
+**64 distinct levels** and from the fused path with **256**. Four passes became one. That is a
+larger quality gain than `Rgba16Float` was ever going to deliver on 8-bit sources, for a
+fraction of the work and with the draw count going *down* — which is the substance of the
+recommendation below, now with a number attached rather than an argument.
+
+See `bay-effects/tests/color_stack.rs`, which is the only place both paths remain reachable.
 
 `bay-preview/src/lib.rs:31-95` emits one pass group per effect. But `brightness`, `contrast`,
 `saturation` and `lut` are pure per-pixel functions with no neighbourhood dependency — they
