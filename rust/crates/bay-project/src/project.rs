@@ -391,6 +391,9 @@ impl Project {
             kind: TrackKind::Video,
             hidden: false,
             muted: false,
+            gain: 1.0,
+            pan: 0.0,
+            solo: false,
             elements: vec![
                 Element::Text(TextElement {
                     id: "el-title".into(),
@@ -457,6 +460,9 @@ impl Project {
             kind: TrackKind::Overlay,
             hidden: false,
             muted: false,
+            gain: 1.0,
+            pan: 0.0,
+            solo: false,
             elements: vec![Element::Text(TextElement {
                 id: "el-caption".into(),
                 name: "Caption".into(),
@@ -498,6 +504,9 @@ impl Project {
             kind: TrackKind::Audio,
             hidden: false,
             muted: false,
+            gain: 1.0,
+            pan: 0.0,
+            solo: false,
             elements: vec![Element::Audio(AudioElement {
                 id: "el-music".into(),
                 name: "Music".into(),
@@ -508,6 +517,7 @@ impl Project {
                 media_id: "media-music".into(),
                 muted: false,
                 volume: 1.0,
+                pan: 0.0,
                 speed: 1.0,
                 prosody: None,
                 dialogue_chain: None,

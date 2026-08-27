@@ -1820,13 +1820,17 @@ impl PreviewRenderer {
             for (index, clip) in audio_clips.iter().enumerate() {
                 filters.push_str(&format!(
                     "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
-                     asetpts=PTS-STARTPTS,{processing}{volume},\
+                     asetpts=PTS-STARTPTS,{processing}{pan}{volume},\
                      atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
                     input = index + 1,
                     start = clip.trim_start_seconds,
                     source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
                     duration = clip.duration_seconds,
                     processing = clip.processing_filters(),
+                    // Before the level, because the level may be a per-frame expression and
+                    // `pan` is a fixed matrix — putting the matrix after it would make the
+                    // stereo placement depend on where in a duck the frame fell.
+                    pan = clip.pan_filter(),
                     volume = clip.volume_filter(),
                     // After the trim, so the tail fade is measured against the clip's real
                     // length, and before the delay, so `st` is clip-relative.
@@ -2556,6 +2560,15 @@ pub struct AudibleClip {
     pub dialogue_chain: Option<bay_project::DialogueAudioChain>,
     /// Linear gain. 1.0 is unity. Constant when `gain_points` holds one point or none.
     pub volume: f32,
+    /// Where the clip sits across the stereo field, `-1.0` left to `1.0` right — the clip's own
+    /// pan, before its lane has had a say.
+    pub pan: f32,
+    /// The lane's pan, composed with the clip's the same way the streaming mixer composes them:
+    /// multiplied per channel, clip stage first. See [`bay_audio::composed_pan_gains`].
+    pub track_pan: f32,
+    /// The lane's fader, linear. A second gain stage on top of `volume`/`gain_points`, exactly
+    /// as `bay_audio::stream::StreamClip::track_gain` is for the preview.
+    pub track_gain: f32,
     /// The clip's level over its own length as `(seconds, gain)` — volume keyframes, taken
     /// from the same model function the preview mixer reads, so the export cannot duck in a
     /// different place than the room did.
@@ -2742,11 +2755,57 @@ impl AudibleClip {
         out
     }
 
+    /// The ffmpeg fragment that places this clip across the stereo field.
+    ///
+    /// Empty for a centred clip on a centred lane, so a project that has never touched pan
+    /// exports the byte-identical filtergraph it always did — and a centred clip is not
+    /// re-levelled by a law that puts centre anywhere but unity.
+    ///
+    /// The two coefficients come from [`bay_audio::composed_pan_gains`], the *same* function
+    /// the preview block mixer multiplies by. That is the whole point: a new audio capability
+    /// has to be expressible as a filter string here **and** as Rust DSP in `bay-audio`, or it
+    /// is audible in only one of the two, and this one is expressible as both because both read
+    /// one implementation of the law.
+    ///
+    /// `aformat` first because `pan=stereo|c0=…|c1=…` names two input channels and a mono
+    /// source has one. Forcing the clip to stereo duplicates it into both, which is exactly
+    /// what the block mixer does with a mono source before applying the same gains.
+    fn pan_filter(&self) -> String {
+        let gains = bay_audio::composed_pan_gains(self.pan, self.track_pan);
+        if gains == bay_audio::CENTRE {
+            return String::new();
+        }
+        format!(
+            "aformat=channel_layouts=stereo,pan=stereo|c0={:.6}*c0|c1={:.6}*c1,",
+            gains[0], gains[1]
+        )
+    }
+
+    /// The lane's fader, folded into the clip's own level.
+    ///
+    /// Gain stages multiply, so the export applies the product exactly as the block mixer does.
+    /// Non-finite is unity rather than silence: a fader that arrived as `NaN` must not be able
+    /// to delete a track from a render.
+    fn track_gain(&self) -> f32 {
+        if self.track_gain.is_finite() {
+            self.track_gain.max(0.0)
+        } else {
+            1.0
+        }
+    }
+
     fn volume_filter(&self) -> String {
-        let decimated = decimate_gain_points(&self.gain_points, MAX_GAIN_EXPRESSION_POINTS);
+        let track_gain = self.track_gain();
+        // Through the model's own scaler, so the export folds a lane's fader into the level
+        // curve by exactly the arithmetic the preview does.
+        let scaled = bay_project::scale_gain_points(&self.gain_points, track_gain);
+        let decimated = decimate_gain_points(&scaled, MAX_GAIN_EXPRESSION_POINTS);
         let points: Vec<&(f64, f32)> = decimated.iter().collect();
         if points.len() < 2 {
-            let gain = points.first().map(|(_, g)| *g).unwrap_or(self.volume);
+            let gain = points
+                .first()
+                .map(|(_, g)| *g)
+                .unwrap_or(self.volume * track_gain);
             return format!("volume={gain:.4}");
         }
         // Built from the last segment backwards, so each `if` only has to decide "before this
@@ -2790,10 +2849,17 @@ fn atempo_filters(speed: f32) -> Vec<String> {
 /// Skips muted tracks, muted clips, silent clips (`volume <= 0`), zero-length clips, and any
 /// clip whose `media_id` does not resolve to a file — each of those would otherwise become an
 /// ffmpeg input that contributes nothing, and an unresolvable path would fail the whole encode.
+///
+/// **Solo is decided here, once, through [`bay_project::Track::mix_gain`]** — the same function
+/// the preview mixer's clip builder calls. Soloing is the kind of state that gets reimplemented
+/// per front end and then disagrees; the export dropping a lane the room still hears is a
+/// difference nobody finds until the file comes back.
 fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
     let mut clips = Vec::new();
+    let any_solo = scene.tracks.any_audio_solo();
     for track in &scene.tracks.audio {
-        if track.muted || track.hidden {
+        let track_gain = track.mix_gain(any_solo);
+        if track_gain <= 0.0 {
             continue;
         }
         for element in &track.elements {
@@ -2818,6 +2884,9 @@ fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
                 speed: audio.speed,
                 dialogue_chain: audio.dialogue_chain.clone(),
                 volume: audio.volume,
+                pan: audio.pan,
+                track_pan: track.pan,
+                track_gain,
                 gain_points: element.gain_points_without_fades(),
                 fade_in_seconds: audio.fade_in.to_seconds_f64().max(0.0),
                 fade_out_seconds: audio.fade_out.to_seconds_f64().max(0.0),
@@ -2891,6 +2960,13 @@ pub fn volume_filter_for_test(clip: &AudibleClip) -> String {
     clip.volume_filter()
 }
 
+/// Test hook for [`AudibleClip::pan_filter`]. A pan that never reaches the filtergraph is a
+/// control that moves in the room and does nothing to the file, which is the exact failure the
+/// project forbids — so the string is asserted, not assumed.
+pub fn pan_filter_for_test(clip: &AudibleClip) -> String {
+    clip.pan_filter()
+}
+
 /// Test hook for [`decimate_gain_points`], with the limit the export uses.
 pub fn decimate_gain_points_for_test(points: &[(f64, f32)]) -> Vec<(f64, f32)> {
     decimate_gain_points(points, MAX_GAIN_EXPRESSION_POINTS)
@@ -2958,6 +3034,9 @@ mod craft_tests {
             speed: 1.25,
             dialogue_chain: Some(bay_project::DialogueAudioChain::default()),
             volume: 1.0,
+            pan: 0.0,
+            track_pan: 0.0,
+            track_gain: 1.0,
             gain_points: vec![(0.0, 1.0)],
             fade_in_seconds: 0.0,
             fade_out_seconds: 0.0,

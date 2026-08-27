@@ -891,6 +891,37 @@ fn half() -> f32 {
     0.5
 }
 
+/// Whether a pan sits dead centre, which is what every clip written before pan existed was.
+///
+/// Used by `skip_serializing_if` so a centred clip writes exactly the JSON it always wrote —
+/// the project file is the web↔native contract, and adding `"pan":0.0` to every audio clip in
+/// every project would be a wire change for a value that means "unchanged".
+fn is_centred(pan: &f32) -> bool {
+    *pan == 0.0
+}
+
+/// Multiply every point of a level polyline by a lane's fader.
+///
+/// The one place a track gain meets the `(seconds, gain)` description both mixers read. Both
+/// the preview's block mixer and the export's `volume` expression end up applying this product;
+/// scaling here rather than at each of them is what stops the two from rounding it differently.
+///
+/// A non-finite scale is unity — a `NaN` fader must not be able to delete a lane from a render.
+pub fn scale_gain_points(points: &[(f64, f32)], scale: f32) -> Vec<(f64, f32)> {
+    let scale = if scale.is_finite() {
+        scale.max(0.0)
+    } else {
+        1.0
+    };
+    if scale == 1.0 {
+        return points.to_vec();
+    }
+    points
+        .iter()
+        .map(|(time, gain)| (*time, gain * scale))
+        .collect()
+}
+
 /// A text outline drawn outside the glyph coverage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1507,6 +1538,17 @@ pub struct AudioElement {
     pub media_id: String,
     pub muted: bool,
     pub volume: f32,
+    /// Where this clip sits across the stereo field: `-1.0` hard left, `0.0` centre, `1.0`
+    /// hard right.
+    ///
+    /// A **balance**, not a constant-power pan: the near channel is left alone and the far one
+    /// is attenuated, so a centred clip is bit-for-bit what it was before pan existed. A
+    /// constant-power law would put centre 3 dB down and hard-panned 3 dB up, which would have
+    /// re-levelled every project ever saved. The law itself is `bay_audio::pan_gains`, which
+    /// the preview block mixer and the export `pan=` filter both read — the model says where
+    /// the clip sits, the DSP crate says what that means in gains, and there is one of it.
+    #[serde(default, skip_serializing_if = "is_centred")]
+    pub pan: f32,
     /// Constant source-time multiplier. `2.0` plays twice as fast.
     #[serde(default = "one")]
     pub speed: f32,
@@ -1754,6 +1796,16 @@ impl Element {
         let mut bare = self.clone();
         bare.set_fades(MediaTime::ZERO, MediaTime::ZERO);
         bare.gain_points()
+    }
+
+    /// The same polyline with a lane's fader folded in.
+    ///
+    /// A lane gain is a second gain stage, and gain stages multiply — so folding it in is a
+    /// constant on every point rather than a reshaping of the curve. Named here, once, because
+    /// three things need it and doing it inline in each is how two of them come to disagree
+    /// about whether a muted lane is a zero or an absence.
+    pub fn gain_points_with_track_gain(&self, track_gain: f32) -> Vec<(f64, f32)> {
+        scale_gain_points(&self.gain_points(), track_gain)
     }
 
     pub fn gain_points(&self) -> Vec<(f64, f32)> {
@@ -2167,6 +2219,23 @@ impl Element {
     pub fn shape(&self) -> Option<&ShapeElement> {
         match self {
             Element::Shape(shape) => Some(shape),
+            _ => None,
+        }
+    }
+
+    /// The audio payload, for `Audio` elements only.
+    pub fn audio(&self) -> Option<&AudioElement> {
+        match self {
+            Element::Audio(audio) => Some(audio),
+            _ => None,
+        }
+    }
+
+    /// The audio payload, mutably. `None` for everything that is not a sound — which is what
+    /// makes a level, a pan or a mute a no-op on a title rather than a silent surprise.
+    pub fn audio_mut(&mut self) -> Option<&mut AudioElement> {
+        match self {
+            Element::Audio(audio) => Some(audio),
             _ => None,
         }
     }

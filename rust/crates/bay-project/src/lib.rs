@@ -42,7 +42,7 @@ pub use element::{
     ElementKind, ElementRole, ElementSource, FreezeFrame, Gradient, ImageElement, KaraokeSpec,
     KaraokeWord, Keyframe, LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody,
     Stroke, TextAlign, TextDecorations, TextElement, TextPlate, TextShadow, TextStroke, Transform,
-    TypeOn, VideoElement, is_builtin_look, is_caption_id, look_id,
+    TypeOn, VideoElement, is_builtin_look, is_caption_id, look_id, scale_gain_points,
 };
 pub use kit::{
     Framing, OffToken, Palette, ResolvedStyle, StyleHistory, StyleKit, Tone, TypeFace, TypeRamp,

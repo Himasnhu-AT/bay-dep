@@ -2478,6 +2478,7 @@ impl Studio {
             media_id,
             muted: false,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: (source == ElementSource::Tool && role == AudioRole::Speech)
                 .then(bay_project::SpeechProsody::default),

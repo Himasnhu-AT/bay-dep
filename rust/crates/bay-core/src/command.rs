@@ -119,6 +119,24 @@ pub enum Command {
         fade_in: MediaTime,
         fade_out: MediaTime,
     },
+    /// Set an audio clip's level. Linear gain; `1.0` is unity. No-op on anything silent.
+    ///
+    /// A command of its own rather than a [`Command::ReplaceElement`] with an edited copy,
+    /// because a mixer strip is a control that is *dragged*: it emits a level a hundred times a
+    /// second, each of which has to coalesce into history as one gesture and be undoable as
+    /// one. Replacing the whole element on every sample of a drag puts a hundred copies of a
+    /// clip in the undo stack.
+    SetVolume { reference: ElementRef, volume: f32 },
+    /// Set an audio clip's pan: `-1.0` hard left, `0.0` centre, `1.0` hard right.
+    SetPan { reference: ElementRef, pan: f32 },
+    /// Mute or unmute a single clip.
+    SetMuted { reference: ElementRef, muted: bool },
+    /// Set a lane's fader. Linear gain on top of every clip's own level.
+    SetTrackVolume { track_id: String, gain: f32 },
+    /// Set a lane's pan.
+    SetTrackPan { track_id: String, pan: f32 },
+    /// Solo a lane, silencing every audio lane that is not soloed.
+    SetTrackSolo { track_id: String, solo: bool },
     /// Replace an element with an edited copy of itself, in place.
     ///
     /// For the properties that have no command of their own — typography, a shape's fill, an
@@ -279,6 +297,12 @@ pub enum CommandKind {
     TrimElement,
     SetSourceStart,
     SetFades,
+    SetVolume,
+    SetPan,
+    SetMuted,
+    SetTrackVolume,
+    SetTrackPan,
+    SetTrackSolo,
     ReplaceElement,
     RenameElement,
     SetTextContent,
@@ -339,6 +363,18 @@ pub(crate) enum ProjectPatch {
         fade_in: MediaTime,
         fade_out: MediaTime,
     },
+    SetElementVolume {
+        reference: ElementRef,
+        volume: f32,
+    },
+    SetElementPan {
+        reference: ElementRef,
+        pan: f32,
+    },
+    SetElementMuted {
+        reference: ElementRef,
+        muted: bool,
+    },
     ReplaceElement {
         reference: ElementRef,
         element: Element,
@@ -394,6 +430,18 @@ pub(crate) enum ProjectPatch {
     SetTrackMuted {
         track_id: String,
         muted: bool,
+    },
+    SetTrackGain {
+        track_id: String,
+        gain: f32,
+    },
+    SetTrackPan {
+        track_id: String,
+        pan: f32,
+    },
+    SetTrackSolo {
+        track_id: String,
+        solo: bool,
     },
     InsertMarker {
         index: usize,
@@ -552,6 +600,48 @@ impl ProjectPatch {
                 }
                 None => ProjectPatch::Noop,
             },
+            // The three mixer-strip writes. Each reports the value it displaced, which is what
+            // makes a fader drag undoable in one step: the history keeps the level the strip
+            // was at when the gesture began.
+            ProjectPatch::SetElementVolume { reference, volume } => {
+                match scene.element_mut(&reference).and_then(Element::audio_mut) {
+                    Some(audio) => {
+                        let previous = audio.volume;
+                        audio.volume = sane_gain(volume);
+                        ProjectPatch::SetElementVolume {
+                            reference,
+                            volume: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetElementPan { reference, pan } => {
+                match scene.element_mut(&reference).and_then(Element::audio_mut) {
+                    Some(audio) => {
+                        let previous = audio.pan;
+                        audio.pan = sane_pan(pan);
+                        ProjectPatch::SetElementPan {
+                            reference,
+                            pan: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetElementMuted { reference, muted } => {
+                match scene.element_mut(&reference).and_then(Element::audio_mut) {
+                    Some(audio) => {
+                        let previous = audio.muted;
+                        audio.muted = muted;
+                        ProjectPatch::SetElementMuted {
+                            reference,
+                            muted: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
             ProjectPatch::ReplaceElement { reference, element } => {
                 match scene.element_mut(&reference) {
                     Some(slot) => {
@@ -769,6 +859,45 @@ impl ProjectPatch {
                         ProjectPatch::SetTrackMuted {
                             track_id,
                             muted: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackGain { track_id, gain } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.gain;
+                        track.gain = sane_gain(gain);
+                        ProjectPatch::SetTrackGain {
+                            track_id,
+                            gain: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackPan { track_id, pan } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.pan;
+                        track.pan = sane_pan(pan);
+                        ProjectPatch::SetTrackPan {
+                            track_id,
+                            pan: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackSolo { track_id, solo } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.solo;
+                        track.solo = solo;
+                        ProjectPatch::SetTrackSolo {
+                            track_id,
+                            solo: previous,
                         }
                     }
                     None => ProjectPatch::Noop,
@@ -1159,6 +1288,100 @@ impl Command {
                         reference: reference.clone(),
                         fade_in,
                         fade_out,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetVolume { reference, volume } => {
+                let audio = scene.element(reference)?.audio()?;
+                let volume = sane_gain(*volume);
+                if volume == audio.volume {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetVolume,
+                    forward: vec![ProjectPatch::SetElementVolume {
+                        reference: reference.clone(),
+                        volume,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetPan { reference, pan } => {
+                let audio = scene.element(reference)?.audio()?;
+                let pan = sane_pan(*pan);
+                if pan == audio.pan {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetPan,
+                    forward: vec![ProjectPatch::SetElementPan {
+                        reference: reference.clone(),
+                        pan,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetMuted { reference, muted } => {
+                let audio = scene.element(reference)?.audio()?;
+                if *muted == audio.muted {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetMuted,
+                    forward: vec![ProjectPatch::SetElementMuted {
+                        reference: reference.clone(),
+                        muted: *muted,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackVolume { track_id, gain } => {
+                let track = scene.tracks.track(track_id)?;
+                let gain = sane_gain(*gain);
+                if gain == track.gain {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetTrackVolume,
+                    forward: vec![ProjectPatch::SetTrackGain {
+                        track_id: track_id.clone(),
+                        gain,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackPan { track_id, pan } => {
+                let track = scene.tracks.track(track_id)?;
+                let pan = sane_pan(*pan);
+                if pan == track.pan {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetTrackPan,
+                    forward: vec![ProjectPatch::SetTrackPan {
+                        track_id: track_id.clone(),
+                        pan,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackSolo { track_id, solo } => {
+                let track = scene.tracks.track(track_id)?;
+                if *solo == track.solo {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetTrackSolo,
+                    forward: vec![ProjectPatch::SetTrackSolo {
+                        track_id: track_id.clone(),
+                        solo: *solo,
                     }],
                     selection_patch: None,
                 })
@@ -1667,5 +1890,32 @@ impl Command {
 
             Command::Paste => None, // resolved in Editor::execute (mints ids)
         }
+    }
+}
+
+/// The most gain a fader may apply.
+///
+/// Not a taste limit — a *render-path* limit. The summing mixer clamps to ±1 after summing, so
+/// gain past a point buys nothing but distortion, and a fader dragged to a number with no top
+/// can be handed `1e30` by a UI that scaled a drag wrong. 4× is +12 dB, which is as far up as a
+/// clip that was mastered quiet ever needs to come.
+const MAX_GAIN: f32 = 4.0;
+
+/// A level a mixer may actually be set to. Non-finite is unity: a `NaN` level would silence a
+/// clip and there would be nothing on screen saying why.
+fn sane_gain(gain: f32) -> f32 {
+    if gain.is_finite() {
+        gain.clamp(0.0, MAX_GAIN)
+    } else {
+        1.0
+    }
+}
+
+/// A pan position a mixer may actually be set to. Non-finite is centre, for the same reason.
+fn sane_pan(pan: f32) -> f32 {
+    if pan.is_finite() {
+        pan.clamp(-1.0, 1.0)
+    } else {
+        0.0
     }
 }
