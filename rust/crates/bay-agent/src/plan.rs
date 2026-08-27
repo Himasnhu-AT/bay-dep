@@ -638,6 +638,7 @@ pub const SUPPORTED_EFFECTS: &[&str] = &[
     "blur",
     "lut",
     "drop-shadow",
+    "lift-gamma-gain",
 ];
 
 /// Resolve the `elementId` argument every revising tool takes.

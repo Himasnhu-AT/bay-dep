@@ -1336,9 +1336,19 @@ pub fn all_definitions() -> Vec<Value> {
                          than one dial: `amount` is the shadow's opacity (0.18 is a card \
                          sitting on a page), `offsetX`/`offsetY` its displacement in pixels, \
                          `blur` its softness in pixels, `spread` how much it grows before \
-                         blurring, and `colorR`/`colorG`/`colorB` its colour in 0-1. Omitted \
-                         parameters take those defaults rather than zero, so a shadow added \
-                         with no params is already visible.",
+                         blurring, and `colorR`/`colorG`/`colorB` its colour in 0-1. \
+                         `lift-gamma-gain` is the three-way colour balance, and the one to \
+                         reach for when a shot needs a *look* rather than more of one dial: \
+                         `liftR`/`liftG`/`liftB` offset the shadows and hold white (0 is \
+                         neutral), `gammaR`/`gammaG`/`gammaB` bend the midtones and hold both \
+                         ends (1 is neutral, above 1 brightens the mids), \
+                         `gainR`/`gainG`/`gainB` multiply the highlights and hold black (1 is \
+                         neutral), each with a `…Master` applying to all three channels at \
+                         once, and `amount` is how much of the whole balance to apply, as on \
+                         `lut`. A cool lift with a warm gain is the split most graded footage \
+                         has in it. Omitted parameters take those defaults rather than zero, \
+                         so a shadow added with no params is already visible and a balance \
+                         with one wheel set leaves the other two at rest.",
                 },
                 "effectId": { "type": "string", "description": "Minted if omitted." }
             }),

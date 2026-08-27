@@ -211,6 +211,12 @@ const EFFECT_BLOCKS: &[Block] = &[
         detail: "neutral contrast grade",
         needs_selection: true,
     },
+    Block {
+        id: "fx.balance",
+        label: "Balance",
+        detail: "cool shadows · warm highlights",
+        needs_selection: true,
+    },
 ];
 
 /// The grade the Look tile attaches.
@@ -402,6 +408,13 @@ pub fn plan(
             Some(format!("{}{TILE_LOOK}", bay_project::LOOK_PREFIX)),
             fresh_id,
         )]),
+        "fx.balance" => Ok(vec![add_effect_with(
+            reference,
+            "lift-gamma-gain",
+            default_effect_params("lift-gamma-gain"),
+            None,
+            fresh_id,
+        )]),
 
         "audio.fade-in" => Ok(vec![Command::SetFades {
             reference,
@@ -591,6 +604,31 @@ pub fn default_effect_params(effect_type: &str) -> BTreeMap<String, f32> {
         ]),
         // Sigma in pixels.
         "blur" => BTreeMap::from([("amount".to_string(), 4.0)]),
+        // Three wheels, thirteen numbers, and deliberately **not** the neutral setting.
+        //
+        // Neutral would be the tidy default and it would make the tile a dead control: it
+        // would add a row to the inspector and change no pixel, which is the failure this
+        // module exists to prevent. So the tile seeds the balance its own label promises — a
+        // cool toe and a warm top, the split every colourist puts in first — small enough to
+        // tune from rather than undo. `amount` is how much of it to apply, as on `lut`.
+        //
+        // Neutral per wheel is lift 0, gamma 1, gain 1; the preview's mapper falls back to
+        // those, so a wheel omitted here is at rest rather than at zero.
+        "lift-gamma-gain" => BTreeMap::from([
+            ("amount".to_string(), 1.0),
+            ("liftR".to_string(), -0.005),
+            ("liftG".to_string(), 0.0),
+            ("liftB".to_string(), 0.02),
+            ("liftMaster".to_string(), 0.0),
+            ("gammaR".to_string(), 1.0),
+            ("gammaG".to_string(), 1.0),
+            ("gammaB".to_string(), 1.0),
+            ("gammaMaster".to_string(), 1.0),
+            ("gainR".to_string(), 1.04),
+            ("gainG".to_string(), 1.0),
+            ("gainB".to_string(), 0.96),
+            ("gainMaster".to_string(), 1.0),
+        ]),
         // How much of the grade to apply, so 1.0 is the *full* look, not "no change" —
         // the opposite of what the same number means on the colour adjustments below.
         // A grade that arrives at 0 is a control that did nothing, and telling that from a
@@ -707,13 +745,14 @@ mod tests {
     /// The set `bay-preview` translates and `bay-agent` validates against. Pinned equal to
     /// `bay_agent::plan::SUPPORTED_EFFECTS` by `bay-mcp`'s `tool_vocabulary` tests, which can
     /// see both crates; this one cannot, since `bay-agent` depends on it and not the reverse.
-    const IMPLEMENTED: [&str; 6] = [
+    const IMPLEMENTED: [&str; 7] = [
         "brightness",
         "contrast",
         "saturation",
         "blur",
         "lut",
         "drop-shadow",
+        "lift-gamma-gain",
     ];
 
     /// The reason this module exists. Every effect tile must name a shader the compositor
