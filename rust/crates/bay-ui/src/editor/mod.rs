@@ -31,7 +31,12 @@ use crate::widgets::{self, text as shared_text};
 /// because Rust privacy lets a child see `EditorView`'s private fields and a sibling cannot —
 /// the alternative is `pub(crate)` on fifty fields. Each page body added later lands here on the
 /// same terms.
+mod audio;
+mod color;
+mod deliver;
 mod inspector;
+mod media;
+mod motion;
 mod panels;
 mod timeline;
 mod toolbar;
@@ -1327,9 +1332,17 @@ impl Render for EditorView {
             // The page owns the body; the bar is the only thing below it. Both are children of
             // the same column, so the transport band lands at the same distance from the window
             // top on every page that has one — which `pages.md` calls the horizon line of the app.
+            // One arm per page, each in its own file, so a page body can be written without
+            // touching this router. `placeholder_page` still backs the pages that are stubs —
+            // a tab that opens an empty frame reads as broken, one that says what is coming
+            // does not.
             .child(match self.page {
+                Page::Media => self.media_page(cx),
                 Page::Cut => self.edit_page(&vm, lane_width, cx),
-                other => self.placeholder_page(other),
+                Page::Motion => self.motion_page(cx),
+                Page::Color => self.color_page(cx),
+                Page::Audio => self.audio_page(cx),
+                Page::Deliver => self.deliver_page(cx),
             })
             .child(self.page_bar(window_width, cx))
             // Absolutely positioned and last, so the spike panel sits over the editor rather

@@ -419,7 +419,13 @@ fn the_summary_json_names_what_a_colourist_would_ask_for() {
 fn scope_cost_is_reported() {
     let optimized = !cfg!(debug_assertions);
     // Enough runs to find a clean one, few enough that 4K does not dominate the suite.
-    let runs: u32 = if optimized { 7 } else { 3 };
+    // `BAY_SCOPE_RUNS` raises it: on a machine that cannot be made quiet, more runs is the only
+    // way the best-of estimator gets close to the uninterrupted cost.
+    let runs: u32 = std::env::var("BAY_SCOPE_RUNS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|runs| *runs > 0)
+        .unwrap_or(if optimized { 7 } else { 3 });
 
     // A gradient rather than a flat fill: a flat frame touches one histogram bin repeatedly and
     // measures a cache that a real frame does not get.
