@@ -8,6 +8,7 @@ different states and conflating them is how a green build gets mistaken for a wo
 | [`todo.completed.md`](todo.completed.md) | What is built and shipped — each entry with the evidence that proves it |
 | [`todo.pending.md`](todo.pending.md) | What is not built, sized and ordered |
 | [`todo.testing.md`](todo.testing.md) | What exists but has never been exercised, and how to exercise it |
+| [`todo.pages.md`](todo.pages.md) | The six-page editor migration — what is verified, what is in flight, who owns it |
 
 ---
 
