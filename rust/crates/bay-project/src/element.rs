@@ -175,6 +175,42 @@ pub struct Effect {
     pub asset: Option<String>,
 }
 
+/// How a built-in grade is named in [`Effect::asset`], as opposed to a path on disk.
+///
+/// Built-in looks are generated on the machine — there is no `.cube` anywhere for them, and
+/// deliberately so, since a project naming one keeps working on a machine that has never
+/// downloaded anything. That makes `asset` two namespaces in one field, and anything reading
+/// it has to know which it is holding: `check` did not, tested every asset with
+/// `Path::exists`, and so reported every built-in look as a missing file. Since a render is
+/// refused while an error stands, the documented way to grade a clip blocked the export.
+pub const LOOK_PREFIX: &str = "look:";
+
+/// Every built-in look, by id.
+///
+/// Here rather than in `bay-effects` because `bay-core` has to validate a look id and cannot
+/// take a dependency on wgpu to do it. `bay-effects` owns what a look *is*; this owns what
+/// they are *called*, and a test in `bay-effects` pins the two lists equal in both directions,
+/// so a look added there and not here would be rejected by the very check that is meant to
+/// catch a typo.
+pub const BUILTIN_LOOKS: &[&str] = &[
+    "neutral-contrast",
+    "teal-orange",
+    "bleach-bypass",
+    "warm-film",
+    "cool-night",
+    "mono",
+];
+
+/// The look id an `asset` names, if it names one at all.
+pub fn look_id(asset: &str) -> Option<&str> {
+    asset.strip_prefix(LOOK_PREFIX)
+}
+
+/// Whether `id` is a look this build can generate.
+pub fn is_builtin_look(id: &str) -> bool {
+    BUILTIN_LOOKS.contains(&id)
+}
+
 /// A shape that limits where a clip shows.
 ///
 /// The feathering pipeline behind this (a jump-flood signed distance field) has been written
@@ -597,6 +633,60 @@ impl KaraokeSpec {
     }
 }
 
+/// Reveal a line one character at a time, the way a terminal does.
+///
+/// **Why this is a property of the text and not a mask animation.** A wipe over a finished
+/// raster reveals *half a glyph* at the wipe edge, which reads as a rectangle sliding over
+/// words; typing reveals whole characters, and the difference is the whole effect. It also has
+/// to re-shape as it goes, because a line that will wrap does not know where it wraps until it
+/// gets there — revealing a pre-wrapped raster puts the break in the wrong place for every
+/// frame before the last.
+///
+/// The cost is real and worth stating: each distinct prefix is a separate raster, so a 60
+/// character line at 24 cps is 60 cache entries over two and a half seconds. That is fine for
+/// the one or two lines in a shot that are *about* being typed, and it is the reason this is
+/// not something to put on body copy.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeOn {
+    /// Characters per second. Around 24 reads as a fast confident typist; much past 40 and the
+    /// eye stops resolving individual characters and it becomes a wipe with extra steps.
+    pub chars_per_second: f32,
+    /// Draw a block caret at the leading edge while the line is still arriving.
+    #[serde(default)]
+    pub caret: bool,
+}
+
+/// The caret glyph. A full block rather than an underscore or a bar: at the sizes type appears
+/// at in a film it is the only one of the three that is still visible.
+pub const CARET: char = '▌';
+
+impl TypeOn {
+    /// How long `content` takes to arrive in full.
+    pub fn duration_seconds(&self, content: &str) -> f64 {
+        let rate = self.chars_per_second.max(0.1) as f64;
+        content.chars().count() as f64 / rate
+    }
+
+    /// What is on screen at `local` seconds into the element.
+    ///
+    /// Counted in `char`s rather than bytes, so a line containing an em dash or an accent does
+    /// not reveal half a code point and render a replacement box.
+    pub fn revealed(&self, content: &str, local_seconds: f64) -> String {
+        let rate = self.chars_per_second.max(0.1) as f64;
+        let total = content.chars().count();
+        let shown = (local_seconds.max(0.0) * rate).floor() as usize;
+        if shown >= total {
+            return content.to_string();
+        }
+        let mut out: String = content.chars().take(shown).collect();
+        if self.caret {
+            out.push(CARET);
+        }
+        out
+    }
+}
+
 /// Hold one source frame while timeline time continues to advance.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -751,6 +841,21 @@ pub struct Transform {
     pub crop_right: f32,
     #[serde(default)]
     pub crop_bottom: f32,
+    /// Tilt about the element's own horizontal axis, in degrees: the card leans out of the
+    /// screen rather than spinning in it.
+    ///
+    /// `rotation` already existed and is not this. Rotation keeps every edge the same length —
+    /// it is a 2D spin. A tilt foreshortens: the edge that leans away gets shorter and the one
+    /// leaning towards the eye gets longer, which is the only way a flat composition acquires a
+    /// front and a back. Held here rather than as an effect because it is geometry, so it
+    /// composes with position and scale instead of being applied to the finished picture.
+    ///
+    /// Zero is flat, which is what every project written before tilt existed deserializes to.
+    #[serde(default)]
+    pub tilt_x: f32,
+    /// Tilt about the element's own vertical axis, in degrees. See [`Transform::tilt_x`].
+    #[serde(default)]
+    pub tilt_y: f32,
 }
 
 impl Transform {
@@ -798,6 +903,8 @@ impl Default for Transform {
             crop_top: 0.0,
             crop_right: 0.0,
             crop_bottom: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
         }
     }
 }
@@ -923,6 +1030,9 @@ pub struct TextElement {
     pub decorations: Option<TextDecorations>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub karaoke: Option<KaraokeSpec>,
+    /// Reveal the line character by character from the element's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_on: Option<TypeOn>,
     #[serde(default)]
     pub source: ElementSource,
     #[serde(default)]
@@ -968,6 +1078,51 @@ impl Default for ShapeKind {
     }
 }
 
+/// A two-stop linear gradient fill.
+///
+/// Stored as resolved colours, the same way `color` is, because the element is what the
+/// renderer reads and the kit is what the *tool* consults — an element carrying a tone name
+/// would make every renderer a kit resolver.
+///
+/// Two stops and a linear ramp, deliberately. The genre that wants gradients wants a ground
+/// that is not flat and an orb that is not a disc; it does not want a gradient editor, and a
+/// stop list is the first step towards one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Gradient {
+    /// `#rrggbb` at the start of the ramp.
+    pub from: String,
+    /// `#rrggbb` at the end of it.
+    pub to: String,
+    /// Direction of the ramp, in degrees clockwise from left-to-right.
+    #[serde(default)]
+    pub angle: f32,
+}
+
+/// An outline instead of a fill, optionally broken into dashes.
+///
+/// Both fall out of the signed distance field the rasteriser already builds: an outline is the
+/// band where the distance to the boundary is small, and that is true for a rounded rect and an
+/// ellipse alike without either being special-cased.
+///
+/// `dash` breaks the shape along its LONGER axis, which is what a connector is. A dash pattern
+/// that walked the perimeter would be the general answer and is not the one anybody needs here;
+/// the thing this exists for is the dashed line between two nodes in a diagram.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stroke {
+    /// `#rrggbb`. Resolved by the tool from a tone, like every other colour on an element.
+    pub color: String,
+    /// Line width as a fraction of the shape's shorter side.
+    pub width: f32,
+    /// Dash length as a fraction of the shape's LONGER side. `None` draws a continuous line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<f32>,
+    /// Gap length, same units as `dash`. Ignored when `dash` is `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f32>,
+}
+
 /// A solid-colour vector primitive. Carries the same transform/effect/animation surface as
 /// every other visual element, so a bar can be eased, blended and effected like any layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -983,8 +1138,18 @@ pub struct ShapeElement {
     pub fade_out: MediaTime,
     #[serde(default)]
     pub shape: ShapeKind,
-    /// `#rrggbb` fill.
+    /// `#rrggbb` fill. Ignored when `gradient` is set.
     pub color: String,
+    /// A gradient fill, which replaces `color` when present.
+    ///
+    /// Optional and `skip_serializing_if`, so every project written before gradients existed
+    /// loads and renders exactly as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Gradient>,
+    /// Draw the outline rather than the fill. `None` fills, which is what a shape did before
+    /// this existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<Stroke>,
     #[serde(default)]
     pub transform: Transform,
     #[serde(default)]
@@ -1251,6 +1416,20 @@ impl Element {
     /// Eased keyframe segments are subdivided rather than taken at their endpoints — an
     /// `expo-out` duck sampled only at its two keys is a straight line, which is not what the
     /// author asked for. A flat clip returns a single point.
+    /// The same polyline, with the head and tail fades left out.
+    ///
+    /// For a mixer that applies fades itself. The export does: an ffmpeg `volume` expression is
+    /// evaluated once per audio *frame* — about 21 ms — and held, so a fade folded into it is
+    /// quantised to that grid and its first frame is multiplied by exactly zero. On a fade of a
+    /// second nobody notices; on the tens of milliseconds a dialogue join wants, the fade *is*
+    /// the first frame, and what reaches the file is a hole rather than a ramp. The export
+    /// emits `afade` for these instead, which is sample-accurate.
+    pub fn gain_points_without_fades(&self) -> Vec<(f64, f32)> {
+        let mut bare = self.clone();
+        bare.set_fades(MediaTime::ZERO, MediaTime::ZERO);
+        bare.gain_points()
+    }
+
     pub fn gain_points(&self) -> Vec<(f64, f32)> {
         if !matches!(self, Element::Audio(_)) {
             return Vec::new();
@@ -1394,6 +1573,59 @@ impl Element {
             mask.feather = value;
         }
         Some(mask)
+    }
+
+    /// The shape with `shape.radius` sampled at element-local time (`None` for non-shapes).
+    ///
+    /// Corner radius is a fraction of the shorter side, so a channel on it reads the same way
+    /// at any size — which is what makes "round the corners off as the card seats" expressible
+    /// as two keys rather than as a second element that swaps in.
+    pub fn sampled_shape_kind(&self, local_time: MediaTime) -> Option<ShapeKind> {
+        let Element::Shape(shape) = self else {
+            return None;
+        };
+        let mut kind = shape.shape;
+        if let Some(value) = shape
+            .animations
+            .get("shape.radius")
+            .and_then(|c| c.sample(local_time))
+            && let ShapeKind::Rect { radius } = &mut kind
+        {
+            *radius = value;
+        }
+        Some(kind)
+    }
+
+    /// The stroke with `stroke.width` sampled at element-local time.
+    ///
+    /// `None` when the element has no stroke at all: a channel cannot bring one into
+    /// existence, because the width is only half of a stroke and the colour is not a scalar.
+    pub fn sampled_stroke(&self, local_time: MediaTime) -> Option<Stroke> {
+        let Element::Shape(shape) = self else {
+            return None;
+        };
+        let mut stroke = shape.stroke.clone()?;
+        if let Some(value) = shape
+            .animations
+            .get("stroke.width")
+            .and_then(|c| c.sample(local_time))
+        {
+            stroke.width = value;
+        }
+        Some(stroke)
+    }
+
+    /// The font size with a `fontSize` channel sampled at element-local time.
+    pub fn sampled_font_size(&self, local_time: MediaTime) -> Option<f32> {
+        let Element::Text(text) = self else {
+            return None;
+        };
+        Some(
+            text.animations
+                .get("fontSize")
+                .and_then(|c| c.sample(local_time))
+                .unwrap_or(text.font_size),
+        )
     }
 
     /// The on-canvas transform for visual elements (`None` for audio).
@@ -1551,6 +1783,12 @@ impl Element {
             {
                 transform.crop_bottom = v;
             }
+            if let Some(v) = animations.get("tiltX").and_then(|c| c.sample(local_time)) {
+                transform.tilt_x = v;
+            }
+            if let Some(v) = animations.get("tiltY").and_then(|c| c.sample(local_time)) {
+                transform.tilt_y = v;
+            }
         }
         Some(transform)
     }
@@ -1558,7 +1796,7 @@ impl Element {
     /// The animatable transform properties, in the order the inspector lists them. Also the
     /// set the MCP surface validates against, so an unknown channel name is a hard error
     /// rather than an animation that silently never plays.
-    pub const ANIMATABLE: [&'static str; 11] = [
+    pub const ANIMATABLE: [&'static str; 13] = [
         "opacity",
         "scale",
         "x",
@@ -1570,6 +1808,8 @@ impl Element {
         "cropTop",
         "cropRight",
         "cropBottom",
+        "tiltX",
+        "tiltY",
     ];
 
     /// The only property an audio clip has to animate. Kept apart from [`Self::ANIMATABLE`]

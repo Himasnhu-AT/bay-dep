@@ -205,6 +205,27 @@ mod tests {
     }
 
     /// Ids are stored in projects, so a rename is a broken grade in someone's saved film.
+    /// The look ids here and the ones `bay-project` publishes must be the same set.
+    ///
+    /// `check` validates a look id against `bay_project::BUILTIN_LOOKS`, because it runs
+    /// headless and cannot pull wgpu in to ask this crate directly. Two lists mean they can
+    /// drift: a look added here and not there would be reported as a look that does not
+    /// exist, and — since a render is refused while an error stands — could not be exported.
+    /// One added there and not here would pass the check and then render ungraded.
+    #[test]
+    fn the_published_look_ids_match_the_looks_that_exist() {
+        let here: std::collections::BTreeSet<&str> = LOOKS.iter().map(|look| look.id).collect();
+        let published: std::collections::BTreeSet<&str> =
+            bay_project::BUILTIN_LOOKS.iter().copied().collect();
+        assert_eq!(
+            here, published,
+            "bay_project::BUILTIN_LOOKS and the looks in this crate have drifted"
+        );
+        assert!(!bay_project::is_builtin_look("no-such-look"));
+        assert_eq!(bay_project::look_id("look:warm-film"), Some("warm-film"));
+        assert_eq!(bay_project::look_id("/tmp/grade.cube"), None);
+    }
+
     #[test]
     fn look_ids_are_unique_and_resolvable() {
         for look in LOOKS {

@@ -215,6 +215,7 @@ fn text_at(id: &str, y: f32) -> Element {
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Author,
         role: ElementRole::Headline,
     })
@@ -230,6 +231,8 @@ fn shape_at(id: &str) -> Element {
         fade_out: MediaTime::ZERO,
         shape: ShapeKind::Rect { radius: 0.0 },
         color: "#ffffff".into(),
+        gradient: None,
+        stroke: None,
         transform: Transform::default(),
         effects: Vec::new(),
         animations: BTreeMap::new(),
@@ -474,7 +477,7 @@ fn a_later_move_extends_the_channel_instead_of_erasing_the_entrance() {
     );
     // …and the response is measured from where the element actually is, not from its authored
     // transform, so the two compose.
-    assert!((y.keys[4].value - (0.4 - 0.0198)).abs() < 1e-5, "{y:?}");
+    assert!((y.keys[4].value - (0.4 - 0.0278)).abs() < 1e-5, "{y:?}");
 
     let scene = scene_of(vec![{
         let mut e = element.clone();

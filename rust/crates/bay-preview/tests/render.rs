@@ -1,7 +1,7 @@
 //! The preview renderer composites scenes to non-empty BGRA frames on a real GPU (skips if
 //! none — set `BAY_REQUIRE_GPU=1` / `BAY_REQUIRE_FFMPEG=1` to turn those skips into failures).
 
-use bay_preview::PreviewRenderer;
+use bay_preview::{CollectedFrame, PreviewRenderer};
 use bay_project::{
     AudioRole, Effect, Element, ElementSource, ImageElement, MediaAsset, MediaTime, Project,
     Transform, VideoElement,
@@ -101,19 +101,23 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
 }
 
 #[test]
-fn renders_contrast_saturation_and_blur_on_gpu() {
+fn renders_contrast_saturation_blur_and_drop_shadow_on_gpu() {
     // Exercises the new effect shaders end-to-end (WGSL compiles + runs on the real GPU).
     let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
-    for effect_type in ["contrast", "saturation", "blur"] {
+    for effect_type in ["contrast", "saturation", "blur", "drop-shadow"] {
         let mut project = Project::starter();
         if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
             title.effects.push(Effect {
                 id: format!("fx-{effect_type}"),
                 effect_type: effect_type.into(),
                 enabled: true,
-                params: [("amount".to_string(), 1.5)].into_iter().collect(),
+                params: if effect_type == "drop-shadow" {
+                    bay_core::blocks::default_effect_params("drop-shadow")
+                } else {
+                    [("amount".to_string(), 1.5)].into_iter().collect()
+                },
                 asset: None,
             });
         }
@@ -1069,6 +1073,8 @@ fn bar(scale_x: f32, anchor_x: f32) -> bay_project::ShapeElement {
         fade_out: MediaTime::ZERO,
         shape: bay_project::ShapeKind::Rect { radius: 0.0 },
         color: "#ff0000".into(),
+        gradient: None,
+        stroke: None,
         transform: Transform {
             x: 0.5,
             y: 0.5,
@@ -1242,6 +1248,8 @@ fn a_rounded_rect_has_transparent_corners_and_a_solid_middle() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.5 },
         "#ffffff",
+        None,
+        None,
         64,
         64,
     );
@@ -1256,6 +1264,8 @@ fn a_square_rect_fills_its_corners() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.0 },
         "#ffffff",
+        None,
+        None,
         16,
         16,
     );
@@ -1266,8 +1276,14 @@ fn a_square_rect_fills_its_corners() {
 
 #[test]
 fn an_ellipse_is_round() {
-    let rgba =
-        bay_preview::rasterize_shape_for_test(&bay_project::ShapeKind::Ellipse, "#ffffff", 64, 64);
+    let rgba = bay_preview::rasterize_shape_for_test(
+        &bay_project::ShapeKind::Ellipse,
+        "#ffffff",
+        None,
+        None,
+        64,
+        64,
+    );
     let alpha = |x: u32, y: u32| rgba[((y * 64 + x) * 4 + 3) as usize];
     assert_eq!(alpha(32, 32), 255, "centre is filled");
     assert_eq!(alpha(1, 1), 0, "corners are outside the circle");
@@ -1291,6 +1307,8 @@ fn a_wide_pill_has_a_flat_top_not_a_pointed_lens() {
     let rgba = bay_preview::rasterize_shape_for_test(
         &bay_project::ShapeKind::Rect { radius: 0.5 },
         "#ffffff",
+        None,
+        None,
         w,
         h,
     );
@@ -1684,6 +1702,7 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 line_height: 1.2,
                 decorations: None,
                 karaoke: None,
+                type_on: None,
                 source: Default::default(),
                 role: Default::default(),
             }));
@@ -1697,6 +1716,8 @@ fn a_frame_with_more_rasters_than_the_cache_cap_still_renders() {
                 shape: bay_project::ShapeKind::Rect { radius: 0.4 },
                 // A unique colour per shape forces a unique cache key.
                 color: format!("#{:02x}20a0", 40 + i * 3),
+                gradient: None,
+                stroke: None,
                 transform: Transform {
                     x: 0.5,
                     y: (i as f32 % 10.0) / 10.0,
@@ -2381,11 +2402,15 @@ fn a_moving_level_becomes_an_ffmpeg_expression() {
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 0.5)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
     };
     assert_eq!(bay_preview::volume_filter_for_test(&flat), "volume=0.5000");
 
     let ducked = bay_preview::AudibleClip {
         gain_points: vec![(0.0, 1.0), (1.0, 0.2), (3.0, 0.2), (4.0, 1.0)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
         ..flat
     };
     let filter = bay_preview::volume_filter_for_test(&ducked);
@@ -2518,6 +2543,12 @@ fn interpolate(points: &[(f64, f32)], at: f64) -> f32 {
 }
 
 /// A fade on an audio clip has to reach the export, not only the preview.
+///
+/// It arrives as `fade_in_seconds`/`fade_out_seconds` rather than inside `gain_points`, which
+/// is what it used to be. Folding it into the gain polyline meant it was applied by the ffmpeg
+/// `volume` expression, evaluated once per ~21 ms audio frame — fine for a fade of a second,
+/// and a hole rather than a ramp for the tens of milliseconds a dialogue join wants. The
+/// numbers are the same; only the resolution they are applied at changed.
 #[test]
 fn an_audio_fade_reaches_the_export_mixer() {
     use bay_project::{AudioElement, MediaAsset, Track, TrackKind};
@@ -2553,13 +2584,20 @@ fn an_audio_fade_reaches_the_export_mixer() {
     let media = vec![MediaAsset::new("m-ok", "ok.mp3", "/tmp/ok.mp3")];
     let clips = bay_preview::audible_clips_for_test(project.active_scene(), &media);
     assert_eq!(clips.len(), 1);
-    assert!(
-        clips[0].gain_points.len() > 1,
-        "the fade reached the mixer: {:?}",
-        clips[0].gain_points
+    assert_eq!(
+        clips[0].fade_in_seconds, 1.0,
+        "the head fade reached the mixer"
     );
-    assert_eq!(clips[0].gain_points.first(), Some(&(0.0, 0.0)));
-    assert_eq!(clips[0].gain_points.last(), Some(&(4.0, 0.0)));
+    assert_eq!(
+        clips[0].fade_out_seconds, 1.0,
+        "the tail fade reached the mixer"
+    );
+    // And it is not *also* in the gain polyline, which would apply it twice.
+    assert_eq!(
+        clips[0].gain_points,
+        vec![(0.0, 1.0)],
+        "a clip with no volume keyframes carries a flat gain; the fades are separate"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2603,6 +2641,8 @@ fn a_range_moves_the_sound_with_the_picture() {
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
     };
 
     // Exporting 5s..15s of a timeline.
@@ -2652,6 +2692,8 @@ fn a_range_of_zero_leaves_every_clip_alone() {
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
+        fade_in_seconds: 0.0,
+        fade_out_seconds: 0.0,
     }];
     let kept = bay_preview::clips_in_range_for_test(clips.clone(), 0.0, 10.0);
     assert_eq!(kept, clips);
@@ -2761,6 +2803,8 @@ fn a_lut_actually_grades_the_frame() {
             fade_out: MediaTime::ZERO,
             shape: bay_project::ShapeKind::Rect { radius: 0.0 },
             color: "#ff0000".into(),
+            gradient: None,
+            stroke: None,
             transform: bay_project::Transform::default(),
             effects: vec![bay_project::Effect {
                 id: "fx".into(),
@@ -2943,6 +2987,8 @@ fn a_mask_hides_what_falls_outside_it() {
             fade_out: MediaTime::ZERO,
             shape: bay_project::ShapeKind::Rect { radius: 0.0 },
             color: "#ffffff".into(),
+            gradient: None,
+            stroke: None,
             transform: bay_project::Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -3114,4 +3160,913 @@ fn an_export_delivers_48k_stereo_however_the_mix_was_assembled() {
     for path in [&voice, &bed, &out] {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// The bug this guards: an audio clip that stops before the picture does used to truncate the
+/// whole export to the audio's end, and ffmpeg reported success.
+///
+/// A silent 0.7 s stinger at 4.85 s on an 8 s reel produced a 5.6 s file with the end card
+/// missing. Nothing failed, nothing was logged; the only way to find it was to decode the
+/// output and count. So this test decodes the output and counts.
+#[test]
+fn an_audio_clip_that_ends_early_does_not_truncate_the_export() {
+    if !require_ffmpeg() {
+        return;
+    }
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "bay-short-audio-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+
+    // A one-second tone, to sit near the head of a four-second picture.
+    let tone = root.join("stinger.wav");
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            tone.to_str().unwrap(),
+        ])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(made, "generate the stinger") {
+        return;
+    }
+
+    const PICTURE_SECONDS: f64 = 8.0;
+    const FPS: u32 = 30;
+
+    let mut project = Project::starter();
+    project.media = vec![MediaAsset::new(
+        "stinger",
+        "stinger.wav",
+        tone.to_string_lossy(),
+    )];
+    // One audio clip, one second long, finishing well before the picture does.
+    let Element::Audio(stinger) = &mut project.active_scene_mut().tracks.audio[0].elements[0]
+    else {
+        panic!("the starter audio lane should contain audio")
+    };
+    // Placed late and finishing early, which is the shape that broke: the mixed bed's last
+    // sample lands at 2.5 s on a 4 s picture.
+    stinger.media_id = "stinger".into();
+    stinger.start = MediaTime::from_seconds_f64(4.85).unwrap();
+    stinger.duration = MediaTime::from_seconds_f64(0.7).unwrap();
+    project.active_scene_mut().tracks.audio[0]
+        .elements
+        .truncate(1);
+
+    let out = root.join("short-audio.mp4");
+    let result = renderer.export_video(
+        project.active_scene(),
+        PICTURE_SECONDS,
+        f64::from(FPS),
+        1920,
+        1080,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
+    );
+    // Asserted, not gated. `require_ffmpeg_step` turns a failure into a *skip*, and the failure
+    // mode here — ffmpeg quitting early and the pipe breaking — is precisely what this test
+    // exists to catch. Gating it made the test skip on the bug and report a pass.
+    assert!(
+        result.is_ok(),
+        "the export failed outright, which is the truncation showing up as a broken pipe: \
+         {result:?}"
+    );
+
+    // Count decoded frames, not container metadata: a truncated file can still carry a header
+    // that claims the full duration, and it was the decode that exposed this in the first place.
+    let probe = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "default=nw=1:nk=1",
+            out.to_str().unwrap(),
+        ])
+        .output();
+    let Ok(probe) = probe else {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !require_ffmpeg_step(probe.status.success(), "probe the short-audio mp4") {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let frames: u32 = String::from_utf8_lossy(&probe.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0);
+
+    let expected = (PICTURE_SECONDS * f64::from(FPS)).round() as u32;
+    assert_eq!(
+        frames, expected,
+        "the export was cut to the audio clip's end: {frames} frames on disk, {expected} expected \
+         for {PICTURE_SECONDS}s at {FPS}fps"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A short audio fade must reach the file as a ramp, not as a hole.
+///
+/// Fades used to be folded into the `volume` expression, which the export evaluates once per
+/// audio frame — about 21 ms — and holds. A fade of a second survives that; a fade of a few
+/// tens of milliseconds *is* one frame, and the frame it lands on is multiplied by the value
+/// at the very start of the curve, which for a fade-in is zero. So the crossfade that smooths
+/// a dialogue join arrived as ~21 ms of digital silence on each side of it: two clips butt
+/// joined with 35 ms fades measured 67 ms of exact zero, and the same two clips with the fades
+/// removed measured none. A smoothing that produces a hole is worse than the seam it replaced.
+///
+/// The fades are `afade` now, which works on samples. This renders the shape that broke and
+/// asserts the file has no digital silence in it at all.
+#[test]
+fn a_short_audio_fade_renders_as_a_ramp_rather_than_a_hole() {
+    let Some(mut renderer) = bay_test_support::require_gpu_backed(
+        "a PreviewRenderer",
+        bay_preview::PreviewRenderer::new,
+    ) else {
+        return;
+    };
+    let dir = std::env::temp_dir().join("bay-short-fade");
+    let _ = std::fs::create_dir_all(&dir);
+    let tone = dir.join("tone.wav");
+    let out = dir.join("short-fade.mp4");
+
+    let made = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            tone.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(made, "synthesize a test tone") {
+        return;
+    }
+
+    // 35 ms, the length a dialogue join wants — and under two audio frames.
+    let fade = MediaTime::from_seconds_f64(0.035).expect("35 ms");
+    let mut project = Project::starter();
+    project.media = vec![bay_project::MediaAsset::new(
+        "tone",
+        "tone.wav",
+        tone.to_str().unwrap(),
+    )];
+    {
+        let scene = project.active_scene_mut();
+        let one = |id: &str, start: f64, trim: f64, fade_in, fade_out| {
+            Element::Audio(bay_project::AudioElement {
+                id: id.into(),
+                name: id.into(),
+                start: MediaTime::from_seconds_f64(start).expect("a start"),
+                duration: MediaTime::from_seconds_f64(1.0).expect("a second"),
+                fade_in,
+                fade_out,
+                media_id: "tone".into(),
+                muted: false,
+                volume: 1.0,
+                speed: 1.0,
+                prosody: None,
+                dialogue_chain: None,
+                animations: Default::default(),
+                trim_start: MediaTime::from_seconds_f64(trim).expect("a trim"),
+                source: Default::default(),
+                role: Default::default(),
+            })
+        };
+        scene.tracks.audio[0].elements = vec![
+            one("a", 0.0, 0.0, MediaTime::ZERO, fade),
+            one("b", 1.0, 2.0, fade, MediaTime::ZERO),
+        ];
+    }
+
+    let rendered = renderer.export_video(
+        project.active_scene(),
+        2.0,
+        30.0,
+        320,
+        180,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings {
+            loudness_lufs: None,
+            ..Default::default()
+        },
+    );
+    assert!(rendered.is_ok(), "the export failed: {rendered:?}");
+
+    // Decode and look for exact zero. A sine through a linear crossfade never reaches it.
+    let pcm = std::process::Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-i",
+            out.to_str().unwrap(),
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "-",
+        ])
+        .output()
+        .expect("decode the rendered audio");
+    let samples: Vec<f32> = pcm
+        .stdout
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    assert!(!samples.is_empty(), "the render carried no audio at all");
+
+    // The longest run of silence anywhere but the very ends.
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for (index, sample) in samples.iter().enumerate() {
+        if sample.abs() < 1e-7 {
+            run += 1;
+            if index + 1 < samples.len() && index > 480 {
+                longest = longest.max(run);
+            }
+        } else {
+            run = 0;
+        }
+    }
+    let seconds = longest as f64 / 48000.0;
+    assert!(
+        seconds < 0.005,
+        "a {:.0} ms hole in the middle of a crossfade — the fade was quantised to an audio \
+         frame instead of applied to samples",
+        seconds * 1000.0
+    );
+}
+
+/// A gradient fill reaches the pixels, and the texture cache tells two ramps apart.
+///
+/// Both halves matter. The ramp is the point — a flat orb on a flat ground is what this format
+/// looks like without it — and the cache is where it would silently go wrong: shape textures are
+/// keyed and reused, so a key that does not carry the fill hands the second shape the first
+/// one's picture, which looks like the gradient working until the moment two of them differ.
+#[test]
+fn a_gradient_fills_across_the_shape_and_is_not_shared_between_ramps() {
+    use bay_project::{Gradient, ShapeKind};
+
+    let (w, h) = (64u32, 64u32);
+    let read = |rgba: &[u8], x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    };
+
+    // Black to white, left to right, across a square-cornered rect that fills the raster.
+    let ramp = Gradient {
+        from: "#000000".into(),
+        to: "#FFFFFF".into(),
+        angle: 0.0,
+    };
+    let shape = ShapeKind::Rect { radius: 0.0 };
+    let filled = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&ramp), None, w, h);
+
+    let mid_y = h / 2;
+    let left = read(&filled, 2, mid_y);
+    let centre = read(&filled, w / 2, mid_y);
+    let right = read(&filled, w - 3, mid_y);
+    assert!(
+        left[3] > 0 && right[3] > 0,
+        "the shape is opaque where it is filled"
+    );
+    assert!(
+        left[0] < centre[0] && centre[0] < right[0],
+        "the ramp runs dark to light across the shape: {left:?} {centre:?} {right:?}"
+    );
+    assert!(
+        left[0] < 40,
+        "the near edge is close to the first stop: {left:?}"
+    );
+    assert!(
+        right[0] > 215,
+        "the far edge is close to the second stop: {right:?}"
+    );
+    assert!(
+        (i16::from(centre[0]) - 128).abs() < 24,
+        "the middle is about halfway: {centre:?}"
+    );
+
+    // Turned 90 degrees the ramp runs down the frame instead, and across it is flat.
+    let down = Gradient {
+        angle: 90.0,
+        ..ramp.clone()
+    };
+    let vertical =
+        bay_preview::rasterize_shape_for_test(&shape, "#FF0000", Some(&down), None, w, h);
+    let top = read(&vertical, w / 2, 2);
+    let bottom = read(&vertical, w / 2, h - 3);
+    assert!(
+        top[0] < bottom[0],
+        "90 degrees runs top to bottom: {top:?} {bottom:?}"
+    );
+    let across = (
+        read(&vertical, 2, mid_y)[0],
+        read(&vertical, w - 3, mid_y)[0],
+    );
+    assert!(
+        (i16::from(across.0) - i16::from(across.1)).abs() < 8,
+        "and is flat across the other axis: {across:?}"
+    );
+
+    // The flat fill is untouched when no gradient is given.
+    let solid = bay_preview::rasterize_shape_for_test(&shape, "#FF0000", None, None, w, h);
+    assert_eq!(read(&solid, 2, mid_y)[..3], [255, 0, 0]);
+    assert_eq!(read(&solid, w - 3, mid_y)[..3], [255, 0, 0]);
+}
+
+/// A stroke draws the outline, and a dash breaks it along the long axis.
+///
+/// Both fall out of the distance field the rasteriser already builds — an outline is the band
+/// either side of the boundary — which is why a rounded rect and an ellipse both get one
+/// without either being special-cased. The dash exists for one thing: the connector between two
+/// nodes in a diagram, which is a long thin rect.
+#[test]
+fn a_stroke_outlines_the_shape_and_a_dash_breaks_it_up() {
+    use bay_project::{ShapeKind, Stroke};
+
+    let (w, h) = (64u32, 64u32);
+    let alpha = |rgba: &[u8], x: u32, y: u32| rgba[((y * w + x) * 4 + 3) as usize];
+    let square = ShapeKind::Rect { radius: 0.0 };
+
+    // Outlined: the edge is drawn, the middle is not.
+    let outline = Stroke {
+        color: "#ffffff".into(),
+        width: 0.06,
+        dash: None,
+        gap: None,
+    };
+    let stroked =
+        bay_preview::rasterize_shape_for_test(&square, "#ff0000", None, Some(&outline), w, h);
+    assert!(alpha(&stroked, w / 2, 1) > 200, "the top edge is drawn");
+    assert!(alpha(&stroked, 1, h / 2) > 200, "the left edge is drawn");
+    assert_eq!(alpha(&stroked, w / 2, h / 2), 0, "the middle is hollow");
+
+    // The same shape with no stroke is solid through the middle.
+    let solid = bay_preview::rasterize_shape_for_test(&square, "#ff0000", None, None, w, h);
+    assert!(alpha(&solid, w / 2, h / 2) > 200, "a fill is still a fill");
+
+    // A long thin bar, dashed: the run along it alternates rather than being continuous.
+    let (bw, bh) = (256u32, 8u32);
+    let dashed = Stroke {
+        color: "#ffffff".into(),
+        width: 0.9,
+        dash: Some(0.05),
+        gap: Some(0.05),
+    };
+    let bar =
+        bay_preview::rasterize_shape_for_test(&square, "#ffffff", None, Some(&dashed), bw, bh);
+    let row: Vec<u8> = (0..bw)
+        .map(|x| bar[(((bh / 2) * bw + x) * 4 + 3) as usize])
+        .collect();
+    let on = row.iter().filter(|a| **a > 128).count();
+    let off = row.iter().filter(|a| **a < 32).count();
+    assert!(on > 20, "some of the line is drawn: {on} of {bw}");
+    assert!(off > 20, "and some of it is gap: {off} of {bw}");
+    let changes = row
+        .windows(2)
+        .filter(|w| (w[0] > 128) != (w[1] > 128))
+        .count();
+    assert!(
+        changes >= 6,
+        "a dashed line alternates several times, not once: {changes}"
+    );
+}
+
+/// A stroked shape and a filled one of the same colour must not share a cached texture.
+///
+/// This shipped broken: `shape_raster_key` carried the shape, its radius, its fill and the
+/// raster size, but not the stroke. In the film that found it, a red rule and an outlined red
+/// boundary box were both square-cornered rects on an 8x8 tile, so the boundary drew as a solid
+/// red plate across the whole frame; a stroked ellipse and a solid one of the same red swapped
+/// the other way and the solid mark rendered as a ring. No error, no warning — just the wrong
+/// picture, and only when a project contained both.
+#[test]
+fn a_stroked_shape_does_not_borrow_a_filled_one_s_texture() {
+    use bay_preview::shape_raster_key;
+    use bay_project::{ShapeKind, Stroke};
+
+    let outline = Stroke {
+        color: "#C42A18".into(),
+        width: 0.004,
+        dash: None,
+        gap: None,
+    };
+    for shape in [ShapeKind::Rect { radius: 0.0 }, ShapeKind::Ellipse] {
+        let filled = shape_raster_key(&shape, "#C42A18", None, None, 8, 8);
+        let stroked = shape_raster_key(&shape, "#C42A18", None, Some(&outline), 8, 8);
+        assert_ne!(filled, stroked, "{shape:?}: fill and outline share a key");
+    }
+
+    // And a dash is a different picture from a continuous line of the same width.
+    let dashed = Stroke {
+        dash: Some(0.02),
+        gap: Some(0.01),
+        ..outline.clone()
+    };
+    assert_ne!(
+        shape_raster_key(
+            &ShapeKind::Rect { radius: 0.0 },
+            "#C42A18",
+            None,
+            Some(&outline),
+            8,
+            8
+        ),
+        shape_raster_key(
+            &ShapeKind::Rect { radius: 0.0 },
+            "#C42A18",
+            None,
+            Some(&dashed),
+            8,
+            8
+        ),
+    );
+}
+
+/// A tilted card is a trapezoid, and which end is wide says which way it leans.
+///
+/// The check that matters is the *asymmetry*, not the presence of an edge: a renderer that
+/// ignored the tilt entirely would still draw a rectangle with a top and a bottom, and every
+/// row would be the same width. Measuring both ends and comparing them is what distinguishes
+/// "the projection ran" from "the uniform was uploaded and never read".
+///
+/// The rows are found rather than assumed, because a tilt also *shortens* the card — leaning
+/// away foreshortens by the cosine of the angle — so a pair of fixed rows that framed the flat
+/// card falls outside the tilted one and reads as a renderer that drew nothing.
+#[test]
+fn a_tilted_card_foreshortens_the_edge_that_leans_away() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+
+    // The width of the card at its top and bottom edges, and the rows they were found on.
+    let mut ends = |tilt_x: f32| -> (u32, u32) {
+        let mut shape = bar(0.6, 0.5);
+        shape.transform.scale_y = 0.6;
+        shape.transform.tilt_x = tilt_x;
+        let project = shape_scene(shape);
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                320,
+                180,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("a frame");
+        let width_at = |y: u32| {
+            (0..frame.width)
+                .filter(|x| pixel(&frame, *x, y) != [0, 0, 0])
+                .count() as u32
+        };
+        let rows: Vec<u32> = (0..frame.height).filter(|y| width_at(*y) > 0).collect();
+        assert!(
+            rows.len() > 8,
+            "tilt {tilt_x} left only {} rows of card to measure",
+            rows.len()
+        );
+        // Two rows in from each edge, so a single row of antialiasing cannot decide the test.
+        (width_at(rows[2]), width_at(rows[rows.len() - 3]))
+    };
+
+    let (flat_top, flat_bottom) = ends(0.0);
+    assert!(
+        flat_top.abs_diff(flat_bottom) <= 2,
+        "an untilted card is a rectangle: {flat_top} vs {flat_bottom}"
+    );
+
+    // Leaning the top away from the eye: the top edge must come out narrower than the bottom.
+    let (top, bottom) = ends(30.0);
+    assert!(
+        bottom > top + 4,
+        "a card leaning away at the top should be narrower there: top {top}, bottom {bottom}"
+    );
+
+    // The opposite sign is the mirror image, which rules out a one-way fudge in the shader.
+    let (top_b, bottom_b) = ends(-30.0);
+    assert!(
+        top_b > bottom_b + 4,
+        "the opposite tilt should widen the top: top {top_b}, bottom {bottom_b}"
+    );
+    assert!(
+        top_b.abs_diff(bottom) <= 3 && bottom_b.abs_diff(top) <= 3,
+        "equal and opposite tilts should mirror: {top}/{bottom} vs {top_b}/{bottom_b}"
+    );
+}
+
+/// A tilt past edge-on cannot be projected, and a NaN one is not a number the shader can
+/// compare against. Both have to land somewhere harmless rather than painting the layer over
+/// the whole canvas or crashing the editor.
+#[test]
+fn an_impossible_tilt_still_renders_a_card() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    for tilt in [f32::NAN, f32::INFINITY, 179.0, -4000.0] {
+        let mut shape = bar(0.6, 0.5);
+        shape.transform.scale_y = 0.6;
+        shape.transform.tilt_x = tilt;
+        let project = shape_scene(shape);
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                320,
+                180,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("a frame even for a tilt that cannot be projected");
+        let covered = (0..frame.width * frame.height)
+            .filter(|i| pixel(&frame, i % frame.width, i / frame.width) != [0, 0, 0])
+            .count();
+        let share = covered as f64 / (frame.width * frame.height) as f64;
+        assert!(
+            share < 0.9,
+            "tilt {tilt} painted {:.0}% of the canvas — a non-finite angle reached the shader",
+            share * 100.0
+        );
+    }
+}
+
+/// A typed line arrives a character at a time, and the picture proves it.
+///
+/// Asserted on rendered ink rather than on the string the model returns, because the two can
+/// disagree in the one way that matters: the raster cache is keyed by content, and a cache that
+/// ignored the prefix would serve the finished line at every frame while `revealed()` kept
+/// returning the right substring. Ink at three moments, strictly increasing, is what rules that
+/// out.
+#[test]
+fn a_typed_line_reaches_the_frame_one_character_at_a_time() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements = vec![Element::Text(bay_project::TextElement {
+            id: "typed".into(),
+            name: "typed".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000 * 8),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            content: "the editor is the api".into(),
+            font_size: 64.0,
+            color: "#ffffff".into(),
+            transform: Transform {
+                scale: 0.9,
+                ..Transform::default()
+            },
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            font_family: None,
+            font_weight: 400,
+            align: bay_project::TextAlign::Left,
+            letter_spacing: 0.0,
+            line_height: 1.2,
+            decorations: None,
+            karaoke: None,
+            type_on: Some(bay_project::TypeOn {
+                chars_per_second: 10.0,
+                caret: false,
+            }),
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+    project.settings.background = bay_project::Background::Color {
+        color: "#000000".into(),
+    };
+
+    let mut ink_at = |seconds: f64| -> usize {
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::from_seconds_f64(seconds).expect("a playhead"),
+                320,
+                180,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("a frame");
+        (0..frame.width * frame.height)
+            .filter(|i| pixel(&frame, i % frame.width, i / frame.width) != [0, 0, 0])
+            .count()
+    };
+
+    // 21 characters at 10/s: nothing at all before the first lands, a fraction mid-way, the
+    // whole line once it has run.
+    let early = ink_at(0.05);
+    let middle = ink_at(1.0);
+    let full = ink_at(2.5);
+    assert_eq!(
+        early, 0,
+        "nothing should be typed yet at 0.05s, found {early}"
+    );
+    assert!(
+        middle > 0 && middle < full,
+        "half-typed should be some but not all of the line: {middle} of {full}"
+    );
+    assert!(full > 0, "the finished line should have ink");
+
+    // And it stays finished — a reveal that wrapped back to nothing would still pass the above.
+    let later = ink_at(7.0);
+    assert_eq!(
+        later, full,
+        "a line that has finished typing should stay whole"
+    );
+}
+
+/// The shadow has to be *visible*, and its dial has to move it.
+///
+/// The GPU test above only proves the shader compiles and the pass runs; a shadow that packed
+/// its uniforms perfectly and composited nothing would pass it. This renders the same frame
+/// twice with only `amount` changed and compares total luminance, so it needs no knowledge of
+/// where the layer landed — a black shadow can only ever make the frame darker, and a stronger
+/// one has to make it darker still.
+#[test]
+fn a_stronger_drop_shadow_darkens_the_frame() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+
+    let luminance_at = |renderer: &mut PreviewRenderer, amount: f32| -> f64 {
+        let mut project = Project::starter();
+        // A black shadow on the starter's black background is invisible, and the test would
+        // pass or fail on rounding noise. White ground, ink shadow — which is also the only
+        // arrangement in which anyone would notice a shadow at all.
+        project.settings.background = bay_project::Background::Color {
+            color: "#ffffff".to_string(),
+        };
+        if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
+            let mut params = bay_core::blocks::default_effect_params("drop-shadow");
+            params.insert("amount".to_string(), amount);
+            title.effects.push(Effect {
+                id: "fx-shadow".into(),
+                effect_type: "drop-shadow".into(),
+                enabled: true,
+                params,
+                asset: None,
+            });
+        }
+        // Sampled after the title's fade-in, not at zero. At t=0 the starter title's gain is
+        // still 0, so the compositor multiplies the whole layer — shadow included — down to
+        // nothing, and both renders come back as bare background.
+        let (width, height) = (160, 90);
+        let frame = renderer
+            .render(
+                project.active_scene(),
+                MediaTime::from_seconds_f64(1.0).expect("one second is representable"),
+                width,
+                height,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame");
+        // Luminance from the colour bytes only. BGRA's fourth byte is alpha, and a shadow
+        // raises alpha while lowering colour, so summing all four can cancel the very thing
+        // this asserts.
+        frame
+            .bgra
+            .chunks_exact(4)
+            .map(|px| px[0] as f64 + px[1] as f64 + px[2] as f64)
+            .sum()
+    };
+
+    let faint = luminance_at(&mut renderer, 0.05);
+    let strong = luminance_at(&mut renderer, 0.9);
+    assert!(
+        strong < faint,
+        "a stronger shadow should darken the frame: faint={faint}, strong={strong}"
+    );
+}
+
+/// Render a project file to a PNG so a migration can be *looked at*.
+///
+/// Gated on env vars, and inert without them. A project that deserializes is not a project that
+/// renders correctly — geometry, text metrics and effect params can all be well-formed and
+/// still put the type in the wrong place, which is only visible in a frame.
+///
+/// `BAY_LOAD_PROJECT=p.json BAY_RENDER_FRAME=195 BAY_RENDER_OUT=out.png \
+///   cargo test -p bay-preview --test render render_external_project -- --nocapture`
+#[test]
+fn render_external_project() {
+    let (Ok(path), Ok(out)) = (
+        std::env::var("BAY_LOAD_PROJECT"),
+        std::env::var("BAY_RENDER_OUT"),
+    ) else {
+        return;
+    };
+    let frame: i64 = std::env::var("BAY_RENDER_FRAME")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let raw = std::fs::read_to_string(&path).expect("the project file is readable");
+    let project: bay_project::Project = serde_json::from_str(&raw).expect("it is a project");
+    let (width, height) = (
+        project.settings.canvas.width,
+        project.settings.canvas.height,
+    );
+    let rendered = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::from_ticks(frame * 4_000),
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
+
+    // The compositor hands back BGRA; PNG wants RGBA.
+    let mut rgba = rendered.bgra.clone();
+    for px in rgba.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    image::save_buffer(&out, &rgba, width, height, image::ColorType::Rgba8)
+        .expect("the PNG is written");
+    println!("RENDERED {out} at frame {frame} ({width}x{height})");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The pipelined preview path: composite on one tick, collect on a later one.
+// ---------------------------------------------------------------------------------------------
+
+/// Drive `collect_composite` until it stops saying `Pending`, the way the editor's
+/// animation-frame loop does. Bounded so a wedged readback fails the test instead of hanging it.
+fn collect_until_ready(renderer: &mut PreviewRenderer) -> bay_preview::PreviewFrame {
+    for _ in 0..10_000 {
+        match renderer.collect_composite() {
+            CollectedFrame::Ready(frame) => return frame,
+            CollectedFrame::Pending => continue,
+            CollectedFrame::Idle => panic!("nothing was in flight to collect"),
+            CollectedFrame::Failed => panic!("the readback failed"),
+        }
+    }
+    panic!("the composite never finished");
+}
+
+#[test]
+fn a_pipelined_composite_produces_the_same_pixels_as_a_blocking_one() {
+    // The whole point of the pipelined path is that it is only a *timing* change. If it ever
+    // renders something different from `render`, the preview has stopped showing what an export
+    // of the same frame would produce.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    let (width, height) = (128, 72);
+
+    let blocking = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
+
+    assert!(
+        renderer.submit_composite(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        ),
+        "the composite went to the GPU"
+    );
+    let pipelined = collect_until_ready(&mut renderer);
+
+    assert_eq!((pipelined.width, pipelined.height), (width, height));
+    assert_eq!(
+        pipelined.bgra, blocking.bgra,
+        "the pipelined path composited a different picture than the blocking one"
+    );
+}
+
+#[test]
+fn a_second_composite_is_refused_while_one_is_still_in_flight() {
+    // There is one staging buffer. Submitting again before collecting would have the GPU writing
+    // into the buffer the previous frame is being read out of.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    let submit = |renderer: &mut PreviewRenderer| {
+        renderer.submit_composite(
+            project.active_scene(),
+            MediaTime::ZERO,
+            64,
+            36,
+            &project.settings.background,
+            &project.media,
+        )
+    };
+
+    assert!(submit(&mut renderer), "the first composite was accepted");
+    assert!(renderer.has_pending_readback());
+    assert!(
+        !submit(&mut renderer),
+        "a second composite must be refused while the first is uncollected"
+    );
+
+    let _ = collect_until_ready(&mut renderer);
+    assert!(!renderer.has_pending_readback());
+    assert!(
+        submit(&mut renderer),
+        "once collected, the renderer accepts work again"
+    );
+}
+
+#[test]
+fn collecting_nothing_is_idle_rather_than_a_failure() {
+    // `Idle` and `Failed` drive different behaviour in the editor — one is "nothing to do", the
+    // other clears the frame signature to force a re-composite. A fresh renderer is the former.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    assert!(matches!(renderer.collect_composite(), CollectedFrame::Idle));
+    assert!(!renderer.has_pending_readback());
+}
+
+#[test]
+fn a_discarded_composite_is_not_delivered_to_the_next_collect() {
+    // Opening a different project discards whatever is in flight. If those pixels survived, the
+    // previous project's last frame would appear as the new project's first.
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let project = Project::starter();
+    assert!(renderer.submit_composite(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    ));
+
+    renderer.discard_composite();
+    assert!(!renderer.has_pending_readback());
+    assert!(
+        matches!(renderer.collect_composite(), CollectedFrame::Idle),
+        "a discarded composite must not be collectable"
+    );
+
+    // The staging buffer must be reusable afterwards, not left mapped.
+    assert!(renderer.submit_composite(
+        project.active_scene(),
+        MediaTime::ZERO,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+    ));
+    let frame = collect_until_ready(&mut renderer);
+    assert_eq!(frame.bgra.len(), 64 * 36 * 4);
 }

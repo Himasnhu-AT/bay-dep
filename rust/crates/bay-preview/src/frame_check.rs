@@ -973,6 +973,38 @@ fn stable_hash(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
+/// How far a cluster has to travel, as a fraction of frame height, for the frame not to count
+/// as holding the same arrangement.
+///
+/// **Taken from the move registry, not chosen here.** This was 0.03 while `make-room` — the
+/// registry's only positional response, the move whose whole job is to answer an arrival —
+/// travels 0.0278. So a shot held with a real response in it still read as frozen, and the only
+/// way to clear the check was for elements to keep *arriving*. That is a check quietly insisting
+/// on a slideshow: constant entrances pass, sustained motion does not.
+///
+/// It is the third time these two definitions have been found disagreeing (`no-response` at
+/// 0.0198 against 0.02, and the same move again for `broken-continuity`), so it is now read from
+/// the registry rather than restated, and `the_frozen_threshold_is_what_a_response_travels`
+/// fails if they drift apart again.
+fn moved_enough() -> f32 {
+    bay_project::moves::find("make-room")
+        .map(|response| {
+            response
+                .lead_channel()
+                .keys
+                .iter()
+                .filter_map(|key| match key.value {
+                    bay_project::moves::KeyValue::Offset(offset) => Some(offset.abs()),
+                    _ => None,
+                })
+                .fold(0.0_f32, f32::max)
+        })
+        // A registry with no `make-room` in it is a broken build, not a project to judge; the
+        // old literal is the least surprising thing to fall back to.
+        .filter(|travel| *travel > 0.0)
+        .unwrap_or(0.03)
+}
+
 fn frozen_pair(before: &InkFrame, after: &InkFrame, width: u32, height: u32) -> bool {
     let intersection = before
         .mask
@@ -989,23 +1021,53 @@ fn frozen_pair(before: &InkFrame, after: &InkFrame, width: u32, height: u32) -> 
     if union == 0 || intersection as f64 / union as f64 <= 0.97 {
         return false;
     }
+    // A cluster counts as changed if it TRAVELLED or if it CHANGED SIZE.
+    //
+    // Position alone was the whole test, and it made half the move registry invisible here:
+    // `push-in`, `swell`, `press`, `fill` and an audio-reactive pulse all grow an element in
+    // place, so its centroid does not move and a shot built on them read as frozen. The check's
+    // own message is "the same ink arrangement", and an arrangement is where things are *and*
+    // how big they are.
     let moved = before
         .clusters
         .iter()
         .filter(|cluster| {
-            after
-                .clusters
-                .iter()
-                .map(|other| {
+            let nearest = after.clusters.iter().min_by(|left, right| {
+                let distance = |other: &InkCluster| {
                     let dx = (cluster.x - other.x) * width as f32;
                     let dy = (cluster.y - other.y) * height as f32;
-                    (dx * dx + dy * dy).sqrt() / height.max(1) as f32
-                })
-                .fold(f32::INFINITY, f32::min)
-                >= 0.03
+                    dx * dx + dy * dy
+                };
+                distance(left).total_cmp(&distance(right))
+            });
+            let Some(nearest) = nearest else {
+                return true;
+            };
+            let dx = (cluster.x - nearest.x) * width as f32;
+            let dy = (cluster.y - nearest.y) * height as f32;
+            let travelled = (dx * dx + dy * dy).sqrt() / height.max(1) as f32;
+            if travelled >= moved_enough() {
+                return true;
+            }
+            // Sizes compared as linear extents — the square root of the area — because that is
+            // the unit `scale` is in, and the floor is the registry's own: the smallest scale
+            // change a named move is allowed to make.
+            let extent = |area: usize| (area as f32).sqrt();
+            let (from, to) = (extent(cluster.area), extent(nearest.area));
+            let larger = from.max(to);
+            larger > 0.0 && (from - to).abs() / larger >= grew_enough()
         })
         .count();
     moved < 2
+}
+
+/// The smallest change in an element's linear extent that the move registry calls a move.
+///
+/// Read from the registry for the same reason [`moved_enough`] is: a check demanding motion and
+/// a vocabulary defining it must not each hold their own number.
+fn grew_enough() -> f32 {
+    let floor = bay_project::moves::amplitude_floor(bay_project::moves::MoveKind::Ambient, "scale");
+    if floor > 0.0 { floor } else { 0.025 }
 }
 
 #[cfg(test)]
@@ -1061,6 +1123,7 @@ mod tests {
             line_height: 1.2,
             decorations: None,
             karaoke: None,
+            type_on: None,
             source: ElementSource::Author,
             role: ElementRole::Label,
         })
@@ -1076,6 +1139,8 @@ mod tests {
             fade_out: MediaTime::ZERO,
             shape: ShapeKind::Rect { radius: 0.0 },
             color: "#ff4f4f".into(),
+            gradient: None,
+            stroke: None,
             transform,
             effects: Vec::new(),
             animations: Default::default(),
@@ -1235,6 +1300,8 @@ mod tests {
             fade_out: MediaTime::ZERO,
             shape: ShapeKind::Rect { radius: 12.0 },
             color: "#101010".into(),
+            gradient: None,
+            stroke: None,
             transform: Transform {
                 x: 0.05,
                 y: 0.64,
@@ -1270,6 +1337,66 @@ mod tests {
         assert!(frame.bottom_alive);
         assert_eq!(frame.clusters.len(), 1);
         assert_eq!(frame.clusters[0].area, 16);
+    }
+
+    /// The registry's positional response and the check that judges whether anything moved have
+    /// to be the same question. They were not: `make-room` travelled 0.0278 against a literal
+    /// 0.03 here, so a held shot with a real response in it was still reported frozen and the
+    /// only way to pass was to keep introducing elements.
+    #[test]
+    fn the_frozen_threshold_is_what_a_response_travels() {
+        let response = bay_project::moves::find("make-room").expect("make-room is in the registry");
+        let travel = response
+            .lead_channel()
+            .keys
+            .iter()
+            .filter_map(|key| match key.value {
+                bay_project::moves::KeyValue::Offset(offset) => Some(offset.abs()),
+                _ => None,
+            })
+            .fold(0.0_f32, f32::max);
+        assert!(
+            travel >= super::moved_enough(),
+            "make-room travels {travel} but a frame needs {} of movement to count as alive, so              the registry's own response cannot clear the check that demands one",
+            super::moved_enough()
+        );
+    }
+
+    /// A shot whose only motion is a scale is not a frozen shot. Half the registry moves an
+    /// element without moving its centre — `push-in`, `swell`, `press`, `fill`, and the
+    /// audio-reactive pulse — and while this compared positions only, every one of them read as
+    /// nothing happening. The check then had exactly one way to be satisfied: elements
+    /// arriving. A check that can only be cleared by constant entrances is a check asking for a
+    /// slideshow.
+    #[test]
+    fn a_shot_that_only_grows_is_not_frozen() {
+        let (width, height) = (64_u32, 64_u32);
+        let block = |from: u32, to: u32| {
+            let mut bgra = vec![0u8; (width * height * 4) as usize];
+            for y in from..to {
+                for x in from..to {
+                    let index = ((y * width + x) * 4) as usize;
+                    bgra[index..index + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+            bgra
+        };
+        // The same block, grown well past the registry's smallest named scale change, about
+        // the same centre — so it has travelled nothing at all.
+        let still = block(20, 30);
+        let grown = block(18, 32);
+        let before = ink_frame(0.0, width, height, &still);
+        let after = ink_frame(1.2, width, height, &grown);
+        assert!(
+            !frozen_pair(&before, &after, width, height),
+            "a block that grew by 40% in place is not the same arrangement"
+        );
+        // And the identical frame still is frozen, so this did not simply disable the check.
+        let same = ink_frame(1.2, width, height, &still);
+        assert!(
+            frozen_pair(&before, &same, width, height),
+            "two identical frames must still read as frozen"
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ struct EffectUniforms {
     resolution: vec2f,
     direction: vec2f,
     scalars: vec4f,
+    color: vec4f,
 }
 
 @group(0) @binding(0) var input_texture: texture_2d<f32>;

@@ -16,7 +16,7 @@ use bay_compositor::{
 };
 use std::collections::HashSet;
 
-use bay_gpu::GpuContext;
+use bay_gpu::{GpuContext, PipelinedReadback, ReadbackPoll, ReadbackPool, wgpu};
 use bay_project::{Background, Element, ElementKind, MediaAsset, MediaTime, Scene};
 use bay_text::TextRaster;
 
@@ -77,11 +77,53 @@ fn effect_groups(
                     };
                     Some(vec![pass([1.0, 0.0]), pass([0.0, 1.0])])
                 }
+                // A layer drop shadow. Every parameter is a scalar, so each one is reachable
+                // from an `effect.<id>.<param>` animation channel with no extra plumbing —
+                // which is what makes "grow the shadow as the card lands" a keyframe rather
+                // than a new feature. Colour is three channels for the same reason: a hex
+                // string could not be animated, and `params` is a map of `f32` by design.
+                "drop-shadow" => {
+                    let param = |name: &str, fallback: f32| {
+                        effect.params.get(name).copied().unwrap_or(fallback)
+                    };
+                    Some(vec![EffectPassDescriptor {
+                        shader: "drop-shadow".to_string(),
+                        uniforms: [
+                            (
+                                "u_offset".to_string(),
+                                EffectUniformValueDescriptor::Vector(vec![
+                                    param("offsetX", 0.0),
+                                    param("offsetY", 8.0),
+                                ]),
+                            ),
+                            // Clamped low rather than at zero: a sigma of 0 divides by zero in
+                            // the kernel, and a shadow with no blur is a duplicate of the layer.
+                            ("u_sigma".to_string(), number(param("blur", 16.0).max(0.1))),
+                            // `amount` is the shadow's strength, matching every other effect's
+                            // primary dial and the one the inspector's stepper writes.
+                            ("u_opacity".to_string(), number(param("amount", 0.18))),
+                            ("u_spread".to_string(), number(param("spread", 0.0))),
+                            (
+                                "u_color".to_string(),
+                                EffectUniformValueDescriptor::Vector(vec![
+                                    param("colorR", 0.0),
+                                    param("colorG", 0.0),
+                                    param("colorB", 0.0),
+                                ]),
+                            ),
+                        ]
+                        .into(),
+                        lut: None,
+                    }])
+                }
                 _ => None,
             }
         })
         .collect()
 }
+
+/// How far a card may lean before the projection stops being a picture.
+pub const MAX_TILT_DEGREES: f32 = 85.0;
 
 /// Map the project's GPU-free blend mode onto the compositor's WGSL blend set. The two enums
 /// are deliberately separate so the data model carries no render dependency.
@@ -290,6 +332,10 @@ fn sanitise_transform(t: bay_project::Transform) -> bay_project::Transform {
         crop_top: finite(t.crop_top, 0.0).clamp(0.0, 1.0),
         crop_right: finite(t.crop_right, 0.0).clamp(0.0, 1.0),
         crop_bottom: finite(t.crop_bottom, 0.0).clamp(0.0, 1.0),
+        // Past 90 degrees a card is edge-on and every point on it projects onto a line — the
+        // picture is gone whatever the renderer does — so the lean is capped short of that.
+        tilt_x: finite(t.tilt_x, 0.0).clamp(-MAX_TILT_DEGREES, MAX_TILT_DEGREES),
+        tilt_y: finite(t.tilt_y, 0.0).clamp(-MAX_TILT_DEGREES, MAX_TILT_DEGREES),
     }
 }
 
@@ -331,12 +377,25 @@ fn shape_raster_dimensions(aspect: f32) -> (u32, u32) {
 fn rasterize_shape(
     shape: &bay_project::ShapeKind,
     color: &str,
+    gradient: Option<&bay_project::Gradient>,
+    stroke: Option<&bay_project::Stroke>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
     use bay_project::ShapeKind;
 
     let [r, g, b] = hex_to_rgb8(color);
+    // A gradient replaces the flat fill. Resolved once here rather than per texel: the ramp is
+    // two colours and an angle, and the per-texel work is one dot product and a lerp.
+    let ramp = gradient.map(|gradient| {
+        let radians = gradient.angle.to_radians();
+        (
+            hex_to_rgb8(&gradient.from),
+            hex_to_rgb8(&gradient.to),
+            radians.cos(),
+            radians.sin(),
+        )
+    });
     let (width, height) = (width.max(2), height.max(2));
     let mut rgba = vec![0u8; (width * height * 4) as usize];
 
@@ -371,15 +430,59 @@ fn rasterize_shape(
                 }
             };
             // One-texel-wide linear ramp across the boundary.
-            let coverage = (0.5 - distance).clamp(0.0, 1.0);
+            let mut coverage = (0.5 - distance).clamp(0.0, 1.0);
+            // An outline is the band either side of the boundary. Same distance field, so a
+            // rounded rect and an ellipse both get one without either being special-cased.
+            if let Some(stroke) = stroke {
+                let half = (stroke.width.max(0.0) * short).max(0.5);
+                coverage = (0.5 - (distance.abs() - half)).clamp(0.0, 1.0);
+                // Dashes run along the longer axis, which is what a connector is.
+                if let Some(dash) = stroke.dash.filter(|dash| *dash > 0.0) {
+                    let gap = stroke.gap.unwrap_or(dash).max(0.0);
+                    let period = dash + gap;
+                    if period > 0.0 {
+                        let (along, extent) = if half_w >= half_h {
+                            (dx + half_w, half_w * 2.0)
+                        } else {
+                            (dy + half_h, half_h * 2.0)
+                        };
+                        let phase = (along / extent / period).fract().abs();
+                        if phase > dash / period {
+                            coverage = 0.0;
+                        }
+                    }
+                }
+            }
             if coverage <= 0.0 {
                 continue;
             }
             let alpha = (coverage * 255.0).round() as u8;
             let index = ((py * width + px) * 4) as usize;
-            rgba[index] = r;
-            rgba[index + 1] = g;
-            rgba[index + 2] = b;
+            let [r, g, b] = match stroke {
+                Some(stroke) => hex_to_rgb8(&stroke.color),
+                None => [r, g, b],
+            };
+            let [fr, fg, fb] = match ramp {
+                None => [r, g, b],
+                Some(([ar, ag, ab], [br, bg, bb], cos, sin)) => {
+                    // Project the texel onto the ramp's axis and normalise to 0..1 across the
+                    // shape's extent along that axis, so the ramp spans the shape whatever its
+                    // aspect and whichever way it points.
+                    let extent = (half_w * cos).abs() + (half_h * sin).abs();
+                    let t = if extent > 0.0 {
+                        ((dx * cos + dy * sin) / (2.0 * extent) + 0.5).clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+                    let mix = |a: u8, b: u8| {
+                        (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8
+                    };
+                    [mix(ar, br), mix(ag, bg), mix(ab, bb)]
+                }
+            };
+            rgba[index] = fr;
+            rgba[index + 1] = fg;
+            rgba[index + 2] = fb;
             rgba[index + 3] = alpha;
         }
     }
@@ -390,15 +493,78 @@ fn rasterize_shape(
 pub fn rasterize_shape_for_test(
     shape: &bay_project::ShapeKind,
     color: &str,
+    gradient: Option<&bay_project::Gradient>,
+    stroke: Option<&bay_project::Stroke>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
-    rasterize_shape(shape, color, width, height)
+    rasterize_shape(shape, color, gradient, stroke, width, height)
+}
+
+/// The cache key for one rasterised shape.
+///
+/// **Everything that changes the pixels has to be in here.** The fill was, once the gradient
+/// arrived; the stroke was not, and the failure that produced is worse than a wrong ramp. An
+/// outlined panel and a filled bar of the same colour, kind and raster size hashed identically,
+/// so whichever rasterised first served both: a red boundary box drew as a solid red plate over
+/// the whole frame, and a solid mark came out as a hollow ring. Nothing errored — the picture
+/// was simply wrong, and only in a project that happened to contain both.
+pub fn shape_raster_key(
+    shape: &bay_project::ShapeKind,
+    color: &str,
+    gradient: Option<&bay_project::Gradient>,
+    stroke: Option<&bay_project::Stroke>,
+    raster_w: u32,
+    raster_h: u32,
+) -> String {
+    use bay_project::ShapeKind;
+    let fill = match gradient {
+        None => color.to_string(),
+        Some(gradient) => format!(
+            "{}>{}@{}",
+            gradient.from,
+            gradient.to,
+            gradient.angle.to_bits()
+        ),
+    };
+    let fill = match stroke {
+        None => fill,
+        Some(stroke) => format!(
+            "{fill}|stroke:{}:{}:{}:{}",
+            stroke.color,
+            stroke.width.to_bits(),
+            stroke.dash.map_or(0, f32::to_bits),
+            stroke.gap.map_or(0, f32::to_bits),
+        ),
+    };
+    match shape {
+        ShapeKind::Rect { radius } => {
+            format!(
+                "shape:rect:{}:{fill}:{raster_w}x{raster_h}",
+                radius.to_bits()
+            )
+        }
+        ShapeKind::Ellipse => format!("shape:ellipse:{fill}:{raster_w}x{raster_h}"),
+    }
 }
 
 /// Test hook for [`shape_raster_dimensions`].
 pub fn shape_raster_dimensions_for_test(aspect: f32) -> (u32, u32) {
     shape_raster_dimensions(aspect)
+}
+
+/// What [`PreviewRenderer::collect_composite`] found waiting.
+pub enum CollectedFrame {
+    /// Pixels arrived. Show them.
+    Ready(PreviewFrame),
+    /// A composite is still on the GPU. Keep the frame already on screen and tick again — this
+    /// is the normal result on the tick a composite was submitted, not a failure.
+    Pending,
+    /// Nothing was outstanding to collect.
+    Idle,
+    /// The readback failed; device loss is the realistic cause. The caller should keep the last
+    /// good frame on screen and let the composite be re-submitted.
+    Failed,
 }
 
 /// A composited frame as tightly-packed BGRA8 (`width * height * 4` bytes).
@@ -870,7 +1036,7 @@ impl ExportStreams {
     }
 }
 
-/// Where [`PreviewRenderer::render_inner`] gets video pixels from. Named rather than a bare
+/// Where [`PreviewRenderer::composite_inner`] gets video pixels from. Named rather than a bare
 /// `Option` because the two are a real policy choice, not a present/absent flag.
 enum FrameSource<'a> {
     /// Preview: the whole clip, decoded once at preview size, indexed by time.
@@ -913,6 +1079,11 @@ pub struct PreviewRenderer {
     /// isn't re-shaped every frame. `order` is the eviction queue for the [`TEXT_CACHE_CAP`] LRU.
     raster_keys: HashSet<String>,
     raster_order: std::collections::VecDeque<String>,
+    /// Staging buffer for the per-frame readback, kept across frames so compositing a preview
+    /// does not allocate and free a GPU buffer sixty times a second.
+    readback: ReadbackPool,
+    /// The interactive preview's readback, submitted on one tick and collected on a later one.
+    pipelined: PipelinedReadback,
 }
 
 /// The container the picture and sound are wrapped in — as opposed to what is on the timeline.
@@ -1105,6 +1276,8 @@ impl PreviewRenderer {
             video_lru: std::collections::VecDeque::new(),
             raster_keys: HashSet::new(),
             raster_order: std::collections::VecDeque::new(),
+            readback: ReadbackPool::new(),
+            pipelined: PipelinedReadback::new(),
         })
     }
 
@@ -1156,29 +1329,26 @@ impl PreviewRenderer {
         &mut self,
         shape: &bay_project::ShapeKind,
         color: &str,
+        gradient: Option<&bay_project::Gradient>,
+        stroke: Option<&bay_project::Stroke>,
         aspect: f32,
     ) -> Option<String> {
         use bay_project::ShapeKind;
         // A square-cornered rect has no curvature at all, so one tiny tile serves every size
         // and aspect. Anything curved must be rasterized at the layer's own aspect or the
-        // quad's non-uniform stretch turns its round corners into ellipses.
+        // quad's non-uniform stretch turns its round corners into ellipses. An OUTLINE has
+        // curvature everywhere — its border is a fraction of the shorter side, and an 8x8 tile
+        // stretched to a full-width panel would draw a border hundreds of pixels thick on two
+        // sides and hairline on the other two.
         let (raster_w, raster_h) = match shape {
-            ShapeKind::Rect { radius } if *radius <= 0.0 => (8, 8),
+            ShapeKind::Rect { radius } if *radius <= 0.0 && stroke.is_none() => (8, 8),
             _ => shape_raster_dimensions(aspect),
         };
-        let key = match shape {
-            ShapeKind::Rect { radius } => {
-                format!(
-                    "shape:rect:{}:{color}:{raster_w}x{raster_h}",
-                    radius.to_bits()
-                )
-            }
-            ShapeKind::Ellipse => format!("shape:ellipse:{color}:{raster_w}x{raster_h}"),
-        };
+        let key = shape_raster_key(shape, color, gradient, stroke, raster_w, raster_h);
         if self.raster_keys.contains(&key) {
             return Some(key);
         }
-        let rgba = rasterize_shape(shape, color, raster_w, raster_h);
+        let rgba = rasterize_shape(shape, color, gradient, stroke, raster_w, raster_h);
         let texture = self
             .ctx
             .upload_rgba_texture(&rgba, raster_w, raster_h, "preview-shape")?;
@@ -1533,13 +1703,16 @@ impl PreviewRenderer {
                 filters.push_str(&format!(
                     "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
                      asetpts=PTS-STARTPTS,{processing}{volume},\
-                     atrim=duration={duration:.4},adelay={delay_ms}:all=1[a{index}];",
+                     atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
                     input = index + 1,
                     start = clip.trim_start_seconds,
                     source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
                     duration = clip.duration_seconds,
                     processing = clip.processing_filters(),
                     volume = clip.volume_filter(),
+                    // After the trim, so the tail fade is measured against the clip's real
+                    // length, and before the delay, so `st` is clip-relative.
+                    fades = clip.fade_filters(),
                     delay_ms = (clip.start_seconds * 1000.0).round() as i64,
                 ));
             }
@@ -1564,6 +1737,14 @@ impl PreviewRenderer {
             // mix to mono. Both were measured in shipped files. Pin the delivery format here,
             // after everything that could have changed it, rather than trusting the chain.
             filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
+            // Pad the bed with silence, forever. `-shortest` below ends the file at the
+            // shortest stream, and without this that stream is the audio whenever the last
+            // audible clip stops before the picture does — an eight-second reel with a
+            // 0.7 s stinger at 4.85 s came out 5.6 s long, missing its whole end card, and
+            // ffmpeg reported success. Padding makes the audio effectively infinite, so the
+            // picture is always the shortest stream and always the one that sets the length.
+            // Placed after `loudnorm`, which must measure the real mix and not the silence.
+            filters.push_str(",apad");
             filters.push_str("[aout]");
 
             args.push("-filter_complex".into());
@@ -1576,7 +1757,8 @@ impl PreviewRenderer {
             args.push("aac".into());
             args.push("-b:a".into());
             args.push(format!("{}k", settings.audio_bitrate_kbps.clamp(32, 512)));
-            // The mixed bed can outlast the picture; the video track defines the duration.
+            // The picture defines the duration, in both directions: a bed that outlasts it is
+            // cut here, and one that stops early was padded above so it cannot cut the picture.
             args.push("-shortest".into());
         }
 
@@ -1642,7 +1824,7 @@ impl PreviewRenderer {
             streams.retain_only(&live_video_elements(scene, playhead));
             // A frame the GPU could not produce must not be silently skipped: doing so would
             // shorten the output and shift every later frame's timing.
-            let Some(frame) = self.render_inner(
+            let Some(frame) = self.composite_and_read(
                 scene,
                 playhead,
                 width,
@@ -1722,7 +1904,7 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
     ) -> Option<PreviewFrame> {
-        self.render_inner(
+        self.composite_and_read(
             scene,
             playhead,
             width,
@@ -1733,14 +1915,126 @@ impl PreviewRenderer {
         )
     }
 
+    /// Composite and wait for the pixels. The blocking path: an export has nothing to do until
+    /// the frame exists, and a still has nowhere to put a frame that arrives later.
+    #[allow(clippy::too_many_arguments)]
+    fn composite_and_read(
+        &mut self,
+        scene: &Scene,
+        playhead: MediaTime,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+        source: FrameSource<'_>,
+    ) -> Option<PreviewFrame> {
+        let texture =
+            self.composite_inner(scene, playhead, width, height, background, media, source)?;
+        // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
+        // native order, so there is no channel swizzle.
+        let bgra =
+            self.ctx
+                .read_texture_bgra_pooled(&mut self.readback, &texture, width, height)?;
+        Some(PreviewFrame {
+            width,
+            height,
+            bgra,
+        })
+    }
+
+    /// Take the pixels of a composite submitted by an earlier [`Self::submit_composite`], if the
+    /// GPU has finished with it. Never blocks.
+    ///
+    /// Collecting and submitting are separate calls on purpose. Fused into one "render" the
+    /// preview could not idle: every collect would submit the next composite, which would owe
+    /// another collect, and a window with nothing happening in it would spin at full frame rate.
+    pub fn collect_composite(&mut self) -> CollectedFrame {
+        match self.ctx.poll_readback(&mut self.pipelined) {
+            ReadbackPoll::Ready {
+                width,
+                height,
+                pixels,
+            } => CollectedFrame::Ready(PreviewFrame {
+                width,
+                height,
+                bgra: pixels,
+            }),
+            ReadbackPoll::Pending => CollectedFrame::Pending,
+            ReadbackPoll::Idle => CollectedFrame::Idle,
+            ReadbackPoll::Failed => CollectedFrame::Failed,
+        }
+    }
+
+    /// Composite the scene and start reading it back, **without waiting for the GPU**.
+    ///
+    /// [`Self::render`] waits for the frame it just submitted, idling the thread for the length
+    /// of a composite on every tick of the interactive preview. This submits and leaves; the
+    /// pixels arrive at a later [`Self::collect_composite`], so a frame reaches the screen one
+    /// tick after the edit that caused it.
+    ///
+    /// That one-tick lag is only invisible if the caller keeps ticking. Callers **must** drive
+    /// another frame while [`Self::has_pending_readback`] is true — exactly as they already do
+    /// for [`Self::has_pending_decodes`] — or the last edit before the window goes idle will sit
+    /// composited-but-uncollected and the preview will keep showing the state before it.
+    ///
+    /// Returns `false` if nothing was submitted: either a readback is still outstanding (the
+    /// single staging buffer has nowhere to put a second frame) or the composite itself failed.
+    pub fn submit_composite(
+        &mut self,
+        scene: &Scene,
+        playhead: MediaTime,
+        width: u32,
+        height: u32,
+        background: &Background,
+        media: &[MediaAsset],
+    ) -> bool {
+        if self.pipelined.is_pending() {
+            return false;
+        }
+        let Some(texture) = self.composite_inner(
+            scene,
+            playhead,
+            width,
+            height,
+            background,
+            media,
+            FrameSource::Cache,
+        ) else {
+            return false;
+        };
+        self.ctx
+            .begin_readback(&mut self.pipelined, &texture, width, height)
+    }
+
+    /// Whether a composite is on the GPU waiting to be collected. While this is true the caller
+    /// owes another tick — see [`Self::submit_composite`]'s note on the one-tick lag.
+    pub fn has_pending_readback(&self) -> bool {
+        self.pipelined.is_pending()
+    }
+
+    /// Throw away a composite still on the GPU, because what it depicts is no longer what should
+    /// be on screen.
+    ///
+    /// Loading a different project is the case that needs this: the composite in flight is of
+    /// the *old* project, and collecting it would put the previous project's last frame up as
+    /// the new one's first.
+    pub fn discard_composite(&mut self) {
+        self.ctx.discard_readback(&mut self.pipelined);
+    }
+
     /// The one compositing implementation, shared by the preview and the export.
     ///
     /// Only where **video pixels** come from differs between the two, so that is the only thing
-    /// `source` selects. Everything else — layer order, transforms, effects, masks, the readback
-    /// — is common by construction rather than by discipline, which is what keeps an export from
-    /// quietly diverging from what the preview showed.
+    /// `source` selects. Everything else — layer order, transforms, effects, masks — is common by
+    /// construction rather than by discipline, which is what keeps an export from quietly
+    /// diverging from what the preview showed.
+    ///
+    /// Returns the composited texture; how its pixels are collected is the caller's choice, and
+    /// is the one place preview and export legitimately differ. An export wants them now
+    /// ([`Self::render`]); the interactive preview would rather not stall for them
+    /// ([`Self::render_pipelined`]).
     #[allow(clippy::too_many_arguments)]
-    fn render_inner(
+    fn composite_inner(
         &mut self,
         scene: &Scene,
         playhead: MediaTime,
@@ -1749,7 +2043,7 @@ impl PreviewRenderer {
         background: &Background,
         media: &[MediaAsset],
         mut source: FrameSource<'_>,
-    ) -> Option<PreviewFrame> {
+    ) -> Option<wgpu::Texture> {
         let clear = match background {
             Background::Color { color } => hex_to_rgba(color),
             Background::Blur { .. } => [0.06, 0.06, 0.08, 1.0],
@@ -1791,7 +2085,9 @@ impl PreviewRenderer {
                         let tw = (base_scale * width as f32).min(width as f32).max(1.0) as u32;
                         let th = (base_scale * height as f32).min(height as f32).max(1.0) as u32;
                         let (tw, th) = (tw.max(1), th.max(1));
-                        let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
+                        let sampled_size =
+                            element.sampled_font_size(local).unwrap_or(text.font_size);
+                        let font_px = (sampled_size * height as f32 / 1080.0).max(8.0);
                         let active_word = text
                             .karaoke
                             .as_ref()
@@ -1855,10 +2151,21 @@ impl PreviewRenderer {
                             tw.saturating_add(margin_x.saturating_mul(2)),
                             th.saturating_add(margin_y.saturating_mul(2)),
                         );
+                        // What is on screen this frame. A typing line re-shapes per prefix —
+                        // it has to, because a line that will wrap does not know where until
+                        // it gets there — so the raster cache holds one entry per character
+                        // revealed. Bounded by the line's own length, and only for lines that
+                        // asked to be typed.
+                        let shown = match &text.type_on {
+                            Some(spec) => std::borrow::Cow::Owned(
+                                spec.revealed(&text.content, local.to_seconds_f64()),
+                            ),
+                            None => std::borrow::Cow::Borrowed(text.content.as_str()),
+                        };
                         (
                             self.ensure_text_texture(
                                 &text.id,
-                                &text.content,
+                                shown.as_ref(),
                                 font_px,
                                 &text.color,
                                 (tw, th),
@@ -1874,8 +2181,19 @@ impl PreviewRenderer {
                         // in order to keep its corners round under a non-uniform stretch.
                         let aspect = (transform.scale_x * width as f32)
                             / (transform.scale_y * height as f32).max(f32::EPSILON);
+                        // Sampled, not raw: `shape.radius` and `stroke.width` are animation
+                        // channels like any other. The raster cache keys on both, so a frame
+                        // whose radius has moved gets its own texture rather than a stale one.
+                        let sampled_kind = element.sampled_shape_kind(local).unwrap_or(shape.shape);
+                        let sampled_stroke = element.sampled_stroke(local);
                         (
-                            self.ensure_shape_texture(&shape.shape, &shape.color, aspect),
+                            self.ensure_shape_texture(
+                                &sampled_kind,
+                                &shape.color,
+                                shape.gradient.as_ref(),
+                                sampled_stroke.as_ref(),
+                                aspect,
+                            ),
                             None,
                             (0.0, 0.0),
                         )
@@ -2018,6 +2336,8 @@ impl PreviewRenderer {
                         flip_x: false,
                         flip_y: false,
                         crop: transform.crop_rect(),
+                        tilt_x_degrees: transform.tilt_x,
+                        tilt_y_degrees: transform.tilt_y,
                     },
                     // The clip's own fade multiplies whatever opacity the transform (and any
                     // keyframes on it) asked for, rather than replacing it — a title can fade
@@ -2047,22 +2367,16 @@ impl PreviewRenderer {
             items,
         };
 
-        // Read straight back as BGRA (what GPUI's RenderImage wants). On Metal this is the raw
-        // native order, so there is no per-frame channel swizzle on the hot path.
-        let bgra = match self.compositor.render_frame_to_texture(&self.ctx, &frame) {
-            Ok(texture) => self.ctx.read_texture_bgra(&texture, width, height),
-            Err(_) => None,
-        };
+        let texture = self
+            .compositor
+            .render_frame_to_texture(&self.ctx, &frame)
+            .ok();
 
         // Evict before the early return, so a failed frame cannot strand this frame's rasters
         // in the cache and shrink the budget available to the next one.
         self.evict_rasters(&in_use);
 
-        Some(PreviewFrame {
-            width,
-            height,
-            bgra: bgra?,
-        })
+        texture
     }
 }
 
@@ -2124,10 +2438,19 @@ pub struct AudibleClip {
     pub dialogue_chain: Option<bay_project::DialogueAudioChain>,
     /// Linear gain. 1.0 is unity. Constant when `gain_points` holds one point or none.
     pub volume: f32,
-    /// The clip's level over its own length as `(seconds, gain)` — fades and any volume
-    /// keyframes, taken from the same model function the preview mixer reads, so the export
-    /// cannot duck in a different place than the room did.
+    /// The clip's level over its own length as `(seconds, gain)` — volume keyframes, taken
+    /// from the same model function the preview mixer reads, so the export cannot duck in a
+    /// different place than the room did.
+    ///
+    /// **Without the head and tail fades**, which [`AudibleClip::fade_filters`] applies
+    /// separately. They are the same numbers either way; what differs is the resolution they
+    /// are applied at, and a fade is the one thing here that cannot survive being rounded to
+    /// an audio frame.
     pub gain_points: Vec<(f64, f32)>,
+    /// Head fade, in seconds.
+    pub fade_in_seconds: f64,
+    /// Tail fade, in seconds.
+    pub fade_out_seconds: f64,
 }
 
 /// How many points an ffmpeg `volume` expression may carry.
@@ -2272,6 +2595,35 @@ impl AudibleClip {
     /// Decimated on the way in, because the expression parser has a hard limit the model does
     /// not — see [`MAX_GAIN_EXPRESSION_POINTS`]. The preview mixer keeps the full polyline;
     /// what the two share is the description, not the sample count.
+    /// Head and tail fades, as `afade` — sample-accurate, unlike the `volume` expression.
+    ///
+    /// `volume` is evaluated once per audio frame (`eval=frame`, ~21 ms) and held for that
+    /// frame. Fold a fade into it and the first frame of the fade is multiplied by whatever the
+    /// curve reads at its very start, which for a fade-in is exactly zero — so a 35 ms
+    /// crossfade reached the file as ~21 ms of digital silence on each side of the join, a hole
+    /// where a smoothing was asked for. Measured on a two-clip repro: butt-joined with 35 ms
+    /// fades produced 67 ms of exact zero, and the same two clips with no fades produced none.
+    ///
+    /// `afade` works on samples, so the ramp is the ramp however short it is. Linear, matching
+    /// [`bay_project::Element::fade_gain`], so the export and the preview agree.
+    fn fade_filters(&self) -> String {
+        let mut out = String::new();
+        if self.fade_in_seconds > 0.0 {
+            out.push_str(&format!(
+                "afade=t=in:curve=tri:st=0:d={:.4},",
+                self.fade_in_seconds
+            ));
+        }
+        if self.fade_out_seconds > 0.0 {
+            let start = (self.duration_seconds - self.fade_out_seconds).max(0.0);
+            out.push_str(&format!(
+                "afade=t=out:curve=tri:st={start:.4}:d={:.4},",
+                self.fade_out_seconds
+            ));
+        }
+        out
+    }
+
     fn volume_filter(&self) -> String {
         let decimated = decimate_gain_points(&self.gain_points, MAX_GAIN_EXPRESSION_POINTS);
         let points: Vec<&(f64, f32)> = decimated.iter().collect();
@@ -2348,7 +2700,9 @@ fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
                 speed: audio.speed,
                 dialogue_chain: audio.dialogue_chain.clone(),
                 volume: audio.volume,
-                gain_points: element.gain_points(),
+                gain_points: element.gain_points_without_fades(),
+                fade_in_seconds: audio.fade_in.to_seconds_f64().max(0.0),
+                fade_out_seconds: audio.fade_out.to_seconds_f64().max(0.0),
             });
         }
     }
@@ -2487,6 +2841,8 @@ mod craft_tests {
             dialogue_chain: Some(bay_project::DialogueAudioChain::default()),
             volume: 1.0,
             gain_points: vec![(0.0, 1.0)],
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
         };
         let filters = clip.processing_filters();
         let positions = [

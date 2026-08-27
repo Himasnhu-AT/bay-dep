@@ -302,6 +302,33 @@ impl TextRaster {
             .is_some_and(|face| face.is(family))
     }
 
+    /// Every upright family installed on this machine, sorted, deduplicated.
+    ///
+    /// So a kit can be *chosen* rather than guessed at. `fonts_check` has always been able to
+    /// answer "is this one here?", which is only useful once you already have a name in mind —
+    /// and a name guessed wrong is not a refusal but a substitution: cosmic-text drops the
+    /// family and shapes in something else entirely, so a project can render in a face nobody
+    /// picked with nothing downstream able to tell.
+    ///
+    /// Italic-only and condensed-only cuts are left out for the same reason they are left out
+    /// of [`has_face`](Self::has_face): bay never sets style or stretch, so they are not
+    /// reachable and listing them would offer a choice that cannot be taken.
+    pub fn families(&mut self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .font_system
+            .db()
+            .faces()
+            .filter(|face| {
+                face.style == cosmic_text::fontdb::Style::Normal
+                    && face.stretch == cosmic_text::fontdb::Stretch::Normal
+            })
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
     /// Every CSS weight `family` can actually be set in, out of the nine standard steps.
     ///
     /// Generated rather than declared: a table of which weights a family has is a fact about the

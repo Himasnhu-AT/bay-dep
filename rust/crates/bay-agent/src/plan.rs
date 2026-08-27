@@ -136,6 +136,58 @@ pub fn window_tools() -> &'static [&'static str] {
     &["project_create", "project_list", "project_load"]
 }
 
+/// Tools the headless MCP server answers that never reach an open window.
+///
+/// They exist because `bay-mcp`'s `Studio` owns capabilities the attached editor does not route
+/// — sound-effect libraries, transcript editing, variant tournaments, critic passes. Listed
+/// here, in the crate both the server and the UI can see, for one reason: the MCP settings pane
+/// draws a switch per tool and cannot depend on `bay-mcp`. A tool absent from this list would be
+/// served with no way to switch it off, which is a permission control with a hole in it.
+///
+/// `bay-mcp`'s `tool_vocabulary` test asserts this list and its own definitions agree in both
+/// directions, so adding a tool there without adding it here fails the suite rather than
+/// quietly shipping an unswitchable tool.
+pub fn server_only_tools() -> &'static [&'static str] {
+    &[
+        "audio_react",
+        "audio_smooth",
+        "check_frames",
+        "contact_sheet",
+        "fonts_list",
+        "formats_list",
+        "critic_prepare",
+        "critic_refresh",
+        "critic_submit",
+        "cut_by_transcript",
+        "remove_silence_and_fillers",
+        "room_tone",
+        "runtime_remove",
+        "sfx_add",
+        "sfx_list",
+        "sfx_search",
+        "sound_add",
+        "style_pick",
+        "tournament_compare",
+        "transcript_get",
+        "transcript_search",
+        "variant_create",
+        "variant_register_render",
+    ]
+}
+
+/// Every tool bay implements anywhere, sorted.
+///
+/// [`available_tools`] answers "what can an agent call right now?"; this answers "what exists?".
+/// The settings pane needs the second: a pane built from the first would have no switch for a
+/// tool that only the headless server serves.
+pub fn all_tool_names() -> Vec<&'static str> {
+    let mut all = available_tools();
+    all.extend_from_slice(server_only_tools());
+    all.sort_unstable();
+    all.dedup();
+    all
+}
+
 /// Every tool that works while the editor is open, for an error message that tells an agent
 /// what to do instead of only what it cannot.
 pub fn available_tools() -> Vec<&'static str> {
@@ -270,6 +322,8 @@ fn transform_framed(args: &Value, framing: Option<&bay_project::Framing>) -> Tra
         scale_y: number(args, "scaleY", 1.0) as f32,
         anchor_x: number(args, "anchorX", f64::from(anchor_x)) as f32,
         anchor_y: number(args, "anchorY", f64::from(anchor_y)) as f32,
+        tilt_x: number(args, "tiltX", 0.0) as f32,
+        tilt_y: number(args, "tiltY", 0.0) as f32,
         ..Transform::default()
     }
 }
@@ -556,7 +610,14 @@ fn easing_name(easing: Easing) -> &'static str {
 
 /// The effects the compositor actually renders. Naming one it does not know would attach a
 /// no-op the agent then cannot see the absence of — worse than refusing it.
-const SUPPORTED_EFFECTS: &[&str] = &["brightness", "contrast", "saturation", "blur", "lut"];
+const SUPPORTED_EFFECTS: &[&str] = &[
+    "brightness",
+    "contrast",
+    "saturation",
+    "blur",
+    "lut",
+    "drop-shadow",
+];
 
 /// Resolve the `elementId` argument every revising tool takes.
 fn require_element<'a>(
@@ -1226,6 +1287,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 line_height: number(args, "lineHeight", f64::from(style.line_height)) as f32,
                 decorations: text_decorations(args),
                 karaoke: None,
+                type_on: None,
                 source: ElementSource::Author,
                 role,
             });
@@ -1268,6 +1330,50 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 None => bay_project::Tone::default_for(role),
             };
             let color = kit.color(tone).to_string();
+            // A gradient names two TONES, not two colours: the kit stays the only place a
+            // value comes from, exactly as `tone` already works for the solid fill.
+            let gradient = match (
+                args.get("gradientFrom").and_then(|v| v.as_str()),
+                args.get("gradientTo").and_then(|v| v.as_str()),
+            ) {
+                (Some(from), Some(to)) => Some(bay_project::Gradient {
+                    from: kit.color(parse_tone(from)?).to_string(),
+                    to: kit.color(parse_tone(to)?).to_string(),
+                    angle: args
+                        .get("gradientAngle")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32,
+                }),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "a gradient needs both gradientFrom and gradientTo — one stop is a \
+                         solid fill, which is what `tone` already gives you"
+                            .into(),
+                    );
+                }
+            };
+            // An outline instead of a fill, again from a tone. `strokeWidth` alone is enough:
+            // the colour falls back to the shape's own tone, which is what an outlined version
+            // of the same mark should be.
+            let stroke = match args.get("strokeWidth").and_then(|v| v.as_f64()) {
+                Some(width) if width > 0.0 => Some(bay_project::Stroke {
+                    color: match args.get("strokeTone").and_then(|v| v.as_str()) {
+                        Some(name) => kit.color(parse_tone(name)?).to_string(),
+                        None => color.clone(),
+                    },
+                    width: width as f32,
+                    dash: args
+                        .get("dash")
+                        .and_then(|v| v.as_f64())
+                        .map(|dash| dash as f32),
+                    gap: args
+                        .get("gap")
+                        .and_then(|v| v.as_f64())
+                        .map(|gap| gap as f32),
+                }),
+                _ => None,
+            };
             let framing = framing_for(args, &kit)?;
             let id = text(args, "id").unwrap_or_else(|| mint_id(project, "shape"));
             reject_reserved_id(&id)?;
@@ -1286,6 +1392,8 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     fade_out: MediaTime::ZERO,
                     shape,
                     color,
+                    gradient,
+                    stroke,
                     transform: transform_framed(args, framing),
                     effects: Vec::new(),
                     animations: BTreeMap::new(),
@@ -1792,11 +1900,13 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 take("opacity", &mut transform.opacity)?;
                 take("anchorX", &mut transform.anchor_x)?;
                 take("anchorY", &mut transform.anchor_y)?;
+                take("tiltX", &mut transform.tilt_x)?;
+                take("tiltY", &mut transform.tilt_y)?;
             }
             if !touched {
                 return Err(
-                    "give at least one of x, y, scale, scaleX, scaleY, rotation, opacity, \
-                     anchorX, anchorY"
+                    "give at least one of x, y, scale, scaleX, scaleY, rotation, tiltX, tiltY, \
+                     opacity, anchorX, anchorY"
                         .into(),
                 );
             }
@@ -2705,6 +2815,7 @@ mod tests {
             metadata: bay_project::ProjectMetadata {
                 id: "p".into(),
                 name: "Test".into(),
+                shelf: Default::default(),
             },
             settings: ProjectSettings {
                 fps: Fps {
@@ -2720,6 +2831,7 @@ mod tests {
                 // and colour a role resolves to, and the picker is seeded by the date.
                 kit: bay_project::builtin_kit("swiss").cloned(),
                 plan: None,
+                format: None,
             },
             scenes: vec![Scene {
                 id: "scene-main".into(),
@@ -2805,6 +2917,7 @@ mod tests {
             line_height: 1.2,
             decorations: None,
             karaoke: None,
+            type_on: None,
             source: Default::default(),
             role: Default::default(),
         })];
@@ -3324,6 +3437,8 @@ mod tests {
                 fade_out: MediaTime::ZERO,
                 shape: ShapeKind::Ellipse,
                 color: "#ffffff".into(),
+                gradient: None,
+                stroke: None,
                 transform: Transform::default(),
                 effects: Vec::new(),
                 animations: Default::default(),
@@ -3738,6 +3853,7 @@ mod tests {
                     line_height: 1.2,
                     decorations: None,
                     karaoke: None,
+                    type_on: None,
                     source: Default::default(),
                     role: Default::default(),
                 }));
@@ -3799,6 +3915,8 @@ mod tests {
                     fade_out: MediaTime::ZERO,
                     shape: Default::default(),
                     color: "#FF5B5B".into(),
+                    gradient: None,
+                    stroke: None,
                     transform: Default::default(),
                     effects: Vec::new(),
                     animations: Default::default(),
@@ -4042,6 +4160,20 @@ pub struct CaptionStyle {
     pub layer: usize,
     /// Fade in/out seconds. A hard cut on every caption reads as a flicker.
     pub fade: f64,
+    /// Display name per speaker id, for a clip where more than one person talks.
+    ///
+    /// Without one, a two-hander reads as a single person contradicting themselves — the
+    /// captions say the words and lose who said them, which on a social cut is most of the
+    /// point of the exchange. The name is written **only on the first caption after the floor
+    /// changes**, because prefixing every line eats the frame and stops being read after the
+    /// second one.
+    pub speaker_labels: std::collections::BTreeMap<String, String>,
+    /// Caption colour per speaker id.
+    ///
+    /// Carries who is talking without spending any of the frame, which is why it does the work
+    /// on the lines that are not labelled. Two speakers want two colours that survive a
+    /// thumbnail; more than three, and the labels are doing the work and the colour is noise.
+    pub speaker_colors: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for CaptionStyle {
@@ -4061,6 +4193,8 @@ impl Default for CaptionStyle {
             line_height: 1.2,
             layer: CAPTION_LAYER,
             fade: CAPTION_FADE_SECONDS,
+            speaker_labels: std::collections::BTreeMap::new(),
+            speaker_colors: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -4107,6 +4241,8 @@ impl CaptionStyle {
             line_height: style.line_height,
             layer: CAPTION_LAYER,
             fade: CAPTION_FADE_SECONDS,
+            speaker_labels: std::collections::BTreeMap::new(),
+            speaker_colors: std::collections::BTreeMap::new(),
         }
     }
 
@@ -4202,13 +4338,39 @@ pub fn caption_style_from(
             None => None,
         },
     };
+    // Who is talking, if the caller said. Both maps are keyed by the speaker id `diarize`
+    // writes into the transcript, which is also what `transcript_get` reports.
+    let map_of_strings = |key: &str| -> std::collections::BTreeMap<String, String> {
+        args.get(key)
+            .and_then(|value| value.as_object())
+            .map(|object| {
+                object
+                    .iter()
+                    .filter_map(|(speaker, value)| {
+                        value
+                            .as_str()
+                            .map(|text| (speaker.clone(), text.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let speaker_labels = map_of_strings("speakerLabels");
+    let speaker_colors = map_of_strings("speakerColors");
+
     Ok(match kit {
-        Some(kit) => CaptionStyle::from_kit(kit, preset, placement),
+        Some(kit) => CaptionStyle {
+            speaker_labels,
+            speaker_colors,
+            ..CaptionStyle::from_kit(kit, preset, placement)
+        },
         None => CaptionStyle {
             preset,
             x: placement.x.unwrap_or(CaptionStyle::default().x),
             y: placement.y.unwrap_or(CaptionStyle::default().y),
             align: placement.align.unwrap_or(TextAlign::Left),
+            speaker_labels,
+            speaker_colors,
             ..CaptionStyle::default()
         },
     })
@@ -4395,6 +4557,7 @@ fn caption_commands(
                 line_height: style.line_height,
                 decorations: None,
                 karaoke: Some(karaoke_for_cue(project, cue, &style.highlight_color)),
+                type_on: None,
                 // bay wrote this, not the author — the same stamp the headless path applies,
                 // so a caption means the same thing whichever front end placed it.
                 source: ElementSource::Tool,

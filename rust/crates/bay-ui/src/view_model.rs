@@ -23,9 +23,27 @@ pub struct ProjectCard {
     pub duration: String,
     /// How long ago it was last written, in words.
     pub modified: String,
+    /// The stage the project is at, as the coloured chip draws it.
+    pub status: bay_core::ProjectStatus,
+    pub status_label: String,
+    pub status_color: u32,
+    /// The user's labels, in the order they added them.
+    pub tags: Vec<String>,
+    /// Whether the card can show a still. bay does not cache a poster frame today, so this is
+    /// false everywhere; the card draws "no render yet" rather than a coloured gradient that
+    /// looks like a thumbnail of footage nobody has seen.
+    pub has_poster: bool,
 }
 
 impl HomeViewModel {
+    /// "3 projects" — the line under the wordmark.
+    pub fn count_label(&self) -> String {
+        match self.projects.len() {
+            0 => "No projects yet".to_string(),
+            n => plural(n, "project"),
+        }
+    }
+
     pub fn build(summaries: &[ProjectSummary], now: SystemTime) -> Self {
         Self {
             projects: summaries
@@ -37,18 +55,31 @@ impl HomeViewModel {
                     } else {
                         summary.name.clone()
                     },
-                    detail: format!(
-                        "{} × {} · {} fps · {}",
-                        summary.canvas.width,
-                        summary.canvas.height,
-                        format_fps(summary.fps),
-                        plural(summary.element_count, "clip"),
-                    ),
+                    detail: {
+                        let mut detail = format!(
+                            "{} × {} · {} fps · {}",
+                            summary.canvas.width,
+                            summary.canvas.height,
+                            format_fps(summary.fps),
+                            plural(summary.element_count, "clip"),
+                        );
+                        // Only when there is more than one. "· 1 scene" on every card is noise
+                        // that pushes the useful half of the line out of a narrow column.
+                        if summary.scene_count > 1 {
+                            detail.push_str(&format!(" · {} scenes", summary.scene_count));
+                        }
+                        detail
+                    },
                     duration: format_duration(summary.duration_seconds),
                     modified: summary
                         .modified
                         .map(|at| format_since(at, now))
                         .unwrap_or_else(|| "—".to_string()),
+                    status: summary.shelf.status,
+                    status_label: summary.shelf.status.label().to_string(),
+                    status_color: summary.shelf.status.color(),
+                    tags: summary.shelf.tags.clone(),
+                    has_poster: false,
                 })
                 .collect(),
         }
@@ -127,6 +158,51 @@ pub struct MediaItem {
     pub name: String,
     pub path: String,
     pub kind: bay_core::MediaKind,
+}
+
+/// The media panel's groups.
+///
+/// bay has no folders in the project format, so grouping by kind is what the library can
+/// honestly offer: it is derived from the files themselves rather than from a hierarchy nobody
+/// created. Inventing "Footage / Graphics / Audio" folders and then having no way to move
+/// anything between them would be a directory tree that does not exist.
+pub struct MediaFolder {
+    pub name: &'static str,
+    pub items: Vec<MediaItem>,
+}
+
+impl MediaFolder {
+    /// Split a library into its kind groups, dropping the empty ones.
+    ///
+    /// Order is fixed — video, images, audio — so the panel does not reshuffle when the first
+    /// file of a kind arrives.
+    pub fn group(media: Vec<MediaItem>) -> Vec<MediaFolder> {
+        use bay_core::MediaKind;
+        const ORDER: [(MediaKind, &str); 3] = [
+            (MediaKind::Video, "Video"),
+            (MediaKind::Image, "Images"),
+            (MediaKind::Audio, "Audio"),
+        ];
+        let mut remaining = media;
+        let mut folders = Vec::new();
+        for (kind, name) in ORDER {
+            let (mine, rest): (Vec<_>, Vec<_>) =
+                remaining.into_iter().partition(|item| item.kind == kind);
+            remaining = rest;
+            if !mine.is_empty() {
+                folders.push(MediaFolder { name, items: mine });
+            }
+        }
+        // Nothing should be left — the match above is exhaustive over MediaKind — but if a
+        // variant is ever added, its files land in a group rather than vanishing from the panel.
+        if !remaining.is_empty() {
+            folders.push(MediaFolder {
+                name: "Other",
+                items: remaining,
+            });
+        }
+        folders
+    }
 }
 
 /// A visual element on screen at the current playhead, for the layout preview.
@@ -457,11 +533,123 @@ mod tests {
             duration_seconds: 92.0,
             scene_count: 1,
             element_count: 3,
+            shelf: Default::default(),
         }
     }
 
     fn now() -> SystemTime {
         SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)
+    }
+
+    /// The card's chip. An unfiled project reads as "in progress" rather than as unlabelled.
+    #[test]
+    fn a_card_carries_the_projects_filing() {
+        let mut filed = summary("Reel", 0);
+        filed.shelf.status = bay_core::ProjectStatus::ClientReview;
+        filed.shelf.add_tag("Priority");
+        filed.shelf.add_tag("Reel");
+
+        let card = &HomeViewModel::build(&[filed], now()).projects[0];
+        assert_eq!(card.status_label, "Client review");
+        assert_eq!(
+            card.status_color,
+            bay_core::ProjectStatus::ClientReview.color()
+        );
+        assert_eq!(card.tags, vec!["Priority", "Reel"]);
+
+        let plain = &HomeViewModel::build(&[summary("Reel", 0)], now()).projects[0];
+        assert_eq!(plain.status_label, "In progress");
+        assert!(plain.tags.is_empty());
+    }
+
+    /// bay caches no poster frame, so no card may claim one. A gradient in that slot would read
+    /// as a still from footage nobody has rendered.
+    #[test]
+    fn no_card_claims_a_thumbnail_bay_does_not_have() {
+        let card = &HomeViewModel::build(&[summary("Reel", 0)], now()).projects[0];
+        assert!(!card.has_poster);
+    }
+
+    /// "· 1 scene" on every card is noise; more than one is information.
+    #[test]
+    fn the_scene_count_appears_only_when_there_is_more_than_one() {
+        let single = &HomeViewModel::build(&[summary("Reel", 0)], now()).projects[0];
+        assert!(!single.detail.contains("scene"), "{}", single.detail);
+
+        let mut many = summary("Reel", 0);
+        many.scene_count = 3;
+        let card = &HomeViewModel::build(&[many], now()).projects[0];
+        assert!(card.detail.ends_with("· 3 scenes"), "{}", card.detail);
+    }
+
+    #[test]
+    fn the_count_line_reads_naturally_at_zero_one_and_many() {
+        assert_eq!(
+            HomeViewModel::build(&[], now()).count_label(),
+            "No projects yet"
+        );
+        assert_eq!(
+            HomeViewModel::build(&[summary("A", 0)], now()).count_label(),
+            "1 project"
+        );
+        assert_eq!(
+            HomeViewModel::build(&[summary("A", 0), summary("B", 0)], now()).count_label(),
+            "2 projects"
+        );
+    }
+
+    fn asset(name: &str) -> MediaItem {
+        MediaItem {
+            id: format!("m-{name}"),
+            name: name.to_string(),
+            path: format!("/tmp/{name}"),
+            kind: bay_core::MediaKind::of_path(name),
+        }
+    }
+
+    /// The panel groups by what the files are, in a fixed order, and never shows an empty group.
+    #[test]
+    fn media_groups_by_kind_in_a_stable_order() {
+        let folders = MediaFolder::group(vec![
+            asset("bed.mp3"),
+            asset("b-roll.mp4"),
+            asset("logo.png"),
+            asset("skyline.mov"),
+        ]);
+        let names: Vec<&str> = folders.iter().map(|folder| folder.name).collect();
+        assert_eq!(names, vec!["Video", "Images", "Audio"]);
+        assert_eq!(folders[0].items.len(), 2, "both videos in one group");
+        assert_eq!(folders[2].items[0].name, "bed.mp3");
+    }
+
+    /// An empty group is a heading with nothing under it — worse than no heading.
+    #[test]
+    fn an_empty_kind_gets_no_group() {
+        let folders = MediaFolder::group(vec![asset("bed.mp3")]);
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].name, "Audio");
+        assert!(MediaFolder::group(Vec::new()).is_empty());
+    }
+
+    /// Grouping must not lose a file. A library that silently drops one is a file the user
+    /// imported and can never place.
+    #[test]
+    fn grouping_keeps_every_file() {
+        let library = vec![
+            asset("a.mp4"),
+            asset("b.png"),
+            asset("c.wav"),
+            asset("d.weirdextension"),
+        ];
+        let total = library.len();
+        let folders = MediaFolder::group(library);
+        assert_eq!(
+            folders
+                .iter()
+                .map(|folder| folder.items.len())
+                .sum::<usize>(),
+            total
+        );
     }
 
     #[test]

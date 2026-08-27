@@ -54,6 +54,18 @@ pub struct QuadTransformDescriptor {
     /// UV space. `(0, 0, 1, 1)` — the default — is the whole thing.
     #[serde(default = "whole_source")]
     pub crop: (f32, f32, f32, f32),
+    /// Tilt about the quad's own horizontal axis, in degrees — the card leans away from the
+    /// eye at the top and towards it at the bottom, or the other way at a negative angle.
+    ///
+    /// Separate from `rotation_degrees` because they are different animals: rotation spins the
+    /// card in the plane of the screen and every edge keeps its length, while a tilt takes the
+    /// card *out* of that plane and the far edge gets shorter. Zero for both is the flat card
+    /// every project had before this existed.
+    #[serde(default)]
+    pub tilt_x_degrees: f32,
+    /// Tilt about the quad's own vertical axis, in degrees.
+    #[serde(default)]
+    pub tilt_y_degrees: f32,
 }
 
 fn whole_source() -> (f32, f32, f32, f32) {

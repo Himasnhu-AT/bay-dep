@@ -3337,102 +3337,102 @@
     {
       "id": "m-figure",
       "name": "figure-narrator.png",
-      "path": "/assets/r2/figure-narrator.png"
+      "path": "media/figure-narrator.png"
     },
     {
       "id": "m-wagon",
       "name": "wagon.png",
-      "path": "/assets/r2/wagon.png"
+      "path": "media/wagon.png"
     },
     {
       "id": "m-arrow-volley",
       "name": "arrows.png",
-      "path": "/assets/r2/arrows.png"
+      "path": "media/arrows.png"
     },
     {
       "id": "m-homestead",
       "name": "homestead.png",
-      "path": "/assets/r2/homestead.png"
+      "path": "media/homestead.png"
     },
     {
       "id": "m-chalkboard",
       "name": "chalkboard.png",
-      "path": "/assets/r2/chalkboard.png"
+      "path": "media/chalkboard.png"
     },
     {
       "id": "m-logo-altavista",
       "name": "logo-altavista.png",
-      "path": "/assets/r2/logo-altavista.png"
+      "path": "media/logo-altavista.png"
     },
     {
       "id": "m-logo-lycos",
       "name": "logo-lycos.png",
-      "path": "/assets/r2/logo-lycos.png"
+      "path": "media/logo-lycos.png"
     },
     {
       "id": "m-logo-excite",
       "name": "logo-excite.png",
-      "path": "/assets/r2/logo-excite.png"
+      "path": "media/logo-excite.png"
     },
     {
       "id": "m-arrows-stuck",
       "name": "arrows-stuck.png",
-      "path": "/assets/r2/arrows-stuck.png"
+      "path": "media/arrows-stuck.png"
     },
     {
       "id": "m-logo-google",
       "name": "logo-google.png",
-      "path": "/assets/r2/logo-google.png"
+      "path": "media/logo-google.png"
     },
     {
       "id": "m-flag",
       "name": "flag.png",
-      "path": "/assets/r2/flag.png"
+      "path": "media/flag.png"
     },
     {
       "id": "m-car",
       "name": "car.png",
-      "path": "/assets/r2/car.png"
+      "path": "media/car.png"
     },
     {
       "id": "m-logo-sidecar",
       "name": "logo-sidecar.png",
-      "path": "/assets/r2/logo-sidecar.png"
+      "path": "media/logo-sidecar.png"
     },
     {
       "id": "m-logo-uber",
       "name": "logo-uber.png",
-      "path": "/assets/r2/logo-uber.png"
+      "path": "media/logo-uber.png"
     },
     {
       "id": "m-price-tag",
       "name": "price-tag.png",
-      "path": "/assets/r2/price-tag.png"
+      "path": "media/price-tag.png"
     },
     {
       "id": "m-figure-shrug",
       "name": "figure-shrug.png",
-      "path": "/assets/r2/figure-shrug.png"
+      "path": "media/figure-shrug.png"
     },
     {
       "id": "m-logo-openai",
       "name": "logo-openai.png",
-      "path": "/assets/r2/logo-openai.png"
+      "path": "media/logo-openai.png"
     },
     {
       "id": "m-logo-meta",
       "name": "logo-meta.png",
-      "path": "/assets/r2/logo-meta.png"
+      "path": "media/logo-meta.png"
     },
     {
       "id": "m-logo-anthropic",
       "name": "logo-anthropic.png",
-      "path": "/assets/r2/logo-anthropic.png"
+      "path": "media/logo-anthropic.png"
     },
     {
       "id": "m-narration-01",
       "name": "bay-narration-01.wav",
-      "path": "/assets/r2/bay-narration-01.wav",
+      "path": "media/bay-narration-01.wav",
       "durationSeconds": 3.6,
       "loudness": {
         "peakDb": -2.4,
@@ -3444,7 +3444,7 @@
     {
       "id": "m-narration-02",
       "name": "bay-narration-02.wav",
-      "path": "/assets/r2/bay-narration-02.wav",
+      "path": "media/bay-narration-02.wav",
       "durationSeconds": 4.4,
       "loudness": {
         "peakDb": -2.4,
@@ -3456,7 +3456,7 @@
     {
       "id": "m-narration-03",
       "name": "bay-narration-03.wav",
-      "path": "/assets/r2/bay-narration-03.wav",
+      "path": "media/bay-narration-03.wav",
       "durationSeconds": 2.8,
       "loudness": {
         "peakDb": -2.4,
@@ -3468,7 +3468,7 @@
     {
       "id": "m-narration-04",
       "name": "bay-narration-04.wav",
-      "path": "/assets/r2/bay-narration-04.wav",
+      "path": "media/bay-narration-04.wav",
       "durationSeconds": 3.2,
       "loudness": {
         "peakDb": -2.4,
@@ -3480,7 +3480,7 @@
     {
       "id": "m-narration-05",
       "name": "bay-narration-05.wav",
-      "path": "/assets/r2/bay-narration-05.wav",
+      "path": "media/bay-narration-05.wav",
       "durationSeconds": 3.6,
       "loudness": {
         "peakDb": -2.4,
@@ -3492,7 +3492,7 @@
     {
       "id": "m-narration-06",
       "name": "bay-narration-06.wav",
-      "path": "/assets/r2/bay-narration-06.wav",
+      "path": "media/bay-narration-06.wav",
       "durationSeconds": 4.8,
       "loudness": {
         "peakDb": -2.4,
@@ -3504,7 +3504,7 @@
     {
       "id": "m-narration-07",
       "name": "bay-narration-07.wav",
-      "path": "/assets/r2/bay-narration-07.wav",
+      "path": "media/bay-narration-07.wav",
       "durationSeconds": 5.2,
       "loudness": {
         "peakDb": -2.4,
@@ -3516,7 +3516,7 @@
     {
       "id": "m-narration-08",
       "name": "bay-narration-08.wav",
-      "path": "/assets/r2/bay-narration-08.wav",
+      "path": "media/bay-narration-08.wav",
       "durationSeconds": 2.4,
       "loudness": {
         "peakDb": -2.4,
@@ -3528,7 +3528,7 @@
     {
       "id": "m-narration-09",
       "name": "bay-narration-09.wav",
-      "path": "/assets/r2/bay-narration-09.wav",
+      "path": "media/bay-narration-09.wav",
       "durationSeconds": 4.0,
       "loudness": {
         "peakDb": -2.4,
@@ -3540,7 +3540,7 @@
     {
       "id": "m-narration-10",
       "name": "bay-narration-10.wav",
-      "path": "/assets/r2/bay-narration-10.wav",
+      "path": "media/bay-narration-10.wav",
       "durationSeconds": 4.4,
       "loudness": {
         "peakDb": -2.4,
@@ -3552,7 +3552,7 @@
     {
       "id": "m-narration-11",
       "name": "bay-narration-11.wav",
-      "path": "/assets/r2/bay-narration-11.wav",
+      "path": "media/bay-narration-11.wav",
       "durationSeconds": 3.6,
       "loudness": {
         "peakDb": -2.4,
@@ -3564,7 +3564,7 @@
     {
       "id": "m-narration-12",
       "name": "bay-narration-12.wav",
-      "path": "/assets/r2/bay-narration-12.wav",
+      "path": "media/bay-narration-12.wav",
       "durationSeconds": 2.8,
       "loudness": {
         "peakDb": -2.4,
@@ -3576,7 +3576,7 @@
     {
       "id": "m-narration-13",
       "name": "bay-narration-13.wav",
-      "path": "/assets/r2/bay-narration-13.wav",
+      "path": "media/bay-narration-13.wav",
       "durationSeconds": 4.0,
       "loudness": {
         "peakDb": -2.4,
@@ -3588,7 +3588,7 @@
     {
       "id": "m-narration-14",
       "name": "bay-narration-14.wav",
-      "path": "/assets/r2/bay-narration-14.wav",
+      "path": "media/bay-narration-14.wav",
       "durationSeconds": 2.8,
       "loudness": {
         "peakDb": -2.4,

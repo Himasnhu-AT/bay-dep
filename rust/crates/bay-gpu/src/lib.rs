@@ -2,7 +2,7 @@ mod context;
 
 use thiserror::Error;
 
-pub use context::GpuContext;
+pub use context::{GpuContext, PipelinedReadback, ReadbackPoll, ReadbackPool};
 pub use wgpu;
 
 pub const GPU_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;

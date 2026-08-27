@@ -148,6 +148,8 @@ pub struct TextArgs {
     /// Line box as a multiple of the size, overriding the ramp's.
     pub line_height: Option<f32>,
     pub decorations: Option<TextDecorations>,
+    /// Reveal the line a character at a time instead of showing it whole.
+    pub type_on: Option<bay_project::TypeOn>,
 }
 
 /// How a caller said which style kit it wants.
@@ -215,7 +217,19 @@ impl Studio {
     /// A studio whose pathless saves land in `root` instead of the user's project library.
     pub fn with_library_root(library_root: Option<std::path::PathBuf>) -> Self {
         Self {
-            editor: Editor::new(empty_project("Untitled", 1080, 1920, 30, "#000000", None)),
+            editor: Editor::new(empty_project(
+                "Untitled",
+                CanvasSize {
+                    width: 1080,
+                    height: 1920,
+                },
+                Fps {
+                    numerator: 30,
+                    denominator: 1,
+                },
+                "#000000",
+                None,
+            )),
             renderer: None,
             renderer_unavailable: None,
             text_probe: bay_text::TextRaster::new(),
@@ -246,6 +260,14 @@ impl Studio {
             None => bay_project::ProjectLibrary::open_default(),
         }
         .map_err(|e| err(format!("could not open the project library: {e}")))
+    }
+
+    /// Replace a media asset, for tests that need a transcript the recogniser would have
+    /// written. Diarised speaker labels are the input to speaker-aware captions, and standing
+    /// up a real recogniser to get two of them is a slower test that checks less.
+    #[cfg(test)]
+    pub(crate) fn replace_media_for_test(&mut self, asset: bay_project::MediaAsset) {
+        self.editor.add_media(asset);
     }
 
     pub fn project(&self) -> &Project {
@@ -343,6 +365,10 @@ impl Studio {
 
     /// Place one caption: centred text across the content width, fading in and out so a cut
     /// between neighbouring captions does not read as a flicker.
+    /// Place one caption. `colour` overrides the style's own, which is how a speaker-coloured
+    /// caption carries who is talking without spending any of the frame; `None` keeps the
+    /// style's.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_caption_element(
         &mut self,
         id: &str,
@@ -350,6 +376,7 @@ impl Studio {
         style: &crate::narration::CaptionStyle,
         duration: f64,
         karaoke: Option<KaraokeSpec>,
+        colour: Option<String>,
     ) -> Result<(), ToolError> {
         let element = Element::Text(TextElement {
             id: id.to_string(),
@@ -360,7 +387,7 @@ impl Studio {
             fade_out: MediaTime::ZERO,
             content: cue.text.clone(),
             font_size: style.font_size,
-            color: style.color.clone(),
+            color: colour.unwrap_or_else(|| style.color.clone()),
             transform: Transform {
                 x: style.x,
                 y: style.y,
@@ -380,6 +407,7 @@ impl Studio {
             line_height: style.line_height,
             decorations: None,
             karaoke,
+            type_on: None,
             // bay wrote this, not the author. Everything downstream that measures type size,
             // position or motion has to be able to leave it out — 38 of the 73 text elements in
             // the project that prompted provenance are exactly this call's output, and counting
@@ -479,38 +507,47 @@ impl Studio {
     pub fn project_create(
         &mut self,
         name: &str,
-        width: u32,
-        height: u32,
-        fps: u32,
+        canvas: CanvasSize,
+        fps: Fps,
         background: Option<&str>,
         choice: KitChoice,
+        format: Option<&str>,
     ) -> ToolResult {
+        let (width, height) = (canvas.width, canvas.height);
         if width == 0 || height == 0 {
             return Err(err("canvas width and height must both be non-zero"));
         }
-        if fps == 0 {
+        if fps.numerator == 0 {
             return Err(err("fps must be at least 1"));
+        }
+        if fps.denominator == 0 {
+            return Err(err("fpsDenominator must be at least 1"));
+        }
+        if let Some(id) = format
+            && bay_project::format::by_id(id).is_none()
+        {
+            return Err(err(format!(
+                "unknown format {id:?} — one of: {}",
+                bay_project::format::ids().join(", ")
+            )));
         }
         let (kit, alternatives) = self.resolve_kit(&choice)?;
         // The ground is the kit's, unless the caller insisted. A background chosen apart from the
         // palette is exactly the "five colours, none of them a decision" state that the kit
         // exists to close, so it is reported back rather than accepted silently.
         let ground = background.unwrap_or(&kit.palette.bg).to_string();
-        self.editor.load_project(empty_project(
-            name,
-            width,
-            height,
-            fps,
-            &ground,
-            Some(kit.clone()),
-        ));
+        let mut project = empty_project(name, canvas, fps, &ground, Some(kit.clone()));
+        project.settings.format = format.map(str::to_string);
+        self.editor.load_project(project);
         self.next_id = 1;
         self.critic_panels.clear();
         self.record_kit(&kit.id);
         let mut out = serde_json::json!({
             "name": name,
             "canvas": { "width": width, "height": height },
-            "fps": fps,
+            "fps": self.editor.project().settings.fps.as_f64(),
+            "frameRate": { "numerator": fps.numerator, "denominator": fps.denominator },
+            "format": describe_format(bay_project::format::resolve(format)),
             "background": ground,
             "kit": describe_kit(&kit),
             "alternatives": alternatives,
@@ -1340,6 +1377,513 @@ impl Studio {
     }
 
     /// Place source ranges consecutively as paired video and speech clips.
+    /// What kinds of video bay knows, and what declaring one changes.
+    pub fn formats_list(&self) -> ToolResult {
+        let declared = self.editor.project().settings.format.clone();
+        Ok(serde_json::json!({
+            "current": declared,
+            "resolved": describe_format(bay_project::format::resolve(declared.as_deref())),
+            "formats": bay_project::format::FORMATS
+                .iter()
+                .map(|format| describe_format(*format))
+                .collect::<Vec<_>>(),
+            "note": "A format only ever relaxes checks, and only ones it names a reason for. \
+                     A suspended check still runs and is still reported — as a note carrying \
+                     that reason — so it stops blocking an export without stopping being \
+                     visible. If none of these describes what you are making, leave it \
+                     undeclared: `general` suspends nothing, and one justified `ignoreChecks` \
+                     is better than a format that quietly relaxes a check you needed.",
+        }))
+    }
+
+    /// Drive an element's scale from how loud the sound is, moment to moment.
+    ///
+    /// The orb that pulses with the voice is this genre's one piece of life, and without it a
+    /// circle on a ground is a circle on a ground. bay has no audio-reactive *channel* — a
+    /// channel would have to be sampled every frame by the renderer, which is a decode on the
+    /// render path — so this samples the sound once, here, and writes ordinary keyframes. The
+    /// result is a normal animation: editable, visible in the timeline, and identical in the
+    /// preview and the export because there is nothing left to re-derive.
+    ///
+    /// The window sampled is the element's own, mapped through wherever that audio actually
+    /// sits on the timeline, so an orb over the second half of a bed reacts to the second half
+    /// of the bed rather than to its opening.
+    pub fn audio_react(
+        &mut self,
+        element_id: &str,
+        media_id: &str,
+        channel: &str,
+        depth: f64,
+        floor_db: f64,
+    ) -> ToolResult {
+        if !matches!(channel, "scale" | "scaleX" | "scaleY" | "opacity") {
+            return Err(err(format!(
+                "cannot drive {channel:?} from sound — scale, scaleX, scaleY or opacity"
+            )));
+        }
+        let path = self
+            .media_path(media_id)
+            .ok_or_else(|| err(format!("no media with id {media_id:?}")))?;
+
+        // If the channel is already animated, the pulse rides ON that curve rather than
+        // replacing it. Overwriting is what the first version did, and it silently deleted
+        // every authored scale move on the element — the orb's whole arc through the film
+        // vanished the moment the pulse was added, with nothing said.
+        let existing = {
+            let project = self.editor.project();
+            project
+                .active_scene()
+                .elements()
+                .find(|element| element.id() == element_id)
+                .and_then(|element| element.animations())
+                .and_then(|animations| animations.get(channel))
+                .cloned()
+        };
+        let (start, duration, base) = {
+            let element = self
+                .editor
+                .project()
+                .active_scene()
+                .elements()
+                .find(|element| element.id() == element_id)
+                .ok_or_else(|| err(format!("no element with id {element_id:?}")))?;
+            let transform = element.transform().unwrap_or_default();
+            let base = match channel {
+                "scale" => transform.scale,
+                "scaleX" => transform.scale_x,
+                "scaleY" => transform.scale_y,
+                _ => transform.opacity,
+            };
+            (element.start(), element.duration(), base)
+        };
+        if duration <= MediaTime::ZERO {
+            return Err(err("that element has no duration to animate over"));
+        }
+
+        // Where this media sits on the timeline, so the element's window maps onto the right
+        // part of the sound. Without this an orb placed at 20s reacts to the first second.
+        let placed = self
+            .editor
+            .project()
+            .active_scene()
+            .tracks
+            .audio
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .find_map(|element| match element {
+                bay_project::Element::Audio(audio) if audio.media_id == media_id => {
+                    Some((audio.start, audio.trim_start))
+                }
+                _ => None,
+            });
+        let (audio_start, audio_trim) = placed.unwrap_or((MediaTime::ZERO, MediaTime::ZERO));
+
+        let pcm = bay_audio::decode_pcm(&path, 16000).ok_or_else(|| {
+            err(format!(
+                "could not read audio from {path}. Decoding needs ffmpeg — runtime_install \
+                 with component \"video\" installs it."
+            ))
+        })?;
+        let rate = pcm.sample_rate.max(1) as f64;
+        let channels = pcm.channels.max(1) as usize;
+
+        // 20 Hz: fast enough that a syllable moves it, slow enough that a five-second element
+        // is a hundred keys rather than a thousand.
+        const HZ: f64 = 20.0;
+        let steps = ((duration.to_seconds_f64() * HZ).round() as usize).clamp(2, 2000);
+        let window = (rate / HZ) as usize * channels;
+
+        let mut levels = Vec::with_capacity(steps);
+        for step in 0..steps {
+            let local = duration.to_seconds_f64() * step as f64 / (steps - 1).max(1) as f64;
+            let source = (audio_trim.to_seconds_f64() + (start.to_seconds_f64() + local)
+                - audio_start.to_seconds_f64())
+            .max(0.0);
+            let at = (source * rate) as usize * channels;
+            let slice = pcm
+                .samples
+                .get(at..(at + window).min(pcm.samples.len()))
+                .unwrap_or(&[]);
+            let rms = if slice.is_empty() {
+                0.0
+            } else {
+                (slice
+                    .iter()
+                    .map(|s| f64::from(*s) * f64::from(*s))
+                    .sum::<f64>()
+                    / slice.len() as f64)
+                    .sqrt()
+            };
+            levels.push(20.0 * (rms.max(1e-9)).log10());
+        }
+
+        // Normalise against what this sound actually does, not against full scale: speech
+        // peaking at -12 dB would otherwise never move the orb more than a fraction of the
+        // depth asked for.
+        let loudest = levels.iter().copied().fold(f64::MIN, f64::max);
+        let quietest = floor_db.min(loudest - 1.0);
+        let span = (loudest - quietest).max(1.0);
+
+        let keys: Vec<bay_project::Keyframe> = levels
+            .iter()
+            .enumerate()
+            .map(|(step, level)| {
+                let amount = ((level - quietest) / span).clamp(0.0, 1.0);
+                let local = duration.to_seconds_f64() * step as f64 / (steps - 1).max(1) as f64;
+                let time = MediaTime::from_seconds_f64(local).unwrap_or(MediaTime::ZERO);
+                // The value the element would have had here without the pulse.
+                let under = existing
+                    .as_ref()
+                    .and_then(|channel| channel.sample(time))
+                    .unwrap_or(base);
+                bay_project::Keyframe {
+                    time,
+                    value: (f64::from(under) * (1.0 + depth * amount)) as f32,
+                    easing: None,
+                }
+            })
+            .collect();
+
+        let reference = self
+            .find_element_ref(element_id)
+            .ok_or_else(|| err(format!("no element with id {element_id:?}")))?;
+        let mut element = self
+            .editor
+            .project()
+            .active_scene()
+            .elements()
+            .find(|element| element.id() == element_id)
+            .cloned()
+            .ok_or_else(|| err("the element went away"))?;
+        if let Some(animations) = element.animations_mut() {
+            animations.insert(
+                channel.to_string(),
+                bay_project::AnimationChannel {
+                    keys: keys.clone(),
+                    easing: bay_project::Easing::Linear,
+                },
+            );
+        } else {
+            return Err(err(format!("{element_id:?} cannot be animated")));
+        }
+        if !self
+            .editor
+            .execute(Command::ReplaceElement { reference, element })
+        {
+            return Err(err("could not write the animation"));
+        }
+
+        Ok(serde_json::json!({
+            "elementId": element_id,
+            "mediaId": media_id,
+            "channel": channel,
+            "keys": keys.len(),
+            "baseValue": base,
+            "rodeExistingCurve": existing.is_some(),
+            "depth": depth,
+            "quietestDb": (quietest * 10.0).round() / 10.0,
+            "loudestDb": (loudest * 10.0).round() / 10.0,
+            "note": "Ordinary keyframes, sampled from the sound once. `check` reports a \
+                     hand-keyed channel as off-vocabulary-motion, which this is — the \
+                     vocabulary has no move for it, and a pulse driven by a voice is the one \
+                     case where that is the point rather than a shortcut.",
+        }))
+    }
+
+    /// Lay the room itself under the whole cut, lifted from a pause in the recording.
+    ///
+    /// The companion to [`Studio::audio_smooth`], and the half of the problem a crossfade does
+    /// not solve. A crossfade fixes how *fast* you cross a join; it cannot change what the two
+    /// sides sound like. Two moments of the same recording still differ in noise floor and
+    /// timbre — measured across one edit, about 18 dB in the worst band — and at every cut the
+    /// listener hears the background change even when the change is smooth.
+    ///
+    /// A continuous bed of the room's own tone masks that, because the background stops being
+    /// something that changes at cuts and becomes something that is simply there. The material
+    /// is the recording's own silence: whichever pause is longest and sits closest to the
+    /// measured noise floor, which is what makes it room tone rather than a clipped word. So
+    /// nothing is synthesised and nothing is imported — the room under the edit is the room.
+    ///
+    /// Laid down as overlapping copies with crossfades, because a loop butt-joined to itself
+    /// ticks for exactly the reason a dialogue edit does.
+    pub fn room_tone(
+        &mut self,
+        media_id: &str,
+        seconds: Option<f64>,
+        level_db: f64,
+        crossfade_ms: f64,
+    ) -> ToolResult {
+        let path = self
+            .media_path(media_id)
+            .ok_or_else(|| err(format!("no media with id {media_id:?}")))?;
+        let pcm = bay_audio::decode_pcm(&path, 16000).ok_or_else(|| {
+            err(format!(
+                "could not read audio from {path}. Decoding needs ffmpeg — runtime_install \
+                 with component \"video\" installs it."
+            ))
+        })?;
+        let scan = bay_audio::silence::detect(
+            &pcm,
+            bay_audio::silence::Options {
+                threshold_db: None,
+                minimum_seconds: 0.35,
+                pad_seconds: 0.0,
+            },
+        )
+        .ok_or_else(|| err(format!("{path} has no audio to measure")))?;
+
+        // The best chunk is long *and* quiet: a long pause with a peak well above the floor is
+        // a breath or the tail of a word, and looping one puts a heartbeat under the cut.
+        let floor = scan.noise_floor_db;
+        let best = scan
+            .silences
+            .iter()
+            .filter(|silence| silence.duration_seconds >= 0.35)
+            .min_by(|a, b| {
+                let cost = |s: &bay_audio::silence::Silence| {
+                    (s.peak_db - floor) - 6.0 * s.duration_seconds.min(2.0)
+                };
+                cost(a)
+                    .partial_cmp(&cost(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .ok_or_else(|| {
+                err(format!(
+                    "no pause in {path} is long enough to lift room tone from — the quietest \
+                     run is under 0.35s. Record a few seconds of the empty room, or pass a \
+                     different file."
+                ))
+            })?;
+
+        let chunk = best.duration_seconds.min(4.0);
+        let cover = seconds.unwrap_or_else(|| self.editor.duration().to_seconds_f64());
+        if cover <= 0.0 {
+            return Err(err("there is no timeline to lay room tone under"));
+        }
+        let fade = (crossfade_ms.clamp(0.0, 1000.0) / 1000.0).min(chunk / 3.0);
+        let gain = 10f32.powf((level_db as f32) / 20.0);
+
+        let step = (chunk - fade).max(0.05);
+        let mut placed = Vec::new();
+        let mut at = 0.0f64;
+        let mut index = 0usize;
+        // A cap, so a bad chunk length cannot carpet the timeline with thousands of clips.
+        while at < cover && index < 4000 {
+            // Never past the end: a bed that outlasts the picture lengthens the timeline and
+            // leaves black on the end of the video.
+            let duration = chunk.min(cover - at);
+            if duration <= 0.02 {
+                break;
+            }
+            let id = format!("room-tone-{index}");
+            self.add_audio(
+                Some(id.clone()),
+                media_id.to_string(),
+                at,
+                duration,
+                gain,
+                best.start_seconds,
+                ElementSource::Tool,
+                AudioRole::Bed,
+                false,
+            )?;
+            placed.push(id);
+            at += step;
+            index += 1;
+        }
+
+        // Crossfade the loop into itself, and ease the two open ends.
+        let fade_time = secs(fade)?;
+        for (position, id) in placed.iter().enumerate() {
+            let Some(reference) = self.find_element_ref(id) else {
+                continue;
+            };
+            let fade_in = if position == 0 {
+                secs(fade.min(0.25))?
+            } else {
+                fade_time
+            };
+            let fade_out = if position + 1 == placed.len() {
+                secs(fade.min(0.25))?
+            } else {
+                fade_time
+            };
+            self.editor.execute(Command::SetFades {
+                reference,
+                fade_in,
+                fade_out,
+            });
+        }
+
+        Ok(serde_json::json!({
+            "mediaId": media_id,
+            "liftedFrom": {
+                "startSeconds": best.start_seconds,
+                "durationSeconds": best.duration_seconds,
+                "peakDb": best.peak_db,
+            },
+            "noiseFloorDb": floor,
+            "speechDb": scan.speech_db,
+            "chunkSeconds": chunk,
+            "crossfadeSeconds": fade,
+            "levelDb": level_db,
+            "clips": placed.len(),
+            "coversSeconds": cover,
+            "elementIds": placed,
+        }))
+    }
+
+    /// Crossfade every place two sounds meet, so a dialogue edit stops ticking at its joins.
+    ///
+    /// A cut in dialogue is not a cut in the *room*. Butt two takes together and the noise
+    /// floor, the reverb tail and the timbre all change between one sample and the next —
+    /// measured across one such edit: +7.5 dB of level at one join and -20.8 dB of top end at
+    /// another, instantaneously. There is no click to find, because nothing is discontinuous
+    /// in the waveform; what the ear hears is the room teleporting, and it reads as a fault in
+    /// the recording rather than as an edit.
+    ///
+    /// The fix is the one every editor makes by hand: overlap the two clips by a few tens of
+    /// milliseconds and fade one down as the other comes up. The material for the overlap is
+    /// real — the outgoing clip is extended into the source it was cut from, so the tail is
+    /// the room continuing, not silence.
+    ///
+    /// **Both sides move, which is where this parts company with a picture dissolve.**
+    /// [`Command::SetFades`] documents a dissolve as the incoming clip alone fading over an
+    /// outgoing one still at full, and for opacity that is right. Sum two sounds that way and
+    /// the overlap is *louder* than either — up to 6 dB for uncorrelated room tone. So the
+    /// outgoing fades down as the incoming fades up.
+    pub fn audio_smooth(&mut self, join_ms: f64, element_ids: Option<Vec<String>>) -> ToolResult {
+        let join = secs(join_ms.clamp(0.0, 500.0) / 1000.0)?;
+        if join <= MediaTime::ZERO {
+            return Err(err("joinMs must be greater than zero"));
+        }
+        let wanted: Option<std::collections::BTreeSet<String>> =
+            element_ids.map(|ids| ids.into_iter().collect());
+
+        // (id, track, start, duration, source room left after the out-point)
+        let mut clips: Vec<(String, String, MediaTime, MediaTime, MediaTime)> = Vec::new();
+        {
+            let project = self.editor.project();
+            let scene = project.active_scene();
+            for track in &scene.tracks.audio {
+                for element in &track.elements {
+                    let bay_project::Element::Audio(audio) = element else {
+                        continue;
+                    };
+                    if wanted.as_ref().is_some_and(|ids| !ids.contains(&audio.id)) {
+                        continue;
+                    }
+                    // How much source lies past this clip's out-point — the material the
+                    // overlap is made of. Without it there is nothing to fade *through*.
+                    let room = project
+                        .media
+                        .iter()
+                        .find(|asset| asset.id == audio.media_id)
+                        .and_then(|asset| asset.source_duration())
+                        .map(|length| {
+                            (length - (audio.trim_start + audio.duration)).max(MediaTime::ZERO)
+                        })
+                        .unwrap_or(MediaTime::ZERO);
+                    clips.push((
+                        audio.id.clone(),
+                        track.id.clone(),
+                        audio.start,
+                        audio.duration,
+                        room,
+                    ));
+                }
+            }
+        }
+        clips.sort_by_key(|(_, _, start, _, _)| *start);
+        if clips.is_empty() {
+            return Err(err("no audio clips to smooth"));
+        }
+
+        // A join is two clips that meet: touching, or overlapping already, or with a gap too
+        // short to be a deliberate silence.
+        let tolerance = join;
+        let mut fades: std::collections::BTreeMap<String, (MediaTime, MediaTime)> =
+            std::collections::BTreeMap::new();
+        let mut extend: std::collections::BTreeMap<String, MediaTime> =
+            std::collections::BTreeMap::new();
+        let mut joins = Vec::new();
+        for pair in clips.windows(2) {
+            let (a_id, _, a_start, a_duration, a_room) = &pair[0];
+            let (b_id, _, b_start, _, _) = &pair[1];
+            let a_end = *a_start + *a_duration;
+            let gap = *b_start - a_end;
+            if gap > tolerance || gap < -tolerance {
+                continue;
+            }
+            // Overlap by as much as the source allows, up to the asked-for join.
+            let overlap = join.min(*a_room + (a_end - *b_start).max(MediaTime::ZERO));
+            if overlap <= MediaTime::ZERO {
+                continue;
+            }
+            let grow = (*b_start + overlap - a_end).max(MediaTime::ZERO);
+            if grow > MediaTime::ZERO {
+                extend.insert(a_id.clone(), grow);
+            }
+            fades.entry(a_id.clone()).or_default().1 = overlap;
+            fades.entry(b_id.clone()).or_default().0 = overlap;
+            joins.push(serde_json::json!({
+                "from": a_id, "to": b_id,
+                "atSeconds": b_start.to_seconds_f64(),
+                "crossfadeSeconds": overlap.to_seconds_f64(),
+                "grewOutgoingBySeconds": grow.to_seconds_f64(),
+            }));
+        }
+
+        // The two open ends. A clip that starts at full level on the first sample ticks just as
+        // audibly as a join does, and nothing is overlapping there to hide it.
+        let edge = join.min(secs(0.010)?);
+        fades.entry(clips[0].0.clone()).or_default().0 = fades
+            .get(&clips[0].0)
+            .map(|f| f.0)
+            .unwrap_or(MediaTime::ZERO)
+            .max(edge);
+        let last = clips[clips.len() - 1].0.clone();
+        let existing = fades.get(&last).map(|f| f.1).unwrap_or(MediaTime::ZERO);
+        fades.entry(last).or_default().1 = existing.max(edge);
+
+        let mut changed = 0usize;
+        for (id, grow) in &extend {
+            let Some((_, _, start, duration, _)) = clips.iter().find(|(c, ..)| c == id) else {
+                continue;
+            };
+            let Some(reference) = self.find_element_ref(id) else {
+                continue;
+            };
+            if self.editor.execute(Command::TrimElement {
+                reference,
+                start: *start,
+                duration: *duration + *grow,
+            }) {
+                changed += 1;
+            }
+        }
+        for (id, (fade_in, fade_out)) in &fades {
+            let Some(reference) = self.find_element_ref(id) else {
+                continue;
+            };
+            if self.editor.execute(Command::SetFades {
+                reference,
+                fade_in: *fade_in,
+                fade_out: *fade_out,
+            }) {
+                changed += 1;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "joinMs": join.to_seconds_f64() * 1000.0,
+            "clips": clips.len(),
+            "joinsSmoothed": joins.len(),
+            "edits": changed,
+            "joins": joins,
+        }))
+    }
+
     pub fn cut_by_transcript(
         &mut self,
         media_id: &str,
@@ -1409,6 +1953,7 @@ impl Studio {
                 range.start_seconds,
                 ElementSource::Tool,
                 AudioRole::Speech,
+                true,
             )?;
             placed.push(serde_json::json!({
                 "timelineStart": at,
@@ -1485,6 +2030,46 @@ impl Studio {
     /// drops the family when the weight is missing, so `Avenir` is installed and `Avenir` at 700
     /// is Menlo Bold. Each row is generated by shaping a glyph at each of the nine CSS steps and
     /// reading back the face that carried it — the same probe `add_text` refuses on.
+    /// Every family installed here, so a kit can be chosen rather than guessed at.
+    ///
+    /// `fonts_check` answers "is this one here?", which needs a name already in mind. A name
+    /// guessed wrong is not refused — the shaper drops the family and substitutes another face,
+    /// so the project renders in something nobody picked and nothing downstream can tell.
+    pub fn fonts_list(&mut self, contains: Option<&str>, weight: Option<u16>) -> ToolResult {
+        let needle = contains.map(str::to_lowercase);
+        let mut families: Vec<String> = self
+            .text_probe
+            .families()
+            .into_iter()
+            .filter(|family| {
+                needle
+                    .as_ref()
+                    .is_none_or(|needle| family.to_lowercase().contains(needle.as_str()))
+            })
+            .collect();
+        // Asking for a weight is asking which families can carry a *kit* at that weight, which
+        // is the shaper's answer and not the database's.
+        if let Some(weight) = weight {
+            families.retain(|family| self.text_probe.resolves(family, weight));
+        }
+        let total = families.len();
+        // A machine can carry hundreds; a list that long is not a choice, it is a wall.
+        const CAP: usize = 200;
+        let truncated = total > CAP;
+        families.truncate(CAP);
+        let mut out = serde_json::json!({
+            "families": families,
+            "total": total,
+        });
+        if truncated {
+            out["note"] = serde_json::json!(format!(
+                "{total} families installed; the first {CAP} are listed. Pass `contains` to \
+                 narrow it, or `weight` to see only the families a kit could use at that weight."
+            ));
+        }
+        Ok(out)
+    }
+
     pub fn fonts_check(&mut self, families: &[String]) -> ToolResult {
         let mut available = Vec::new();
         let mut missing = Vec::new();
@@ -1727,6 +2312,7 @@ impl Studio {
             line_height: text.line_height.unwrap_or(style.line_height),
             decorations: text.decorations,
             karaoke: None,
+            type_on: text.type_on,
             source: ElementSource::Author,
             role: text.role,
         });
@@ -1751,6 +2337,7 @@ impl Studio {
         shape: ShapeKind,
         role: ElementRole,
         tone: Tone,
+        fill: ShapeFill,
         visual: VisualArgs,
     ) -> ToolResult {
         if duration <= 0.0 {
@@ -1763,6 +2350,8 @@ impl Studio {
             id,
             start: secs(start)?,
             duration: secs(duration)?,
+            gradient: fill.gradient,
+            stroke: fill.stroke,
             fade_in: MediaTime::ZERO,
             fade_out: MediaTime::ZERO,
             shape,
@@ -1867,6 +2456,7 @@ impl Studio {
         trim_start: f64,
         source: ElementSource,
         role: AudioRole,
+        process_dialogue: bool,
     ) -> ToolResult {
         self.require_media(&media_id)?;
         if duration <= 0.0 {
@@ -1889,7 +2479,13 @@ impl Studio {
             speed: 1.0,
             prosody: (source == ElementSource::Tool && role == AudioRole::Speech)
                 .then(bay_project::SpeechProsody::default),
-            dialogue_chain: (role == AudioRole::Speech)
+            // Speech gets the EQ/compressor/limiter chain, because raw dialogue always wants
+            // it. Not unconditionally, though: a bed that arrives already mixed and levelled
+            // is dialogue too, and running the chain over it a second time is what took a mix
+            // mastered to -13.9 LUFS down to -19.6 with its loudness range squashed from 5.9
+            // to 3.5. `loudness: false` on the export cannot prevent that — the chain is a
+            // property of the element, not of the encode.
+            dialogue_chain: (role == AudioRole::Speech && process_dialogue)
                 .then(bay_project::DialogueAudioChain::default),
             trim_start: secs(trim_start)?,
             animations: BTreeMap::new(),
@@ -2083,6 +2679,8 @@ impl Studio {
             0.0,
             ElementSource::Author,
             AudioRole::Sfx,
+            // Not speech, so the chain does not apply either way.
+            true,
         )?;
         Ok(serde_json::json!({
             "sound": sound.id,
@@ -2169,6 +2767,8 @@ impl Studio {
             0.0,
             ElementSource::Author,
             AudioRole::Sfx,
+            // Not speech, so the chain does not apply either way.
+            true,
         )?;
         Ok(serde_json::json!({
             "sfx": effect.id,
@@ -2882,26 +3482,41 @@ fn describe_element(element: &Element) -> serde_json::Value {
     out
 }
 
+/// How a shape is painted, beyond the flat tone every shape has always had.
+///
+/// A struct rather than two more arguments because `add_shape` already carries eight, and
+/// because the two travel together: a stroked shape with a gradient is an outline drawn in the
+/// ramp, which is one decision rather than two.
+#[derive(Debug, Clone, Default)]
+pub struct ShapeFill {
+    pub gradient: Option<bay_project::Gradient>,
+    pub stroke: Option<bay_project::Stroke>,
+}
+
+/// What a caller needs to choose a format, and to see what one is doing to their report.
+fn describe_format(format: bay_project::format::Format) -> serde_json::Value {
+    serde_json::json!({
+        "id": format.id,
+        "name": format.name,
+        "note": format.note,
+        "builtFrom": format.built_from,
+        "suspends": format.suspends
+            .iter()
+            .map(|(code, why)| serde_json::json!({ "code": code, "why": why }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// A project with one empty scene — the starting point every reel is built up from. The
 /// `Project::starter()` demo scene would otherwise leave placeholder blocks in the render.
 fn empty_project(
     name: &str,
-    width: u32,
-    height: u32,
-    fps: u32,
+    canvas: CanvasSize,
+    fps: Fps,
     background: &str,
     kit: Option<StyleKit>,
 ) -> Project {
-    let mut project = Project::empty(
-        &fresh_project_id(),
-        name,
-        CanvasSize { width, height },
-        Fps {
-            numerator: fps,
-            denominator: 1,
-        },
-        background,
-    );
+    let mut project = Project::empty(&fresh_project_id(), name, canvas, fps, background);
     project.settings.kit = kit;
     project
 }

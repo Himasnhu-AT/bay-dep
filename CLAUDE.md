@@ -49,6 +49,8 @@ rust/
 │   ├── bay-ui        GPUI application shell (the editor UI)
 │   ├── bay-core      editor model + orchestration
 │   ├── bay-project   project format, serialization, web↔native interop
+│   ├── bay-settings  account/session, providers, model routing, MCP access, compute — the
+│   │                  settings screen's state, headless because the MCP server enforces it
 │   ├── bay-preview   preview rendering, decode planning, caching
 │   ├── compositor, gpu, effects, masks    the wgpu render path
 │   ├── bay-audio, bay-text, bay-speech
@@ -71,7 +73,15 @@ the MCP server. Logic is never duplicated between front ends.
 ## Conventions and judgment calls
 
 - **Never put logic in the UI crate that a headless client would need.** If the MCP server or a test
-  can't reach it, it's in the wrong crate.
+  can't reach it, it's in the wrong crate. The settings screen is the standing temptation: "which
+  MCP tools may an agent call" looks like a checkbox but is enforced by `bay --mcp` with no window
+  open, so it lives in `bay-settings` and the view only draws it.
+- **A control must do what it says.** The panel palettes come from `bay-core::blocks`, which only
+  names effects the compositor compiles — a tile adding an effect nothing renders is a dead
+  control discovered after an export comes back unchanged. Same rule for accounts and cloud
+  compute: neither exists in this build, so both refuse with the reason rather than appearing to
+  work. `bay-mcp`'s `tool_vocabulary` test enforces the settings pane and the server agreeing on
+  what a tool is called, in both directions.
 - **Decode never runs on the *interactive* render path.** A long clip must not freeze `render()`;
   preview decodes are planned on a worker and awaited explicitly. **Export is the exception, by
   design:** it streams each clip at source resolution through `ClipStream` and decodes inside its

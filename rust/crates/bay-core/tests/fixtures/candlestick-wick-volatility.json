@@ -7936,42 +7936,42 @@
     {
       "id": "media-1",
       "name": "bay-narration-1.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-1.wav"
+      "path": "media/bay-narration-1.wav"
     },
     {
       "id": "media-2",
       "name": "bay-narration-2.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-2.wav"
+      "path": "media/bay-narration-2.wav"
     },
     {
       "id": "media-3",
       "name": "bay-narration-3.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-3.wav"
+      "path": "media/bay-narration-3.wav"
     },
     {
       "id": "media-4",
       "name": "bay-narration-4.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-4.wav"
+      "path": "media/bay-narration-4.wav"
     },
     {
       "id": "media-5",
       "name": "bay-narration-5.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-5.wav"
+      "path": "media/bay-narration-5.wav"
     },
     {
       "id": "media-6",
       "name": "bay-narration-6.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-6.wav"
+      "path": "media/bay-narration-6.wav"
     },
     {
       "id": "media-7",
       "name": "bay-narration-7.wav",
-      "path": "/var/folders/h1/9l1f8xpd64v7w8gtg02q003h0000gn/T/bay-narration-7.wav"
+      "path": "media/bay-narration-7.wav"
     },
     {
       "id": "silence-pad",
       "name": "silence2s.wav",
-      "path": "/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/8bed0c56-d113-4eac-a246-d75830383879/scratchpad/silence2s.wav"
+      "path": "media/silence2s.wav"
     }
   ]
 }

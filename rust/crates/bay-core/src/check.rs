@@ -229,6 +229,11 @@ pub const CODES: &[(&str, Severity, &str)] = &[
         Severity::Warning,
         "a value that is not in the project's own kit",
     ),
+    (
+        "sparse-events",
+        Severity::Warning,
+        "long stretches where nothing arrives, lands or leaves",
+    ),
     ("silent", Severity::Note, "the export carries no sound"),
     (
         "one-scene",
@@ -513,7 +518,39 @@ pub fn check(project: &Project) -> Report {
     findings.append(&mut composition.findings);
 
     let mix = mix_stats(envelope);
+    let findings = apply_format(project, findings);
     report(findings, skipped, stats(scene, &composition, beats, mix))
+}
+
+/// Downgrade the checks this project's format does not apply to.
+///
+/// **Downgrade, never drop.** A suspended check still ran and still says what it saw; it is
+/// reported as a note carrying the format's reason, so it stops blocking an export without
+/// stopping being visible. The alternative — removing the finding — makes a report that cannot
+/// be audited, and the whole reason formats exist is that the previous answer was
+/// `ignoreChecks` on every render, which silences everything including the codes nobody meant
+/// to relax.
+fn apply_format(project: &Project, findings: Vec<Finding>) -> Vec<Finding> {
+    let format = bay_project::format::resolve(project.settings.format.as_deref());
+    if format.suspends.is_empty() {
+        return findings;
+    }
+    findings
+        .into_iter()
+        .map(|mut finding| {
+            if finding.severity == Severity::Note {
+                return finding;
+            }
+            if let Some(why) = format.suspends(finding.code) {
+                finding.message = format!(
+                    "{} [not gating: this project is a {} — {}]",
+                    finding.message, format.name, why
+                );
+                finding.severity = Severity::Note;
+            }
+            finding
+        })
+        .collect()
 }
 
 /// Run the same pass against only the part of the timeline that will be delivered.
@@ -742,7 +779,25 @@ fn element_findings(project: &Project, scene: &Scene, skipped: &mut Vec<Skipped>
                 let Some(asset) = effect.asset.as_deref() else {
                     continue;
                 };
-                if !std::path::Path::new(asset).exists() {
+                // `asset` is two namespaces: a path, or `look:<id>` naming a grade this build
+                // generates itself. A built-in has no file and never will, so testing it with
+                // `exists` reported every graded clip as broken — and because a render is
+                // refused while an error stands, that turned the documented way to grade into
+                // one that could not be exported. The id is still worth checking: a look that
+                // does not exist renders ungraded, which is the failure this pass is for.
+                if let Some(id) = bay_project::look_id(asset) {
+                    if !bay_project::is_builtin_look(id) {
+                        findings.push(here(
+                            "missing-effect-asset",
+                            format!(
+                                "{:?} grades through the look {id:?}, which this build does not \
+                                 have — the clip renders ungraded. The looks are: {}",
+                                element.id(),
+                                bay_project::BUILTIN_LOOKS.join(", ")
+                            ),
+                        ));
+                    }
+                } else if !std::path::Path::new(asset).exists() {
                     findings.push(here(
                         "missing-effect-asset",
                         format!(
@@ -2047,6 +2102,87 @@ fn authored_moves(scene: &Scene) -> Vec<Move> {
     moves
 }
 
+/// The longest stretch of the timeline in which nothing visibly happens, and when it starts.
+///
+/// **What counts as happening.** An element arriving or leaving, and the *onset* of any animated
+/// segment whose travel clears the registry's smallest amplitude floor for that channel. Onsets
+/// rather than landings, because the onset is the frame the eye is drawn to; and the floor comes
+/// from [`moves::amplitude_floor`] rather than from a number invented here, so a check that
+/// demands events and a registry that defines what a move is cannot drift apart. That was the
+/// failure behind the `make-room` fix: two correct definitions, never compared.
+///
+/// **Why a gap and not a rate.** Events per second is an average, and an average is satisfied by
+/// a busy opening followed by a dead middle — which is the shape this is looking for. The
+/// longest silence is the thing the viewer actually experiences.
+///
+/// **Why this cannot be gamed cheaply.** A nudge below the ambient floor is not an event, and a
+/// nudge above it is a real move that `off-vocabulary-motion` will then name. The cheapest way
+/// to clear this check is to animate something, which is the point.
+fn longest_dead_stretch(scene: &Scene, end: f64) -> Option<(f64, f64)> {
+    if end <= 0.0 {
+        return None;
+    }
+    // Arrivals and departures straight off the elements, not from `stage_changes` — that is a
+    // *beat* detector, and it deliberately ignores anything that does not hold long enough to
+    // restructure the video. A card that appears for a second is not a beat and is certainly an
+    // event, which is the distinction this check turns on.
+    let mut events: Vec<f64> = Vec::new();
+    for (_, element) in picture_elements(scene) {
+        if !element.is_authored() || element.duration() <= MediaTime::ZERO {
+            continue;
+        }
+        events.push(element.start().to_seconds_f64());
+        events.push(element.end().to_seconds_f64());
+    }
+    for element in scene.authored_elements() {
+        let Some(animations) = element.animations() else {
+            continue;
+        };
+        let start = element.start().to_seconds_f64();
+        for (property, channel) in animations {
+            // The lowest bar the registry sets for "this channel did something" — an ambient
+            // move's floor. Opacity has no entry there (it may never lead a move) but a fade is
+            // plainly an event, so it gets the one number defined here: a quarter of the range,
+            // which is the least visible fade anybody authors on purpose.
+            let floor = match property.as_str() {
+                "opacity" => 0.25,
+                other => moves::amplitude_floor(moves::MoveKind::Ambient, other),
+            };
+            for pair in channel.keys.windows(2) {
+                let (from, to) = (&pair[0], &pair[1]);
+                if (to.value - from.value).abs() < floor || floor <= 0.0 {
+                    continue;
+                }
+                events.push(start + from.time.to_seconds_f64());
+            }
+        }
+    }
+    events.retain(|at| at.is_finite() && *at >= 0.0 && *at <= end);
+    events.push(0.0);
+    events.push(end);
+    events.sort_by(f64::total_cmp);
+    events
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0], pair[0]))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// How long the picture may hold with nothing arriving, landing or leaving.
+///
+/// **Derived from the corpus, not chosen.** Measured across the five fixtures, the longest dead
+/// stretch separates the reference explainers from the failures cleanly and in the right order:
+/// the two references hold 4.1 s and 6.0 s, and the three failed projects hold 7.2 s, 10.1 s and
+/// 39.3 s. 6.5 sits in that gap. A threshold picked from taste instead landed at 2.5 s, which
+/// fires on both references — the round-1 inversion exactly, a metric ranking the good video
+/// below the bad one.
+///
+/// **What this does not catch, stated so nobody assumes otherwise.** A film can put an event on
+/// screen every two seconds and still read as a slide deck, if every event is small and
+/// peripheral while the mass of the frame holds still. This counts events; it does not weigh
+/// them. The launch film that prompted the check measures 3.6 s here — better than either
+/// reference — and is the thing that looks static.
+pub const MAX_DEAD_SECONDS: f64 = 6.5;
+
 /// The moves in each sliding window that holds enough of them to have a vocabulary.
 ///
 /// **This is the shape that closes round 1's hole.** A global min/max over move lengths is
@@ -2111,6 +2247,22 @@ fn motion_findings(project: &Project, scene: &Scene, beats: &Beats) -> Vec<Findi
     // What survives is the same two questions asked per sliding window. A sprinkle rescues only
     // the window it is in, so the cheapest way to pass is to vary the motion where the motion is.
     let moves = authored_moves(scene);
+    let end = timeline_end(scene).to_seconds_f64();
+    if let Some((dead, at)) = longest_dead_stretch(scene, end)
+        && dead > MAX_DEAD_SECONDS
+    {
+        findings.push(
+            finding(
+                "sparse-events",
+                format!(
+                    "nothing arrives, lands or leaves for {dead:.1}s from {at:.1}s — the frame is \
+                     not frozen, but a drift the eye cannot time is not an event, and the shot \
+                     reads as a still held under the narration"
+                ),
+            )
+            .at(at),
+        );
+    }
     let seconds = PACING_WINDOW_FRAMES / fps;
     let windows = pacing_windows(&moves, timeline_end(scene).to_seconds_f64(), fps);
     let mostly = |count: usize| {
@@ -3197,6 +3349,14 @@ fn observe(frame: &Frame<'_>, plates: &mut Vec<Plate>, canvas: (f64, f64), at: f
         if !one.element.is_authored() {
             continue;
         }
+        // An outlined shape is not a plate. Both checks below are about a large FILL — one
+        // that reads as a slightly different background, or as a panel that failed to load —
+        // and a stroke draws a thin band on the boundary and nothing in the middle. Judging a
+        // border by the area it encloses reports the frame's furniture as a dead plate, which
+        // is how a correctly drawn panel comes back as a defect.
+        if shape.stroke.is_some() {
+            continue;
+        }
         let area = one.rect.area();
         if area < AGGREGATE_AREA {
             continue;
@@ -3653,6 +3813,7 @@ mod tests {
             line_height: 1.2,
             decorations: None,
             karaoke: None,
+            type_on: None,
             source: Default::default(),
             role: Default::default(),
         })
@@ -3668,6 +3829,8 @@ mod tests {
             fade_out: MediaTime::ZERO,
             shape: Default::default(),
             color: "#ffffff".into(),
+            gradient: None,
+            stroke: None,
             transform: Transform::default(),
             effects: Vec::new(),
             animations: Default::default(),
@@ -4450,6 +4613,48 @@ mod tests {
         assert!(has(&report, "missing-effect-asset"), "{:?}", codes(&report));
     }
 
+    /// A built-in look is not a file, and must not be reported as a missing one.
+    ///
+    /// `looks_list` offers six grades the machine generates itself; `effect_add` records one
+    /// as `look:<id>`. This pass used to test that string with `Path::exists`, so every clip
+    /// graded the documented way came back as "not on disk — the clip renders ungraded". A
+    /// render is refused while an error stands, so grading a timeline made it unexportable.
+    #[test]
+    fn a_built_in_look_is_not_a_missing_file() {
+        for id in bay_project::BUILTIN_LOOKS {
+            let mut element = title("t", "Hello", 96.0, Transform::default());
+            element.effects_mut().unwrap().push(bay_project::Effect {
+                id: "fx".into(),
+                effect_type: "lut".into(),
+                enabled: true,
+                params: Default::default(),
+                asset: Some(format!("{}{id}", bay_project::LOOK_PREFIX)),
+            });
+            let report = check(&project_with(vec![element]));
+            assert!(
+                !has(&report, "missing-effect-asset"),
+                "{id} is generated, not loaded: {:?}",
+                codes(&report)
+            );
+        }
+    }
+
+    /// A look that does not exist still renders ungraded, so that stays an error — the check
+    /// moved from "is there a file" to "is this a look", rather than being switched off.
+    #[test]
+    fn a_look_this_build_does_not_have_is_still_an_error() {
+        let mut element = title("t", "Hello", 96.0, Transform::default());
+        element.effects_mut().unwrap().push(bay_project::Effect {
+            id: "fx".into(),
+            effect_type: "lut".into(),
+            enabled: true,
+            params: Default::default(),
+            asset: Some("look:warm-flim".into()),
+        });
+        let report = check(&project_with(vec![element]));
+        assert!(has(&report, "missing-effect-asset"), "{:?}", codes(&report));
+    }
+
     #[test]
     fn a_silent_timeline_is_a_note_not_an_error() {
         let report = check(&project_with(vec![shape("a", 0.0, 2.0)]));
@@ -5034,6 +5239,55 @@ mod tests {
 
     /// The same plate lifted to 2.4:1 is a design element, and the layout rules then apply to
     /// it. Every escape from this check is a better video.
+    /// An outlined shape is not a plate, however large the area it encloses.
+    ///
+    /// `dead-plate` and `empty-container` are both about a large FILL — one that reads as a
+    /// slightly different background, or as a panel whose contents failed to load. A stroke
+    /// draws a band on the boundary and nothing inside it, so judging one by the area it
+    /// encloses reports the frame's own furniture as a defect: the interface panels a composed
+    /// film is built out of are outlines, and they came back as dead plates.
+    #[test]
+    fn an_outlined_shape_is_not_judged_as_a_fill() {
+        let filled = |stroke: Option<bay_project::Stroke>| {
+            let mut project = project_with(vec![shape("panel", 0.0, 4.0)]);
+            if let Some(Element::Shape(panel)) =
+                project.active_scene_mut().tracks.main.elements.first_mut()
+            {
+                panel.color = "#0E0E12".into();
+                panel.transform.scale = 0.9;
+                panel.transform.scale_x = 1.0;
+                panel.transform.scale_y = 0.7;
+                panel.stroke = stroke;
+            }
+            with_audio(&mut project, vec![sound("bed", 0.0, 4.0, 1.0)]);
+            check(&project)
+        };
+
+        let plate = filled(None);
+        assert!(
+            has(&plate, "dead-plate") || has(&plate, "empty-container"),
+            "a large low-contrast fill is the thing these checks are for: {:?}",
+            codes(&plate)
+        );
+
+        let outline = filled(Some(bay_project::Stroke {
+            color: "#0E0E12".into(),
+            width: 0.01,
+            dash: None,
+            gap: None,
+        }));
+        assert!(
+            !has(&outline, "dead-plate"),
+            "an outline encloses area but does not fill it: {:?}",
+            codes(&outline)
+        );
+        assert!(
+            !has(&outline, "empty-container"),
+            "and it is not a container that failed to load: {:?}",
+            codes(&outline)
+        );
+    }
+
     #[test]
     fn a_plate_that_can_be_seen_is_not_reported() {
         let mut project = project_with(vec![plate("panel", "#4A4A58", 0.9, 0.38, 10.0)]);
@@ -6114,6 +6368,116 @@ mod tests {
             "check took {elapsed:?} on a 66s timeline"
         );
         assert!(report.total > 0);
+    }
+
+    /// The registry's response move has to clear the amount of motion the checks read as a
+    /// response. It did not: `make-room` travelled 0.0198 of the canvas against a 0.02
+    /// threshold, so the one move whose entire purpose is to satisfy `no-response` could not,
+    /// and neither could it carry a seam for `broken-continuity`. Nothing reported this,
+    /// because each side was correct on its own — the registry against its own amplitude floor,
+    /// the check against its own definition. This is the assertion that they are the same
+    /// question.
+    #[test]
+    fn a_positional_response_clears_what_the_checks_ask_of_it() {
+        let make_room =
+            bay_project::moves::find("make-room").expect("make-room is in the registry");
+        let lead = make_room.lead_channel();
+        assert_eq!(lead.property, "y");
+        let travel = lead
+            .keys
+            .iter()
+            .filter_map(|key| match key.value {
+                bay_project::moves::KeyValue::Offset(offset) => Some(offset.abs()),
+                _ => None,
+            })
+            .fold(0.0_f32, f32::max);
+        assert!(
+            travel >= CARRIED_POSITION,
+            "make-room travels {travel} but a response has to move {CARRIED_POSITION} to count"
+        );
+    }
+
+    /// A shot that holds still under a spoken sentence is reported, and the number in the
+    /// message is the length of the hold.
+    #[test]
+    fn a_long_hold_with_nothing_happening_is_reported() {
+        let mut project = project_with(vec![shape("ground", 0.0, 20.0)]);
+        with_overlay(
+            &mut project,
+            vec![shape("early", 0.5, 1.0), shape("late", 18.0, 1.0)],
+        );
+        let report = check(&project);
+        assert!(has(&report, "sparse-events"), "{:?}", codes(&report));
+        // 1.5s to 18s is the hole; the message must name it rather than just complain.
+        assert!(
+            message(&report, "sparse-events").contains("16.5s"),
+            "{}",
+            message(&report, "sparse-events")
+        );
+    }
+
+    /// The check counts events at the amplitude the *registry* calls a move, not at one of its
+    /// own choosing. A drift below the ambient floor is invisible, and a check that accepted it
+    /// could be cleared by keyframing noise — the same shape of bug as `make-room` travelling
+    /// 0.0198 against a 0.02 threshold. This asserts the two numbers are one number.
+    ///
+    /// Measured on the gap itself rather than on whether the finding fires, because a project
+    /// short enough to have only one hold is a project where any move splits it and the check
+    /// goes quiet for the wrong reason.
+    #[test]
+    fn an_invisible_nudge_does_not_count_as_an_event() {
+        let floor = bay_project::moves::amplitude_floor(bay_project::moves::MoveKind::Ambient, "y");
+        let gap_after = |travel: f32| -> f64 {
+            let mut project = project_with(vec![shape("ground", 0.0, 20.0)]);
+            with_overlay(&mut project, vec![shape("held", 0.5, 19.0)]);
+            let scene = project.active_scene_mut();
+            let element = scene
+                .tracks
+                .overlay
+                .iter_mut()
+                .flat_map(|track| track.elements.iter_mut())
+                .find(|element| element.id() == "held")
+                .expect("the overlay shape");
+            let mut channel = AnimationChannel::default();
+            channel.upsert(seconds(9.0), 0.5);
+            channel.upsert(seconds(10.0), 0.5 + travel);
+            element
+                .animations_mut()
+                .expect("a shape animates")
+                .insert("y".into(), channel);
+            let scene = project.active_scene();
+            longest_dead_stretch(scene, timeline_end(scene).to_seconds_f64())
+                .expect("a timeline with a length has a longest gap")
+                .0
+        };
+
+        // Nothing at all: the hold runs from the arrival to the departure.
+        let untouched = {
+            let mut project = project_with(vec![shape("ground", 0.0, 20.0)]);
+            with_overlay(&mut project, vec![shape("held", 0.5, 19.0)]);
+            let scene = project.active_scene();
+            longest_dead_stretch(scene, timeline_end(scene).to_seconds_f64())
+                .expect("a longest gap")
+                .0
+        };
+        assert!(untouched > 18.0, "the empty case should hold {untouched}s");
+
+        // Just under the registry's floor: keys exist, the picture does not change, and the
+        // hold is exactly as long as it was.
+        let below = gap_after(floor * 0.9);
+        assert!(
+            (below - untouched).abs() < 0.01,
+            "a nudge below the registry's own floor changed the measured hold: \
+             {below}s against {untouched}s"
+        );
+
+        // Comfortably over it: a real move, and the hold is cut roughly in half.
+        let above = gap_after(floor * 4.0);
+        assert!(
+            above < untouched * 0.6,
+            "a move the registry would call a move has to break the hold: \
+             {above}s against {untouched}s"
+        );
     }
 
     #[test]

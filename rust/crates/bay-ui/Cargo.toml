@@ -13,6 +13,7 @@ path = "src/lib.rs"
 bay-speech = { path = "../bay-speech" }
 bay-provision = { path = "../bay-provision" }
 bay-paths = { path = "../bay-paths" }
+bay-settings = { path = "../bay-settings" }
 bay-jobs = { path = "../bay-jobs" }
 gpui = "0.2.2"
 image = "0.25"

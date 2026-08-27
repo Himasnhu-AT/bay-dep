@@ -78,4 +78,11 @@ pub struct ProjectSettings {
     /// Optional for backward compatibility: projects saved before the trust loop have no plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<PlanArtifact>,
+    /// What kind of video this is — see [`crate::format`].
+    ///
+    /// The id only, not the whole registry row, so the registry can gain a field without
+    /// rewriting every project on disk. `None` means the project never said, which resolves to
+    /// `general` and suspends nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }

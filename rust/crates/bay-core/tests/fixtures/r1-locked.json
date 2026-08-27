@@ -178,12 +178,12 @@
     {
       "id": "m-tweet",
       "name": "reply-screenshot.png",
-      "path": "/assets/r1/reply-screenshot.png"
+      "path": "media/reply-screenshot.png"
     },
     {
       "id": "m-demo",
       "name": "palmier-session.mp4",
-      "path": "/assets/r1/palmier-session.mp4",
+      "path": "media/palmier-session.mp4",
       "durationSeconds": 41.0,
       "width": 1920,
       "height": 1080
@@ -191,7 +191,7 @@
     {
       "id": "m-bed",
       "name": "bed-loop.wav",
-      "path": "/assets/r1/bed-loop.wav",
+      "path": "media/bed-loop.wav",
       "durationSeconds": 64.0,
       "loudness": {
         "peakDb": -1.0,

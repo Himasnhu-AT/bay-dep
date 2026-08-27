@@ -53,7 +53,10 @@ it never removes a system ffmpeg, Python, or user media.
 
 ## The loop
 
-1. **`project_create`** — canvas, and the **kit**. A vertical reel is portrait at 30; landscape is
+1. **`project_create`** — canvas, the **kit**, and the **format**. `formats_list` says what
+   bay knows and what declaring one changes: a format only ever relaxes checks, only ones it
+   names a reason for, and a relaxed check still runs and still reports — as a note carrying
+   that reason. Undeclared suspends nothing, which is the right answer when none of them fits. A vertical reel is portrait at 30; landscape is
    the other way up. The kit is committed to the project before anything is placed.
 2. **Write the beats before the elements.** `marker_add` every beat, the turn and the payoff.
    Beats are how `check` reads the piece and how the mix is judged. See
@@ -80,6 +83,8 @@ it never removes a system ffmpeg, Python, or user media.
    can land *on* the music. Read `confidence` before `bpm`, and `candidates` before you commit to
    a grid that has to end on the last beat.
 
+   **A recorded conversation is its own format** — see
+   [references/multicam-podcast.md](references/multicam-podcast.md) before cutting one.
    **`silence_detect`** finds the dead air in a recorded take — the first thing anyone does to an
    interview. Its threshold is measured off the material, not typed. `keepRanges` is the shape of
    the edit. Note that **`add_video` carries no audio**: the picture and the sound are separate
@@ -161,6 +166,12 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 - **Only transforms are animatable** (`opacity, scale, x, y, rotation, scaleX, scaleY`, and
   `volume` on audio). Colour, blur, letter-spacing and mask geometry are one-shot state changes,
   so plan the move around what is a channel.
+- **A dialogue edit ticks at every join until you smooth it.** Consecutive speech clips are
+  butt-joined, and a cut in the dialogue is not a cut in the room: the noise floor and the timbre
+  change between one sample and the next. There is no click to find, which is why it survives a
+  listen on speakers and not headphones. `audio_smooth` crossfades every seam, and `room_tone`
+  lays the room under the whole cut — the first fixes how fast you cross a join, the second what
+  the two sides sound like, and an edit that only got one of them still sounds wrong.
 - **Edit in place.** `element_trim`, `element_source`, `element_split`, `element_move`,
   `transform_set` and `text_update` all keep the id and the animation. Deleting and re-adding
   loses both, and the id is what continuity is measured on.
@@ -170,11 +181,15 @@ written claim, not a suppression: fixing is nearly always cheaper than justifyin
 | [references/structure.md](references/structure.md) | beats, roles, the hold, the turn, the landing |
 | [references/craft.md](references/craft.md) | what a move, a kit and an asset are FOR; audio; narration |
 | [references/archive-reel.md](references/archive-reel.md) | the **archive reel** — a named format: portrait, no voice, archival stills cut to a beat grid. Every number, and the six things that go wrong |
+| [references/product-film.md](references/product-film.md) | the **product film** — a named format: type, shapes and rebuilt interfaces on a flat canvas, cut to music. What the genre is made of, how to build each piece, and the six things it does that bay cannot |
+| [references/multicam-podcast.md](references/multicam-podcast.md) | the **multicam podcast** — a named format: two or three locked-off cameras on one conversation, a mic per speaker, an hour of it. Speaker attribution, switching rules, matching the cameras, and which of `check`'s complaints to believe |
 | [references/tools.md](references/tools.md) | the generated tool index |
 
 ## When NOT to use bay
 
 - **The deliverable is a web page, not a file.** bay emits MP4s.
 - **You need a browser to render something** — a live site, a DOM screenshot, a WebGL scene.
-- **You need per-character text animation, gradients, text stroke, or a group/parent transform.**
-  bay has none of these. Say so rather than approximating them with dozens of elements.
+- **You need per-character text animation, text stroke, or an animatable blur.** bay has none of
+  these. Say so rather than approximating them with dozens of elements. (Shape gradients, shape
+  strokes and dashes, and a group transform all *do* exist now — `gradientFrom`/`gradientTo`,
+  `strokeTone`/`dash`, and `group_create`.)

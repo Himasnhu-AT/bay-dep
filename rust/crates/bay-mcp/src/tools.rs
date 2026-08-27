@@ -62,6 +62,30 @@ fn required_text(value: &Value, key: &str) -> Result<String, ToolError> {
     text(value, key).ok_or_else(|| err(format!("missing required string field {key:?}")))
 }
 
+/// The typing spec, if the call asked for one.
+///
+/// A rate that is zero or negative is refused rather than clamped: it means the line never
+/// finishes arriving, and a title that silently never appears is the most expensive kind of
+/// wrong — it costs a render to find.
+fn type_on(value: &Value) -> Result<Option<bay_project::TypeOn>, ToolError> {
+    let Some(spec) = value.get("typeOn") else {
+        return Ok(None);
+    };
+    let Some(rate) = spec.get("charsPerSecond").and_then(|v| v.as_f64()) else {
+        return Err(err("typeOn needs charsPerSecond"));
+    };
+    if !rate.is_finite() || rate <= 0.0 {
+        return Err(err(
+            "typeOn.charsPerSecond must be greater than zero — at zero the line never finishes \
+             arriving and nothing is ever on screen",
+        ));
+    }
+    Ok(Some(bay_project::TypeOn {
+        chars_per_second: rate as f32,
+        caret: spec.get("caret").and_then(|v| v.as_bool()).unwrap_or(false),
+    }))
+}
+
 fn text_decorations(value: &Value) -> Option<TextDecorations> {
     let stroke = value.get("stroke").and_then(|entry| {
         Some(TextStroke {
@@ -128,6 +152,11 @@ fn visual(args: &Value, framing: Option<&Framing>) -> Result<VisualArgs, ToolErr
         scale_y: number(args, "scaleY", 1.0) as f32,
         anchor_x: number(args, "anchorX", f64::from(anchor_x)) as f32,
         anchor_y: number(args, "anchorY", f64::from(anchor_y)) as f32,
+        // Read here as well as in `transform_set`. A placement argument that is accepted and
+        // then dropped by `..Default` is the gradient bug again: the call succeeds, the picture
+        // is flat, and nothing says why until somebody looks at a frame.
+        tilt_x: number(args, "tiltX", 0.0) as f32,
+        tilt_y: number(args, "tiltY", 0.0) as f32,
         ..Transform::default()
     };
     Ok(VisualArgs {
@@ -249,6 +278,10 @@ fn visual_properties() -> Value {
             "description": "Vertical position of the element's anchor, as a fraction of canvas height (0 = top, 1 = bottom)." },
         "scale": { "type": "number", "default": 1.0,
             "description": "Size as a fraction of the canvas. 1.0 spans the full frame. For text this is the box the type is laid out in." },
+        "tiltX": { "type": "number", "default": 0,
+            "description": "Degrees of lean out of the screen about the horizontal axis — positive tips the top away, as CSS rotateX does, and the far edge foreshortens. This is depth, not rotation: use it to make a panel read as a screen standing in a room. 6-12 is a room; past 30 is a special effect. Foreshortening costs legibility, so tilt the panel, not the words on it." },
+        "tiltY": { "type": "number", "default": 0,
+            "description": "Degrees of lean about the vertical axis: positive turns the right edge away. Same scale as tiltX." },
         "scaleX": { "type": "number", "default": 1.0,
             "description": "Extra horizontal-only multiplier on top of `scale`. Animate this to grow a bar sideways." },
         "scaleY": { "type": "number", "default": 1.0,
@@ -358,7 +391,20 @@ fn caption_properties() -> Value {
                  the kit's lower-third framing, which clears the platform caption band." },
         "captionAlign": { "type": "string", "enum": ["left", "center", "right"],
             "description": "Defaults to whatever the kit's lower-third framing hangs off — left \
-                 on a grid kit, centred on a centred one." }
+                 on a grid kit, centred on a centred one." },
+        "speakerLabels": { "type": "object",
+            "description": "Display name per speaker id, e.g. {\"speaker-1\": \"JULIE\"}. The ids \
+                 are the ones `diarize` writes into the transcript. Use this whenever more than \
+                 one person talks in a clip: without it the captions say the words and lose who \
+                 said them, and a two-hander reads as one person contradicting themselves. The \
+                 name is written only on the FIRST caption after the floor changes — prefixing \
+                 every line eats the frame and stops being read after the second one." },
+        "speakerColors": { "type": "object",
+            "description": "Caption colour per speaker id, e.g. {\"speaker-1\": \"#RRGGBB\"}. This \
+                 is what carries who is talking on the lines that are not labelled, and it \
+                 spends none of the frame to do it. Two speakers want two colours that still \
+                 read apart at thumbnail size; past three, the labels are doing the work and \
+                 the colour is noise." }
     })
 }
 
@@ -593,6 +639,66 @@ fn silence_detect(studio: &Studio, args: &Value) -> Result<Value, ToolError> {
     Ok(value)
 }
 
+/// A shape's gradient and stroke, resolved from TONES against the committed kit.
+///
+/// Tones, not colours, for the same reason `tone` itself is: the kit is the only place a value
+/// comes from. Both stops are required together — one stop is a solid fill, which `tone`
+/// already gives you, and accepting a half-specified ramp would silently ignore it.
+fn shape_fill(
+    args: &Value,
+    kit: &bay_project::StyleKit,
+    role: bay_project::ElementRole,
+) -> Result<crate::studio::ShapeFill, ToolError> {
+    let tone_colour = |name: &str| -> Result<String, ToolError> {
+        Ok(kit.color(parse_tone(Some(name), role)?).to_string())
+    };
+    let gradient = match (
+        text(args, "gradientFrom").as_deref().map(str::to_string),
+        text(args, "gradientTo").as_deref().map(str::to_string),
+    ) {
+        (Some(from), Some(to)) => Some(bay_project::Gradient {
+            from: tone_colour(&from)?,
+            to: tone_colour(&to)?,
+            angle: number(args, "gradientAngle", 0.0) as f32,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(err(
+                "a gradient needs both gradientFrom and gradientTo — one stop is a solid fill, \
+                 which is what `tone` already gives you",
+            ));
+        }
+    };
+    // A stroke is a fraction of the SHORTER side, so half of it is already a solid shape with a
+    // hole the width of a hairline, and anything past that is a fill. Refused rather than
+    // drawn: a panel asked for as an outline and delivered as a slab is a call that reported
+    // success and produced the opposite picture, and it costs a render to notice.
+    if let Some(width) = args.get("strokeWidth").and_then(Value::as_f64)
+        && width >= 0.5
+    {
+        return Err(err(format!(
+            "strokeWidth {width} is a fraction of the shape's shorter side, so this is a filled \
+             shape rather than an outline — a border is normally 0.005 to 0.03. Leave strokeWidth \
+             out for a solid fill."
+        )));
+    }
+    let stroke = match args.get("strokeWidth").and_then(Value::as_f64) {
+        Some(width) if width > 0.0 => Some(bay_project::Stroke {
+            color: match text(args, "strokeTone") {
+                Some(name) => tone_colour(&name)?,
+                None => kit
+                    .color(parse_tone(args.get("tone").and_then(|v| v.as_str()), role)?)
+                    .to_string(),
+            },
+            width: width as f32,
+            dash: args.get("dash").and_then(Value::as_f64).map(|v| v as f32),
+            gap: args.get("gap").and_then(Value::as_f64).map(|v| v as f32),
+        }),
+        _ => None,
+    };
+    Ok(crate::studio::ShapeFill { gradient, stroke })
+}
+
 /// An imported `mediaId` or a bare `path`, for the tools that only read a file.
 fn source_path(studio: &Studio, args: &Value) -> Result<String, ToolError> {
     match text(args, "mediaId") {
@@ -646,7 +752,13 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 }
 
 /// Every tool the server advertises, in the order an author would use them.
-pub fn definitions() -> Vec<Value> {
+/// Every tool bay implements, before the user's MCP allow-list is applied.
+///
+/// [`definitions`] is what the wire sees; this is what exists. Split so the settings pane can
+/// list every tool with a switch beside it — a pane built from the filtered list could show a
+/// blocked tool only until you blocked it, at which point the row would vanish and there would
+/// be no way to switch it back on.
+pub fn all_definitions() -> Vec<Value> {
     vec![
         tool(
             "project_create",
@@ -664,7 +776,25 @@ pub fn definitions() -> Vec<Value> {
                     "name": { "type": "string", "default": "Untitled" },
                     "width": { "type": "integer", "default": 1080 },
                     "height": { "type": "integer", "default": 1920 },
-                    "fps": { "type": "integer", "default": 30 },
+                    "fps": { "type": "integer", "default": 30,
+                        "description": "Frame rate numerator. On its own this is the frame rate, \
+                             so 30 means 30." },
+                    "format": { "type": "string",
+                        "description": "What KIND of video this is — call formats_list to see \
+                             them. It only ever relaxes checks, and only ones it names a reason \
+                             for: a hard cut between two locked-off cameras shares no element, \
+                             so `broken-continuity` describes a composed film and not a \
+                             recorded conversation. A suspended check still runs and is still \
+                             reported, as a note carrying the reason, so it stops blocking an \
+                             export without stopping being visible. Leave it out if none of \
+                             them fits: undeclared suspends nothing." },
+                    "fpsDenominator": { "type": "integer", "default": 1,
+                        "description": "Frame rate denominator, for the broadcast rates that are \
+                             not whole numbers. 24000/1001 is 23.976, 30000/1001 is 29.97, \
+                             60000/1001 is 59.94. Footage shot at one of these must be edited at \
+                             it — rounding 23.976 to 24 conforms the cut, which drifts a frame \
+                             every 42 seconds and pulls the audio off the picture by the end of \
+                             an hour." },
                     "background": { "type": "string",
                         "description": "Canvas fill as #rrggbb. Defaults to the chosen kit's \
                              ground, which is what you want — a background picked apart from the \
@@ -712,6 +842,25 @@ pub fn definitions() -> Vec<Value> {
                     "description": "Family names to test, e.g. [\"Helvetica Neue\", \"Menlo\"]." }
             }),
             &["families"],
+        ),
+        tool(
+            "fonts_list",
+            "Every typeface installed on this machine.\n\n`fonts_check` answers \"is this one \
+             here?\", which needs a name already in mind. This answers \"what is there?\", which \
+             is the question when choosing a kit. Naming a family that is not installed is not \
+             refused at render time — the shaper drops it and substitutes another face, so the \
+             project comes out in a typeface nobody chose and nothing downstream can tell. \
+             Italic-only and condensed-only cuts are left out, because bay never sets style or \
+             stretch and so cannot reach them.",
+            json!({
+                "contains": { "type": "string",
+                    "description": "Case-insensitive substring filter on the family name." },
+                "weight": { "type": "integer",
+                    "description": "Only families that actually shape at this CSS weight — the \
+                         shaper's answer, not the database's. The weight a kit names is the one \
+                         that has to exist." }
+            }),
+            &[],
         ),
         tool(
             "media_import",
@@ -782,6 +931,14 @@ pub fn definitions() -> Vec<Value> {
                         "paddingY": { "type": "number", "default": 10 },
                         "radius": { "type": "number", "default": 12 }
                     } },
+                    "typeOn": { "type": "object",
+                        "description": "Reveal the line character by character from the element's start, the way a terminal does. For a shot that is ABOUT text arriving — a command, a payload, a log. Not for a headline: a title that types is a title the viewer finishes reading before it finishes appearing. The line must be on screen long enough to finish typing; check charsPerSecond against its length.",
+                        "properties": {
+                            "charsPerSecond": { "type": "number", "minimum": 1,
+                                "description": "Around 24 reads as a fast confident typist. Past 40 the eye stops resolving characters and it is a wipe with extra steps." },
+                            "caret": { "type": "boolean", "default": false,
+                                "description": "Draw a block caret at the leading edge while the line is still arriving." }
+                        }, "required": ["charsPerSecond"] },
                     "id": { "type": "string", "description": "Optional explicit element id, for animating it later. Ids of the form caption-<number> are reserved for narrate and the subtitle tools." }
                 }),
                 merge(
@@ -793,13 +950,38 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "add_shape",
-            "Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines. To make \
-             a bar chart, set anchorX to 0 and animate scaleX from 0 to its final value.\n\nThe \
-             fill comes from `tone` against the project's style kit — a data mark takes the \
-             accent, a plate takes the surface colour, which is the one that sits far enough \
-             above the ground to actually be seen.",
+            "Place a rectangle or ellipse: bars, rules, dots, panels, underlines, and the orbs \
+             and grounds a composed film is built out of. To make a bar chart, set anchorX to 0 \
+             and animate scaleX from 0 to its final value.\n\nThe fill comes from `tone` \
+             against the project's style kit — a data mark takes the accent, a plate takes the \
+             surface colour, which is the one that sits far enough above the ground to actually \
+             be seen. For a ramp instead of a flat fill, give `gradientFrom` and `gradientTo`: \
+             two more TONES, not colours, so the kit stays the only place a value comes from.",
             merge(
                 json!({
+                    "gradientFrom": { "type": "string",
+                        "description": "Tone at the start of a gradient ramp — ink, dim, accent, \
+                             accent2 or surface. Needs `gradientTo` as well; one stop is a solid \
+                             fill, which is what `tone` already gives you." },
+                    "gradientTo": { "type": "string",
+                        "description": "Tone at the end of the ramp." },
+                    "gradientAngle": { "type": "number", "default": 0,
+                        "description": "Direction of the ramp in degrees clockwise from \
+                             left-to-right, so 90 runs top to bottom." },
+                    "strokeWidth": { "type": "number",
+                        "description": "Draw the OUTLINE instead of the fill, this wide as a \
+                             fraction of the shape's shorter side. This is how a diagram gets \
+                             its connectors and a panel its border." },
+                    "strokeTone": { "type": "string",
+                        "description": "Tone for the outline. Defaults to the shape's own tone, \
+                             which is what an outlined version of the same mark should be." },
+                    "dash": { "type": "number",
+                        "description": "Break the outline into dashes this long, as a fraction \
+                             of the shape's LONGER side. Runs along that axis, which is what a \
+                             connector between two nodes is. Omit for a continuous line." },
+                    "gap": { "type": "number",
+                        "description": "Gap between dashes, same units. Defaults to the dash \
+                             length." },
                     "start": { "type": "number" },
                     "duration": { "type": "number" },
                     "shape": { "type": "string", "enum": ["rect", "ellipse"], "default": "rect" },
@@ -861,6 +1043,13 @@ pub fn definitions() -> Vec<Value> {
                     "description": "Constant playback speed with pitch-preserving time stretch." },
                 "role": { "type": "string", "enum": AudioRole::NAMES, "default": "bed",
                     "description": "What this sound is doing: \"speech\" is narration or dialogue (narrate sets this itself), \"bed\" is music under the picture, \"sfx\" is a one-off effect. The bed is what a duck is measured against, so a voice-over placed by hand should say so." },
+                "processDialogue": { "type": "boolean", "default": true,
+                    "description": "Whether speech gets bay's EQ, compressor and limiter. On by \
+                         default, because raw dialogue wants all three. Turn it off for audio \
+                         that arrives already mixed and levelled — a delivered mix run through \
+                         the chain a second time comes out quieter and flatter, and the \
+                         export's `loudness` flag cannot undo it, because the chain belongs to \
+                         the element rather than to the encode. Ignored unless role is speech." },
                 "id": { "type": "string" }
             }),
             &["mediaId", "start", "duration"],
@@ -1079,7 +1268,9 @@ pub fn definitions() -> Vec<Value> {
                 "scale": { "type": "number", "description": "Fraction of the canvas the element spans." },
                 "scaleX": { "type": "number" },
                 "scaleY": { "type": "number" },
-                "rotation": { "type": "number", "description": "Degrees." },
+                "rotation": { "type": "number", "description": "Degrees. Spins the element in the plane of the screen — every edge keeps its length." },
+                "tiltX": { "type": "number", "description": "Degrees of lean out of the screen about the horizontal axis: positive tips the top away from the eye, as CSS rotateX does, and the far edge foreshortens. This is depth, not rotation. 6-12 reads as a card standing in space; past 30 it is a special effect." },
+                "tiltY": { "type": "number", "description": "Degrees of lean about the vertical axis: positive turns the right edge away. Same scale as tiltX." },
                 "opacity": { "type": "number", "description": "0 is invisible, 1 is solid." },
                 "anchorX": { "type": "number", "description": "Which point of the layer sits at (x,y). 0.5 is its centre." },
                 "anchorY": { "type": "number" }
@@ -1121,7 +1312,14 @@ pub fn definitions() -> Vec<Value> {
                     "description": "Path to a .cube file, required when type is \"lut\". A LUT is a whole grade in one pass — the same look lands identically on every clip you attach it to, which is how a set of shots comes to look like one film. Checked when attached, so a bad path is an error here rather than a clip that quietly looks untouched." },
                 "params": {
                     "type": "object",
-                    "description": "Scalar parameters, e.g. {\"amount\": 0.4}. Effect-specific.",
+                    "description": "Scalar parameters. Every effect calls its parameter \
+                         `amount`, and the ranges are NOT interchangeable. `lut`: 0-1, how much \
+                         of the grade to blend in, so 0 leaves the clip untouched and 1 is the \
+                         full look. `brightness`, `contrast`, `saturation`: a multiplier where \
+                         1.0 is unchanged — 1.06 is a gentle lift and 0.9 pulls it back, so \
+                         0.06 is not a six percent adjustment but a ninety-four percent \
+                         removal, which on contrast flattens the whole frame to mid-grey. \
+                         `blur`: radius in pixels.",
                 },
                 "effectId": { "type": "string", "description": "Minted if omitted." }
             }),
@@ -1197,6 +1395,111 @@ pub fn definitions() -> Vec<Value> {
                 duck_properties(),
             ),
             &["bedId"],
+        ),
+        tool(
+            "formats_list",
+            "What kinds of video bay knows, what each is built out of, and which checks each \
+             one relaxes and why.\n\nThe gating checks were written against composed motion \
+             graphics, where a beat is an arrangement of elements and consecutive beats carry \
+             something across the seam. They are right for that and wrong for a recorded \
+             conversation, where every cut shares nothing by design — which used to mean \
+             `ignoreChecks` on every render, silencing every code including the ones nobody \
+             meant to relax. Declaring the format relaxes exactly the codes that do not \
+             describe it, each with a reason you can read and disagree with.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "audio_react",
+            "Drive an element's scale from how loud the sound is, moment to moment — the orb \
+             that pulses with the voice.\n\nIt samples the sound ONCE and writes ordinary \
+             keyframes, rather than adding a channel the renderer would have to re-derive every \
+             frame. So the result is a normal animation: editable, visible on the timeline, and \
+             identical in the preview and the export because there is nothing left to \
+             recompute. The window sampled is the element's own, mapped through wherever that \
+             audio actually sits, so an orb over the back half of a bed reacts to the back half \
+             of it.\n\nLevels are normalised against what the sound actually does rather than \
+             against full scale — speech peaking well below 0 dB would otherwise barely move \
+             it. `check` reports the result as off-vocabulary-motion, correctly: the move \
+             vocabulary has nothing for this, and a pulse driven by a voice is the one case \
+             where hand-keying is the point rather than a shortcut.",
+            json!({
+                "elementId": { "type": "string", "description": "The element to move." },
+                "mediaId": { "type": "string",
+                    "description": "The sound to read. Normally the voice or bed already on the \
+                         timeline." },
+                "channel": { "type": "string", "enum": ["scale", "scaleX", "scaleY", "opacity"],
+                    "default": "scale",
+                    "description": "What the sound moves. Scale is the orb; opacity is a glow." },
+                "depth": { "type": "number", "default": 0.08,
+                    "description": "How far it moves at the loudest moment, as a fraction of the \
+                         element's own value. Small: this is a pulse, and past about a fifth it \
+                         stops reading as breathing and starts reading as a bounce." },
+                "floorDb": { "type": "number", "default": -45,
+                    "description": "The level treated as silence. Raise it towards the speech \
+                         level to make the pulse react only to the loud parts." }
+            }),
+            &["elementId", "mediaId"],
+        ),
+        tool(
+            "room_tone",
+            "Lay the room itself under the whole cut, lifted from a pause in the \
+             recording.\n\nThe companion to audio_smooth, and the half of the problem a \
+             crossfade cannot solve: a crossfade fixes how FAST you cross a join, not what the \
+             two sides sound like. Two moments of one recording still differ in noise floor and \
+             timbre — about 18 dB in the worst band across a real edit — so at every cut the \
+             listener hears the background change even when the change is smooth. A continuous \
+             bed of the room's own tone masks it, because the background stops being something \
+             that changes at cuts and becomes something that is simply there.\n\nThe material \
+             is the recording's own silence: whichever pause is longest and sits closest to the \
+             measured noise floor, which is what makes it room tone rather than a clipped word \
+             or a breath. Nothing is synthesised and nothing is imported. Laid down as \
+             overlapping copies with crossfades, because a loop butt-joined to itself ticks for \
+             the same reason a dialogue edit does. Call it after the dialogue is placed.",
+            json!({
+                "mediaId": { "type": "string",
+                    "description": "The recording to lift the tone from — normally the same one \
+                         the dialogue was cut from, because it is the same room." },
+                "seconds": { "type": "number",
+                    "description": "How much timeline to cover. Defaults to all of it." },
+                "levelDb": { "type": "number", "default": -6,
+                    "description": "Level of the bed. The dialogue already carries the room, so \
+                         unity would lay a second copy of it over the first and raise the floor; \
+                         a few dB down fills the gaps without doubling. Raise it only if the \
+                         cuts are still audible." },
+                "crossfadeMs": { "type": "number", "default": 250,
+                    "description": "How long each copy takes to hand over to the next. Long \
+                         enough that the loop is not a rhythm — this is the one place a fade \
+                         should be slow." }
+            }),
+            &["mediaId"],
+        ),
+        tool(
+            "audio_smooth",
+            "Crossfade every place two sounds meet, so a dialogue edit stops ticking at its \
+             joins.\n\nA cut in the dialogue is not a cut in the ROOM. Butt two takes \
+             together and the noise floor, the reverb tail and the timbre change between one \
+             sample and the next. There is no click to find — nothing in the waveform is \
+             discontinuous — but the room appears to teleport, and it reads as a fault in the \
+             recording rather than as an edit. Measured across one such cut: 7.5 dB of level \
+             at one join, 20 dB of top end at another, instantly.\n\nThis overlaps each pair \
+             by a few tens of milliseconds and fades one down as the other comes up, extending \
+             the outgoing clip into the source it was cut from so the overlap is the room \
+             continuing rather than silence. Both sides move: summing a full-level outgoing \
+             with a fading-in incoming makes the overlap up to 6 dB LOUDER, which is why an \
+             audio crossfade is not a picture dissolve. Call it after cut_by_transcript, \
+             remove_silence_and_fillers, or any hand-built run of speech clips.",
+            json!({
+                "joinMs": { "type": "number", "default": 30,
+                    "description": "How long each crossfade is. Tens of milliseconds is a \
+                         smoothing, not a transition — long enough to hide the seam in the room \
+                         tone, short enough that no word is doubled. Shortened automatically \
+                         where the source runs out." },
+                "elementIds": { "type": "array", "items": { "type": "string" },
+                    "description": "Restrict to these audio clips. Omit for every one on the \
+                         timeline, which is what you usually want." }
+            }),
+            &[],
         ),
         tool(
             "fade_set",
@@ -2165,6 +2468,44 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
+/// The tools an agent may see, after the user's MCP allow-list.
+///
+/// A blocked tool is removed from `tools/list` as well as refused at the call. Leaving it
+/// listed would have an agent plan a whole job around a call that gets refused at the last
+/// step, which reads as bay breaking rather than bay declining.
+pub fn definitions() -> Vec<Value> {
+    definitions_with(&bay_settings::store::current().mcp)
+}
+
+/// [`definitions`], against an explicit policy.
+///
+/// The injectable form exists so the filtering can be tested without the test reading — or
+/// depending on — whatever the developer running it has switched off in their own settings.
+pub fn definitions_with(settings: &bay_settings::McpSettings) -> Vec<Value> {
+    all_definitions()
+        .into_iter()
+        .filter(|definition| {
+            definition
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| settings.allows(name))
+        })
+        .collect()
+}
+
+/// The names of every tool bay implements, for a settings pane that needs a row per tool.
+pub fn all_tool_names() -> Vec<String> {
+    all_definitions()
+        .iter()
+        .filter_map(|definition| {
+            definition
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 fn transcript_ranges(
     studio: &Studio,
     media_id: &str,
@@ -2229,17 +2570,29 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 .unwrap_or_else(|| KitChoice::Brief(text(args, "brief").unwrap_or(name.clone())));
             studio.project_create(
                 &name,
-                number(args, "width", 1080.0) as u32,
-                number(args, "height", 1920.0) as u32,
-                number(args, "fps", 30.0) as u32,
+                bay_project::CanvasSize {
+                    width: number(args, "width", 1080.0) as u32,
+                    height: number(args, "height", 1920.0) as u32,
+                },
+                bay_project::Fps {
+                    numerator: number(args, "fps", 30.0) as u32,
+                    denominator: number(args, "fpsDenominator", 1.0) as u32,
+                },
                 text(args, "background").as_deref(),
                 choice,
+                text(args, "format").as_deref(),
             )
         }
         "style_pick" => {
             studio.style_pick(&text(args, "brief").unwrap_or_default(), kit_choice(args)?)
         }
         "project_info" => studio.project_info(),
+        "fonts_list" => studio.fonts_list(
+            text(args, "contains").as_deref(),
+            args.get("weight")
+                .and_then(|v| v.as_u64())
+                .map(|w| w as u16),
+        ),
         "fonts_check" => {
             let families: Vec<String> = args
                 .get("families")
@@ -2499,15 +2852,30 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                         .and_then(|v| v.as_f64())
                         .map(|v| v as f32),
                     decorations: text_decorations(args),
+                    type_on: type_on(args)?,
                 },
                 visual(args, framing.as_ref())?,
             )
         }
         "add_shape" => {
             let shape = match args.get("shape").and_then(|v| v.as_str()).unwrap_or("rect") {
-                "rect" => ShapeKind::Rect {
-                    radius: number(args, "radius", 0.0) as f32,
-                },
+                "rect" => {
+                    // A radius is a fraction of the shorter side and the rasteriser clamps it to
+                    // 0.5, so anything larger silently becomes a pill. That is nearly always a
+                    // caller who meant pixels — and the difference between a 12 px corner and a
+                    // stadium is not subtle, so it is refused rather than clamped.
+                    let radius = number(args, "radius", 0.0);
+                    if radius > 0.5 {
+                        return Err(err(format!(
+                            "radius {radius} is a fraction of the shape's shorter side, where 0.5 \
+                             is already a fully rounded pill — a panel corner is usually 0.01 to \
+                             0.05. This is not a pixel value."
+                        )));
+                    }
+                    ShapeKind::Rect {
+                        radius: radius as f32,
+                    }
+                }
                 "ellipse" => ShapeKind::Ellipse,
                 other => return Err(err(format!("unknown shape {other:?} — rect or ellipse"))),
             };
@@ -2523,6 +2891,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 shape,
                 role,
                 parse_tone(args.get("tone").and_then(|v| v.as_str()), role)?,
+                shape_fill(args, &kit, role)?,
                 visual(args, framing.as_ref())?,
             )
         }
@@ -2557,6 +2926,30 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
                 visual,
             )
         }
+        "formats_list" => studio.formats_list(),
+        "audio_react" => studio.audio_react(
+            &required_text(args, "elementId")?,
+            &required_text(args, "mediaId")?,
+            &text(args, "channel").unwrap_or_else(|| "scale".into()),
+            number(args, "depth", 0.08),
+            number(args, "floorDb", -45.0),
+        ),
+        "room_tone" => studio.room_tone(
+            &required_text(args, "mediaId")?,
+            args.get("seconds").and_then(Value::as_f64),
+            number(args, "levelDb", -6.0),
+            number(args, "crossfadeMs", 250.0),
+        ),
+        "audio_smooth" => studio.audio_smooth(
+            number(args, "joinMs", 30.0),
+            args.get("elementIds")
+                .and_then(|v| v.as_array())
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_string))
+                        .collect()
+                }),
+        ),
         "add_audio" => studio.add_audio(
             text(args, "id"),
             required_text(args, "mediaId")?,
@@ -2568,6 +2961,9 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             // Only bay's own generators claim Tool.
             ElementSource::Author,
             parse_audio_role(args.get("role").and_then(|v| v.as_str()))?,
+            args.get("processDialogue")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
         ),
         // `animate` has no arm here on purpose. It used to have one, into a second headless
         // implementation that knew 8 of the 14 easings and refused `volume` outright; it now
@@ -2806,11 +3202,18 @@ fn subtitles_to_video(studio: &mut Studio, args: &Value) -> ToolResult {
     });
     studio.project_create(
         "Subtitles",
-        number(args, "width", 1080.0) as u32,
-        number(args, "height", 1920.0) as u32,
-        number(args, "fps", 30.0) as u32,
+        bay_project::CanvasSize {
+            width: number(args, "width", 1080.0) as u32,
+            height: number(args, "height", 1920.0) as u32,
+        },
+        bay_project::Fps {
+            numerator: number(args, "fps", 30.0) as u32,
+            denominator: number(args, "fpsDenominator", 1.0) as u32,
+        },
         text(args, "background").as_deref(),
         choice,
+        // Burned-in subtitles over a picture are a composed piece; nothing is relaxed.
+        None,
     )?;
 
     let style = caption_style_for(studio, args, "subtitles_to_video")?;

@@ -17,6 +17,7 @@ bay-text = { path = "../bay-text" }
 bay-speech = { path = "../bay-speech" }
 bay-listen = { path = "../bay-listen" }
 bay-provision = { path = "../bay-provision" }
+bay-settings = { path = "../bay-settings" }
 bay-stock = { path = "../bay-stock" }
 bay-gen = { path = "../bay-gen" }
 bay-vision = { path = "../bay-vision" }

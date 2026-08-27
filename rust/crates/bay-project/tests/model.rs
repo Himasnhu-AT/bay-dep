@@ -627,6 +627,7 @@ fn provenance_and_role_keep_their_wire_names() {
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Author,
         role: ElementRole::Hook,
     });
@@ -657,6 +658,8 @@ fn provenance_and_role_keep_their_wire_names() {
         fade_out: MediaTime::ZERO,
         shape: ShapeKind::Rect { radius: 0.0 },
         color: "#15151C".into(),
+        gradient: None,
+        stroke: None,
         transform: Default::default(),
         effects: Vec::new(),
         animations: Default::default(),
@@ -1096,6 +1099,7 @@ fn the_captions_bay_wrote_are_not_off_token_values() {
         line_height: 1.2,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Tool,
         role: bay_project::ElementRole::Caption,
     };
@@ -1154,4 +1158,166 @@ fn the_failed_project_is_full_of_off_token_values() {
         "every authored title names a family the kit does not"
     );
     assert!(colors > 50, "and five colours, none of them the kit's");
+}
+
+// --------------------------------------------------------------- sampled channels
+
+use bay_project::{
+    AnimationChannel, BlendMode, Easing, ElementSource, Keyframe, ShapeElement, ShapeKind, Stroke,
+};
+
+/// Two keys on a channel: `from` at zero, `to` one second in, travelled linearly so the value
+/// halfway along is the midpoint and the assertion needs no easing table.
+fn ramp(from: f32, to: f32) -> AnimationChannel {
+    AnimationChannel {
+        keys: vec![
+            Keyframe::new(MediaTime::ZERO, from),
+            Keyframe::new(secs(1.0), to),
+        ],
+        easing: Easing::Linear,
+    }
+}
+
+fn card(radius: f32, stroke: Option<Stroke>) -> ShapeElement {
+    ShapeElement {
+        id: "sh".into(),
+        name: "Card".into(),
+        start: MediaTime::ZERO,
+        duration: secs(2.0),
+        fade_in: MediaTime::ZERO,
+        fade_out: MediaTime::ZERO,
+        shape: ShapeKind::Rect { radius },
+        color: "#ffffff".into(),
+        gradient: None,
+        stroke,
+        transform: Default::default(),
+        effects: Vec::new(),
+        animations: Default::default(),
+        blend_mode: BlendMode::Normal,
+        mask: None,
+        source: ElementSource::Author,
+        role: Default::default(),
+    }
+}
+
+#[test]
+fn shape_radius_and_stroke_width_are_animatable() {
+    let mut shape = card(
+        0.0,
+        Some(Stroke {
+            color: "#000000".into(),
+            width: 0.0,
+            dash: None,
+            gap: None,
+        }),
+    );
+    shape
+        .animations
+        .insert("shape.radius".into(), ramp(0.0, 0.4));
+    shape
+        .animations
+        .insert("stroke.width".into(), ramp(0.0, 0.1));
+    let element = Element::Shape(shape);
+
+    let half = secs(0.5);
+    let ShapeKind::Rect { radius } = element.sampled_shape_kind(half).expect("a shape") else {
+        panic!("expected a rect");
+    };
+    assert!((radius - 0.2).abs() < 1e-4, "radius was {radius}");
+    let width = element.sampled_stroke(half).expect("a stroke").width;
+    assert!((width - 0.05).abs() < 1e-4, "stroke width was {width}");
+}
+
+/// A channel cannot conjure a stroke that is not there: width is only half of one, and the
+/// colour it would need is not a scalar.
+#[test]
+fn a_stroke_channel_on_a_shape_without_a_stroke_stays_none() {
+    let mut shape = card(0.0, None);
+    shape
+        .animations
+        .insert("stroke.width".into(), ramp(0.0, 0.1));
+    assert!(
+        Element::Shape(shape)
+            .sampled_stroke(MediaTime::ZERO)
+            .is_none()
+    );
+}
+
+#[test]
+fn font_size_is_animatable_and_falls_back_to_the_static_value() {
+    let project = Project::starter();
+    let Element::Text(base) = project.active_scene().tracks.main.elements[0].clone() else {
+        panic!("the starter title is text");
+    };
+    assert_eq!(
+        Element::Text(base.clone()).sampled_font_size(MediaTime::ZERO),
+        Some(base.font_size),
+        "with no channel the static size stands"
+    );
+
+    let mut animated = base.clone();
+    animated
+        .animations
+        .insert("fontSize".into(), ramp(20.0, 60.0));
+    let sampled = Element::Text(animated)
+        .sampled_font_size(secs(0.5))
+        .expect("a text element");
+    assert!((sampled - 40.0).abs() < 1e-4, "font size was {sampled}");
+}
+
+/// Ground truth for anything writing a project file by hand: what the wire format actually
+/// looks like. `cargo test -p bay-project --test model dump_starter_json -- --nocapture`
+#[test]
+fn dump_starter_json() {
+    if std::env::var("DUMP_PROJECT_JSON").is_err() {
+        return;
+    }
+    let project = Project::starter();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&project).expect("the project serializes")
+    );
+}
+
+/// Load a project file written by something outside this repo and report what it says.
+///
+/// Gated on an env var so it is inert in CI: it exists to prove an exporter's output is a
+/// project bay can actually open, which is a claim no amount of matching field names settles.
+/// `BAY_LOAD_PROJECT=/path/to.json cargo test -p bay-project --test model load_external -- --nocapture`
+#[test]
+fn load_external_project() {
+    let Ok(path) = std::env::var("BAY_LOAD_PROJECT") else {
+        return;
+    };
+    let raw = std::fs::read_to_string(&path).expect("the file is readable");
+    let project: Project = serde_json::from_str(&raw).expect("it deserializes as a Project");
+    let scene = project.active_scene();
+    let elements = &scene.tracks.main.elements;
+    let shadows = elements
+        .iter()
+        .filter(|e| e.effects().iter().any(|fx| fx.effect_type == "drop-shadow"))
+        .count();
+    let last = elements
+        .iter()
+        .map(|e| e.start().as_ticks() + e.duration().as_ticks())
+        .max()
+        .unwrap_or(0);
+    println!(
+        "LOADED name={:?} canvas={}x{} elements={} shadows={} end_ticks={} end_seconds={:.2}",
+        project.metadata.name,
+        project.settings.canvas.width,
+        project.settings.canvas.height,
+        elements.len(),
+        shadows,
+        last,
+        last as f64 / 120_000.0,
+    );
+
+    // Round-trip: what we read must be what we would write.
+    let again = serde_json::to_string(&project).expect("serializes");
+    let reparsed: Project = serde_json::from_str(&again).expect("re-reads");
+    assert_eq!(
+        project, reparsed,
+        "the project does not survive a round trip"
+    );
 }

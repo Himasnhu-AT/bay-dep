@@ -17,9 +17,68 @@ Companions: [`todo.pending.md`](todo.pending.md) (not built yet) ·
 | Agents | one owner of `:7333`, discoverable via `bay --agents`; conflicts name what holds it |
 | Build | `./build.sh` builds the one binary, `bay`; runtimes are the app's job, not the build's |
 | Skill | `.claude/skills/bay/` — an agent can drive the editor unassisted |
-| Tests | 967 passing, and the suite is deterministic |
+| Screens | launcher, settings (5 panes), sign-in and editor, over a headless `bay-settings` |
+| Tests | 1300 passing, and the suite is deterministic |
 
 ---
+
+## The design migration: a shell with four screens, and settings that control something
+
+**What it was.** bay opened on a list of project rows and went straight into one editor layout.
+There was no settings screen at all, so the things a settings screen would control had nowhere
+to live: which MCP tools an agent may call, which runtimes are installed, which providers have
+keys. The launcher could not answer "which of these twenty projects is waiting on the client?",
+because a project had nowhere to record that.
+
+**What it does now.** Four screens — launcher, settings, sign-in, editor — over new headless
+state:
+
+| | |
+|---|---|
+| `bay-settings` | account/session, providers, model routing, MCP access, compute. Atomic JSON at `settings.json`, with the snapshot the MCP server reads |
+| `bay-project::shelf` | a project's stage and tags, on the project itself, so filing survives a copy to another machine |
+| `bay-core::blocks` | the Text/Transitions/Effects/Audio palettes, as `Command`s — reachable from MCP, not just from a click |
+| `bay-settings::token` | the agent credential, moved out of `bay-mcp` so the settings pane can show and rotate the same file the server reads |
+
+The editor gained a five-tab rail (library + four block palettes), a resizable panel, a kind-
+grouped library, a transport under the picture it drives, and the razor and snap toggle the
+design calls for.
+
+**Three things are deliberately not what the mockup shows**, because bay cannot honestly do
+them:
+
+- **No account.** There is no bay.video in this repository. `AccountService` is the seam and
+  `Unconfigured` is the only implementation; pressing Sign in reports that, and the launcher —
+  not a login — is what the app opens on. A local editor that asks a server for permission to
+  open a local file is the thin client the manifesto rules out.
+- **No cloud compute or billing.** The option is drawn, because it is a real product decision
+  worth keeping on screen, and it cannot be selected: `choose` returns the reason instead.
+- **No thumbnails or hover-scrub.** bay caches no poster frame, and decoding one per tile on the
+  render path is what the decode rule forbids. Cards say "no render yet" rather than filling the
+  space with a gradient that reads as a still.
+
+The mockup's "Wipe" transition, "Sharpen"/"Vignette" effects and "Denoise" tool are absent for
+the same reason: the compositor has five shaders, and a tile that adds an effect nothing renders
+is a control discovered to be dead only after an export comes back unchanged.
+
+**What proves it.** 1300 tests pass under `./test.sh` (fmt + clippy `-D warnings` + the suite),
+up from 1145. The load-bearing ones:
+
+- `bay_mcp::server::policy_tests` — a blocked tool is refused *and* disappears from
+  `tools/list`, in both attached and headless modes.
+- `bay_mcp` `tool_vocabulary` — every tool the server serves has a switch in the pane and vice
+  versa, in both directions. Writing it found 18 tools that had none.
+- `bay_core::blocks::every_effect_tile_names_a_shader_the_engine_implements` — the tile catalog
+  cannot drift from what the compositor compiles.
+- `bay_settings::account::signing_in_is_refused_and_says_why` and
+  `compute::the_cloud_cannot_be_selected_while_there_is_no_cloud` — the two places bay could
+  start claiming something untrue.
+- `bay_ui::app_view::shell_tests::a_typed_key_is_stored_outside_the_settings_document` — a
+  provider key never reaches `settings.json`; `provider-keys.json` is `0600`.
+
+Verified live as well: with the app running, writing a block into `settings.json` made the
+attached server drop `snapshot` from a 95-tool listing and refuse the call with the reason,
+without a restart.
 
 ## Finding a picture by describing it
 

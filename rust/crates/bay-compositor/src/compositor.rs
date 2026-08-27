@@ -61,7 +61,9 @@ struct LayerUniformBuffer {
     /// whole thing.
     crop_offset: [f32; 2],
     crop_size: [f32; 2],
-    _padding: [f32; 2], // uniform buffer sizes must be a multiple of 16 bytes (56 → 64)
+    /// Tilt about the layer's own horizontal and vertical axes, in radians. This occupies what
+    /// used to be tail padding, so the buffer is still 64 bytes.
+    tilt: [f32; 2],
 }
 
 #[repr(C)]
@@ -612,7 +614,10 @@ impl Compositor {
                         flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
                         crop_offset: [layer.transform.crop.0, layer.transform.crop.1],
                         crop_size: [layer.transform.crop.2, layer.transform.crop.3],
-                        _padding: [0.0; 2],
+                        tilt: [
+                            layer.transform.tilt_x_degrees.to_radians(),
+                            layer.transform.tilt_y_degrees.to_radians(),
+                        ],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });

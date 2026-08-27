@@ -1,0 +1,19 @@
+[package]
+name = "bay-settings"
+version = "0.1.0"
+edition = "2021"
+
+# Everything the settings screen edits, as headless state. It lives outside the UI crate for the
+# workspace rule: the MCP server has to answer "which tools am I allowed to call?" and "where do
+# models run?" with no window open, so the answer cannot live in a view.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bay-paths = { path = "../bay-paths" }
+serde = { workspace = true }
+serde_json = "1"
+getrandom = "0.4.3"
+
+[dev-dependencies]
+tempfile = "3"

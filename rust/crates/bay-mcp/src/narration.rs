@@ -210,6 +210,8 @@ impl Studio {
             // ask "is the bed under the voice" without being told which clip the voice is.
             bay_project::ElementSource::Tool,
             bay_project::AudioRole::Speech,
+            // Kokoro's output is raw speech; the chain is exactly what it wants.
+            true,
         )?;
         if let Some(element_id) = audio.get("elementId").and_then(|value| value.as_str()) {
             self.set_audio_prosody(
@@ -291,11 +293,61 @@ impl Studio {
         if let Some(family) = &style.font_family {
             self.require_face(family, style.font_weight, "the captions")?;
         }
-        for cue in cues {
+        // Who is speaking over each cue, when anything has said. The floor belongs to whoever
+        // owns the most words inside the cue rather than to whoever owns the first: a cue that
+        // straddles a turn is mostly the new speaker, and labelling it with the old one puts the
+        // wrong name on the line that changes the subject.
+        let speakers: Vec<Option<String>> =
+            if style.speaker_labels.is_empty() && style.speaker_colors.is_empty() {
+                vec![None; cues.len()]
+            } else {
+                let word_speakers = self.projected_word_speakers();
+                let words = timed_words.map(|(words, _)| words).unwrap_or(&[]);
+                cues.iter()
+                    .map(|cue| {
+                        let mut tally: std::collections::BTreeMap<&str, usize> =
+                            std::collections::BTreeMap::new();
+                        for (index, word) in words.iter().enumerate() {
+                            if word.start < cue.end
+                                && word.end > cue.start
+                                && let Some(Some(speaker)) = word_speakers.get(index)
+                            {
+                                *tally.entry(speaker.as_str()).or_default() += 1;
+                            }
+                        }
+                        tally
+                            .into_iter()
+                            .max_by_key(|(_, count)| *count)
+                            .map(|(speaker, _)| speaker.to_string())
+                    })
+                    .collect()
+            };
+
+        let mut previous: Option<String> = None;
+        for (index, cue) in cues.iter().enumerate() {
             let id = format!("caption-{}", self.next_caption_id());
             let duration = cue.duration().max(0.05);
             let karaoke = karaoke_for_cue(cue, style, timed_words);
-            self.add_caption_element(&id, cue, style, duration, Some(karaoke))?;
+            let speaker = speakers.get(index).cloned().flatten();
+
+            // Name the speaker only where the floor changes. Every line prefixed is a line of
+            // frame spent on something the reader stopped reading after the second one.
+            let mut cue = cue.clone();
+            if speaker != previous
+                && let Some(label) = speaker
+                    .as_deref()
+                    .and_then(|speaker| style.speaker_labels.get(speaker))
+            {
+                cue.text = format!("{label}: {}", cue.text);
+            }
+            let colour = speaker
+                .as_deref()
+                .and_then(|speaker| style.speaker_colors.get(speaker))
+                .cloned();
+            if speaker.is_some() {
+                previous = speaker;
+            }
+            self.add_caption_element(&id, &cue, style, duration, Some(karaoke), colour)?;
         }
         Ok(cues.len())
     }
@@ -331,6 +383,50 @@ impl Studio {
     /// start. A word survives only when its complete half-open source interval belongs to a
     /// placed clip. This both drops words from removed regions and prevents a word straddling a
     /// cut boundary from being presented as fully audible.
+    /// The speaker of every projected word, in the same order — see
+    /// [`Self::projected_transcript_words`]. Separate so the word timing, which every caption
+    /// path needs, does not have to grow a type only the speaker-aware one reads.
+    fn projected_word_speakers(&self) -> Vec<Option<String>> {
+        let project = self.project();
+        let mut projected: Vec<(f64, Option<String>)> = Vec::new();
+        for element in project.active_scene().elements() {
+            let Element::Audio(audio) = element else {
+                continue;
+            };
+            if audio.role != bay_project::AudioRole::Speech || audio.speed <= 0.0 {
+                continue;
+            }
+            let Some(transcript) = project
+                .media
+                .iter()
+                .find(|asset| asset.id == audio.media_id)
+                .and_then(|asset| asset.transcript.as_ref())
+            else {
+                continue;
+            };
+            let speed = f64::from(audio.speed);
+            let source_start = audio.trim_start.to_seconds_f64();
+            let source_end = source_start + audio.duration.to_seconds_f64() * speed;
+            let timeline_start = audio.start.to_seconds_f64();
+            projected.extend(
+                transcript
+                    .words
+                    .iter()
+                    .filter(|word| {
+                        word.start_seconds >= source_start && word.end_seconds <= source_end
+                    })
+                    .map(|word| {
+                        (
+                            timeline_start + (word.start_seconds - source_start) / speed,
+                            word.speaker.clone(),
+                        )
+                    }),
+            );
+        }
+        projected.sort_by(|left, right| left.0.total_cmp(&right.0));
+        projected.into_iter().map(|(_, speaker)| speaker).collect()
+    }
+
     fn projected_transcript_words(&self) -> Option<Vec<bay_speech::WordSpan>> {
         let project = self.project();
         let mut has_word_timing = false;

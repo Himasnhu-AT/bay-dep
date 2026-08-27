@@ -136,6 +136,7 @@ fn text_element(
         line_height: 1.15,
         decorations: None,
         karaoke: None,
+        type_on: None,
         source: ElementSource::Author,
         role,
     })
@@ -158,6 +159,8 @@ fn bar(
         fade_out: secs(0.2),
         shape: ShapeKind::Rect { radius: 0.0 },
         color: color.into(),
+        gradient: None,
+        stroke: None,
         transform,
         effects: Vec::new(),
         animations: Default::default(),
