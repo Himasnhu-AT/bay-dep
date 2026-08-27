@@ -118,6 +118,45 @@ fn effect_groups(
                         lut: None,
                     }])
                 }
+                // Three-way colour balance. Each wheel is three channel scalars plus its
+                // master, flat in `params` for the same reason the shadow's colour is —
+                // `params` is a map of `f32`, so a flat scalar is the only shape an
+                // `effect.<id>.<param>` animation channel can reach. Warming the highlights
+                // over a shot is a keyframe, not a feature.
+                //
+                // Each wheel falls back to *its own* neutral rather than to zero: a partially
+                // written effect grades with the wheels it was given and leaves the rest at
+                // rest, instead of multiplying the frame to black through a gain of 0.
+                "lift-gamma-gain" => {
+                    let wheel = |prefix: &str, neutral: f32| {
+                        let param = |suffix: &str| {
+                            effect
+                                .params
+                                .get(&format!("{prefix}{suffix}"))
+                                .copied()
+                                .unwrap_or(neutral)
+                        };
+                        EffectUniformValueDescriptor::Vector(vec![
+                            param("R"),
+                            param("G"),
+                            param("B"),
+                            param("Master"),
+                        ])
+                    };
+                    Some(vec![EffectPassDescriptor {
+                        shader: "lift-gamma-gain".to_string(),
+                        uniforms: [
+                            ("u_lift".to_string(), wheel("lift", 0.0)),
+                            ("u_gamma".to_string(), wheel("gamma", 1.0)),
+                            ("u_gain".to_string(), wheel("gain", 1.0)),
+                            // As on `lut`, and unlike the colour adjustments: how much of the
+                            // grade to apply, so 1.0 is the full balance.
+                            ("u_amount".to_string(), number(amount.unwrap_or(1.0))),
+                        ]
+                        .into(),
+                        lut: None,
+                    }])
+                }
                 _ => None,
             }
         })
