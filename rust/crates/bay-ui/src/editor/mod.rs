@@ -249,20 +249,6 @@ pub fn legacy_project_path() -> std::path::PathBuf {
         .join("bay-project.json")
 }
 
-/// Where "Export Frame" writes the composited still.
-fn export_frame_path() -> std::path::PathBuf {
-    bay_paths::output_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("bay-frame.png")
-}
-
-/// Where "Export Video" writes the encoded timeline — somewhere the user will actually find
-/// it, not the current working directory (which on a double-clicked app is anyone's guess).
-fn export_video_path() -> std::path::PathBuf {
-    bay_paths::output_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("bay-export.mp4")
-}
 /// What bay could install but has not, as toolbar offers.
 ///
 /// A component already satisfied by something the user installed themselves — a Homebrew
@@ -428,6 +414,13 @@ pub struct EditorView {
     /// why the playhead, the preview and its atlas bookkeeping, the audio output, the waveform
     /// cache and the undo history all survive a page switch without a line of code to carry them.
     page: Page,
+    /// The Deliver page's render settings and range.
+    ///
+    /// The *value* is `bay_agent::deliver::DeliverSettings`, which is headless on purpose:
+    /// `pages.md` rule 5 says per-page state is a value type, and rule 4 says a behaviour a
+    /// headless test cannot reach is in the wrong crate. What this holds is a form; what it
+    /// produces is arguments for the same `render` tool an agent calls.
+    deliver: bay_agent::deliver::DeliverSettings,
     /// Each page's own zoom and scroll, remembered while you are elsewhere.
     ///
     /// Keyed by page, because a whole-programme overview and a frame-accurate detail view are
@@ -435,6 +428,13 @@ pub struct EditorView {
     /// right. The page currently showing reads [`Self::timeline`] instead; this is where the
     /// others wait.
     page_timelines: std::collections::BTreeMap<Page, crate::geometry::TimelineState>,
+    /// The Media page's own state: what is selected in the pool, how the pool is drawn and
+    /// filtered, and which of its two panels are open.
+    ///
+    /// A value type living beside its page, per `pages.md` rule 5 — the same shape
+    /// [`Self::page_timelines`] uses, and for the same reason: state that looks like view state
+    /// and is not is how one field ends up serving two surfaces that disagree about it.
+    media_page: media::MediaPageState,
 }
 
 impl crate::lab::LabHost for EditorView {
@@ -499,7 +499,9 @@ impl EditorView {
             collapsed_folders: std::collections::BTreeSet::new(),
             lab: crate::lab::enabled().then(crate::lab::Lab::default),
             page: Page::default(),
+            deliver: bay_agent::deliver::DeliverSettings::default(),
             page_timelines: std::collections::BTreeMap::new(),
+            media_page: media::MediaPageState::default(),
         }
     }
 
