@@ -23,6 +23,7 @@ use bay_preview::{CollectedFrame, PreviewRenderer};
 
 use crate::controls::{self, ValueDrag, WidgetGesture, WidgetHost};
 use crate::drag::{Drag, WidgetState};
+use crate::page::{BarLayout, Page};
 use crate::view_model::MediaFolder;
 use crate::widgets::{self, text as shared_text};
 
@@ -139,6 +140,12 @@ gpui::actions!(
         SelectTool,
         RazorTool,
         ToggleSnap,
+        ShowMedia,
+        ShowCut,
+        ShowMotion,
+        ShowColor,
+        ShowAudio,
+        ShowDeliver,
     ]
 );
 
@@ -172,6 +179,15 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("v", SelectTool, editor),
         KeyBinding::new("c", RazorTool, editor),
         KeyBinding::new("n", ToggleSnap, editor),
+        // Shift+2..7, which is what Resolve uses, and shifted because the unmodified digits are
+        // the obvious home for a future "select track N". Bound in the "Editor" context like
+        // everything else here, so they do not fire while a text field is open.
+        KeyBinding::new("shift-2", ShowMedia, editor),
+        KeyBinding::new("shift-3", ShowCut, editor),
+        KeyBinding::new("shift-4", ShowMotion, editor),
+        KeyBinding::new("shift-5", ShowColor, editor),
+        KeyBinding::new("shift-6", ShowAudio, editor),
+        KeyBinding::new("shift-7", ShowDeliver, editor),
     ]
 }
 
@@ -330,10 +346,11 @@ pub struct EditorView {
     needs_focus: bool,
     /// The one gesture in flight, and the one popover open. See [`crate::drag`].
     widgets: WidgetState<EditorDrag>,
-    pixels_per_second: f32,
-    /// Horizontal scroll of the timeline, in px. One offset for every lane and the ruler: they
-    /// are reading the same time axis, so they scroll as one or they lie about where a clip is.
-    scroll_x: f32,
+    /// The zoom and scroll of the timeline on the page currently showing.
+    ///
+    /// One *value*, not two fields — see [`crate::geometry::TimelineState`]. The pages that are
+    /// not showing keep theirs in [`Self::page_timelines`].
+    timeline: crate::geometry::TimelineState,
     /// GPU compositor preview (None if no adapter); the rendered image + a change signature.
     preview: Option<PreviewRenderer>,
     preview_image: Option<Arc<RenderImage>>,
@@ -388,6 +405,19 @@ pub struct EditorView {
     /// The widget and drawing spike panel. `Some` only when `BAY_UI_LAB=1` is set, so with the
     /// variable unset none of it is constructed and none of it is drawn.
     lab: Option<crate::lab::Lab>,
+    /// Which of the six pages is showing.
+    ///
+    /// A page is a *method* on this struct, not its own GPUI view — see [`crate::page`]. That is
+    /// why the playhead, the preview and its atlas bookkeeping, the audio output, the waveform
+    /// cache and the undo history all survive a page switch without a line of code to carry them.
+    page: Page,
+    /// Each page's own zoom and scroll, remembered while you are elsewhere.
+    ///
+    /// Keyed by page, because a whole-programme overview and a frame-accurate detail view are
+    /// different questions about the same film and answering both with one zoom means neither is
+    /// right. The page currently showing reads [`Self::timeline`] instead; this is where the
+    /// others wait.
+    page_timelines: std::collections::BTreeMap<Page, crate::geometry::TimelineState>,
 }
 
 impl crate::lab::LabHost for EditorView {
@@ -430,8 +460,7 @@ impl EditorView {
             focus_handle,
             needs_focus: true,
             widgets: WidgetState::new(),
-            pixels_per_second: DEFAULT_PIXELS_PER_SECOND,
-            scroll_x: 0.0,
+            timeline: crate::geometry::TimelineState::default(),
             preview,
             preview_image: None,
             retired_images: crate::draw::RetiredImages::new(),
@@ -452,7 +481,29 @@ impl EditorView {
             media_width: DEFAULT_PANEL_WIDTH,
             collapsed_folders: std::collections::BTreeSet::new(),
             lab: crate::lab::enabled().then(crate::lab::Lab::default),
+            page: Page::default(),
+            page_timelines: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// Switch pages, parking the timeline this page was using and picking up the next one's.
+    ///
+    /// The playhead is deliberately *not* touched. `pages.md`: the global playhead surviving a
+    /// page switch is the single behaviour that makes six pages feel like one application rather
+    /// than six tools.
+    fn show_page(&mut self, page: Page) {
+        if self.page == page {
+            return;
+        }
+        self.page_timelines.insert(self.page, self.timeline);
+        self.timeline = self
+            .page_timelines
+            .get(&page)
+            .copied()
+            .unwrap_or(self.timeline);
+        self.page = page;
+        // A gesture that began on the page being left has nothing to finish onto.
+        self.widgets.cancel();
     }
 
     /// Start installing `component`, and follow it in the status line.
@@ -1049,7 +1100,7 @@ impl EditorView {
         let (snapped, did_snap) = crate::geometry::snap_time(
             MediaTime::from_ticks(moving_edge),
             &targets,
-            self.pixels_per_second,
+            self.timeline.pixels_per_second(),
         );
         if !did_snap {
             return delta_px;
@@ -1073,7 +1124,8 @@ impl EditorView {
     /// drop point.
     fn finish_drag(&mut self, drag: BlockDrag, delta_px: f32) {
         let delta_px = self.snapped_delta_px(&drag, delta_px);
-        let delta_ticks = (delta_px / self.pixels_per_second * TICKS_PER_SECOND as f32) as i64;
+        let delta_ticks =
+            (delta_px / self.timeline.pixels_per_second() * TICKS_PER_SECOND as f32) as i64;
         if delta_ticks == 0 {
             return;
         }
@@ -1739,11 +1791,7 @@ impl EditorView {
     /// The px ↔ time mapping the whole timeline shares — lanes, ruler, playhead and scrub. One
     /// source, so a clip block and the playhead can't disagree about where a second is.
     fn geometry(&self) -> TimelineGeometry {
-        TimelineGeometry::new(
-            self.pixels_per_second,
-            self.scroll_x,
-            self.editor.project().settings.fps,
-        )
+        self.timeline.geometry(self.editor.project().settings.fps)
     }
 
     /// Width of one lane: the timeline spans the window, and the lanes take what the track
@@ -1774,7 +1822,10 @@ impl EditorView {
     /// Scroll the lanes horizontally by a wheel/trackpad delta, clamped to the content.
     fn scroll_by(&mut self, delta_x: f32, lane_width: f32) {
         let content = self.content_width(lane_width);
-        self.scroll_x = crate::geometry::clamp_scroll(self.scroll_x - delta_x, content, lane_width);
+        let wanted = self.timeline.scroll_x() - delta_x;
+        self.timeline = self
+            .timeline
+            .with_scroll_x(crate::geometry::clamp_scroll(wanted, content, lane_width));
     }
 
     /// Zoom about a fixed point, keeping the time under `anchor_x` on the same pixel. Zooming
@@ -1783,10 +1834,13 @@ impl EditorView {
         let zoomed = self
             .geometry()
             .zoom_at(anchor_x, factor, MIN_ZOOM, MAX_ZOOM);
-        self.pixels_per_second = zoomed.pixels_per_second();
-        self.scroll_x = zoomed.scroll_x();
+        self.timeline = crate::geometry::TimelineState::from_geometry(zoomed);
         let content = self.content_width(lane_width);
-        self.scroll_x = crate::geometry::clamp_scroll(self.scroll_x, content, lane_width);
+        self.timeline = self.timeline.with_scroll_x(crate::geometry::clamp_scroll(
+            self.timeline.scroll_x(),
+            content,
+            lane_width,
+        ));
     }
 
     /// Keep the playhead in view while the transport runs. Without this, playback walks off the
@@ -1806,8 +1860,11 @@ impl EditorView {
             .with_scroll_x(0.0)
             .ticks_to_px(self.editor.playhead());
         let content = self.content_width(lane_width);
-        self.scroll_x =
-            crate::geometry::clamp_scroll(absolute - lane_width * 0.2, content, lane_width);
+        self.timeline = self.timeline.with_scroll_x(crate::geometry::clamp_scroll(
+            absolute - lane_width * 0.2,
+            content,
+            lane_width,
+        ));
     }
 
     /// Where the playhead sits inside the lane, clamped so a zoom anchored on it stays on
@@ -3472,7 +3529,7 @@ impl EditorView {
                             .text_color(rgb(theme::MUTED))
                             .child(shared_text(format!(
                                 "{} px/s",
-                                self.pixels_per_second.round() as i64
+                                self.timeline.pixels_per_second().round() as i64
                             ))),
                     )
                     .child(self.transport_button("zoom-in", "+", cx, move |this| {
@@ -3513,8 +3570,10 @@ impl EditorView {
         if duration <= 0.0 {
             return;
         }
-        self.pixels_per_second = ((lane_width - 20.0) / duration).clamp(MIN_ZOOM, MAX_ZOOM);
-        self.scroll_x = 0.0;
+        self.timeline = crate::geometry::TimelineState::new(
+            ((lane_width - 20.0) / duration).clamp(MIN_ZOOM, MAX_ZOOM),
+            0.0,
+        );
     }
 
     fn timeline(&self, vm: &EditorViewModel, lane_width: f32, cx: &mut Context<Self>) -> Div {
@@ -3799,7 +3858,8 @@ impl EditorView {
             // carries the scroll offset; the width is a difference, so it does not.
             let base_left = geometry.seconds_to_px(block.start_seconds);
             let base_width =
-                (block.duration_seconds as f32 * self.pixels_per_second).max(MIN_BLOCK_WIDTH);
+                (block.duration_seconds as f32 * self.timeline.pixels_per_second())
+                    .max(MIN_BLOCK_WIDTH);
             let (mut left, mut width) = (base_left, base_width);
             if let Some((drag, delta)) = self.block_drag() {
                 // The dragged clip shows the snapped position; the rest of the selection moves
@@ -4006,9 +4066,240 @@ impl EditorView {
     }
 }
 
+/// Width of one right-hand icon button, and the inset the flanking clusters sit at.
+const BAR_ICON: f32 = 27.0;
+const BAR_INSET: f32 = 16.0;
+/// Thickness of the active page's underline.
+const BAR_UNDERLINE: f32 = 3.0;
+
+impl EditorView {
+    /// The page bar: wordmark, six centred pages, and the two controls that leave the project.
+    ///
+    /// **Not `deferred`.** It is the last child of a flex column, so it paints last anyway, and a
+    /// deferred subtree can never contain a `Select` — GPUI aborts on `defer_draw` during
+    /// deferred drawing. Later pages will want selects in here.
+    fn page_bar(&self, window_width: f32, cx: &mut Context<Self>) -> Div {
+        let layout = BarLayout::for_width(window_width);
+
+        let mut tabs = div().flex().flex_row().flex_none();
+        for page in Page::ALL {
+            tabs = tabs.child(self.page_tab(page, layout, cx));
+        }
+
+        // `1fr auto 1fr`, which is what the approved prototype's grid is. Equal grow on both
+        // flanks puts the six tabs on the *window's* midline whatever the clusters weigh —
+        // `pages.md` is explicit that they are centred on the window, not on the gap between
+        // the clusters. Done with flex rather than an absolute overlay because an overlay
+        // spanning the bar would sit over the two buttons on the right.
+        let left = div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .pl(px(BAR_INSET))
+            .overflow_hidden()
+            .children(layout.show_wordmark.then(|| {
+                // A signature, not a menu. It anchors the left edge so the centred group reads
+                // as centred, and it is the first thing given up when the window narrows.
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(rgb(theme::FAINT))
+                    .child("bay")
+            }));
+
+        let right = div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_end()
+            .gap(px(6.0))
+            .pr(px(BAR_INSET))
+            .child(self.bar_icon("bar-library", "⌂", "Project library", cx, |this, cx| {
+                cx.emit(EditorViewEvent::CloseRequested);
+                let _ = this;
+            }))
+            .child(self.bar_icon("bar-settings", "⚙", "Settings", cx, |this, _cx| {
+                this.status = Some(
+                    "Settings live on the project list for now — ‹ Projects, then Settings."
+                        .to_string(),
+                );
+            }));
+
+        div()
+            .h(px(crate::page::BAR_HEIGHT))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .bg(rgb(theme::PANEL))
+            .border_t_1()
+            .border_color(rgb(theme::BORDER_SOFT))
+            .child(left)
+            .child(tabs)
+            .child(right)
+    }
+
+    /// One page button: glyph over label, and — when it is the active one — a red underline on
+    /// the bar's bottom edge.
+    ///
+    /// The underline is an absolutely positioned strip rather than a bottom border, so it sits on
+    /// the *bar's* edge rather than the button's content box, and so its thickness does not
+    /// change the button's height and reflow the row.
+    fn page_tab(&self, page: Page, layout: BarLayout, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let on = self.page == page;
+        let mut tab = div()
+            .id(("page-tab", page.index()))
+            .relative()
+            .w(px(layout.tab_width))
+            .h_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(4.0))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(theme::HOVER)))
+            .child(
+                div()
+                    .text_color(rgb(if on { theme::EMPHASIS } else { theme::MUTED }))
+                    .child(page.glyph()),
+            );
+        if layout.show_labels {
+            tab = tab.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(if on { theme::EMPHASIS } else { theme::MUTED }))
+                    .child(page.label()),
+            );
+        }
+        if on {
+            // It cuts, never animates between positions — because the page beneath it cuts too.
+            tab = tab.child(
+                div()
+                    .absolute()
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .bottom(px(0.0))
+                    .h(px(BAR_UNDERLINE))
+                    .bg(rgb(theme::RECORD)),
+            );
+        }
+        tab.on_click(cx.listener(move |this, _event, _window, cx| {
+            this.show_page(page);
+            cx.notify();
+        }))
+    }
+
+    /// A small square button in the bar's right-hand cluster.
+    fn bar_icon(
+        &self,
+        id: &'static str,
+        glyph: &'static str,
+        tooltip: &'static str,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut EditorView, &mut Context<EditorView>) + 'static,
+    ) -> gpui::Stateful<Div> {
+        let _ = tooltip;
+        widgets::pressable(
+            widgets::ButtonKind::Normal,
+            widgets::button_face(widgets::ButtonKind::Normal, true)
+                .id(id)
+                .w(px(BAR_ICON))
+                .h(px(24.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
+                .child(glyph),
+        )
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            action(this, cx);
+            cx.notify();
+        }))
+    }
+
+    /// The editor as it has always been: toolbar, panels, preview, transport, scenes, timeline.
+    ///
+    /// Moved here **verbatim** from `render`. This is the Cut page — the one page that exists —
+    /// and lifting it out unchanged is what makes the page switch a routing change rather than a
+    /// rewrite of the thing that already works.
+    fn edit_page(&self, vm: &EditorViewModel, lane_width: f32, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(self.toolbar(vm, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .child(self.panel_rail(cx))
+                    .child(self.left_panel(vm, cx))
+                    .child(
+                        // Preview and transport are one column: the transport belongs under the
+                        // picture it drives, not buried in the timeline header where it used to
+                        // sit half a screen away from the frame it is scrubbing.
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(self.preview(vm))
+                            .child(self.transport(vm, lane_width, cx)),
+                    )
+                    .child(self.inspector(vm, cx)),
+            )
+            .child(self.scene_bar(vm, cx))
+            .child(self.timeline(vm, lane_width, cx))
+    }
+
+    /// A page that is designed but not built: what it will own, and what the engine still owes
+    /// it. `pages.md` rules out a blank panel — the map of remaining work is worth having on
+    /// screen, which is the same reason a control the engine cannot back is drawn and disabled
+    /// rather than hidden.
+    fn placeholder_page(&self, page: Page) -> Div {
+        div()
+            .flex_1()
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(10.0))
+            .p(px(32.0))
+            .bg(rgb(theme::BG))
+            .child(
+                div()
+                    .text_color(rgb(theme::MUTED))
+                    .child(Self::shared(format!("{}  {}", page.glyph(), page.label()))),
+            )
+            .child(
+                div()
+                    .max_w(px(560.0))
+                    .text_xs()
+                    .text_color(rgb(theme::TEXT))
+                    .child(page.blurb()),
+            )
+            .children(page.engine_gap().map(|gap| {
+                widgets::banner(gap, theme::Severity::Warn.dot())
+                    .max_w(px(560.0))
+            }))
+    }
+}
+
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lane_width = Self::lane_width(window);
+        let window_width = f32::from(window.viewport_size().width);
         if self.playing {
             self.advance_playback();
             self.follow_playhead(lane_width);
@@ -4131,6 +4422,30 @@ impl Render for EditorView {
                 this.snapping = !this.snapping;
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ShowMedia, _window, cx| {
+                this.show_page(Page::Media);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ShowCut, _window, cx| {
+                this.show_page(Page::Cut);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ShowMotion, _window, cx| {
+                this.show_page(Page::Motion);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ShowColor, _window, cx| {
+                this.show_page(Page::Color);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ShowAudio, _window, cx| {
+                this.show_page(Page::Audio);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ShowDeliver, _window, cx| {
+                this.show_page(Page::Deliver);
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &SelectAll, _window, cx| {
                 let all: Vec<ElementRef> = this
                     .editor
@@ -4183,31 +4498,14 @@ impl Render for EditorView {
                     this.pointer_released(event.position, event.modifiers.alt, cx);
                 }),
             )
-            .child(self.toolbar(&vm, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .child(self.panel_rail(cx))
-                    .child(self.left_panel(&vm, cx))
-                    .child(
-                        // Preview and transport are one column: the transport belongs under the
-                        // picture it drives, not buried in the timeline header where it used to
-                        // sit half a screen away from the frame it is scrubbing.
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(self.preview(&vm))
-                            .child(self.transport(&vm, lane_width, cx)),
-                    )
-                    .child(self.inspector(&vm, cx)),
-            )
-            .child(self.scene_bar(&vm, cx))
-            .child(self.timeline(&vm, lane_width, cx))
+            // The page owns the body; the bar is the only thing below it. Both are children of
+            // the same column, so the transport band lands at the same distance from the window
+            // top on every page that has one — which `pages.md` calls the horizon line of the app.
+            .child(match self.page {
+                Page::Cut => self.edit_page(&vm, lane_width, cx),
+                other => self.placeholder_page(other),
+            })
+            .child(self.page_bar(window_width, cx))
             // Absolutely positioned and last, so the spike panel sits over the editor rather
             // than beside it. Not `deferred`: a `Select` inside it defers its own popover, and
             // GPUI aborts on a `defer_draw` during deferred drawing — see `controls::Select`.
@@ -4332,7 +4630,7 @@ mod timeline_tests {
     fn a_scrubbed_press_counts_the_scroll_offset(cx: &mut TestAppContext) {
         let view = view(cx);
         view.update(cx, |this, _| {
-            this.scroll_x = 96.0;
+            this.timeline = this.timeline.with_scroll_x(96.0);
             this.scrub_to(lane_origin_x() + 96.0);
             assert_eq!(this.editor.playhead().to_seconds_f64(), 4.0);
         });
@@ -4369,14 +4667,14 @@ mod timeline_tests {
         view.update(cx, |this, _| {
             const LANE: f32 = 200.0;
             this.scroll_by(500.0, LANE); // a big swipe right-to-left
-            assert_eq!(this.scroll_x, 0.0, "there is nothing before the start");
+            assert_eq!(this.timeline.scroll_x(), 0.0, "there is nothing before the start");
 
             this.scroll_by(-5_000.0, LANE);
             let content = 7.0 * DEFAULT_PIXELS_PER_SECOND + LANE * 0.5;
             assert!(
-                (this.scroll_x - (content - LANE)).abs() < 0.5,
+                (this.timeline.scroll_x() - (content - LANE)).abs() < 0.5,
                 "scrolled to {} past a {content}px timeline",
-                this.scroll_x
+                this.timeline.scroll_x()
             );
         });
     }
@@ -4390,7 +4688,7 @@ mod timeline_tests {
             const LANE: f32 = 120.0; // ~2.5s of film on screen at the default zoom
             this.editor
                 .seek(MediaTime::from_ticks(6 * TICKS_PER_SECOND));
-            assert_eq!(this.scroll_x, 0.0);
+            assert_eq!(this.timeline.scroll_x(), 0.0);
 
             this.follow_playhead(LANE);
             let x = this.geometry().ticks_to_px(this.editor.playhead());
@@ -4400,9 +4698,9 @@ mod timeline_tests {
             );
 
             // Already on screen: the view must not jump on every frame.
-            let settled = this.scroll_x;
+            let settled = this.timeline.scroll_x();
             this.follow_playhead(LANE);
-            assert_eq!(this.scroll_x, settled);
+            assert_eq!(this.timeline.scroll_x(), settled);
         });
     }
 
@@ -4418,7 +4716,7 @@ mod timeline_tests {
             let before = this.playhead_anchor_x(LANE);
 
             this.zoom_by(1.5, before, LANE);
-            assert!(this.pixels_per_second > DEFAULT_PIXELS_PER_SECOND);
+            assert!(this.timeline.pixels_per_second() > DEFAULT_PIXELS_PER_SECOND);
             assert!(
                 (this.playhead_anchor_x(LANE) - before).abs() < 1.0,
                 "the playhead moved from {before} to {}",
@@ -4610,9 +4908,9 @@ mod panel_tests {
                 bay_core::Fps::default(),
                 "#000000",
             ));
-            let before = view.pixels_per_second;
+            let before = view.timeline.pixels_per_second();
             view.fit_to_window(1200.0);
-            assert_eq!(view.pixels_per_second, before);
+            assert_eq!(view.timeline.pixels_per_second(), before);
         });
     }
 
@@ -4620,12 +4918,12 @@ mod panel_tests {
     fn fitting_a_real_timeline_brings_it_into_view(cx: &mut TestAppContext) {
         let view = view(cx);
         view.update(cx, |view, _| {
-            view.scroll_x = 500.0;
+            view.timeline = view.timeline.with_scroll_x(500.0);
             view.fit_to_window(1200.0);
             let duration = view.editor.duration().to_seconds_f64() as f32;
-            assert!(view.pixels_per_second * duration <= 1200.0);
-            assert!(view.pixels_per_second >= MIN_ZOOM);
-            assert_eq!(view.scroll_x, 0.0, "fitting starts at the beginning");
+            assert!(view.timeline.pixels_per_second() * duration <= 1200.0);
+            assert!(view.timeline.pixels_per_second() >= MIN_ZOOM);
+            assert_eq!(view.timeline.scroll_x(), 0.0, "fitting starts at the beginning");
         });
     }
 

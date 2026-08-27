@@ -61,6 +61,21 @@ pub const DISABLED_TEXT: u32 = 0x55556a;
 /// and naming it separately is what lets one move without the other.
 pub const FOCUS_RING: u32 = ACCENT;
 
+/// Brighter than [`TEXT`], for the one element on screen that must win against everything else.
+///
+/// Exactly one thing uses it: the active page in the page bar. Nothing else on a page is allowed
+/// to be louder than the label naming which mode you are in, because without that label the
+/// six-page model collapses — nothing else on screen says which page you are looking at.
+pub const EMPHASIS: u32 = 0xffffff;
+
+/// The mode marker: the active page's underline, and the record state when one exists.
+///
+/// Red rather than [`ACCENT`], and that is deliberate. The blue accent already means *selection*
+/// — a chosen clip, a focused control, an "on" toggle — and those come and go constantly. Which
+/// page you are on is not a selection; it is where you are. A second colour is what keeps the
+/// two from reading as the same kind of statement.
+pub const RECORD: u32 = 0xe0454f;
+
 /// What a control's fill should be, given how the pointer is treating it.
 ///
 /// One function rather than a `match` at every call site, because the moment two buttons pick
@@ -204,6 +219,8 @@ pub const ALL_TOKENS: &[(&str, u32)] = &[
     ("DISABLED", DISABLED),
     ("DISABLED_TEXT", DISABLED_TEXT),
     ("FOCUS_RING", FOCUS_RING),
+    ("EMPHASIS", EMPHASIS),
+    ("RECORD", RECORD),
 ];
 
 /// The pairs that are the same colour **on purpose**, and why.
@@ -285,7 +302,7 @@ mod tests {
             .map(|(name, _)| name)
             .collect();
         assert!(
-            declared.len() >= 26,
+            declared.len() >= 28,
             "the source scan found only {} constants — has the declaration syntax changed?",
             declared.len()
         );
@@ -421,6 +438,10 @@ mod tests {
         };
         assert!(brightness(TEXT) > brightness(MUTED));
         assert!(brightness(MUTED) > brightness(FAINT));
+        assert!(
+            brightness(EMPHASIS) > brightness(TEXT),
+            "the active page has to beat ordinary text, or it does not name the mode"
+        );
         assert!(
             brightness(FAINT) > brightness(DISABLED_TEXT),
             "a switched-off label must be quieter than a merely quiet one"

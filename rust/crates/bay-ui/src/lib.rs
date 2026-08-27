@@ -14,6 +14,7 @@ pub mod input;
 pub mod lab;
 pub mod launcher_view;
 pub mod login_view;
+pub mod page;
 pub mod settings_model;
 pub mod settings_view;
 pub mod theme;

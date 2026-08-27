@@ -28,6 +28,7 @@ fn one_audio_clip(media_id: &str) -> (Scene, Vec<MediaAsset>) {
         trim_start: MediaTime::ZERO,
         muted: false,
         volume: 1.0,
+        pan: 0.0,
         speed: 1.0,
         prosody: None,
         dialogue_chain: None,

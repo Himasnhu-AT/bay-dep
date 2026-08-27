@@ -43,6 +43,78 @@ const MIN_MINOR_SPACING_PX: f32 = 6.0;
 /// it here rather than letting a NaN reach a layout.
 const PIXELS_PER_SECOND_FLOOR: f32 = 0.001;
 
+/// Zoom bounds and the zoom a timeline opens at. Here rather than in `editor_view.rs` because
+/// [`TimelineState`] enforces them, and a floor the view holds and the value type does not is a
+/// floor a second timeline will be created without.
+pub const DEFAULT_PIXELS_PER_SECOND: f32 = 48.0;
+pub const MIN_PIXELS_PER_SECOND: f32 = 8.0;
+pub const MAX_PIXELS_PER_SECOND: f32 = 400.0;
+
+/// What one timeline remembers: how far in it is zoomed, and how far along it is scrolled.
+///
+/// A **value type**, and that is the whole point. These were two bare fields on `EditorView`, so
+/// there was exactly one timeline in the application and nowhere to put a second. The Cut page
+/// needs a whole-programme ribbon and a zoomed detail view that share a playhead and must *not*
+/// share a zoom; the Motion page's value axis is a third. Two fields cannot express that, and
+/// adding a second pair would be the same mistake twice.
+///
+/// It is not [`TimelineGeometry`]: this is what is *stored* — two numbers that outlive a frame
+/// and belong in a settings file. Geometry is what is *computed*, per frame, by pairing this
+/// with the project's frame rate, which is not a property of the view at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimelineState {
+    pixels_per_second: f32,
+    scroll_x: f32,
+}
+
+impl Default for TimelineState {
+    fn default() -> Self {
+        Self {
+            pixels_per_second: DEFAULT_PIXELS_PER_SECOND,
+            scroll_x: 0.0,
+        }
+    }
+}
+
+impl TimelineState {
+    /// Clamped on construction, so no caller can produce a timeline at a zoom the rest of the
+    /// code would have to defend against — including a settings file written by hand.
+    pub fn new(pixels_per_second: f32, scroll_x: f32) -> Self {
+        Self {
+            pixels_per_second: sane(pixels_per_second, DEFAULT_PIXELS_PER_SECOND)
+                .clamp(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND),
+            scroll_x: sane(scroll_x, 0.0).max(0.0),
+        }
+    }
+
+    pub fn pixels_per_second(self) -> f32 {
+        self.pixels_per_second
+    }
+
+    pub fn scroll_x(self) -> f32 {
+        self.scroll_x
+    }
+
+    pub fn with_pixels_per_second(self, pixels_per_second: f32) -> Self {
+        Self::new(pixels_per_second, self.scroll_x)
+    }
+
+    pub fn with_scroll_x(self, scroll_x: f32) -> Self {
+        Self::new(self.pixels_per_second, scroll_x)
+    }
+
+    /// Pair with the project's frame rate to get the per-frame mapping.
+    pub fn geometry(self, fps: Fps) -> TimelineGeometry {
+        TimelineGeometry::new(self.pixels_per_second, self.scroll_x, fps)
+    }
+
+    /// Take back the two numbers after a geometry operation (a zoom about a cursor, a clamped
+    /// scroll) has produced a new one.
+    pub fn from_geometry(geometry: TimelineGeometry) -> Self {
+        Self::new(geometry.pixels_per_second(), geometry.scroll_x())
+    }
+}
+
 /// The px ↔ ticks mapping for one timeline, at one zoom level and one scroll offset.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimelineGeometry {
@@ -585,6 +657,69 @@ fn ladder_candidates(fps: Fps) -> Vec<i64> {
     candidates.sort_unstable();
     candidates.dedup();
     candidates
+}
+
+#[cfg(test)]
+mod timeline_state_tests {
+    use super::*;
+
+    #[test]
+    fn a_timeline_opens_at_the_default_zoom_and_the_start() {
+        let state = TimelineState::default();
+        assert_eq!(state.pixels_per_second(), DEFAULT_PIXELS_PER_SECOND);
+        assert_eq!(state.scroll_x(), 0.0);
+    }
+
+    /// Clamped on construction, not at the call site. A settings file is user-editable, and a
+    /// zoom of zero makes every px↔time mapping infinite.
+    #[test]
+    fn no_caller_can_build_an_impossible_timeline() {
+        assert_eq!(
+            TimelineState::new(0.0, 0.0).pixels_per_second(),
+            MIN_PIXELS_PER_SECOND
+        );
+        assert_eq!(
+            TimelineState::new(1e9, 0.0).pixels_per_second(),
+            MAX_PIXELS_PER_SECOND
+        );
+        assert_eq!(TimelineState::new(48.0, -500.0).scroll_x(), 0.0);
+        assert_eq!(
+            TimelineState::new(f32::NAN, f32::NAN).pixels_per_second(),
+            DEFAULT_PIXELS_PER_SECOND
+        );
+        assert_eq!(TimelineState::new(f32::NAN, f32::NAN).scroll_x(), 0.0);
+        assert!(TimelineState::new(f32::INFINITY, f32::INFINITY)
+            .pixels_per_second()
+            .is_finite());
+    }
+
+    /// Two timelines are two values. This is the whole reason the type exists: with the zoom and
+    /// scroll as bare fields on the view there was one timeline in the application, and the Cut
+    /// page needs a ribbon and a detail view that share a playhead and not a zoom.
+    #[test]
+    fn two_timelines_do_not_share_a_zoom() {
+        let ribbon = TimelineState::new(9.0, 0.0);
+        let detail = TimelineState::new(120.0, 400.0);
+        assert_ne!(ribbon.pixels_per_second(), detail.pixels_per_second());
+
+        let zoomed = detail.with_pixels_per_second(200.0);
+        assert_eq!(zoomed.pixels_per_second(), 200.0);
+        assert_eq!(
+            ribbon.pixels_per_second(),
+            9.0,
+            "zooming one timeline moved the other"
+        );
+        assert_eq!(zoomed.scroll_x(), 400.0, "a zoom is not also a scroll");
+    }
+
+    /// The round trip through geometry has to be lossless, or a zoom-about-the-cursor loses a
+    /// little of itself every frame it is applied.
+    #[test]
+    fn a_state_survives_the_trip_through_geometry() {
+        let state = TimelineState::new(73.5, 218.25);
+        let back = TimelineState::from_geometry(state.geometry(Fps::default()));
+        assert_eq!(back, state);
+    }
 }
 
 #[cfg(test)]
