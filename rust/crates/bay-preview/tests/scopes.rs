@@ -3,9 +3,13 @@
 //! Every case here is a frame whose correct reading can be worked out on paper, so a wrong
 //! answer is wrong rather than merely different. No GPU, no ffmpeg, no window: these are pure
 //! reductions over a `Vec<u8>` and nothing in this file can skip.
+//!
+//! The four scopes are `Option`: a scope outside the requested [`ScopeSet`] never ran. Except
+//! where a case says otherwise these ask for the default, `ScopeSet::ALL`, so the `unwrap`s below
+//! are that default holding — and a change that quietly stopped computing one fails here.
 
 use bay_preview::scopes::{
-    ScopeError, ScopeOptions, Scopes, chroma_pair, luma_code, relative_luminance,
+    ScopeError, ScopeOptions, ScopeSet, Scopes, chroma_pair, luma_code, relative_luminance,
 };
 
 /// A `width * height` BGRA buffer of one repeated colour, given as RGB.
@@ -49,11 +53,17 @@ fn a_black_frame_sits_on_the_floor_of_every_scope() {
 
     assert_eq!((summary.luma_min, summary.luma_max), (0, 0));
     assert_eq!(summary.luma_mean, 0.0);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.luma), 0);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.red), 0);
-    for column in 0..scopes.waveform.columns {
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().luma),
+        0
+    );
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().red),
+        0
+    );
+    for column in 0..scopes.waveform.as_ref().unwrap().columns {
         assert_eq!(
-            sole_occupied_bin(scopes.waveform.column(column)),
+            sole_occupied_bin(scopes.waveform.as_ref().unwrap().column(column)),
             0,
             "every waveform column traces at black"
         );
@@ -61,7 +71,7 @@ fn a_black_frame_sits_on_the_floor_of_every_scope() {
     assert_eq!(summary.black_clipped_share, 1.0);
     assert_eq!(summary.white_clipped_share, 0.0);
     // Black is neutral: no chroma, therefore no hue to report.
-    assert_eq!(summary.mean_saturation, 0.0);
+    assert_eq!(summary.mean_saturation, Some(0.0));
     assert_eq!(summary.dominant_hue_degrees, None);
     // Code 0 is below the 16..=235 studio window, so a black frame is entirely outside it.
     assert_eq!(summary.outside_legal_range_share, 1.0);
@@ -74,18 +84,30 @@ fn a_white_frame_sits_at_the_ceiling_of_every_scope() {
 
     assert_eq!((summary.luma_min, summary.luma_max), (255, 255));
     assert_eq!(summary.luma_mean, 255.0);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.luma), 255);
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().luma),
+        255
+    );
     for channel in [
-        &scopes.histogram.red,
-        &scopes.histogram.green,
-        &scopes.histogram.blue,
+        &scopes.histogram.as_ref().unwrap().red,
+        &scopes.histogram.as_ref().unwrap().green,
+        &scopes.histogram.as_ref().unwrap().blue,
     ] {
         assert_eq!(sole_occupied_bin(channel), 255);
     }
-    for column in 0..scopes.parade.red.columns {
-        assert_eq!(sole_occupied_bin(scopes.parade.red.column(column)), 255);
-        assert_eq!(sole_occupied_bin(scopes.parade.green.column(column)), 255);
-        assert_eq!(sole_occupied_bin(scopes.parade.blue.column(column)), 255);
+    for column in 0..scopes.parade.as_ref().unwrap().red.columns {
+        assert_eq!(
+            sole_occupied_bin(scopes.parade.as_ref().unwrap().red.column(column)),
+            255
+        );
+        assert_eq!(
+            sole_occupied_bin(scopes.parade.as_ref().unwrap().green.column(column)),
+            255
+        );
+        assert_eq!(
+            sole_occupied_bin(scopes.parade.as_ref().unwrap().blue.column(column)),
+            255
+        );
     }
     assert_eq!(summary.white_clipped_share, 1.0);
     assert_eq!(summary.black_clipped_share, 0.0);
@@ -101,7 +123,10 @@ fn mid_grey_traces_at_its_code_value_not_at_its_linear_luminance() {
     let summary = scopes.summary();
 
     assert_eq!(summary.luma_mean, 128.0);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.luma), 128);
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().luma),
+        128
+    );
     assert_eq!(luma_code([128, 128, 128]), 128);
 
     let linear = relative_luminance([128, 128, 128]);
@@ -118,7 +143,7 @@ fn mid_grey_traces_at_its_code_value_not_at_its_linear_luminance() {
     assert_eq!(summary.white_clipped_share, 0.0);
     assert_eq!(summary.outside_legal_range_share, 0.0, "128 is legal range");
     assert_eq!(summary.dominant_hue_degrees, None, "grey has no hue");
-    assert_eq!(summary.mean_saturation, 0.0);
+    assert_eq!(summary.mean_saturation, Some(0.0));
 }
 
 /// Saturated red. Its luma is `0.2126 * 255 = 54.2`, and its vectorscope angle is the R target.
@@ -129,19 +154,40 @@ fn a_saturated_primary_lands_where_rec709_puts_it() {
 
     assert_eq!(summary.luma_min, 54, "0.2126 * 255 rounds to 54");
     assert_eq!(summary.luma_max, 54);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.luma), 54);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.red), 255);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.green), 0);
-    assert_eq!(sole_occupied_bin(&scopes.histogram.blue), 0);
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().luma),
+        54
+    );
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().red),
+        255
+    );
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().green),
+        0
+    );
+    assert_eq!(
+        sole_occupied_bin(&scopes.histogram.as_ref().unwrap().blue),
+        0
+    );
 
     // The parade is what separates a primary from a grey of the same luma: the traces split.
-    assert_eq!(sole_occupied_bin(scopes.parade.red.column(0)), 255);
-    assert_eq!(sole_occupied_bin(scopes.parade.green.column(0)), 0);
-    assert_eq!(sole_occupied_bin(scopes.parade.blue.column(0)), 0);
+    assert_eq!(
+        sole_occupied_bin(scopes.parade.as_ref().unwrap().red.column(0)),
+        255
+    );
+    assert_eq!(
+        sole_occupied_bin(scopes.parade.as_ref().unwrap().green.column(0)),
+        0
+    );
+    assert_eq!(
+        sole_occupied_bin(scopes.parade.as_ref().unwrap().blue.column(0)),
+        0
+    );
 
     assert_eq!(summary.channel_mean, [255.0, 0.0, 0.0]);
     assert!(
-        summary.peak_saturation > 0.5,
+        summary.peak_saturation.expect("the vectorscope ran") > 0.5,
         "a primary is far from neutral"
     );
 }
@@ -153,6 +199,8 @@ fn the_vectorscope_places_each_primary_at_its_graticule_angle() {
     let angle = |rgb: [u8; 3]| {
         measure(rgb)
             .vectorscope
+            .as_ref()
+            .unwrap()
             .dominant_hue_degrees()
             .expect("a primary has a hue")
     };
@@ -205,9 +253,10 @@ fn every_grey_lands_on_the_vectorscope_origin() {
             "grey {level} should be neutral, got ({cb}, {cr})"
         );
         let scopes = measure([level, level, level]);
-        let centre = scopes.vectorscope.size / 2;
+        let centre = scopes.vectorscope.as_ref().unwrap().size / 2;
         assert_eq!(
-            scopes.vectorscope.cells[centre * scopes.vectorscope.size + centre],
+            scopes.vectorscope.as_ref().unwrap().cells
+                [centre * scopes.vectorscope.as_ref().unwrap().size + centre],
             scopes.sampled_pixels as u32,
             "every pixel of a grey frame belongs in the centre cell"
         );
@@ -232,12 +281,21 @@ fn the_waveform_separates_a_split_frame_by_column() {
     };
     let scopes = Scopes::from_bgra(&bgra, width, height, options).unwrap();
 
-    let columns = scopes.waveform.columns;
-    assert_eq!(sole_occupied_bin(scopes.waveform.column(0)), 0);
-    assert_eq!(sole_occupied_bin(scopes.waveform.column(columns - 1)), 255);
+    let columns = scopes.waveform.as_ref().unwrap().columns;
+    assert_eq!(
+        sole_occupied_bin(scopes.waveform.as_ref().unwrap().column(0)),
+        0
+    );
+    assert_eq!(
+        sole_occupied_bin(scopes.waveform.as_ref().unwrap().column(columns - 1)),
+        255
+    );
 
     // The histogram sees an even split and nothing about where it is.
-    assert_eq!(scopes.histogram.luma[0], scopes.histogram.luma[255]);
+    assert_eq!(
+        scopes.histogram.as_ref().unwrap().luma[0],
+        scopes.histogram.as_ref().unwrap().luma[255]
+    );
     let summary = scopes.summary();
     assert_eq!(summary.luma_mean, 127.5);
     assert_eq!(summary.black_clipped_share, 0.5);
@@ -306,13 +364,14 @@ fn degenerate_options_clamp_instead_of_panicking() {
             histogram_bins: 0,
             vectorscope_size: 0,
             stride: 0,
+            scopes: ScopeSet::ALL,
         },
     )
     .expect("clamped options still measure");
-    assert_eq!(scopes.waveform.columns, 1);
-    assert_eq!(scopes.waveform.levels, 1);
-    assert_eq!(scopes.histogram.bins, 1);
-    assert_eq!(scopes.vectorscope.size, 1);
+    assert_eq!(scopes.waveform.as_ref().unwrap().columns, 1);
+    assert_eq!(scopes.waveform.as_ref().unwrap().levels, 1);
+    assert_eq!(scopes.histogram.as_ref().unwrap().bins, 1);
+    assert_eq!(scopes.vectorscope.as_ref().unwrap().size, 1);
     assert_eq!(scopes.sampled_pixels, 16, "stride 0 still advances");
 }
 
@@ -336,42 +395,194 @@ fn the_summary_json_names_what_a_colourist_would_ask_for() {
     assert!(grey["chroma"]["dominantHueDegrees"].is_null());
 }
 
-/// Not an assertion — a measurement, printed for the record.
+/// What one scope pass costs, per scope and in total, on whatever machine runs it.
 ///
-/// The plan assumed scopes over a preview-sized buffer "is fine" at interactive rates. That was
-/// an assumption; this prints the number on whatever machine is running, so it can be checked
-/// rather than believed. It deliberately asserts nothing about time: a loaded CI box would fail
-/// a timing assertion for reasons that have nothing to do with this code.
+/// This is a report, not a benchmark and not a gate: it prints under `--nocapture` and asserts
+/// only a ceiling an order of magnitude above the measured figure. A tight timing assertion fails
+/// on a loaded machine for reasons that have nothing to do with this code, and a test that fails
+/// for outside reasons teaches people to re-run until green.
+///
+/// **The numbers are only meaningful in a release build** — an unoptimized reduction is not the
+/// one that ships, and it runs some thirty times slower. So the full matrix runs under
+/// `--release` only; a debug run times one case, prints it as the non-measurement it is, and
+/// keeps a ceiling loose enough that only an algorithmic regression trips it.
+///
+/// Best-of-N rather than a mean: the fastest run is the one least interrupted, and therefore the
+/// closest thing to the idle number. The spread against the median says how loaded the box was.
+///
+/// Per scope as well as in total, because the four do not cost the same and the expensive one is
+/// the one to drop or stride. Each scope is timed alone, and `ScopeSet::NONE` — the buffer walk
+/// plus the always-computed exposure and clipping stats — is timed as the floor every one of them
+/// pays. A scope's own cost is its alone-figure minus that floor; the four alone-figures sum to
+/// more than the fused pass because they each pay the floor once.
 #[test]
 fn scope_cost_is_reported() {
-    let cases = [
-        ("854x480 preview", 854u32, 480u32, 1usize),
-        ("1920x1080", 1920, 1080, 1),
-        ("3840x2160 source", 3840, 2160, 1),
-        ("3840x2160 stride 4", 3840, 2160, 4),
-    ];
-    println!("scope cost (this machine, this profile):");
-    for (label, width, height, stride) in cases {
-        // A gradient rather than a flat fill: a flat frame touches one histogram bin repeatedly
-        // and measures a cache that a real frame does not get.
-        let bgra: Vec<u8> = (0..width as usize * height as usize)
+    let optimized = !cfg!(debug_assertions);
+    // Enough runs to find a clean one, few enough that 4K does not dominate the suite.
+    let runs: u32 = if optimized { 7 } else { 3 };
+
+    // A gradient rather than a flat fill: a flat frame touches one histogram bin repeatedly and
+    // measures a cache that a real frame does not get.
+    fn gradient(width: u32, height: u32) -> Vec<u8> {
+        (0..width as usize * height as usize)
             .flat_map(|index| {
                 let x = (index % width as usize) as u8;
                 let y = (index / width as usize) as u8;
                 [x, y, x.wrapping_add(y), 255]
             })
+            .collect()
+    }
+
+    /// Milliseconds for the fastest and the middle run.
+    fn time(bgra: &[u8], width: u32, height: u32, options: ScopeOptions, runs: u32) -> (f64, f64) {
+        let mut timings: Vec<f64> = (0..runs)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                let scopes = Scopes::from_bgra(bgra, width, height, options)
+                    .expect("a sized buffer measures");
+                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                // Keep the result alive past the clock read so the reduction cannot be elided.
+                std::hint::black_box(&scopes);
+                elapsed
+            })
             .collect();
+        timings.sort_by(f64::total_cmp);
+        (timings[0], timings[timings.len() / 2])
+    }
+
+    let preview = gradient(854, 480);
+    let all_four = ScopeOptions::default();
+    let (preview_best, preview_median) = time(&preview, 854, 480, all_four, runs);
+
+    if !optimized {
+        println!(
+            "scope cost, 854x480, all four: {preview_best:.2} ms best / {preview_median:.2} median \
+             — DEBUG BUILD, so this is not the cost of anything that ships. \
+             `cargo test --release -p bay-preview --test scopes -- --nocapture scope_cost` \
+             prints the real matrix."
+        );
+        assert!(
+            preview_best < 400.0,
+            "all four scopes over a 854x480 frame took {preview_best:.2} ms even unoptimized, \
+             which is far past anything this reduction has cost — something regressed"
+        );
+        return;
+    }
+
+    let per_scope = [
+        ("frame walk + stats only", ScopeSet::NONE),
+        ("+ waveform", ScopeSet::WAVEFORM),
+        ("+ parade", ScopeSet::PARADE),
+        ("+ vectorscope", ScopeSet::VECTORSCOPE),
+        ("+ histogram", ScopeSet::HISTOGRAM),
+        ("all four", ScopeSet::ALL),
+    ];
+
+    println!("scope cost — release build, best of {runs}, milliseconds:");
+    for (label, width, height) in [
+        ("854x480 preview", 854u32, 480u32),
+        ("1920x1080", 1920, 1080),
+        ("3840x2160 source", 3840, 2160),
+    ] {
+        let bgra = gradient(width, height);
+        println!("  {label}:");
+        for (name, scopes) in per_scope {
+            let options = ScopeOptions {
+                scopes,
+                ..ScopeOptions::default()
+            };
+            let (best, median) = time(&bgra, width, height, options, runs);
+            println!("    {name:>24}: {best:>7.2}  (median {median:>7.2})");
+        }
+        for stride in [2usize, 4] {
+            let options = ScopeOptions {
+                stride,
+                ..ScopeOptions::default()
+            };
+            let (best, median) = time(&bgra, width, height, options, runs);
+            let name = format!("all four, stride {stride}");
+            println!("    {name:>24}: {best:>7.2}  (median {median:>7.2})");
+        }
+    }
+
+    assert!(
+        preview_best < 25.0,
+        "all four scopes over a 854x480 frame took {preview_best:.2} ms, an order of magnitude \
+         past what this reduction has ever cost — a preview-sized pass no longer fits a frame"
+    );
+}
+
+/// A scope outside the requested set never ran, and says so. The alternative — an empty structure
+/// and a zeroed summary — reads as a measurement of a neutral black frame, which is exactly the
+/// lie a scopes panel must not tell.
+#[test]
+fn a_scope_that_was_not_asked_for_is_absent_rather_than_empty() {
+    let options = ScopeOptions {
+        scopes: ScopeSet::HISTOGRAM,
+        ..ScopeOptions::default()
+    };
+    let scopes = Scopes::from_bgra(&flat([200, 40, 40], 8, 8), 8, 8, options).expect("measures");
+
+    assert!(scopes.histogram.is_some(), "the histogram was asked for");
+    assert!(scopes.waveform.is_none());
+    assert!(scopes.parade.is_none());
+    assert!(scopes.vectorscope.is_none());
+    assert_eq!(scopes.computed, ScopeSet::HISTOGRAM);
+
+    // The exposure and clipping numbers come off the same walk and are always available; the
+    // chroma numbers came from the vectorscope, which did not run.
+    let summary = scopes.summary();
+    assert_eq!(summary.luma_min, summary.luma_max, "a flat frame");
+    assert_eq!(summary.channel_mean, [200.0, 40.0, 40.0]);
+    assert_eq!(summary.mean_saturation, None);
+    assert_eq!(summary.peak_saturation, None);
+    assert_eq!(
+        summary.dominant_hue_degrees, None,
+        "a saturated frame still reports no hue when nothing measured its chroma"
+    );
+    assert!(summary.to_json()["chroma"]["meanSaturation"].is_null());
+}
+
+/// Dropping a scope must not change what the others say. A shared loop is exactly where a gate
+/// added for cost can accidentally skip work another scope depended on.
+#[test]
+fn a_narrowed_set_reports_the_same_numbers_as_the_full_pass() {
+    let bgra: Vec<u8> = (0..64 * 64)
+        .flat_map(|index: usize| {
+            [
+                (index % 251) as u8,
+                (index % 199) as u8,
+                (index % 97) as u8,
+                255,
+            ]
+        })
+        .collect();
+    let full = Scopes::from_bgra(&bgra, 64, 64, ScopeOptions::default()).expect("measures");
+    for set in [
+        ScopeSet::WAVEFORM,
+        ScopeSet::PARADE,
+        ScopeSet::VECTORSCOPE,
+        ScopeSet::HISTOGRAM,
+    ] {
         let options = ScopeOptions {
-            stride,
+            scopes: set,
             ..ScopeOptions::default()
         };
-        let started = std::time::Instant::now();
-        let scopes = Scopes::from_bgra(&bgra, width, height, options).expect("measures");
-        let elapsed = started.elapsed();
-        println!(
-            "  {label:>22}: {:>8.3} ms  ({} px sampled)",
-            elapsed.as_secs_f64() * 1000.0,
-            scopes.sampled_pixels
-        );
+        let narrowed = Scopes::from_bgra(&bgra, 64, 64, options).expect("measures");
+        assert_eq!(narrowed.sampled_pixels, full.sampled_pixels);
+        assert_eq!(narrowed.summary().luma_mean, full.summary().luma_mean);
+        assert_eq!(narrowed.summary().channel_mean, full.summary().channel_mean);
+        if set.waveform {
+            assert_eq!(narrowed.waveform, full.waveform);
+        }
+        if set.parade {
+            assert_eq!(narrowed.parade, full.parade);
+        }
+        if set.vectorscope {
+            assert_eq!(narrowed.vectorscope, full.vectorscope);
+        }
+        if set.histogram {
+            assert_eq!(narrowed.histogram, full.histogram);
+        }
     }
 }

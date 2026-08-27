@@ -98,6 +98,71 @@ pub fn chroma_pair(rgb: [u8; 3]) -> (f32, f32) {
     ((b - y) / 1.8556, (r - y) / 1.5748)
 }
 
+/// Which of the four reductions to run.
+///
+/// A scope not in the set costs nothing and comes back `None` — not an empty structure, which a
+/// display would draw as a black frame, and not a zeroed count, which a summary would report as a
+/// measurement. `None` is the only honest answer to "what did the vectorscope say" when the
+/// vectorscope never ran.
+///
+/// This exists because the four do not cost the same (see [`SCOPE_BUDGET_NOTE`]): the vectorscope
+/// is most of the pass, and a page showing a waveform and a histogram should not pay for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeSet {
+    pub waveform: bool,
+    pub parade: bool,
+    pub vectorscope: bool,
+    pub histogram: bool,
+}
+
+impl ScopeSet {
+    /// All four. What a scopes panel showing every quadrant asks for, and the default.
+    pub const ALL: Self = Self {
+        waveform: true,
+        parade: true,
+        vectorscope: true,
+        histogram: true,
+    };
+    /// None of them — the frame is still walked for the exposure and clipping numbers in
+    /// [`ScopeSummary`], which is the cheapest reading that is still a reading.
+    pub const NONE: Self = Self {
+        waveform: false,
+        parade: false,
+        vectorscope: false,
+        histogram: false,
+    };
+    pub const WAVEFORM: Self = Self {
+        waveform: true,
+        parade: false,
+        vectorscope: false,
+        histogram: false,
+    };
+    pub const PARADE: Self = Self {
+        waveform: false,
+        parade: true,
+        vectorscope: false,
+        histogram: false,
+    };
+    pub const VECTORSCOPE: Self = Self {
+        waveform: false,
+        parade: false,
+        vectorscope: true,
+        histogram: false,
+    };
+    pub const HISTOGRAM: Self = Self {
+        waveform: false,
+        parade: false,
+        vectorscope: false,
+        histogram: true,
+    };
+}
+
+impl Default for ScopeSet {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
 /// What the caller wants measured, and how finely.
 ///
 /// The defaults are what a scope display needs: 256 luma levels is one row per code value, and
@@ -116,6 +181,8 @@ pub struct ScopeOptions {
     /// them. Present so a caller that cannot afford a full 4K pass says so, rather than a scope
     /// quietly sampling and reporting shares that do not describe the frame.
     pub stride: usize,
+    /// Which reductions to run. Anything left out is `None` on the result rather than empty.
+    pub scopes: ScopeSet,
 }
 
 impl Default for ScopeOptions {
@@ -126,6 +193,7 @@ impl Default for ScopeOptions {
             histogram_bins: 256,
             vectorscope_size: 128,
             stride: 1,
+            scopes: ScopeSet::ALL,
         }
     }
 }
@@ -140,6 +208,7 @@ impl ScopeOptions {
             histogram_bins: self.histogram_bins.clamp(1, 256),
             vectorscope_size: self.vectorscope_size.max(1),
             stride: self.stride.max(1),
+            scopes: self.scopes,
         }
     }
 }
@@ -243,10 +312,12 @@ pub struct Scopes {
     /// share *of what was measured*, not of the frame it was assumed to describe.
     pub sampled_pixels: u64,
     pub stride: usize,
-    pub waveform: Waveform,
-    pub parade: Parade,
-    pub vectorscope: Vectorscope,
-    pub histogram: Histogram,
+    /// Which reductions ran. Every `Some` below is one of these; every `None` was not asked for.
+    pub computed: ScopeSet,
+    pub waveform: Option<Waveform>,
+    pub parade: Option<Parade>,
+    pub vectorscope: Option<Vectorscope>,
+    pub histogram: Option<Histogram>,
     luma_min: u8,
     luma_max: u8,
     luma_sum: u64,
@@ -312,17 +383,25 @@ impl Scopes {
             });
         }
         let options = options.sanitised();
+        let wanted = options.scopes;
         let (columns, levels) = (options.waveform_columns, options.levels);
         let bins = options.histogram_bins;
         let size = options.vectorscope_size;
 
-        let blank = |len: usize| vec![0u32; len];
-        let mut waveform = blank(columns * levels);
-        let mut red_trace = blank(columns * levels);
-        let mut green_trace = blank(columns * levels);
-        let mut blue_trace = blank(columns * levels);
-        let mut vector_cells = blank(size * size);
-        let mut histogram = [blank(bins), blank(bins), blank(bins), blank(bins)];
+        // A scope that was not asked for allocates nothing and is never indexed.
+        let blank = |asked: bool, len: usize| if asked { vec![0u32; len] } else { Vec::new() };
+        let trace_cells = columns * levels;
+        let mut waveform = blank(wanted.waveform, trace_cells);
+        let mut red_trace = blank(wanted.parade, trace_cells);
+        let mut green_trace = blank(wanted.parade, trace_cells);
+        let mut blue_trace = blank(wanted.parade, trace_cells);
+        let mut vector_cells = blank(wanted.vectorscope, size * size);
+        let mut histogram = [
+            blank(wanted.histogram, bins),
+            blank(wanted.histogram, bins),
+            blank(wanted.histogram, bins),
+            blank(wanted.histogram, bins),
+        ];
 
         let mut luma_min = u8::MAX;
         let mut luma_max = u8::MIN;
@@ -346,33 +425,46 @@ impl Scopes {
                 let rgb = [pixel[2], pixel[1], pixel[0]];
                 let luma = luma_code(rgb);
 
-                let column = x * columns / width as usize;
-                let level = usize::from(luma) * levels / 256;
-                waveform[column * levels + level] += 1;
-                for (trace, value) in [
-                    (&mut red_trace, rgb[0]),
-                    (&mut green_trace, rgb[1]),
-                    (&mut blue_trace, rgb[2]),
-                ] {
-                    trace[column * levels + usize::from(value) * levels / 256] += 1;
+                // The column index is the one piece of work the waveform and the parade share,
+                // so it is computed once and only when one of them wants it.
+                if wanted.waveform || wanted.parade {
+                    let column = x * columns / width as usize;
+                    if wanted.waveform {
+                        waveform[column * levels + usize::from(luma) * levels / 256] += 1;
+                    }
+                    if wanted.parade {
+                        for (trace, value) in [
+                            (&mut red_trace, rgb[0]),
+                            (&mut green_trace, rgb[1]),
+                            (&mut blue_trace, rgb[2]),
+                        ] {
+                            trace[column * levels + usize::from(value) * levels / 256] += 1;
+                        }
+                    }
+                }
+
+                if wanted.histogram {
+                    for (channel, value) in rgb.iter().enumerate() {
+                        histogram[channel][usize::from(*value) * bins / 256] += 1;
+                    }
+                    histogram[3][usize::from(luma) * bins / 256] += 1;
+                }
+
+                if wanted.vectorscope {
+                    let (cb, cr) = chroma_pair(rgb);
+                    let cell_x = (((cb + 0.5) * size as f32) as usize).min(size - 1);
+                    let cell_y = (((cr + 0.5) * size as f32) as usize).min(size - 1);
+                    vector_cells[cell_y * size + cell_x] += 1;
+                    let saturation = f64::from(cb.hypot(cr));
+                    saturation_sum += saturation;
+                    peak_saturation = peak_saturation.max(saturation);
+                    hue_cb_sum += f64::from(cb);
+                    hue_cr_sum += f64::from(cr);
                 }
 
                 for (channel, value) in rgb.iter().enumerate() {
-                    histogram[channel][usize::from(*value) * bins / 256] += 1;
                     channel_sums[channel] += u64::from(*value);
                 }
-                histogram[3][usize::from(luma) * bins / 256] += 1;
-
-                let (cb, cr) = chroma_pair(rgb);
-                let cell_x = (((cb + 0.5) * size as f32) as usize).min(size - 1);
-                let cell_y = (((cr + 0.5) * size as f32) as usize).min(size - 1);
-                vector_cells[cell_y * size + cell_x] += 1;
-                let saturation = f64::from(cb.hypot(cr));
-                saturation_sum += saturation;
-                peak_saturation = peak_saturation.max(saturation);
-                hue_cb_sum += f64::from(cb);
-                hue_cr_sum += f64::from(cr);
-
                 luma_min = luma_min.min(luma);
                 luma_max = luma_max.max(luma);
                 luma_sum += u64::from(luma);
@@ -402,13 +494,14 @@ impl Scopes {
             height,
             sampled_pixels: sampled,
             stride,
-            waveform: trace(waveform),
-            parade: Parade {
+            computed: wanted,
+            waveform: wanted.waveform.then(|| trace(waveform)),
+            parade: wanted.parade.then(|| Parade {
                 red: trace(red_trace),
                 green: trace(green_trace),
                 blue: trace(blue_trace),
-            },
-            vectorscope: Vectorscope {
+            }),
+            vectorscope: wanted.vectorscope.then_some(Vectorscope {
                 size,
                 cells: vector_cells,
                 saturation_sum,
@@ -416,14 +509,14 @@ impl Scopes {
                 hue_cb_sum,
                 hue_cr_sum,
                 sampled,
-            },
-            histogram: Histogram {
+            }),
+            histogram: wanted.histogram.then_some(Histogram {
                 bins,
                 red: red_bins,
                 green: green_bins,
                 blue: blue_bins,
                 luma: luma_bins,
-            },
+            }),
             luma_min,
             luma_max,
             luma_sum,
@@ -453,9 +546,12 @@ impl Scopes {
             black_clipped_share: self.black_clipped as f64 / sampled,
             white_clipped_share: self.white_clipped as f64 / sampled,
             outside_legal_range_share: self.outside_legal as f64 / sampled,
-            mean_saturation: self.vectorscope.mean_saturation(),
-            peak_saturation: self.vectorscope.peak_saturation(),
-            dominant_hue_degrees: self.vectorscope.dominant_hue_degrees(),
+            mean_saturation: self.vectorscope.as_ref().map(Vectorscope::mean_saturation),
+            peak_saturation: self.vectorscope.as_ref().map(Vectorscope::peak_saturation),
+            dominant_hue_degrees: self
+                .vectorscope
+                .as_ref()
+                .and_then(Vectorscope::dominant_hue_degrees),
         }
     }
 }
@@ -483,9 +579,12 @@ pub struct ScopeSummary {
     /// bay composites full-range, so this is never a gamut error — it is a delivery note for a
     /// destination that expects legal range, and a full-range frame legitimately has a high one.
     pub outside_legal_range_share: f64,
-    pub mean_saturation: f64,
-    pub peak_saturation: f64,
-    /// `None` for a frame with no chroma at all. See [`Vectorscope::dominant_hue_degrees`].
+    /// `None` when [`ScopeSet::vectorscope`] was not asked for — a frame whose chroma was never
+    /// read has no mean saturation, and reporting 0.0 there would read as "perfectly neutral".
+    pub mean_saturation: Option<f64>,
+    pub peak_saturation: Option<f64>,
+    /// `None` for a frame with no chroma at all, and for one whose vectorscope did not run. See
+    /// [`Vectorscope::dominant_hue_degrees`].
     pub dominant_hue_degrees: Option<f64>,
 }
 
@@ -514,8 +613,8 @@ impl ScopeSummary {
                 "outsideLegalRangeShare": round4(self.outside_legal_range_share),
             },
             "chroma": {
-                "meanSaturation": round4(self.mean_saturation),
-                "peakSaturation": round4(self.peak_saturation),
+                "meanSaturation": self.mean_saturation.map(round4),
+                "peakSaturation": self.peak_saturation.map(round4),
                 "dominantHueDegrees": self.dominant_hue_degrees.map(round4),
             },
         })
