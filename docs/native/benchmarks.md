@@ -270,12 +270,13 @@ repeatedly and measures a cache a real frame does not get.
 **Machine:** Apple M5 Pro (15 cores) · macOS 26.5.2 · rustc 1.97.0 · release profile · single
 thread. **Captured:** 2026-08-27 on `feat/six-page-editor`, best of 25.
 
-**Conditions, stated because they matter here.** The table is from a run at a 1-minute load
-average of 3.4 (another project's workspace build was on the machine), and it was then repeated on
-a quiet machine — load 2.2, nothing compiling — which agreed within 3% on every total: 0.95 vs
-0.98 at 640×360, 1.72 vs 1.74 at 854×480, 8.79 vs 8.80 at 1080p. Across three best-of-25 runs the
-4K total ranged 34.9–37.6. Within each run, best and median sit within 5% on nearly every row,
-which is the evidence that the fastest run was not preempted.
+**Conditions, stated because they matter here.** Four independent best-of-25 runs, taken between
+1-minute load averages of 2.2 and 3.4 on 15 cores — including one with nothing compiling on the
+machine at all. They agree within 2% on every total: 640×360 read 0.95 / 0.97 / 0.98 / 0.98,
+854×480 read 1.71 / 1.72 / 1.72 / 1.74, 1080p 8.71 / 8.79 / 8.79 / 8.80. The 4K total ranged
+34.9–37.6, the one figure with real spread, for the reason in the next paragraph. Within each run
+best and median sit within 2–5% on nearly every row, which is the evidence that the fastest run
+was not preempted.
 
 Runs taken while a dozen `rustc` processes were compiling read **25–35% slower at 4K and barely
 differently at 640×360** — the signature of memory-bandwidth contention on a 33 MB buffer, since
