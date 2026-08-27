@@ -118,9 +118,14 @@ impl Page {
             // table. `editor/motion.rs` draws its value axis from that table and drags handles
             // through those commands, so leaving the warning up would make the map lie.
             Page::Motion => None,
+            // Lift/gamma/gain shipped, so this no longer names it. Curves, the qualifier and
+            // power windows are the real remainder — the last two need a per-effect mask the
+            // compositor does not have, which is why they are the expensive ones rather than
+            // the next ones.
             Page::Color => Some(
-                "Waiting on the engine: lift/gamma/gain, curves, qualifier and windows. Exactly \
-                 four colour operations compile to a shader today. Scopes need no GPU work.",
+                "Waiting on the engine: curves, the HSL qualifier and power windows. Five colour \
+                 operations compile to a shader today; the qualifier and windows need a \
+                 per-effect mask the compositor does not have.",
             ),
             Page::Audio => Some(
                 "Waiting on the engine: there is no real-time audio path, no pan anywhere in the \

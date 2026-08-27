@@ -28,37 +28,46 @@ Contract: [`docs/native/pages.md`](docs/native/pages.md). Plan and standing rule
 | P2 | **M7's frame budget.** Never measured, and it is the one number M7 owed. A real figure, the machine, and 4K behaviour. If it does not fit an interactive budget, say the sampling stride out loud rather than sampling quietly. | `bay-preview` | p2-scopes | **done** — [`benchmarks.md`](docs/native/benchmarks.md#scopes--the-color-pages-four-reductions). Four live scopes fit a preview frame (0.98 ms of 16.6); they do not fit at 4K (35 ms), where a caller must pass `stride`. At the 640×360 the preview actually composites it is 0.98 ms. `ScopeSet` lets a page pay only for the scopes it shows, but that is a weak lever — the pass is bound by the buffer walk all four share, so dropping the dearest saves 24% where stride 4 saves 94%. Dropping the vectorscope's per-pixel `hypot` took 27% off every reading bay takes. |
 | P3 | **Lift/gamma/gain shader.** Needs a new WGSL pass *and* a widened uniform struct — `EffectUniformBuffer` is 2+2+4+4 floats and the identical struct is declared in every shader. Engine only; the Color page wires it later. | `bay-effects` | p3-grade | **done** — `lift_gamma_gain.wgsl`, all six places wired (shader, pipeline, packer, `effect_groups`, `SUPPORTED_EFFECTS`, the `fx.balance` tile). The struct was *not* widened: a third buffer type fronts the same bind group layout, the way `color_stack.wgsl` already does. Convention is stated in the shader header — lift holds white, gamma holds both ends, gain holds black, `.w` is each wheel's master. Verified on GPU: neutral is byte-exact identity, each wheel moves only the end it claims, and gain alone is byte-identical to `brightness`, which pins the clamp where it already was. |
 
-## Wave 2 — running now
+## Where it stands — 2026-08-27, team paused
 
-P1 landed, so each page owns `editor/<page>.rs` and the router was pre-wired in `5b39813`:
-nobody edits `mod.rs`. **P5 and P9 are held on purpose**, not forgotten:
+Everything below **compiles and has unit tests. None of it has been looked at on screen.** That
+distinction is the whole reason this repo splits its roadmap by state, and it is the one thing to
+carry forward.
 
-- **P5 (Cut)** needs `editor/timeline.rs` and `lane_origin_x` in `geometry.rs`, and P7 may turn
-  `LANE_HEIGHT` into state in the same files. Two agents in one coordinate system is how a click
-  lands somewhere other than where it was drawn. Runs after P7.
-- **P9 (Color)** is held only to keep the cargo build lock from thrashing — six concurrent
-  `bay-ui` builds serialise on one lock and each stalls the others. Runs as wave 2 drains.
+| | State |
+|---|---|
+| P1 carve `editor_view.rs` | **done** — six regions, `mod.rs` 5,332 → 1,530, proven behaviour-free |
+| P2 scope frame budget | **done** — 0.98 ms for four scopes at 640×360, `benchmarks.md` |
+| P3 lift/gamma/gain | **done** — all six enforced places, gain proven byte-identical to `brightness` |
+| P4 Media page | **code landed, unseen** — shows only what `MediaAsset` can fill; fps/codec drawn disabled |
+| P6 Motion page | **code landed, unseen** — a row per animatable path, keyed or not |
+| P7 Audio page | **code landed, unseen** — faders on the six real commands; meters dark on purpose |
+| P8 Deliver page | **code landed, unseen** — export off the UI thread via `slow::run`, so it passes `render_gate`; toolbar's two exports deleted |
+| P5 Cut page | **not started** |
+| P9 Color page | **not started** — still a placeholder |
 
-Each owns `editor/<page>.rs` and touches `editor/mod.rs` only to register itself.
+## What has to happen next, in order
 
-| # | Item | Also needs | State |
-|---|---|---|---|
-| P4 | **M3 Media** — storage tree, pool with bins, thumbnail + list, dual viewers, metadata | `MediaAsset` has no fps and no codec: add them serde-default with `probe.rs` parsing, or show duration and resolution only. Do not draw rows the model cannot fill. | **p4-media, in progress** — chose *show only what exists*: duration and resolution, `None` drawn "unknown", never "0". `bay-project`/`probe.rs` untouched; fps and codec are drawn as disabled rows so the gap stays on screen. |
-| P5 | **M4 Cut** — source tape, whole-program ribbon over zoomed detail sharing a playhead but not a zoom, the smart-edit set | First page to inset a lane, so `lane_origin_x()` gets threaded — with a test that scrubs and razors at a nonzero origin | pending |
-| P6 | **M6 Motion** — curve + keyframe editor, layer composition, masks and shapes | A row per animatable path **animated or not**, with a rest line, or the page is empty for every un-animated clip | **in progress** — p6-motion. `editor/motion.rs` written and committed (`6c144b8`): a row per `animatable_paths()` entry keyed or not, each with a dashed rest line at the descriptor default and a ◆ that keys it at the playhead; curve pane with draggable keys and bezier handles; composite stack over the clip; mask panel with polygon/bezier/second-window drawn **disabled**. The two timebases are a type (`ChannelOwner`), tested as exact inverses. Not yet: the unit tests have not run (`bay-ui --all-targets` does not build while `editor/deliver.rs` is mid-write) and the page has not been looked at. |
-| P7 | **M10 Audio** — Fairlight mixer on M9's engine, tall tracks, automation lanes | `LANE_HEIGHT` is a compile-time constant hit-testing reads; resizable tracks make it state | **p7-audio** — in progress. Page built in `editor/audio.rs`: strips bound to the six real commands, tall lanes with waveforms and automation, loudness from `mix::envelope`. `LANE_HEIGHT` was **not** touched — the tall lanes derive their height from one function and each lane element owns its own press, so no y ever becomes a track. **P5 is unblocked.** Meters are dark: M9's `StreamEngine` is wired to nothing and playback still submits one pre-mixed rodio buffer, so a fader is not audible during playback. |
-| P8 | **M11 Deliver** — settings, range, queue | — | **done** — the precondition is closed: the encode runs on a worker with its own GPU device, through the same `bay_agent::slow::run("render", …)` an agent calls, so `render_gate` and `frame_check` cover both callers and the file is the project's canvas rather than a silent 1280 cap. **Both toolbar exports deleted** in the same commit. The queue is `bay_jobs` filtered to renders, so a render an agent started over MCP is in the same list. New engine: an **out point** (`endSeconds`) — `duration` shorter than the timeline is refused as a forgotten tail, which meant bay had no way to render a section at all; and `bay_agent::deliver`, the form as a headless value whose tests round-trip every control back through `slow::export_settings`. CRF is drawn **disabled** on ProRes (quality-fixed by profile); **no alpha option at all**, because `Background` has no transparency to keep. `fixes.md` entry 6 is closed. |
-| P9 | **M8 Color** — clip strip, gallery, node list, scopes, palettes | XL. Free win: `SceneEffect` is fully implemented in the compositor and constructed nowhere — that is the adjustment layer at zero shader cost | pending |
+1. **A full gate on a quiet tree.** The last green one was `d60f379`. Everything since is
+   per-crate or unverified. Four files were mid-edit when the team stopped.
+2. **A visual check of every page**, 1440×900 and small. Never done, and it is the only
+   verification a layout migration actually needs.
+3. **Wire the streaming audio engine to playback** — `fixes.md` entry 15. Until then the Audio
+   page's faders change the next play, not the current one.
+4. **P5 Cut**, then **P9 Color** — the last two pages.
 
-## Outstanding regardless
+## What the parallel run cost, and what it bought
 
-- **The visual check.** Nothing in the Done table above has been looked at. `./run.sh`, at 1440×900
-  **and** at a small window, per page. For a layout migration this is the verification no test
-  substitutes for.
-- Three open defects in [`fixes.md`](fixes.md), none blocking. **Entry 6 (the ungated export on
-  the UI thread) is closed by P8** — `grep render_gate` now finds the editor as well as the
-  server, via `slow::render_stamp`.
-- **The band constants are literals in three files.** Deliver's two bands sum to 340 to match
-  Cut's scene bar (40, `toolbar.rs`) plus its timeline (300, `timeline.rs`), which is what keeps
-  the transport at the same height across pages — `pages.md` calls that the horizon line. Only
-  the Deliver end is guarded by a test. They want lifting into one place in `editor/mod.rs`.
+Worth recording because the answer is not one-sided.
+
+**It worked while the work was in different crates.** M5, M7, M9 and the pass-collapse ran
+genuinely concurrently and landed clean, because a keyframe engine, a scope reduction and an audio
+mixer do not touch each other's files.
+
+**It stopped working when everything moved into `bay-ui`.** One working tree, one `editor/mod.rs`,
+one cargo build lock, and one `bay` single-instance port. Agents queued on the lock, blocked on
+each other's half-written files, and — the sharp one — an agent launching `bay` could silently
+focus *another agent's window* and report on a page it had never rendered.
+
+The lesson is not "don't parallelise". It is that **the unit of parallelism is the crate, not the
+task**, and that shared mutable resources — a file, a lock, a port, a window — are what decide it.

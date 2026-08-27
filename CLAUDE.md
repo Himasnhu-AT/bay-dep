@@ -61,10 +61,11 @@ the lead's job, on a quiet tree.
 rust/
 ├── desktop/          the binary — thin; calls bay_ui::run()
 ├── crates/
-│   ├── bay-ui        GPUI application shell (the six-page editor UI)
+│   ├── bay-ui        GPUI application shell — mid-migration to six pages, see below
 │   │                  page.rs — the six pages and the bar's responsive ladder, GPUI-free
 │   │                  draw.rs — the only place bay draws something that is not a box
 │   │                  controls.rs, drag.rs — slider/drag-number/popover, one drag abstraction
+│   │                  editor/ — the editor carved into regions; one file per page
 │   ├── bay-core      editor model + orchestration
 │   ├── bay-project   project format, serialization, web↔native interop
 │   ├── bay-settings  account/session, providers, model routing, MCP access, compute — the
@@ -136,12 +137,16 @@ the MCP server. Logic is never duplicated between front ends.
   the repository teaches people to re-run until green, which is how a real failure gets ignored.
 - Every substantive fix in the parity effort is recorded with what it was and what verifies it —
   follow that pattern in [`docs/native/parity-status.md`](docs/native/parity-status.md).
-- **The UI is six pages behind one bar** — Media · Cut · Motion · Color · Audio · Deliver. The
-  contract is [`docs/native/pages.md`](docs/native/pages.md) and the rules there bind: a page is a
-  *method* on `EditorView`, never its own GPUI view (the moment it is, the `PreviewRenderer` and
-  its atlas bookkeeping, audio, waveforms and undo history all have to be hoisted); the global
-  playhead survives a page switch; and a control the engine cannot back is drawn **disabled**, not
-  hidden — the disabled controls are the map of the remaining engine work.
+- **The UI is mid-migration to six pages behind one bar** — Media · Cut · Motion · Color · Audio ·
+  Deliver. **It is under development and no page has had a visual check.** The contract, and a
+  table of what is actually built versus what is not, is [`docs/native/pages.md`](docs/native/pages.md);
+  the work queue is [`todo.pages.md`](todo.pages.md). Do not describe a page as working on the
+  strength of its unit tests — that error has already been made here once, in an audio engine whose
+  tests all passed and which nothing called. The rules bind regardless: a page is a *method* on
+  `EditorView`, never its own GPUI view (the moment it is, the `PreviewRenderer` and its atlas
+  bookkeeping, audio, waveforms and undo history all have to be hoisted); the global playhead
+  survives a page switch; and a control the engine cannot back is drawn **disabled**, not hidden —
+  the disabled controls are the map of the remaining engine work.
 - **Vector geometry is a path; a density plot is a raster; nothing else uses an image.** Decided
   and measured in [`docs/native/drawing.md`](docs/native/drawing.md) — 80 µs for a 1,000-point
   polyline. Five surfaces depend on it (curve editor, scopes, wheels, tall waveforms, EQ). Do not

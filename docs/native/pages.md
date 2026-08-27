@@ -1,8 +1,43 @@
 # bay — the six-page editor
 
-**Status: designed, not shipped.** This is the contract every page milestone builds against.
-Written 2026-08-27 against the audit of DaVinci Resolve 21's page model and bay's own crates.
-A prototype of the whole shell exists and was approved before implementation began.
+**Status: under development. Not shipped, not finished, and not yet looked at.** This is the
+contract every page milestone builds against, plus a running record of which parts of it are real.
+Written 2026-08-27 against an audit of DaVinci Resolve 21's page model and bay's own crates.
+
+Read the state table below before believing anything else in this file: several pages exist as
+code and have never been rendered on screen by a person. A page that compiles and passes its unit
+tests is not a page that works, and this document has already been wrong in that direction once.
+
+## Where this actually stands
+
+Nothing here has had a visual check. The engine work underneath is verified; the surface is not.
+
+| | State | Evidence |
+|---|---|---|
+| **The page bar** | Built | `page.rs`, GPUI-free; the responsive ladder is `BarLayout::for_width`, asserted down to 320px |
+| **The widget + drawing layer** | Built | `draw.rs` (paths, 80 µs per 1,000-point polyline), `controls.rs`, `drag.rs` — see `drawing.md` |
+| **Keyframe engine** | Built | bezier handles, `animatable_paths`, descriptor table, `MoveKeyframe`/`SetKeyframeEasing` |
+| **Scopes** | Built + measured | four reductions, 0.98 ms at 640×360 — see `benchmarks.md` |
+| **Streaming audio engine** | Built, **called by nothing** | `fixes.md` entry 15: `start_audio` still pre-mixes the whole timeline, so a fader is not audible mid-playback |
+| **Lift/gamma/gain** | Built | `lift_gamma_gain.wgsl`, all six enforced places wired |
+| **Scalar pass fusion** | Built + measured | 64 → 256 distinct levels through a squeeze-and-stretch |
+| **Media page** | Code landed, unseen | |
+| **Motion page** | Code landed, unseen | |
+| **Audio page** | Code landed, unseen | faders bound to real commands; meters deliberately dark until the engine is wired |
+| **Deliver page** | Code landed, unseen | export moved off the UI thread through `slow::run`, so it now passes `render_gate` |
+| **Cut page** | Not started | still the pre-migration editor body |
+| **Color page** | Not started | placeholder |
+
+### What still has to happen
+
+1. **A visual check of every page**, at 1440×900 and at a small window. For a layout migration this
+   is the verification nothing substitutes for, and it has not been done once.
+2. **Wire the streaming audio engine to playback** — `fixes.md` entry 15. Until then the Audio
+   page's faders change the *next* play, not the current one.
+3. **The Cut page** — Resolve's actual Cut page, with the dual timeline.
+4. **The Color page** — the one XL left, and the only page still on a placeholder.
+5. **A full green gate on a quiet tree.** The last one was at `d60f379`; everything since has been
+   verified per-crate or not at all.
 
 ## Why a page bar at all
 
@@ -71,16 +106,21 @@ Two fixed chrome strips sandwich a page-owned body. Nothing else is global.
    on a narrow window; every page milestone is done only after it has been looked at, at 1440×900
    **and** at a small window.
 
-## What each page needs from the engine that does not exist yet
+## What each page needs from the engine
 
-Recorded so a page is never built on an assumption. Detail and evidence in `fixes.md` and the
-milestone list.
+Recorded so a page is never built on an assumption. Several entries here have since been **closed**
+and are kept, struck through in prose, because the record of what was missing is what stops the
+next person re-deriving it. Detail and evidence in `fixes.md` and the milestone list.
 
-- **Motion** — bezier handles per keyframe (bay interpolates by named easing today; there are no
-  tangents anywhere in the repo), stable keyframe identity, a `MoveKeyframe` verb, and a property
-  descriptor table so a value axis has units to draw.
-- **Color** — lift/gamma/gain, curves, qualifier and windows are all absent; exactly four colour
-  operations compile to a shader today (brightness, contrast, saturation, and a 3D LUT). Scopes,
+- **Motion — closed.** It needed bezier handles per keyframe (bay interpolated by named easing
+  only; there were no tangents anywhere in the repo), stable keyframe identity, a `MoveKeyframe`
+  verb, and a property descriptor table so a value axis has units to draw. M5 landed all four.
+- **Color — partly closed.** Lift/gamma/gain **now exists** (`lift_gamma_gain.wgsl`, all six
+  enforced places wired), so **five** colour operations compile to a shader today: brightness,
+  contrast, saturation, a 3D LUT, and the three-way wheels. Still absent: curves, the HSL
+  qualifier, and power windows — the qualifier and windows both need a per-effect mask the
+  compositor does not have, which is why they are the expensive two rather than the next two.
+  Scopes,
   by contrast, need **no** GPU work — they are a CPU reduction over a readback that already
   happens, and that reduction has now been measured rather than assumed: all four over the
   640×360 buffer bay's preview composites cost **0.98 ms** single-threaded — six percent of a
@@ -91,6 +131,14 @@ milestone list.
   table and the stride the Color page needs above preview size. Neither page changes the intermediate render-target format: that is decided and
   deferred in [`intermediate-format.md`](intermediate-format.md), which also names the cheaper
   win (collapse consecutive scalar effects into one pass) and the signal that reopens it.
-- **Audio** — there is no real-time audio path at all. No pan anywhere in the codebase, no
-  track-level gain or solo, and `ANIMATABLE_AUDIO` is literally `["volume"]`.
+- **Audio — built, and not yet reachable.** Pan, track gain and solo all exist now
+  (`bay-project/src/track.rs`, `bay-audio/src/stream.rs`), together with a callback block mixer,
+  a lock-free ring and peak/K-weighted metering. **But nothing calls any of it**:
+  `editor/transport.rs` still pre-mixes the whole remaining timeline into one buffer, so a fader
+  moved during playback changes the *next* play and not this one, and there is no running meter to
+  read. `fixes.md` entry 15. The Audio page draws its meters dark on purpose until this is wired,
+  which is the disabled-control rule being followed rather than dodged.
+
+  Still genuinely absent: EQ, compression and aux sends as editable controls, and
+  `ANIMATABLE_AUDIO` is still literally `["volume"]`.
 - **Deliver** — export runs synchronously on the UI thread, so a progress bar cannot move.
