@@ -43,7 +43,7 @@ Each owns `editor/<page>.rs` and touches `editor/mod.rs` only to register itself
 
 | # | Item | Also needs | State |
 |---|---|---|---|
-| P4 | **M3 Media** — storage tree, pool with bins, thumbnail + list, dual viewers, metadata | `MediaAsset` has no fps and no codec: add them serde-default with `probe.rs` parsing, or show duration and resolution only. Do not draw rows the model cannot fill. | pending |
+| P4 | **M3 Media** — storage tree, pool with bins, thumbnail + list, dual viewers, metadata | `MediaAsset` has no fps and no codec: add them serde-default with `probe.rs` parsing, or show duration and resolution only. Do not draw rows the model cannot fill. | **p4-media, in progress** — chose *show only what exists*: duration and resolution, `None` drawn "unknown", never "0". `bay-project`/`probe.rs` untouched; fps and codec are drawn as disabled rows so the gap stays on screen. |
 | P5 | **M4 Cut** — source tape, whole-program ribbon over zoomed detail sharing a playhead but not a zoom, the smart-edit set | First page to inset a lane, so `lane_origin_x()` gets threaded — with a test that scrubs and razors at a nonzero origin | pending |
 | P6 | **M6 Motion** — curve + keyframe editor, layer composition, masks and shapes | A row per animatable path **animated or not**, with a rest line, or the page is empty for every un-animated clip | pending |
 | P7 | **M10 Audio** — Fairlight mixer on M9's engine, tall tracks, automation lanes | `LANE_HEIGHT` is a compile-time constant hit-testing reads; resizable tracks make it state | pending |
