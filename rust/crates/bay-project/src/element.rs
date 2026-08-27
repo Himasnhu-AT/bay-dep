@@ -1575,6 +1575,59 @@ impl Element {
         Some(mask)
     }
 
+    /// The shape with `shape.radius` sampled at element-local time (`None` for non-shapes).
+    ///
+    /// Corner radius is a fraction of the shorter side, so a channel on it reads the same way
+    /// at any size — which is what makes "round the corners off as the card seats" expressible
+    /// as two keys rather than as a second element that swaps in.
+    pub fn sampled_shape_kind(&self, local_time: MediaTime) -> Option<ShapeKind> {
+        let Element::Shape(shape) = self else {
+            return None;
+        };
+        let mut kind = shape.shape;
+        if let Some(value) = shape
+            .animations
+            .get("shape.radius")
+            .and_then(|c| c.sample(local_time))
+            && let ShapeKind::Rect { radius } = &mut kind
+        {
+            *radius = value;
+        }
+        Some(kind)
+    }
+
+    /// The stroke with `stroke.width` sampled at element-local time.
+    ///
+    /// `None` when the element has no stroke at all: a channel cannot bring one into
+    /// existence, because the width is only half of a stroke and the colour is not a scalar.
+    pub fn sampled_stroke(&self, local_time: MediaTime) -> Option<Stroke> {
+        let Element::Shape(shape) = self else {
+            return None;
+        };
+        let mut stroke = shape.stroke.clone()?;
+        if let Some(value) = shape
+            .animations
+            .get("stroke.width")
+            .and_then(|c| c.sample(local_time))
+        {
+            stroke.width = value;
+        }
+        Some(stroke)
+    }
+
+    /// The font size with a `fontSize` channel sampled at element-local time.
+    pub fn sampled_font_size(&self, local_time: MediaTime) -> Option<f32> {
+        let Element::Text(text) = self else {
+            return None;
+        };
+        Some(
+            text.animations
+                .get("fontSize")
+                .and_then(|c| c.sample(local_time))
+                .unwrap_or(text.font_size),
+        )
+    }
+
     /// The on-canvas transform for visual elements (`None` for audio).
     pub fn transform(&self) -> Option<Transform> {
         match self {

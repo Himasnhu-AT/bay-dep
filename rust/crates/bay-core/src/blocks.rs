@@ -193,6 +193,12 @@ const EFFECT_BLOCKS: &[Block] = &[
         detail: "gaussian",
         needs_selection: true,
     },
+    Block {
+        id: "fx.shadow",
+        label: "Shadow",
+        detail: "drop shadow",
+        needs_selection: true,
+    },
 ];
 
 const AUDIO_BLOCKS: &[Block] = &[
@@ -354,6 +360,15 @@ pub fn plan(
         "fx.contrast" => Ok(vec![add_effect(reference, "contrast", 1.15, fresh_id)]),
         "fx.saturation" => Ok(vec![add_effect(reference, "saturation", 1.3, fresh_id)]),
         "fx.blur" => Ok(vec![add_effect(reference, "blur", 4.0, fresh_id)]),
+        // Defaults a designer would recognise as "a card sits on the page": below the layer,
+        // soft, and faint. A tile that adds a shadow nobody can see is the same dead control
+        // as a tile naming a shader that does not exist.
+        "fx.shadow" => Ok(vec![add_effect_with(
+            reference,
+            "drop-shadow",
+            default_effect_params("drop-shadow"),
+            fresh_id,
+        )]),
 
         "audio.fade-in" => Ok(vec![Command::SetFades {
             reference,
@@ -525,6 +540,62 @@ fn text_geometry(block_id: &str) -> (f32, Transform) {
     }
 }
 
+/// The parameters an effect is born with, by type.
+///
+/// Here rather than at each call site because there are three: the block palette, the
+/// inspector's add-buttons, and anything an agent builds. When the seed for blur lived in the
+/// UI and the seed for the palette lived here, the same tile produced two different shadows
+/// depending on which surface added it.
+pub fn default_effect_params(effect_type: &str) -> BTreeMap<String, f32> {
+    match effect_type {
+        // A card sitting on a page: below the layer, soft, faint.
+        //
+        // `amount` is the shadow's opacity, not a seventh parameter beside it. Every effect's
+        // `amount` is the one dial a person reaches for first — sigma for blur, gain for the
+        // colour adjustments — and it is what the inspector's stepper nudges, so a shadow
+        // whose strength lived under some other name could not be turned up from the UI.
+        "drop-shadow" => BTreeMap::from([
+            ("amount".to_string(), 0.18),
+            ("offsetX".to_string(), 0.0),
+            ("offsetY".to_string(), 8.0),
+            ("blur".to_string(), 16.0),
+            ("spread".to_string(), 0.0),
+            ("colorR".to_string(), 0.0),
+            ("colorG".to_string(), 0.0),
+            ("colorB".to_string(), 0.0),
+        ]),
+        // Sigma in pixels.
+        "blur" => BTreeMap::from([("amount".to_string(), 4.0)]),
+        // The colour adjustments seed at 1.0, which is no change, so adding one is visible in
+        // the inspector without altering the frame until it is tuned.
+        _ => BTreeMap::from([("amount".to_string(), 1.0)]),
+    }
+}
+
+/// An effect whose contract is several named scalars rather than one `amount`.
+///
+/// `add_effect` writes a single `amount`, which is the whole contract for the colour
+/// adjustments and for blur's sigma. A drop shadow has five parameters and ignores `amount`
+/// entirely, so building it through `add_effect` would put a param on the element that
+/// nothing reads.
+fn add_effect_with(
+    reference: ElementRef,
+    effect_type: &str,
+    params: impl IntoIterator<Item = (String, f32)>,
+    fresh_id: &mut dyn FnMut(&str) -> String,
+) -> Command {
+    Command::AddEffect {
+        reference,
+        effect: Effect {
+            id: fresh_id("fx"),
+            effect_type: effect_type.to_string(),
+            enabled: true,
+            params: params.into_iter().collect(),
+            asset: None,
+        },
+    }
+}
+
 fn add_effect(
     reference: ElementRef,
     effect_type: &str,
@@ -614,7 +685,14 @@ mod tests {
     #[test]
     fn every_effect_tile_names_a_shader_the_engine_implements() {
         // The set `bay-preview` translates and `bay-agent` validates against.
-        const IMPLEMENTED: [&str; 5] = ["brightness", "contrast", "saturation", "blur", "lut"];
+        const IMPLEMENTED: [&str; 6] = [
+            "brightness",
+            "contrast",
+            "saturation",
+            "blur",
+            "lut",
+            "drop-shadow",
+        ];
         let mut editor = Editor::starter();
         select_title(&mut editor);
         let mut next = ids();

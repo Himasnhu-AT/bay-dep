@@ -17,6 +17,8 @@ const SATURATION_SHADER_ID: &str = "saturation";
 const SATURATION_SHADER_SOURCE: &str = include_str!("shaders/saturation.wgsl");
 const LUT_SHADER_ID: &str = "lut";
 const LUT_SHADER_SOURCE: &str = include_str!("shaders/lut.wgsl");
+const DROP_SHADOW_SHADER_ID: &str = "drop-shadow";
+const DROP_SHADOW_SHADER_SOURCE: &str = include_str!("shaders/drop_shadow.wgsl");
 
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
@@ -68,6 +70,12 @@ struct EffectUniformBuffer {
     resolution: [f32; 2],
     direction: [f32; 2],
     scalars: [f32; 4],
+    /// A colour a pass may need beyond its scalars — the shadow tint today.
+    ///
+    /// Every shader declares the same `EffectUniforms` struct, so this field exists in all of
+    /// them whether or not they read it. Appended rather than inserted: `vec4f` wants 16-byte
+    /// alignment and the three fields before it already total 32 bytes.
+    color: [f32; 4],
 }
 
 impl EffectPipeline {
@@ -101,6 +109,13 @@ impl EffectPipeline {
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("effects-gaussian-blur-shader"),
                     source: wgpu::ShaderSource::Wgsl(GAUSSIAN_BLUR_SHADER_SOURCE.into()),
+                });
+        let drop_shadow_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-drop-shadow-shader"),
+                    source: wgpu::ShaderSource::Wgsl(DROP_SHADOW_SHADER_SOURCE.into()),
                 });
         let brightness_shader_module =
             context
@@ -200,6 +215,16 @@ impl EffectPipeline {
                     &vertex_shader_module,
                     &gaussian_blur_shader_module,
                     "effects-gaussian-blur-pipeline",
+                ),
+            ),
+            (
+                DROP_SHADOW_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    &drop_shadow_shader_module,
+                    "effects-drop-shadow-pipeline",
                 ),
             ),
             (
@@ -519,6 +544,7 @@ fn pack_effect_uniforms(
                 resolution,
                 direction,
                 scalars: [sigma, step, 0.0, 0.0],
+                color: [0.0; 4],
             })
         }
         BRIGHTNESS_SHADER_ID | CONTRAST_SHADER_ID | SATURATION_SHADER_ID => {
@@ -529,6 +555,7 @@ fn pack_effect_uniforms(
                 resolution,
                 direction: [0.0, 0.0],
                 scalars: [amount, 0.0, 0.0, 0.0],
+                color: [0.0; 4],
             })
         }
         LUT_SHADER_ID => {
@@ -547,6 +574,26 @@ fn pack_effect_uniforms(
                 resolution,
                 direction: [0.0, 0.0],
                 scalars: [amount, size, 0.0, 0.0],
+                color: [0.0; 4],
+            })
+        }
+        DROP_SHADOW_SHADER_ID => {
+            let offset = read_vec2_uniform(pass, "u_offset")?;
+            let sigma = read_number_uniform(pass, "u_sigma")?;
+            let opacity = read_number_uniform(pass, "u_opacity")?;
+            let spread = read_number_uniform(pass, "u_spread")?;
+            let color = read_vec3_uniform(pass, "u_color")?;
+            reject_unsupported_uniforms(
+                pass,
+                &["u_offset", "u_sigma", "u_opacity", "u_spread", "u_color"],
+            )?;
+            Ok(EffectUniformBuffer {
+                resolution,
+                // The offset rides in `direction` because it is the one vec2 the shared
+                // uniform already carries, and no pass uses both a blur axis and an offset.
+                direction: offset,
+                scalars: [sigma, opacity, spread, 0.0],
+                color: [color[0], color[1], color[2], 0.0],
             })
         }
         other => Err(EffectsError::UnknownEffectShader {
@@ -581,6 +628,30 @@ fn read_number_uniform(pass: &EffectPass, uniform: &str) -> Result<f32, EffectsE
             uniform: uniform.to_string(),
         }),
     }
+}
+
+fn read_vec3_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 3], EffectsError> {
+    let Some(value) = pass.uniforms.get(uniform) else {
+        return Err(EffectsError::MissingUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+        });
+    };
+    let UniformValue::Vector(values) = value else {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 3,
+        });
+    };
+    if values.len() != 3 {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 3,
+        });
+    }
+    Ok([values[0], values[1], values[2]])
 }
 
 fn read_vec2_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 2], EffectsError> {
@@ -621,6 +692,41 @@ mod tests {
                 .collect(),
             lut: None,
         }
+    }
+
+    #[test]
+    fn packs_drop_shadow_offset_scalars_and_tint() {
+        let p = pass(
+            DROP_SHADOW_SHADER_ID,
+            &[
+                ("u_offset", UniformValue::Vector(vec![3.0, -7.0])),
+                ("u_sigma", UniformValue::Number(12.0)),
+                ("u_opacity", UniformValue::Number(0.4)),
+                ("u_spread", UniformValue::Number(0.25)),
+                ("u_color", UniformValue::Vector(vec![0.1, 0.2, 0.3])),
+            ],
+        );
+        let packed = pack_effect_uniforms(&p, 1920, 1080).expect("the pass packs");
+        // The offset rides in `direction`; nothing else in the chain uses both.
+        assert_eq!(packed.direction, [3.0, -7.0]);
+        assert_eq!(packed.scalars, [12.0, 0.4, 0.25, 0.0]);
+        assert_eq!(packed.color, [0.1, 0.2, 0.3, 0.0]);
+    }
+
+    #[test]
+    fn drop_shadow_rejects_a_two_component_tint() {
+        // A vec2 where a vec3 belongs would otherwise read as black with no complaint.
+        let p = pass(
+            DROP_SHADOW_SHADER_ID,
+            &[
+                ("u_offset", UniformValue::Vector(vec![0.0, 8.0])),
+                ("u_sigma", UniformValue::Number(4.0)),
+                ("u_opacity", UniformValue::Number(0.2)),
+                ("u_spread", UniformValue::Number(0.0)),
+                ("u_color", UniformValue::Vector(vec![0.1, 0.2])),
+            ],
+        );
+        assert!(pack_effect_uniforms(&p, 64, 64).is_err());
     }
 
     #[test]

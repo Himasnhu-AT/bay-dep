@@ -610,7 +610,14 @@ fn easing_name(easing: Easing) -> &'static str {
 
 /// The effects the compositor actually renders. Naming one it does not know would attach a
 /// no-op the agent then cannot see the absence of — worse than refusing it.
-const SUPPORTED_EFFECTS: &[&str] = &["brightness", "contrast", "saturation", "blur", "lut"];
+const SUPPORTED_EFFECTS: &[&str] = &[
+    "brightness",
+    "contrast",
+    "saturation",
+    "blur",
+    "lut",
+    "drop-shadow",
+];
 
 /// Resolve the `elementId` argument every revising tool takes.
 fn require_element<'a>(

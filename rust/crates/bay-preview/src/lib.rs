@@ -77,6 +77,45 @@ fn effect_groups(
                     };
                     Some(vec![pass([1.0, 0.0]), pass([0.0, 1.0])])
                 }
+                // A layer drop shadow. Every parameter is a scalar, so each one is reachable
+                // from an `effect.<id>.<param>` animation channel with no extra plumbing —
+                // which is what makes "grow the shadow as the card lands" a keyframe rather
+                // than a new feature. Colour is three channels for the same reason: a hex
+                // string could not be animated, and `params` is a map of `f32` by design.
+                "drop-shadow" => {
+                    let param = |name: &str, fallback: f32| {
+                        effect.params.get(name).copied().unwrap_or(fallback)
+                    };
+                    Some(vec![EffectPassDescriptor {
+                        shader: "drop-shadow".to_string(),
+                        uniforms: [
+                            (
+                                "u_offset".to_string(),
+                                EffectUniformValueDescriptor::Vector(vec![
+                                    param("offsetX", 0.0),
+                                    param("offsetY", 8.0),
+                                ]),
+                            ),
+                            // Clamped low rather than at zero: a sigma of 0 divides by zero in
+                            // the kernel, and a shadow with no blur is a duplicate of the layer.
+                            ("u_sigma".to_string(), number(param("blur", 16.0).max(0.1))),
+                            // `amount` is the shadow's strength, matching every other effect's
+                            // primary dial and the one the inspector's stepper writes.
+                            ("u_opacity".to_string(), number(param("amount", 0.18))),
+                            ("u_spread".to_string(), number(param("spread", 0.0))),
+                            (
+                                "u_color".to_string(),
+                                EffectUniformValueDescriptor::Vector(vec![
+                                    param("colorR", 0.0),
+                                    param("colorG", 0.0),
+                                    param("colorB", 0.0),
+                                ]),
+                            ),
+                        ]
+                        .into(),
+                        lut: None,
+                    }])
+                }
                 _ => None,
             }
         })
@@ -1913,7 +1952,9 @@ impl PreviewRenderer {
                         let tw = (base_scale * width as f32).min(width as f32).max(1.0) as u32;
                         let th = (base_scale * height as f32).min(height as f32).max(1.0) as u32;
                         let (tw, th) = (tw.max(1), th.max(1));
-                        let font_px = (text.font_size * height as f32 / 1080.0).max(8.0);
+                        let sampled_size =
+                            element.sampled_font_size(local).unwrap_or(text.font_size);
+                        let font_px = (sampled_size * height as f32 / 1080.0).max(8.0);
                         let active_word = text
                             .karaoke
                             .as_ref()
@@ -2007,12 +2048,17 @@ impl PreviewRenderer {
                         // in order to keep its corners round under a non-uniform stretch.
                         let aspect = (transform.scale_x * width as f32)
                             / (transform.scale_y * height as f32).max(f32::EPSILON);
+                        // Sampled, not raw: `shape.radius` and `stroke.width` are animation
+                        // channels like any other. The raster cache keys on both, so a frame
+                        // whose radius has moved gets its own texture rather than a stale one.
+                        let sampled_kind = element.sampled_shape_kind(local).unwrap_or(shape.shape);
+                        let sampled_stroke = element.sampled_stroke(local);
                         (
                             self.ensure_shape_texture(
-                                &shape.shape,
+                                &sampled_kind,
                                 &shape.color,
                                 shape.gradient.as_ref(),
-                                shape.stroke.as_ref(),
+                                sampled_stroke.as_ref(),
                                 aspect,
                             ),
                             None,
