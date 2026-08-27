@@ -332,6 +332,7 @@ mod tests {
             media_id: "m".into(),
             muted: false,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,

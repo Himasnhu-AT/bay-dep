@@ -166,30 +166,37 @@ pub fn envelope(project: &Project) -> MixEnvelope {
         })
         .collect();
 
-    let audible: Vec<&Element> = scene
+    // Each audible clip with the fader of the lane it sits on. **Solo counts here**: the mix
+    // this measures has to be the mix that would be delivered, and a lane the export drops is
+    // not in the file whose loudness is being judged.
+    let any_solo = scene.tracks.any_audio_solo();
+    let audible: Vec<(f32, &Element)> = scene
         .tracks
         .audio
         .iter()
-        .filter(|track| !track.muted && !track.hidden)
-        .flat_map(|track| track.elements.iter())
-        .filter(|element| matches!(element, Element::Audio(_)))
-        .filter(|element| element.duration() > MediaTime::ZERO)
-        .filter(|element| element.gain_points().iter().any(|(_, gain)| *gain > 0.0))
+        .filter_map(|track| {
+            let gain = track.mix_gain(any_solo);
+            (gain > 0.0).then_some((gain, track))
+        })
+        .flat_map(|(gain, track)| track.elements.iter().map(move |element| (gain, element)))
+        .filter(|(_, element)| matches!(element, Element::Audio(_)))
+        .filter(|(_, element)| element.duration() > MediaTime::ZERO)
+        .filter(|(_, element)| element.gain_points().iter().any(|(_, gain)| *gain > 0.0))
         .collect();
 
     let mut out = MixEnvelope {
         has_speech: audible
             .iter()
-            .any(|element| element.audio_role() == Some(AudioRole::Speech)),
+            .any(|(_, element)| element.audio_role() == Some(AudioRole::Speech)),
         has_bed: audible
             .iter()
-            .any(|element| element.audio_role() == Some(AudioRole::Bed)),
+            .any(|(_, element)| element.audio_role() == Some(AudioRole::Bed)),
         ..MixEnvelope::default()
     };
     // Named once each, in timeline order, so the reason a mix could not be measured names the
     // files rather than a count.
     let mut unmeasured: Vec<String> = Vec::new();
-    for element in &audible {
+    for (_, element) in &audible {
         if let Some(media_id) = element.media_id()
             && !loudness.contains_key(media_id)
             && !unmeasured.iter().any(|id| id == media_id)
@@ -201,7 +208,7 @@ pub fn envelope(project: &Project) -> MixEnvelope {
 
     let end = audible
         .iter()
-        .map(|element| element.end())
+        .map(|(_, element)| element.end())
         .max()
         .unwrap_or(MediaTime::ZERO)
         .to_seconds_f64();
@@ -214,7 +221,7 @@ pub fn envelope(project: &Project) -> MixEnvelope {
     let mut total = vec![0.0_f64; hops];
     let mut bed = vec![0.0_f64; hops];
     let mut speaking = vec![false; hops];
-    for element in &audible {
+    for (track_gain, element) in &audible {
         let Some(media_id) = element.media_id() else {
             continue;
         };
@@ -246,7 +253,11 @@ pub fn envelope(project: &Project) -> MixEnvelope {
             let Some(local) = MediaTime::from_seconds_f64(at - start) else {
                 continue;
             };
-            let Some(gain) = element.sampled_gain(local) else {
+            // The lane's fader is a second gain stage, so it multiplies the clip's own level
+            // exactly as it does in the block mixer and in the export's `volume` filter. A
+            // lane pulled 6 dB down is 6 dB down in the file, and the mix gate has to be
+            // measuring the file.
+            let Some(gain) = element.sampled_gain(local).map(|gain| gain * track_gain) else {
                 continue;
             };
             if gain <= 0.0 {
@@ -389,6 +400,7 @@ mod tests {
             media_id: media.into(),
             muted: false,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -655,6 +667,58 @@ mod tests {
         assert!(
             (before - after).abs() < 1e-9,
             "{before} vs {after}: a constant on every gain is not a mix decision"
+        );
+    }
+
+    /// **A lane's fader is part of the mix.** It is a second gain stage on top of every clip's
+    /// own level, so pulling a lane down moves the measurement by exactly that much — the same
+    /// arithmetic the block mixer and the export's `volume` filter apply. A gate that could not
+    /// see the fader would certify a mix nobody will hear.
+    #[test]
+    fn a_lane_fader_moves_the_measurement() {
+        let flat = envelope(&flat_project());
+        let mut project = flat_project();
+        // −6 dB on the whole audio lane.
+        project.active_scene_mut().tracks.audio[0].gain = 0.5;
+        let pulled = envelope(&project);
+        assert!(
+            (pulled.authored_lufs.expect("authored") - flat.authored_lufs.expect("authored")
+                + 6.02)
+                .abs()
+                < 0.05,
+            "half gain on the lane is 6 dB quieter: {:?} vs {:?}",
+            flat.authored_lufs,
+            pulled.authored_lufs
+        );
+    }
+
+    /// **Solo is part of the mix too.** A lane the export drops is not in the file whose
+    /// loudness is being judged, so the envelope must stop hearing it as well.
+    #[test]
+    fn solo_takes_the_other_lanes_out_of_the_measurement() {
+        let mut project = flat_project();
+        {
+            // Move the bed onto a lane of its own, then solo the voice.
+            let scene = project.active_scene_mut();
+            let bed = scene.tracks.audio[0]
+                .elements
+                .iter()
+                .position(|element| element.id() == "bed")
+                .expect("the bed");
+            let bed = scene.tracks.audio[0].elements.remove(bed);
+            let mut music = Track::new("track-music", "Music", TrackKind::Audio);
+            music.elements = vec![bed];
+            scene.tracks.audio.push(music);
+            scene.tracks.audio[0].solo = true;
+        }
+        let soloed = envelope(&project);
+        assert!(
+            !soloed.has_bed,
+            "the soloed lane is the voice; the bed is not in this mix"
+        );
+        assert!(
+            soloed.gap_bed_lufs.is_none(),
+            "and there is no bed level to report"
         );
     }
 

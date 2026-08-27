@@ -18,6 +18,7 @@ bay-compositor = { version = "0.1.0", path = "../bay-compositor" }
 bay-effects = { version = "0.1.0", path = "../bay-effects" }
 bay-gpu = { version = "0.1.0", path = "../bay-gpu" }
 image = "0.25"
+bay-audio = { version = "0.1.0", path = "../bay-audio" }
 bay-project = { version = "0.1.0", path = "../bay-project" }
 bay-text = { version = "0.1.0", path = "../bay-text" }
 pollster = "0.4"

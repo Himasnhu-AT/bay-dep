@@ -1255,6 +1255,7 @@ impl EditorView {
                     media_id: media_id.to_string(),
                     muted: false,
                     volume: 1.0,
+                    pan: 0.0,
                     speed: 1.0,
                     prosody: None,
                     dialogue_chain: None,

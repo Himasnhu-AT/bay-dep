@@ -504,6 +504,7 @@ fn a_move_an_element_cannot_perform_is_refused() {
         media_id: "m".into(),
         muted: false,
         volume: 1.0,
+        pan: 0.0,
         speed: 1.0,
         prosody: None,
         dialogue_chain: None,
