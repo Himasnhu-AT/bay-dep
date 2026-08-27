@@ -1180,6 +1180,19 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Timed as a whole, with the preview hop timed separately inside it, because the two
+        // point at different fixes. See `frametime.rs`; off unless BAY_UI_FRAMETIME is set.
+        let started = crate::frametime::enabled().then(std::time::Instant::now);
+        let tree = self.render_inner(window, cx);
+        if let Some(started) = started {
+            crate::frametime::record_render(started.elapsed());
+        }
+        tree
+    }
+}
+
+impl EditorView {
+    fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lane_width = Self::lane_width(window);
         let window_width = f32::from(window.viewport_size().width);
         // Failures used to land in a 360px strip in the toolbar, in the same grey as everything

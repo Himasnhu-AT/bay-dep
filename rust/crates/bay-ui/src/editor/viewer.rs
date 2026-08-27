@@ -92,7 +92,12 @@ impl EditorView {
         if self.preview.is_none() {
             return;
         }
+        crate::frametime::timed(crate::frametime::record_preview, || {
+            self.update_preview_inner()
+        })
+    }
 
+    fn update_preview_inner(&mut self) {
         // --- collect ---
         let collected = self.preview.as_mut().unwrap().collect_composite();
         match collected {

@@ -9,6 +9,7 @@ pub mod controls;
 pub mod drag;
 pub mod draw;
 pub mod editor;
+pub mod frametime;
 pub mod geometry;
 pub mod input;
 pub mod lab;
