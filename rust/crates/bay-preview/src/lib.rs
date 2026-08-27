@@ -7,6 +7,7 @@
 //! lands; the compositing (background, transform, opacity, blend) is real.
 
 pub mod frame_check;
+pub mod poster;
 pub mod probe;
 pub mod scopes;
 pub mod waveform;

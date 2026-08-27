@@ -405,6 +405,14 @@ pub struct EditorView {
     /// It is not only a layout number: `panel_columns` derives the media grid's column count
     /// from it, so the panel has to know its own width during render, not merely be given one.
     media_width: f32,
+    /// One thumbnail per media asset, decoded on workers and uploaded once.
+    ///
+    /// `posters` owns the decode; `poster_images` is the gpui side, built lazily the first time
+    /// a decoded frame is drawn. Kept apart because `bay-preview` must not know what a
+    /// `RenderImage` is — and because the conversion costs a channel swap that should happen
+    /// once per asset, not once per frame.
+    posters: bay_preview::poster::PosterCache,
+    poster_images: std::collections::BTreeMap<String, Arc<RenderImage>>,
     /// Where the resizable split between left panel, viewer and inspector keeps its sizes.
     ///
     /// Lazily built because `EditorView::new` has no `Context` to make an entity with, and
@@ -510,6 +518,8 @@ impl EditorView {
             tool: Tool::Select,
             panel: Panel::Media,
             media_width: DEFAULT_PANEL_WIDTH,
+            posters: bay_preview::poster::PosterCache::new(),
+            poster_images: std::collections::BTreeMap::new(),
             panel_resize: None,
             collapsed_folders: std::collections::BTreeSet::new(),
             lab: crate::lab::enabled().then(crate::lab::Lab::default),
@@ -1263,6 +1273,19 @@ impl EditorView {
         // nothing at all.
         self.release_retired_images(window);
         self.request_waveforms();
+        self.request_posters();
+        if self.posters.has_pending() {
+            // A decode landing on a worker changes nothing the signature can see, so without
+            // this the picture would not appear until something unrelated repainted.
+            //
+            // `cx.notify()` rather than `window.request_animation_frame()`: the latter reads
+            // `current_view()`, which unwraps the rendered-entity stack, and that stack is empty
+            // under `VisualTestContext::draw` — every paint test panicked inside gpui the moment
+            // this branch became reachable. The other `request_animation_frame` calls in this
+            // function share the landmine and merely never fire in a test. `notify` marks the
+            // view dirty and lets the compositor pace the redraw, which is what was wanted.
+            cx.notify();
+        }
         let vm = EditorViewModel::build(&self.editor);
 
         div()

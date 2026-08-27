@@ -1097,6 +1097,9 @@ impl EditorView {
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Stateful<Div> {
         let kind = MediaKind::of_path(&asset.path);
+        // Taken before the element chain starts, because uploading a first-seen thumbnail needs
+        // `&mut self` and everything below borrows immutably.
+        let poster = self.poster_image(&asset.id);
         let on = self.media_state().selected.as_deref() == Some(asset.id.as_str());
         let id = asset.id.clone();
         div()
@@ -1116,22 +1119,34 @@ impl EditorView {
             }))
             .cursor_pointer()
             .hover(|style| style.bg(rgb(theme::HOVER)))
-            .child(
-                div()
+            .child({
+                let plate = div()
                     .h(px(TILE_IMAGE))
                     .rounded(px(4.0))
                     .bg(rgb(theme::LANE))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(
+                    .overflow_hidden();
+                match poster {
+                    // The picture, once a worker has produced one.
+                    Some(image) => plate.child(
+                        img(ImageSource::Render(image))
+                            .h(px(TILE_IMAGE))
+                            .w(px(TILE_WIDTH - 8.0)),
+                    ),
+                    // Still decoding, decode failed, or the kind has no picture to show. The
+                    // coloured bar stays for those, because a tile with nothing in it reads as
+                    // a broken file rather than one whose thumbnail has not arrived.
+                    None => plate.child(
                         div()
                             .w(px(30.0))
                             .h(px(4.0))
                             .rounded(px(2.0))
                             .bg(rgb(theme::element_color(kind.label()))),
                     ),
-            )
+                }
+            })
             .child(
                 div()
                     .mt(px(4.0))
@@ -1801,5 +1816,52 @@ mod paint_tests {
             );
         });
         paint(&view, cx, 1440.0, 900.0);
+    }
+}
+
+impl EditorView {
+    /// Queue a thumbnail for every asset, poll the ones in flight, and upload any that landed.
+    ///
+    /// Uploading happens *here*, in the one `&mut self` pass render already makes, rather than
+    /// lazily at the tile. Doing it at the tile means `pool_tile` needs `&mut self`, and that
+    /// borrow cascades up through `media_pool_body`, `media_pool` and `media_page` — turning a
+    /// thumbnail into a refactor of the page. This keeps the element tree immutable.
+    pub(super) fn request_posters(&mut self) {
+        let assets: Vec<(String, String)> = self
+            .editor
+            .project()
+            .media
+            .iter()
+            .map(|asset| (asset.id.clone(), asset.path.clone()))
+            .collect();
+        for (id, path) in assets {
+            self.posters.request(&id, Some(path.as_str()));
+            if self.poster_images.contains_key(&id) {
+                continue;
+            }
+            let Some(frame) = self.posters.poster(&id) else {
+                continue;
+            };
+            // The channel swap, once per asset rather than once per frame. `PosterFrame` carries
+            // **RGBA**, because that is what ffmpeg was asked for; gpui documents `RenderImage`
+            // as **BGRA**. `viewer.rs` correctly does *not* swap, because its frames come off
+            // the GPU already in BGRA — the two paths genuinely differ, and reconciling them
+            // turns every face blue.
+            let mut bgra = frame.rgba.clone();
+            for texel in bgra.chunks_exact_mut(4) {
+                texel.swap(0, 2);
+            }
+            if let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, bgra) {
+                self.poster_images.insert(
+                    id,
+                    Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])),
+                );
+            }
+        }
+    }
+
+    /// The uploaded thumbnail for `media_id`, if one has landed. A pure lookup.
+    fn poster_image(&self, media_id: &str) -> Option<Arc<RenderImage>> {
+        self.poster_images.get(media_id).map(Arc::clone)
     }
 }
