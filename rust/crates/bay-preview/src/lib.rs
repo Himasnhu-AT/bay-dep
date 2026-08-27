@@ -771,6 +771,7 @@ fn plan_decode(
     rotation: i32,
     duration_secs: f64,
     intent: DecodeIntent,
+    preview_budget: usize,
 ) -> DecodePlan {
     let (nw, nh) = natural;
     let (nw, nh) = if nw == 0 || nh == 0 {
@@ -815,7 +816,7 @@ fn plan_decode(
 
     let duration = duration_secs.max(0.05);
     let frames_affordable =
-        (VIDEO_MEMORY_BUDGET / ((w as usize) * (h as usize) * 4).max(1)).max(1) as f64;
+        (preview_budget.max(1) / ((w as usize) * (h as usize) * 4).max(1)).max(1) as f64;
 
     // Coverage of the whole clip is non-negotiable — truncating it is what made long clips
     // freeze on their last decoded frame. So spend the budget on frame RATE first, and only
@@ -864,7 +865,13 @@ pub fn plan_decode_for_test(
     rotation: i32,
     duration_secs: f64,
 ) -> (u32, u32, f32, u32) {
-    let plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        VIDEO_MEMORY_BUDGET,
+    );
     (
         plan.width,
         plan.height,
@@ -890,7 +897,13 @@ pub fn clip_stream_samples_for_test(path: &str, fps: f32, at_seconds: &[f64]) ->
         ),
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
     };
-    let plan = plan_decode(natural, rotation, duration, DecodeIntent::Export { fps });
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration,
+        DecodeIntent::Export { fps },
+        VIDEO_MEMORY_BUDGET,
+    );
     let start = at_seconds.first().copied().unwrap_or(0.0);
     let Some(mut stream) = ClipStream::open(path, plan, start) else {
         return at_seconds.iter().map(|_| None).collect();
@@ -919,6 +932,7 @@ pub fn plan_export_decode_for_test(
         rotation,
         duration_secs,
         DecodeIntent::Export { fps },
+        VIDEO_MEMORY_BUDGET,
     )
 }
 
@@ -1144,6 +1158,7 @@ impl ExportStreams {
                 rotation,
                 duration,
                 DecodeIntent::Export { fps: self.fps },
+                VIDEO_MEMORY_BUDGET,
             );
             match ClipStream::open(path, plan, source_seconds) {
                 Some(stream) => {
@@ -1181,6 +1196,32 @@ const TEXT_CACHE_CAP: usize = 64;
 /// Ceiling on decoded video frames held across **all** clips. [`VIDEO_MEMORY_BUDGET`] bounds a
 /// single clip; without a global cap, ten imported clips would each claim their own budget.
 const GLOBAL_VIDEO_MEMORY_BUDGET: usize = 384 * 1024 * 1024;
+
+/// What one clip may claim when `clips` of them share [`GLOBAL_VIDEO_MEMORY_BUDGET`].
+///
+/// Without this every clip planned against the full 192 MB [`VIDEO_MEMORY_BUDGET`] regardless of
+/// how many others existed. Eight clips therefore planned 1.5 GB against a 384 MB ceiling, and
+/// the LRU spent playback evicting a clip to make room for the next one and then re-decoding it
+/// — on screen, a solid placeholder with real frames flashing through it for under a second at a
+/// time. `CLAUDE.md` names this exact regression: "cache budgets are global, not per clip …
+/// regressing this means N clips get N budgets."
+///
+/// Still capped at the single-clip budget, so one clip on its own is unchanged.
+fn distinct_video_clips(scene: &Scene) -> usize {
+    let mut seen = HashSet::new();
+    for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+        for element in &track.elements {
+            if let Element::Video(video) = element {
+                seen.insert(video.media_id.as_str());
+            }
+        }
+    }
+    seen.len()
+}
+
+fn preview_budget_per_clip(clips: usize) -> usize {
+    (GLOBAL_VIDEO_MEMORY_BUDGET / clips.max(1)).min(VIDEO_MEMORY_BUDGET)
+}
 
 /// Where a clip's decode has got to. Decoding runs on a worker thread so the render path never
 /// blocks: a 10-minute clip took ~33s of frozen UI when this was a synchronous call.
@@ -1609,7 +1650,7 @@ impl PreviewRenderer {
 
     /// Advance a clip's decode state: start a worker if this is the first sighting, otherwise
     /// check whether the worker has finished. Never blocks.
-    fn poll_decode(&mut self, media_id: &str, path: Option<&str>) {
+    fn poll_decode(&mut self, media_id: &str, path: Option<&str>, budget: usize) {
         match self.video_cache.get(media_id) {
             None => {
                 let Some(path) = path else {
@@ -1623,7 +1664,7 @@ impl PreviewRenderer {
                 // Detached worker: the receiver is the only handle we keep. If the renderer is
                 // dropped first the send simply fails and the thread exits.
                 std::thread::spawn(move || {
-                    let _ = tx.send(decode_video_clip(&owned));
+                    let _ = tx.send(decode_video_clip(&owned, budget));
                 });
                 self.video_cache
                     .insert(media_id.to_string(), ClipState::Pending(rx));
@@ -1726,6 +1767,7 @@ impl PreviewRenderer {
         scene: &Scene,
         media: &[MediaAsset],
     ) -> Result<(), String> {
+        let budget = preview_budget_per_clip(distinct_video_clips(scene));
         for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
             for element in &track.elements {
                 let Element::Video(video) = element else {
@@ -1736,7 +1778,7 @@ impl PreviewRenderer {
                     .find(|m| m.id == video.media_id)
                     .map(|m| m.path.clone());
                 loop {
-                    self.poll_decode(&video.media_id, path.as_deref());
+                    self.poll_decode(&video.media_id, path.as_deref(), budget);
                     match self.video_cache.get(&video.media_id) {
                         Some(ClipState::Pending(_)) => {
                             std::thread::sleep(std::time::Duration::from_millis(10))
@@ -2210,6 +2252,10 @@ impl PreviewRenderer {
             Background::Color { color } => hex_to_rgba(color),
             Background::Blur { .. } => [0.06, 0.06, 0.08, 1.0],
         };
+        // What each clip may hold, given how many share the global cache. Computed per frame
+        // because the answer changes when a clip is added or removed, and a stale share is how
+        // the cache ends up over-committed again.
+        let clip_budget = preview_budget_per_clip(distinct_video_clips(scene));
 
         // Main lane first (bottom), then overlay lanes (on top) — the compositor blends in order.
         let mut items = Vec::new();
@@ -2385,7 +2431,7 @@ impl PreviewRenderer {
                             // Doing this inline used to block the render path for the whole
                             // decode (~33s of frozen UI for a 10-minute clip).
                             FrameSource::Cache => {
-                                self.poll_decode(&media_id, path.as_deref());
+                                self.poll_decode(&media_id, path.as_deref(), clip_budget);
                                 let frame = self
                                     .video_cache
                                     .get(&media_id)
@@ -2548,7 +2594,7 @@ impl PreviewRenderer {
 ///
 /// NOTE: this blocks for the whole decode (seconds, for a long clip) and is currently called
 /// from the render path. Moving it off-thread is tracked as M9 in the parity plan.
-fn decode_video_clip(path: &str) -> Option<VideoClip> {
+fn decode_video_clip(path: &str, budget: usize) -> Option<VideoClip> {
     // Probe first so the decode matches the source's real display aspect and length.
     let (natural, rotation, duration_secs) = match probe::probe_media(path) {
         Ok(meta) => (
@@ -2558,7 +2604,13 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
         ),
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
     };
-    let plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        budget,
+    );
     let (decode_w, decode_h, fps) = (plan.width, plan.height, plan.fps);
 
     let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
@@ -3530,7 +3582,13 @@ pub fn poster_frame(path: &str, at_seconds: f64) -> Option<PosterFrame> {
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
     };
 
-    let mut plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    let mut plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        VIDEO_MEMORY_BUDGET,
+    );
     // One frame, and no larger than a tile needs.
     plan.max_frames = Some(1);
     if plan.width > POSTER_MAX_W {
@@ -3577,4 +3635,75 @@ pub fn poster_frame(path: &str, at_seconds: f64) -> Option<PosterFrame> {
         height: plan.height,
         rgba,
     })
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    /// The regression `CLAUDE.md` names: "cache budgets are global, not per clip — regressing
+    /// this means N clips get N budgets."
+    ///
+    /// Eight clips each planning against the full 192 MB single-clip budget commits 1.5 GB
+    /// against a 384 MB ceiling. The LRU then spends playback evicting a clip to make room for
+    /// the next and re-decoding it, which on screen is a solid placeholder with real frames
+    /// flashing through it for under a second at a time.
+    #[test]
+    fn many_clips_share_the_global_budget_rather_than_each_claiming_it_all() {
+        let eight = preview_budget_per_clip(8);
+        assert!(
+            eight * 8 <= GLOBAL_VIDEO_MEMORY_BUDGET,
+            "eight clips must fit the global cap together, got {} each",
+            eight
+        );
+        assert!(
+            eight < VIDEO_MEMORY_BUDGET,
+            "with eight clips a single clip cannot still claim the whole single-clip budget"
+        );
+    }
+
+    /// One clip on its own is unchanged — the share is capped at the single-clip budget rather
+    /// than handing a lone clip the entire global cap.
+    #[test]
+    fn one_clip_is_unchanged_by_the_share() {
+        assert_eq!(preview_budget_per_clip(1), VIDEO_MEMORY_BUDGET);
+        assert_eq!(preview_budget_per_clip(0), VIDEO_MEMORY_BUDGET);
+    }
+
+    /// A smaller share must buy a lower frame rate, not a truncated clip. Coverage of the whole
+    /// duration is the promise `plan_decode` is built around: truncating is what made long clips
+    /// freeze on their last decoded frame.
+    #[test]
+    fn a_smaller_share_lowers_the_rate_and_still_covers_the_clip() {
+        let (natural, duration) = ((1920, 1080), 103.0);
+        let generous = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        let shared = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Preview,
+            preview_budget_per_clip(8),
+        );
+
+        assert!(
+            shared.fps <= generous.fps,
+            "a smaller share cannot afford a higher rate"
+        );
+        for plan in [&generous, &shared] {
+            let frames = plan
+                .max_frames
+                .expect("preview plans bound their frame count");
+            let covered = frames as f64 / plan.fps as f64;
+            assert!(
+                covered >= duration - 1.0,
+                "the plan must still span the clip: {covered:.1}s of {duration}s"
+            );
+        }
+    }
 }

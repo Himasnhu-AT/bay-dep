@@ -258,7 +258,20 @@ impl EditorView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(div().w(px(28.0)).h(px(4.0)).rounded(px(2.0)).bg(rgb(color))),
+                    .overflow_hidden()
+                    // The Cut page's library is a *different* renderer from the Media page's
+                    // pool, and wiring thumbnails into only one of them is why the Cut page
+                    // still showed coloured bars after the pool stopped.
+                    .children(self.poster_image(&asset.id).map(|image| {
+                        gpui::img(gpui::ImageSource::Render(image))
+                            .h(px(cell))
+                            .w_full()
+                    }))
+                    .children(
+                        self.poster_image(&asset.id)
+                            .is_none()
+                            .then(|| div().w(px(28.0)).h(px(4.0)).rounded(px(2.0)).bg(rgb(color))),
+                    ),
             )
             .child(
                 div()

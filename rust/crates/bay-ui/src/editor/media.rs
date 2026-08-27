@@ -1882,7 +1882,7 @@ impl EditorView {
     }
 
     /// The uploaded thumbnail for `media_id`, if one has landed. A pure lookup.
-    fn poster_image(&self, media_id: &str) -> Option<Arc<RenderImage>> {
+    pub(super) fn poster_image(&self, media_id: &str) -> Option<Arc<RenderImage>> {
         self.poster_images.get(media_id).map(Arc::clone)
     }
 }

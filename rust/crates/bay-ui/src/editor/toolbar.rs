@@ -49,7 +49,13 @@ impl EditorView {
                     // Leaving saves first: an editor that drops work on the way out teaches
                     // people never to use the back button.
                     .child(
-                        self.button("projects", "‹ Projects", false, cx, |this, cx| match this
+                        // `true` is *enabled*, not "primary". There are two `button` methods in
+                        // this crate and their third parameter means different things —
+                        // `BayApp::button` takes `primary`, `EditorView::button` takes `enabled`.
+                        // This read `false` for "not primary" and so shipped a back button that
+                        // silently did nothing; it only became visible once buttons started
+                        // drawing their disabled state honestly.
+                        self.button("projects", "‹ Projects", true, cx, |this, cx| match this
                             .save_project()
                         {
                             Ok(_) => cx.emit(EditorViewEvent::CloseRequested),
@@ -145,7 +151,7 @@ impl EditorView {
                                 },
                             )),
                     )
-                    .child(self.button("save", "Save", false, cx, |this, _cx| {
+                    .child(self.button("save", "Save", true, cx, |this, _cx| {
                         this.status = Some(match this.save_project() {
                             Ok(path) => format!("Saved to {}", path.display()),
                             Err(error) => format!("Save failed: {error}"),
