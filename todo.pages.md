@@ -47,7 +47,7 @@ Each owns `editor/<page>.rs` and touches `editor/mod.rs` only to register itself
 | P5 | **M4 Cut** — source tape, whole-program ribbon over zoomed detail sharing a playhead but not a zoom, the smart-edit set | First page to inset a lane, so `lane_origin_x()` gets threaded — with a test that scrubs and razors at a nonzero origin | pending |
 | P6 | **M6 Motion** — curve + keyframe editor, layer composition, masks and shapes | A row per animatable path **animated or not**, with a rest line, or the page is empty for every un-animated clip | pending |
 | P7 | **M10 Audio** — Fairlight mixer on M9's engine, tall tracks, automation lanes | `LANE_HEIGHT` is a compile-time constant hit-testing reads; resizable tracks make it state | **p7-audio** — in progress. Page built in `editor/audio.rs`: strips bound to the six real commands, tall lanes with waveforms and automation, loudness from `mix::envelope`. `LANE_HEIGHT` was **not** touched — the tall lanes derive their height from one function and each lane element owns its own press, so no y ever becomes a track. **P5 is unblocked.** Meters are dark: M9's `StreamEngine` is wired to nothing and playback still submits one pre-mixed rodio buffer, so a fader is not audible during playback. |
-| P8 | **M11 Deliver** — settings, range, queue | **Precondition:** export runs synchronously on the UI thread, so a progress bar cannot move. Delete `export_video`/`export_frame` from the toolbar in the same milestone — two output paths, one bypassing `render_gate`, is the defect this closes | pending |
+| P8 | **M11 Deliver** — settings, range, queue | — | **done** — the precondition is closed: the encode runs on a worker with its own GPU device, through the same `bay_agent::slow::run("render", …)` an agent calls, so `render_gate` and `frame_check` cover both callers and the file is the project's canvas rather than a silent 1280 cap. **Both toolbar exports deleted** in the same commit. The queue is `bay_jobs` filtered to renders, so a render an agent started over MCP is in the same list. New engine: an **out point** (`endSeconds`) — `duration` shorter than the timeline is refused as a forgotten tail, which meant bay had no way to render a section at all; and `bay_agent::deliver`, the form as a headless value whose tests round-trip every control back through `slow::export_settings`. CRF is drawn **disabled** on ProRes (quality-fixed by profile); **no alpha option at all**, because `Background` has no transparency to keep. `fixes.md` entry 6 is closed. |
 | P9 | **M8 Color** — clip strip, gallery, node list, scopes, palettes | XL. Free win: `SceneEffect` is fully implemented in the compositor and constructed nowhere — that is the adjustment layer at zero shader cost | pending |
 
 ## Outstanding regardless
@@ -55,4 +55,10 @@ Each owns `editor/<page>.rs` and touches `editor/mod.rs` only to register itself
 - **The visual check.** Nothing in the Done table above has been looked at. `./run.sh`, at 1440×900
   **and** at a small window, per page. For a layout migration this is the verification no test
   substitutes for.
-- Four open defects in [`fixes.md`](fixes.md), none blocking.
+- Three open defects in [`fixes.md`](fixes.md), none blocking. **Entry 6 (the ungated export on
+  the UI thread) is closed by P8** — `grep render_gate` now finds the editor as well as the
+  server, via `slow::render_stamp`.
+- **The band constants are literals in three files.** Deliver's two bands sum to 340 to match
+  Cut's scene bar (40, `toolbar.rs`) plus its timeline (300, `timeline.rs`), which is what keeps
+  the transport at the same height across pages — `pages.md` calls that the horizon line. Only
+  the Deliver end is guarded by a test. They want lifting into one place in `editor/mod.rs`.
