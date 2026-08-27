@@ -1465,15 +1465,7 @@ mod paint_tests {
         (view, cx)
     }
 
-    fn paint(view: &gpui::Entity<EditorView>, cx: &mut VisualTestContext, width: f32, height: f32) {
-        cx.simulate_resize(size(px(width), px(height)));
-        let view = view.clone();
-        cx.draw(
-            gpui::point(px(0.0), px(0.0)),
-            size(px(width), px(height)),
-            |_, _| view.into_any_element(),
-        );
-    }
+    use crate::paint_harness::paint;
 
     /// The window the app actually opens.
     #[gpui::test]

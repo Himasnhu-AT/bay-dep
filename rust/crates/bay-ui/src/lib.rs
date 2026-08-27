@@ -15,6 +15,9 @@ pub mod lab;
 pub mod launcher_view;
 pub mod login_view;
 pub mod page;
+/// The shared `VisualTestContext::draw` call the five page test modules used to duplicate.
+#[cfg(test)]
+pub(crate) mod paint_harness;
 pub mod settings_model;
 pub mod settings_view;
 pub mod theme;

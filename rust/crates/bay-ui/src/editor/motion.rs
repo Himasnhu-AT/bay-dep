@@ -2424,7 +2424,7 @@ mod paint_tests {
     use super::*;
     use crate::page::Page;
     use bay_core::Editor;
-    use gpui::{size, Modifiers, MouseButton, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
 
     fn title() -> ElementRef {
         ElementRef::new("track-main", "el-title")
@@ -2491,15 +2491,7 @@ mod paint_tests {
             .expect("the opacity channel that was just written")
     }
 
-    fn paint(view: &gpui::Entity<EditorView>, cx: &mut VisualTestContext, width: f32, height: f32) {
-        cx.simulate_resize(size(px(width), px(height)));
-        let view = view.clone();
-        cx.draw(
-            gpui::point(px(0.0), px(0.0)),
-            size(px(width), px(height)),
-            |_, _| view.into_any_element(),
-        );
-    }
+    use crate::paint_harness::paint;
 
     /// With nothing selected — the state the page opens in, and the one where a curve editor
     /// most easily draws an empty frame.

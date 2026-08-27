@@ -898,7 +898,7 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{size, TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext};
 
     /// **The test that stops the second output path growing back.**
     ///
@@ -1053,15 +1053,7 @@ mod tests {
         (view, cx)
     }
 
-    fn paint(view: &gpui::Entity<EditorView>, cx: &mut VisualTestContext, width: f32, height: f32) {
-        cx.simulate_resize(size(px(width), px(height)));
-        let view = view.clone();
-        cx.draw(
-            gpui::point(px(0.0), px(0.0)),
-            size(px(width), px(height)),
-            |_, _| view.into_any_element(),
-        );
-    }
+    use crate::paint_harness::paint;
 
     /// `pages.md`: every page milestone is done only after it has been looked at, at 1440×900
     /// **and** at a small window. This is the half a machine can check — that nothing panics.

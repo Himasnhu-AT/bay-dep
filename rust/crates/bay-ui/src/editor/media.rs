@@ -1652,7 +1652,7 @@ mod tests {
 #[cfg(test)]
 mod paint_tests {
     use super::*;
-    use gpui::{size, TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext};
 
     /// An editor on the media page with one asset of each kind in the pool: a probed video, an
     /// unprobed one (the "unknown" path), a still whose file is not on disk (the `img` fallback)
@@ -1692,15 +1692,7 @@ mod paint_tests {
         (view, cx)
     }
 
-    fn paint(view: &gpui::Entity<EditorView>, cx: &mut VisualTestContext, width: f32, height: f32) {
-        cx.simulate_resize(size(px(width), px(height)));
-        let view = view.clone();
-        cx.draw(
-            gpui::point(px(0.0), px(0.0)),
-            size(px(width), px(height)),
-            |_, _| view.into_any_element(),
-        );
-    }
+    use crate::paint_harness::paint;
 
     /// The window the app actually opens, in both pool views, with nothing selected.
     #[gpui::test]
