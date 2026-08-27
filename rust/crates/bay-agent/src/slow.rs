@@ -538,7 +538,7 @@ fn render_duration(
             Some(duration)
         }
         Requested::Duration(_) => {
-            return Err("duration must be a finite number greater than zero".into())
+            return Err("duration must be a finite number greater than zero".into());
         }
         // An out point is a decision, so the tail it leaves out is not an error. The clamp
         // below still stops it running past the end of the timeline.
@@ -1558,16 +1558,74 @@ mod tests {
 
     #[test]
     fn an_explicit_duration_cannot_silently_cut_off_the_timeline() {
-        let error = render_duration(155.0, 30.0, 0.0, Some(61.0)).expect_err("must refuse");
+        let error =
+            render_duration(155.0, 30.0, 0.0, Requested::Duration(61.0)).expect_err("must refuse");
         assert!(error.contains("94.00s would be omitted"), "{error}");
         assert!(error.contains("Remove duration"), "{error}");
+        // And it names the way to say "stopping there is what I meant", which is the whole
+        // reason the out point exists.
+        assert!(error.contains("endSeconds"), "{error}");
     }
 
     #[test]
     fn a_duration_within_one_frame_of_the_tail_is_not_called_truncation() {
         assert_eq!(
-            render_duration(5.0, 30.0, 0.0, Some(4.99)).expect("rounding tolerance"),
+            render_duration(5.0, 30.0, 0.0, Requested::Duration(4.99)).expect("rounding tolerance"),
             4.99
+        );
+    }
+
+    /// The gap the Deliver page's range control was built on. Dragging an out point *is* asking
+    /// for the tail to be left out, so the guard above must not fire on it — before this the
+    /// only way to render a section was to delete the rest of the film.
+    #[test]
+    fn an_out_point_renders_a_section_the_duration_guard_would_refuse() {
+        let refused =
+            render_duration(155.0, 30.0, 10.0, Requested::Duration(61.0)).expect_err("guarded");
+        assert!(refused.contains("would be omitted"), "{refused}");
+
+        // The same 61 seconds, stated as an out point at 71s.
+        let allowed = render_duration(155.0, 30.0, 10.0, Requested::Until(71.0))
+            .expect("an out point is a decision, not an oversight");
+        assert!((allowed - 61.0).abs() < 1e-9, "{allowed}");
+    }
+
+    #[test]
+    fn an_out_point_never_runs_past_the_end_of_the_timeline() {
+        let duration = render_duration(12.0, 30.0, 2.0, Requested::Until(9_999.0))
+            .expect("clamped, not refused");
+        assert!((duration - 10.0).abs() < 1e-9, "{duration}");
+    }
+
+    #[test]
+    fn an_out_point_before_the_in_point_is_refused_by_name() {
+        let error = requested_range(&serde_json::json!({ "endSeconds": 2.0 }), 5.0)
+            .expect_err("an out point before the in point encodes nothing");
+        assert!(error.contains("endSeconds"), "{error}");
+        assert!(error.contains("startSeconds"), "{error}");
+    }
+
+    /// They compute the same number and mean opposite things. A caller that passes both has not
+    /// decided which, and picking one silently is how a render comes back the wrong length.
+    #[test]
+    fn duration_and_an_out_point_together_are_refused_rather_than_guessed() {
+        let error = requested_range(
+            &serde_json::json!({ "duration": 4.0, "endSeconds": 9.0 }),
+            0.0,
+        )
+        .expect_err("ambiguous");
+        assert!(error.contains("not both"), "{error}");
+    }
+
+    #[test]
+    fn no_range_argument_still_means_the_rest_of_the_timeline() {
+        assert_eq!(
+            requested_range(&serde_json::json!({}), 3.0).expect("no range is legal"),
+            Requested::Rest
+        );
+        assert_eq!(
+            render_duration(20.0, 30.0, 3.0, Requested::Rest).expect("the rest of it"),
+            17.0
         );
     }
 
