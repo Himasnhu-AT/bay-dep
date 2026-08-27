@@ -270,7 +270,7 @@ where
         .child(severities)
 }
 
-/// A view that owns a [`Lab`]. Only [`crate::editor_view::EditorView`] does.
+/// A view that owns a [`Lab`]. Only [`crate::editor::EditorView`] does.
 pub trait LabHost {
     fn lab_mut(&mut self) -> &mut Lab;
 }

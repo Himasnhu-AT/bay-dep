@@ -19,7 +19,7 @@ use bay_core::project::{CanvasSize, Fps, ProjectLibrary, ProjectSummary};
 use bay_core::Editor;
 use bay_preview::PreviewRenderer;
 
-use crate::editor_view::{legacy_project_path, EditorView, EditorViewEvent};
+use crate::editor::{legacy_project_path, EditorView, EditorViewEvent};
 use crate::input::{Edit, TextField};
 use crate::settings_model::Pane;
 

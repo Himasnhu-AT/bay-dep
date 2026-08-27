@@ -2,13 +2,13 @@
 //!
 //! Renders `bay_core::Editor` state and turns user interaction into `Command`s. The pure,
 //! testable presentation mapping lives in [`view_model`]; the GPUI views live in
-//! [`editor_view`]. [`run`] opens the editor window.
+//! [`editor`]. [`run`] opens the editor window.
 
 pub mod app_view;
 pub mod controls;
 pub mod drag;
 pub mod draw;
-pub mod editor_view;
+pub mod editor;
 pub mod geometry;
 pub mod input;
 pub mod lab;
@@ -22,7 +22,7 @@ pub mod view_model;
 pub mod widgets;
 
 pub use app_view::BayApp;
-pub use editor_view::{key_bindings, EditorView};
+pub use editor::{key_bindings, EditorView};
 pub use menus::menus;
 pub use view_model::{EditorViewModel, HomeViewModel};
 

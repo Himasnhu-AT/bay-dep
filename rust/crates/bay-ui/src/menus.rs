@@ -19,7 +19,7 @@
 
 use gpui::{App, Menu, MenuItem, OsAction, SystemMenuType};
 
-use crate::editor_view::{
+use crate::editor::{
     CopyClip, DeleteSelected, PasteClip, Redo, SeekBackward, SeekForward, ShowAudio, ShowColor,
     ShowCut, ShowDeliver, ShowMedia, ShowMotion, SplitClip, TogglePlay, Undo,
 };

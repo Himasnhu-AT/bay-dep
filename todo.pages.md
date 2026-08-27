@@ -24,7 +24,7 @@ Contract: [`docs/native/pages.md`](docs/native/pages.md). Plan and standing rule
 
 | # | Item | Crate | Owner | State |
 |---|---|---|---|---|
-| P1 | **Carve `editor_view.rs`** into `editor/{mod,toolbar,panels,inspector,timeline,viewer,transport}.rs`. Behaviour-free. `EditorView` moves into `editor/mod.rs` with the regions as **child** modules — siblings cannot see its ~50 private fields. **This unblocks every page body.** | `bay-ui` | — | pending |
+| P1 | **Carve `editor_view.rs`** into `editor/{mod,toolbar,panels,inspector,timeline,viewer,transport}.rs`. Behaviour-free. `EditorView` moves into `editor/mod.rs` with the regions as **child** modules — siblings cannot see its ~50 private fields. **This unblocks every page body.** | `bay-ui` | carve-agent | in progress |
 | P2 | **M7's frame budget.** Never measured, and it is the one number M7 owed. A real figure, the machine, and 4K behaviour. If it does not fit an interactive budget, say the sampling stride out loud rather than sampling quietly. | `bay-preview` | — | pending |
 | P3 | **Lift/gamma/gain shader.** Needs a new WGSL pass *and* a widened uniform struct — `EffectUniformBuffer` is 2+2+4+4 floats and the identical struct is declared in every shader. Engine only; the Color page wires it later. | `bay-effects` | — | pending |
 

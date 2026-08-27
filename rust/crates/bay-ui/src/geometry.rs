@@ -3,7 +3,7 @@
 //!
 //! **Status: partly adopted.** The timeline is on it — lane blocks, the ruler, the playhead,
 //! scrubbing, horizontal scroll and zoom all read their pixels from a [`TimelineGeometry`], so
-//! those agree by construction. `editor_view.rs` still declares its own `TICKS_PER_SECOND` and
+//! those agree by construction. `editor/mod.rs` still declares its own `TICKS_PER_SECOND` and
 //! does inline tick arithmetic elsewhere (inspector nudges, transport steps); migrating the
 //! rest is the remainder of T-008 in `docs/native/palmier-parity-todo.md`.
 //!
@@ -43,7 +43,7 @@ const MIN_MINOR_SPACING_PX: f32 = 6.0;
 /// it here rather than letting a NaN reach a layout.
 const PIXELS_PER_SECOND_FLOOR: f32 = 0.001;
 
-/// Zoom bounds and the zoom a timeline opens at. Here rather than in `editor_view.rs` because
+/// Zoom bounds and the zoom a timeline opens at. Here rather than in `editor/mod.rs` because
 /// [`TimelineState`] enforces them, and a floor the view holds and the value type does not is a
 /// floor a second timeline will be created without.
 pub const DEFAULT_PIXELS_PER_SECOND: f32 = 48.0;

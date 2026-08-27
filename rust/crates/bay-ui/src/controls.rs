@@ -801,7 +801,7 @@ impl SelectOption {
 /// `Select` may not itself sit inside a deferred subtree — `defer_draw` during deferred drawing
 /// fails an assertion and takes the process with it. Put a select in an ordinary panel; if a
 /// panel has to float over its siblings, position it absolutely and put it last rather than
-/// deferring it. `editor_view::paint_tests::an_open_select_paints_at_both_sizes` catches this.
+/// deferring it. `editor::paint_tests::an_open_select_paints_at_both_sizes` catches this.
 pub struct Select {
     id: SharedString,
     options: Vec<SelectOption>,
