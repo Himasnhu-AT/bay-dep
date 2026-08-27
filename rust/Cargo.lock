@@ -616,6 +616,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bay-bench"
+version = "0.1.0"
+dependencies = [
+ "bay-preview",
+ "bay-project",
+]
+
+[[package]]
 name = "bay-compositor"
 version = "0.1.0"
 dependencies = [

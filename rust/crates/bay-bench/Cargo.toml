@@ -1,0 +1,16 @@
+[package]
+name = "bay-bench"
+version = "0.1.0"
+edition = "2021"
+
+# The wall-clock harness. Criterion covers the pure-CPU work (mixing, commands, serde); this
+# covers the pipeline — preview frame time, decode, and whether playback can hold its frame
+# budget. Those need a real GPU, real files and a real clock, which is exactly what criterion is
+# not for, and why `docs/native/benchmarks.md` has said "does not exist yet" until now.
+[[bin]]
+name = "bay-bench"
+path = "src/main.rs"
+
+[dependencies]
+bay-preview = { path = "../bay-preview" }
+bay-project = { path = "../bay-project" }

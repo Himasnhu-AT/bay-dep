@@ -16,8 +16,8 @@ before the Color page could be designed around it, not a curve to be tracked ove
 Everything here is **pure CPU**: no GPU, no ffmpeg, no file IO, no clock, no RNG. Every fixture is
 a deterministic synthetic project built in-process, so two runs on the same machine differ only by
 machine noise. Wall-clock pipeline numbers (preview frame time, decode, export, cold start) are
-*not* criterion's job — those belong to the `bay-bench` binary described in §6.6(B) of the plan,
-which does not exist yet.
+*not* criterion's job — those belong to the **`bay-bench` binary, which now exists**; see
+"The pipeline, on a clock" below.
 
 ---
 
@@ -373,3 +373,48 @@ with nothing else running. The table above is a record of one machine at one com
 **Recapture the table in its own commit.** If a change legitimately moves these numbers, update
 this file in a commit separate from the change, so the reviewer sees the number diff isolated from
 the diff that caused it — the same rule goldens follow.
+
+
+---
+
+## The pipeline, on a clock — `bay-bench`
+
+```sh
+cargo run --release -p bay-bench
+BAY_BENCH_MEDIA=/path/to/clip.mp4 cargo run --release -p bay-bench
+```
+
+Refuses to run on a debug build (~30x slower here, so a debug number looks like data without
+being any) and skips loudly without a GPU — `BAY_REQUIRE_GPU=1` turns that skip into exit 1.
+
+It reports **p50/p95/p99/max, and takes its verdict from p99**. A loop that averages 8 ms and
+stalls to 60 ms twice a second looks perfect in a mean and stutters visibly on screen; judder is
+a tail problem, so the mean is the wrong statistic for it.
+
+Measured 2026-08-27, release, `Project::starter()` at 640x360, 120 frames after a 10-frame warmup:
+
+| Case | p50 | p95 | p99 | max |
+|---|---:|---:|---:|---:|
+| `render()` blocking | 1.42 ms | 1.46 ms | 1.55 ms | 2.15 ms |
+| `submit_composite` + `collect_composite` | **0.38 ms** | 0.43 ms | 0.46 ms | 1.05 ms |
+| real 1080p clip, decode + composite @30 fps | **0.46 ms** | 0.53 ms | 0.76 ms | 0.92 ms |
+
+The pipelined path is **3.7x cheaper** than blocking, and `bay-ui`'s viewer already uses it.
+
+**The engine is not the source of playback lag.** A real 1920x1080 H.264 clip composites, decode
+included, in 0.46 ms — about 1,300 fps of headroom against a 30 fps timeline.
+
+### The check that stops this lying
+
+The real-clip case counts how many measured frames came back with **more than one colour in
+them**, and prints it. Without that it measures how fast bay produces *nothing*: a decode that has
+not landed composites to a flat frame, which costs almost no time and reads as a superb number.
+`bay-preview/tests/render.rs` carries the same warning about a test that once asserted only buffer
+length and passed with a missing file. Current run: **120 of 120 frames painted**.
+
+### What it does not cover
+
+The GPU->CPU->GPU hop into the UI. `bay-ui`'s `update_preview` builds a **fresh `RenderImage`
+every frame**, so a 640x360 tile is allocated, uploaded and freed per frame, and the atlas churns
+once per frame. That cost is outside these numbers, and it is where a lag that is not in the
+engine has to be. Measuring it needs a harness inside a live GPUI window, which does not exist.

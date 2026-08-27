@@ -97,6 +97,12 @@ impl EditorView {
         let collected = self.preview.as_mut().unwrap().collect_composite();
         match collected {
             CollectedFrame::Ready(frame) => {
+                // `RgbaImage` is the container type, not a claim about channel order: gpui
+                // documents `RenderImage` as "a cached and processed image, in BGRA format", so
+                // handing it BGRA is correct and swapping first would turn every face blue.
+                // The export path *does* swap (`lib.rs`, "BGRA → RGBA for ffmpeg input") because
+                // ffmpeg wants the other order — the two are not inconsistent, they are two
+                // different consumers, and this comment exists so nobody reconciles them.
                 if let Some(buffer) =
                     image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
                 {

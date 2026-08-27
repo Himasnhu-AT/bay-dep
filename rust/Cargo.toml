@@ -26,6 +26,7 @@ members = [
     "crates/bay-gen",
     "crates/bay-vision",
     "crates/bay-test-support",
+    "crates/bay-bench",
 ]
 
 # P0-GPU-01 — single frozen wgpu major for the whole native workspace.
