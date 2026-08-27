@@ -154,9 +154,11 @@ impl EditorView {
                     // Where Export Frame and Export Video used to be. Output is the Deliver
                     // page's, and it is one button rather than two because there is one way to
                     // encode now — see this module's own header.
-                    .child(self.button("go-deliver", "Deliver ⇧", true, cx, |this, _cx| {
-                        this.show_page(crate::page::Page::Deliver);
-                    })),
+                    .child(
+                        self.button("go-deliver", "Deliver ⇧", true, cx, |this, _cx| {
+                            this.show_page(crate::page::Page::Deliver);
+                        }),
+                    ),
             )
     }
 

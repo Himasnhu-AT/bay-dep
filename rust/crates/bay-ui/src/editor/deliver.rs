@@ -276,7 +276,11 @@ impl EditorView {
                     "Loudness",
                     self.deliver_toggle(
                         "deliver-loudness",
-                        if loudness_on { "Normalise" } else { "Leave as mixed" },
+                        if loudness_on {
+                            "Normalise"
+                        } else {
+                            "Leave as mixed"
+                        },
                         loudness_on,
                         cx,
                         move |view| {
@@ -393,7 +397,11 @@ impl EditorView {
                 .rounded(px(5.0))
                 .text_xs()
                 .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
-                .bg(rgb(if on { theme::SELECTED } else { theme::PANEL_ALT }))
+                .bg(rgb(if on {
+                    theme::SELECTED
+                } else {
+                    theme::PANEL_ALT
+                }))
                 .child(Self::shared(label.to_string())),
         )
         .cursor_pointer()
@@ -538,10 +546,7 @@ impl EditorView {
                             .font_family("ui-monospace")
                             .text_xs()
                             .text_color(rgb(theme::FAINT))
-                            .child(shared_text(format!(
-                                "/ {}",
-                                timecode(vm.duration_seconds)
-                            ))),
+                            .child(shared_text(format!("/ {}", timecode(vm.duration_seconds)))),
                     ),
             )
     }
@@ -604,17 +609,25 @@ impl EditorView {
                 widgets::row()
                     .gap(px(8.0))
                     .child(widgets::section("Range"))
-                    .child(self.button("deliver-set-in", "Set In", true, cx, |this, _cx| {
-                        this.set_range_in();
-                    }))
-                    .child(self.button("deliver-set-out", "Set Out", true, cx, |this, _cx| {
-                        this.set_range_out();
-                    }))
                     .child(
-                        self.button("deliver-whole", "Whole timeline", ranged, cx, |this, _cx| {
-                            this.deliver.range = Range::Whole;
+                        self.button("deliver-set-in", "Set In", true, cx, |this, _cx| {
+                            this.set_range_in();
                         }),
                     )
+                    .child(
+                        self.button("deliver-set-out", "Set Out", true, cx, |this, _cx| {
+                            this.set_range_out();
+                        }),
+                    )
+                    .child(self.button(
+                        "deliver-whole",
+                        "Whole timeline",
+                        ranged,
+                        cx,
+                        |this, _cx| {
+                            this.deliver.range = Range::Whole;
+                        },
+                    ))
                     .child(div().flex_1())
                     .child(widgets::readout(
                         format!("{} — {}", timecode(start), timecode(end)),
@@ -666,7 +679,9 @@ impl EditorView {
                     .gap(px(8.0))
                     .child(widgets::section("Render queue"))
                     .child(div().flex_1())
-                    .children((running > 0).then(|| widgets::chip_on(format!("{running} running")))),
+                    .children(
+                        (running > 0).then(|| widgets::chip_on(format!("{running} running"))),
+                    ),
             );
 
         if renders.is_empty() {
@@ -925,44 +940,72 @@ mod tests {
     }
 
     /// Set In and Set Out take the playhead and leave the other end alone.
-    #[test]
-    fn the_range_buttons_take_the_playhead_one_end_at_a_time() {
-        let mut view = EditorView::new(Editor::starter(), FocusHandle::dummy(), None, None);
-        view.editor.seek(MediaTime::from_seconds_f64(1.5));
-        view.set_range_in();
-        assert_eq!(view.deliver.range.start(), 1.5);
-        // With no out point set, the range still runs to the end of the timeline.
-        assert_eq!(
-            view.deliver.range.end(),
-            Some(view.editor.duration().to_seconds_f64())
-        );
+    #[gpui::test]
+    fn the_range_buttons_take_the_playhead_one_end_at_a_time(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_window, cx| {
+            EditorView::new(Editor::starter(), cx.focus_handle(), None, None)
+        });
+        view.update(cx, |view, _| {
+            let seconds = |value: f64| MediaTime::from_seconds_f64(value).expect("a finite time");
+            view.editor.seek(seconds(1.5));
+            view.set_range_in();
+            assert_eq!(view.deliver.range.start(), 1.5);
+            // With no out point set, the range still runs to the end of the timeline.
+            assert_eq!(
+                view.deliver.range.end(),
+                Some(view.editor.duration().to_seconds_f64())
+            );
 
-        view.editor.seek(MediaTime::from_seconds_f64(2.5));
-        view.set_range_out();
-        assert_eq!(view.deliver.range.start(), 1.5, "the in point must not move");
-        assert_eq!(view.deliver.range.end(), Some(2.5));
+            view.editor.seek(seconds(2.5));
+            view.set_range_out();
+            assert_eq!(
+                view.deliver.range.start(),
+                1.5,
+                "the in point must not move"
+            );
+            assert_eq!(view.deliver.range.end(), Some(2.5));
+
+            // And "Whole timeline" puts it back, which is the only way out of a range.
+            view.deliver.range = Range::Whole;
+            assert_eq!(view.deliver.range.end(), None);
+        });
     }
 
-    /// A render of a project the gate refuses never becomes a queue row. The refusal arrives as
-    /// a status line, which is something the user can act on; a row that turns red is not.
-    #[test]
-    fn a_refused_project_is_refused_before_a_job_exists(cx: &mut TestAppContext) {
-        let before = bay_agent::deliver::queue().len();
+    /// A render the form can already tell is impossible never becomes a queue row.
+    ///
+    /// The refusal arrives as a status line, which is something the user can act on before
+    /// pressing anything; a row that turns red a second later is not. Uses an inverted range
+    /// because it is the refusal a person can actually produce by clicking — Set Out before
+    /// Set In.
+    #[gpui::test]
+    fn a_render_the_form_refuses_never_becomes_a_queue_row(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_window, cx| {
-            EditorView::new(Editor::empty(), cx.focus_handle(), None, None)
+            EditorView::new(Editor::starter(), cx.focus_handle(), None, None)
         });
-        view.update(cx, |view, cx| {
+        let expected = view.update(cx, |view, cx| {
+            view.deliver.file_stem = format!("bay-refused-{}", std::process::id());
+            view.deliver.range = Range::InOut {
+                start: 6.0,
+                end: 4.0,
+            };
+            let expected = view.deliver.output_path(&output_directory());
             view.queue_render(cx);
             let status = view.status.clone().expect("a refusal says why");
-            assert!(
-                status.contains("Cannot render") || status.contains("Render refused"),
-                "{status}"
-            );
+            assert!(status.contains("Cannot render"), "{status}");
+            assert!(status.contains("out point"), "{status}");
+            expected
         });
-        assert_eq!(
-            bay_agent::deliver::queue().len(),
-            before,
-            "an empty timeline must not leave a job in the queue"
+
+        // Keyed on this render's own output path, not on how long the queue is. `bay_jobs` is
+        // a process-global registry and Rust runs these tests in parallel, so a count is a
+        // shared machine resource wearing an assertion — the class of defect `fixes.md` 11 and
+        // 13 are both about, and one this file would have taught by example.
+        let label = expected.to_string_lossy().to_string();
+        assert!(
+            !bay_agent::deliver::queue()
+                .iter()
+                .any(|render| render.label == label),
+            "a refused render must not leave a job in the queue"
         );
     }
 
@@ -999,9 +1042,23 @@ mod tests {
     /// progress bar and the cancel button. Painted with a live job so neither is skipped.
     #[gpui::test]
     fn the_queue_paints_with_a_render_in_it(cx: &mut TestAppContext) {
-        let running = bay_jobs::start("render", "/tmp/bay-paint.mp4", bay_jobs::Unit::Frames, 120);
+        // Per-process labels: nothing here writes a file, but two copies of this binary
+        // sharing a name in one registry is how a queue assertion elsewhere starts matching
+        // somebody else's job.
+        let pid = std::process::id();
+        let running = bay_jobs::start(
+            "render",
+            &format!("/tmp/bay-paint-{pid}.mp4"),
+            bay_jobs::Unit::Frames,
+            120,
+        );
         running.progress(30, 120, "encoding frame 30 of 120");
-        let failed = bay_jobs::start("render", "/tmp/bay-failed.mp4", bay_jobs::Unit::Frames, 10);
+        let failed = bay_jobs::start(
+            "render",
+            &format!("/tmp/bay-failed-{pid}.mp4"),
+            bay_jobs::Unit::Frames,
+            10,
+        );
         bay_jobs::finish(&failed, Err("ffmpeg is not installed".into()));
 
         let (view, cx) = windowed(cx);

@@ -113,10 +113,11 @@ impl Page {
         match self {
             Page::Media => None,
             Page::Cut => None,
-            Page::Motion => Some(
-                "Waiting on the engine: bezier handles per keyframe, stable keyframe identity, a \
-                 MoveKeyframe verb, and a property descriptor table so a value axis has units.",
-            ),
+            // Motion's gap is closed: M5 landed bezier handles on `Keyframe`, keyframe ids that
+            // survive a move, `MoveKeyframe`/`SetKeyframeCurve` and the property descriptor
+            // table. `editor/motion.rs` draws its value axis from that table and drags handles
+            // through those commands, so leaving the warning up would make the map lie.
+            Page::Motion => None,
             Page::Color => Some(
                 "Waiting on the engine: lift/gamma/gain, curves, qualifier and windows. Exactly \
                  four colour operations compile to a shader today. Scopes need no GPU work.",
@@ -276,16 +277,38 @@ mod tests {
         }
     }
 
-    /// The engine gaps are the map of remaining work. Cut is the page that exists today, so it is
-    /// the one that must *not* claim to be waiting on anything.
+    /// The engine gaps are the map of remaining work, and a map is only worth having if it is
+    /// current in **both** directions: an unbuilt page must say what it is waiting for, and a
+    /// page whose gap has been closed must stop saying it.
+    ///
+    /// Only the first half is machine-checkable, and it is worth being clear about why. "Is
+    /// this page built?" is not a fact in the code — nothing here can tell a `None` that means
+    /// "done" from a `None` somebody forgot to fill in. So this test pins the wording of every
+    /// gap that exists, and Cut, which has never had one; **clearing a gap is part of landing
+    /// the page milestone that closes it**, and `todo.pages.md` is the record of which have.
+    ///
+    /// Leaving a warning up after closing the gap it names makes the map lie in the direction
+    /// nobody checks — Deliver's said "a progress bar cannot move" while the queue's bars were
+    /// moving.
     #[test]
-    fn only_the_unbuilt_pages_name_an_engine_gap() {
-        assert_eq!(Page::Cut.engine_gap(), None);
-        for page in [Page::Motion, Page::Color, Page::Audio, Page::Deliver] {
-            let gap = page.engine_gap().expect("named in pages.md");
+    fn every_engine_gap_says_what_it_is_waiting_for() {
+        assert_eq!(
+            Page::Cut.engine_gap(),
+            None,
+            "Cut is the page that has always existed"
+        );
+        for page in Page::ALL {
+            let Some(gap) = page.engine_gap() else {
+                continue;
+            };
             assert!(
                 gap.starts_with("Waiting on the engine:"),
                 "{} should say what it is waiting for",
+                page.label()
+            );
+            assert!(
+                gap.len() > 60,
+                "{}'s gap is too short to name anything concrete",
                 page.label()
             );
         }
