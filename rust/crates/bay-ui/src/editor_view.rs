@@ -195,8 +195,9 @@ use crate::geometry::TimelineGeometry;
 use crate::theme;
 use crate::view_model::{EditorViewModel, TrackRow};
 
-/// Pixels per timeline second.
-const DEFAULT_PIXELS_PER_SECOND: f32 = 48.0;
+// `DEFAULT_PIXELS_PER_SECOND` lives on `TimelineState` in `geometry.rs`, which owns the zoom
+// now that each page carries its own. A second copy here is how the view and the value type
+// come to disagree about what a fresh timeline looks like.
 const MIN_ZOOM: f32 = 8.0;
 const MAX_ZOOM: f32 = 400.0;
 const TRACK_LABEL_WIDTH: f32 = 132.0;
@@ -3857,9 +3858,8 @@ impl EditorView {
             // Live geometry while this block is the one being dragged/trimmed. `seconds_to_px`
             // carries the scroll offset; the width is a difference, so it does not.
             let base_left = geometry.seconds_to_px(block.start_seconds);
-            let base_width =
-                (block.duration_seconds as f32 * self.timeline.pixels_per_second())
-                    .max(MIN_BLOCK_WIDTH);
+            let base_width = (block.duration_seconds as f32 * self.timeline.pixels_per_second())
+                .max(MIN_BLOCK_WIDTH);
             let (mut left, mut width) = (base_left, base_width);
             if let Some((drag, delta)) = self.block_drag() {
                 // The dragged clip shows the snapped position; the rest of the selection moves
@@ -4119,16 +4119,20 @@ impl EditorView {
             .justify_end()
             .gap(px(6.0))
             .pr(px(BAR_INSET))
-            .child(self.bar_icon("bar-library", "⌂", "Project library", cx, |this, cx| {
-                cx.emit(EditorViewEvent::CloseRequested);
-                let _ = this;
-            }))
-            .child(self.bar_icon("bar-settings", "⚙", "Settings", cx, |this, _cx| {
-                this.status = Some(
-                    "Settings live on the project list for now — ‹ Projects, then Settings."
-                        .to_string(),
-                );
-            }));
+            .child(
+                self.bar_icon("bar-library", "⌂", "Project library", cx, |this, cx| {
+                    cx.emit(EditorViewEvent::CloseRequested);
+                    let _ = this;
+                }),
+            )
+            .child(
+                self.bar_icon("bar-settings", "⚙", "Settings", cx, |this, _cx| {
+                    this.status = Some(
+                        "Settings live on the project list for now — ‹ Projects, then Settings."
+                            .to_string(),
+                    );
+                }),
+            );
 
         div()
             .h(px(crate::page::BAR_HEIGHT))
@@ -4149,7 +4153,12 @@ impl EditorView {
     /// The underline is an absolutely positioned strip rather than a bottom border, so it sits on
     /// the *bar's* edge rather than the button's content box, and so its thickness does not
     /// change the button's height and reflow the row.
-    fn page_tab(&self, page: Page, layout: BarLayout, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    fn page_tab(
+        &self,
+        page: Page,
+        layout: BarLayout,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
         let on = self.page == page;
         let mut tab = div()
             .id(("page-tab", page.index()))
@@ -4289,10 +4298,10 @@ impl EditorView {
                     .text_color(rgb(theme::TEXT))
                     .child(page.blurb()),
             )
-            .children(page.engine_gap().map(|gap| {
-                widgets::banner(gap, theme::Severity::Warn.dot())
-                    .max_w(px(560.0))
-            }))
+            .children(
+                page.engine_gap()
+                    .map(|gap| widgets::banner(gap, theme::Severity::Warn.dot()).max_w(px(560.0))),
+            )
     }
 }
 
@@ -4667,10 +4676,14 @@ mod timeline_tests {
         view.update(cx, |this, _| {
             const LANE: f32 = 200.0;
             this.scroll_by(500.0, LANE); // a big swipe right-to-left
-            assert_eq!(this.timeline.scroll_x(), 0.0, "there is nothing before the start");
+            assert_eq!(
+                this.timeline.scroll_x(),
+                0.0,
+                "there is nothing before the start"
+            );
 
             this.scroll_by(-5_000.0, LANE);
-            let content = 7.0 * DEFAULT_PIXELS_PER_SECOND + LANE * 0.5;
+            let content = 7.0 * crate::geometry::DEFAULT_PIXELS_PER_SECOND + LANE * 0.5;
             assert!(
                 (this.timeline.scroll_x() - (content - LANE)).abs() < 0.5,
                 "scrolled to {} past a {content}px timeline",
@@ -4716,7 +4729,7 @@ mod timeline_tests {
             let before = this.playhead_anchor_x(LANE);
 
             this.zoom_by(1.5, before, LANE);
-            assert!(this.timeline.pixels_per_second() > DEFAULT_PIXELS_PER_SECOND);
+            assert!(this.timeline.pixels_per_second() > crate::geometry::DEFAULT_PIXELS_PER_SECOND);
             assert!(
                 (this.playhead_anchor_x(LANE) - before).abs() < 1.0,
                 "the playhead moved from {before} to {}",
@@ -4923,7 +4936,11 @@ mod panel_tests {
             let duration = view.editor.duration().to_seconds_f64() as f32;
             assert!(view.timeline.pixels_per_second() * duration <= 1200.0);
             assert!(view.timeline.pixels_per_second() >= MIN_ZOOM);
-            assert_eq!(view.timeline.scroll_x(), 0.0, "fitting starts at the beginning");
+            assert_eq!(
+                view.timeline.scroll_x(),
+                0.0,
+                "fitting starts at the beginning"
+            );
         });
     }
 

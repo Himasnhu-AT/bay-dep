@@ -170,7 +170,11 @@ pub const BAR_HEIGHT: f32 = 46.0;
 /// Width of one page button with its label, and without.
 const TAB_WIDE: f32 = 82.0;
 const TAB_ICON: f32 = 46.0;
-const TAB_TIGHT: f32 = 40.0;
+// Six of these plus the 92px right-hand cluster and insets must fit 320px, the narrowest
+// window `the_bar_fits_every_window_it_is_given` asserts: 6 × 36 + 92 = 308. At 40 it came to
+// 332 and overflowed by twelve, which is the kind of thing that looks fine at 1440 and clips
+// on a laptop with a panel open.
+const TAB_TIGHT: f32 = 36.0;
 
 /// Widths at which the bar gives something up. Named, because "it looked fine on my monitor" is
 /// how the toolbar came to collide with itself.
@@ -252,7 +256,11 @@ mod tests {
             let total = list.len();
             list.sort_unstable();
             list.dedup();
-            assert_eq!(list.len(), total, "two pages present themselves the same way");
+            assert_eq!(
+                list.len(),
+                total,
+                "two pages present themselves the same way"
+            );
         }
     }
 
@@ -307,7 +315,9 @@ mod tests {
     fn the_bar_fits_every_window_it_is_given() {
         // The two right-hand buttons, their gap, and both 16px insets.
         const FLANKS: f32 = 27.0 * 2.0 + 6.0 + 32.0;
-        for width in [320.0, 400.0, 480.0, 640.0, 700.0, 900.0, 1100.0, 1440.0, 2560.0] {
+        for width in [
+            320.0, 400.0, 480.0, 640.0, 700.0, 900.0, 1100.0, 1440.0, 2560.0,
+        ] {
             let layout = BarLayout::for_width(width);
             assert!(
                 layout.tabs_width() + FLANKS <= width,
