@@ -28,7 +28,16 @@ Contract: [`docs/native/pages.md`](docs/native/pages.md). Plan and standing rule
 | P2 | **M7's frame budget.** Never measured, and it is the one number M7 owed. A real figure, the machine, and 4K behaviour. If it does not fit an interactive budget, say the sampling stride out loud rather than sampling quietly. | `bay-preview` | p2-scopes | **done** — [`benchmarks.md`](docs/native/benchmarks.md#scopes--the-color-pages-four-reductions). Four live scopes fit a preview frame (1.8 ms of 16.6); they do not fit at 4K (36 ms), where the Color page must pass `stride`. `ScopeSet` lets a page pay only for the scopes it shows; the vectorscope is over half the cost, and dropping its per-pixel `hypot` took 27% off every reading. |
 | P3 | **Lift/gamma/gain shader.** Needs a new WGSL pass *and* a widened uniform struct — `EffectUniformBuffer` is 2+2+4+4 floats and the identical struct is declared in every shader. Engine only; the Color page wires it later. | `bay-effects` | p3-grade | **done** — `lift_gamma_gain.wgsl`, all six places wired (shader, pipeline, packer, `effect_groups`, `SUPPORTED_EFFECTS`, the `fx.balance` tile). The struct was *not* widened: a third buffer type fronts the same bind group layout, the way `color_stack.wgsl` already does. Convention is stated in the shader header — lift holds white, gamma holds both ends, gain holds black, `.w` is each wheel's master. Verified on GPU: neutral is byte-exact identity, each wheel moves only the end it claims, and gain alone is byte-identical to `brightness`, which pins the clamp where it already was. |
 
-## Next — wave 2, page bodies, parallel once P1 lands
+## Wave 2 — running now
+
+P1 landed, so each page owns `editor/<page>.rs` and the router was pre-wired in `5b39813`:
+nobody edits `mod.rs`. **P5 and P9 are held on purpose**, not forgotten:
+
+- **P5 (Cut)** needs `editor/timeline.rs` and `lane_origin_x` in `geometry.rs`, and P7 may turn
+  `LANE_HEIGHT` into state in the same files. Two agents in one coordinate system is how a click
+  lands somewhere other than where it was drawn. Runs after P7.
+- **P9 (Color)** is held only to keep the cargo build lock from thrashing — six concurrent
+  `bay-ui` builds serialise on one lock and each stalls the others. Runs as wave 2 drains.
 
 Each owns `editor/<page>.rs` and touches `editor/mod.rs` only to register itself.
 
