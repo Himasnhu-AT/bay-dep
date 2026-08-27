@@ -3488,3 +3488,92 @@ mod effect_group_tests {
         assert_eq!(shaders(&groups), ["color-stack"]);
     }
 }
+
+/// One frame of a video, decoded for use as a thumbnail.
+///
+/// Tightly packed RGBA — the same order [`decode_args`] asks ffmpeg for, and the order
+/// `image::RgbaImage` wants, so a caller can hand it straight on without a swizzle. Note this is
+/// *not* the BGRA that [`PreviewFrame`] carries: that comes off the GPU, this comes out of
+/// ffmpeg, and they genuinely differ.
+pub struct PosterFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The widest a poster frame is decoded to.
+///
+/// A media-pool tile is ~180px and a timeline strip is shorter still, so anything larger is
+/// bytes decoded, copied and thrown away. Small enough that a pool of forty assets is a few
+/// megabytes rather than a few hundred.
+const POSTER_MAX_W: u32 = 320;
+
+/// Decode a single frame of `path` at `at_seconds`, for a thumbnail.
+///
+/// Deliberately its own one-shot ffmpeg call rather than a read through the preview cache. The
+/// preview cache is a budgeted LRU sized for *playback* of the clips on the timeline; a media
+/// pool wants one frame each for assets that are mostly not on the timeline at all, and letting
+/// those evict playback frames would trade a visible stutter for a thumbnail.
+///
+/// Returns `None` when ffmpeg is absent or the file yields no frame — a missing thumbnail is a
+/// placeholder, never an error dialog and never a panic.
+pub fn poster_frame(path: &str, at_seconds: f64) -> Option<PosterFrame> {
+    let (natural, rotation, duration_secs) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        // No probe is not a reason to give up: ffmpeg will still decode, and the fallback size
+        // only decides the aspect of the buffer we ask for. Same fallback the montage path uses.
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
+    };
+
+    let mut plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    // One frame, and no larger than a tile needs.
+    plan.max_frames = Some(1);
+    if plan.width > POSTER_MAX_W {
+        let scale = POSTER_MAX_W as f32 / plan.width as f32;
+        plan.width = POSTER_MAX_W;
+        // Even, because several pixel formats cannot encode an odd side and ffmpeg refuses.
+        plan.height = (((plan.height as f32 * scale).round() as u32).max(2) / 2) * 2;
+    }
+
+    // Clamp the seek roughly inside the file, then **fall back to the first frame** if that
+    // still yields nothing.
+    //
+    // The fallback is the load-bearing half. Two attempts at computing a safe margin were wrong:
+    // a fixed 0.05s ignores that a 10 fps source has 0.1s between frames, and one frame of
+    // `plan.fps` is the wrong frame — the *plan's* rate is not the *source's*, so a 30 fps plan
+    // backs off 0.033s and still lands past the last frame of a 10 fps file. Rather than a third
+    // guess at arithmetic that depends on facts we do not have, ask, and if nothing comes back
+    // ask again from the start. A thumbnail of frame zero beats a black rectangle.
+    let clamped = if duration_secs > 0.0 {
+        at_seconds.clamp(0.0, duration_secs * 0.9)
+    } else {
+        at_seconds.max(0.0)
+    };
+
+    let frame_size = (plan.width * plan.height * 4) as usize;
+    if frame_size == 0 {
+        return None;
+    }
+
+    let decode = |at: f64| -> Option<Vec<u8>> {
+        let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+            .ok()?
+            .args(decode_args(path, &plan, Some(at)))
+            .output()
+            .ok()?;
+        (output.status.success() && output.stdout.len() >= frame_size)
+            .then(|| output.stdout[..frame_size].to_vec())
+    };
+
+    let rgba = decode(clamped).or_else(|| decode(0.0))?;
+
+    Some(PosterFrame {
+        width: plan.width,
+        height: plan.height,
+        rgba,
+    })
+}

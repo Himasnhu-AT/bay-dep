@@ -4351,3 +4351,101 @@ fn a_prores_master_returns_the_pixels_it_was_given() {
          8-bit RGB exactly, so the profile or the pixel format has moved"
     );
 }
+
+/// A poster frame comes back with a picture in it, at a size a tile can use.
+///
+/// The content assertion is the point. A decode that produced nothing would still hand back a
+/// correctly-sized buffer of zeroes, which satisfies every dimension check and shows on screen
+/// as the black rectangle this feature exists to remove. `bay-bench` was nearly fooled by the
+/// same shape of non-result.
+#[test]
+fn a_poster_frame_has_a_picture_in_it() {
+    let dir = std::env::temp_dir().join("bay-poster-frame");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("poster.mp4");
+    // A moving gradient, so every frame differs from flat and from its neighbours.
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=10:duration=2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the poster test clip") {
+        return;
+    }
+
+    let Some(frame) = bay_preview::poster_frame(path.to_str().unwrap(), 1.0) else {
+        if !require_ffmpeg() {
+            return;
+        }
+        panic!("ffmpeg is available but no poster frame came back");
+    };
+
+    assert!(frame.width > 0 && frame.height > 0, "a poster needs a size");
+    assert_eq!(
+        frame.rgba.len() as u32,
+        frame.width * frame.height * 4,
+        "the buffer must match the size it claims"
+    );
+    let first = &frame.rgba[0..4];
+    assert!(
+        frame.rgba.chunks_exact(4).any(|texel| texel != first),
+        "the poster is a single flat colour, so nothing was actually decoded"
+    );
+    assert!(
+        frame.width <= 320,
+        "a poster wider than a tile is bytes decoded and thrown away, got {}",
+        frame.width
+    );
+}
+
+/// Seeking past the end returns the last frame rather than nothing.
+///
+/// A clip whose thumbnail is requested at its own duration is the ordinary case — the pool asks
+/// for a frame partway in, and rounding puts it at the boundary. Returning `None` there would
+/// leave a placeholder on a file that plays perfectly.
+#[test]
+fn a_poster_seek_past_the_end_still_returns_a_frame() {
+    let dir = std::env::temp_dir().join("bay-poster-frame");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("poster-short.mp4");
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x180:rate=10:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the short poster clip") {
+        return;
+    }
+
+    // 30s into a 1s file.
+    let frame = bay_preview::poster_frame(path.to_str().unwrap(), 30.0);
+    if !require_ffmpeg() {
+        return;
+    }
+    assert!(
+        frame.is_some(),
+        "a seek past the end must clamp into the file, not return nothing"
+    );
+}
