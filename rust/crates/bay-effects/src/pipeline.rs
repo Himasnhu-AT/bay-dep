@@ -21,6 +21,8 @@ const DROP_SHADOW_SHADER_ID: &str = "drop-shadow";
 const DROP_SHADOW_SHADER_SOURCE: &str = include_str!("shaders/drop_shadow.wgsl");
 const COLOR_STACK_SHADER_ID: &str = "color-stack";
 const COLOR_STACK_SHADER_SOURCE: &str = include_str!("shaders/color_stack.wgsl");
+const LIFT_GAMMA_GAIN_SHADER_ID: &str = "lift-gamma-gain";
+const LIFT_GAMMA_GAIN_SHADER_SOURCE: &str = include_str!("shaders/lift_gamma_gain.wgsl");
 
 /// How many colour stages one `color-stack` pass carries.
 ///
@@ -140,6 +142,27 @@ struct ColorStackUniformBuffer {
     stages: [[f32; 4]; MAX_COLOR_STACK_STAGES],
 }
 
+/// The uniform a `lift-gamma-gain` pass reads: three wheels, each with its master in `w`.
+///
+/// A third buffer type over the same bind group layout, for the same reason
+/// [`ColorStackUniformBuffer`] is a second one. Twelve numbers plus a strength do not fit the
+/// shared struct's `scalars: vec4f`, and widening that struct to hold them would make six
+/// other shaders declare fields they never read.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct LiftGammaGainUniformBuffer {
+    resolution: [f32; 2],
+    /// How much of the grade to apply. 0 is the source, 1 the full balance — the same sense
+    /// `lut`'s amount has, and the opposite of the colour adjustments' multiplier.
+    strength: f32,
+    /// `vec4f` wants 16-byte alignment and the three fields before it total 12 bytes. Declared
+    /// in the shader too, so the two layouts stay legible side by side.
+    padding: f32,
+    lift: [f32; 4],
+    gamma: [f32; 4],
+    gain: [f32; 4],
+}
+
 impl EffectPipeline {
     pub fn new(context: &GpuContext) -> Self {
         let uniform_bind_group_layout =
@@ -213,6 +236,13 @@ impl EffectPipeline {
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("effects-color-stack-shader"),
                     source: wgpu::ShaderSource::Wgsl(COLOR_STACK_SHADER_SOURCE.into()),
+                });
+        let lift_gamma_gain_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-lift-gamma-gain-shader"),
+                    source: wgpu::ShaderSource::Wgsl(LIFT_GAMMA_GAIN_SHADER_SOURCE.into()),
                 });
         let pipeline_layout =
             context
@@ -314,6 +344,19 @@ impl EffectPipeline {
                     &vertex_shader_module,
                     &contrast_shader_module,
                     "effects-contrast-pipeline",
+                ),
+            ),
+            (
+                // The plain pipeline layout: three wheels need no cube, and a bigger uniform
+                // is not a different layout — the layout pins a buffer at binding 0 and says
+                // nothing about its size.
+                LIFT_GAMMA_GAIN_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    &lift_gamma_gain_shader_module,
+                    "effects-lift-gamma-gain-pipeline",
                 ),
             ),
             (
@@ -429,7 +472,7 @@ impl EffectPipeline {
                             },
                         ],
                     });
-            // Two uniform shapes, one bind group layout. Each branch packs into a stack local
+            // Three uniform shapes, one bind group layout. Each branch packs into a stack local
             // and borrows it directly: a `Vec` here would be a heap allocation per pass per
             // frame, on the path this change exists to make cheaper.
             let make_uniform_buffer = |bytes: &[u8]| {
@@ -441,12 +484,19 @@ impl EffectPipeline {
                         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     })
             };
-            let uniform_buffer = if pass.shader == COLOR_STACK_SHADER_ID {
-                let packed = pack_color_stack_uniforms(pass, width, height)?;
-                make_uniform_buffer(bytemuck::bytes_of(&packed))
-            } else {
-                let packed = pack_effect_uniforms(pass, width, height)?;
-                make_uniform_buffer(bytemuck::bytes_of(&packed))
+            let uniform_buffer = match pass.shader.as_str() {
+                COLOR_STACK_SHADER_ID => {
+                    let packed = pack_color_stack_uniforms(pass, width, height)?;
+                    make_uniform_buffer(bytemuck::bytes_of(&packed))
+                }
+                LIFT_GAMMA_GAIN_SHADER_ID => {
+                    let packed = pack_lift_gamma_gain_uniforms(pass, width, height)?;
+                    make_uniform_buffer(bytemuck::bytes_of(&packed))
+                }
+                _ => {
+                    let packed = pack_effect_uniforms(pass, width, height)?;
+                    make_uniform_buffer(bytemuck::bytes_of(&packed))
+                }
             };
             let uniform_bind_group =
                 context
@@ -780,6 +830,35 @@ fn pack_color_stack_uniforms(
     })
 }
 
+/// Pack a `lift-gamma-gain` pass's three wheels.
+///
+/// Each wheel arrives as one `vec4`: `(r, g, b, master)`. Four values rather than a `vec3` and
+/// a separate scalar because the master is *part of* the wheel — it is the slider drawn under
+/// it — and splitting them into six uniforms would let a caller set three and forget three.
+///
+/// Nothing here defaults. A wheel omitted is a `MissingUniform`, not a silent identity: the
+/// caller that forgot `u_gain` gets told, rather than getting a grade with a third of it
+/// missing and no way to see which third.
+fn pack_lift_gamma_gain_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<LiftGammaGainUniformBuffer, EffectsError> {
+    let lift = read_vec4_uniform(pass, "u_lift")?;
+    let gamma = read_vec4_uniform(pass, "u_gamma")?;
+    let gain = read_vec4_uniform(pass, "u_gain")?;
+    let strength = read_number_uniform(pass, "u_amount")?;
+    reject_unsupported_uniforms(pass, &["u_lift", "u_gamma", "u_gain", "u_amount"])?;
+    Ok(LiftGammaGainUniformBuffer {
+        resolution: [width as f32, height as f32],
+        strength,
+        padding: 0.0,
+        lift,
+        gamma,
+        gain,
+    })
+}
+
 fn reject_unsupported_uniforms(pass: &EffectPass, allowed: &[&str]) -> Result<(), EffectsError> {
     for uniform in pass.uniforms.keys() {
         if !allowed.contains(&uniform.as_str()) {
@@ -849,6 +928,30 @@ fn read_vec3_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 3], Effec
         });
     }
     Ok([values[0], values[1], values[2]])
+}
+
+fn read_vec4_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 4], EffectsError> {
+    let Some(value) = pass.uniforms.get(uniform) else {
+        return Err(EffectsError::MissingUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+        });
+    };
+    let UniformValue::Vector(values) = value else {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 4,
+        });
+    };
+    if values.len() != 4 {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 4,
+        });
+    }
+    Ok([values[0], values[1], values[2], values[3]])
 }
 
 fn read_vec2_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 2], EffectsError> {
@@ -951,6 +1054,7 @@ mod tests {
             GAUSSIAN_BLUR_SHADER_ID,
             DROP_SHADOW_SHADER_ID,
             COLOR_STACK_SHADER_ID,
+            LIFT_GAMMA_GAIN_SHADER_ID,
             "not-an-effect",
         ] {
             assert_eq!(
@@ -965,6 +1069,160 @@ mod tests {
         assert!(!is_collapsible_color_shader(DROP_SHADOW_SHADER_ID));
         // And a stack is not itself a stage — nesting one would lose every stage but the first.
         assert!(!is_collapsible_color_shader(COLOR_STACK_SHADER_ID));
+        // Three wheels are twelve numbers; a stage in the fused program carries one. Sweeping
+        // this into a run would hand the loop a stage code it has no branch for.
+        assert!(!is_collapsible_color_shader(LIFT_GAMMA_GAIN_SHADER_ID));
+    }
+
+    fn wheels(uniforms: &[(&str, UniformValue)]) -> EffectPass {
+        pass(LIFT_GAMMA_GAIN_SHADER_ID, uniforms)
+    }
+
+    fn vec4(values: [f32; 4]) -> UniformValue {
+        UniformValue::Vector(values.to_vec())
+    }
+
+    /// A neutral wheel set packs to the numbers the shader treats as an identity. The GPU test
+    /// proves the identity renders; this proves the buffer carrying it is the one it thinks.
+    #[test]
+    fn packs_three_wheels_and_a_strength() {
+        let packed = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", vec4([0.02, -0.01, 0.03, 0.005])),
+                ("u_gamma", vec4([1.1, 1.0, 0.95, 1.02])),
+                ("u_gain", vec4([1.05, 1.0, 0.9, 0.98])),
+                ("u_amount", UniformValue::Number(0.75)),
+            ]),
+            1920,
+            1080,
+        )
+        .expect("a complete wheel set packs");
+        assert_eq!(packed.resolution, [1920.0, 1080.0]);
+        assert_eq!(packed.strength, 0.75);
+        assert_eq!(packed.lift, [0.02, -0.01, 0.03, 0.005]);
+        assert_eq!(packed.gamma, [1.1, 1.0, 0.95, 1.02]);
+        assert_eq!(packed.gain, [1.05, 1.0, 0.9, 0.98]);
+    }
+
+    /// The order of the three wheels is the whole contract, and a transposed pair is the
+    /// defect a grading shader hides longest. Three distinguishable wheels, checked by slot.
+    #[test]
+    fn the_wheels_do_not_swap_slots() {
+        let packed = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", vec4([1.0, 0.0, 0.0, 0.0])),
+                ("u_gamma", vec4([0.0, 1.0, 0.0, 0.0])),
+                ("u_gain", vec4([0.0, 0.0, 1.0, 0.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+            ]),
+            8,
+            8,
+        )
+        .expect("a complete wheel set packs");
+        assert_eq!(packed.lift[0], 1.0, "lift landed in another wheel's slot");
+        assert_eq!(packed.gamma[1], 1.0, "gamma landed in another wheel's slot");
+        assert_eq!(packed.gain[2], 1.0, "gain landed in another wheel's slot");
+    }
+
+    /// Every wheel is required. A missing one used to be the tempting default — identity, no
+    /// harm — but a caller that dropped `u_gain` would then get two thirds of a grade and no
+    /// signal, which is the whole failure mode `reject_unsupported_uniforms` exists to avoid
+    /// in the other direction.
+    #[test]
+    fn a_missing_wheel_is_refused_rather_than_defaulted() {
+        for omitted in ["u_lift", "u_gamma", "u_gain", "u_amount"] {
+            let mut uniforms: Vec<(&str, UniformValue)> = vec![
+                ("u_lift", vec4([0.0; 4])),
+                ("u_gamma", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_gain", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+            ];
+            uniforms.retain(|(name, _)| *name != omitted);
+            let error = pack_lift_gamma_gain_uniforms(&wheels(&uniforms), 8, 8)
+                .expect_err("an incomplete wheel set is refused");
+            assert!(
+                matches!(error, EffectsError::MissingUniform { ref uniform, .. } if uniform == omitted),
+                "omitting {omitted} gave {error:?}"
+            );
+        }
+    }
+
+    /// A wheel is four numbers — three channels and its master. Three is the shape someone
+    /// reaching for `read_vec3_uniform` would write, and it would silently lose the master.
+    #[test]
+    fn a_three_component_wheel_is_refused() {
+        let error = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", UniformValue::Vector(vec![0.0, 0.0, 0.0])),
+                ("u_gamma", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_gain", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+            ]),
+            8,
+            8,
+        )
+        .expect_err("a three-component wheel is refused");
+        assert!(matches!(
+            error,
+            EffectsError::InvalidVectorUniform {
+                ref uniform,
+                expected_length: 4,
+                ..
+            } if uniform == "u_lift"
+        ));
+    }
+
+    #[test]
+    fn lift_gamma_gain_rejects_unknown_uniforms() {
+        let error = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", vec4([0.0; 4])),
+                ("u_gamma", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_gain", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+                ("u_offset", vec4([0.0; 4])),
+            ]),
+            8,
+            8,
+        )
+        .expect_err("an uniform this shader does not read is refused");
+        assert!(matches!(
+            error,
+            EffectsError::UnsupportedUniform { ref uniform, .. } if uniform == "u_offset"
+        ));
+    }
+
+    /// The uniform buffer and the WGSL struct are two declarations of one memory layout, and
+    /// nothing but this test pins them together — a reordered field would read the gain wheel
+    /// as a gamma and still compile on both sides.
+    #[test]
+    fn the_shader_and_rust_agree_on_the_wheel_layout() {
+        // vec2 + f32 + f32, then three vec4s at 16-byte alignment.
+        assert_eq!(std::mem::size_of::<LiftGammaGainUniformBuffer>(), 64);
+        let declared: Vec<&str> = LIFT_GAMMA_GAIN_SHADER_SOURCE
+            .split_once("struct LiftGammaGainUniforms {")
+            .expect("the shader declares its uniform struct")
+            .1
+            .split_once('}')
+            .expect("the struct is closed")
+            .0
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .filter_map(|line| line.split(':').next())
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                "resolution",
+                "strength",
+                "_padding",
+                "lift",
+                "gamma",
+                "gain"
+            ],
+            "the WGSL struct's field order drifted from LiftGammaGainUniformBuffer's"
+        );
     }
 
     #[test]
