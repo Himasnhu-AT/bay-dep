@@ -101,12 +101,18 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
 }
 
 #[test]
-fn renders_contrast_saturation_blur_and_drop_shadow_on_gpu() {
+fn every_effect_type_renders_on_gpu() {
     // Exercises the new effect shaders end-to-end (WGSL compiles + runs on the real GPU).
     let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
-    for effect_type in ["contrast", "saturation", "blur", "drop-shadow"] {
+    for effect_type in [
+        "contrast",
+        "saturation",
+        "blur",
+        "drop-shadow",
+        "lift-gamma-gain",
+    ] {
         let mut project = Project::starter();
         if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
             title.effects.push(Effect {

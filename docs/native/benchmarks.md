@@ -9,6 +9,10 @@ Criterion benchmark suite for the pure-CPU parts of the editor, per
 | `bay-core` | `benches/commands.rs` | command dispatch + undo/redo on an N-element project |
 | `bay-project` | `benches/project_serde.rs` | project JSON serialize / deserialize / round-trip at N elements |
 
+A fourth measurement lives outside criterion: **[the scopes' frame budget](#scopes--the-color-pages-four-reductions)**,
+reported by a test rather than a bench because it is a single pass whose cost had to be known
+before the Color page could be designed around it, not a curve to be tracked over time.
+
 Everything here is **pure CPU**: no GPU, no ffmpeg, no file IO, no clock, no RNG. Every fixture is
 a deterministic synthetic project built in-process, so two runs on the same machine differ only by
 machine noise. Wall-clock pipeline numbers (preview frame time, decode, export, cold start) are
@@ -231,6 +235,110 @@ A 1000-element save is 217 µs. Autosave on the UI thread is affordable today at
 plan's `bay-bench` target of *project open / save (500 clips) ≈ 84 ms / 61 ms* is dominated by file
 IO and whatever wrapping the save path adds, not by serde: serde's share of a 500-element save is
 0.11 ms.
+
+---
+
+## Scopes — the Color page's four reductions
+
+`bay-preview/src/scopes.rs` computes a luma waveform, an RGB parade, a vectorscope and a
+histogram in one pass over the BGRA buffer the preview already reads back. M7 shipped it with a
+budget that was an assumption — "a ≤480px buffer at interactive rates is fine" — and the Color
+page's whole layout depends on whether that is true. This is the measurement.
+
+**Not criterion.** This is one function called once per user action, not a curve to be tracked
+across commits, and `bay-preview` carries no bench harness. It follows the pattern in
+`bay-ui/src/draw.rs`: a test that prints under `--nocapture` and asserts only a ceiling an order
+of magnitude above the figure. A tight timing assertion fails on a loaded machine for reasons that
+have nothing to do with the code, and a test that fails for outside reasons teaches people to
+re-run until it passes.
+
+```sh
+# the full matrix — release only; a debug build runs this reduction ~30x slower
+cargo test --release -p bay-preview --test scopes -- --nocapture scope_cost_is_reported
+
+# more repetitions when the machine cannot be made quiet
+BAY_SCOPE_RUNS=25 cargo test --release -p bay-preview --test scopes -- --nocapture scope_cost
+```
+
+Each row is the **fastest of N runs**, not the mean: the fastest run is the least interrupted and
+therefore the closest thing to the idle number, and the printed median next to it says how loaded
+the box was. Fixture is a gradient, not a flat fill — a flat frame touches one histogram bin
+repeatedly and measures a cache a real frame does not get.
+
+### The numbers
+
+**Machine:** Apple M5 Pro (15 cores) · macOS 26.5.2 · rustc 1.97.0 · release profile · single
+thread. **Captured:** 2026-08-27 on `feat/six-page-editor`, best of 25.
+
+**Conditions, stated because they matter here.** The table is from a run at a 1-minute load
+average of 3.4 (another project's workspace build was on the machine), and it was then repeated on
+a quiet machine — load 2.2, nothing compiling — which agreed within 3% on every total: 0.95 vs
+0.98 at 640×360, 1.72 vs 1.74 at 854×480, 8.79 vs 8.80 at 1080p. Across three best-of-25 runs the
+4K total ranged 34.9–37.6. Within each run, best and median sit within 5% on nearly every row,
+which is the evidence that the fastest run was not preempted.
+
+Runs taken while a dozen `rustc` processes were compiling read **25–35% slower at 4K and barely
+differently at 640×360** — the signature of memory-bandwidth contention on a 33 MB buffer, since
+the small frame fits in cache and the large one does not. Worth knowing before someone
+re-measures on a busy machine and concludes something regressed. It is also the reason
+`BAY_SCOPE_RUNS` exists.
+
+| | 640×360 *(bay's preview)* | 854×480 | 1920×1080 | 3840×2160 |
+|---|---:|---:|---:|---:|
+| pixels | 230 400 | 409 920 | 2 073 600 | 8 294 400 |
+| frame walk + stats only | 0.28 | 0.49 | 2.48 | 10.01 |
+| waveform alone | 0.39 | 0.67 | 3.40 | 13.68 |
+| parade alone | 0.47 | 0.81 | 4.00 | 15.94 |
+| vectorscope alone | 0.73 | 1.28 | 6.39 | 24.92 |
+| histogram alone | 0.48 | 0.81 | 4.17 | 16.99 |
+| all but waveform | 0.88 | 1.57 | 8.15 | 32.76 |
+| all but parade | 0.80 | 1.43 | 7.48 | 30.02 |
+| all but vectorscope | 0.76 | 1.30 | 6.55 | 26.72 |
+| all but histogram | 0.84 | 1.46 | 7.40 | 30.06 |
+| **all four** | **0.98** | **1.74** | **8.80** | **35.33** |
+| all four, `stride: 2` | 0.26 | 0.48 | 2.17 | 8.71 |
+| all four, `stride: 4` | 0.08 | 0.13 | 0.58 | 2.16 |
+
+Milliseconds. "Alone" is that scope plus the frame walk every scope pays; "all but" is the other
+three, which is what turning one off actually buys.
+
+**Cost is 4.25 ns per sampled pixel**, within 1% across every size and every stride in the table.
+Any case not listed reads off that: multiply sampled pixels by 4.25 ns. The frame walk itself —
+the buffer read, the luma, and the exposure/clipping statistics that are always computed — is
+1.21 ns of that, which is why the scopes are cheaper together than apart.
+
+### Reading it
+
+- **Four live scopes fit a frame.** At the size bay's preview actually composites — a fixed
+  640×360 (`PREVIEW_RENDER_W/H`) — all four cost **0.98 ms**, six percent of a 16.6 ms frame, and
+  roughly half of the 1.85 ms that the blocking composite-and-readback they measure costs. The
+  Color page does not need to sample, alternate, or throttle them.
+- **Turning scopes off is a weak lever.** Dropping the dearest of the four, the vectorscope, saves
+  24%; dropping the three cheapest saves 30%. The pass is bound by the walk over the buffer that
+  every scope shares, so `ScopeSet` is a refinement, not a rescue. It earns its place for a panel
+  showing one scope full-height, not as a performance strategy.
+- **Striding is the strong lever**, and it is linear: `stride: 2` reads a quarter of the pixels for
+  a quarter of the cost, `stride: 4` a sixteenth for a sixteenth.
+- **4K does not fit, and cannot be made to fit by choosing scopes.** 35.3 ms is two frames, and the
+  frame walk *alone*, computing none of the four, is 10 ms. Any caller reading scopes off a
+  source-resolution frame — `snapshot` at `scale: 1`, an export readback, the `scopes_read` MCP
+  tool at full canvas — must pass a stride. **`stride: 4` is the recommendation**: 2.16 ms at 4K,
+  518 400 samples, which is still five hundred times more samples than a 128×128 vectorscope has
+  cells. `Scopes::sampled_pixels` is reported on every result so a clipping share can be read as a
+  share of what was measured rather than of the frame it is assumed to describe.
+- **The one number to watch** is 1920×1080 at 8.80 ms — over half a frame. It is not reachable
+  today, because the preview composites at a fixed 640×360. It becomes reachable the moment the
+  viewer composites at its own pixel size on a Retina display, and at that point scopes need a
+  stride even in the preview.
+
+### What moved while measuring it
+
+Timing the four apart showed the vectorscope at ~2.6× the frame walk, and almost all of its excess
+was one libm call: `cb.hypot(cr)`, once per pixel, guarding an overflow that cannot happen —
+Rec.709 colour differences are bounded to ±0.5. Replacing it with the square root of the sum of
+squares took **27% off every scope reading bay takes** (854×480 all four: 2.4–2.5 ms → 1.74 ms;
+4K: 48.9–52.2 ms → 35.3 ms), verified A/B/A alternating across three rounds on the same machine so
+drift could not account for it. The table above is the post-change measurement.
 
 ---
 

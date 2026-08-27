@@ -82,9 +82,11 @@ milestone list.
 - **Color** — lift/gamma/gain, curves, qualifier and windows are all absent; exactly four colour
   operations compile to a shader today (brightness, contrast, saturation, and a 3D LUT). Scopes,
   by contrast, need **no** GPU work — they are a CPU reduction over a readback that already
-  happens, and that reduction has now been measured rather than assumed: all four over a
-  854×480 preview frame cost **1.8 ms** single-threaded, of which the vectorscope is more than
-  half; at 3840×2160 they cost **36 ms**, which is two frames.
+  happens, and that reduction has now been measured rather than assumed: all four over the
+  640×360 buffer bay's preview composites cost **0.98 ms** single-threaded — six percent of a
+  frame, and about half what the readback they measure costs — so the Color page can show four
+  live scopes without sampling. At 3840×2160 they cost **35 ms**, which is two frames, and no
+  choice of scopes rescues that: a caller reading a source-resolution frame passes a stride.
   [`benchmarks.md`](benchmarks.md#scopes--the-color-pages-four-reductions) has the per-scope
   table and the stride the Color page needs above preview size. Neither page changes the intermediate render-target format: that is decided and
   deferred in [`intermediate-format.md`](intermediate-format.md), which also names the cheaper

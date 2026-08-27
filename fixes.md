@@ -1,4 +1,4 @@
-# fixes — fourteen defects: ten from an audit, four found while building on it
+# fixes — fifteen defects: ten from an audit, five found while building on it
 
 Every one of these is the same failure in a different place: **a control that does not do what
 it says.** A tile that adds an effect nothing renders, a validator that accepts a channel
@@ -6,7 +6,7 @@ nothing reads, a schema that hides an effect the engine has, an import that succ
 nothing — none of them fail. They all return success and produce no change, which is the only
 kind of bug a person cannot find by looking at the screen.
 
-Six are fixed here. Eight are open, with what would verify each one, so nobody has to
+Six are fixed here. Nine are open, with what would verify each one, so nobody has to
 re-discover them.
 
 **State at time of writing:** every fix below is covered by a named test, and each entry says
@@ -222,6 +222,32 @@ bit-depth question is answered once.
 
 
 ## Open
+
+### 15. The streaming audio engine is wired to nothing
+
+M9 built a callback-driven block mixer on a lock-free ring, with frame-exact clip windows, peak
+and K-weighted RMS metering, pan on clips and tracks, track gain and solo, and six undoable
+commands. All of it is tested. **None of it is called.** `StreamEngine`, `BlockMixer` and
+`LevelMeter` appear only in `bay-audio`'s own tests and `bay-core/tests/mixer.rs`.
+
+The live playback path is still the one M9 was built to replace: `editor/transport.rs::start_audio`
+mixes the whole remaining timeline through `bay_audio::mix_stereo` into a single
+`rodio::SamplesBuffer` and appends it to a sink. So a fader moved during playback is **not
+audible** — the mix already happened — and there is no running `LevelMeter` for a meter to read.
+
+This is the register's usual shape with the stakes raised: not a control that lies, but an entire
+milestone whose justification was "a fader you can hear move" and which cannot currently be heard.
+The commit that landed it says exactly that in its title. Every test M9 wrote passes; none of them
+exercises the path a user takes.
+
+Worth stating as a general lesson, because it is cheap to repeat: a milestone verified only by its
+own unit tests can be complete and unreachable at the same time. The question that catches it is
+not "do the tests pass" but "what calls this".
+
+Found by the agent building the Audio page, on reading the engine it was told to bind to.
+
+Verified when: moving a fader during playback changes what is heard, and a meter reads from a
+running `LevelMeter` rather than a placeholder.
 
 ### 14. The inspector's add-effect row is a hand-written list, and it is now 5 of 7
 

@@ -4,10 +4,11 @@
 //! GPU resource, or knows a window exists: the Color page reads these structures and paints
 //! them, and a headless client or a test reads exactly the same numbers.
 //!
-//! **Not for the interactive render path.** [`Scopes::from_bgra`] is a full pass over the
-//! buffer: ~2.3 ms at preview size and ~44 ms at 4K (see [`SCOPE_BUDGET_NOTE`]). That is work
-//! proportional to pixel count, and it belongs on the same footing as decode — computed when
-//! something asks for it, never once per `render()`.
+//! **Cost is proportional to pixel count, at 4.25 ns per sampled pixel** — measured, not assumed;
+//! see [`SCOPE_BUDGET_NOTE`]. All four scopes over bay's 640x360 preview composite come to
+//! 0.98 ms, which a page can afford once per displayed frame. Over a 3840x2160 frame they come to
+//! 35 ms, which is two frames, and a caller reading one must pass a [`ScopeOptions::stride`].
+//! Nothing here is cheap enough to run twice for the same frame.
 //!
 //! ## Two luma functions, on purpose
 //!
@@ -31,30 +32,37 @@ pub const REC709_LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 /// The per-frame budget this reduction is held to, and what it actually costs.
 ///
-/// **Budget: one scope pass over a preview-sized buffer fits inside a 16.6 ms frame**, sharing
-/// that frame with the composite it measures. The plan assumed this was fine; these are the
-/// numbers, not the assumption. Apple M5 Pro, macOS 26.5, release build, single thread, all four
-/// scopes in one pass, eight runs (system load ~10, so a quiet machine is this or better):
+/// **Budget: one pass over the buffer the preview already composited fits inside a 16.6 ms
+/// frame, sharing that frame with the composite it measures.** M7 asserted this; these are the
+/// numbers. Apple M5 Pro (15 core), macOS 26.5.2, rustc 1.97.0, release profile, single thread,
+/// all four scopes in one pass, best of 25 runs:
 ///
-/// - 854×480 (preview size): 2.17–2.58 ms. **Fits** — about a seventh of the frame.
-/// - 1920×1080: 10.4–15.1 ms. **Marginal**: two thirds to nine tenths of one 60 fps frame.
-/// - 3840×2160 (source): 42.6–44.8 ms. **Does not fit** — two and a half frames per pass.
-/// - 3840×2160 at [`ScopeOptions::stride`] 4: 2.64–2.84 ms. Fits, reading 1/16 of the pixels.
+/// - **640x360 — the size bay's preview composites: 0.98 ms.** Six percent of a 60 fps frame,
+///   and about half what the composite and readback it measures cost. Four live scopes **fit**.
+/// - 854x480: 1.74 ms. Fits.
+/// - 1920x1080: 8.80 ms. Fits, but that is over half the frame — the ceiling to watch if the
+///   preview ever composites at a Retina viewer's pixel size instead of a fixed 640x360.
+/// - 3840x2160: 35.3 ms. **Does not fit**, and no choice of scopes rescues it: the frame walk
+///   alone, computing none of the four, is 10 ms.
+/// - 3840x2160 at [`ScopeOptions::stride`] 2: 8.71 ms. At stride 4: 2.16 ms.
 ///
-/// Cost is linear in sampled pixels, at roughly 5.3 ns each, so any size not listed can be read
-/// off that.
+/// Cost is linear in *sampled* pixels at **4.25 ns each** across every size and stride above, so
+/// any case not listed can be read off that. Turning a scope off is worth much less than striding
+/// — dropping the vectorscope, the most expensive of the four, saves 24%, where stride 4 saves
+/// 94%.
 ///
-/// The preview path never reaches the 4K case — the preview cache is ≤480px by design. A caller
-/// reading scopes off a source-resolution frame does, and must pass a stride. That is a
-/// parameter and not an automatic fallback on purpose: a scope that quietly sampled would report
-/// clipping shares that describe a sixteenth of the frame while looking like they describe all
-/// of it. [`Scopes::sampled_pixels`] is reported for the same reason.
+/// The preview path never reaches the 4K case. A caller reading scopes off a source-resolution
+/// frame does, and must pass a stride. That is a parameter and not an automatic fallback on
+/// purpose: a scope that quietly sampled would report clipping shares that describe a sixteenth
+/// of the frame while looking like they describe all of it. [`Scopes::sampled_pixels`] is
+/// reported for the same reason.
 ///
-/// `tests/scopes.rs::scope_cost_is_reported` prints these on whatever machine runs it. It
-/// asserts nothing about time — a timing assertion on a loaded box fails for reasons that have
-/// nothing to do with this code.
-pub const SCOPE_BUDGET_NOTE: &str =
-    "854x480 2.2-2.6ms (fits 16.6ms); 3840x2160 42.6-44.8ms (does not); 2.6-2.8ms at stride 4";
+/// `tests/scopes.rs::scope_cost_is_reported` prints the full per-scope matrix on whatever machine
+/// runs it, under `--release` and `--nocapture`. It asserts nothing tight about time — a timing
+/// assertion on a loaded box fails for reasons that have nothing to do with this code.
+/// `docs/native/benchmarks.md` carries the table and what it means for the Color page.
+pub const SCOPE_BUDGET_NOTE: &str = "4.25ns per sampled pixel: 640x360 0.98ms (fits a frame); \
+     3840x2160 35.3ms (does not; stride 4 gives 2.2ms)";
 
 /// CIE relative luminance of an sRGB triple (linearised, Rec.709 weighted), 0.0..=1.0.
 ///
@@ -106,7 +114,9 @@ pub fn chroma_pair(rgb: [u8; 3]) -> (f32, f32) {
 /// vectorscope never ran.
 ///
 /// This exists because the four do not cost the same (see [`SCOPE_BUDGET_NOTE`]): the vectorscope
-/// is most of the pass, and a page showing a waveform and a histogram should not pay for it.
+/// is the dearest of them, and a page showing a waveform and a histogram should not pay for it.
+/// Expect less than the arithmetic suggests, though — dropping all but one saves under half,
+/// because the pass is bound by the walk over the buffer that every scope shares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScopeSet {
     pub waveform: bool,

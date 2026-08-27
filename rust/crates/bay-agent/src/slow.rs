@@ -251,7 +251,7 @@ fn render(
         context.timeline_duration,
         context.project.settings.fps.as_f64(),
         settings.start_seconds,
-        args.get("duration").and_then(|v| v.as_f64()),
+        requested_range(args, settings.start_seconds)?,
     )?;
     if duration <= 0.0 {
         return Err(
@@ -358,7 +358,7 @@ pub fn render_stamp(project: &Project, args: &Value) -> Result<Option<String>, S
         timeline_duration,
         project.settings.fps.as_f64(),
         settings.start_seconds,
-        args.get("duration").and_then(|value| value.as_f64()),
+        requested_range(args, settings.start_seconds)?,
     )?;
     Ok(stamp)
 }
@@ -464,30 +464,86 @@ pub fn frame_stamp(
 
 /// Resolve the export length, refusing a caller-supplied duration that would silently omit the
 /// populated tail of the timeline.
+/// How much of the timeline a `render` was asked for, and — the part that matters — whether
+/// leaving the tail out was the point.
+///
+/// `duration` and `endSeconds` compute the same number and mean opposite things, which is why
+/// they are two variants rather than one field. `duration` is a convenience: "encode this much
+/// from the in point", and a value that stops short of the populated timeline is almost always
+/// an agent that forgot the tail, so it is refused. `endSeconds` is an **out point** — a
+/// deliberate statement that everything past it is not wanted — so the same arithmetic is
+/// allowed. Collapsing them would mean either losing the guard or losing the out point, and the
+/// Deliver page needs the second while the guard exists for the first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Requested {
+    /// Nothing asked for: the rest of the timeline from the in point.
+    Rest,
+    /// `duration` — guarded against silently dropping the tail.
+    Duration(f64),
+    /// `endSeconds` — an out point. The tail is meant to be left out.
+    Until(f64),
+}
+
+/// Read [`Requested`] off a `render` call. `duration` and `endSeconds` are alternatives; asking
+/// for both is a caller that has not decided, and guessing which one it meant is how a render
+/// comes back the wrong length with nothing to explain it.
+fn requested_range(args: &Value, start_seconds: f64) -> Result<Requested, String> {
+    let duration = args.get("duration").and_then(|v| v.as_f64());
+    let end = args.get("endSeconds").and_then(|v| v.as_f64());
+    match (duration, end) {
+        (Some(_), Some(_)) => Err("pass duration or endSeconds, not both — duration counts \
+                                   forward from startSeconds, endSeconds is an out point on the \
+                                   timeline"
+            .into()),
+        (Some(duration), None) => Ok(Requested::Duration(duration)),
+        (None, Some(end)) => {
+            if !end.is_finite() {
+                return Err("endSeconds must be a finite number".into());
+            }
+            if end <= start_seconds {
+                return Err(format!(
+                    "endSeconds {end:.2}s is not after startSeconds {start_seconds:.2}s — an \
+                     out point before the in point encodes nothing"
+                ));
+            }
+            Ok(Requested::Until(end))
+        }
+        (None, None) => Ok(Requested::Rest),
+    }
+}
+
 fn render_duration(
     timeline_duration: f64,
     fps: f64,
     start_seconds: f64,
-    requested: Option<f64>,
+    requested: Requested,
 ) -> Result<f64, String> {
     let remaining = (timeline_duration - start_seconds).max(0.0);
     let requested = match requested {
-        Some(duration) if duration.is_finite() && duration > 0.0 => Some(duration),
-        Some(_) => return Err("duration must be a finite number greater than zero".into()),
-        None => None,
-    };
-    if let Some(duration) = requested {
-        let tolerance = 1.0 / fps.max(1.0);
-        if remaining > tolerance && duration + tolerance < remaining {
-            return Err(format!(
-                "render refused: duration {duration:.2}s ends at {:.2}s, but the populated \
-                 timeline continues to {timeline_duration:.2}s ({:.2}s would be omitted). \
-                 Remove duration to render the whole timeline, or trim/delete the tail first.",
-                start_seconds + duration,
-                remaining - duration
-            ));
+        Requested::Rest => None,
+        Requested::Duration(duration) if duration.is_finite() && duration > 0.0 => {
+            // The guard, and only here: a bare duration that stops short of the populated
+            // timeline drops the tail without saying so.
+            let tolerance = 1.0 / fps.max(1.0);
+            if remaining > tolerance && duration + tolerance < remaining {
+                return Err(format!(
+                    "render refused: duration {duration:.2}s ends at {:.2}s, but the populated \
+                     timeline continues to {timeline_duration:.2}s ({:.2}s would be omitted). \
+                     Remove duration to render the whole timeline, pass endSeconds if stopping \
+                     there is deliberate, or trim/delete the tail first.",
+                    start_seconds + duration,
+                    remaining - duration
+                ));
+            }
+            Some(duration)
         }
-    }
+        Requested::Duration(_) => {
+            return Err("duration must be a finite number greater than zero".into())
+        }
+        // An out point is a decision, so the tail it leaves out is not an error. The clamp
+        // below still stops it running past the end of the timeline.
+        Requested::Until(end) => Some(end - start_seconds),
+    };
     let duration = requested
         .unwrap_or(remaining)
         .min(remaining.max(f64::MIN_POSITIVE));
