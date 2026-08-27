@@ -1,0 +1,1404 @@
+//! The timeline: geometry and zoom, pointer gestures, the edit operations they run, and the
+//! ruler, tracks and blocks they are performed on.
+//!
+//! A child module of [`super`], so it can reach `EditorView`'s private fields; a sibling
+//! could not.
+
+use super::*;
+
+impl EditorView {
+    /// Ask for a waveform for every audio clip on the timeline, and collect any that finished.
+    ///
+    /// Called from `render`, so it must not decode: extraction spawns ffmpeg and reads the whole
+    /// file, which on a long clip froze the frame for seconds. The cache starts a worker and
+    /// returns; `render` draws whatever has arrived. Same contract as the video decode path.
+    pub(super) fn request_waveforms(&mut self) {
+        // Disjoint field borrows: &mut self.waveforms and &self.editor.
+        let scene = self.editor.active_scene();
+        let media = self.editor.media();
+        self.waveforms.request_scene(scene, media, WAVEFORM_BUCKETS);
+    }
+
+    /// The edge a drag is actually moving, after snapping — and the delta in pixels that
+    /// produces it, so the block under the pointer and the edit that commits cannot disagree.
+    ///
+    /// Snapping is applied here rather than at the drop so the user *sees* the clip jump onto
+    /// its neighbour's edge while dragging. A snap you only discover after letting go is
+    /// indistinguishable from the editor moving your clip on its own.
+    pub(super) fn snapped_delta_px(&self, drag: &BlockDrag, delta_px: f32) -> f32 {
+        if !self.snapping {
+            return delta_px;
+        }
+        let geometry = self.geometry();
+        let raw_ticks = geometry.delta_px_to_ticks(delta_px).as_ticks();
+        // Which edge the pointer is carrying: the head for a move or a start-trim, the tail
+        // for an end-trim.
+        let moving_edge = match drag.mode {
+            DragMode::Move | DragMode::TrimStart => drag.origin_start_ticks + raw_ticks,
+            DragMode::TrimEnd => drag.origin_start_ticks + drag.origin_duration_ticks + raw_ticks,
+        };
+        let targets = self
+            .editor
+            .active_scene()
+            .snap_targets(Some(&drag.reference));
+        // The playhead is a target too: cutting to where you are looking is the common case.
+        let mut targets = targets;
+        targets.push(self.editor.playhead());
+        let (snapped, did_snap) = crate::geometry::snap_time(
+            MediaTime::from_ticks(moving_edge),
+            &targets,
+            self.timeline.pixels_per_second(),
+        );
+        if !did_snap {
+            return delta_px;
+        }
+        let corrected_ticks = snapped.as_ticks() - moving_edge;
+        delta_px + geometry.delta_ticks_to_px(MediaTime::from_ticks(corrected_ticks))
+    }
+
+    /// The snapped delta of whichever block gesture is live, if one is. The single reader of the
+    /// drag slot for timeline geometry, so the block being drawn and the edit that commits are
+    /// computed the same way.
+    pub(super) fn block_drag(&self) -> Option<(&BlockDrag, f32)> {
+        let drag = self.widgets.active()?;
+        match &drag.kind {
+            EditorDrag::Block(block) => Some((block, self.snapped_delta_px(block, drag.dx()))),
+            _ => None,
+        }
+    }
+
+    /// Finish a block drag: commit a single undoable edit (move or edge-trim) from origin to
+    /// drop point.
+    pub(super) fn finish_drag(&mut self, drag: BlockDrag, delta_px: f32) {
+        let delta_px = self.snapped_delta_px(&drag, delta_px);
+        let delta_ticks =
+            (delta_px / self.timeline.pixels_per_second() * TICKS_PER_SECOND as f32) as i64;
+        if delta_ticks == 0 {
+            return;
+        }
+        match drag.mode {
+            DragMode::Move => {
+                let new_start = (drag.origin_start_ticks + delta_ticks).max(0);
+                // Everything else in the selection moves by the same amount, so dragging one
+                // clip of a group carries the group rather than tearing it apart.
+                let others: Vec<ElementRef> = self
+                    .editor
+                    .selection()
+                    .iter()
+                    .filter(|reference| **reference != drag.reference)
+                    .cloned()
+                    .collect();
+                for reference in others {
+                    let current = self
+                        .editor
+                        .active_scene()
+                        .element(&reference)
+                        .map(|element| element.start().as_ticks());
+                    if let Some(start) = current {
+                        self.editor.execute(Command::MoveElement {
+                            reference,
+                            start: MediaTime::from_ticks((start + delta_ticks).max(0)),
+                        });
+                    }
+                }
+                self.editor.execute(Command::MoveElement {
+                    reference: drag.reference,
+                    start: MediaTime::from_ticks(new_start),
+                });
+            }
+            DragMode::TrimStart => {
+                let new_start = (drag.origin_start_ticks + delta_ticks).max(0);
+                let consumed = new_start - drag.origin_start_ticks;
+                let new_duration = (drag.origin_duration_ticks - consumed).max(MIN_DURATION_TICKS);
+                self.editor.execute(Command::TrimElement {
+                    reference: drag.reference,
+                    start: MediaTime::from_ticks(new_start),
+                    duration: MediaTime::from_ticks(new_duration),
+                });
+            }
+            DragMode::TrimEnd => {
+                let new_duration =
+                    (drag.origin_duration_ticks + delta_ticks).max(MIN_DURATION_TICKS);
+                self.editor.execute(Command::TrimElement {
+                    reference: drag.reference,
+                    start: MediaTime::from_ticks(drag.origin_start_ticks),
+                    duration: MediaTime::from_ticks(new_duration),
+                });
+            }
+        }
+    }
+
+    /// Begin a playhead scrub, and seek to where the press landed.
+    ///
+    /// The ruler and the empty lane both do this; the *continuation* is the root's move handler,
+    /// not either of them, because the pointer leaves the ruler's few pixels almost immediately
+    /// and a scrub that stops when it does is unusable.
+    pub(super) fn begin_scrub(&mut self, event: &MouseDownEvent) {
+        self.widgets.begin(Drag::new(
+            EditorDrag::Scrub,
+            event.position,
+            event.modifiers,
+        ));
+        self.scrub_to(f32::from(event.position.x));
+    }
+
+    /// The one place a moving pointer is interpreted.
+    ///
+    /// `fine` is the live Alt state rather than the one from the press: it changes a widget's
+    /// rate from here on and must not be frozen at the moment the button went down.
+    pub(super) fn pointer_moved(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        fine: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if controls::drive_value_drag(self, position, fine, cx) {
+            return;
+        }
+        let Some(drag) = self.widgets.pointer_moved(position) else {
+            return;
+        };
+        // Read what the gesture needs before touching `self` — the gesture lives in it.
+        let panel_width = match &drag.kind {
+            EditorDrag::PanelWidth { start_width } => Some(start_width + drag.dx()),
+            _ => None,
+        };
+        let scrub_x = matches!(drag.kind, EditorDrag::Scrub).then(|| f32::from(position.x));
+
+        if let Some(wanted) = panel_width {
+            self.media_width = wanted.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
+        }
+        if let Some(x) = scrub_x {
+            self.scrub_to(x);
+        }
+        // A block drag needs nothing committed until release; the redraw is what moves it.
+        cx.notify();
+    }
+
+    /// The one place a released pointer is interpreted. Committing happens here, so a gesture
+    /// that was never released has changed nothing undoable.
+    pub(super) fn pointer_released(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        fine: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if controls::end_value_drag(self, position, fine, cx) {
+            return;
+        }
+        let Some(drag) = self.widgets.end(position) else {
+            return;
+        };
+        let delta_px = drag.dx();
+        if let EditorDrag::Block(block) = drag.kind {
+            self.finish_drag(block, delta_px);
+        }
+        cx.notify();
+    }
+
+    /// Build the mouse-down listener that begins a drag in `mode` for `reference`.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn begin_drag(
+        &self,
+        reference: ElementRef,
+        mode: DragMode,
+        origin_start_ticks: i64,
+        origin_duration_ticks: i64,
+        cx: &mut Context<Self>,
+    ) -> Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static> {
+        Box::new(
+            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                // The lane underneath scrubs the playhead on a press. Grabbing a clip is not
+                // also a request to move the playhead, so the event stops here.
+                cx.stop_propagation();
+                // With the razor out, a press is a cut at the point clicked — not the start of
+                // a drag. Handled here rather than in a separate handler so the razor cannot
+                // also begin a move the user did not ask for.
+                if this.tool == Tool::Razor {
+                    this.editor.select(vec![reference.clone()]);
+                    this.split_at_x(&reference, f32::from(event.position.x));
+                    cx.notify();
+                    return;
+                }
+                // Shift adds to the selection instead of replacing it, so several clips can
+                // be moved or deleted as one.
+                if event.modifiers.shift {
+                    let mut selection = this.editor.selection().to_vec();
+                    match selection.iter().position(|other| *other == reference) {
+                        Some(index) => {
+                            selection.remove(index);
+                        }
+                        None => selection.push(reference.clone()),
+                    }
+                    this.editor.select(selection);
+                } else if !this.editor.is_selected(&reference) {
+                    // Grabbing a clip that is already part of a group keeps the group, so a
+                    // drag moves all of it.
+                    this.editor.select(vec![reference.clone()]);
+                }
+                this.widgets.begin(Drag::new(
+                    EditorDrag::Block(BlockDrag {
+                        reference: reference.clone(),
+                        mode,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                    }),
+                    event.position,
+                    event.modifiers,
+                ));
+                cx.notify();
+            }),
+        )
+    }
+
+    pub(super) fn delete_selected(&mut self) {
+        for reference in self.editor.selection().to_vec() {
+            self.editor.execute(Command::RemoveElement { reference });
+        }
+    }
+
+    /// Delete and close the hole: every later clip on the same lane moves back by the removed
+    /// clip's length. This is the delete you want nine times out of ten — the plain one leaves
+    /// a gap that reads as a stall in the finished video.
+    pub(super) fn ripple_delete_selected(&mut self) {
+        for reference in self.editor.selection().to_vec() {
+            self.editor.execute(Command::RippleDelete { reference });
+        }
+    }
+
+    /// Drop a marker at the playhead.
+    pub(super) fn add_marker(&mut self) {
+        self.add_counter += 1;
+        self.editor.execute(Command::AddMarker {
+            id: format!("marker-{}", self.add_counter),
+            time: self.editor.playhead(),
+            label: String::new(),
+        });
+    }
+
+    /// How long a clip of this file should be. Timed media is probed so a 3-minute track does
+    /// not land as a 4-second one; stills are NEVER probed, because ffprobe reports a nominal
+    /// ~0.04s for a JPEG (a one-frame "video") and a photo would import as a 40ms clip.
+    ///
+    /// A probe failure falls back to 4s rather than aborting the import — but it says so. A
+    /// silent fallback is the bug probing was added to fix.
+    pub(super) fn media_duration(&mut self, path: &str, kind: MediaKind) -> MediaTime {
+        const DEFAULT_STILL: i64 = TICKS_PER_SECOND * 4;
+        if !kind.is_timed() {
+            return MediaTime::from_ticks(DEFAULT_STILL);
+        }
+        use bay_preview::probe::ProbeError;
+        match bay_preview::probe::probe_media(path) {
+            Ok(meta) if meta.duration.as_ticks() > 0 => meta.duration,
+            Err(ProbeError::Unavailable(_)) => {
+                self.status = Some(
+                    "ffprobe not found — clip length is a 4s guess. Install ffmpeg for real \
+                     durations."
+                        .to_string(),
+                );
+                MediaTime::from_ticks(DEFAULT_STILL)
+            }
+            Err(error) => {
+                self.status = Some(format!("Could not read media duration ({error}); using 4s"));
+                MediaTime::from_ticks(DEFAULT_STILL)
+            }
+            Ok(_) => MediaTime::from_ticks(DEFAULT_STILL),
+        }
+    }
+
+    /// Put a clip of an already-imported asset on the timeline at the playhead, on the lane its
+    /// kind belongs to. Shared by the import flow and by clicking an asset in the media panel,
+    /// so the two cannot place the same file differently.
+    pub(super) fn place_media(&mut self, media_id: &str, name: &str, path: &str) {
+        let kind = MediaKind::of_path(path);
+        let duration = self.media_duration(path, kind);
+        let start = self.editor.playhead();
+        self.add_counter += 1;
+        let uid = self.add_counter;
+        let (track_id, element) = match kind {
+            MediaKind::Audio => (
+                "track-audio",
+                Element::Audio(AudioElement {
+                    id: format!("aud-{uid}"),
+                    name: name.to_string(),
+                    start,
+                    duration,
+                    fade_in: MediaTime::ZERO,
+                    fade_out: MediaTime::ZERO,
+                    media_id: media_id.to_string(),
+                    muted: false,
+                    volume: 1.0,
+                    pan: 0.0,
+                    speed: 1.0,
+                    prosody: None,
+                    dialogue_chain: None,
+                    animations: Default::default(),
+                    trim_start: MediaTime::ZERO,
+                    source: Default::default(),
+                    role: Default::default(),
+                }),
+            ),
+            MediaKind::Video => (
+                "track-main",
+                Element::Video(VideoElement {
+                    id: format!("vid-{uid}"),
+                    name: name.to_string(),
+                    start,
+                    duration,
+                    fade_in: MediaTime::ZERO,
+                    fade_out: MediaTime::ZERO,
+                    media_id: media_id.to_string(),
+                    trim_start: MediaTime::ZERO,
+                    trim_end: duration,
+                    speed: 1.0,
+                    freeze: None,
+                    transform: Transform::default(),
+                    effects: Vec::new(),
+                    animations: Default::default(),
+                    blend_mode: Default::default(),
+                    mask: None,
+                    source: Default::default(),
+                    role: Default::default(),
+                }),
+            ),
+            MediaKind::Image => (
+                "track-main",
+                Element::Image(ImageElement {
+                    id: format!("img-{uid}"),
+                    name: name.to_string(),
+                    start,
+                    duration,
+                    fade_in: MediaTime::ZERO,
+                    fade_out: MediaTime::ZERO,
+                    media_id: media_id.to_string(),
+                    transform: Transform::default(),
+                    effects: Vec::new(),
+                    animations: Default::default(),
+                    blend_mode: Default::default(),
+                    mask: None,
+                    source: Default::default(),
+                    role: Default::default(),
+                }),
+            ),
+        };
+        self.editor.execute(Command::AddElement {
+            track_id: track_id.into(),
+            element,
+            select: true,
+        });
+    }
+
+    /// Split the selected element at the playhead into two clips.
+    pub(super) fn split_selected(&mut self) {
+        if let Some(reference) = self.editor.selection().first().cloned() {
+            self.add_counter += 1;
+            let new_id = format!("split-{}", self.add_counter);
+            let at = self.editor.playhead();
+            self.editor.execute(Command::SplitElement {
+                reference,
+                at,
+                new_id,
+            });
+        }
+    }
+
+    /// Cut `reference` at the timeline position under `window_x`.
+    ///
+    /// Refuses a cut within a frame of either end: a zero-length clip is not a cut, it is a
+    /// clip nobody can select and a hole in the timeline nobody can see.
+    pub(super) fn split_at_x(&mut self, reference: &ElementRef, window_x: f32) {
+        // Quantised to a frame, like a scrub: a cut between two frames is not a cut anyone
+        // can act on, and the exported file would round it anyway.
+        let at = self.geometry().px_to_frame_time(window_x - lane_origin_x());
+        let Some(element) = self
+            .editor
+            .active_scene()
+            .tracks
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .find(|element| element.id() == reference.element_id)
+        else {
+            return;
+        };
+        let margin = MIN_DURATION_TICKS;
+        if at.as_ticks() <= element.start().as_ticks() + margin
+            || at.as_ticks() >= element.end().as_ticks() - margin
+        {
+            self.status = Some("That cut is too close to the edge of the clip.".into());
+            return;
+        }
+        self.add_counter += 1;
+        let new_id = format!("split-{}", self.add_counter);
+        self.editor.execute(Command::SplitElement {
+            reference: reference.clone(),
+            at,
+            new_id,
+        });
+    }
+
+    /// The px ↔ time mapping the whole timeline shares — lanes, ruler, playhead and scrub. One
+    /// source, so a clip block and the playhead can't disagree about where a second is.
+    pub(super) fn geometry(&self) -> TimelineGeometry {
+        self.timeline.geometry(self.editor.project().settings.fps)
+    }
+
+    /// Width of one lane: the timeline spans the window, and the lanes take what the track
+    /// labels leave.
+    pub(super) fn lane_width(window: &Window) -> f32 {
+        (f32::from(window.viewport_size().width) - lane_origin_x() - TIMELINE_PADDING).max(1.0)
+    }
+
+    /// Scrollable width, with half a viewport of room past the last clip so the end of the film
+    /// is not glued to the right edge.
+    pub(super) fn content_width(&self, lane_width: f32) -> f32 {
+        self.geometry()
+            .content_width_px(self.editor.duration(), lane_width * 0.5)
+    }
+
+    /// Move the playhead to a window-space x, snapped to a frame.
+    ///
+    /// Scrubbing stops playback: a transport still running under the pointer fights the drag,
+    /// and the frame the user let go on is not the one they end up looking at.
+    pub(super) fn scrub_to(&mut self, window_x: f32) {
+        if self.playing {
+            self.toggle_play();
+        }
+        let time = self.geometry().px_to_frame_time(window_x - lane_origin_x());
+        self.editor.seek(time);
+    }
+
+    /// Scroll the lanes horizontally by a wheel/trackpad delta, clamped to the content.
+    pub(super) fn scroll_by(&mut self, delta_x: f32, lane_width: f32) {
+        let content = self.content_width(lane_width);
+        let wanted = self.timeline.scroll_x() - delta_x;
+        self.timeline = self
+            .timeline
+            .with_scroll_x(crate::geometry::clamp_scroll(wanted, content, lane_width));
+    }
+
+    /// Zoom about a fixed point, keeping the time under `anchor_x` on the same pixel. Zooming
+    /// around the left edge instead would throw the playhead off screen at every step.
+    pub(super) fn zoom_by(&mut self, factor: f32, anchor_x: f32, lane_width: f32) {
+        let zoomed = self
+            .geometry()
+            .zoom_at(anchor_x, factor, MIN_ZOOM, MAX_ZOOM);
+        self.timeline = crate::geometry::TimelineState::from_geometry(zoomed);
+        let content = self.content_width(lane_width);
+        self.timeline = self.timeline.with_scroll_x(crate::geometry::clamp_scroll(
+            self.timeline.scroll_x(),
+            content,
+            lane_width,
+        ));
+    }
+
+    /// Duplicate the selection, one clip length later.
+    pub(super) fn duplicate_selected(&mut self) {
+        let Some(reference) = self.editor.selection().first().cloned() else {
+            return;
+        };
+        self.add_counter += 1;
+        let new_id = format!("dup-{}", self.add_counter);
+        self.editor
+            .execute(Command::DuplicateElement { reference, new_id });
+    }
+
+    /// Add an empty overlay lane.
+    pub(super) fn add_overlay_track(&mut self) {
+        self.add_counter += 1;
+        let count = self.editor.active_scene().tracks.overlay.len() + 1;
+        self.editor.execute(Command::AddTrack {
+            lane: bay_core::command::TrackLane::Overlay,
+            id: format!("track-overlay-{}", self.add_counter),
+            name: format!("Overlay {count}"),
+        });
+    }
+
+    /// Set the zoom so the whole timeline fits the lane.
+    pub(super) fn fit_to_window(&mut self, lane_width: f32) {
+        let duration = self.editor.duration().to_seconds_f64() as f32;
+        if duration <= 0.0 {
+            return;
+        }
+        self.timeline = crate::geometry::TimelineState::new(
+            ((lane_width - 20.0) / duration).clamp(MIN_ZOOM, MAX_ZOOM),
+            0.0,
+        );
+    }
+
+    pub(super) fn timeline(
+        &self,
+        vm: &EditorViewModel,
+        lane_width: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut rows: Vec<Div> = Vec::new();
+        let mut block_index: usize = 0;
+        for track in &vm.tracks {
+            rows.push(self.track_row(track, vm.playhead_seconds, &mut block_index, cx));
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            // Tall enough for the tool row, the ruler and five lanes. Past that the track list
+            // scrolls — projects with a stack of overlays are normal, not exceptional.
+            .h(px(300.0))
+            .p(px(TIMELINE_PADDING))
+            .gap_1()
+            .bg(rgb(theme::PANEL))
+            .border_t_1()
+            .border_color(rgb(theme::BORDER))
+            // Two-finger horizontal scroll pans the lanes. Vertical is left alone: the track
+            // list below handles it, and hijacking both would stop the tracks scrolling at all.
+            .on_scroll_wheel(cx.listener(
+                move |this, event: &gpui::ScrollWheelEvent, window, cx| {
+                    let delta = event.delta.pixel_delta(window.line_height());
+                    if delta.x != gpui::Pixels::ZERO {
+                        this.scroll_by(f32::from(delta.x), lane_width);
+                        cx.notify();
+                    }
+                },
+            ))
+            .child(self.timeline_tools(vm, cx))
+            .child(self.ruler(vm, lane_width, cx))
+            .child(
+                // The tracks scroll: a project with a stack of overlays is taller than the
+                // panel, and before this the rows past the bottom edge simply could not be
+                // reached.
+                div()
+                    .id("timeline-tracks")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+    }
+
+    /// The row of edit tools above the ruler.
+    pub(super) fn timeline_tools(&self, vm: &EditorViewModel, cx: &mut Context<Self>) -> Div {
+        let selected = vm.selected.is_some();
+        let razor = self.tool == Tool::Razor;
+        widgets::row()
+            .gap(px(10.0))
+            .child(widgets::section("TIMELINE"))
+            .child(
+                widgets::row()
+                    .gap(px(1.0))
+                    .child(
+                        self.mode_button("tool-select", "➤ Select", !razor, cx, |this| {
+                            this.tool = Tool::Select
+                        }),
+                    )
+                    .child(self.mode_button("tool-razor", "✂ Cut", razor, cx, |this| {
+                        this.tool = Tool::Razor
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .gap(px(1.0))
+                    .child(
+                        self.tool_button("split", "Split", selected, cx, |this| {
+                            this.split_selected()
+                        }),
+                    )
+                    .child(
+                        self.tool_button("duplicate", "Duplicate", selected, cx, |this| {
+                            this.duplicate_selected()
+                        }),
+                    )
+                    .child(self.tool_button("delete", "Delete", selected, cx, |this| {
+                        this.delete_selected()
+                    })),
+            )
+            .child(
+                widgets::row()
+                    .gap(px(1.0))
+                    .child(
+                        self.tool_button("marker", "◆ Marker", true, cx, |this| {
+                            this.add_marker()
+                        }),
+                    )
+                    .child(self.tool_button("add-track", "＋ Track", true, cx, |this| {
+                        this.add_overlay_track()
+                    }))
+                    .child(self.mode_button("snap", "Snap", self.snapping, cx, |this| {
+                        this.snapping = !this.snapping
+                    })),
+            )
+            .child(div().flex_1())
+            .child(widgets::note(format!(
+                "{} tracks · {} markers",
+                vm.tracks.len(),
+                vm.markers.len()
+            )))
+    }
+
+    /// A toolbar button that is either on or off, rather than enabled or disabled.
+    pub(super) fn mode_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        let kind = if on {
+            widgets::ButtonKind::On
+        } else {
+            widgets::ButtonKind::Normal
+        };
+        widgets::pressable(
+            kind,
+            widgets::button_face(kind, true)
+                .id(id)
+                .h(px(22.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .text_xs()
+                // An "off" toggle is not a disabled one: it is available, just not currently
+                // true, so it keeps a readable label and only loses the fill.
+                .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
+                .child(label),
+        )
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            action(this);
+            cx.notify();
+        }))
+    }
+
+    /// A small toolbar button that greys out when it has nothing to act on.
+    pub(super) fn tool_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        enabled: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut EditorView) + 'static,
+    ) -> gpui::Stateful<Div> {
+        let base = widgets::button_face(widgets::ButtonKind::Normal, enabled)
+            .id(id)
+            .h(px(22.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .text_xs()
+            .child(label);
+        if !enabled {
+            // It already did nothing — the handler used to be attached anyway, so the pointer
+            // said "button" and the click said nothing. Now the fill says it first.
+            return base;
+        }
+        widgets::pressable(widgets::ButtonKind::Normal, base)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                action(this);
+                cx.notify();
+            }))
+    }
+
+    /// The time ruler above the lanes: ticks, timecode labels, and the playhead's handle. This
+    /// is the scrub target — pressing anywhere on it moves the playhead there, and the press
+    /// keeps scrubbing until the button is released.
+    pub(super) fn ruler(
+        &self,
+        vm: &EditorViewModel,
+        lane_width: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let geometry = self.geometry();
+        let mut marks: Vec<Div> = Vec::new();
+        for tick in geometry.ruler_ticks(lane_width) {
+            let height = if tick.major {
+                RULER_HEIGHT * 0.5
+            } else {
+                RULER_HEIGHT * 0.25
+            };
+            marks.push(
+                div()
+                    .absolute()
+                    .left(px(tick.x))
+                    .bottom(px(0.0))
+                    .w(px(1.0))
+                    .h(px(height))
+                    .bg(rgb(theme::BORDER)),
+            );
+            if let Some(label) = tick.label {
+                marks.push(
+                    div()
+                        .absolute()
+                        .left(px(tick.x + 3.0))
+                        .top(px(0.0))
+                        .text_xs()
+                        .text_color(rgb(theme::MUTED))
+                        .child(Self::shared(label)),
+                );
+            }
+        }
+
+        // Markers, drawn under the playhead so the head stays readable on top of one.
+        for marker in &vm.markers {
+            let x = geometry.seconds_to_px(marker.seconds);
+            if x < -8.0 || x > lane_width + 8.0 {
+                continue;
+            }
+            marks.push(
+                div()
+                    .absolute()
+                    .left(px(x - 3.0))
+                    .top(px(RULER_HEIGHT - 8.0))
+                    .w(px(7.0))
+                    .h(px(7.0))
+                    .rounded_sm()
+                    .bg(rgb(theme::MARKER)),
+            );
+        }
+
+        let playhead_x = geometry.seconds_to_px(vm.playhead_seconds);
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(TRACK_GAP))
+            .h(px(RULER_HEIGHT))
+            .child(div().w(px(TRACK_LABEL_WIDTH)))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .h(px(RULER_HEIGHT))
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.begin_scrub(event);
+                            cx.notify();
+                        }),
+                    )
+                    .children(marks)
+                    .child(
+                        // A grabbable head on the playhead: a 2px line is not a mouse target.
+                        div()
+                            .absolute()
+                            .left(px(playhead_x - 4.0))
+                            .top(px(0.0))
+                            .w(px(9.0))
+                            .h(px(9.0))
+                            .rounded_sm()
+                            .bg(rgb(theme::ACCENT)),
+                    ),
+            )
+    }
+
+    pub(super) fn track_row(
+        &self,
+        track: &TrackRow,
+        playhead_seconds: f64,
+        block_index: &mut usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let geometry = self.geometry();
+        // Where t=0 sits on screen. A drag may not push a clip before the start of the
+        // timeline, and once the lane can scroll that boundary is no longer x=0.
+        let zero_x = geometry.seconds_to_px(0.0);
+        let mut blocks: Vec<gpui::Stateful<Div>> = Vec::new();
+        for block in &track.elements {
+            let id = *block_index;
+            *block_index += 1;
+            let reference = block.reference.clone();
+            let origin_start_ticks = (block.start_seconds * TICKS_PER_SECOND as f64) as i64;
+            let origin_duration_ticks = (block.duration_seconds * TICKS_PER_SECOND as f64) as i64;
+
+            // Live geometry while this block is the one being dragged/trimmed. `seconds_to_px`
+            // carries the scroll offset; the width is a difference, so it does not.
+            let base_left = geometry.seconds_to_px(block.start_seconds);
+            let base_width = (block.duration_seconds as f32 * self.timeline.pixels_per_second())
+                .max(MIN_BLOCK_WIDTH);
+            let (mut left, mut width) = (base_left, base_width);
+            if let Some((drag, delta)) = self.block_drag() {
+                // The dragged clip shows the snapped position; the rest of the selection moves
+                // with it, so a group drag looks like one gesture rather than one clip
+                // detaching from its neighbours.
+                if drag.reference == block.reference {
+                    match drag.mode {
+                        DragMode::Move => left = (base_left + delta).max(zero_x),
+                        DragMode::TrimStart => {
+                            left = (base_left + delta).max(zero_x);
+                            width = (base_width - delta).max(MIN_BLOCK_WIDTH);
+                        }
+                        DragMode::TrimEnd => {
+                            width = (base_width + delta).max(MIN_BLOCK_WIDTH);
+                        }
+                    }
+                } else if drag.mode == DragMode::Move && block.selected {
+                    left = (base_left + delta).max(zero_x);
+                }
+            }
+            let inner_height = LANE_HEIGHT - 8.0;
+            let fill = theme::element_color(&block.kind_label);
+
+            // Three sibling regions: left trim handle, move body, right trim handle.
+            let left_handle = div()
+                .id(("trim-start", id))
+                .w(px(TRIM_HANDLE_WIDTH))
+                .h(px(inner_height))
+                .bg(rgb(theme::SELECTED_BORDER))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    self.begin_drag(
+                        reference.clone(),
+                        DragMode::TrimStart,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                        cx,
+                    ),
+                );
+            let base_body = div()
+                .id(("move", id))
+                .flex_1()
+                .h(px(inner_height))
+                .px_2()
+                .overflow_hidden()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    self.begin_drag(
+                        reference.clone(),
+                        DragMode::Move,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                        cx,
+                    ),
+                );
+            // Audio clips with an extracted waveform draw peak bars; everything else shows a label.
+            let waveform = if block.kind_label == "Audio" {
+                block
+                    .media_id
+                    .as_ref()
+                    .and_then(|m| self.waveforms.peaks(m, WAVEFORM_BUCKETS))
+                    .filter(|peaks| !peaks.is_empty())
+            } else {
+                None
+            };
+            let body = match waveform {
+                Some(peaks) => base_body
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .children(peaks.iter().map(|p| {
+                        div()
+                            .w(px(2.0))
+                            .h(px((p * (inner_height - 6.0)).max(1.0)))
+                            .bg(rgb(theme::ACCENT))
+                    })),
+                None => base_body
+                    .text_xs()
+                    .text_color(rgb(theme::TEXT))
+                    .child(Self::shared(block.label.clone())),
+            };
+            let right_handle = div()
+                .id(("trim-end", id))
+                .w(px(TRIM_HANDLE_WIDTH))
+                .h(px(inner_height))
+                .bg(rgb(theme::SELECTED_BORDER))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    self.begin_drag(
+                        reference.clone(),
+                        DragMode::TrimEnd,
+                        origin_start_ticks,
+                        origin_duration_ticks,
+                        cx,
+                    ),
+                );
+
+            let mut element = div()
+                .id(id)
+                .absolute()
+                .left(px(left))
+                .top(px(4.0))
+                .h(px(inner_height))
+                .w(px(width))
+                .rounded_md()
+                .bg(rgb(fill))
+                .overflow_hidden()
+                .flex()
+                .flex_row()
+                .items_center()
+                .child(left_handle)
+                .child(body)
+                .child(right_handle);
+            if block.selected {
+                element = element.border_1().border_color(rgb(theme::SELECTED_BORDER));
+            }
+            blocks.push(element);
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(TRACK_GAP))
+            .h(px(LANE_HEIGHT + 6.0))
+            .child(
+                div()
+                    .w(px(TRACK_LABEL_WIDTH))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(rgb(theme::MUTED))
+                            .overflow_hidden()
+                            .child(Self::shared(track.name.clone())),
+                    )
+                    .child(self.track_toggle(
+                        SharedString::from(format!("{}-hide", track.id)),
+                        "H",
+                        track.hidden,
+                        cx,
+                        {
+                            let track_id = track.id.clone();
+                            let hidden = track.hidden;
+                            move |this| {
+                                this.editor.execute(Command::SetTrackHidden {
+                                    track_id: track_id.clone(),
+                                    hidden: !hidden,
+                                });
+                            }
+                        },
+                    ))
+                    .child(self.track_toggle(
+                        SharedString::from(format!("{}-mute", track.id)),
+                        "M",
+                        track.muted,
+                        cx,
+                        {
+                            let track_id = track.id.clone();
+                            let muted = track.muted;
+                            move |this| {
+                                this.editor.execute(Command::SetTrackMuted {
+                                    track_id: track_id.clone(),
+                                    muted: !muted,
+                                });
+                            }
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .h(px(LANE_HEIGHT))
+                    .rounded_md()
+                    .bg(rgb(theme::LANE))
+                    .overflow_hidden()
+                    // Pressing empty lane space scrubs, the same as the ruler. A press that
+                    // lands on a clip never gets here: `begin_drag` stops propagation, so
+                    // dragging a clip does not also drag the playhead.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.begin_scrub(event);
+                            cx.notify();
+                        }),
+                    )
+                    .children(blocks)
+                    .child(
+                        // Playhead line across this lane.
+                        div()
+                            .absolute()
+                            .left(px(geometry.seconds_to_px(playhead_seconds)))
+                            .top(px(0.0))
+                            .w(px(2.0))
+                            .h(px(LANE_HEIGHT))
+                            .bg(rgb(theme::ACCENT)),
+                    ),
+            )
+    }
+}
+
+/// The timeline's pointer arithmetic: where a press lands, and what scrolling and zooming do to
+/// it. This is the layer where a mistake shows up as "the playhead is a second off" rather than
+/// as a crash, so it is asserted rather than eyeballed.
+#[cfg(test)]
+mod timeline_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn view(cx: &mut TestAppContext) -> gpui::Entity<EditorView> {
+        cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        })
+    }
+
+    /// The lane starts after the track labels, so a press must have that gutter taken off it
+    /// before it means anything. 96px at the default 48 px/s is two seconds in.
+    #[gpui::test]
+    fn a_press_on_a_lane_moves_the_playhead_to_that_time(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.scrub_to(lane_origin_x() + 96.0);
+            assert_eq!(this.editor.playhead().to_seconds_f64(), 2.0);
+        });
+    }
+
+    /// Once the lanes can scroll, the same pixel is a different time. Reading the press without
+    /// the offset is how a scrub lands a screenful away from the pointer.
+    #[gpui::test]
+    fn a_scrubbed_press_counts_the_scroll_offset(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.timeline = this.timeline.with_scroll_x(96.0);
+            this.scrub_to(lane_origin_x() + 96.0);
+            assert_eq!(this.editor.playhead().to_seconds_f64(), 4.0);
+        });
+    }
+
+    /// Dragging left past the labels asks for a negative time. There is no film before zero.
+    #[gpui::test]
+    fn a_press_left_of_the_lane_cannot_seek_before_the_start(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.scrub_to(0.0);
+            assert_eq!(this.editor.playhead(), MediaTime::ZERO);
+        });
+    }
+
+    /// A transport still running under the pointer fights the drag: the frame the user let go
+    /// on is not the frame they end up looking at.
+    #[gpui::test]
+    fn scrubbing_stops_playback(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.playing = true;
+            this.scrub_to(lane_origin_x() + 48.0);
+            assert!(!this.playing, "a scrub takes the transport off the user");
+            assert_eq!(this.editor.playhead().to_seconds_f64(), 1.0);
+        });
+    }
+
+    /// Scrolling stops where the content does, in both directions — the starter runs 7s, so at
+    /// 48 px/s there is 336px of film plus half a viewport of tail.
+    #[gpui::test]
+    fn scrolling_stops_at_both_ends(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            const LANE: f32 = 200.0;
+            this.scroll_by(500.0, LANE); // a big swipe right-to-left
+            assert_eq!(
+                this.timeline.scroll_x(),
+                0.0,
+                "there is nothing before the start"
+            );
+
+            this.scroll_by(-5_000.0, LANE);
+            let content = 7.0 * crate::geometry::DEFAULT_PIXELS_PER_SECOND + LANE * 0.5;
+            assert!(
+                (this.timeline.scroll_x() - (content - LANE)).abs() < 0.5,
+                "scrolled to {} past a {content}px timeline",
+                this.timeline.scroll_x()
+            );
+        });
+    }
+
+    /// Playback with a scrollable timeline has to bring the playhead with it. A transport that
+    /// runs off the right edge leaves the user scrolling to find their own film.
+    #[gpui::test]
+    fn playback_brings_the_view_with_it(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            const LANE: f32 = 120.0; // ~2.5s of film on screen at the default zoom
+            this.editor
+                .seek(MediaTime::from_ticks(6 * TICKS_PER_SECOND));
+            assert_eq!(this.timeline.scroll_x(), 0.0);
+
+            this.follow_playhead(LANE);
+            let x = this.geometry().ticks_to_px(this.editor.playhead());
+            assert!(
+                (0.0..=LANE).contains(&x),
+                "the playhead sits at {x} in a {LANE}px lane"
+            );
+
+            // Already on screen: the view must not jump on every frame.
+            let settled = this.timeline.scroll_x();
+            this.follow_playhead(LANE);
+            assert_eq!(this.timeline.scroll_x(), settled);
+        });
+    }
+
+    /// Zoom anchored on the playhead. Zooming about the left edge instead throws the frame the
+    /// user is looking at off screen at every step.
+    #[gpui::test]
+    fn zooming_keeps_the_playhead_under_the_same_pixel(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            const LANE: f32 = 800.0;
+            this.editor
+                .seek(MediaTime::from_ticks(3 * TICKS_PER_SECOND));
+            let before = this.playhead_anchor_x(LANE);
+
+            this.zoom_by(1.5, before, LANE);
+            assert!(this.timeline.pixels_per_second() > crate::geometry::DEFAULT_PIXELS_PER_SECOND);
+            assert!(
+                (this.playhead_anchor_x(LANE) - before).abs() < 1.0,
+                "the playhead moved from {before} to {}",
+                this.playhead_anchor_x(LANE)
+            );
+        });
+    }
+}
+
+/// The two timeline modes the design adds: snapping, and the razor.
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn view(cx: &mut TestAppContext) -> gpui::Entity<EditorView> {
+        cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        })
+    }
+
+    /// Snapping is on by default: butt-joining two clips by eye at 48 px/s is a fight.
+    #[gpui::test]
+    fn snapping_starts_on_and_can_be_switched_off(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            assert!(view.snapping);
+            assert_eq!(view.tool, Tool::Select);
+            view.snapping = false;
+            assert!(!view.snapping);
+        });
+    }
+
+    /// With snapping on, a drag that lands near a clip edge is pulled to it; with it off, the
+    /// same drag lands exactly where the pointer did. A toggle that changes neither is decor.
+    #[gpui::test]
+    fn the_snap_toggle_actually_changes_where_a_drag_lands(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let reference = ElementRef::new("track-main", "el-title");
+            let element = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|element| element.id() == "el-title")
+                .expect("the starter title")
+                .clone();
+            view.editor.select(vec![reference.clone()]);
+
+            // Nudge the head to a couple of pixels short of the clip that follows it, which is
+            // inside the snap tolerance.
+            let next_start = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|other| other.start() > element.start())
+                .map(|other| other.start())
+                .expect("the starter project has a second clip on the main lane");
+            let target_px = view.geometry().delta_ticks_to_px(MediaTime::from_ticks(
+                next_start.as_ticks() - element.start().as_ticks(),
+            ));
+            let drag = BlockDrag {
+                reference,
+                mode: DragMode::Move,
+                origin_start_ticks: element.start().as_ticks(),
+                origin_duration_ticks: element.duration().as_ticks(),
+            };
+            let dragged_px = target_px - 3.0;
+
+            let snapped = view.snapped_delta_px(&drag, dragged_px);
+            assert!(
+                (snapped - target_px).abs() < 0.01,
+                "snapping should pull the head onto the next clip: {snapped} vs {target_px}"
+            );
+
+            view.snapping = false;
+            assert_eq!(
+                view.snapped_delta_px(&drag, dragged_px),
+                dragged_px,
+                "with snapping off, the drag must land where the pointer did"
+            );
+        });
+    }
+
+    /// The whole clip-drag gesture, through the same three entry points the root element uses:
+    /// press on the block, move the pointer, release. This is what the drag refactor had to keep
+    /// working — the old test suite reached the commit path only through `snapped_delta_px`, so
+    /// nothing checked that a press installed a gesture or that a release committed one.
+    #[gpui::test]
+    fn a_clip_drag_presses_moves_and_commits(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.snapping = false;
+            let reference = ElementRef::new("track-main", "el-title");
+            let element = view
+                .editor
+                .active_scene()
+                .element(&reference)
+                .expect("the starter title")
+                .clone();
+            let origin = element.start().as_ticks();
+
+            view.editor.select(vec![reference.clone()]);
+            view.widgets.begin(Drag::new(
+                EditorDrag::Block(BlockDrag {
+                    reference: reference.clone(),
+                    mode: DragMode::Move,
+                    origin_start_ticks: origin,
+                    origin_duration_ticks: element.duration().as_ticks(),
+                }),
+                gpui::point(px(200.0), px(400.0)),
+                gpui::Modifiers::default(),
+            ));
+
+            // Mid-drag the clip has moved on screen but nothing is committed yet.
+            view.pointer_moved(gpui::point(px(296.0), px(400.0)), false, cx);
+            assert_eq!(
+                view.editor
+                    .active_scene()
+                    .element(&reference)
+                    .unwrap()
+                    .start()
+                    .as_ticks(),
+                origin,
+                "a drag in flight must not have edited anything"
+            );
+            let (_, delta) = view.block_drag().expect("a live block gesture");
+            assert!((delta - 96.0).abs() < 0.01, "delta was {delta}");
+
+            view.pointer_released(gpui::point(px(296.0), px(400.0)), false, cx);
+            assert!(!view.widgets.is_dragging());
+            // 96px at the default 48 px/s is two seconds.
+            assert_eq!(
+                view.editor
+                    .active_scene()
+                    .element(&reference)
+                    .unwrap()
+                    .start()
+                    .as_ticks(),
+                origin + 2 * TICKS_PER_SECOND,
+            );
+            assert!(
+                view.editor.can_undo(),
+                "the drop has to be one undoable edit"
+            );
+        });
+    }
+
+    /// Only one gesture can be in flight. A press on a clip while the playhead is being scrubbed
+    /// used to leave both fields set and let an `else if` decide which one the pointer meant.
+    #[gpui::test]
+    fn a_second_press_replaces_the_gesture_rather_than_joining_it(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.widgets.begin(Drag::new(
+                EditorDrag::Scrub,
+                gpui::point(px(200.0), px(400.0)),
+                gpui::Modifiers::default(),
+            ));
+            view.widgets.begin(Drag::new(
+                EditorDrag::PanelWidth {
+                    start_width: DEFAULT_PANEL_WIDTH,
+                },
+                gpui::point(px(300.0), px(400.0)),
+                gpui::Modifiers::default(),
+            ));
+            let before = view.editor.playhead();
+            view.pointer_moved(gpui::point(px(360.0), px(400.0)), false, cx);
+            assert_eq!(
+                view.media_width,
+                DEFAULT_PANEL_WIDTH + 60.0,
+                "the live gesture is the panel"
+            );
+            assert_eq!(view.editor.playhead(), before, "and it is not also a scrub");
+        });
+    }
+
+    /// The razor cuts where it is clicked, and produces two clips that still add up to one.
+    #[gpui::test]
+    fn the_razor_cuts_a_clip_in_two_at_the_point_clicked(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.tool = Tool::Razor;
+            let reference = ElementRef::new("track-main", "el-title");
+            let before = view.editor.active_scene().tracks.main.elements.len();
+            let original = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|element| element.id() == "el-title")
+                .expect("the starter title")
+                .clone();
+
+            // One second in: 48 px/s at the default zoom, plus the label gutter.
+            view.split_at_x(&reference, lane_origin_x() + 48.0);
+
+            let elements = &view.editor.active_scene().tracks.main.elements;
+            assert_eq!(elements.len(), before + 1, "the razor should add a clip");
+            let halves: Vec<_> = elements
+                .iter()
+                .filter(|element| element.name() == original.name())
+                .collect();
+            assert_eq!(halves.len(), 2);
+            let total: i64 = halves.iter().map(|half| half.duration().as_ticks()).sum();
+            assert_eq!(
+                total,
+                original.duration().as_ticks(),
+                "the two halves must add up to the clip that was cut"
+            );
+            assert!(view.status.is_none(), "no complaint: {:?}", view.status);
+        });
+    }
+
+    /// A cut on the very edge would leave a clip of no length: unselectable, and a hole nobody
+    /// can see. It must be refused with a reason rather than made.
+    #[gpui::test]
+    fn a_cut_at_the_edge_is_refused_with_a_reason(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            view.tool = Tool::Razor;
+            let reference = ElementRef::new("track-main", "el-title");
+            let before = view.editor.active_scene().tracks.main.elements.len();
+
+            view.split_at_x(&reference, lane_origin_x() + 0.5);
+            assert_eq!(
+                view.editor.active_scene().tracks.main.elements.len(),
+                before,
+                "nothing should have been cut"
+            );
+            let status = view.status.clone().expect("a reason");
+            assert!(status.contains("too close"), "{status}");
+        });
+    }
+
+    /// A razor cut on a clip that has since gone must not panic.
+    #[gpui::test]
+    fn cutting_a_clip_that_is_gone_does_nothing(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let ghost = ElementRef::new("track-main", "el-not-here");
+            view.split_at_x(&ghost, lane_origin_x() + 48.0);
+            assert!(view.status.is_none());
+        });
+    }
+}
