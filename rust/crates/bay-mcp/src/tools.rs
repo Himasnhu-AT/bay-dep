@@ -1796,7 +1796,7 @@ pub fn all_definitions() -> Vec<Value> {
                                     a faithful read of a large canvas use scale 1 with a stride." },
                 "stride": { "type": "integer", "default": 1,
                     "description": "Sample every Nth pixel in each axis. 1 reads every pixel. A \
-                                    4K frame costs ~60ms at stride 1 and ~4ms at stride 4; the \
+                                    4K frame costs ~35ms at stride 1 and ~2ms at stride 4; the \
                                     reply always reports sampledPixels so shares are readable as \
                                     shares of what was measured." }
             }),
@@ -1856,9 +1856,11 @@ pub fn all_definitions() -> Vec<Value> {
             json!({
                 "path": { "type": "string", "description": "Output path. .mp4 for h264/hevc, .mov for prores." },
                 "duration": { "type": "number",
-                    "description": "How many seconds to encode. Defaults to the rest of the timeline from startSeconds." },
+                    "description": "How many seconds to encode, counting forward from startSeconds. Defaults to the rest of the timeline. A duration that stops before the end of the populated timeline is REFUSED, because that is almost always a forgotten tail — pass endSeconds instead when stopping early is the point." },
                 "startSeconds": { "type": "number", "default": 0,
-                    "description": "Where in the timeline the file begins — for exporting one section rather than the whole thing. The sound moves with it." },
+                    "description": "Where in the timeline the file begins — the in point. The sound moves with it." },
+                "endSeconds": { "type": "number",
+                    "description": "The out point: where the file stops. Unlike duration this is a deliberate range, so the part of the timeline after it is left out without complaint. Pass this or duration, never both." },
                 "preset": { "type": "string", "enum": ["social", "youtube", "master"],
                     "description": "social = Reels/TikTok/Shorts (H.264, CRF 20, -14 LUFS). youtube = a little more bitrate. master = ProRes with no loudness processing, for handing to another editor." },
                 "codec": { "type": "string", "enum": ["h264", "hevc", "prores"],
