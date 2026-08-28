@@ -412,9 +412,53 @@ not landed composites to a flat frame, which costs almost no time and reads as a
 `bay-preview/tests/render.rs` carries the same warning about a test that once asserted only buffer
 length and passed with a missing file. Current run: **120 of 120 frames painted**.
 
-### What it does not cover
+### Playback, on a wall clock
 
-The GPU->CPU->GPU hop into the UI. `bay-ui`'s `update_preview` builds a **fresh `RenderImage`
-every frame**, so a 640x360 tile is allocated, uploaded and freed per frame, and the atlas churns
-once per frame. That cost is outside these numbers, and it is where a lag that is not in the
-engine has to be. Measuring it needs a harness inside a live GPUI window, which does not exist.
+The fixed-step case above answers *how expensive is one frame*. It cannot answer *how many frames
+reach the screen*, because it never lets real time pass — it takes as long as it takes and calls
+that a frame. A pipeline that produces a perfect frame in 0.46 ms but is only **asked** four times
+a second scores identically there and is a slideshow in the window. That is not hypothetical: it
+is exactly the bug that survived two rounds of investigation, because every number anyone measured
+was healthy.
+
+So `bay-bench` also plays a clip on a wall clock, advancing the playhead by elapsed time the way
+the transport does, paced at 60 Hz. Measured 2026-08-28, release, six seconds of transport on a
+1080p H.264 source:
+
+| | |
+|---|---:|
+| pictures reaching the screen | **59.4 /s** |
+| composite calls | 59.9 /s |
+| window: served / repeat / starved / reseek | 289 / 144 / 8 / 1 |
+| decoder head start | 96 frames (the bound) |
+
+144 repeats of 289 is correct, not a fault: the source is 23.976 fps and the tick is 60 Hz, so
+about three ticks in five *must* show the frame already up. The number that matters is
+`served - repeat` — 145 distinct frames over six seconds, which is the source rate.
+
+Pacing it at 60 Hz is deliberate. Unthrottled the same loop ran **5.8 million composite calls a
+second** and reported 98% repeated frames — true, useless, and it drowns the two counters
+(`starved`, `reseek`) that would name a real fault.
+
+### What the numbers ruled out, and what actually caused the lag
+
+Every layer measured well, and each measurement removed a suspect:
+
+| Layer | Measured | Verdict |
+|---|---|---|
+| ffmpeg decode to preview size | 388 fps (300 frames in 0.774 s) | 13x real time — not it |
+| composite + readback | 0.46 ms p50 | ~1,300 fps of headroom — not it |
+| engine end to end, headless | 2,216 pictures/s | ~90x what playback needs — not it |
+| GPU->CPU->GPU hop into GPUI | 2.05 ms p99 (`BAY_UI_FRAMETIME`) | against a 16.67 ms budget — not it |
+
+An earlier version of this page named that last row as "where a lag that is not in the engine has
+to be", and proposed `Window::paint_surface` with an IOSurface-backed `CVPixelBuffer` to remove it.
+**That was wrong and the work was not worth doing.** The cause was that no frame was being
+requested at all: `cx.notify()` called from inside `render` does not schedule one, because
+GPUI sets the dirty flag only outside the draw phase. See `CLAUDE.md`.
+
+The lesson is in the shape of the table, not any row of it. Four correct measurements of four
+layers, all green, and the fault was in none of them — it was in how often the whole thing was
+asked to run, which nothing measured. **A frame-rate probe must count pictures reaching the
+screen, not ticks**; `BAY_UI_FRAMETIME` now reports `pictures/s` beside `ticks/s` for that reason,
+and this wall-clock case exists for the same one.

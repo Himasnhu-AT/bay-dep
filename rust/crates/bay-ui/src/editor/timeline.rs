@@ -442,77 +442,110 @@ impl EditorView {
             .unwrap_or_else(|| self.editor.playhead());
         self.add_counter += 1;
         let uid = self.add_counter;
-        let (track_id, element) = match kind {
-            MediaKind::Audio => (
-                "track-audio",
-                Element::Audio(AudioElement {
-                    id: format!("aud-{uid}"),
-                    name: name.to_string(),
-                    start,
-                    duration,
-                    fade_in: MediaTime::ZERO,
-                    fade_out: MediaTime::ZERO,
-                    media_id: media_id.to_string(),
-                    muted: false,
-                    volume: 1.0,
-                    pan: 0.0,
-                    speed: 1.0,
-                    prosody: None,
-                    dialogue_chain: None,
-                    animations: Default::default(),
-                    trim_start: MediaTime::ZERO,
-                    source: Default::default(),
-                    role: Default::default(),
-                }),
-            ),
-            MediaKind::Video => (
-                "track-main",
-                Element::Video(VideoElement {
-                    id: format!("vid-{uid}"),
-                    name: name.to_string(),
-                    start,
-                    duration,
-                    fade_in: MediaTime::ZERO,
-                    fade_out: MediaTime::ZERO,
-                    media_id: media_id.to_string(),
-                    trim_start: MediaTime::ZERO,
-                    trim_end: duration,
-                    speed: 1.0,
-                    freeze: None,
-                    transform: Transform::default(),
-                    effects: Vec::new(),
-                    animations: Default::default(),
-                    blend_mode: Default::default(),
-                    mask: None,
-                    source: Default::default(),
-                    role: Default::default(),
-                }),
-            ),
-            MediaKind::Image => (
-                "track-main",
-                Element::Image(ImageElement {
-                    id: format!("img-{uid}"),
-                    name: name.to_string(),
-                    start,
-                    duration,
-                    fade_in: MediaTime::ZERO,
-                    fade_out: MediaTime::ZERO,
-                    media_id: media_id.to_string(),
-                    transform: Transform::default(),
-                    effects: Vec::new(),
-                    animations: Default::default(),
-                    blend_mode: Default::default(),
-                    mask: None,
-                    source: Default::default(),
-                    role: Default::default(),
-                }),
-            ),
+        // No lane names here: the element only. Naming the lane beside its constructor is what
+        // produced `fixes.md` entry 5 — a string literal that was right for the starter scene and
+        // silently wrong for every other one. `resolve_lane` asks the scene instead.
+        let element = match kind {
+            MediaKind::Audio => Element::Audio(AudioElement {
+                id: format!("aud-{uid}"),
+                name: name.to_string(),
+                start,
+                duration,
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                media_id: media_id.to_string(),
+                muted: false,
+                volume: 1.0,
+                pan: 0.0,
+                speed: 1.0,
+                prosody: None,
+                dialogue_chain: None,
+                animations: Default::default(),
+                trim_start: MediaTime::ZERO,
+                source: Default::default(),
+                role: Default::default(),
+            }),
+            MediaKind::Video => Element::Video(VideoElement {
+                id: format!("vid-{uid}"),
+                name: name.to_string(),
+                start,
+                duration,
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                media_id: media_id.to_string(),
+                trim_start: MediaTime::ZERO,
+                trim_end: duration,
+                speed: 1.0,
+                freeze: None,
+                transform: Transform::default(),
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
+            }),
+            MediaKind::Image => Element::Image(ImageElement {
+                id: format!("img-{uid}"),
+                name: name.to_string(),
+                start,
+                duration,
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                media_id: media_id.to_string(),
+                transform: Transform::default(),
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
+            }),
+        };
+        // Resolve the lane from the scene rather than trusting the literal above.
+        //
+        // `fixes.md` entry 5: lowering `AddElement` is `scene.tracks.track(track_id)?` — a `?` on
+        // an `Option`, so naming a track that is not there yields no patch, no undo entry, no
+        // error and no status line. The file imports, the pool lists it, the timeline does not
+        // change, and nothing says why. Two projects hit it: one with no audio lane yet, and
+        // *any* scene after the first, because `Scene::empty` names its main track
+        // `{scene_id}-main` and only the starter's is literally `track-main`.
+        let track_id = match track {
+            Some(explicit) => explicit.to_string(),
+            None => self.resolve_lane(kind),
         };
         self.editor.execute(Command::AddElement {
-            track_id: track.unwrap_or(track_id).to_string(),
+            track_id,
             element,
             select: true,
         });
+    }
+
+    /// The lane a newly placed clip of `kind` belongs on, creating an audio lane if the scene
+    /// has none.
+    ///
+    /// Reads the scene instead of naming a track in a string literal. The main lane is taken from
+    /// `tracks.main.id`, which is `{scene_id}-main` on every scene but the starter — that literal
+    /// is why placing anything on scene two silently did nothing.
+    ///
+    /// Only audio can be missing a home: every scene has a main lane by construction, and no
+    /// scene necessarily has an audio one.
+    fn resolve_lane(&mut self, kind: MediaKind) -> String {
+        if !matches!(kind, MediaKind::Audio) {
+            return self.editor.active_scene().tracks.main.id.clone();
+        }
+        if let Some(existing) = self.editor.active_scene().tracks.audio.first() {
+            return existing.id.clone();
+        }
+        // No audio lane in this scene. Make one rather than dropping the import on the floor.
+        self.add_counter += 1;
+        let id = format!("track-audio-{}", self.add_counter);
+        self.editor.execute(Command::AddTrack {
+            lane: bay_core::command::TrackLane::Audio,
+            id: id.clone(),
+            name: "Audio 1".into(),
+        });
+        id
     }
 
     /// Downsample cached peaks to as many bars as the block is wide enough to show.
@@ -1653,6 +1686,64 @@ mod timeline_tests {
                     .iter()
                     .any(|element| element.id() == reference.element_id),
                 "a vertical-only drag left the clip where it was"
+            );
+        });
+    }
+
+    /// Importing audio into a scene with no audio lane must place a clip, not silently nothing.
+    ///
+    /// `fixes.md` entry 5. `AddElement` lowers through `scene.tracks.track(track_id)?`, so naming
+    /// a lane that is not there produces no patch and no error — the import "succeeds" and the
+    /// timeline does not change.
+    #[gpui::test]
+    fn audio_lands_in_a_scene_that_has_no_audio_lane(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            // Take the audio lanes away, which is the state `Scene::empty` starts in.
+            let scene = this.editor.active_scene().id.clone();
+            let _ = scene;
+            this.editor
+                .project_mut()
+                .active_scene_mut()
+                .tracks
+                .audio
+                .clear();
+            assert!(this.editor.active_scene().tracks.audio.is_empty());
+
+            this.place_media_at("a1", "Sound", "/tmp/sound.wav", Some(MediaTime::ZERO), None);
+
+            let placed = this
+                .editor
+                .active_scene()
+                .tracks
+                .iter()
+                .flat_map(|track| track.elements.iter())
+                .any(|element| matches!(element, Element::Audio(_)));
+            assert!(placed, "the audio import placed nothing and said nothing");
+        });
+    }
+
+    /// The main lane is `{scene_id}-main` on every scene but the starter, so a literal
+    /// `"track-main"` made placement on scene two silently do nothing too.
+    #[gpui::test]
+    fn video_lands_on_a_scene_whose_main_lane_is_not_named_track_main(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.editor.project_mut().active_scene_mut().tracks.main.id = "scene-2-main".into();
+
+            this.place_media_at("v1", "Clip", "/tmp/clip.mp4", Some(MediaTime::ZERO), None);
+
+            let placed = this
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .any(|element| matches!(element, Element::Video(_)));
+            assert!(
+                placed,
+                "placement missed a main lane that is not called track-main"
             );
         });
     }

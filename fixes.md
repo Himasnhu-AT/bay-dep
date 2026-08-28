@@ -425,6 +425,24 @@ three more individual fixes.
 
 ### 5. Importing audio into a project with no audio lane succeeds and places nothing
 
+**The UI half is fixed** (2026-08-28). `place_media_at` no longer names a lane in a literal: the
+match arms construct the element only, and `resolve_lane` asks the scene — `tracks.main.id` for
+picture, the first audio lane for sound, creating one when the scene has none. Two tests hold it:
+`audio_lands_in_a_scene_that_has_no_audio_lane` clears the audio lanes and asserts a clip is
+placed; `video_lands_on_a_scene_whose_main_lane_is_not_named_track_main` renames the main lane and
+asserts the same. `drop_onto_new_track` picks its lane from the media kind for the same reason —
+audio dropped below the lanes used to create an *overlay* called "Overlay 1".
+
+**The engine half is still open**, and it is the half the entry was really about: lowering
+`AddElement` against a track that does not exist is still `scene.tracks.track(track_id)?`, so it
+is still no patch, no undo entry, no error and no status line. The view now avoids asking a bad
+question; nothing yet stops anyone else asking one, and an MCP client placing media has exactly
+the problem described below. Fixing that means either a fallible lowering or a
+create-lane-if-missing placement command in `bay-core`.
+
+The original entry follows.
+
+
 `place_media` (`rust/crates/bay-ui/src/editor_view.rs:1235`) chooses a lane by media kind and
 names it with a **string literal**: `"track-audio"` for audio, `"track-main"` for video and
 images. It then executes `Command::AddElement` and ignores the result. Lowering that command is

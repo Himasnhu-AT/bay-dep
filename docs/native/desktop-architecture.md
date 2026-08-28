@@ -129,6 +129,14 @@ macOS-only unsafe interop across `wgpu-hal`/`objc2-metal`/`io-surface`/`core-vid
 cross-device (wgpu vs. GPUI/blade) synchronization hazard. It is a deliberate, self-contained spike
 whose payoff is latency only, so it is deferred rather than half-built.
 
+**Now measured, and the answer is: do not build it.** `BAY_UI_FRAMETIME=1` reports the whole hop —
+readback, `RenderImage`, atlas upload — at **2.05 ms p99 against a 16.67 ms budget at 60 Hz**, and
+0.57 ms p50 during steady playback at 120 Hz. There is no lag hiding in it. This was the leading
+suspect for a playback stall that turned out to be frame pacing (`cx.notify()` from inside `render`
+never requesting a frame — see `CLAUDE.md`), and the temptation to spend a week of unsafe Metal
+interop on it was real. Keep the item; reopen it only if a measurement, not an intuition, puts a
+cost here.
+
 ## Tests
 - `bay-project`: model invariants + JSON round-trip (`tests/model.rs`).
 - `bay-core`: every command, reversible undo/redo, paste, selectionOverride, one-event-per-command
