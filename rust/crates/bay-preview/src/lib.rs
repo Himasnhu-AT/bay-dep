@@ -7,6 +7,7 @@
 //! lands; the compositing (background, transform, opacity, blend) is real.
 
 pub mod frame_check;
+pub mod playback;
 pub mod poster;
 pub mod probe;
 pub mod scopes;
@@ -1096,6 +1097,15 @@ impl ClipStream {
         })
     }
 
+    /// Pull the next frame and hand it over.
+    ///
+    /// The streaming *export* path lends `buffer` to its caller and re-uses it, which is right
+    /// there — one buffer, no allocation per frame. A playback worker cannot: the frame crosses
+    /// a thread boundary and has to own its pixels.
+    fn next_owned(&mut self) -> Option<Vec<u8>> {
+        self.advance().then(|| self.buffer.clone())
+    }
+
     /// Pull the next frame off the pipe into `buffer`. `false` once the source is exhausted.
     fn advance(&mut self) -> bool {
         if self.exhausted {
@@ -1155,18 +1165,6 @@ impl Drop for ClipStream {
     }
 }
 
-/// What a set of streams is decoding *for*.
-///
-/// Named rather than a bool for the same reason [`FrameSource`] is: export wants source
-/// resolution because it is writing a file, playback wants preview size because it is filling a
-/// 640x360 composite, and decoding one at the other's size is the bug that made a 4K export a
-/// 480px upscale. The distinction has been got wrong here before.
-#[derive(Clone, Copy, PartialEq)]
-enum StreamPurpose {
-    Export,
-    Playback,
-}
-
 /// The decoders a stream-based pass has open, one per video element, opened on first use and
 /// closed once the timeline has moved past the element that needed them.
 struct ExportStreams {
@@ -1175,7 +1173,6 @@ struct ExportStreams {
     /// spawn rather than one per exported frame.
     failed: HashSet<String>,
     fps: f32,
-    purpose: StreamPurpose,
 }
 
 impl ExportStreams {
@@ -1184,25 +1181,7 @@ impl ExportStreams {
             open: std::collections::HashMap::new(),
             failed: HashSet::new(),
             fps,
-            purpose: StreamPurpose::Export,
         }
-    }
-
-    /// Streams for interactive playback: preview-sized, full rate, nothing resident.
-    fn for_playback(fps: f32) -> Self {
-        Self {
-            open: std::collections::HashMap::new(),
-            failed: HashSet::new(),
-            fps,
-            purpose: StreamPurpose::Playback,
-        }
-    }
-
-    /// Drop every decoder. Called when playback stops, so a paused editor is not holding one
-    /// ffmpeg process per visible clip for as long as the window is open.
-    fn close_all(&mut self) {
-        self.open.clear();
-        self.failed.clear();
     }
 
     /// Frame for `element_id` at `source_seconds`, opening its decoder if this is the first ask.
@@ -1224,11 +1203,13 @@ impl ExportStreams {
                 ),
                 Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
             };
-            let intent = match self.purpose {
-                StreamPurpose::Export => DecodeIntent::Export { fps: self.fps },
-                StreamPurpose::Playback => DecodeIntent::Playback { fps: self.fps },
-            };
-            let plan = plan_decode(natural, rotation, duration, intent, VIDEO_MEMORY_BUDGET);
+            let plan = plan_decode(
+                natural,
+                rotation,
+                duration,
+                DecodeIntent::Export { fps: self.fps },
+                VIDEO_MEMORY_BUDGET,
+            );
             match ClipStream::open(path, plan, source_seconds) {
                 Some(stream) => {
                     self.open.insert(element_id.to_string(), stream);
@@ -1254,8 +1235,12 @@ impl ExportStreams {
 enum FrameSource<'a> {
     /// Preview: the whole clip, decoded once at preview size, indexed by time.
     Cache,
-    /// Export: source-resolution frames streamed in timeline order.
+    /// Export: source-resolution frames streamed in timeline order. Blocking is correct here —
+    /// an export must not skip a frame it has not decoded yet.
     Streams(&'a mut ExportStreams),
+    /// Playback: preview-sized frames taken from decoder threads, never waited for. A frame that
+    /// has not arrived shows the previous one; the render path does not stall for it.
+    Playback(&'a mut playback::PlaybackStreams),
 }
 
 /// Max distinct text rasters kept resident in the compositor store before the least-recently
@@ -1327,7 +1312,7 @@ pub struct PreviewRenderer {
     ///
     /// Empty whenever playback is stopped, so a paused editor holds no ffmpeg processes. See
     /// [`Self::set_playing`].
-    playback: ExportStreams,
+    playback: playback::PlaybackStreams,
     /// Whether the transport is running, and so whether frames come from streams or the cache.
     playing: bool,
 }
@@ -1553,7 +1538,7 @@ impl PreviewRenderer {
             raster_order: std::collections::VecDeque::new(),
             readback: ReadbackPool::new(),
             pipelined: PipelinedReadback::new(),
-            playback: ExportStreams::for_playback(VIDEO_MAX_FPS),
+            playback: playback::PlaybackStreams::default(),
             playing: false,
         })
     }
@@ -2282,10 +2267,7 @@ impl PreviewRenderer {
         // and `ClipStream` seeks by respawning, so a jump costs one spawn rather than a stall.
         let texture = if self.playing {
             // Moved out and back so the streams can be borrowed mutably alongside `self`.
-            let mut streams = std::mem::replace(
-                &mut self.playback,
-                ExportStreams::for_playback(VIDEO_MAX_FPS),
-            );
+            let mut streams = std::mem::take(&mut self.playback);
             let texture = self.composite_inner(
                 scene,
                 playhead,
@@ -2293,7 +2275,7 @@ impl PreviewRenderer {
                 height,
                 background,
                 media,
-                FrameSource::Streams(&mut streams),
+                FrameSource::Playback(&mut streams),
             );
             self.playback = streams;
             texture
@@ -2593,6 +2575,25 @@ impl PreviewRenderer {
                                 .and_then(|(w, h, rgba)| {
                                     self.ctx
                                         .upload_rgba_texture(rgba, w, h, "export-video")
+                                        .map(|texture| (texture, w, h))
+                                }),
+                            // Whatever a decoder thread has ready. Opening a clip builds the
+                            // ffmpeg stream *inside* the worker, so even the spawn is off the
+                            // render path — that spawn on the render thread was half the stall.
+                            FrameSource::Playback(streams) => path
+                                .as_deref()
+                                .and_then(|path| {
+                                    let owned = path.to_string();
+                                    streams.frame_at(
+                                        element.id(),
+                                        path,
+                                        source_seconds,
+                                        move |at| open_playback_source(&owned, at),
+                                    )
+                                })
+                                .and_then(|(w, h, rgba)| {
+                                    self.ctx
+                                        .upload_rgba_texture(rgba, w, h, "playback-video")
                                         .map(|texture| (texture, w, h))
                                 }),
                         };
@@ -4014,4 +4015,39 @@ pub fn filmstrip(path: &str, count: u32) -> Option<Vec<PosterFrame>> {
         })
         .collect();
     (!frames.is_empty()).then_some(frames)
+}
+
+/// Build a decoder for one clip, positioned at `at_seconds`.
+///
+/// Everything here runs on the **worker** thread: probing, planning, and spawning ffmpeg. That
+/// matters — the first attempt at streaming playback spawned the process on the render thread,
+/// and a spawn during a scrub is a visible stall on its own.
+fn open_playback_source(path: &str, at_seconds: f64) -> Option<playback::PlaybackSource> {
+    let (natural, rotation, duration) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
+    };
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration,
+        DecodeIntent::Playback { fps: VIDEO_MAX_FPS },
+        VIDEO_MEMORY_BUDGET,
+    );
+    let (width, height, fps) = (plan.width, plan.height, plan.fps);
+    let mut stream = ClipStream::open(path, plan, at_seconds)?;
+    Some(playback::PlaybackSource {
+        width,
+        height,
+        fps,
+        next_frame: Box::new(move || {
+            // One clone per frame, because the frame crosses a thread boundary. The alternative
+            // is handing out a borrow of the stream's buffer, which cannot outlive the worker.
+            stream.next_owned()
+        }),
+    })
 }
