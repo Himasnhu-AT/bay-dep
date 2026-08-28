@@ -6,6 +6,22 @@
 
 use super::*;
 
+/// Turn a scroll delta into a zoom multiplier.
+///
+/// Exponential rather than linear, because zoom is multiplicative: at 8 px/s a linear step is a
+/// huge jump and at 400 px/s the same step is imperceptible. The 1/300 divisor makes an ordinary
+/// trackpad flick roughly a factor of two, and the clamp stops a flung gesture crossing the whole
+/// range in one event.
+///
+/// Positive delta zooms **in**: scrolling up or swiping away from you enlarges, which is the
+/// direction every map and every NLE uses.
+fn zoom_factor(delta: f32) -> f32 {
+    if !delta.is_finite() {
+        return 1.0;
+    }
+    (delta / 300.0).clamp(-1.0, 1.0).exp()
+}
+
 impl EditorView {
     /// Ask for a waveform for every audio clip on the timeline, and collect any that finished.
     ///
@@ -468,6 +484,7 @@ impl EditorView {
     }
 
     /// Scroll the lanes horizontally by a wheel/trackpad delta, clamped to the content.
+    ///
     pub(super) fn scroll_by(&mut self, delta_x: f32, lane_width: f32) {
         let content = self.content_width(lane_width);
         let wanted = self.timeline.scroll_x() - delta_x;
@@ -548,13 +565,36 @@ impl EditorView {
             .bg(rgb(theme::PANEL))
             .border_t_1()
             .border_color(rgb(theme::BORDER))
-            // Two-finger horizontal scroll pans the lanes. Vertical is left alone: the track
-            // list below handles it, and hijacking both would stop the tracks scrolling at all.
+            // Sideways pans, vertical zooms, and Cmd/Ctrl zooms whichever axis the mouse has.
+            //
+            // A one-axis wheel cannot pan *and* zoom, so the modifier is what a mouse gets; a
+            // trackpad has two axes and uses them, which is the gesture every NLE trains people
+            // into. Horizontal is checked first: a two-finger swipe is rarely purely horizontal,
+            // and treating its vertical component as a zoom would make every pan drift in scale.
             .on_scroll_wheel(cx.listener(
                 move |this, event: &gpui::ScrollWheelEvent, window, cx| {
                     let delta = event.delta.pixel_delta(window.line_height());
-                    if delta.x != gpui::Pixels::ZERO {
-                        this.scroll_by(f32::from(delta.x), lane_width);
+                    let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
+                    // `platform` is Cmd on macOS, Super/Win elsewhere.
+                    let zoom_held = event.modifiers.platform || event.modifiers.control;
+
+                    // Anchor on the playhead, so the frame being looked at stays put. Anchoring
+                    // on the left edge throws it off screen within a few notches. Same anchor
+                    // the +/- buttons use, so wheel and button zoom agree.
+                    let anchor = this.playhead_anchor_x(lane_width);
+
+                    if zoom_held {
+                        // Whichever axis the device moved. A mouse only has one.
+                        let amount = if dx.abs() > dy.abs() { dx } else { dy };
+                        if amount != 0.0 {
+                            this.zoom_by(zoom_factor(amount), anchor, lane_width);
+                            cx.notify();
+                        }
+                    } else if dx != 0.0 {
+                        this.scroll_by(dx, lane_width);
+                        cx.notify();
+                    } else if dy != 0.0 {
+                        this.zoom_by(zoom_factor(dy), anchor, lane_width);
                         cx.notify();
                     }
                 },
@@ -1360,6 +1400,47 @@ mod tool_tests {
                 "and the clip the first press grabbed did not move with it"
             );
         });
+    }
+
+    /// Zoom is multiplicative, so the wheel delta has to be exponential.
+    ///
+    /// A linear step is enormous at 8 px/s and imperceptible at 400 — the two ends of bay's zoom
+    /// range differ by 50x. Exponential makes a flick feel the same at both.
+    #[test]
+    fn a_scroll_delta_zooms_by_a_ratio_not_an_amount() {
+        assert_eq!(zoom_factor(0.0), 1.0, "no scroll is no zoom");
+        assert!(zoom_factor(60.0) > 1.0, "scrolling up zooms in");
+        assert!(zoom_factor(-60.0) < 1.0, "scrolling down zooms out");
+
+        // Symmetric: a flick out then back in returns to where it started.
+        let round_trip = zoom_factor(60.0) * zoom_factor(-60.0);
+        assert!(
+            (round_trip - 1.0).abs() < 1e-5,
+            "equal and opposite flicks must cancel, got {round_trip}"
+        );
+    }
+
+    /// A flung gesture must not cross the whole zoom range in one event.
+    ///
+    /// macOS delivers momentum scrolls with very large deltas; without the clamp a single
+    /// trackpad flick took the timeline from frames to hours.
+    #[test]
+    fn a_flung_gesture_is_clamped() {
+        let huge = zoom_factor(100_000.0);
+        assert!(
+            huge <= std::f32::consts::E + 1e-3,
+            "one event may not zoom more than e, got {huge}"
+        );
+        assert!(zoom_factor(-100_000.0) >= 1.0 / std::f32::consts::E - 1e-3);
+    }
+
+    /// NaN reaches this from a device that reports one; the render path must not carry it into
+    /// the timeline's scale, where it would poison every later conversion.
+    #[test]
+    fn a_nonfinite_delta_does_not_zoom() {
+        assert_eq!(zoom_factor(f32::NAN), 1.0);
+        assert_eq!(zoom_factor(f32::INFINITY), 1.0);
+        assert_eq!(zoom_factor(f32::NEG_INFINITY), 1.0);
     }
 
     /// The razor cuts where it is clicked, and produces two clips that still add up to one.

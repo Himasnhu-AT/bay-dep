@@ -98,6 +98,19 @@ impl EditorView {
     }
 
     fn update_preview_inner(&mut self) {
+        // Told once, here, rather than at each of the four places `playing` is assigned
+        // (toggle_play's two arms, the end-of-timeline stop, and open_project). Those can and
+        // would drift; this cannot. `set_playing` is a no-op when the value is unchanged, so
+        // saying it every frame costs a comparison.
+        //
+        // Playing switches the preview onto streams positioned at the playhead — preview size,
+        // full rate, nothing resident — instead of the whole-clip cache, which spends its memory
+        // budget on coverage and pays for it in frame rate.
+        let playing = self.playing;
+        if let Some(renderer) = self.preview.as_mut() {
+            renderer.set_playing(playing);
+        }
+
         // --- collect ---
         let collected = self.preview.as_mut().unwrap().collect_composite();
         match collected {

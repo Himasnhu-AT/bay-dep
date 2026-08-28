@@ -747,6 +747,18 @@ pub enum DecodeIntent {
     /// Export: source resolution at the delivered frame rate, **streamed**. No memory budget
     /// applies because no whole clip is ever resident — a 4K clip cannot fit one and must not try.
     Export { fps: f32 },
+    /// Playback: preview size at **full rate**, streamed around the playhead.
+    ///
+    /// The third case, and it exists because the first two answer different questions than
+    /// "what does the next frame look like". `Preview` holds the whole clip so scrubbing is
+    /// instant, and pays for that in frame rate — a 29s vertical reel came out at 4.2 fps
+    /// against a 23.976 fps source, which on screen is a slideshow. `Export` streams at full
+    /// rate but at source resolution, which is far more pixels than a 640x360 preview can show.
+    ///
+    /// This is what a video player does: stream a window at full rate, throw it away behind,
+    /// and seek when the playhead jumps. Nothing is resident, so no budget applies and no
+    /// coverage promise has to be bought with frames.
+    Playback { fps: f32 },
 }
 
 /// The outcome of [`plan_decode`].
@@ -810,8 +822,36 @@ fn plan_decode(
         };
     }
 
+    // Playback shares the preview's *size* and the export's *streaming*: small enough for a
+    // 640x360 composite, full rate, and `max_frames: None` because nothing is held.
+    if let DecodeIntent::Playback { fps } = intent {
+        let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32)
+            .min(VIDEO_MAX_WIDTH as f32 / nh as f32)
+            .min(1.0);
+        return DecodePlan {
+            width: even(nw as f32 * scale),
+            height: even(nh as f32 * scale),
+            fps: if fps.is_finite() && fps > 0.0 {
+                fps.min(VIDEO_MAX_FPS)
+            } else {
+                VIDEO_MAX_FPS
+            },
+            max_frames: None,
+        };
+    }
+
     // Downscale to the preview budget, keeping aspect; ffmpeg wants even dimensions.
-    let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32).min(1.0);
+    //
+    // Bounded on **both** sides, not just width. Capping width alone penalises portrait footage
+    // for being portrait: 1920x1080 lands at 480x270 (130k pixels) while 1080x1920 lands at
+    // 480x853 (409k) — 3.2x the pixels per frame, so 3.2x fewer frames fit the same budget, so
+    // the frame rate collapses. A 29s vertical reel decoded at 4.2 fps against a 23.976 fps
+    // source, which on screen is a slideshow. Nothing is lost by the tighter bound: the preview
+    // composites at 640x360, so a portrait clip is displayed about 202x360 and 270x480 is still
+    // oversampled.
+    let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32)
+        .min(VIDEO_MAX_WIDTH as f32 / nh as f32)
+        .min(1.0);
     let (mut w, mut h) = (even(nw as f32 * scale), even(nh as f32 * scale));
 
     let duration = duration_secs.max(0.05);
@@ -1115,23 +1155,54 @@ impl Drop for ClipStream {
     }
 }
 
-/// The decoders an export has open, one per video element, opened on first use and closed once
-/// the timeline has moved past the element that needed them.
-#[derive(Default)]
+/// What a set of streams is decoding *for*.
+///
+/// Named rather than a bool for the same reason [`FrameSource`] is: export wants source
+/// resolution because it is writing a file, playback wants preview size because it is filling a
+/// 640x360 composite, and decoding one at the other's size is the bug that made a 4K export a
+/// 480px upscale. The distinction has been got wrong here before.
+#[derive(Clone, Copy, PartialEq)]
+enum StreamPurpose {
+    Export,
+    Playback,
+}
+
+/// The decoders a stream-based pass has open, one per video element, opened on first use and
+/// closed once the timeline has moved past the element that needed them.
 struct ExportStreams {
     open: std::collections::HashMap<String, ClipStream>,
     /// Elements whose decoder could not be started. Remembered so a broken path costs one failed
     /// spawn rather than one per exported frame.
     failed: HashSet<String>,
     fps: f32,
+    purpose: StreamPurpose,
 }
 
 impl ExportStreams {
     fn new(fps: f32) -> Self {
         Self {
+            open: std::collections::HashMap::new(),
+            failed: HashSet::new(),
             fps,
-            ..Default::default()
+            purpose: StreamPurpose::Export,
         }
+    }
+
+    /// Streams for interactive playback: preview-sized, full rate, nothing resident.
+    fn for_playback(fps: f32) -> Self {
+        Self {
+            open: std::collections::HashMap::new(),
+            failed: HashSet::new(),
+            fps,
+            purpose: StreamPurpose::Playback,
+        }
+    }
+
+    /// Drop every decoder. Called when playback stops, so a paused editor is not holding one
+    /// ffmpeg process per visible clip for as long as the window is open.
+    fn close_all(&mut self) {
+        self.open.clear();
+        self.failed.clear();
     }
 
     /// Frame for `element_id` at `source_seconds`, opening its decoder if this is the first ask.
@@ -1153,13 +1224,11 @@ impl ExportStreams {
                 ),
                 Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
             };
-            let plan = plan_decode(
-                natural,
-                rotation,
-                duration,
-                DecodeIntent::Export { fps: self.fps },
-                VIDEO_MEMORY_BUDGET,
-            );
+            let intent = match self.purpose {
+                StreamPurpose::Export => DecodeIntent::Export { fps: self.fps },
+                StreamPurpose::Playback => DecodeIntent::Playback { fps: self.fps },
+            };
+            let plan = plan_decode(natural, rotation, duration, intent, VIDEO_MEMORY_BUDGET);
             match ClipStream::open(path, plan, source_seconds) {
                 Some(stream) => {
                     self.open.insert(element_id.to_string(), stream);
@@ -1254,6 +1323,13 @@ pub struct PreviewRenderer {
     readback: ReadbackPool,
     /// The interactive preview's readback, submitted on one tick and collected on a later one.
     pipelined: PipelinedReadback,
+    /// Decoders held open while the transport is running.
+    ///
+    /// Empty whenever playback is stopped, so a paused editor holds no ffmpeg processes. See
+    /// [`Self::set_playing`].
+    playback: ExportStreams,
+    /// Whether the transport is running, and so whether frames come from streams or the cache.
+    playing: bool,
 }
 
 /// The container the picture and sound are wrapped in — as opposed to what is on the timeline.
@@ -1477,6 +1553,8 @@ impl PreviewRenderer {
             raster_order: std::collections::VecDeque::new(),
             readback: ReadbackPool::new(),
             pipelined: PipelinedReadback::new(),
+            playback: ExportStreams::for_playback(VIDEO_MAX_FPS),
+            playing: false,
         })
     }
 
@@ -2195,15 +2273,42 @@ impl PreviewRenderer {
         if self.pipelined.is_pending() {
             return false;
         }
-        let Some(texture) = self.composite_inner(
-            scene,
-            playhead,
-            width,
-            height,
-            background,
-            media,
-            FrameSource::Cache,
-        ) else {
+        // While the transport runs, frames come from streams positioned at the playhead rather
+        // than from the whole-clip cache. The cache buys instant scrubbing by lowering the frame
+        // *rate* to fit a memory budget — the right trade when the playhead is being dragged and
+        // the wrong one when it is running, where it shows as a slideshow.
+        //
+        // `close_all` on stop means a paused editor holds no decoders; playback re-opens them,
+        // and `ClipStream` seeks by respawning, so a jump costs one spawn rather than a stall.
+        let texture = if self.playing {
+            // Moved out and back so the streams can be borrowed mutably alongside `self`.
+            let mut streams = std::mem::replace(
+                &mut self.playback,
+                ExportStreams::for_playback(VIDEO_MAX_FPS),
+            );
+            let texture = self.composite_inner(
+                scene,
+                playhead,
+                width,
+                height,
+                background,
+                media,
+                FrameSource::Streams(&mut streams),
+            );
+            self.playback = streams;
+            texture
+        } else {
+            self.composite_inner(
+                scene,
+                playhead,
+                width,
+                height,
+                background,
+                media,
+                FrameSource::Cache,
+            )
+        };
+        let Some(texture) = texture else {
             return false;
         };
         self.ctx
@@ -2222,6 +2327,31 @@ impl PreviewRenderer {
     /// Loading a different project is the case that needs this: the composite in flight is of
     /// the *old* project, and collecting it would put the previous project's last frame up as
     /// the new one's first.
+    /// Tell the renderer whether the transport is running.
+    ///
+    /// Playing switches the preview onto streaming decoders positioned at the playhead: preview
+    /// size, full rate, nothing resident. Stopping closes every one of them, so a paused editor
+    /// holds no ffmpeg processes — a window left open overnight must not be a decoder per clip.
+    ///
+    /// The two modes exist because they answer different questions. The whole-clip cache buys
+    /// instant scrubbing by spending its memory budget on coverage and lowering the frame *rate*
+    /// to fit; measured on a 29s vertical reel that was 4.2 fps against a 23.976 fps source.
+    /// Streaming buys frame rate and pays for a seek. A scrub wants the first, a play the second.
+    pub fn set_playing(&mut self, playing: bool) {
+        if self.playing == playing {
+            return;
+        }
+        self.playing = playing;
+        if !playing {
+            self.playback.close_all();
+        }
+    }
+
+    /// Whether the preview is currently streaming rather than reading the cache.
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
     pub fn discard_composite(&mut self) {
         self.ctx.discard_readback(&mut self.pipelined);
     }
@@ -3668,6 +3798,115 @@ mod budget_tests {
     fn one_clip_is_unchanged_by_the_share() {
         assert_eq!(preview_budget_per_clip(1), VIDEO_MEMORY_BUDGET);
         assert_eq!(preview_budget_per_clip(0), VIDEO_MEMORY_BUDGET);
+    }
+
+    /// Portrait footage must not be punished for its orientation.
+    ///
+    /// `VIDEO_MAX_WIDTH` used to bound width alone, so a 1080x1920 reel decoded at 480x853 —
+    /// 3.2x the pixels per frame of a 1920x1080 clip at 480x270 — and therefore afforded 3.2x
+    /// fewer frames from the same budget. The measured result was 4.2 fps against a 23.976 fps
+    /// source: a slideshow, reported as "video is not smooth".
+    #[test]
+    fn a_portrait_clip_gets_the_same_frame_rate_as_a_landscape_one() {
+        let duration = 29.32;
+        let landscape = plan_decode(
+            (1920, 1080),
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        let portrait = plan_decode(
+            (1080, 1920),
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        assert!(
+            (landscape.fps - portrait.fps).abs() < 1.0,
+            "orientation must not decide the frame rate: landscape {} fps vs portrait {} fps",
+            landscape.fps,
+            portrait.fps
+        );
+        assert!(
+            portrait.width <= VIDEO_MAX_WIDTH && portrait.height <= VIDEO_MAX_WIDTH,
+            "both sides must be bounded, got {}x{}",
+            portrait.width,
+            portrait.height
+        );
+    }
+
+    /// Playback streams at full rate; the cache does not, and cannot.
+    ///
+    /// This is the whole reason `DecodeIntent::Playback` exists. The cache spends a fixed memory
+    /// budget on covering the entire clip, so its frame rate is whatever is left over — measured
+    /// at 4.2 fps for a 29s vertical reel against a 23.976 fps source, which reads on screen as
+    /// a slideshow rather than as lag. Streaming holds nothing, so the rate is simply the rate.
+    #[test]
+    fn playback_streams_at_full_rate_where_the_cache_cannot() {
+        let (natural, duration) = ((1080, 1920), 29.32);
+        let cached = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        let streamed = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Playback { fps: 24.0 },
+            VIDEO_MEMORY_BUDGET,
+        );
+
+        assert_eq!(
+            streamed.fps, 24.0,
+            "playback asks for the rate it was given"
+        );
+        assert!(
+            streamed.fps > cached.fps,
+            "streaming exists to beat the cache's rate: {} vs {}",
+            streamed.fps,
+            cached.fps
+        );
+        assert_eq!(
+            streamed.max_frames, None,
+            "nothing is resident, so nothing bounds the frame count"
+        );
+        assert!(
+            streamed.width <= VIDEO_MAX_WIDTH && streamed.height <= VIDEO_MAX_WIDTH,
+            "playback is preview-sized, not source-sized: {}x{}",
+            streamed.width,
+            streamed.height
+        );
+    }
+
+    /// Playback must not inherit export's sizing. Decoding a 4K source at source resolution to
+    /// fill a 640x360 preview is the mirror of the bug that made a 4K export a 480px upscale.
+    #[test]
+    fn playback_is_not_export_sized() {
+        let export = plan_decode(
+            (3840, 2160),
+            0,
+            10.0,
+            DecodeIntent::Export { fps: 30.0 },
+            VIDEO_MEMORY_BUDGET,
+        );
+        let playback = plan_decode(
+            (3840, 2160),
+            0,
+            10.0,
+            DecodeIntent::Playback { fps: 30.0 },
+            VIDEO_MEMORY_BUDGET,
+        );
+        assert_eq!(export.width, 3840, "export keeps the source");
+        assert!(
+            playback.width <= VIDEO_MAX_WIDTH,
+            "playback fills a 640x360 composite, got {}",
+            playback.width
+        );
     }
 
     /// A smaller share must buy a lower frame rate, not a truncated clip. Coverage of the whole
