@@ -48,6 +48,16 @@ struct Spans {
     preview: Vec<Duration>,
     render: Vec<Duration>,
     last_report: Option<Instant>,
+    /// Composites actually collected and put on screen since the last report.
+    ///
+    /// **The number that was missing**, and the reason a lag hunt ran twice on the wrong
+    /// evidence. `render` counts ticks of the element tree; a tick that shows the same picture
+    /// as the last one is indistinguishable from one that shows a new frame, so a report of
+    /// "p99 2.05 ms over 120 frames" is entirely compatible with a picture updating four times a
+    /// second. Playback is smooth or not according to *this* count.
+    pictures: u64,
+    /// Playback window counters, summed over the report window.
+    playback: bay_preview::playback::PlaybackStats,
 }
 
 impl Spans {
@@ -56,8 +66,46 @@ impl Spans {
             preview: Vec::new(),
             render: Vec::new(),
             last_report: None,
+            pictures: 0,
+            playback: bay_preview::playback::PlaybackStats {
+                requests: 0,
+                served: 0,
+                repeats: 0,
+                starved: 0,
+                reseeks: 0,
+                decoded: 0,
+                head_start: 0,
+            },
         }
     }
+}
+
+/// Record one composite reaching the screen. See [`Spans::pictures`].
+pub fn record_picture() {
+    if !enabled() {
+        return;
+    }
+    SPANS.with(|spans| spans.borrow_mut().pictures += 1);
+}
+
+/// Fold one window of playback counters into the report.
+pub fn record_playback(stats: bay_preview::playback::PlaybackStats) {
+    if !enabled() {
+        return;
+    }
+    SPANS.with(|spans| {
+        let acc = &mut spans.borrow_mut().playback;
+        acc.requests += stats.requests;
+        acc.served += stats.served;
+        acc.repeats += stats.repeats;
+        acc.starved += stats.starved;
+        acc.reseeks += stats.reseeks;
+        acc.decoded += stats.decoded;
+        // Not a sum: the head start is a level, so the last reading is the meaningful one.
+        if stats.requests > 0 {
+            acc.head_start = stats.head_start;
+        }
+    });
 }
 
 /// Record one `update_preview` — the collect, the `RenderImage`, the atlas hand-off.
@@ -81,13 +129,17 @@ pub fn record_render(elapsed: Duration) {
             .last_report
             .is_none_or(|last| now.duration_since(last) >= REPORT_AFTER);
         if spans.render.len() >= WINDOW || due {
+            let elapsed = spans
+                .last_report
+                .map(|last| now.duration_since(last))
+                .unwrap_or(REPORT_AFTER);
             spans.last_report = Some(now);
-            report(&mut spans);
+            report(&mut spans, elapsed);
         }
     });
 }
 
-fn report(spans: &mut Spans) {
+fn report(spans: &mut Spans, elapsed: Duration) {
     let render = summarise(&mut spans.render);
     let preview = summarise(&mut spans.preview);
     let frames = spans.render.len();
@@ -112,8 +164,46 @@ fn report(spans: &mut Spans) {
     if render.2 > Duration::from_micros(16_667) {
         eprintln!("                       p99 misses the 60 fps budget (16.67 ms)");
     }
+
+    // Rates, not totals: a count over an unstated window says nothing.
+    let seconds = elapsed.as_secs_f64().max(1e-3);
+    let tick_rate = frames as f64 / seconds;
+    let picture_rate = spans.pictures as f64 / seconds;
+    eprintln!(
+        "                       ticks {tick_rate:.1}/s · pictures {picture_rate:.1}/s over {seconds:.1}s"
+    );
+
+    let play = spans.playback;
+    if play.requests > 0 {
+        eprintln!(
+            "                       playback: served {} repeat {} starved {} reseek {} decoded {} head-start {} frames",
+            play.served, play.repeats, play.starved, play.reseeks, play.decoded, play.head_start
+        );
+        // Each line below names one cause and only that cause. Guessing between them is what
+        // cost two rounds of the wrong fix.
+        if play.reseeks > play.requests / 8 {
+            eprintln!(
+                "                       ^ re-seeking constantly — each one respawns ffmpeg; the window is being thrown away"
+            );
+        } else if play.starved > play.requests / 4 {
+            eprintln!(
+                "                       ^ decoder cannot keep up — frames are not arriving in time"
+            );
+        } else if play.repeats > play.requests / 4 {
+            eprintln!(
+                "                       ^ frames arriving, same one shown twice — the presentation side is ahead of the decoder"
+            );
+        } else if picture_rate < 20.0 && tick_rate < 30.0 {
+            eprintln!(
+                "                       ^ not being asked to draw often enough — this is frame pacing, not decode"
+            );
+        }
+    }
+
     spans.render.clear();
     spans.preview.clear();
+    spans.pictures = 0;
+    spans.playback = bay_preview::playback::PlaybackStats::default();
 }
 
 /// (p50, p95, p99, max) over `samples`, which this sorts in place.

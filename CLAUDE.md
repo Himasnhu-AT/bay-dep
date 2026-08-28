@@ -20,6 +20,7 @@ See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 
 ```bash
 ./run.sh              # debug build + launch — fastest loop
+BAY_UI_FRAMETIME=1 RELEASE=1 ./run.sh   # frame pacing: ticks/s, pictures/s, playback counters
 RELEASE=1 ./run.sh    # release build — much smoother playback
 ./build.sh            # release build of the desktop app
 ./test.sh             # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
@@ -170,6 +171,27 @@ the MCP server. Logic is never duplicated between front ends.
   bookkeeping, audio, waveforms and undo history all have to be hoisted); the global playhead
   survives a page switch; and a control the engine cannot back is drawn **disabled**, not hidden —
   the disabled controls are the map of the remaining engine work.
+- **Never ask for a frame with `cx.notify()` from inside `render`.** GPUI's
+  `WindowInvalidator::invalidate_view` sets the dirty flag *only* when
+  `draw_phase == DrawPhase::None`, and `render` is the draw phase — so a `notify` issued there
+  records the view in `dirty_views` and never marks the window dirty, while the display-link
+  callback draws only `if invalidator.is_dirty()`. The frame is silently not requested. This is
+  not theoretical: it made the transport a slideshow while dragging the playhead over the same
+  clip stayed perfectly smooth, and the frame-time probe reported a healthy p99 the whole time
+  because it counted *ticks*, not pictures. Use `EditorView::request_frame`, which is
+  `window.request_animation_frame()` without the `current_view()` unwrap that panics under
+  `VisualTestContext::draw`.
+- **A frame-rate probe must count pictures, not ticks.** A render tick that redraws the same
+  image is indistinguishable from one that shows a new frame, so "p99 2.05 ms over 120 frames" is
+  entirely compatible with a picture updating four times a second. `BAY_UI_FRAMETIME=1` now
+  reports `pictures/s` beside `ticks/s`, and `bay-bench`'s wall-clock playback case exists for
+  the same reason — the fixed-step case answers "how expensive is one frame" and cannot see how
+  many reach the screen.
+- **The playback window is bounded ahead as well as behind, and ahead is the memory bound.**
+  Draining a `sync_channel` until empty does not inherit its backpressure — emptying it frees the
+  worker to refill it, so the real limit becomes ffmpeg's speed. The decoder runs ~500 fps against
+  a playhead at 24, which grew the window by ~475 frames/s at half a megabyte each: 1.5 GB in six
+  seconds, measured. `Worker::drain` stops at the window edge and leaves the rest in the channel.
 - **Vector geometry is a path; a density plot is a raster; nothing else uses an image.** Decided
   and measured in [`docs/native/drawing.md`](docs/native/drawing.md) — 80 µs for a 1,000-point
   polyline. Five surfaces depend on it (curve editor, scopes, wheels, tall waveforms, EQ). Do not

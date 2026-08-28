@@ -37,6 +37,11 @@ const QUEUE_DEPTH: usize = 48;
 ///
 /// Behind matters: playback nudges the playhead backwards on any correction, and a window that
 /// only looks forward would re-seek — respawning ffmpeg — for a move of one frame.
+///
+/// Ahead matters more, and for a different reason: it is the memory bound. At preview size a
+/// frame is about half a megabyte, so 96 ahead and 48 behind is roughly 70 MB per playing clip.
+/// [`Worker::drain`] enforces both edges; enforcing only the trailing one cost 1.5 GB in six
+/// seconds, because the decoder runs an order of magnitude faster than the playhead.
 const WINDOW_FRAMES: usize = 96;
 
 /// How far past the newest decoded frame a request may be before re-seeking beats waiting.
@@ -86,9 +91,27 @@ impl Worker {
     /// Never blocks: `try_recv` until empty. Everything decoded is *kept*, not consumed — that
     /// is the difference from the first version and the reason a frame the playhead has already
     /// passed is still there when something asks for it again.
-    fn drain(&mut self, wanted: u64) {
-        while let Ok((index, pixels)) = self.frames.try_recv() {
+    fn drain(&mut self, wanted: u64) -> u64 {
+        let mut decoded = 0;
+        // Bounded **ahead** as well as behind, and the ahead half is the one that matters.
+        //
+        // The first version drained until the channel was empty. That looks like it inherits the
+        // `sync_channel`'s backpressure and it does not: emptying the queue every tick frees the
+        // worker to decode the next 48 immediately, so the only real limit becomes how fast
+        // ffmpeg runs — measured at ~500 fps against a playhead moving at 24. The map grew by
+        // ~475 frames a second, half a megabyte each, and `bay-bench` caught it holding 2,951
+        // frames (1.5 GB) after six seconds. A minute of playback was tens of gigabytes and the
+        // machine went to swap, which is a far better explanation of "laggy" than any frame cost.
+        //
+        // Stopping the drain at the window edge leaves the frames in the channel, where the
+        // bound is enforced by `send` blocking — which is what `QUEUE_DEPTH` was for all along.
+        let ceiling = wanted + WINDOW_FRAMES as u64;
+        while self.window.last_key_value().map_or(0, |(index, _)| *index) < ceiling {
+            let Ok((index, pixels)) = self.frames.try_recv() else {
+                break;
+            };
             self.window.insert(index, pixels);
+            decoded += 1;
         }
         // Evict well behind the playhead. Split rather than retain: the map is ordered, so this
         // is a pointer move rather than a walk of every frame held.
@@ -96,6 +119,7 @@ impl Worker {
         if floor > 0 {
             self.window = self.window.split_off(&floor);
         }
+        decoded
     }
 
     /// The frame at `wanted`, or the newest one before it.
@@ -113,10 +137,40 @@ impl Worker {
     }
 }
 
+/// What the playback window did, counted so a stall can be attributed rather than guessed.
+///
+/// Every field here distinguishes a *different* cause of the same symptom — a picture that does
+/// not move. Without them "playback is laggy" has at least four explanations and no way to pick
+/// one: the decoder is too slow (`starved`), the presentation side is asking too rarely
+/// (`served` far below the source rate), the window keeps being thrown away (`reseeks`), or the
+/// frames are arriving fine and the same one is being shown twice (`repeats`).
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaybackStats {
+    /// Frames asked for.
+    pub requests: u64,
+    /// Requests answered with a frame.
+    pub served: u64,
+    /// Requests answered with the *same* index as the previous one — the picture stood still
+    /// because the next frame had not arrived.
+    pub repeats: u64,
+    /// Requests answered with nothing at all: the window held no frame at or before the
+    /// playhead. Before the first frame of a clip this is expected; sustained, it is starvation.
+    pub starved: u64,
+    /// Decoders respawned. Each one is an ffmpeg process start, so this should be near zero
+    /// during steady playback and a handful after a seek.
+    pub reseeks: u64,
+    /// Frames the workers handed over.
+    pub decoded: u64,
+    /// Newest decoded index minus the one asked for, at the last request — the head start, in
+    /// frames. A number that trends to zero is a decoder losing the race.
+    pub head_start: i64,
+}
+
 /// The decoders playback has running, one per video element.
 #[derive(Default)]
 pub struct PlaybackStreams {
     open: std::collections::HashMap<String, Worker>,
+    stats: PlaybackStats,
     /// Elements whose decoder could not be started. Remembered so a broken path costs one failed
     /// spawn rather than one per frame.
     failed: std::collections::HashSet<String>,
@@ -127,6 +181,11 @@ impl PlaybackStreams {
     pub fn close_all(&mut self) {
         self.open.clear();
         self.failed.clear();
+    }
+
+    /// Counters since the last [`Self::take_stats`]. See [`PlaybackStats`].
+    pub fn take_stats(&mut self) -> PlaybackStats {
+        std::mem::take(&mut self.stats)
     }
 
     /// The frame for `element_id` at `source_seconds`, if one is ready.
@@ -144,6 +203,7 @@ impl PlaybackStreams {
         if self.failed.contains(element_id) {
             return None;
         }
+        self.stats.requests += 1;
 
         // Re-seek when the playhead moved backwards, or far enough forward that reading through
         // the intervening frames would cost more than a respawn.
@@ -168,6 +228,7 @@ impl PlaybackStreams {
         };
 
         if reseek {
+            self.stats.reseeks += 1;
             self.open.remove(element_id);
             match open(source_seconds) {
                 Some(source) => {
@@ -183,10 +244,35 @@ impl PlaybackStreams {
 
         let worker = self.open.get_mut(element_id)?;
         let wanted = worker.index_for(source_seconds);
-        worker.drain(wanted);
+        let decoded = worker.drain(wanted);
         let (width, height) = (worker.width, worker.height);
+        let previous = worker.last_served;
+        let newest = worker.window.keys().next_back().copied();
         let _ = path;
-        worker.frame(wanted).map(|pixels| (width, height, pixels))
+        let frame = worker.frame(wanted);
+        let served = frame.is_some();
+        // Borrow of `worker` ends here; the counters live on `self`.
+        let index = self.open.get(element_id).and_then(|w| w.last_served);
+
+        self.stats.decoded += decoded;
+        self.stats.head_start = newest.map_or(0, |n| n as i64 - wanted as i64);
+        if served {
+            self.stats.served += 1;
+            if index == previous {
+                self.stats.repeats += 1;
+            }
+        } else {
+            self.stats.starved += 1;
+        }
+
+        // Re-lookup rather than hold the borrow across the counter writes above. The window is a
+        // `BTreeMap` and this is one comparison-chain per painted frame, not per decoded frame.
+        let worker = self.open.get(element_id)?;
+        let index = worker.last_served?;
+        worker
+            .window
+            .get(&index)
+            .map(|pixels| (width, height, pixels.as_slice()))
     }
 
     /// Close decoders for elements no longer on screen, so a long timeline does not accumulate
@@ -284,6 +370,80 @@ mod tests {
             worker.frame(5).map(|p| p[0]),
             Some(5),
             "and so is one the playhead went past"
+        );
+    }
+
+    /// The window is bounded **ahead** of the playhead, which is what makes it a window rather
+    /// than a slow whole-clip cache.
+    ///
+    /// This is the one that caught a real leak. `drain` used to read until the channel was empty,
+    /// which reads like it respects the `sync_channel` bound and does not: emptying the queue
+    /// releases the worker to fill it again, so the map's only limit was ffmpeg's speed. The
+    /// decoder runs at ~500 fps and the playhead at 24, so the window grew by ~475 frames per
+    /// second of playback - half a megabyte each. `bay-bench` measured 2,951 frames held after
+    /// six seconds; a minute of playback would have been tens of gigabytes.
+    #[test]
+    fn the_window_does_not_grow_ahead_without_bound() {
+        // Far more frames available than the window may hold, all decoded and waiting.
+        let plenty = WINDOW_FRAMES * 10;
+        let mut worker = worker_from(
+            (0..plenty as u64).map(|i| (i, vec![i as u8])).collect(),
+            30.0,
+        );
+
+        worker.drain(0);
+
+        let newest = *worker
+            .window
+            .keys()
+            .next_back()
+            .expect("frames were drained");
+        assert!(
+            newest <= WINDOW_FRAMES as u64,
+            "the window kept {newest} frames ahead of the playhead, bound is {WINDOW_FRAMES}"
+        );
+        assert!(
+            worker.window.len() <= WINDOW_FRAMES + 1,
+            "the window holds {} frames, bound is {WINDOW_FRAMES}",
+            worker.window.len()
+        );
+        // The rest stay in the channel, where `send` blocking is the backpressure.
+        assert!(
+            worker.frames.try_recv().is_ok(),
+            "undrained frames are still queued rather than dropped"
+        );
+    }
+
+    /// Advancing the playhead pulls the window along, so the bound above is not a one-shot cap
+    /// that starves playback after the first `WINDOW_FRAMES`.
+    #[test]
+    fn the_window_follows_the_playhead_forward() {
+        let plenty = WINDOW_FRAMES * 4;
+        let mut worker = worker_from(
+            (0..plenty as u64).map(|i| (i, vec![i as u8])).collect(),
+            30.0,
+        );
+
+        worker.drain(0);
+        let first = *worker
+            .window
+            .keys()
+            .next_back()
+            .expect("frames were drained");
+        worker.drain(WINDOW_FRAMES as u64);
+        let second = *worker
+            .window
+            .keys()
+            .next_back()
+            .expect("frames were drained");
+
+        assert!(
+            second > first,
+            "the window edge stayed at {first} as the playhead advanced"
+        );
+        assert!(
+            worker.frame(WINDOW_FRAMES as u64).is_some(),
+            "the frame under the advanced playhead is present"
         );
     }
 

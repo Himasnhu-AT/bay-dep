@@ -92,6 +92,7 @@ fn main() {
     }
 
     verdicts(&results);
+    bench_playback(&mut renderer);
 }
 
 /// One measured case.
@@ -306,6 +307,133 @@ fn bench_real_clip(renderer: &mut PreviewRenderer) -> Option<Case> {
         }
     }
     Some(Case::from("real clip: decode+composite @30fps", samples).with_content(non_empty, RUNS))
+}
+
+/// Play a real clip on a wall clock and count the pictures that come out.
+///
+/// # Why this is separate from `bench_real_clip`
+///
+/// That case steps the playhead by a fixed 1/30 s and times each composite. It answers "how
+/// expensive is one frame", and it answered it well: 0.46 ms p50. What it cannot see is how many
+/// frames per second actually reach the screen, because it never lets real time pass — it takes
+/// as long as it takes and calls that a frame. A pipeline that produces a perfect frame in
+/// 0.46 ms but is only *asked* four times a second scores identically here and is a slideshow on
+/// screen. That is exactly the bug this was written to catch, after the frame-time probe reported
+/// a healthy p99 through two rounds of a lag nobody could locate.
+///
+/// So this one advances the playhead by elapsed wall-clock time, the way the transport does, and
+/// reports achieved pictures per second against the source rate. It is the closest a headless
+/// harness gets to pressing play.
+fn bench_playback(renderer: &mut PreviewRenderer) {
+    let Ok(path) = std::env::var("BAY_BENCH_MEDIA") else {
+        return;
+    };
+    if !std::path::Path::new(&path).is_file() {
+        return;
+    }
+
+    let mut project = Project::starter();
+    project
+        .media
+        .push(MediaAsset::new("bench-clip", "Bench", path.clone()));
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements.clear();
+        scene
+            .tracks
+            .main
+            .elements
+            .push(Element::Video(VideoElement {
+                id: "bench-vid".into(),
+                name: "Bench".into(),
+                start: MediaTime::ZERO,
+                duration: MediaTime::from_ticks(600_000),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                media_id: "bench-clip".into(),
+                trim_start: MediaTime::ZERO,
+                trim_end: MediaTime::from_ticks(600_000),
+                speed: 1.0,
+                freeze: None,
+                transform: Transform::default(),
+                effects: Vec::new(),
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
+            }));
+    }
+
+    const PLAY_SECONDS: f64 = 6.0;
+    renderer.set_playing(true);
+
+    let started = Instant::now();
+    let mut pictures = 0usize;
+    let mut painted = 0usize;
+    let mut ticks = 0usize;
+    // A frame arriving with a single colour is a failed decode dressed as a success: a dead
+    // decoder returns correctly-sized zeroes and passes every dimension check there is.
+    // Paced at 60 Hz, because an unthrottled loop is not a model of anything. Spinning free ran
+    // 5.8 million composite calls a second and reported 98% repeated frames — true, useless, and
+    // it drowns the two counters (`starved`, `reseek`) that would name a real fault. A display
+    // refreshes 60 times a second and that is the rate the pipeline has to hold.
+    const TICK: Duration = Duration::from_micros(16_667);
+    let mut next_tick = Instant::now();
+    while started.elapsed().as_secs_f64() < PLAY_SECONDS {
+        next_tick += TICK;
+        if let Some(wait) = next_tick.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        ticks += 1;
+        let playhead =
+            MediaTime::from_seconds_f64(started.elapsed().as_secs_f64()).unwrap_or(MediaTime::ZERO);
+        match renderer.collect_composite() {
+            CollectedFrame::Ready(frame) => {
+                pictures += 1;
+                if has_content(&frame.bgra) {
+                    painted += 1;
+                }
+            }
+            CollectedFrame::Pending => continue,
+            _ => {}
+        }
+        renderer.submit_composite(
+            project.active_scene(),
+            playhead,
+            PREVIEW_W,
+            PREVIEW_H,
+            &project.settings.background,
+            &project.media,
+        );
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    renderer.set_playing(false);
+
+    let stats = renderer.take_playback_stats();
+    println!(
+        "
+playback on a wall clock ({elapsed:.1}s of transport)"
+    );
+    println!(
+        "  pictures {:.1}/s ({} of them with real content), composite calls {:.1}/s",
+        pictures as f64 / elapsed,
+        painted,
+        ticks as f64 / elapsed
+    );
+    println!(
+        "  window: served {} repeat {} starved {} reseek {} decoded {} head-start {} frames",
+        stats.served, stats.repeats, stats.starved, stats.reseeks, stats.decoded, stats.head_start
+    );
+    let rate = pictures as f64 / elapsed;
+    if painted == 0 {
+        println!("  VERDICT: nothing decoded — every frame was a single flat colour");
+    } else if rate >= 24.0 {
+        println!("  VERDICT: holds 24 fps at the source rate");
+    } else {
+        println!("  VERDICT: {rate:.1} fps — below the 24 fps floor, this is visible judder");
+    }
 }
 
 /// Turn the numbers into a statement about playback, which is the only reason to measure this.

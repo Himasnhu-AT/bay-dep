@@ -109,6 +109,9 @@ impl EditorView {
         let playing = self.playing;
         if let Some(renderer) = self.preview.as_mut() {
             renderer.set_playing(playing);
+            if crate::frametime::enabled() {
+                crate::frametime::record_playback(renderer.take_playback_stats());
+            }
         }
 
         // --- collect ---
@@ -129,6 +132,10 @@ impl EditorView {
                     // it would drop the `Arc` and leak the tile — see `draw::RetiredImages`.
                     self.retired_images
                         .replace(&mut self.preview_image, Some(Arc::new(render_image)));
+                    // Counted here and nowhere else: this is the one line in the program where a
+                    // new picture reaches the screen. Every other candidate (a render tick, a
+                    // submit, a decode) can happen without the image changing.
+                    crate::frametime::record_picture();
                 }
             }
             // A frame the GPU could not produce (device loss on a laptop that slept) leaves the

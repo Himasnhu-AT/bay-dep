@@ -1226,6 +1226,33 @@ impl EditorView {
                     .map(|gap| widgets::banner(gap, theme::Severity::Warn.dot()).max_w(px(560.0))),
             )
     }
+
+    /// Ask the compositor for another frame, from inside `render`.
+    ///
+    /// **This may not be `cx.notify()`, and the difference is not cosmetic.** `notify` routes to
+    /// `WindowInvalidator::invalidate_view`, which reads:
+    ///
+    /// ```text
+    /// if inner.draw_phase == DrawPhase::None { inner.dirty = true; ... } else { false }
+    /// ```
+    ///
+    /// `render` *is* the draw phase, so a `notify` issued here records the view in `dirty_views`
+    /// and **never sets the dirty flag** — and the display-link callback only draws
+    /// `if invalidator.is_dirty()`. The frame is silently not requested. Playback then advanced
+    /// only when something outside draw dirtied the window, which in practice meant mouse
+    /// movement: the transport ran as a slideshow while dragging the playhead over the very same
+    /// clip was perfectly smooth. That was the whole reported bug.
+    ///
+    /// `window.request_animation_frame()` is the intended API and does the right thing — it
+    /// defers through `on_next_frame`, whose callbacks the display-link handler drains *before*
+    /// the dirty check, at which point `draw_phase` is `None` again. Its one problem is that it
+    /// resolves the target with `current_view()`, which unwraps the rendered-entity stack; that
+    /// stack is empty under `VisualTestContext::draw`, so it panics in every paint test. Taking
+    /// the entity id from `cx` instead is the same call without the unwrap.
+    fn request_frame(&self, window: &Window, cx: &Context<Self>) {
+        let id = cx.entity_id();
+        window.on_next_frame(move |_, cx| cx.notify(id));
+    }
 }
 
 impl Render for EditorView {
@@ -1272,27 +1299,20 @@ impl EditorView {
         {
             self.media_width = width.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
         }
-        // Everything below asks for another frame through `cx.notify()`, never
-        // `window.request_animation_frame()`.
-        //
-        // `request_animation_frame` reads `current_view()`, which unwraps the rendered-entity
-        // stack — and that stack is empty under `VisualTestContext::draw`. Every one of these
-        // branches was therefore a panic waiting for its condition to become true in a test, and
-        // two of them have since become true: pool thumbnails made decodes pending, and pool
-        // waveforms made extraction pending. Six paint tests died at the second one. `notify`
-        // marks the view dirty and lets the compositor pace the redraw, which is what all of
-        // these wanted in the first place.
+        // Everything below asks for another frame through `Self::request_frame`, and it must
+        // not be `cx.notify()`. See that method — `notify` from inside `render` does not
+        // schedule anything, and using it here is what made playback a slideshow.
         if self.playing {
             self.advance_playback();
             self.follow_playhead(lane_width);
             if self.playing {
-                cx.notify();
+                self.request_frame(window, cx);
             }
         }
         // The agent chip expires on a timer, so keep frames coming until it does — otherwise
         // it lingers until something unrelated repaints.
         if self.agent_chip().is_some() {
-            cx.notify();
+            self.request_frame(window, cx);
         }
         // Video decodes run on worker threads. Keep asking for frames while any are in flight so
         // the finished clip actually appears, even when playback is paused.
@@ -1305,13 +1325,13 @@ impl EditorView {
             .as_ref()
             .is_some_and(|p| p.has_pending_decodes() || p.has_pending_readback())
         {
-            cx.notify();
+            self.request_frame(window, cx);
         }
         // Waveform extraction is the same obligation on the audio side: it finishes on a worker
         // and is collected by a later `request_waveforms`, so without a tick the peaks would
         // appear only when something unrelated repainted.
         if self.waveforms.has_pending() {
-            cx.notify();
+            self.request_frame(window, cx);
         }
         if self.needs_focus {
             self.needs_focus = false;
@@ -1328,7 +1348,7 @@ impl EditorView {
             // A decode landing on a worker changes nothing the signature can see, so without
             // this the picture would not appear until something unrelated repainted.
             //
-            cx.notify();
+            self.request_frame(window, cx);
         }
         let vm = EditorViewModel::build(&self.editor);
 

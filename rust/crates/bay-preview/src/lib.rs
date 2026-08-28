@@ -2334,6 +2334,14 @@ impl PreviewRenderer {
         self.playing
     }
 
+    /// Playback window counters since the last call, for the frame-time probe.
+    ///
+    /// Reset on read, so the caller reports a rate over its own window rather than a total that
+    /// has to be differenced. See [`playback::PlaybackStats`] for what each field distinguishes.
+    pub fn take_playback_stats(&mut self) -> playback::PlaybackStats {
+        self.playback.take_stats()
+    }
+
     pub fn discard_composite(&mut self) {
         self.ctx.discard_readback(&mut self.pipelined);
     }
