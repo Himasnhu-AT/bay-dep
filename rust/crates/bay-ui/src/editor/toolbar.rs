@@ -95,30 +95,14 @@ impl EditorView {
                             .text_xs()
                             .text_color(rgb(theme::TEXT))
                             .child(label)
-                    }))
-                    // Status line: the one place failures become visible to the user.
-                    .children(self.status.clone().map(|message| {
-                        let bad = message.contains("fail")
-                            || message.contains("error")
-                            || message.contains("Not closing");
-                        div()
-                            .id("status")
-                            .max_w(px(360.0))
-                            .px(px(8.0))
-                            .py(px(3.0))
-                            .rounded(px(6.0))
-                            .bg(rgb(theme::PANEL_ALT))
-                            .border_l_2()
-                            .border_color(rgb(if bad { theme::DANGER } else { theme::ACCENT }))
-                            .text_xs()
-                            .text_color(rgb(theme::TEXT))
-                            .overflow_hidden()
-                            .child(Self::shared(message))
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.status = None; // click to dismiss
-                                cx.notify();
-                            }))
-                    })),
+                    })), // No status strip here.
+                         //
+                         // There was one, and it could never draw: `render_inner` *takes* `self.status`
+                         // to build a notification before the page — and therefore this bar — is built,
+                         // so it was always `None` by the time this read it. The comment above it
+                         // called it "the one place failures become visible to the user", which is
+                         // exactly the shape this repository keeps `fixes.md` for. The real channel is
+                         // the notification layer, mounted in `BayApp::render`.
             )
             .child(
                 widgets::row()

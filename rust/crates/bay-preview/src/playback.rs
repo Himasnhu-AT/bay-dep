@@ -539,6 +539,44 @@ mod tests {
         assert!(!tried_again, "a known-bad clip was retried every frame");
     }
 
+    /// Decoders for clips playback has left behind are closed, which is what stops a play-through
+    /// holding one ffmpeg process per clip in the timeline.
+    ///
+    /// `retain_only` carried a doc comment promising exactly this and **had no caller** - the
+    /// only pruning was `close_all` when the transport stopped. A hundred-clip timeline played
+    /// through once held a hundred windows (~99 MB each) and a hundred child processes until you
+    /// pressed stop. There was no test because the method looked obviously correct; what was
+    /// missing was anything asserting it ran.
+    #[test]
+    fn decoders_for_clips_left_behind_are_closed() {
+        let mut streams = PlaybackStreams::default();
+        for id in ["past", "present", "upcoming"] {
+            streams.warm(id, 0.0, |_| Some(fake_source()));
+        }
+        assert_eq!(streams.open.len(), 3);
+
+        // The playhead has moved on: only these two are still worth a decoder.
+        let live: std::collections::HashSet<String> = ["present", "upcoming"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        streams.retain_only(&live);
+
+        assert!(
+            !streams.open.contains_key("past"),
+            "a passed clip kept its decoder"
+        );
+        assert!(
+            streams.open.contains_key("present"),
+            "the playing clip lost its decoder"
+        );
+        assert!(
+            streams.open.contains_key("upcoming"),
+            "eviction closed a clip the pre-roll had just opened - that is one ffmpeg spawn per \
+             frame, which is worse than the leak it replaced"
+        );
+    }
+
     /// A frame that has not been decoded shows the newest one before it, rather than nothing.
     /// That is what makes a late decode invisible instead of a stall.
     #[test]

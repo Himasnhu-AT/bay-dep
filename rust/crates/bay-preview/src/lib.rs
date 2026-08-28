@@ -2276,7 +2276,20 @@ impl PreviewRenderer {
         let texture = if self.playing {
             // Moved out and back so the streams can be borrowed mutably alongside `self`.
             let mut streams = std::mem::take(&mut self.playback);
-            Self::warm_upcoming(scene, playhead, media, &mut streams);
+            // Open what is about to be needed, then close what no longer is — in that order and
+            // from the same set, so a clip inside the horizon is never opened and closed on the
+            // same frame.
+            //
+            // The eviction is not optional bookkeeping. `PlaybackStreams::retain_only` existed
+            // with a doc comment promising exactly this and **had no caller at all**; the only
+            // pruning was `close_all` when the transport stopped. Every clip a playback pass
+            // touched kept its window (~99 MB) and its ffmpeg child until you pressed stop, so a
+            // hundred-clip timeline played through once held a hundred processes. The comment on
+            // `warm_upcoming` asserted this was handled, which made it worse — a false claim of a
+            // bound reads as a checked one.
+            let live = playback_video_elements(scene, playhead);
+            Self::warm_upcoming(scene, playhead, media, &live, &mut streams);
+            streams.retain_only(&live);
             let texture = self.composite_inner(
                 scene,
                 playhead,
@@ -2346,30 +2359,24 @@ impl PreviewRenderer {
     /// cut. Starting them [`PREROLL_SECONDS`] early costs one ffmpeg process per upcoming clip
     /// for a moment and makes the switch seamless.
     ///
-    /// Bounded by looking *forward only* and by a short horizon: a timeline of two hundred clips
-    /// must not become two hundred decoders. `retain_only` already closes what has gone off
-    /// screen, and the pre-roll horizon is what stops this opening them faster than that closes
-    /// them.
+    /// Bounded by the horizon in [`playback_video_elements`], which is also what the eviction
+    /// beside this call keeps. A timeline of two hundred clips holds decoders for the handful
+    /// inside the horizon, not for two hundred.
     fn warm_upcoming(
         scene: &Scene,
         playhead: MediaTime,
         media: &[MediaAsset],
+        live: &HashSet<String>,
         streams: &mut playback::PlaybackStreams,
     ) {
-        let horizon = playhead.as_ticks()
-            + MediaTime::from_seconds_f64(PREROLL_SECONDS)
-                .map(|time| time.as_ticks())
-                .unwrap_or(0);
         for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
             if track.hidden {
                 continue;
             }
             for element in &track.elements {
-                // Ahead of the playhead and inside the horizon. Elements already under the
-                // playhead are opened by `frame_at` on this very frame, and opening them here
-                // too would just be the same hash lookup twice.
-                let start = element.start().as_ticks();
-                if start <= playhead.as_ticks() || start > horizon {
+                // Inside the horizon, and not already under the playhead — those are opened by
+                // `frame_at` on this very frame, so warming them is the same hash lookup twice.
+                if !live.contains(element.id()) || element.start() <= playhead {
                     continue;
                 }
                 let Element::Video(video) = element else {
@@ -2395,6 +2402,29 @@ impl PreviewRenderer {
                 });
             }
         }
+    }
+
+    /// Drop every cache keyed by media id, because a different project is about to use the same
+    /// keys for different files.
+    ///
+    /// Media ids are `media-{n}` from a per-view counter (`editor/panels.rs`), so `media-1` in
+    /// one project and `media-1` in another are the *same key*. Every one of these maps is keyed
+    /// by it, and none of them was cleared on a project switch — so opening a second project drew
+    /// the first project's video frames and image textures under the second one's clips. That is
+    /// a correctness bug wearing a memory bug's clothes: the leak is what you measure, the wrong
+    /// picture is what you see.
+    ///
+    /// Textures are released through the compositor rather than dropped with the map. Removing a
+    /// key from `uploaded_media` alone leaves the GPU texture alive in the compositor's own store
+    /// under the same id, which is both the leak and the stale picture again.
+    pub fn clear_media_caches(&mut self) {
+        for media_id in self.uploaded_media.keys() {
+            self.compositor.release_texture(media_id);
+        }
+        self.uploaded_media.clear();
+        self.video_cache.clear();
+        self.luts = LutCache::default();
+        self.playback.close_all();
     }
 
     /// Whether the preview is currently streaming rather than reading the cache.
@@ -3375,6 +3405,38 @@ fn solid_rgba(color: [u8; 4]) -> Vec<u8> {
 ///
 /// Export uses this to close decoders it has finished with. Hidden tracks count as not on
 /// screen, matching what the compositor draws.
+/// Video elements playback should hold a decoder for: those under the playhead, and those the
+/// playhead reaches within [`PREROLL_SECONDS`].
+///
+/// **One predicate, used by both the pre-roll and the eviction.** Written separately they
+/// disagree in one of two ways and both are silent: an eviction narrower than the pre-roll closes
+/// the decoder that was just opened, once per frame, which is an ffmpeg spawn per frame; an
+/// eviction wider than the pre-roll leaks. Deriving both from this function makes the two agree
+/// by construction rather than by matching two edits.
+fn playback_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
+    let horizon = MediaTime::from_ticks(
+        playhead.as_ticks()
+            + MediaTime::from_seconds_f64(PREROLL_SECONDS)
+                .map(|time| time.as_ticks())
+                .unwrap_or(0),
+    );
+    let mut live = HashSet::new();
+    for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+        if track.hidden {
+            continue;
+        }
+        for element in &track.elements {
+            if matches!(element, Element::Video(_))
+                && element.start() <= horizon
+                && playhead < element.end()
+            {
+                live.insert(element.id().to_string());
+            }
+        }
+    }
+    live
+}
+
 fn live_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
     let mut live = HashSet::new();
     for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {

@@ -127,6 +127,18 @@ impl PosterCache {
     }
 
     /// Forget everything, so a project switch does not show the last project's pictures.
+    /// Entries known in any state, for tests and diagnostics — the same shape and the same
+    /// reason as `WaveformCache::len`. Without it, "the cache was cleared" is not a statement a
+    /// test can make about this type, which is why nothing ever asserted `clear` had run.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache holds nothing. Present because clippy asks for it beside `len`.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
     }
@@ -328,6 +340,18 @@ impl FilmstripCache {
         self.entries
             .values()
             .any(|state| matches!(state, StripState::Pending(_)))
+    }
+
+    /// Entries known in any state, for tests and diagnostics — the same shape and the same
+    /// reason as `WaveformCache::len`. Without it, "the cache was cleared" is not a statement a
+    /// test can make about this type, which is why nothing ever asserted `clear` had run.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache holds nothing. Present because clippy asks for it beside `len`.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn clear(&mut self) {

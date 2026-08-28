@@ -1151,7 +1151,21 @@ impl Render for BayApp {
             }))
             .on_action(cx.listener(|app, _: &crate::menus::SaveProject, _, cx| {
                 app.save_before_quit(cx);
-            }));
+            }))
+            // The notification layer, mounted by the application because `Root` does not draw it.
+            //
+            // This is not optional plumbing and its absence had no symptom to find it by.
+            // `Root::render` (gpui-component 0.5.1, `src/root.rs:396`) renders `window_border()`
+            // around `self.view` and **nothing else**; the notifications live behind a separate
+            // `Root::render_notification_layer` the app has to mount itself. `Root` "manages" the
+            // list — it does not display it, and the two read the same in a doc comment.
+            //
+            // Until this line, `window.push_notification(...)` pushed into a list nobody drew, and
+            // `EditorView::render_inner` *takes* `self.status` to build that notification — so
+            // every message was cleared as it was swallowed and no other surface could show it
+            // either. That is 19 writers, including "Render refused", "Render failed" and every
+            // import failure, all silent.
+            .children(gpui_component::Root::render_notification_layer(window, cx));
 
         if self.showing_editor {
             if let Some(editor) = self.editor.clone() {

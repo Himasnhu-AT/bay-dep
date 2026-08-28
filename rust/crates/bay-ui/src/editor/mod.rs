@@ -627,9 +627,18 @@ impl EditorView {
         .detach();
     }
 
-    /// Switch the editor to another project from the library. Per-project caches (waveforms,
-    /// decoded audio, the selection, the transport) are dropped — keeping them would show the
-    /// previous project's audio under the new one's clips whenever media ids collide.
+    /// Switch the editor to another project from the library, dropping **every** cache keyed by
+    /// media id.
+    ///
+    /// "Whenever media ids collide" understated it: ids are `media-{n}` from a per-view counter,
+    /// so `media-1` in one project and `media-1` in another are always the same key. A collision
+    /// is not a risk, it is the normal case for any two projects.
+    ///
+    /// This used to clear two of seven. Waveforms and decoded audio were dropped; posters,
+    /// poster images, filmstrips, strip images, and the renderer's video, image and LUT caches
+    /// were not — so a second project drew the first one's thumbnails and frames. `PosterCache`
+    /// and `FilmstripCache` both had a `clear` and a test named
+    /// `clearing_forgets_the_previous_projects_pictures`; neither had a caller.
     pub fn open_project(&mut self, project: Project, path: Option<PathBuf>) {
         self.stop_audio();
         self.editor.load_project(project);
@@ -640,6 +649,22 @@ impl EditorView {
         self.editing_text = None;
         self.waveforms.clear();
         self.audio_cache.clear();
+        self.posters.clear();
+        self.strips.clear();
+        // The decoded images these hold are GPUI atlas tiles, so they go back through
+        // `retired_images` rather than being dropped — see `draw::RetiredImages`.
+        for image in std::mem::take(&mut self.poster_images).into_values() {
+            self.retired_images.retire(image);
+        }
+        for image in std::mem::take(&mut self.strip_images)
+            .into_values()
+            .flatten()
+        {
+            self.retired_images.retire(image);
+        }
+        if let Some(preview) = self.preview.as_mut() {
+            preview.clear_media_caches();
+        }
         self.retire_preview_image();
         // A composite of the *previous* project may still be on the GPU. Collected, it would be
         // installed as this project's first frame.
@@ -1542,6 +1567,50 @@ impl EditorView {
                     .as_ref()
                     .map(|lab| crate::lab::panel(self, lab, cx)),
             )
+    }
+}
+
+#[cfg(test)]
+mod project_switch_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    /// Opening another project must forget every cache keyed by media id.
+    ///
+    /// Ids are `media-{n}` from a per-view counter, so `media-1` in one project and `media-1` in
+    /// another are the same key — a collision is the normal case for any two projects, not an
+    /// edge case. `open_project` cleared two of seven such caches, so the second project drew the
+    /// first one's thumbnails and frames. `PosterCache` and `FilmstripCache` each had a `clear`
+    /// and a test called `clearing_forgets_the_previous_projects_pictures`; neither had a caller.
+    #[gpui::test]
+    fn opening_another_project_forgets_the_previous_ones_pictures(cx: &mut TestAppContext) {
+        let view = cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        });
+        view.update(cx, |this, _| {
+            // Stand in for decoded pictures the first project left behind. Whether they arrived
+            // by decode or by hand is irrelevant to what `open_project` owes.
+            this.posters.request("media-1", Some("/tmp/a.mp4"));
+            this.strips.request("media-1", Some("/tmp/a.mp4"));
+            this.waveforms.request("media-1", Some("/tmp/a.wav"), 64);
+            let seeded = this.posters.len() + this.strips.len() + this.waveforms.len();
+            assert!(seeded > 0, "the test seeded nothing, so it proves nothing");
+
+            this.open_project(Project::starter(), None);
+
+            assert_eq!(this.posters.len(), 0, "poster cache survived the switch");
+            assert_eq!(this.strips.len(), 0, "filmstrip cache survived the switch");
+            assert_eq!(
+                this.waveforms.len(),
+                0,
+                "waveform cache survived the switch"
+            );
+            assert!(
+                this.poster_images.is_empty() && this.strip_images.is_empty(),
+                "decoded images survived the switch"
+            );
+        });
     }
 }
 

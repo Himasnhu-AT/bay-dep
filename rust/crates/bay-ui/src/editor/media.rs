@@ -426,14 +426,10 @@ impl EditorView {
                     state.show_metadata = !state.show_metadata;
                 },
             ))
-            // The import failures that used to be swallowed. In the left cluster rather than
-            // the centre so a long message cannot push the project name off its midline.
-            .children(self.status.clone().map(|message| {
-                div()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
-                    .child(widgets::note(message))
-            }));
+            // No status strip here either — see the note in `toolbar.rs`. `render_inner` takes
+            // `self.status` before this bar is built, so this read was always `None`. Import
+            // failures reach the notification layer instead.
+            ;
 
         let centre = div()
             .flex_none()

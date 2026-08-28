@@ -325,6 +325,67 @@ Verified by:
 
 ## Open
 
+### 17. Image textures have no budget, no downscale, and are never released
+
+`ensure_image_texture` (`bay-preview/src/lib.rs:1774-1802`) decodes an image at its **natural
+size**, uploads it, and records it in `uploaded_media`. Nothing removes from that map on any path
+except a project switch, and the upload skips `plan_decode` entirely — so there is no downscale to
+the 640x360 the preview actually composites at.
+
+Video has `GLOBAL_VIDEO_MEMORY_BUDGET` (384 MB, enforced at `:1762`). Text has `TEXT_CACHE_CAP`.
+Images have neither, and are outside the raster LRU because `remember_raster` is not called here,
+so `evict_rasters` never sees them.
+
+A 4000x3000 photo is 48 MB of GPU texture held for the session to draw a 640x360 preview; a
+twenty-photo slideshow is about 960 MB of unified memory. Found by the bounds audit, 2026-08-28.
+
+Would be fixed by routing image uploads through the same budgeted path as video — a
+`plan_decode`-style downscale to the preview size and membership in the LRU that already exists.
+The downscale is the larger half of the win and the smaller half of the change.
+
+Verified when: a test uploads an oversized image and asserts the texture is preview-sized, and a
+second asserts the image cache participates in the global budget rather than sitting outside it.
+
+### 18. The audio faders push one undo entry per pointer sample
+
+`bay-core`'s history (`editor.rs:32`) has no depth cap: entries are pushed at `:294`/`:333` and
+removed only by `pop()` on undo and `clear()` on load.
+
+That is survivable for discrete edits and not for sliders. The Motion page coalesces a whole drag
+into one entry through `Gesture::commit` (`bay-ui/src/editor/motion.rs:299-319`), which rolls the
+previous step back before applying the next. `Gesture::new()` appears in `motion.rs` and nowhere
+else. The Audio page's four sliders — track pan, track fader, clip pan, clip level
+(`audio.rs:538-636`) — call `editor.execute` directly, and `Slider`'s contract
+(`controls.rs:463`) is explicit that `on_change` fires "throughout the drag, not only at the end".
+
+The memory is the smaller problem (each `HistoryEntry` clones the full `SelectionState`, so
+~250 B empty and ~20 KB with 200 clips selected, at 60-120 samples a second). The real cost is
+that backing out one fader move takes hundreds of presses of Cmd+Z, which makes undo useless
+exactly where it is most needed. Found by the bounds audit, 2026-08-28.
+
+Would be fixed by putting the audio sliders on the same `Gesture` the motion curves use. A depth
+cap on the history is worth having regardless, but it is not the fix for this.
+
+Verified when: dragging a fader from end to end produces one undo entry, and one Cmd+Z restores
+the value it started at.
+
+### 16b. `TexturePool` never trims, which only bites a caller that varies frame size
+
+`bay-compositor/src/texture_pool.rs:8-18` keys by `(width, height)` and returns textures to
+`available` on `recycle_frame`. No key is ever removed and no bucket is capped, so the high-water
+mark of every size class ever rendered is held for the compositor's life.
+
+The interactive preview is safe: it is a fixed 640x360, one key. The exposure is any caller that
+sweeps size — the snapshot agent tool renders at `canvas x scale` for twenty scales
+(`bay-ui/src/editor/mod.rs:836-856`), which is twenty size classes times the four or five
+intermediates a frame acquires, on the order of 500 MB off a 1080p canvas.
+
+Mechanism confirmed by the bounds audit, 2026-08-28; no reported occurrence, because it needs a
+caller that varies scale and agents rarely do. Recorded rather than fixed for that reason.
+
+Verified when: the pool caps each bucket, or drops size classes not used for N frames, and a test
+sweeps twenty scales and asserts the retained texture count does not grow with them.
+
 ### 15. The streaming audio engine is wired to nothing
 
 M9 built a callback-driven block mixer on a lock-free ring, with frame-exact clip windows, peak
