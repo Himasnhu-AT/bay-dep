@@ -348,6 +348,10 @@ const BIN_RAIL_MIN: f32 = 92.0;
 const TILE_WIDTH: f32 = 138.0;
 const TILE_IMAGE: f32 = 76.0;
 
+/// Peaks across a pool tile. Coarse on purpose: a tile is ~170px wide, so more buckets would be
+/// sub-pixel bars and a longer extraction for a picture nobody can resolve.
+const POOL_WAVEFORM_BUCKETS: usize = 56;
+
 impl EditorView {
     /// Where the Media page's own state lives. One accessor pair, so the page body never
     /// reaches past it.
@@ -1121,6 +1125,11 @@ impl EditorView {
         // Taken before the element chain starts, because uploading a first-seen thumbnail needs
         // `&mut self` and everything below borrows immutably.
         let poster = self.poster_image(&asset.id);
+        // Audio tiles draw peaks where a video tile draws a frame.
+        let peaks = (kind == MediaKind::Audio)
+            .then(|| self.waveforms.peaks(&asset.id, POOL_WAVEFORM_BUCKETS))
+            .flatten()
+            .filter(|peaks| !peaks.is_empty());
         let on = self.media_state().selected.as_deref() == Some(asset.id.as_str());
         let id = asset.id.clone();
         div()
@@ -1149,17 +1158,31 @@ impl EditorView {
                     .items_center()
                     .justify_center()
                     .overflow_hidden();
-                match poster {
+                match (poster, peaks) {
                     // The picture, once a worker has produced one.
-                    Some(image) => plate.child(
+                    (Some(image), _) => plate.child(
                         img(ImageSource::Render(image))
                             .h(px(TILE_IMAGE))
                             .w(px(TILE_WIDTH - 8.0)),
                     ),
+                    // Audio has no frame to show, so it shows its shape instead — which is the
+                    // one thing that distinguishes two audio files at a glance.
+                    (None, Some(peaks)) => plate
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(1.0))
+                        .px(px(4.0))
+                        .children(peaks.iter().map(|peak| {
+                            div()
+                                .flex_1()
+                                .h(px((peak * (TILE_IMAGE - 12.0)).max(1.0)))
+                                .bg(rgb(theme::ACCENT))
+                        })),
                     // Still decoding, decode failed, or the kind has no picture to show. The
                     // coloured bar stays for those, because a tile with nothing in it reads as
                     // a broken file rather than one whose thumbnail has not arrived.
-                    None => plate.child(
+                    (None, None) => plate.child(
                         div()
                             .w(px(30.0))
                             .h(px(4.0))
@@ -1859,6 +1882,13 @@ impl EditorView {
             self.posters.request(&id, Some(path.as_str()));
             self.strips.request(&id, Some(path.as_str()));
             self.upload_strip(&id);
+            // Audio has no frame to show, so its tile draws peaks instead. Requested here
+            // because `request_scene` only covers clips on the timeline, and a pool shows every
+            // imported asset whether it has been used yet or not.
+            if bay_core::MediaKind::of_path(&path) == bay_core::MediaKind::Audio {
+                self.waveforms
+                    .request(&id, Some(path.as_str()), POOL_WAVEFORM_BUCKETS);
+            }
             if self.poster_images.contains_key(&id) {
                 continue;
             }

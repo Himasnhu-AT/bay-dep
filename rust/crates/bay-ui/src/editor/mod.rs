@@ -1237,17 +1237,27 @@ impl EditorView {
         {
             self.media_width = width.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
         }
+        // Everything below asks for another frame through `cx.notify()`, never
+        // `window.request_animation_frame()`.
+        //
+        // `request_animation_frame` reads `current_view()`, which unwraps the rendered-entity
+        // stack — and that stack is empty under `VisualTestContext::draw`. Every one of these
+        // branches was therefore a panic waiting for its condition to become true in a test, and
+        // two of them have since become true: pool thumbnails made decodes pending, and pool
+        // waveforms made extraction pending. Six paint tests died at the second one. `notify`
+        // marks the view dirty and lets the compositor pace the redraw, which is what all of
+        // these wanted in the first place.
         if self.playing {
             self.advance_playback();
             self.follow_playhead(lane_width);
             if self.playing {
-                window.request_animation_frame();
+                cx.notify();
             }
         }
         // The agent chip expires on a timer, so keep frames coming until it does — otherwise
         // it lingers until something unrelated repaints.
         if self.agent_chip().is_some() {
-            window.request_animation_frame();
+            cx.notify();
         }
         // Video decodes run on worker threads. Keep asking for frames while any are in flight so
         // the finished clip actually appears, even when playback is paused.
@@ -1260,13 +1270,13 @@ impl EditorView {
             .as_ref()
             .is_some_and(|p| p.has_pending_decodes() || p.has_pending_readback())
         {
-            window.request_animation_frame();
+            cx.notify();
         }
         // Waveform extraction is the same obligation on the audio side: it finishes on a worker
         // and is collected by a later `request_waveforms`, so without a tick the peaks would
         // appear only when something unrelated repainted.
         if self.waveforms.has_pending() {
-            window.request_animation_frame();
+            cx.notify();
         }
         if self.needs_focus {
             self.needs_focus = false;
@@ -1283,12 +1293,6 @@ impl EditorView {
             // A decode landing on a worker changes nothing the signature can see, so without
             // this the picture would not appear until something unrelated repainted.
             //
-            // `cx.notify()` rather than `window.request_animation_frame()`: the latter reads
-            // `current_view()`, which unwraps the rendered-entity stack, and that stack is empty
-            // under `VisualTestContext::draw` — every paint test panicked inside gpui the moment
-            // this branch became reachable. The other `request_animation_frame` calls in this
-            // function share the landmine and merely never fire in a test. `notify` marks the
-            // view dirty and lets the compositor pace the redraw, which is what was wanted.
             cx.notify();
         }
         let vm = EditorViewModel::build(&self.editor);

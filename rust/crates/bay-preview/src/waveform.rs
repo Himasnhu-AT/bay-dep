@@ -92,6 +92,19 @@ impl WaveformCache {
         }
     }
 
+    /// Queue peaks for one media asset, whether or not it is on the timeline.
+    ///
+    /// [`Self::request_scene`] walks the scene, which is the right question for a lane — a
+    /// waveform is drawn under the clip that uses it. A media pool asks a different one: it shows
+    /// every imported asset, and most of them are not on the timeline at all. Same cache and same
+    /// deduplication either way.
+    pub fn request(&mut self, media_id: &str, path: Option<&str>, buckets: usize) {
+        if buckets == 0 {
+            return;
+        }
+        self.poll(media_id, path, buckets);
+    }
+
     /// The peaks for one media id, if extraction has already finished. `None` while a worker is
     /// still running, when extraction failed, and when the media was never requested — the
     /// caller draws the clip without a waveform in every one of those cases.
