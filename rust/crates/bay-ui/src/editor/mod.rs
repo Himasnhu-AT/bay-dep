@@ -7,10 +7,13 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, img, px, rgb, App, Context, Div, EventEmitter, FocusHandle, ImageSource, KeyBinding,
+    div, img, px, App, Context, Div, EventEmitter, FocusHandle, ImageSource, KeyBinding,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, RenderImage,
     SharedString, Window,
 };
+// Shadows `gpui::rgb`: the token is a `theme::Role` now, not a hex. Every submodule
+// inherits this through `use super::*`.
+use crate::theme::rgb;
 use gpui_component::button::Button;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::Disableable as _;

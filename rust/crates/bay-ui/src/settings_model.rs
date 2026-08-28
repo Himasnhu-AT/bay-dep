@@ -259,7 +259,7 @@ pub struct ProviderRow {
     /// Enabled *and* able to serve a request. The dot follows this, not `enabled`.
     pub usable: bool,
     pub toggle_label: String,
-    pub dot: u32,
+    pub dot: crate::theme::Role,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -341,7 +341,7 @@ pub struct ModelRow {
     pub detail: String,
     /// "Installed" / "Downloading 42%" / "Not downloaded" / "Not available for this Mac".
     pub state_label: String,
-    pub state_color: u32,
+    pub state_color: crate::theme::Role,
     /// 0.0–1.0, or `None` when there is no meaningful number to draw.
     pub progress: Option<f32>,
     pub primary_label: String,
@@ -458,7 +458,7 @@ pub struct ToolRow {
 pub struct McpPane {
     pub running: bool,
     pub status_line: String,
-    pub dot: u32,
+    pub dot: crate::theme::Role,
     pub toggle_label: String,
     /// The endpoint line, with the token abbreviated. The full token is only ever put on screen
     /// through the copyable snippet, which is a deliberate act.
@@ -528,7 +528,7 @@ pub struct ComputeOption {
     pub id: &'static str,
     pub name: &'static str,
     pub price: String,
-    pub price_color: u32,
+    pub price_color: crate::theme::Role,
     pub body: String,
     pub chips: Vec<String>,
     pub selected: bool,

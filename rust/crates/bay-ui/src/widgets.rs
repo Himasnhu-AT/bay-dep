@@ -7,8 +7,9 @@
 //! Everything here is a plain `Div` with no click handler. Interaction needs a `Context<V>`,
 //! which would tie these to one view; the caller wraps what it needs in `.id().on_click()`.
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Div, SharedString, Stateful};
+use gpui::{div, px, Div, SharedString, Stateful};
 
 use crate::theme;
 
@@ -32,7 +33,7 @@ pub enum ButtonKind {
 }
 
 impl ButtonKind {
-    fn fill(self) -> u32 {
+    fn fill(self) -> theme::Role {
         match self {
             ButtonKind::Normal => theme::PANEL_ALT,
             ButtonKind::Primary => theme::ACCENT,
@@ -41,7 +42,7 @@ impl ButtonKind {
         }
     }
 
-    fn label(self) -> u32 {
+    fn label(self) -> theme::Role {
         match self {
             ButtonKind::Normal | ButtonKind::On => theme::TEXT,
             ButtonKind::Primary => theme::ON_ACCENT,
@@ -106,12 +107,12 @@ pub fn card() -> Div {
 }
 
 /// [`card`], outlined in a colour that says something — a live server, a selected option.
-pub fn card_edged(color: u32) -> Div {
+pub fn card_edged(color: impl Into<theme::Paint>) -> Div {
     card().border_color(rgb(color))
 }
 
 /// A small status light.
-pub fn dot(color: u32) -> Div {
+pub fn dot(color: impl Into<theme::Paint>) -> Div {
     div()
         .w(px(8.0))
         .h(px(8.0))
@@ -169,7 +170,7 @@ pub fn readout(value: impl Into<String>, muted: bool) -> Div {
 ///
 /// `fraction` of `None` draws an empty trough: the venv step has no byte count, and a bar that
 /// invents a position there tells the user a download is further along than anyone knows.
-pub fn progress(fraction: Option<f32>, color: u32) -> Div {
+pub fn progress(fraction: Option<f32>, color: impl Into<theme::Paint>) -> Div {
     let trough = div()
         .h(px(4.0))
         .rounded(px(3.0))
@@ -195,7 +196,7 @@ pub fn note(value: impl Into<String>) -> Div {
 }
 
 /// A message the user should read once — a status, a complaint, an explanation.
-pub fn banner(message: impl Into<String>, accent: u32) -> Div {
+pub fn banner(message: impl Into<String>, accent: impl Into<theme::Paint>) -> Div {
     div()
         .px(px(10.0))
         .py(px(8.0))

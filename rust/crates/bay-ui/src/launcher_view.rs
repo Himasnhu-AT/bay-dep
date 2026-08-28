@@ -8,8 +8,9 @@
 //! An `impl BayApp` block in its own file, because these methods need `Context<BayApp>` for
 //! click handlers and the shell is already long enough.
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Context, Div, SharedString};
+use gpui::{div, px, Context, Div, SharedString};
 
 use bay_core::project::shelf::{ProjectStatus, MAX_TAG_LEN, TAG_SUGGESTIONS};
 
@@ -178,10 +179,12 @@ impl BayApp {
             .rounded(px(10.0))
             .bg(rgb(theme::PANEL))
             .border_1()
+            // `Paint` on both arms: the status colour is a literal from the document and the
+            // border is a role, and the `if` has to unify to one type.
             .border_color(rgb(if menu_open {
                 card.status_color
             } else {
-                theme::BORDER_SOFT
+                theme::Paint::Role(theme::BORDER_SOFT)
             }))
             .overflow_hidden()
             .child(self.card_poster(card, cx))

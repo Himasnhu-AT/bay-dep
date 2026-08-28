@@ -69,7 +69,7 @@ fn bay_dark_theme() -> Result<gpui_component::ThemeConfig, String> {
         .ok_or_else(|| "the theme file declares no themes".to_string())
 }
 
-/// Make bay's palette the active theme.
+/// Make bay's palette the active theme, and keep bay's own chrome in step with it.
 fn install_theme(cx: &mut App) {
     match bay_dark_theme() {
         Ok(config) => {
@@ -84,6 +84,68 @@ fn install_theme(cx: &mut App) {
             eprintln!("bay: could not load the bundled theme ({error}); using the default")
         }
     }
+    adopt_component_theme(cx);
+    // Follow later changes — `Theme::change(ThemeMode::Light, ..)`, a theme loaded from disk —
+    // rather than only the one installed at startup. Without this the library's widgets would
+    // re-colour and bay's own chrome would not, which is the drift the whole `Role` change
+    // exists to prevent.
+    cx.observe_global::<gpui_component::Theme>(adopt_component_theme)
+        .detach();
+}
+
+/// Rebuild bay's palette from the component set's active theme.
+///
+/// **This is the line that makes the theme configurable rather than merely plumbed.** bay's own
+/// chrome reads `theme::Role`s, which resolve through `theme::palette()`; the library's widgets
+/// read `cx.theme()`. Two sources for one appearance is the drift this maps away — every role in
+/// Group A below is a *view* onto the component theme, so a colour cannot be changed in one and
+/// stay put in the other.
+///
+/// The trap worth naming: in this library's vocabulary — shadcn's — `accent` is the **hover
+/// surface**, a neutral, and `primary` is the primary-action colour. bay's `ACCENT` is the blue
+/// primary action. Wiring `ACCENT` to `accent` compiles, parses, and turns every hover state in
+/// all six pages blue.
+fn adopt_component_theme(cx: &mut App) {
+    let colors = gpui_component::Theme::global(cx).colors;
+    let hex = |color: gpui::Hsla| {
+        let rgba = gpui::Rgba::from(color);
+        let channel = |value: f32| ((value.clamp(0.0, 1.0) * 255.0).round() as u32) & 0xff;
+        (channel(rgba.r) << 16) | (channel(rgba.g) << 8) | channel(rgba.b)
+    };
+
+    // Start from bay's own dark palette, so a role the component theme has no opinion about
+    // keeps a coherent value instead of falling to black.
+    let mut palette = theme::Palette::BUILTIN_DARK;
+
+    palette.bg = hex(colors.background);
+    palette.text = hex(colors.foreground);
+    palette.border = hex(colors.border);
+    palette.accent = hex(colors.primary); // NOT `colors.accent` — see the note above.
+    palette.on_accent = hex(colors.primary_foreground);
+    palette.hover = hex(colors.accent); // …which is where `accent` actually belongs.
+    palette.muted = hex(colors.muted_foreground);
+    palette.ok = hex(colors.success);
+    palette.warn = hex(colors.warning);
+    palette.danger = hex(colors.danger);
+    palette.danger_text = hex(colors.danger_foreground);
+    palette.selected = hex(colors.list_active);
+    palette.selected_border = hex(colors.list_active_border);
+    palette.panel = hex(colors.sidebar);
+    palette.panel_alt = hex(colors.secondary);
+    palette.pressed = hex(colors.secondary_active);
+    palette.focus_ring = hex(colors.ring);
+
+    // Group B: bay's own, with no equivalent in the component set. Derived from what was just
+    // adopted rather than left at the built-in dark values, so a light theme does not leave a
+    // black lane under a white panel.
+    palette.lane = theme::lighten_hex(palette.bg, 0.02);
+    palette.rail = palette.lane;
+    palette.border_soft = theme::lighten_hex(palette.bg, 0.08);
+    palette.faint = theme::lighten_hex(palette.muted, 0.0);
+    palette.accent_soft = theme::lighten_hex(palette.accent, 0.35);
+    palette.disabled = theme::lighten_hex(palette.bg, 0.03);
+
+    theme::set_palette(palette);
 }
 
 /// Launch the app, optionally draining agent tool calls from `pump`.
@@ -169,9 +231,11 @@ pub fn run_with_agent(
 mod theme_file_tests {
     use super::*;
 
-    /// The hex a token is written as in `themes/bay-dark.json`.
-    fn hex(token: u32) -> String {
-        format!("#{token:06x}")
+    /// The hex a role is written as in `themes/bay-dark.json`, resolved through the palette in
+    /// force — which is what keeps this test a statement about bay's colours rather than about
+    /// a constant that no longer exists.
+    fn hex(role: theme::Role) -> String {
+        format!("#{:06x}", theme::palette().resolve(role))
     }
 
     /// A parse failure here is silent in production: [`install_theme`] logs to stderr and the

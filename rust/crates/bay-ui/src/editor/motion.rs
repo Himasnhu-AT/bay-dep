@@ -41,8 +41,9 @@ use std::cell::Cell;
 
 use super::gesture::{fingerprint, Gesture};
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Bounds, Context, Div, MouseDownEvent, Pixels, SharedString};
+use gpui::{div, px, Bounds, Context, Div, MouseDownEvent, Pixels, SharedString};
 
 use bay_core::project::{
     AnimatableProperty, AnimationChannel, BezierHandles, Easing, Element, ElementGroup, Mask,
@@ -106,7 +107,7 @@ const CULL_LEFT: f32 = -HIT;
 /// The colours a curve is drawn in, cycled per animated channel. Theme tokens rather than new
 /// constants, and **not** `ACCENT`: that is the playhead, and a curve wearing the playhead's
 /// colour is a curve that reads as a playhead.
-const CURVE_COLORS: [u32; 5] = [
+const CURVE_COLORS: [theme::Role; 5] = [
     theme::MARKER,
     theme::OK,
     theme::RECORD,
@@ -251,7 +252,7 @@ pub(crate) struct CurveRow {
     /// the case the page is judged on.
     channel: Option<AnimationChannel>,
     axis: ValueAxis,
-    color: u32,
+    color: theme::Role,
     /// The value at the playhead: sampled if animated, the rest value if not.
     now: f32,
 }

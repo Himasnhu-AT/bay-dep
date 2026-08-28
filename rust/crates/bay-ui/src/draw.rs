@@ -26,15 +26,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    canvas, point, px, Bounds, Canvas, Path, PathBuilder, Pixels, Point, RenderImage, Rgba, Window,
+    canvas, point, px, Bounds, Canvas, Path, PathBuilder, Pixels, Point, RenderImage, Window,
 };
 
 /// Convert a `0xRRGGBB` theme token into something `paint_path` accepts.
 ///
 /// `gpui::rgb` returns the same thing; this exists so a call site reads `fill(theme::ACCENT)`
 /// next to the shape it fills rather than importing a colour constructor into every module.
-fn fill(color: u32) -> Rgba {
-    gpui::rgb(color)
+fn fill(color: crate::theme::Paint) -> gpui::Hsla {
+    crate::theme::rgb(color)
 }
 
 /// One drawing, in element-local coordinates.
@@ -49,7 +49,7 @@ pub enum Shape {
     Polyline {
         points: Vec<Point<Pixels>>,
         width: Pixels,
-        color: u32,
+        color: crate::theme::Paint,
         /// On/off run lengths, as `stroke-dasharray`. `None` is a solid line.
         dash: Option<Vec<Pixels>>,
     },
@@ -57,70 +57,87 @@ pub enum Shape {
     /// envelope, not one rectangle per bucket.
     Polygon {
         points: Vec<Point<Pixels>>,
-        color: u32,
+        color: crate::theme::Paint,
     },
     /// A filled disc: a keyframe dot, a wheel's centre puck, a scope point.
     Circle {
         center: Point<Pixels>,
         radius: Pixels,
-        color: u32,
+        color: crate::theme::Paint,
     },
     /// A stroked circle: a colour wheel's rim, a graticule ring, a selected handle.
     Ring {
         center: Point<Pixels>,
         radius: Pixels,
         width: Pixels,
-        color: u32,
+        color: crate::theme::Paint,
     },
 }
 
 impl Shape {
     /// A solid stroked line.
-    pub fn line(points: Vec<Point<Pixels>>, width: f32, color: u32) -> Self {
+    pub fn line(
+        points: Vec<Point<Pixels>>,
+        width: f32,
+        color: impl Into<crate::theme::Paint>,
+    ) -> Self {
         Shape::Polyline {
             points,
             width: px(width),
-            color,
+            color: color.into(),
             dash: None,
         }
     }
 
     /// A dashed stroked line — a graticule, a zero line, an out-of-range guide.
-    pub fn dashed(points: Vec<Point<Pixels>>, width: f32, color: u32, dash: [f32; 2]) -> Self {
+    pub fn dashed(
+        points: Vec<Point<Pixels>>,
+        width: f32,
+        color: impl Into<crate::theme::Paint>,
+        dash: [f32; 2],
+    ) -> Self {
         Shape::Polyline {
             points,
             width: px(width),
-            color,
+            color: color.into(),
             dash: Some(vec![px(dash[0]), px(dash[1])]),
         }
     }
 
     /// A filled disc.
-    pub fn disc(center: Point<Pixels>, radius: f32, color: u32) -> Self {
+    pub fn disc(center: Point<Pixels>, radius: f32, color: impl Into<crate::theme::Paint>) -> Self {
         Shape::Circle {
             center,
             radius: px(radius),
-            color,
+            color: color.into(),
         }
     }
 
     /// A stroked circle.
-    pub fn ring(center: Point<Pixels>, radius: f32, width: f32, color: u32) -> Self {
+    pub fn ring(
+        center: Point<Pixels>,
+        radius: f32,
+        width: f32,
+        color: impl Into<crate::theme::Paint>,
+    ) -> Self {
         Shape::Ring {
             center,
             radius: px(radius),
             width: px(width),
-            color,
+            color: color.into(),
         }
     }
 
     /// A filled closed outline.
-    pub fn area(points: Vec<Point<Pixels>>, color: u32) -> Self {
-        Shape::Polygon { points, color }
+    pub fn area(points: Vec<Point<Pixels>>, color: impl Into<crate::theme::Paint>) -> Self {
+        Shape::Polygon {
+            points,
+            color: color.into(),
+        }
     }
 
     /// The colour this shape paints in.
-    pub fn color(&self) -> u32 {
+    pub fn color(&self) -> crate::theme::Paint {
         match self {
             Shape::Polyline { color, .. }
             | Shape::Polygon { color, .. }

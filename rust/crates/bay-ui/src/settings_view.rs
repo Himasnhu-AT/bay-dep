@@ -5,8 +5,9 @@
 //! this file decides what a pane says — if a claim is wrong, it is wrong in the model, where
 //! there is a test for it.
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Context, Div, SharedString};
+use gpui::{div, px, Context, Div, SharedString};
 
 use crate::app_view::{BayApp, Screen};
 use crate::input::TextField;

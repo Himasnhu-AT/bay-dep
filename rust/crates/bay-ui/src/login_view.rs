@@ -11,8 +11,9 @@
 //! alternative — a short sleep and a hardcoded name — would put an identity in the title bar
 //! that nothing granted.
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Context, Div};
+use gpui::{div, px, Context, Div};
 
 use crate::app_view::{BayApp, Screen};
 use crate::theme;

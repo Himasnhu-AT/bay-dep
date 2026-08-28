@@ -752,7 +752,7 @@ impl EditorView {
 
     // -- strip pieces --------------------------------------------------------------------
 
-    fn strip_frame(&self, edge: u32) -> Div {
+    fn strip_frame(&self, edge: theme::Role) -> Div {
         widgets::card_edged(edge)
             .flex()
             .flex_col()

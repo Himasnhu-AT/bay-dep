@@ -12,8 +12,9 @@
 //! BAY_UI_LAB=1 ./run.sh
 //! ```
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, point, px, rgb, Div, SharedString};
+use gpui::{div, point, px, Div, SharedString};
 
 use crate::controls::{DragNumber, Select, SelectOption, Slider, WidgetHost};
 use crate::draw::{self, Shape};

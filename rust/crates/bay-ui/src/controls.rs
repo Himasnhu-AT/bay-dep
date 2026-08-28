@@ -24,9 +24,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use crate::theme::rgb;
 use gpui::prelude::*;
 use gpui::{
-    anchored, deferred, div, point, px, relative, rgb, AnyElement, Bounds, Context, Corner, Div,
+    anchored, deferred, div, point, px, relative, AnyElement, Bounds, Context, Corner, Div,
     Modifiers, MouseButton, MouseDownEvent, Pixels, Point, SharedString,
 };
 

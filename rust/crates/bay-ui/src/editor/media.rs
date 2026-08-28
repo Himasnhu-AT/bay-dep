@@ -1425,7 +1425,7 @@ fn viewer_frame(title: &'static str, detail: String, body: Div) -> Div {
 }
 
 /// What a viewer shows when there is no picture: what it would be showing, and why it is not.
-fn viewer_plate(accent: u32, title: &str, why: &str) -> Div {
+fn viewer_plate(accent: theme::Role, title: &str, why: &str) -> Div {
     div()
         .flex_1()
         .min_h(px(0.0))
