@@ -154,6 +154,9 @@ impl EditorView {
                 // The export path *does* swap (`lib.rs`, "BGRA → RGBA for ffmpeg input") because
                 // ffmpeg wants the other order — the two are not inconsistent, they are two
                 // different consumers, and this comment exists so nobody reconciles them.
+                if self.page == crate::page::Page::Color {
+                    self.measure_scopes(&frame);
+                }
                 if let Some(buffer) =
                     image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)
                 {

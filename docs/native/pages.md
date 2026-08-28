@@ -28,7 +28,7 @@ Nothing here has had a visual check. The engine work underneath is verified; the
 | **Audio page** | Code landed, unseen | faders bound to real commands; meters deliberately dark until the engine is wired |
 | **Deliver page** | Code landed, unseen | export moved off the UI thread through `slow::run`, so it now passes `render_gate` |
 | **Cut page** | Not started | still the pre-migration editor body |
-| **Color page** | Not started | placeholder |
+| **Color page** | Code landed, unseen | the four scopes wired to the live frame — densities as rasters, histogram as paths, per `drawing.md`. Wheels and curves are absent, not disabled: the shader exists and the commands do not |
 
 ### What still has to happen
 
@@ -37,7 +37,9 @@ Nothing here has had a visual check. The engine work underneath is verified; the
 2. **Wire the streaming audio engine to playback** — `fixes.md` entry 15. Until then the Audio
    page's faders change the *next* play, not the current one.
 3. **The Cut page** — Resolve's actual Cut page, with the dual timeline.
-4. **The Color page** — the one XL left, and the only page still on a placeholder.
+4. **The Color page's controls** — the scopes are live; lift/gamma/gain wheels and a curve
+   editor are not. `lift_gamma_gain.wgsl` is wired at all six enforced places and no command
+   reaches it, so the wheels would be dead controls.
 5. **A full green gate on a quiet tree.** Last run 2026-08-28: **1700 passed, 0 failed, 40
    ignored**, exit 0.
 

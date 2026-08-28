@@ -380,6 +380,16 @@ pub struct EditorView {
     /// GPU compositor preview (None if no adapter); the rendered image + a change signature.
     preview: Option<PreviewRenderer>,
     preview_image: Option<Arc<RenderImage>>,
+    /// The four scopes of the frame currently on screen, and the rasters two of them draw as.
+    ///
+    /// Computed only while the Color page is showing — one pass over the readback costs 0.98 ms
+    /// at 640x360 (`benchmarks.md`), which is worth paying to look at and not worth paying on
+    /// the Cut page where nothing displays it.
+    scopes: Option<bay_preview::scopes::Scopes>,
+    /// Density plots, as rasters. `drawing.md` decided this: vector geometry is a path, a density
+    /// plot is a raster, and the waveform, parade and vectorscope are all densities — a polyline
+    /// through a per-column *envelope* would draw a different instrument and call it a waveform.
+    scope_images: std::collections::BTreeMap<&'static str, Arc<RenderImage>>,
     /// Preview frames that have left the screen and whose sprite-atlas tiles still have to be
     /// released. The rule, and why it is not optional, is on [`crate::draw::RetiredImages`] —
     /// stated once there because the scope panels are about to inherit it.
@@ -532,6 +542,8 @@ impl EditorView {
             timeline: crate::geometry::TimelineState::default(),
             preview,
             preview_image: None,
+            scopes: None,
+            scope_images: std::collections::BTreeMap::new(),
             retired_images: crate::draw::RetiredImages::new(),
             preview_sig: None,
             presets: Vec::new(),
