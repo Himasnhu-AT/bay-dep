@@ -38,7 +38,8 @@
 //! leave one undo entry per pixel travelled. [`Gesture`] collapses them here.
 
 use std::cell::Cell;
-use std::hash::{Hash, Hasher};
+
+use super::gesture::{fingerprint, Gesture};
 
 use gpui::prelude::*;
 use gpui::{div, px, rgb, Bounds, Context, Div, MouseDownEvent, Pixels, SharedString};
@@ -264,76 +265,6 @@ impl CurveRow {
 // ---------------------------------------------------------------------------------------------
 // One undo entry per gesture
 // ---------------------------------------------------------------------------------------------
-
-/// Collapses a drag's stream of commands into a single undo entry.
-///
-/// Every widget on this page reports a value on **every** pointer move, because a curve that
-/// only updates when you let go is a curve you cannot aim. Each of those is a `Command`, and
-/// `bay-core` pushes one history entry per command with no coalescing anywhere — so a two
-/// hundred pixel drag would take two hundred presses of ⌘Z to reverse, which is the same as
-/// having no undo.
-///
-/// So before writing its next state, a gesture undoes the one it wrote last. The drag ends
-/// having left exactly one entry, holding the difference between where the key started and where
-/// it was dropped.
-///
-/// **The guard is the part that matters.** An agent edit can land between two mouse-move events,
-/// and an unguarded undo would take *that* entry rather than this gesture's. So the gesture
-/// fingerprints what it wrote and refuses to undo anything that no longer matches; the cost of
-/// refusing is one extra undo entry, which is the harmless direction to fail in.
-struct Gesture {
-    /// How many commands this gesture's last step committed. Zero before its first.
-    steps: Cell<u8>,
-    /// A fingerprint of the edited thing as this gesture left it.
-    fingerprint: Cell<u64>,
-}
-
-impl Gesture {
-    fn new() -> Self {
-        Self {
-            steps: Cell::new(0),
-            fingerprint: Cell::new(0),
-        }
-    }
-
-    /// Roll back this gesture's previous step (if it is still the top of history) and run the
-    /// next one. `run` returns how many commands it actually committed.
-    fn commit(
-        &self,
-        view: &mut EditorView,
-        probe: impl Fn(&EditorView) -> u64,
-        run: impl FnOnce(&mut EditorView) -> u8,
-    ) {
-        let steps = self.steps.get();
-        if steps > 0 {
-            if probe(view) == self.fingerprint.get() {
-                for _ in 0..steps {
-                    view.editor.undo();
-                }
-            }
-            self.steps.set(0);
-        }
-        let steps = run(view);
-        self.steps.set(steps);
-        self.fingerprint.set(probe(view));
-    }
-}
-
-/// A cheap content fingerprint.
-///
-/// The wire format rather than `Hash`, because the model is full of `f32` and does not implement
-/// it — and that format is pinned by round-trip tests, so this number changes exactly when the
-/// document does. `None` is a fingerprint that matches nothing, which is the safe direction: the
-/// gesture then starts a fresh undo entry rather than undoing somebody else's.
-fn fingerprint(json: Result<String, serde_json::Error>) -> u64 {
-    let Ok(json) = json else {
-        return 0;
-    };
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    json.hash(&mut hasher);
-    // Zero is reserved for "nothing to compare", so a real document never reports it.
-    hasher.finish() | 1
-}
 
 // ---------------------------------------------------------------------------------------------
 // The page

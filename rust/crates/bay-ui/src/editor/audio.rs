@@ -55,6 +55,7 @@ use std::rc::Rc;
 
 use gpui::{point, Bounds, Pixels, Point};
 
+use super::gesture::{fingerprint, Gesture};
 use super::*;
 use crate::controls::Slider;
 use crate::draw::{self, Shape};
@@ -537,11 +538,19 @@ impl EditorView {
                             .detent(0.0)
                             .render(self, cx, {
                                 let id = id.clone();
+                                let gesture = Gesture::new();
                                 move |this, pan, _| {
-                                    this.editor.execute(Command::SetTrackPan {
-                                        track_id: id.clone(),
-                                        pan,
-                                    });
+                                    let id = id.clone();
+                                    gesture.commit(
+                                        this,
+                                        |view| track_fingerprint(view, &id),
+                                        |view| {
+                                            u8::from(view.editor.execute(Command::SetTrackPan {
+                                                track_id: id.clone(),
+                                                pan,
+                                            }))
+                                        },
+                                    );
                                 }
                             }),
                         &format_pan(track.pan),
@@ -558,11 +567,19 @@ impl EditorView {
                             .reset(0.0)
                             .render(self, cx, {
                                 let id = id.clone();
+                                let gesture = Gesture::new();
                                 move |this, db, _| {
-                                    this.editor.execute(Command::SetTrackVolume {
-                                        track_id: id.clone(),
-                                        gain: db_to_gain(db),
-                                    });
+                                    let id = id.clone();
+                                    gesture.commit(
+                                        this,
+                                        |view| track_fingerprint(view, &id),
+                                        |view| {
+                                            u8::from(view.editor.execute(Command::SetTrackVolume {
+                                                track_id: id.clone(),
+                                                gain: db_to_gain(db),
+                                            }))
+                                        },
+                                    );
                                 }
                             }),
                         &format_db(gain_db),
@@ -610,11 +627,19 @@ impl EditorView {
                                 .detent(0.0)
                                 .render(self, cx, {
                                     let reference = reference.clone();
+                                    let gesture = Gesture::new();
                                     move |this, pan, _| {
-                                        this.editor.execute(Command::SetPan {
-                                            reference: reference.clone(),
-                                            pan,
-                                        });
+                                        let reference = reference.clone();
+                                        gesture.commit(
+                                            this,
+                                            |view| clip_fingerprint(view, &reference),
+                                            |view| {
+                                                u8::from(view.editor.execute(Command::SetPan {
+                                                    reference: reference.clone(),
+                                                    pan,
+                                                }))
+                                            },
+                                        );
                                     }
                                 }),
                             &format_pan(audio.pan),
@@ -628,11 +653,19 @@ impl EditorView {
                                 .reset(0.0)
                                 .render(self, cx, {
                                     let reference = reference.clone();
+                                    let gesture = Gesture::new();
                                     move |this, db, _| {
-                                        this.editor.execute(Command::SetVolume {
-                                            reference: reference.clone(),
-                                            volume: db_to_gain(db),
-                                        });
+                                        let reference = reference.clone();
+                                        gesture.commit(
+                                            this,
+                                            |view| clip_fingerprint(view, &reference),
+                                            |view| {
+                                                u8::from(view.editor.execute(Command::SetVolume {
+                                                    reference: reference.clone(),
+                                                    volume: db_to_gain(db),
+                                                }))
+                                            },
+                                        );
                                     }
                                 }),
                             &format_db(volume_db),
@@ -1622,10 +1655,106 @@ impl EditorView {
 /// The value tests are what stop a fader lying about a level; the paint tests are what stop a
 /// canvas painting outside its phase or a shape being built from a NaN. Neither substitutes for
 /// looking at the app, which `todo.pages.md` tracks separately.
+/// Fingerprint of one audio lane, for [`Gesture`].
+///
+/// Scoped to the lane rather than the whole scene: a fingerprint that changes when *anything*
+/// changes would refuse to coalesce whenever a worker finished a waveform mid-drag.
+fn track_fingerprint(view: &EditorView, track_id: &str) -> u64 {
+    match view.editor.active_scene().tracks.track(track_id) {
+        Some(track) => fingerprint(serde_json::to_string(track)),
+        None => 0,
+    }
+}
+
+/// Fingerprint of one clip, for [`Gesture`]. Same reasoning as [`track_fingerprint`].
+fn clip_fingerprint(view: &EditorView, reference: &ElementRef) -> u64 {
+    match view.editor.active_scene().element(reference) {
+        Some(element) => fingerprint(serde_json::to_string(element)),
+        None => 0,
+    }
+}
+
 #[cfg(test)]
 mod audio_tests {
     use super::*;
     use gpui::{size, TestAppContext, VisualTestContext};
+
+    // -- one drag, one undo entry --------------------------------------------------------
+
+    /// A fader drag is one undo entry, not one per pointer sample.
+    ///
+    /// `Slider::render`'s contract is explicit that `on_change` fires "throughout the drag, not
+    /// only at the end", and these four controls called `editor.execute` directly — so a drag at
+    /// 120 Hz left a hundred-odd entries and backing it out took a hundred presses of Cmd+Z.
+    /// `Command::SetVolume`'s own doc said a dragged control "has to coalesce into history as one
+    /// gesture"; the Motion page did it and the Audio page did not, because `Gesture` lived
+    /// inside `motion.rs`.
+    ///
+    /// Driven through `Gesture` directly rather than through a synthetic pointer drag: what is
+    /// under test is the coalescing, and routing it through the widget layer would test that too
+    /// and fail for its reasons.
+    #[gpui::test]
+    fn a_fader_drag_is_one_undo_entry(cx: &mut TestAppContext) {
+        let view = cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        });
+        view.update(cx, |this, _| {
+            let track_id = this
+                .editor
+                .active_scene()
+                .tracks
+                .audio
+                .first()
+                .map(|t| t.id.clone());
+            let Some(track_id) = track_id else {
+                panic!("the starter project has no audio lane to drag a fader on");
+            };
+
+            let gesture = Gesture::new();
+            // Sixty samples is half a second of dragging at 120 Hz.
+            for step in 0..60 {
+                let gain = 0.2 + step as f32 * 0.01;
+                let id = track_id.clone();
+                gesture.commit(
+                    this,
+                    |view| track_fingerprint(view, &id),
+                    |view| {
+                        u8::from(view.editor.execute(Command::SetTrackVolume {
+                            track_id: id.clone(),
+                            gain,
+                        }))
+                    },
+                );
+            }
+
+            let moved = this
+                .editor
+                .active_scene()
+                .tracks
+                .track(&track_id)
+                .expect("the lane is still there")
+                .gain;
+            assert!(
+                (moved - 0.79).abs() < 0.01,
+                "the drag did not land on its final value, it landed on {moved}"
+            );
+
+            // One undo returns the fader to where the drag started, not to the previous sample.
+            this.editor.undo();
+            let after = this
+                .editor
+                .active_scene()
+                .tracks
+                .track(&track_id)
+                .expect("the lane is still there")
+                .gain;
+            assert!(
+                (after - 1.0).abs() < 1e-6,
+                "one undo left the fader at {after}; sixty samples became sixty history entries"
+            );
+        });
+    }
 
     // -- the fader's scale ---------------------------------------------------------------
 

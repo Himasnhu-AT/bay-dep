@@ -38,6 +38,7 @@ use crate::widgets::{self, text as shared_text};
 mod audio;
 mod color;
 mod deliver;
+mod gesture;
 mod inspector;
 mod media;
 mod motion;

@@ -23,7 +23,7 @@ Nothing here has had a visual check. The engine work underneath is verified; the
 | **Scalar pass fusion** | Built + measured | 64 → 256 distinct levels through a squeeze-and-stretch |
 | **Playback transport** | Built + measured | 59.4 pictures/s paced at 60 Hz on a 1080p source, decoder pre-rolled two seconds ahead — `benchmarks.md` |
 | **Timeline clip editing** | Built | move, trim, split, snap, and **move between lanes** (`Command::MoveElementToTrack`, one undo step) |
-| **Media page** | Code landed, unseen | filmstrips and waveforms size from the block, not a constant; Media Storage is still folders derived from imports, not a filesystem browser |
+| **Media page** | Code landed, unseen | filmstrips and waveforms size from the block, not a constant; **Media Storage is a real filesystem browser** — expandable tree, tick-to-multi-select, drag straight to the timeline |
 | **Motion page** | Code landed, unseen | |
 | **Audio page** | Code landed, unseen | faders bound to real commands; meters deliberately dark until the engine is wired |
 | **Deliver page** | Code landed, unseen | export moved off the UI thread through `slow::run`, so it now passes `render_gate` |
@@ -38,10 +38,7 @@ Nothing here has had a visual check. The engine work underneath is verified; the
    page's faders change the *next* play, not the current one.
 3. **The Cut page** — Resolve's actual Cut page, with the dual timeline.
 4. **The Color page** — the one XL left, and the only page still on a placeholder.
-5. **Media Storage as a real filesystem browser.** Resolve's is a directory tree you navigate and
-   drag from; bay's panel still lists folders inferred from files already imported. The import
-   buttons take multiple files and whole folders, which is a workaround, not the panel.
-6. **A full green gate on a quiet tree.** Last run 2026-08-28: **1700 passed, 0 failed, 40
+5. **A full green gate on a quiet tree.** Last run 2026-08-28: **1700 passed, 0 failed, 40
    ignored**, exit 0.
 
 ## Why a page bar at all

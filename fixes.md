@@ -325,7 +325,23 @@ Verified by:
 
 ## Open
 
-### 17. Image textures have no budget, no downscale, and are never released
+### 17. Image textures have no budget, no downscale, and are never released — FIXED 2026-08-28
+
+Uploads now downscale to `IMAGE_MAX_DIMENSION` (1024 on the longest side, bounded on *both* axes
+so a portrait still is not penalised for being portrait) and join the raster LRU, so
+`evict_rasters` can see them. Eviction drops the `uploaded_media` entry alongside the texture —
+without that the map keeps claiming the image is uploaded after its texture is released, and the
+layer draws with a texture id the compositor no longer has, which is worse than the leak.
+
+`remember_raster` became move-to-back rather than push-back in the same change. Text rasters are
+remembered once each and never noticed; an image is touched on every frame it is on screen, so a
+plain push would have grown the queue thirty entries a second — the fix for one leak introducing
+another. Two tests: the downscale keeps aspect and bounds both axes, and touching a key a hundred
+times leaves one queue entry.
+
+The original entry follows.
+
+### 17-original. Image textures have no budget, no downscale, and are never released
 
 `ensure_image_texture` (`bay-preview/src/lib.rs:1774-1802`) decodes an image at its **natural
 size**, uploads it, and records it in `uploaded_media`. Nothing removes from that map on any path
@@ -346,7 +362,20 @@ The downscale is the larger half of the win and the smaller half of the change.
 Verified when: a test uploads an oversized image and asserts the texture is preview-sized, and a
 second asserts the image cache participates in the global budget rather than sitting outside it.
 
-### 18. The audio faders push one undo entry per pointer sample
+### 18. The audio faders push one undo entry per pointer sample — FIXED 2026-08-28
+
+All four (track pan, track fader, clip pan, clip level) go through `Gesture`, which rolls back the
+previous step before applying the next, so a whole drag is one history entry.
+
+`Gesture` lived inside `motion.rs`, which is the entire reason the Motion page coalesced and the
+Audio page did not — it is not a Motion idea, it belongs to any continuous control. It is now
+`editor/gesture.rs` and both pages use it. Tested by driving sixty samples through one gesture and
+asserting a single undo returns the fader to where the drag started; run with the coalescing
+bypassed, that test fails with the fader left at the *previous sample*.
+
+The original entry follows.
+
+### 18-original. The audio faders push one undo entry per pointer sample
 
 `bay-core`'s history (`editor.rs:32`) has no depth cap: entries are pushed at `:294`/`:333` and
 removed only by `pop()` on undo and `clear()` on load.
@@ -369,7 +398,15 @@ cap on the history is worth having regardless, but it is not the fix for this.
 Verified when: dragging a fader from end to end produces one undo entry, and one Cmd+Z restores
 the value it started at.
 
-### 16b. `TexturePool` never trims, which only bites a caller that varies frame size
+### 16b. `TexturePool` never trims — FIXED 2026-08-28
+
+A size class unused for `IDLE_FRAMES_BEFORE_DROP` (120 frames, two seconds at 60 fps) has its
+textures dropped. Generous on purpose: dropping a class the next frame asks for again means
+reallocating a render texture, which is the cost the pool exists to avoid.
+
+The original entry follows.
+
+### 16b-original. `TexturePool` never trims, which only bites a caller that varies frame size
 
 `bay-compositor/src/texture_pool.rs:8-18` keys by `(width, height)` and returns textures to
 `available` on `recycle_frame`. No key is ever removed and no bucket is capped, so the high-water

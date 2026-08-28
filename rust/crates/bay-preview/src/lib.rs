@@ -1255,6 +1255,14 @@ enum FrameSource<'a> {
 /// inserted is evicted. Static captions reuse one entry; inline editing churns keys, so we cap.
 const TEXT_CACHE_CAP: usize = 64;
 
+/// Longest side an image media asset is uploaded at.
+///
+/// The preview composites at 640x360 and export re-reads the source, so a texture larger than
+/// this is paid for and never seen. 1024 leaves headroom for a still scaled up inside the frame
+/// — a Ken Burns push on a photo is an ordinary thing to do — without letting a phone camera's
+/// 4000x3000 become 48 MB of resident texture. See `ensure_image_texture`.
+const IMAGE_MAX_DIMENSION: u32 = 1024;
+
 /// Ceiling on decoded video frames held across **all** clips. [`VIDEO_MEMORY_BUDGET`] bounds a
 /// single clip; without a global cap, ten imported clips would each claim their own budget.
 const GLOBAL_VIDEO_MEMORY_BUDGET: usize = 384 * 1024 * 1024;
@@ -1668,6 +1676,20 @@ impl PreviewRenderer {
     /// compositor died with `MissingTexture`. Eviction now happens in [`Self::evict_rasters`]
     /// after the frame is submitted, and never touches a key that frame used.
     fn remember_raster(&mut self, key: String) {
+        // Move-to-back, not push-back, so touching a key already in the cache does not append a
+        // duplicate. Text rasters are remembered once each on creation and never noticed this;
+        // images are touched on *every frame they are on screen*, which under a plain push would
+        // grow the queue by one entry per frame — thirty a second — and make the eviction pass
+        // walk a queue that is mostly stale copies of the same handful of keys.
+        //
+        // This is also what `touch_clip` does for the video LRU, and for the same reason.
+        if let Some(index) = self
+            .raster_order
+            .iter()
+            .position(|existing| *existing == key)
+        {
+            self.raster_order.remove(index);
+        }
         self.raster_keys.insert(key.clone());
         self.raster_order.push_back(key);
     }
@@ -1691,6 +1713,13 @@ impl PreviewRenderer {
             }
             self.raster_keys.remove(&candidate);
             self.compositor.release_texture(&candidate);
+            // An image's *decoded size* is remembered separately from its texture, and evicting
+            // one without the other is worse than not evicting at all: `ensure_image_texture`
+            // short-circuits on `uploaded_media`, so the entry would keep claiming the image was
+            // uploaded while its texture had just been released, and the layer would draw with a
+            // texture id the compositor no longer has. Text rasters are not in this map, so this
+            // is a no-op for them.
+            self.uploaded_media.remove(&candidate);
             skipped = 0;
         }
     }
@@ -1778,28 +1807,62 @@ impl PreviewRenderer {
     }
 
     /// Decode + upload an image media asset once, returning its texture id, or `None` on failure.
-    /// Returns the texture id and the image's natural pixel size (needed to fit it without
-    /// distortion); the size is cached alongside the upload so repeats stay cheap.
+    ///
+    /// Returns the texture id and the image's **natural** pixel size — the caller fits the layer
+    /// with it, so it must stay the source's aspect and not the uploaded texture's.
+    ///
+    /// The upload itself is downscaled to [`IMAGE_MAX_DIMENSION`] and the entry joins the raster
+    /// LRU. Neither was true before (`fixes.md` 17): images uploaded at full source size and sat
+    /// outside every budget in the file. Video has `GLOBAL_VIDEO_MEMORY_BUDGET`, text has
+    /// `TEXT_CACHE_CAP`; images had neither, because `remember_raster` was never called for them,
+    /// so `evict_rasters` could not see them. A 4000x3000 photo was 48 MB of texture held for the
+    /// session to draw a preview that composites at 640x360 — and a twenty-photo project was
+    /// most of a gigabyte to draw postcards.
+    ///
+    /// The downscale is the larger half of the saving and the smaller half of the change.
     fn ensure_image_texture(
         &mut self,
         media_id: &str,
         media: &[MediaAsset],
     ) -> Option<(String, (u32, u32))> {
         if let Some(size) = self.uploaded_media.get(media_id) {
-            return Some((media_id.to_string(), *size));
+            let size = *size;
+            // Touch it, or the LRU evicts the image the frame is using.
+            self.remember_raster(media_id.to_string());
+            return Some((media_id.to_string(), size));
         }
         let path = media.iter().find(|m| m.id == media_id)?.path.clone();
         let decoded = image::open(&path).ok()?;
-        let rgba = decoded.to_rgba8();
-        let (width, height) = rgba.dimensions();
+        let natural = (decoded.width().max(1), decoded.height().max(1));
+
+        // Bounded on both sides, for the reason `plan_decode` is: capping width alone penalises
+        // a portrait source for being portrait, and a panorama for being wide.
+        let scale = (IMAGE_MAX_DIMENSION as f32 / natural.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / natural.1 as f32)
+            .min(1.0);
+        let upload = if scale < 1.0 {
+            decoded
+                .resize(
+                    ((natural.0 as f32 * scale).round() as u32).max(1),
+                    ((natural.1 as f32 * scale).round() as u32).max(1),
+                    image::imageops::FilterType::Triangle,
+                )
+                .to_rgba8()
+        } else {
+            decoded.to_rgba8()
+        };
+        let (width, height) = upload.dimensions();
         let texture =
             self.ctx
-                .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image")?;
+                .upload_rgba_texture(&upload.into_raw(), width, height, "preview-image")?;
         self.compositor
             .upsert_texture(media_id.to_string(), texture);
-        self.uploaded_media
-            .insert(media_id.to_string(), (width, height));
-        Some((media_id.to_string(), (width, height)))
+        // The *natural* size is what the caller fits with; the upload is only how many pixels
+        // back it. Recording the uploaded size here would letterbox every downscaled image by
+        // whatever rounding the resize introduced.
+        self.uploaded_media.insert(media_id.to_string(), natural);
+        self.remember_raster(media_id.to_string());
+        Some((media_id.to_string(), natural))
     }
 
     /// Upload an 8×8 solid placeholder for an element and return its texture id.
@@ -3910,6 +3973,87 @@ pub fn poster_frame(path: &str, at_seconds: f64) -> Option<PosterFrame> {
         height: plan.height,
         rgba,
     })
+}
+
+#[cfg(test)]
+mod image_budget_tests {
+    use super::*;
+
+    /// An oversized still is uploaded at preview scale, not at source scale.
+    ///
+    /// `fixes.md` 17. The preview composites at 640x360 and export re-reads the source, so every
+    /// pixel above `IMAGE_MAX_DIMENSION` was paid for and never seen: a 4000x3000 photo was
+    /// 48 MB of resident texture to draw a postcard.
+    #[test]
+    fn an_oversized_still_is_uploaded_at_preview_scale() {
+        // The scale `ensure_image_texture` computes, checked without needing a GPU.
+        let natural = (4000u32, 3000u32);
+        let scale = (IMAGE_MAX_DIMENSION as f32 / natural.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / natural.1 as f32)
+            .min(1.0);
+        let uploaded = (
+            ((natural.0 as f32 * scale).round() as u32).max(1),
+            ((natural.1 as f32 * scale).round() as u32).max(1),
+        );
+        assert!(
+            uploaded.0 <= IMAGE_MAX_DIMENSION && uploaded.1 <= IMAGE_MAX_DIMENSION,
+            "uploaded {uploaded:?} exceeds the {IMAGE_MAX_DIMENSION}px bound"
+        );
+        // Aspect survives, or a photo is letterboxed by the downscale itself.
+        let source_aspect = natural.0 as f32 / natural.1 as f32;
+        let upload_aspect = uploaded.0 as f32 / uploaded.1 as f32;
+        assert!(
+            (source_aspect - upload_aspect).abs() < 0.01,
+            "the downscale changed the aspect from {source_aspect} to {upload_aspect}"
+        );
+        // Bounded on both sides: a portrait source must not be penalised for being portrait.
+        let portrait = (3000u32, 4000u32);
+        let portrait_scale = (IMAGE_MAX_DIMENSION as f32 / portrait.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / portrait.1 as f32)
+            .min(1.0);
+        assert!(
+            (portrait.1 as f32 * portrait_scale) <= IMAGE_MAX_DIMENSION as f32 + 1.0,
+            "a portrait still was bounded on width only"
+        );
+        // And an image already smaller than the bound is left alone.
+        let small = (320u32, 200u32);
+        let small_scale = (IMAGE_MAX_DIMENSION as f32 / small.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / small.1 as f32)
+            .min(1.0);
+        assert_eq!(small_scale, 1.0, "a small still was scaled");
+    }
+
+    /// Touching a cached raster must not append a duplicate.
+    ///
+    /// Images are touched on every frame they are on screen. Under the previous plain push-back
+    /// that grew the queue by one entry per frame — thirty a second — so the fix for one leak
+    /// would have introduced another.
+    #[test]
+    fn touching_a_raster_moves_it_rather_than_duplicating_it() {
+        let mut order: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        let remember = |key: &str, order: &mut std::collections::VecDeque<String>| {
+            if let Some(index) = order.iter().position(|existing| existing == key) {
+                order.remove(index);
+            }
+            order.push_back(key.to_string());
+        };
+        for _ in 0..100 {
+            remember("image-1", &mut order);
+        }
+        assert_eq!(
+            order.len(),
+            1,
+            "a hundred frames of one on-screen image left {} queue entries",
+            order.len()
+        );
+        remember("image-2", &mut order);
+        remember("image-1", &mut order);
+        assert_eq!(
+            order.back().map(String::as_str),
+            Some("image-1"),
+            "touching a key did not move it to the most-recent end"
+        );
+    }
 }
 
 #[cfg(test)]

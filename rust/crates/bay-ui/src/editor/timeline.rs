@@ -514,11 +514,24 @@ impl EditorView {
             Some(explicit) => explicit.to_string(),
             None => self.resolve_lane(kind),
         };
-        self.editor.execute(Command::AddElement {
-            track_id,
+        // Checked, not discarded. `AddElement` lowers through `scene.tracks.track(track_id)?`,
+        // so a track that is not there means no patch and no error — `execute` returning `false`
+        // is the only signal there is, and dropping it is the other half of `fixes.md` entry 5.
+        // `bay-mcp` checks it at all three of its call sites; this was the one that did not.
+        //
+        // `resolve_lane` should make this unreachable. That is the reason to report it rather
+        // than to handle it: if it ever fires, the lane resolution is wrong and silence would
+        // send the next person looking at the importer instead.
+        let name = name.to_string();
+        if !self.editor.execute(Command::AddElement {
+            track_id: track_id.clone(),
             element,
             select: true,
-        });
+        }) {
+            self.status = Some(format!(
+                "Could not place {name}: the timeline has no track {track_id}."
+            ));
+        }
     }
 
     /// The lane a newly placed clip of `kind` belongs on, creating an audio lane if the scene

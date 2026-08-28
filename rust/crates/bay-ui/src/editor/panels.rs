@@ -91,7 +91,7 @@ impl EditorView {
     ///
     /// Importing forty clips must not drop forty clips onto the playhead on top of each other.
     /// They land in the pool; the timeline is something the user builds deliberately.
-    fn import_paths(&mut self, paths: Vec<std::path::PathBuf>) {
+    pub(super) fn import_paths(&mut self, paths: Vec<std::path::PathBuf>) {
         let total = paths.len();
         let mut first: Option<(String, String, String)> = None;
         for path in paths {

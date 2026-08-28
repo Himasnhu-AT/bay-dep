@@ -74,6 +74,14 @@ pub struct MediaPageState {
     /// looks like a page that failed to load.
     pub show_storage: bool,
     pub show_metadata: bool,
+    /// Directories the storage browser has open, so the tree keeps its shape between frames.
+    ///
+    /// A set of paths rather than a tree of nodes: the tree is *derived* from the filesystem on
+    /// every draw, so a node struct would be a second copy of the disk that has to be kept in
+    /// step with it. Which folders are open is the only part the view owns.
+    pub expanded: std::collections::BTreeSet<std::path::PathBuf>,
+    /// Files ticked in the storage browser, for importing several at once.
+    pub storage_selection: std::collections::BTreeSet<std::path::PathBuf>,
 }
 
 impl Default for MediaPageState {
@@ -84,6 +92,8 @@ impl Default for MediaPageState {
             filter: PoolFilter::default(),
             show_storage: true,
             show_metadata: true,
+            expanded: std::collections::BTreeSet::new(),
+            storage_selection: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -108,21 +118,7 @@ impl MediaPageState {
     }
 }
 
-/// One directory the project's media actually came from.
-///
-/// bay has no folder hierarchy in the project format, and inventing one here would be a
-/// directory tree nobody created — the same trap `view_model::MediaFolder` names. What the page
-/// *can* show honestly is where the files are: the storage tree is derived from the paths.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageFolder {
-    /// The directory, as it is on disk.
-    pub path: String,
-    /// Its last component — what the row is labelled.
-    pub label: String,
-    pub count: usize,
-}
-
-/// The directory part of a media path, or `""` for a bare filename.
+/// The directory a file sits in, as it is on disk. The key `PoolFilter::Folder` matches on.
 fn parent_folder(path: &str) -> String {
     std::path::Path::new(path)
         .parent()
@@ -130,30 +126,13 @@ fn parent_folder(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The last component of a directory, which is what a tree row shows. Falls back to the whole
-/// path, because "/" and "" have no last component and an empty row is unreadable.
+/// A folder's last component, for a filter chip that has to fit in one.
 fn folder_label(folder: &str) -> &str {
     std::path::Path::new(folder)
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
         .unwrap_or(if folder.is_empty() { "—" } else { folder })
-}
-
-/// The directories this project's media came from, alphabetically, with their counts.
-pub fn storage_folders(assets: &[MediaAsset]) -> Vec<StorageFolder> {
-    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for asset in assets {
-        *counts.entry(parent_folder(&asset.path)).or_default() += 1;
-    }
-    counts
-        .into_iter()
-        .map(|(path, count)| StorageFolder {
-            label: folder_label(&path).to_string(),
-            path,
-            count,
-        })
-        .collect()
 }
 
 /// What one metadata row can say.
@@ -518,11 +497,152 @@ impl EditorView {
             .children(state.show_metadata.then(|| self.media_metadata(cx)))
     }
 
-    /// The storage tree: the directories this project's media actually came from.
-    fn media_storage(&self, cx: &mut gpui::Context<Self>) -> Div {
-        let assets = &self.editor.project().media;
-        let folders = storage_folders(assets);
+    /// One row of the storage browser: a folder that expands, or a file that can be ticked.
+    ///
+    /// Built recursively so an expanded folder's children are drawn under it at a deeper indent.
+    /// The recursion is bounded by what is *expanded*, not by the depth of the disk, so the cost
+    /// is the number of visible rows and a folder nobody opened is one `read_dir` that never
+    /// happens.
+    fn storage_rows(
+        &self,
+        entries: &[bay_core::project::storage::StorageEntry],
+        depth: usize,
+        rows: &mut Vec<gpui::AnyElement>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        // A guard against a filesystem that is deeper than anyone means to browse, and against a
+        // hard link cycle that `read_dir`'s symlink skip does not catch.
+        const MAX_DEPTH: usize = 12;
+        if depth > MAX_DEPTH {
+            return;
+        }
         let state = self.media_state();
+        for entry in entries {
+            let open = entry.is_dir && state.expanded.contains(&entry.path);
+            let ticked = !entry.is_dir && state.storage_selection.contains(&entry.path);
+            let path = entry.path.clone();
+            let is_dir = entry.is_dir;
+            let name = entry.name.clone();
+
+            let mut row = div()
+                .id(SharedString::from(format!(
+                    "storage-{}",
+                    entry.path.display()
+                )))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .pl(px(6.0 + depth as f32 * 12.0))
+                .pr(px(6.0))
+                .py(px(3.0))
+                .rounded(px(4.0))
+                .bg(rgb(if ticked {
+                    theme::SELECTED
+                } else {
+                    theme::PANEL
+                }))
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(theme::HOVER)))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(10.0))
+                        .text_xs()
+                        .text_color(rgb(theme::FAINT))
+                        // A file gets a blank of the same width, so names line up with the
+                        // folders above them instead of stepping left by a glyph.
+                        .child(if is_dir {
+                            if open {
+                                "▾"
+                            } else {
+                                "▸"
+                            }
+                        } else {
+                            " "
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_xs()
+                        .text_color(rgb(if ticked || is_dir {
+                            theme::TEXT
+                        } else {
+                            theme::MUTED
+                        }))
+                        .overflow_hidden()
+                        .child(Self::shared(name.clone())),
+                )
+                .on_click(cx.listener({
+                    let path = path.clone();
+                    move |this, _event, _window, cx| {
+                        let state = this.media_state_mut();
+                        if is_dir {
+                            // Collapsing forgets the branch, not the whole tree: paths under it
+                            // stay in `expanded`, so re-opening a folder shows it as it was.
+                            if !state.expanded.remove(&path) {
+                                state.expanded.insert(path.clone());
+                            }
+                            // Opening a folder also narrows the pool to what has been imported
+                            // *from* it, which is what Resolve does — and it is what keeps
+                            // `PoolFilter::Folder` reachable. The old derived-folder list was its
+                            // only setter, so replacing that panel would otherwise have left the
+                            // variant settable from tests and nowhere else.
+                            state.filter = PoolFilter::Folder(path.to_string_lossy().into_owned());
+                        } else if !state.storage_selection.remove(&path) {
+                            state.storage_selection.insert(path.clone());
+                        }
+                        cx.notify();
+                    }
+                }));
+
+            // A file is draggable into the pool and onto the timeline, which is what Resolve's
+            // Media Storage is *for*. It carries the same payload a pool tile does, so every drop
+            // target that already accepts a tile accepts this without knowing where it came from.
+            if !is_dir {
+                let drag = super::timeline::MediaDrag {
+                    media_id: String::new(),
+                    name: name.clone(),
+                    path: path.to_string_lossy().into_owned(),
+                    duration_seconds: None,
+                };
+                row = row.on_drag(drag, |drag, _offset, _window, cx| {
+                    // No poster: a file on disk has not been decoded, and decoding one to
+                    // dress a drag would spawn ffmpeg on the pointer path.
+                    cx.new(|_| super::timeline::MediaDragChip::new(drag.name.clone().into(), None))
+                });
+            }
+
+            rows.push(row.into_any_element());
+
+            if open {
+                let children = bay_core::project::storage::read_dir(&entry.path);
+                self.storage_rows(&children, depth + 1, rows, cx);
+            }
+        }
+    }
+
+    /// Media Storage: a browser for the disk, not a view of what is already imported.
+    ///
+    /// This used to list folders derived from the paths of assets already in the pool, which is a
+    /// view of the pool wearing a browser's clothes — there was nothing to navigate to and nothing
+    /// to discover, so the only way to find a file was the Import dialog. Resolve's Media Storage
+    /// is a filesystem tree you expand and drag out of, and that is what this is now.
+    ///
+    /// The tree is read from disk on every draw and nothing is cached. That is deliberate: a
+    /// cached tree is a second copy of the filesystem that goes stale the moment anything outside
+    /// bay writes a file, and the cost is bounded by what is *visible* — one `read_dir` per open
+    /// folder, not a walk. `MediaPageState` owns only which folders are open and which files are
+    /// ticked.
+    fn media_storage(&self, cx: &mut gpui::Context<Self>) -> Div {
+        let state = self.media_state();
+        let roots = bay_core::project::storage::roots();
+        let ticked = state.storage_selection.len();
+
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        self.storage_rows(&roots, 0, &mut rows, cx);
 
         let mut tree = div()
             .id("media-storage-tree")
@@ -533,51 +653,14 @@ impl EditorView {
             .gap(px(1.0))
             .overflow_y_scroll();
 
-        if folders.is_empty() {
+        if rows.is_empty() {
             tree = tree.child(widgets::note(
-                "Nothing imported yet. Import Media adds a file to the pool; every other page \
-                 browses what lands here.",
+                "No media folders found. bay looks in Desktop, Movies, Downloads, Pictures, \
+                 Documents and /Volumes.",
             ));
         }
-
-        for folder in &folders {
-            let on = state.filter == PoolFilter::Folder(folder.path.clone());
-            let path = folder.path.clone();
-            tree = tree.child(
-                div()
-                    .id(SharedString::from(format!("storage-{}", folder.path)))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.0))
-                    .px(px(6.0))
-                    .py(px(4.0))
-                    .rounded(px(4.0))
-                    .bg(rgb(if on { theme::SELECTED } else { theme::PANEL }))
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(theme::HOVER)))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_xs()
-                            .text_color(rgb(theme::FAINT))
-                            .child("▸"),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_xs()
-                            .text_color(rgb(if on { theme::TEXT } else { theme::MUTED }))
-                            .overflow_hidden()
-                            .child(Self::shared(folder.label.clone())),
-                    )
-                    .child(widgets::note(folder.count.to_string()))
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.media_state_mut().filter = PoolFilter::Folder(path.clone());
-                        cx.notify();
-                    })),
-            );
+        for row in rows {
+            tree = tree.child(row);
         }
 
         div()
@@ -593,9 +676,65 @@ impl EditorView {
             .overflow_hidden()
             .child(widgets::section("MEDIA STORAGE"))
             .child(tree)
+            .child(
+                widgets::row()
+                    .gap(px(6.0))
+                    .child(
+                        widgets::pressable(
+                            widgets::ButtonKind::Normal,
+                            widgets::button_face(widgets::ButtonKind::Normal, ticked > 0)
+                                .id("storage-import")
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .text_xs()
+                                .child(Self::shared(if ticked > 0 {
+                                    format!("Import {ticked}")
+                                } else {
+                                    "Import".to_string()
+                                })),
+                        )
+                        .cursor_pointer()
+                        .on_click(cx.listener(
+                            |this, _event, _window, cx| {
+                                let picked: Vec<std::path::PathBuf> = this
+                                    .media_state()
+                                    .storage_selection
+                                    .iter()
+                                    .cloned()
+                                    .collect();
+                                if picked.is_empty() {
+                                    return;
+                                }
+                                this.import_paths(picked);
+                                this.media_state_mut().storage_selection.clear();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .children((ticked > 0).then(|| {
+                        widgets::pressable(
+                            widgets::ButtonKind::Normal,
+                            widgets::button_face(widgets::ButtonKind::Normal, true)
+                                .id("storage-clear")
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .text_xs()
+                                .child("Clear"),
+                        )
+                        .cursor_pointer()
+                        .on_click(cx.listener(
+                            |this, _event, _window, cx| {
+                                this.media_state_mut().storage_selection.clear();
+                                cx.notify();
+                            },
+                        ))
+                    })),
+            )
             .child(widgets::note(
-                "Folders come from where the files are on disk. bay's project format has no \
-                 folder hierarchy of its own.",
+                "Click a folder to open it, a file to tick it. Drag a file straight onto the \
+                 timeline, or tick several and press Import.",
             ))
     }
 
@@ -1483,6 +1622,83 @@ fn plural_assets(count: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The storage browser reads the disk, not the pool.
+    ///
+    /// The panel it replaced derived its folders from the paths of assets *already imported*,
+    /// which made it a view of the pool wearing a browser's clothes: there was nothing to
+    /// navigate to and nothing to discover, so the only route to a file was the Import dialog.
+    #[gpui::test]
+    fn the_storage_browser_lists_the_disk_not_the_imported_assets(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("bay-browser-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        std::fs::write(dir.join("unimported.mp4"), b"x").expect("fixture");
+
+        let entries = bay_core::project::storage::read_dir(&dir);
+        assert_eq!(
+            entries.len(),
+            1,
+            "the browser did not see a file that was never imported"
+        );
+        assert_eq!(entries[0].name, "unimported.mp4");
+
+        // And the pool, which is what the old panel listed, knows nothing about it.
+        let view = cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        });
+        view.update(cx, |this, _| {
+            assert!(
+                !this
+                    .editor
+                    .project()
+                    .media
+                    .iter()
+                    .any(|asset| asset.path.contains("unimported.mp4")),
+                "the fixture was somehow already imported"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Expanding is a set of paths, so collapsing a folder does not forget what was open inside
+    /// it — re-opening a branch shows it as it was left.
+    #[test]
+    fn collapsing_a_folder_keeps_the_state_of_what_was_open_inside_it() {
+        let mut state = MediaPageState::default();
+        let parent = std::path::PathBuf::from("/footage");
+        let child = std::path::PathBuf::from("/footage/day-1");
+
+        state.expanded.insert(parent.clone());
+        state.expanded.insert(child.clone());
+        state.expanded.remove(&parent);
+
+        assert!(!state.expanded.contains(&parent));
+        assert!(
+            state.expanded.contains(&child),
+            "collapsing a parent forgot the child, so re-opening it would come back flat"
+        );
+    }
+
+    /// Ticking files is how several are imported at once — the multi-select the Import dialog
+    /// could only do through the OS panel.
+    #[test]
+    fn ticking_files_accumulates_a_multi_file_import() {
+        let mut state = MediaPageState::default();
+        let a = std::path::PathBuf::from("/footage/a.mp4");
+        let b = std::path::PathBuf::from("/footage/b.mp4");
+
+        state.storage_selection.insert(a.clone());
+        state.storage_selection.insert(b.clone());
+        assert_eq!(state.storage_selection.len(), 2);
+
+        // Ticking again unticks, or a mis-click cannot be taken back.
+        state.storage_selection.remove(&a);
+        assert_eq!(state.storage_selection.len(), 1);
+        assert!(state.storage_selection.contains(&b));
+    }
+
     use super::*;
 
     fn asset(id: &str, path: &str) -> MediaAsset {
@@ -1584,32 +1800,6 @@ mod tests {
         assert!(metadata_rows(&asset("b", "/f/b.mp4"))
             .iter()
             .any(|row| row.label == "Loudness"));
-    }
-
-    /// The storage tree is derived from where the files are, not from a hierarchy nobody made.
-    #[test]
-    fn storage_folders_come_from_the_paths() {
-        let assets = [
-            asset("a", "/Volumes/Card/DCIM/a.mp4"),
-            asset("b", "/Volumes/Card/DCIM/b.mp4"),
-            asset("c", "/Users/me/Music/c.wav"),
-        ];
-        let folders = storage_folders(&assets);
-        assert_eq!(folders.len(), 2);
-        assert_eq!(folders[0].path, "/Users/me/Music");
-        assert_eq!(folders[0].label, "Music");
-        assert_eq!(folders[0].count, 1);
-        assert_eq!(folders[1].label, "DCIM");
-        assert_eq!(folders[1].count, 2);
-    }
-
-    /// A bare filename has no directory, and the row for it must still be readable.
-    #[test]
-    fn a_pathless_asset_still_gets_a_row() {
-        let folders = storage_folders(&[asset("a", "a.mp4")]);
-        assert_eq!(folders.len(), 1);
-        assert_eq!(folders[0].path, "");
-        assert_eq!(folders[0].label, "—");
     }
 
     #[test]

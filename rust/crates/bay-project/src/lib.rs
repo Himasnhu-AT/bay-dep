@@ -31,6 +31,7 @@ mod refs;
 mod scene;
 mod settings;
 pub mod shelf;
+pub mod storage;
 pub mod templates;
 mod track;
 
