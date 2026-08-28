@@ -7,11 +7,41 @@ use super::*;
 
 impl EditorView {
     /// A cheap signature of everything that affects the composited preview.
+    /// The playhead the preview draws, quantised to the project's frame rate.
+    ///
+    /// **The picture changes once per frame, not once per tick, and the difference is 4x the
+    /// GPU work on a 120 Hz display.** `MediaTime` counts 120,000 ticks a second, so the raw
+    /// playhead is a different number on every display refresh; hashing it into the signature
+    /// meant a full composite, readback, `RenderImage` and atlas upload 120 times a second to
+    /// show a 24 or 30 fps source — measured at `pictures 120.0/s` against
+    /// `30.0 new frames/s`, with three composites in four producing a picture identical to the
+    /// last one.
+    ///
+    /// It is worse than wasteful when the playhead is over empty timeline. Nothing bounds a
+    /// project's duration to its video: one long audio clip made the timeline 51 minutes, and
+    /// playing past the last picture composited an empty frame 120 times a second for as long
+    /// as the transport ran, with no clip on screen to show for it.
+    ///
+    /// Quantising is also more correct than the alternative of throttling. Two playhead
+    /// positions inside the same frame *are* the same picture — that is what a frame is — and
+    /// the timeline already quantises scrubs and drops the same way (`geometry::quantize_to_frame`).
+    /// The model playhead is untouched, so the timecode still reads continuously.
+    pub(super) fn preview_playhead(&self) -> MediaTime {
+        crate::geometry::quantize_to_frame(
+            self.editor.playhead(),
+            self.editor.project().settings.fps,
+        )
+    }
+
     pub(super) fn preview_signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // The *drawn* playhead, so two ticks inside one frame hash the same and the second one
+        // returns early instead of re-compositing an identical picture.
+        self.preview_playhead().as_ticks().hash(&mut hasher);
+        // Element activity still uses the true playhead: a clip boundary is not required to land
+        // on a frame edge, and rounding it here would flicker the layer at the boundary.
         let playhead = self.editor.playhead();
-        playhead.as_ticks().hash(&mut hasher);
         self.editor.active_scene_id().hash(&mut hasher);
         if let bay_core::Background::Color { color } = &self.editor.project().settings.background {
             color.hash(&mut hasher);
@@ -165,7 +195,10 @@ impl EditorView {
             return;
         }
 
-        let playhead = self.editor.playhead();
+        // Composite the frame the signature agreed on, not the raw tick that happened to
+        // trigger it — otherwise the same frame index draws a fractionally different picture
+        // depending on when the display refreshed.
+        let playhead = self.preview_playhead();
         let background = self.editor.project().settings.background.clone();
         // Disjoint field borrows: &mut self.preview and &self.editor.
         let renderer = self.preview.as_mut().unwrap();
@@ -274,5 +307,129 @@ impl EditorView {
                         }
                     ))),
             )
+    }
+}
+
+#[cfg(test)]
+mod preview_rate_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn view(cx: &mut TestAppContext) -> gpui::Entity<EditorView> {
+        cx.update(|cx| {
+            let focus = cx.focus_handle();
+            cx.new(|_| EditorView::new(Editor::starter(), focus, None, None))
+        })
+    }
+
+    /// Two playhead positions inside one frame are one picture, so they must hash the same.
+    ///
+    /// Without this the preview composites at the display's refresh rate rather than the
+    /// project's frame rate: `MediaTime` has 120,000 ticks per second, so the raw playhead
+    /// differs on every refresh and every refresh paid for a full composite, readback and atlas
+    /// upload. Measured at 120 pictures/s for a source producing 30 new frames/s.
+    #[gpui::test]
+    fn two_ticks_inside_one_frame_are_one_picture(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            let fps = this.editor.project().settings.fps;
+            let frame = crate::geometry::time_of_frame(10, fps);
+
+            this.editor.seek(frame);
+            let at_frame = this.preview_signature();
+
+            // One tick later — the same frame by any definition, since a frame at even 120 fps
+            // is 1,000 ticks wide.
+            this.editor
+                .seek(MediaTime::from_ticks(frame.as_ticks() + 1));
+            let a_tick_later = this.preview_signature();
+
+            assert_eq!(
+                at_frame, a_tick_later,
+                "a playhead one tick along re-composited an identical picture"
+            );
+        });
+    }
+
+    /// The saving must not come from the preview refusing to advance at all: the next frame is a
+    /// different picture and has to hash differently.
+    #[gpui::test]
+    fn the_next_frame_is_a_different_picture(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            let fps = this.editor.project().settings.fps;
+
+            this.editor.seek(crate::geometry::time_of_frame(10, fps));
+            let tenth = this.preview_signature();
+            this.editor.seek(crate::geometry::time_of_frame(11, fps));
+            let eleventh = this.preview_signature();
+
+            assert_ne!(
+                tenth, eleventh,
+                "consecutive frames hash the same, so the preview would never update"
+            );
+        });
+    }
+
+    /// The saving, counted rather than asserted: one second of playhead advanced at a 120 Hz
+    /// display rate must produce one composite per *source* frame, not one per refresh.
+    ///
+    /// This is the number the frame-time probe reported as `pictures 120.0/s` against
+    /// `30.0 new frames/s`. Three composites in four — each a full GPU readback, a fresh
+    /// `RenderImage` and an atlas tile — produced a picture identical to the one before it.
+    #[gpui::test]
+    fn a_second_of_playback_composites_once_per_frame_not_once_per_refresh(
+        cx: &mut TestAppContext,
+    ) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            let fps = this.editor.project().settings.fps;
+            let frames_per_second = crate::geometry::frame_of(
+                MediaTime::from_seconds_f64(1.0).expect("one second is a valid time"),
+                fps,
+            );
+
+            // Walk a second of timeline the way a 120 Hz display would sample it.
+            const REFRESHES: i64 = 120;
+            let second = TICKS_PER_SECOND;
+            let mut signatures = std::collections::HashSet::new();
+            for refresh in 0..REFRESHES {
+                this.editor
+                    .seek(MediaTime::from_ticks(refresh * second / REFRESHES));
+                signatures.insert(this.preview_signature());
+            }
+
+            assert!(
+                signatures.len() as i64 <= frames_per_second + 1,
+                "a second of playback wanted {} composites for a {frames_per_second} fps project \
+                 — the preview is drawing at the refresh rate, not the frame rate",
+                signatures.len()
+            );
+            assert!(
+                signatures.len() > 1,
+                "the whole second collapsed to {} composite(s); the preview would not move",
+                signatures.len()
+            );
+        });
+    }
+
+    /// The composite must draw the frame the signature agreed on. If the signature quantises and
+    /// the composite does not, one frame index draws a slightly different picture depending on
+    /// when the display happened to refresh.
+    #[gpui::test]
+    fn the_drawn_playhead_is_the_one_the_signature_agreed_on(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            let fps = this.editor.project().settings.fps;
+            let frame = crate::geometry::time_of_frame(10, fps);
+            this.editor
+                .seek(MediaTime::from_ticks(frame.as_ticks() + 7));
+
+            assert_eq!(
+                this.preview_playhead(),
+                frame,
+                "the drawn playhead is not quantised to the frame the signature hashed"
+            );
+        });
     }
 }

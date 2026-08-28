@@ -181,6 +181,16 @@ the MCP server. Logic is never duplicated between front ends.
   because it counted *ticks*, not pictures. Use `EditorView::request_frame`, which is
   `window.request_animation_frame()` without the `current_view()` unwrap that panics under
   `VisualTestContext::draw`.
+- **The preview draws at the project's frame rate, not the display's refresh rate.** The composite
+  signature hashes `preview_playhead()` — the playhead quantised by
+  `geometry::quantize_to_frame` — and `submit_composite` is handed the same value. Hashing raw
+  `MediaTime` ticks (120,000 a second) makes every display refresh a new signature, so a 120 Hz
+  screen paid for a full composite, readback, `RenderImage` and atlas tile 120 times a second to
+  show 30 fps of footage: measured at `pictures 120.0/s` against `30.0 new frames/s`, three
+  composites in four identical to the one before. Two playhead positions inside one frame *are*
+  one picture. Worse when the playhead is past the last clip — nothing bounds a project's duration
+  to its video, so one long audio clip had playback compositing an empty frame 120 times a second
+  for 51 minutes.
 - **A frame-rate probe must count pictures, not ticks.** A render tick that redraws the same
   image is indistinguishable from one that shows a new frame, so "p99 2.05 ms over 120 frames" is
   entirely compatible with a picture updating four times a second. `BAY_UI_FRAMETIME=1` now

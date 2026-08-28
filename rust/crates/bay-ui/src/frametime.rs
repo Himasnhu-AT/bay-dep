@@ -201,6 +201,14 @@ fn report(spans: &mut Spans, elapsed: Duration) {
                 eprintln!(
                     "                       ^ not being asked to draw often enough — this is frame pacing, not decode"
                 );
+            } else if play.decoded == 0 && play.head_start <= 0 {
+                // Not a fault. The decoder reached the end of its clip and the window drained —
+                // visible in the logs as head-start walking 96, 61, 31, 1, 0 with `decoded 0`.
+                // Reporting it as a problem sends someone looking for a stall in a clip that
+                // simply ended.
+                eprintln!(
+                    "                       ^ end of clip — the decoder finished and the window drained"
+                );
             } else {
                 eprintln!(
                     "                       ^ drawing often and decoding fine, but few new frames — check the source rate"

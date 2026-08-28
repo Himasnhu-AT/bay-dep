@@ -440,6 +440,29 @@ Pacing it at 60 Hz is deliberate. Unthrottled the same loop ran **5.8 million co
 second** and reported 98% repeated frames — true, useless, and it drowns the two counters
 (`starved`, `reseek`) that would name a real fault.
 
+### The preview draws at the frame rate, not the refresh rate
+
+Once playback was smooth, the probe reported the next thing wrong with it:
+
+```text
+ticks 120.0/s · pictures 120.0/s
+playback: 30.0 new frames/s · served 120 repeat 90 starved 0 reseek 0
+```
+
+120 composites a second to show 30 new frames — three in four producing a picture identical to
+the one before, each paying a full GPU readback, a fresh `RenderImage` and an atlas tile. The
+cause was the composite signature hashing raw `MediaTime` ticks, of which there are 120,000 a
+second, so every display refresh looked like a new scene.
+
+`preview_playhead()` quantises to the project's frame rate and the composite is handed the same
+value. Two playhead positions inside one frame *are* one picture. Counted, not asserted — the test
+`a_second_of_playback_composites_once_per_frame_not_once_per_refresh` walks a second of timeline
+at 120 Hz and reports **120 distinct composites before, 30 after** on a 30 fps project.
+
+The waste was worse past the last clip. Nothing bounds a project's duration to its video: one
+51-minute audio clip meant playing past the last picture composited an *empty* frame 120 times a
+second for as long as the transport ran.
+
 ### What the numbers ruled out, and what actually caused the lag
 
 Every layer measured well, and each measurement removed a suspect:
