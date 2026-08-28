@@ -929,18 +929,45 @@ impl EditorView {
             } else {
                 None
             };
-            let body = match waveform {
-                Some(peaks) => base_body
+            // A video clip with a decoded strip draws its own frames; audio draws peaks;
+            // anything else is a label on a coloured bar.
+            let cells = if block.kind_label == "Video" {
+                block
+                    .media_id
+                    .as_ref()
+                    .and_then(|media| self.filmstrip_cells(media, width))
+                    .filter(|cells| !cells.is_empty())
+            } else {
+                None
+            };
+            let body = match (waveform, cells) {
+                (Some(peaks), _) => {
+                    base_body
+                        .flex()
+                        .flex_row()
+                        .items_end()
+                        .children(peaks.iter().map(|p| {
+                            div()
+                                .w(px(2.0))
+                                .h(px((p * (inner_height - 6.0)).max(1.0)))
+                                .bg(rgb(theme::ACCENT))
+                        }))
+                }
+                (None, Some(cells)) => base_body
+                    // No horizontal padding under a filmstrip: `px_2` would leave two bars of
+                    // the old flat fill at the ends, which reads as the strip failing to load.
+                    .px_0()
                     .flex()
                     .flex_row()
-                    .items_end()
-                    .children(peaks.iter().map(|p| {
+                    .items_center()
+                    .children(cells.into_iter().map(|image| {
                         div()
-                            .w(px(2.0))
-                            .h(px((p * (inner_height - 6.0)).max(1.0)))
-                            .bg(rgb(theme::ACCENT))
+                            .flex_1()
+                            .h(px(inner_height))
+                            .overflow_hidden()
+                            .child(img(ImageSource::Render(image)).h(px(inner_height)).w_full())
                     })),
-                None => base_body
+                (None, None) => base_body
                     .text_xs()
                     .text_color(rgb(theme::TEXT))
                     .child(Self::shared(block.label.clone())),

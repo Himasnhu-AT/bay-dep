@@ -1857,6 +1857,8 @@ impl EditorView {
             .collect();
         for (id, path) in assets {
             self.posters.request(&id, Some(path.as_str()));
+            self.strips.request(&id, Some(path.as_str()));
+            self.upload_strip(&id);
             if self.poster_images.contains_key(&id) {
                 continue;
             }
@@ -1884,5 +1886,64 @@ impl EditorView {
     /// The uploaded thumbnail for `media_id`, if one has landed. A pure lookup.
     pub(super) fn poster_image(&self, media_id: &str) -> Option<Arc<RenderImage>> {
         self.poster_images.get(media_id).map(Arc::clone)
+    }
+
+    /// Upload a decoded filmstrip's cells, once.
+    ///
+    /// Same reasoning as the poster: the channel swap is per cell and must not happen per frame,
+    /// and doing it in the mutable pass keeps the element tree immutable. `PosterFrame` is RGBA
+    /// from ffmpeg; gpui wants BGRA.
+    fn upload_strip(&mut self, media_id: &str) {
+        if self.strip_images.contains_key(media_id) {
+            return;
+        }
+        let Some(frames) = self.strips.strip(media_id) else {
+            return;
+        };
+        let images: Vec<Arc<RenderImage>> = frames
+            .iter()
+            .filter_map(|frame| {
+                let mut bgra = frame.rgba.clone();
+                for texel in bgra.chunks_exact_mut(4) {
+                    texel.swap(0, 2);
+                }
+                let buffer = image::RgbaImage::from_raw(frame.width, frame.height, bgra)?;
+                Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+            })
+            .collect();
+        if !images.is_empty() {
+            self.strip_images.insert(media_id.to_string(), images);
+        }
+    }
+
+    /// The cells to draw across a clip `width` pixels wide.
+    ///
+    /// How many cells fit is decided by the block's width; *which* cells is decided by the
+    /// clip's position in its source. One cell per ~64px, so a short clip shows one frame rather
+    /// than twelve slivers of nothing.
+    pub(super) fn filmstrip_cells(
+        &self,
+        media_id: &str,
+        width: f32,
+    ) -> Option<Vec<Arc<RenderImage>>> {
+        let cells = self.strip_images.get(media_id)?;
+        if cells.is_empty() || !width.is_finite() || width <= 0.0 {
+            return None;
+        }
+        let wanted = ((width / 64.0).round() as usize).clamp(1, cells.len());
+        Some(
+            (0..wanted)
+                .map(|i| {
+                    let fraction = if wanted > 1 {
+                        i as f32 / (wanted - 1) as f32
+                    } else {
+                        0.0
+                    };
+                    let index =
+                        bay_preview::poster::filmstrip_cell(cells.len(), fraction, (0.0, 1.0));
+                    Arc::clone(&cells[index])
+                })
+                .collect(),
+        )
     }
 }

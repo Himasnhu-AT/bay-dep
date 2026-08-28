@@ -3691,6 +3691,12 @@ pub struct PosterFrame {
 /// megabytes rather than a few hundred.
 const POSTER_MAX_W: u32 = 320;
 
+/// The widest a single filmstrip cell is decoded to.
+///
+/// A timeline lane is about 40px tall, so a cell is smaller than a pool tile by an order of
+/// magnitude. Decoding at poster size would be pixels thrown away N times per clip.
+const FILMSTRIP_MAX_W: u32 = 96;
+
 /// Decode a single frame of `path` at `at_seconds`, for a thumbnail.
 ///
 /// Deliberately its own one-shot ffmpeg call rather than a read through the preview cache. The
@@ -3945,4 +3951,67 @@ mod budget_tests {
             );
         }
     }
+}
+
+/// Evenly spaced frames across a clip, for a timeline filmstrip.
+///
+/// **One** ffmpeg process for the whole strip, not one per thumbnail. `decode_args` already asks
+/// for a frame *rate* and a frame *count*, so asking for `count / duration` fps and `count`
+/// frames walks the clip once and hands back frames spread across it. Six separate seeks would
+/// be six spawns, six probes and six pipe setups for the same pixels.
+///
+/// Returns fewer frames than asked for rather than failing, and `None` only when nothing decoded
+/// at all — a short strip is a usable strip.
+pub fn filmstrip(path: &str, count: u32) -> Option<Vec<PosterFrame>> {
+    let count = count.clamp(1, 24);
+    let (natural, rotation, duration_secs) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
+    };
+    if duration_secs <= 0.0 {
+        return poster_frame(path, 0.0).map(|frame| vec![frame]);
+    }
+
+    let mut plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        VIDEO_MEMORY_BUDGET,
+    );
+    // A filmstrip cell is tiny — a timeline lane is ~40px tall. Decoding at preview size would
+    // be ~30x the pixels that ever reach the screen.
+    let scale = (FILMSTRIP_MAX_W as f32 / plan.width as f32).min(1.0);
+    plan.width = (((plan.width as f32 * scale).round() as u32).max(2) / 2) * 2;
+    plan.height = (((plan.height as f32 * scale).round() as u32).max(2) / 2) * 2;
+    plan.fps = (count as f64 / duration_secs) as f32;
+    plan.max_frames = Some(count);
+
+    let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+        .ok()?
+        .args(decode_args(path, &plan, None))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let frame_size = (plan.width * plan.height * 4) as usize;
+    if frame_size == 0 {
+        return None;
+    }
+    let frames: Vec<PosterFrame> = output
+        .stdout
+        .chunks_exact(frame_size)
+        .map(|chunk| PosterFrame {
+            width: plan.width,
+            height: plan.height,
+            rgba: chunk.to_vec(),
+        })
+        .collect();
+    (!frames.is_empty()).then_some(frames)
 }

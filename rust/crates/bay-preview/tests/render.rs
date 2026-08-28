@@ -4449,3 +4449,63 @@ fn a_poster_seek_past_the_end_still_returns_a_frame() {
         "a seek past the end must clamp into the file, not return nothing"
     );
 }
+
+/// A filmstrip walks the clip once and comes back with distinct pictures.
+///
+/// Two claims, and the second is the one that matters. Frame count alone would pass if ffmpeg
+/// handed back the same frame six times — which is exactly what a wrong `-r` produces, and it
+/// would look like a working filmstrip of a frozen clip.
+#[test]
+fn a_filmstrip_returns_distinct_frames_across_the_clip() {
+    let dir = std::env::temp_dir().join("bay-filmstrip");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("strip.mp4");
+    // `testsrc` counts up on screen, so every frame genuinely differs from every other.
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x180:rate=10:duration=6",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the filmstrip test clip") {
+        return;
+    }
+
+    let Some(frames) = bay_preview::filmstrip(path.to_str().unwrap(), 6) else {
+        if !require_ffmpeg() {
+            return;
+        }
+        panic!("ffmpeg is available but no filmstrip came back");
+    };
+
+    assert!(frames.len() > 1, "a strip of one is not a strip");
+    for frame in &frames {
+        assert_eq!(
+            frame.rgba.len() as u32,
+            frame.width * frame.height * 4,
+            "each cell must match the size it claims"
+        );
+        assert!(
+            frame.width <= 96,
+            "a lane cell wider than 96px is pixels thrown away, got {}",
+            frame.width
+        );
+    }
+
+    // The point of a strip: the cells are different moments, not one moment repeated.
+    assert_ne!(
+        frames.first().expect("non-empty").rgba,
+        frames.last().expect("non-empty").rgba,
+        "first and last cell are identical — the strip is one frame repeated"
+    );
+}

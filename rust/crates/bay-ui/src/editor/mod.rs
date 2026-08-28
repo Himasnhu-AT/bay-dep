@@ -412,6 +412,9 @@ pub struct EditorView {
     /// `RenderImage` is — and because the conversion costs a channel swap that should happen
     /// once per asset, not once per frame.
     posters: bay_preview::poster::PosterCache,
+    /// Frames along a timeline clip, decoded once per media and uploaded one image per cell.
+    strips: bay_preview::poster::FilmstripCache,
+    strip_images: std::collections::BTreeMap<String, Vec<Arc<RenderImage>>>,
     poster_images: std::collections::BTreeMap<String, Arc<RenderImage>>,
     /// Where the resizable split between left panel, viewer and inspector keeps its sizes.
     ///
@@ -519,6 +522,8 @@ impl EditorView {
             panel: Panel::Media,
             media_width: DEFAULT_PANEL_WIDTH,
             posters: bay_preview::poster::PosterCache::new(),
+            strips: bay_preview::poster::FilmstripCache::new(),
+            strip_images: std::collections::BTreeMap::new(),
             poster_images: std::collections::BTreeMap::new(),
             panel_resize: None,
             collapsed_folders: std::collections::BTreeSet::new(),
@@ -1274,7 +1279,7 @@ impl EditorView {
         self.release_retired_images(window);
         self.request_waveforms();
         self.request_posters();
-        if self.posters.has_pending() {
+        if self.posters.has_pending() || self.strips.has_pending() {
             // A decode landing on a worker changes nothing the signature can see, so without
             // this the picture would not appear until something unrelated repainted.
             //

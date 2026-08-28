@@ -16,6 +16,11 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use crate::PosterFrame;
 
+/// How many cells a filmstrip asks for. Fixed rather than derived from the block's pixel width:
+/// the cache is keyed by media, and re-decoding every time a clip is resized or the timeline is
+/// zoomed would spawn ffmpeg on a drag.
+pub const FILMSTRIP_CELLS: u32 = 12;
+
 /// How a poster is produced. Injectable so a test can observe *when and where* decoding runs
 /// without needing ffmpeg — the shape of the work is what matters, not the picture.
 pub type PosterDecoder = Arc<dyn Fn(&str, f64) -> Option<PosterFrame> + Send + Sync>;
@@ -238,5 +243,154 @@ mod tests {
             *at.lock().expect("not poisoned") > 0.0,
             "a thumbnail taken at 0.0s is a black rectangle on most real footage"
         );
+    }
+}
+
+/// Evenly spaced frames per media asset, for the timeline's clip blocks.
+///
+/// Same three states and same reasoning as [`PosterCache`] — including `Failed` being
+/// remembered, which matters more here: a filmstrip is asked for by every visible clip on every
+/// frame, so a file that cannot decode would otherwise be a steady stream of ffmpeg processes.
+pub struct FilmstripCache {
+    entries: HashMap<String, StripState>,
+    decode: FilmstripDecoder,
+}
+
+/// How a strip is produced. Injectable for the same reason [`PosterDecoder`] is.
+pub type FilmstripDecoder = Arc<dyn Fn(&str, u32) -> Option<Vec<PosterFrame>> + Send + Sync>;
+
+enum StripState {
+    Pending(Receiver<Option<Vec<PosterFrame>>>),
+    Ready(Arc<Vec<PosterFrame>>),
+    Failed,
+}
+
+impl Default for FilmstripCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FilmstripCache {
+    pub fn new() -> Self {
+        Self::with_decoder(Arc::new(crate::filmstrip))
+    }
+
+    pub fn with_decoder(decode: FilmstripDecoder) -> Self {
+        Self {
+            entries: HashMap::new(),
+            decode,
+        }
+    }
+
+    /// Queue a strip for `media_id` if one is not already made or failed, and poll it.
+    pub fn request(&mut self, media_id: &str, path: Option<&str>) {
+        match self.entries.get(media_id) {
+            None => {
+                let Some(path) = path else {
+                    self.entries
+                        .insert(media_id.to_string(), StripState::Failed);
+                    return;
+                };
+                let (tx, rx) = channel();
+                let owned = path.to_string();
+                let decode = Arc::clone(&self.decode);
+                std::thread::spawn(move || {
+                    let _ = tx.send(decode(&owned, FILMSTRIP_CELLS));
+                });
+                self.entries
+                    .insert(media_id.to_string(), StripState::Pending(rx));
+            }
+            Some(StripState::Pending(rx)) => match rx.try_recv() {
+                Ok(Some(frames)) => {
+                    self.entries
+                        .insert(media_id.to_string(), StripState::Ready(Arc::new(frames)));
+                }
+                Ok(None) | Err(TryRecvError::Disconnected) => {
+                    self.entries
+                        .insert(media_id.to_string(), StripState::Failed);
+                }
+                Err(TryRecvError::Empty) => {}
+            },
+            Some(StripState::Ready(_)) | Some(StripState::Failed) => {}
+        }
+    }
+
+    /// The strip for one media id, if its decode has finished.
+    pub fn strip(&self, media_id: &str) -> Option<Arc<Vec<PosterFrame>>> {
+        match self.entries.get(media_id) {
+            Some(StripState::Ready(frames)) => Some(Arc::clone(frames)),
+            _ => None,
+        }
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.entries
+            .values()
+            .any(|state| matches!(state, StripState::Pending(_)))
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+/// Which cached cell shows at `fraction` through a clip whose visible source range is
+/// `source_range` of the whole file.
+///
+/// The cache holds cells spread across the **whole source**, but a clip on the timeline usually
+/// shows only part of it. Mapping through the trim range means a trimmed clip draws cells from
+/// the region it actually plays rather than from the start of the file — a clip trimmed to its
+/// last ten seconds should not show the first frame.
+///
+/// A narrow trim maps several positions onto one cell, so cells repeat. That is honest: the
+/// cache has no finer picture of that region, and repeating a true frame beats showing a false
+/// one.
+pub fn filmstrip_cell(cells: usize, fraction: f32, source_range: (f32, f32)) -> usize {
+    if cells == 0 {
+        return 0;
+    }
+    let (start, end) = source_range;
+    let fraction = fraction.clamp(0.0, 1.0);
+    let within = if end > start {
+        start + (end - start) * fraction
+    } else {
+        start
+    };
+    ((within.clamp(0.0, 1.0) * cells as f32) as usize).min(cells - 1)
+}
+
+#[cfg(test)]
+mod strip_tests {
+    use super::*;
+
+    /// A clip trimmed to the end of its source must not draw the start of the file.
+    #[test]
+    fn a_trimmed_clip_draws_cells_from_the_part_it_plays() {
+        // Shows the last quarter of the source.
+        let first = filmstrip_cell(12, 0.0, (0.75, 1.0));
+        let last = filmstrip_cell(12, 1.0, (0.75, 1.0));
+        assert!(
+            first >= 9,
+            "the first cell of a clip trimmed to the last quarter must come from there, got {first}"
+        );
+        assert!(last >= first, "the strip must run forwards");
+        assert!(last < 12, "and stay inside the cache");
+    }
+
+    /// An untrimmed clip spans the whole strip.
+    #[test]
+    fn an_untrimmed_clip_uses_the_whole_strip() {
+        assert_eq!(filmstrip_cell(12, 0.0, (0.0, 1.0)), 0);
+        assert_eq!(filmstrip_cell(12, 1.0, (0.0, 1.0)), 11);
+    }
+
+    /// Never indexes past the end, whatever it is handed.
+    #[test]
+    fn nonsense_input_stays_in_bounds() {
+        assert_eq!(filmstrip_cell(0, 0.5, (0.0, 1.0)), 0);
+        assert!(filmstrip_cell(12, f32::NAN, (0.0, 1.0)) < 12);
+        assert!(filmstrip_cell(12, 5.0, (0.0, 1.0)) < 12);
+        assert!(filmstrip_cell(12, 0.5, (1.0, 0.0)) < 12);
     }
 }
