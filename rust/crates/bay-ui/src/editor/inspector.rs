@@ -733,35 +733,30 @@ impl EditorView {
                         .child(controls),
                 );
             }
-            // One add-button per supported effect type. What each is born with comes from
-            // `bay_core::blocks::default_effect_params`, not from here — the seed is engine
-            // logic a headless client needs too, and when this view owned its own copy the
-            // same effect arrived with different parameters depending on whether a person
-            // clicked a button or an agent called a tool.
-            let add_effects: [(&'static str, &'static str, &'static str); 5] = [
-                ("add-fx-brightness", "brightness", "+ Bright"),
-                ("add-fx-contrast", "contrast", "+ Contrast"),
-                ("add-fx-saturation", "saturation", "+ Sat"),
-                ("add-fx-blur", "blur", "+ Blur"),
-                ("add-fx-shadow", "drop-shadow", "+ Shadow"),
-            ];
+            // One add-button per effect the palette offers, **derived from the palette** rather
+            // than listed here.
+            //
+            // It used to be a hand-written `[(&str, &str, &str); 5]` and had drifted to 5 of 7:
+            // `lut` was never offered and `balance` (lift-gamma-gain) was added to `blocks.rs`
+            // and not here. Both work — the shader compiles, the MCP tool exposes them, `check`
+            // validates their assets — so this was the inverse of the usual entry in `fixes.md`:
+            // not a control that lies, but a capability with no control at all.
+            //
+            // The comment this replaces already made the right argument for the effect's *seed*
+            // ("when this view owned its own copy the same effect arrived with different
+            // parameters depending on whether a person clicked a button or an agent called a
+            // tool") and then did not carry it through to the *list*, which is precisely why the
+            // list drifted. Going through `apply_block` means a button and a tile now lower to
+            // identical commands by construction, and adding an effect to `blocks.rs` surfaces it
+            // in both places with no second edit.
             let mut add_row = div().flex().flex_row().flex_wrap().gap_1();
-            for (id, effect_type, label) in add_effects {
-                let reference = selected.reference.clone();
-                add_row = add_row.child(self.button(id, label, cx, move |this, _cx| {
-                    this.add_counter += 1;
-                    let effect = bay_core::Effect {
-                        id: format!("fx-{}", this.add_counter),
-                        effect_type: effect_type.into(),
-                        enabled: true,
-                        params: bay_core::blocks::default_effect_params(effect_type),
-                        asset: None,
-                    };
-                    this.editor.execute(Command::AddEffect {
-                        reference: reference.clone(),
-                        effect,
-                    });
-                }));
+            for block in bay_core::blocks::Panel::Effects.blocks() {
+                add_row = add_row.child(self.button(
+                    block.id,
+                    &format!("+ {}", block.label),
+                    cx,
+                    move |this, _cx| this.apply_block(block.id),
+                ));
             }
             body = body.child(add_row);
 
@@ -820,5 +815,64 @@ impl EditorView {
         }
 
         panel.child(body)
+    }
+}
+
+#[cfg(test)]
+mod add_effect_row_tests {
+
+    /// The inspector offers every effect the palette does.
+    ///
+    /// `fixes.md` 14. The row was a hand-written list and had drifted to 5 of 7 — `lut` was never
+    /// offered and `balance` was added to `blocks.rs` and not here, so two working capabilities
+    /// had no button anywhere. Nothing was enforcing the pairing, so it would have drifted again
+    /// on the next effect.
+    ///
+    /// This asserts the *source*, not the rendered tree: the row is now built by iterating
+    /// `Panel::Effects.blocks()`, so what this really guards is that nobody reintroduces a
+    /// literal alongside it. A paint test would pass just as well against a hardcoded list that
+    /// happened to match today.
+    #[test]
+    fn the_inspector_offers_every_effect_the_palette_does() {
+        let palette: Vec<&str> = bay_core::blocks::Panel::Effects
+            .blocks()
+            .iter()
+            .map(|block| block.id)
+            .collect();
+        assert!(
+            palette.len() >= 7,
+            "the effects palette shrank to {} tiles; this test is calibrated against it",
+            palette.len()
+        );
+
+        let source = include_str!("inspector.rs");
+        assert!(
+            source.contains("for block in bay_core::blocks::Panel::Effects.blocks()"),
+            "the add-effect row no longer derives from the palette, so it can drift again"
+        );
+        // The literal that was there before, assembled at runtime so this test's own source does
+        // not contain the needle it searches for — the first version of this assertion matched
+        // itself and failed against correct code.
+        let literal = format!(
+            "[({}, {}, {}); 5]",
+            "&'static str", "&'static str", "&'static str"
+        );
+        assert!(
+            !source.contains(&literal),
+            "a hand-written effect list is back alongside the derived one"
+        );
+    }
+
+    /// Every effect the row offers has to be a block `plan` accepts, or a button lowers to
+    /// `BlockError::UnknownBlock` and reports a failure for something the palette does fine.
+    #[test]
+    fn every_offered_effect_is_a_block_the_engine_can_plan() {
+        for block in bay_core::blocks::Panel::Effects.blocks() {
+            assert!(
+                bay_core::blocks::block(block.id).is_some(),
+                "the inspector would offer {}, which `blocks::block` does not know",
+                block.id
+            );
+        }
     }
 }

@@ -403,6 +403,28 @@ impl GpuContext {
         height: u32,
         label: &'static str,
     ) -> wgpu::Texture {
+        self.create_render_texture_in(width, height, label, self.texture_format)
+    }
+
+    /// A render texture in an **explicitly chosen** format, for a pass whose correctness depends
+    /// on the format rather than merely rendering into whatever the rest of the pipeline uses.
+    ///
+    /// The JFA mask pass is the reason this exists (`fixes.md` 10). Its shaders pack a 16-bit
+    /// coordinate into two 8-bit colour channels and decode it by undoing exactly that, with a
+    /// `> 0.99` sentinel for "no seed". The scheme is correct and tested, and it is a hard
+    /// dependency on an 8-bit unorm target — which those pipelines were inheriting from
+    /// `texture_format()`, the same global accessor everything else uses. A future move to
+    /// `Rgba16Float` would have carried them along silently: still compiling, still running,
+    /// still producing a plausible alpha ramp, with mask distances quietly wrong at the edges.
+    /// That is the hardest class of error to notice, because a feathered mask has no crisp
+    /// reference to disagree with.
+    pub fn create_render_texture_in(
+        &self,
+        width: u32,
+        height: u32,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::Texture {
         self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -413,7 +435,7 @@ impl GpuContext {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: self.texture_format,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::COPY_SRC

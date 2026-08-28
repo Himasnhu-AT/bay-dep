@@ -449,7 +449,20 @@ Found by the agent building the Audio page, on reading the engine it was told to
 Verified when: moving a fader during playback changes what is heard, and a meter reads from a
 running `LevelMeter` rather than a placeholder.
 
-### 14. The inspector's add-effect row is a hand-written list, and it is now 5 of 7
+### 14. The inspector's add-effect row is a hand-written list — FIXED 2026-08-28
+
+The row iterates `Panel::Effects.blocks()` and lowers each button through `apply_block`, the same
+path the palette tile takes, so a button and a tile now produce identical commands by
+construction and adding an effect to `blocks.rs` surfaces it in both places with no second edit.
+`lut` and `balance` — both working, neither previously reachable by clicking — are there now.
+
+Two tests: the row still derives from the palette and no hand-written list has reappeared beside
+it, and every offered block is one `blocks::block` knows. (The first version of that test matched
+its own assertion text and failed against correct code; the needle is assembled at runtime now.)
+
+The original entry follows.
+
+### 14-original. The inspector's add-effect row is a hand-written list, and it is now 5 of 7
 
 `bay-ui/src/editor/inspector.rs:733` declares `[(&str, &str, &str); 5]` — brightness, contrast,
 saturation, blur, drop-shadow. It has never offered `lut`, and it does not offer
@@ -475,7 +488,17 @@ to the MCP schema in entry 2.
 Verified when: adding an effect to `blocks.rs` makes it appear in the inspector with no second
 edit, and a test asserts the inspector's set equals the palette's.
 
-### 13. The narration tests hardcode two ports, so a second test binary fails them
+### 13. The narration tests hardcode two ports — FIXED 2026-08-28
+
+`unique_speech_port(slot)` derives from the pid, in the IANA dynamic range, two ports per process
+so a slot cannot collide with the next pid's base. The old comment had the right diagnosis — "a
+port of its own, never the product's 7334" — and only half the fix: a *fixed* port is still shared
+with every other copy of the same test binary. This is the failure `CLAUDE.md` records twice, and
+the second time it was the scratch directory beside a port that already had the pid.
+
+The original entry follows.
+
+### 13-original. The narration tests hardcode two ports, so a second test binary fails them
 
 `Studio::for_test(library_root, speech_port)` exists precisely to keep the narration tests off a
 shared machine resource. Its own doc comment says so: *"`CLAUDE.md` requires that a test never
@@ -589,7 +612,22 @@ Verified when: a project with a scene-level grade renders differently from the s
 without one, at the GPU; the field round-trips through serde by name; and `check` treats a
 scene-level `lut` with a missing `.cube` the way it treats a clip-level one.
 
-### 8. Three geometry helpers are written, tested, and called by nothing
+### 8. Three geometry helpers are written, tested, and called by nothing — RESOLVED 2026-08-28
+
+Split, because the three did not have the same answer.
+
+`track_y_offsets` and `track_at_y` are **deleted**. The question they answered has since been
+decided the other way: the cross-track drag resolves which lane the pointer is over from each
+lane's own handler rather than by inverting a flex column's arithmetic, and that decision is
+written down where it was made. Nothing is going to call them.
+
+`fit_rect` is **kept**, with a doc comment saying it is uncalled, naming M2 as what wants it, and
+telling the next reader to delete it then if M2 lands a viewer that does not use it. That is the
+entry's own second resolution, taken deliberately rather than by omission.
+
+The original entry follows.
+
+### 8-original. Three geometry helpers are written, tested, and called by nothing
 
 `rust/crates/bay-ui/src/geometry.rs`:
 
@@ -613,7 +651,15 @@ Two honest resolutions, and the choice is a product one:
 Deferred deliberately rather than guessed at: deleting a helper the six-page editor is about to
 need is not a cleanup.
 
-### 9. `GPU_TEXTURE_FORMAT` is a public constant nothing reads
+### 9. `GPU_TEXTURE_FORMAT` is a public constant nothing reads — FIXED 2026-08-28
+
+Deleted. `rg GPU_TEXTURE_FORMAT` returns nothing; the format that governs every render target is
+still `GpuContext::texture_format()`, chosen at runtime because the GL fallback means there is no
+single compile-time answer.
+
+The original entry follows.
+
+### 9-original. `GPU_TEXTURE_FORMAT` is a public constant nothing reads
 
 `rust/crates/bay-gpu/src/lib.rs:8`:
 
@@ -636,7 +682,23 @@ be the runtime accessor, because the GL fallback means there is no single compil
 
 Verified when: `rg GPU_TEXTURE_FORMAT` returns nothing, and `./test.sh` is clean.
 
-### 10. The JFA mask shaders pack coordinates into colour, and take their format from the global accessor
+### 10. The JFA mask shaders take their format from the global accessor — HALF FIXED 2026-08-28
+
+**Fixed:** the pipelines and their ping/pong textures now name `Rgba8Unorm` explicitly through a
+new `GpuContext::create_render_texture_in`, instead of inheriting `texture_format()`. The landmine
+is gone: widening the intermediate format can no longer carry these shaders along in silence.
+A unit test asserts the pinned format is 4 bytes per texel and not sRGB.
+
+**Not fixed, and this is the half that matters:** the verification the entry asked for — rasterize
+a known mask, feather it, assert the alpha ramp — is still not written, because **the mask path is
+not reachable from the model at all.** `mask` is hardcoded `None` on every element, so no fixture
+can produce one and no test can exercise the JFA. The pinning is guarded by a test about a
+constant; the *behaviour* is guarded by nothing. That stays true until masks are wired to the
+model, and it is worth knowing before anyone trusts a green suite here.
+
+The original entry follows.
+
+### 10-original. The JFA mask shaders pack coordinates into colour, and take their format from the global accessor
 
 `rust/crates/bay-masks/src/shaders/jfa_init.wgsl` encodes integer seed coordinates as colour
 channels:

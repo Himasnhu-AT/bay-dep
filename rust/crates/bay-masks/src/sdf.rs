@@ -92,13 +92,26 @@ impl SdfPipeline {
             label: Some("gpu-jfa-step-shader"),
             source: wgpu::ShaderSource::Wgsl(JFA_STEP_SHADER_SOURCE.into()),
         });
+        // **Pinned, not inherited.** `fixes.md` 10: `jfa_init.wgsl` packs a 16-bit coordinate
+        // into two 8-bit channels and `jfa_distance.wgsl` decodes it by undoing exactly that,
+        // sentinelling "no seed" on `> 0.99` in all four. That is a hard dependency on an 8-bit
+        // unorm target, and taking the format from `context.texture_format()` — the accessor the
+        // whole rest of the pipeline uses — meant a widening to `Rgba16Float` would carry these
+        // along in silence: compiling, running, and producing a plausible alpha ramp with the
+        // distances quietly wrong at the edges.
+        //
+        // `Rgba8Unorm` rather than the context's `Bgra8Unorm` because the packing is symmetric in
+        // the channels it uses (r/g for x, b/a for y) and only the width matters. Naming it here
+        // is the point: this pass has an opinion about its format and now states it.
+        let jfa_format = wgpu::TextureFormat::Rgba8Unorm;
+
         let init_pipeline = create_pipeline(
             device,
             "gpu-jfa-init-pipeline",
             &pipeline_layout,
             &vertex_shader_module,
             &init_shader_module,
-            context.texture_format(),
+            jfa_format,
         );
         let step_pipeline = create_pipeline(
             device,
@@ -106,7 +119,7 @@ impl SdfPipeline {
             &pipeline_layout,
             &vertex_shader_module,
             &step_shader_module,
-            context.texture_format(),
+            jfa_format,
         );
 
         Self {
@@ -164,8 +177,20 @@ impl SdfPipeline {
         height: u32,
         is_inverted: bool,
     ) -> wgpu::Texture {
-        let ping_texture = context.create_render_texture(width, height, "gpu-jfa-ping-texture");
-        let pong_texture = context.create_render_texture(width, height, "gpu-jfa-pong-texture");
+        // The textures must carry the same pinned format as the pipelines that write them, or
+        // the pass fails validation the moment the context's format is not 8-bit.
+        let ping_texture = context.create_render_texture_in(
+            width,
+            height,
+            "gpu-jfa-ping-texture",
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        let pong_texture = context.create_render_texture_in(
+            width,
+            height,
+            "gpu-jfa-pong-texture",
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
 
         self.run_pass(
             context,
@@ -329,4 +354,45 @@ fn create_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod format_tests {
+    use bay_gpu::wgpu;
+
+    /// The JFA pass must render into an 8-bit unorm target, and this is the tripwire that says so.
+    ///
+    /// `fixes.md` 10. `jfa_init.wgsl` packs a 16-bit coordinate into two 8-bit channels:
+    ///
+    /// ```wgsl
+    /// return vec4f(x_hi / 255.0, x_lo / 255.0, y_hi / 255.0, y_lo / 255.0);
+    /// ```
+    ///
+    /// and `jfa_distance.wgsl` decodes it by undoing exactly that, sentinelling "no seed" on
+    /// `> 0.99` in all four channels. Widen the target and every one of those still compiles,
+    /// still runs, and still produces a plausible alpha ramp — with the distances quietly wrong
+    /// at the edges, which is the hardest kind of error to see because a feathered mask has no
+    /// crisp reference to disagree with.
+    ///
+    /// **This is not the verification the register asked for.** That was: rasterize a known mask,
+    /// feather it, and assert the alpha ramp, so a format change anywhere else cannot move the
+    /// result. It is not written because the mask path is not reachable from the model — `mask`
+    /// is hardcoded `None` on every element, so no fixture can produce one. This test guards the
+    /// pinning itself, which is the half that is testable today.
+    #[test]
+    fn the_jfa_target_is_eight_bit_because_its_shaders_pack_into_bytes() {
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        // `block_copy_size`, not `target_pixel_byte_cost`: the latter is wgpu's render-target
+        // budget figure (8 for this format) and says nothing about how wide a channel is.
+        assert_eq!(
+            format.block_copy_size(None),
+            Some(4),
+            "the JFA target is no longer 4 bytes per pixel; its coordinate packing assumes \
+             8 bits per channel and will decode to wrong distances"
+        );
+        assert!(
+            !format.is_srgb(),
+            "an sRGB target would apply a transfer curve to packed coordinate bytes"
+        );
+    }
 }

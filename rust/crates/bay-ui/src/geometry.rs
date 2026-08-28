@@ -506,6 +506,17 @@ pub fn clamp_scroll(scroll_x: f32, content_width_px: f32, viewport_width_px: f32
     sane(scroll_x, 0.0).clamp(0.0, sane(max, 0.0))
 }
 
+/// **Kept deliberately, and not yet called** — `fixes.md` 8.
+///
+/// This is what a preview pane with zoom and pan needs, which is M2 on the roadmap, and deleting
+/// a helper the editor is about to want is not a cleanup. Its two neighbours in that entry
+/// (`track_y_offsets`, `track_at_y`) *were* deleted, because the question they answered has since
+/// been decided the other way: the timeline resolves which lane the pointer is over from each
+/// lane's own handler rather than by inverting a flex column's arithmetic, and that decision is
+/// written down at the cross-track drag in `timeline.rs`. Nothing is going to call them.
+///
+/// If M2 lands a viewer that does not use this either, delete it then rather than leaving a third
+/// tested-but-uncalled helper for the next reader to spend half an hour on.
 /// Fit a canvas of aspect `canvas_aspect` (w/h) inside `viewport`, then scale by `zoom` about the
 /// centre and offset by `pan`. Bars land on the sides for a canvas taller than the viewport and
 /// on the top/bottom for a wider one.
@@ -536,35 +547,6 @@ pub fn fit_rect(viewport: (f32, f32), canvas_aspect: f32, zoom: f32, pan: (f32, 
         width,
         height,
     }
-}
-
-/// Prefix sum of lane heights: `offsets[i]` is the top of row `i`, and the last entry is the
-/// total height.
-pub fn track_y_offsets(heights: &[f32]) -> Vec<f32> {
-    let mut offsets = Vec::with_capacity(heights.len() + 1);
-    let mut y = 0.0;
-    offsets.push(y);
-    for height in heights {
-        y += height.max(0.0);
-        offsets.push(y);
-    }
-    offsets
-}
-
-/// Row index at a content-space y, or `None` above the first row or past the last.
-pub fn track_at_y(heights: &[f32], y: f32) -> Option<usize> {
-    if y.is_nan() || y < 0.0 {
-        return None;
-    }
-    let mut top = 0.0;
-    for (index, height) in heights.iter().enumerate() {
-        let bottom = top + height.max(0.0);
-        if y < bottom {
-            return Some(index);
-        }
-        top = bottom;
-    }
-    None
 }
 
 // ---- internals ---------------------------------------------------------------------------
@@ -1207,22 +1189,6 @@ mod tests {
     }
 
     // ---- tracks --------------------------------------------------------------------------
-
-    #[test]
-    fn track_offsets_are_a_prefix_sum_and_hit_test_back() {
-        let heights = [40.0_f32, 64.0, 40.0];
-        assert_eq!(track_y_offsets(&heights), vec![0.0, 40.0, 104.0, 144.0]);
-        assert_eq!(track_y_offsets(&[]), vec![0.0]);
-
-        assert_eq!(track_at_y(&heights, 0.0), Some(0));
-        assert_eq!(track_at_y(&heights, 39.9), Some(0));
-        assert_eq!(track_at_y(&heights, 40.0), Some(1));
-        assert_eq!(track_at_y(&heights, 103.9), Some(1));
-        assert_eq!(track_at_y(&heights, 104.0), Some(2));
-        assert_eq!(track_at_y(&heights, 144.0), None);
-        assert_eq!(track_at_y(&heights, -1.0), None);
-        assert_eq!(track_at_y(&heights, f32::NAN), None);
-    }
 }
 
 #[cfg(test)]

@@ -2105,14 +2105,28 @@ mod narration_tests {
         assert!(body["job"].is_null(), "no job should have started: {body}");
     }
 
+    /// A speech-sidecar port that no other process on this machine will pick.
+    ///
+    /// `fixes.md` 13. These were the literals 7451 and 7452, with a comment explaining that a
+    /// port of their own was needed — which was the right diagnosis and only half the fix. A
+    /// fixed port is still shared with every *other* copy of this test binary, so two concurrent
+    /// runs, or one left-over sidecar from a previous run, fail them for reasons outside the
+    /// repository. That is the failure `CLAUDE.md` records twice: the registry tests had the pid
+    /// on their port and not on their scratch directory, and 11 of 12 concurrent runs failed.
+    ///
+    /// Derived from the pid, in the IANA dynamic range, and never the product's 7334. `slot`
+    /// separates the tests within one binary; they run in the same process and must not collide
+    /// with each other either.
+    fn unique_speech_port(slot: u16) -> u16 {
+        // Two ports per process, so `slot` cannot collide with the next pid's base.
+        let base = 49_152u32 + (u32::from(std::process::id() as u16) % 7_000) * 2;
+        (base as u16).saturating_add(slot)
+    }
+
     #[test]
     #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn narrating_reuses_one_hot_sidecar_across_calls() {
-        // A port of its own, never the product's 7334. Sharing it meant this test failed
-        // whenever anything else on the machine held that port — another test binary spawning a
-        // sidecar, or a `bay --mcp` someone left running — and a test that fails for reasons
-        // outside the repository is one people learn to re-run rather than read.
-        let mut studio = Studio::for_test(test_library_root(), 7451);
+        let mut studio = Studio::for_test(test_library_root(), unique_speech_port(0));
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
         let status: Value = serde_json::from_str(&status).unwrap();
         if status["available"] != Value::Bool(true) {
@@ -2173,7 +2187,7 @@ mod narration_tests {
     #[test]
     #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn a_real_narration_reports_its_rate_and_places_readable_cues() {
-        let mut studio = Studio::for_test(test_library_root(), 7452);
+        let mut studio = Studio::for_test(test_library_root(), unique_speech_port(1));
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
         let status: Value = serde_json::from_str(&status).unwrap();
         if status["available"] != Value::Bool(true) {
