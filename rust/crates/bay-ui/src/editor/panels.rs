@@ -242,8 +242,20 @@ impl EditorView {
     ) -> gpui::Stateful<Div> {
         let (id, name, path) = (asset.id.clone(), asset.name.clone(), asset.path.clone());
         let color = theme::element_color(asset.kind.label());
+        let payload = super::timeline::MediaDrag {
+            media_id: id.clone(),
+            name: name.clone(),
+            path: path.clone(),
+        };
+        let chip_label = SharedString::from(name.clone());
         div()
             .id(("media-tile", index))
+            // Dragged onto the timeline it lands where it is dropped; clicked it lands at the
+            // playhead. Both go through `place_media_at`, so the two routes cannot drift.
+            .on_drag(payload, move |_, _, _, cx| {
+                let label = chip_label.clone();
+                cx.new(|_| super::timeline::MediaDragChip::new(label))
+            })
             .flex_1()
             .min_w(px(0.0))
             .flex()

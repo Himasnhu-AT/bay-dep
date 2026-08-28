@@ -6,6 +6,44 @@
 
 use super::*;
 
+/// A media asset being dragged from a library tile onto the timeline.
+///
+/// gpui's own drag machinery rather than bay's `WidgetState`: this gesture starts in one element
+/// and ends in a different one, which is exactly what `on_drag`/`on_drop` is for and what a
+/// single root-dispatched drag slot cannot express.
+#[derive(Clone)]
+pub struct MediaDrag {
+    pub media_id: String,
+    pub name: String,
+    pub path: String,
+}
+
+/// What follows the pointer while a tile is being dragged.
+pub struct MediaDragChip {
+    label: SharedString,
+}
+
+impl MediaDragChip {
+    pub fn new(label: SharedString) -> Self {
+        Self { label }
+    }
+}
+
+impl Render for MediaDragChip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(8.0))
+            .py(px(4.0))
+            .rounded(px(4.0))
+            .bg(rgb(theme::SELECTED))
+            .border_1()
+            .border_color(rgb(theme::SELECTED_BORDER))
+            .text_xs()
+            .text_color(rgb(theme::TEXT))
+            .child(self.label.clone())
+    }
+}
+
 /// Turn a scroll delta into a zoom multiplier.
 ///
 /// Exponential rather than linear, because zoom is multiplicative: at 8 px/s a linear step is a
@@ -319,9 +357,35 @@ impl EditorView {
     /// kind belongs to. Shared by the import flow and by clicking an asset in the media panel,
     /// so the two cannot place the same file differently.
     pub(super) fn place_media(&mut self, media_id: &str, name: &str, path: &str) {
+        self.place_media_at(media_id, name, path, None, None);
+    }
+
+    /// Place media at a chosen time on a chosen track, falling back to the playhead and the
+    /// track its kind belongs on.
+    ///
+    /// Drag-and-drop supplies both; clicking a tile supplies neither. Kept as one function so a
+    /// dropped clip and a clicked one are the same element with the same defaults — two builders
+    /// would drift, and the difference would show up as a clip that behaves differently
+    /// depending on how it got there.
+    pub(super) fn place_media_at(
+        &mut self,
+        media_id: &str,
+        name: &str,
+        path: &str,
+        at: Option<MediaTime>,
+        track: Option<&str>,
+    ) {
         let kind = MediaKind::of_path(path);
         let duration = self.media_duration(path, kind);
-        let start = self.editor.playhead();
+        // Quantised to a frame and never before zero: a drop is a pointer position, and a clip
+        // starting between two frames is one the timeline cannot address.
+        let start = at
+            .map(|time| {
+                let ticks = time.as_ticks().max(0);
+                self.geometry()
+                    .quantize_to_frame(MediaTime::from_ticks(ticks))
+            })
+            .unwrap_or_else(|| self.editor.playhead());
         self.add_counter += 1;
         let uid = self.add_counter;
         let (track_id, element) = match kind {
@@ -391,7 +455,7 @@ impl EditorView {
             ),
         };
         self.editor.execute(Command::AddElement {
-            track_id: track_id.into(),
+            track_id: track.unwrap_or(track_id).to_string(),
             element,
             select: true,
         });
@@ -519,6 +583,30 @@ impl EditorView {
             .execute(Command::DuplicateElement { reference, new_id });
     }
 
+    /// Drop a clip onto a track that does not exist yet, creating it first.
+    ///
+    /// Dropping below the last lane is how every NLE spells "put this on its own layer", and it
+    /// is one gesture rather than the two — add a track, then drag onto it — that the button
+    /// beside the timeline requires. The new track is made and the clip lands on it in the same
+    /// pass, so an undo of the drop is not left holding an empty lane.
+    pub(super) fn drop_onto_new_track(&mut self, media: &MediaDrag, at: MediaTime) {
+        self.add_counter += 1;
+        let count = self.editor.active_scene().tracks.overlay.len() + 1;
+        let id = format!("track-overlay-{}", self.add_counter);
+        self.editor.execute(Command::AddTrack {
+            lane: bay_core::command::TrackLane::Overlay,
+            id: id.clone(),
+            name: format!("Overlay {count}"),
+        });
+        self.place_media_at(
+            &media.media_id,
+            &media.name,
+            &media.path,
+            Some(at),
+            Some(&id),
+        );
+    }
+
     /// Add an empty overlay lane.
     pub(super) fn add_overlay_track(&mut self) {
         self.add_counter += 1;
@@ -618,7 +706,34 @@ impl EditorView {
                     .when(self.tool == Tool::Razor, |lanes| {
                         lanes.cursor(gpui::CursorStyle::Crosshair)
                     })
-                    .children(rows),
+                    .children(rows)
+                    // Below the last lane: drop here and the clip gets a lane of its own. Sized
+                    // generously because it is a target you aim at while holding something, and
+                    // a 4px strip is a target you miss.
+                    .child(
+                        div()
+                            .id("timeline-new-track")
+                            .h(px(28.0))
+                            .mt(px(4.0))
+                            .rounded_md()
+                            .border_1()
+                            .border_dashed()
+                            .border_color(rgb(theme::BORDER_SOFT))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .text_color(rgb(theme::FAINT))
+                            .child("Drop here for a new track")
+                            .on_drop::<MediaDrag>(cx.listener(
+                                |this, media: &MediaDrag, window, cx| {
+                                    let x = f32::from(window.mouse_position().x) - lane_origin_x();
+                                    let at = this.geometry().px_to_frame_time(x);
+                                    this.drop_onto_new_track(media, at);
+                                    cx.notify();
+                                },
+                            )),
+                    ),
             )
     }
 
@@ -1066,6 +1181,25 @@ impl EditorView {
             )
             .child(
                 div()
+                    .id(SharedString::from(format!("lane-{}", track.id)))
+                    // Dropping a library tile lands the clip at the pointer, on this track. The
+                    // x comes from the window rather than the event because gpui's drop listener
+                    // carries the payload and not the position.
+                    .on_drop::<MediaDrag>(cx.listener({
+                        let track_id = track.id.clone();
+                        move |this, media: &MediaDrag, window, cx| {
+                            let x = f32::from(window.mouse_position().x) - lane_origin_x();
+                            let at = this.geometry().px_to_frame_time(x);
+                            this.place_media_at(
+                                &media.media_id,
+                                &media.name,
+                                &media.path,
+                                Some(at),
+                                Some(track_id.as_str()),
+                            );
+                            cx.notify();
+                        }
+                    }))
                     .relative()
                     .flex_1()
                     .h(px(LANE_HEIGHT))
@@ -1425,6 +1559,93 @@ mod tool_tests {
                     .as_ticks(),
                 origin,
                 "and the clip the first press grabbed did not move with it"
+            );
+        });
+    }
+
+    /// A dropped clip lands where it was dropped, not at the playhead.
+    ///
+    /// The whole point of the gesture. Clicking a tile places at the playhead and always did;
+    /// if a drop did the same the drag would be an elaborate click.
+    #[gpui::test]
+    fn a_dropped_clip_lands_at_the_drop_point(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let media = MediaDrag {
+                media_id: "m1".into(),
+                name: "Dropped".into(),
+                path: "/clip.mp4".into(),
+            };
+            view.editor.seek(MediaTime::ZERO);
+            let at = MediaTime::from_ticks(5 * TICKS_PER_SECOND);
+            view.place_media_at(&media.media_id, &media.name, &media.path, Some(at), None);
+
+            let placed = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|e| e.name() == "Dropped")
+                .expect("the drop added a clip");
+            assert!(
+                placed.start().as_ticks() > 0,
+                "a clip dropped five seconds in must not land at the playhead"
+            );
+        });
+    }
+
+    /// A drop before zero clamps rather than creating a clip at a negative time.
+    #[gpui::test]
+    fn a_drop_left_of_the_start_clamps_to_zero(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let at = MediaTime::from_ticks(-10 * TICKS_PER_SECOND);
+            view.place_media_at("m2", "Early", "/clip.mp4", Some(at), None);
+            let placed = view
+                .editor
+                .active_scene()
+                .tracks
+                .main
+                .elements
+                .iter()
+                .find(|e| e.name() == "Early")
+                .expect("the drop added a clip");
+            assert_eq!(
+                placed.start().as_ticks(),
+                0,
+                "a clip cannot start before the timeline does"
+            );
+        });
+    }
+
+    /// Dropping below the last lane makes the lane and places the clip on it, in one step.
+    ///
+    /// Two steps would leave an undo holding an empty track — and the gesture exists precisely
+    /// to avoid "add a track, then drag onto it".
+    #[gpui::test]
+    fn dropping_below_the_lanes_creates_a_track_and_uses_it(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, _| {
+            let before = view.editor.active_scene().tracks.overlay.len();
+            let media = MediaDrag {
+                media_id: "m3".into(),
+                name: "OnItsOwnLane".into(),
+                path: "/clip.mp4".into(),
+            };
+            view.drop_onto_new_track(&media, MediaTime::ZERO);
+
+            let overlay = &view.editor.active_scene().tracks.overlay;
+            assert_eq!(overlay.len(), before + 1, "a lane was added");
+            assert!(
+                overlay
+                    .last()
+                    .expect("just added")
+                    .elements
+                    .iter()
+                    .any(|e| e.name() == "OnItsOwnLane"),
+                "and the clip landed on the lane that was just made, not the one below it"
             );
         });
     }
