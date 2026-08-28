@@ -1546,6 +1546,91 @@ impl EditorView {
 }
 
 #[cfg(test)]
+mod frame_pacing_tests {
+    /// `render` may not ask for a frame with `cx.notify()`, and nothing else can catch it.
+    ///
+    /// This reads its own source, which is not a thing to do lightly. It is justified here
+    /// because the failure has no other signature: `cx.notify()` inside `render` compiles, runs,
+    /// returns, panics nowhere, and requests no frame — GPUI's `invalidate_view` sets the dirty
+    /// flag only when `draw_phase == DrawPhase::None`, and `render` *is* the draw phase. There is
+    /// no assertion about behaviour that would catch it, because in a headless test nothing is
+    /// pacing frames anyway: `VisualTestContext::draw` is called explicitly. The symptom appears
+    /// only in a live window, as video playing at a few frames a second, and it cost two rounds
+    /// of investigation into the decoder and the compositor — both of which measured fine,
+    /// because both were fine.
+    ///
+    /// So the tripwire is textual: no `cx.notify()` at the body depth of `render_inner`. Calls
+    /// nested deeper are inside `cx.listener` closures, which run outside the draw phase and are
+    /// correct. Use `EditorView::request_frame`.
+    #[test]
+    fn render_does_not_pace_frames_with_notify() {
+        let source = include_str!("mod.rs");
+        let mut in_prologue = false;
+        let mut offenders = Vec::new();
+        for (number, line) in source.lines().enumerate() {
+            if line.contains("fn render_inner") {
+                in_prologue = true;
+                continue;
+            }
+            // `render_inner` is two regions. Everything before the view model is built is
+            // straight-line work — the pacing decisions, the preview collect, the poster
+            // requests. Everything after is the element tree, whose `cx.listener` closures run
+            // outside the draw phase and may notify freely. The boundary is that one line.
+            //
+            // Matching on indentation instead, as the first version of this test did, was
+            // useless: it looked for exactly eight spaces, and the real bug sat at twelve and
+            // sixteen inside `if` blocks. It passed against a deliberate reintroduction of the
+            // exact defect it exists to catch. Region, not depth.
+            if in_prologue && line.contains("let vm = EditorViewModel::build") {
+                break;
+            }
+            if in_prologue && line.trim() == "cx.notify();" {
+                offenders.push(number + 1);
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "`cx.notify()` at line(s) {offenders:?} is in the body of `render_inner`, where it \
+             silently requests no frame. Use `self.request_frame(window, cx)`."
+        );
+    }
+
+    /// The guard above is only worth having if it can actually see the thing it forbids.
+    ///
+    /// A textual test that matches nothing passes forever, including after a refactor renames the
+    /// method or changes the indentation out from under it. This asserts the scan reaches
+    /// `render_inner` and finds the real calls that replaced the bug.
+    #[test]
+    fn the_pacing_tripwire_is_looking_at_something() {
+        let source = include_str!("mod.rs");
+        assert!(
+            source.contains("fn render_inner"),
+            "the tripwire scans for `fn render_inner` and it is gone — rename the scan too"
+        );
+        assert!(
+            source.contains("self.request_frame(window, cx);"),
+            "no call to `request_frame` remains; either pacing moved or it regressed"
+        );
+        assert!(
+            source.contains("let vm = EditorViewModel::build"),
+            "the scan ends at the view-model build and that line is gone — re-anchor it"
+        );
+        // The scanned region must actually contain the pacing calls, or the guard is watching an
+        // empty stretch of file and will pass forever.
+        let prologue = source
+            .split_once("fn render_inner")
+            .and_then(|(_, rest)| rest.split_once("let vm = EditorViewModel::build"))
+            .map(|(prologue, _)| prologue)
+            .expect("both anchors are asserted present above");
+        assert_eq!(
+            prologue.matches("self.request_frame(window, cx);").count(),
+            5,
+            "the pacing region no longer holds the five frame requests the scan is guarding"
+        );
+    }
+}
+
+#[cfg(test)]
 mod provisioning_tests {
     use super::*;
 
