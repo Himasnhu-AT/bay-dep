@@ -6,12 +6,11 @@
 
 use super::*;
 
-/// How wide the drop shadow is drawn.
+/// Width of the drop shadow when the clip's length is unknown.
 ///
-/// A fixed width rather than the clip's real duration: the duration needs a probe, and probing
-/// on every pointer move during a drag would spawn ffprobe at pointer rate. The shadow's job is
-/// to say *where the clip starts*, which is the thing a pointer alone does not tell you.
-const GHOST_WIDTH: f32 = 64.0;
+/// Only reached for media that was never probed — a file whose duration could not be read. The
+/// shadow still says where the clip starts, which is the part a pointer cannot tell you.
+const GHOST_FALLBACK_WIDTH: f32 = 64.0;
 
 /// A media asset being dragged from a library tile onto the timeline.
 ///
@@ -23,6 +22,12 @@ pub struct MediaDrag {
     pub media_id: String,
     pub name: String,
     pub path: String,
+    /// How long the clip is, so the drop shadow can be its real length.
+    ///
+    /// Carried rather than probed. The last version drew a fixed 64px because probing on every
+    /// pointer move would spawn ffprobe at pointer rate — but nothing needs probing: the pool
+    /// measured this at import and has held it ever since.
+    pub duration_seconds: Option<f64>,
 }
 
 /// What follows the pointer while a tile is being dragged.
@@ -735,12 +740,19 @@ impl EditorView {
                     .child(
                         div()
                             .id("timeline-new-track")
-                            .h(px(28.0))
+                            // Tall enough to hit while holding something. 28px was a target you
+                            // aim at; a drop that misses silently looks like the feature is
+                            // broken rather than like the pointer was two pixels high.
+                            .h(px(LANE_HEIGHT))
                             .mt(px(4.0))
                             .rounded_md()
                             .border_1()
                             .border_dashed()
                             .border_color(rgb(theme::BORDER_SOFT))
+                            // The same tint the lanes get. Without it this strip was the one
+                            // drop target in the timeline that gave no sign it was under the
+                            // pointer, which is indistinguishable from not accepting drops.
+                            .drag_over::<MediaDrag>(|style, _, _, _| style.bg(rgb(theme::SELECTED)))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1218,9 +1230,15 @@ impl EditorView {
                         let track_id = track.id.clone();
                         move |this, event: &gpui::DragMoveEvent<MediaDrag>, _window, cx| {
                             let x = f32::from(event.event.position.x) - lane_origin_x();
-                            let next = Some((track_id.clone(), x));
-                            if this.drag_ghost != next {
-                                this.drag_ghost = next;
+                            let stale = this.drag_ghost.as_ref().is_none_or(|ghost| {
+                                ghost.track != track_id || (ghost.x - x).abs() > 0.5
+                            });
+                            if stale {
+                                this.drag_ghost = Some(DragGhost {
+                                    track: track_id.clone(),
+                                    x,
+                                    duration_seconds: event.drag(cx).duration_seconds,
+                                });
                                 cx.notify();
                             }
                         }
@@ -1253,16 +1271,26 @@ impl EditorView {
                     // The shadow of where the clip lands. Drawn from the pointer's x, quantised
                     // the same way the drop is, so what is shown is where it goes rather than
                     // an approximation of it.
-                    .children(self.drag_ghost.as_ref().and_then(|(ghost_track, x)| {
-                        (ghost_track == &track.id).then(|| {
-                            let at = geometry.px_to_frame_time(*x);
+                    .children(self.drag_ghost.as_ref().and_then(|ghost| {
+                        (ghost.track == track.id).then(|| {
+                            let at = geometry.px_to_frame_time(ghost.x);
                             let left = geometry.ticks_to_px(at).max(zero_x);
+                            // The clip's real length, so the shadow covers the seconds it will
+                            // occupy rather than a token 64px. A drop is a decision about how
+                            // much of the timeline gets used, and the shadow should show that.
+                            let width = ghost
+                                .duration_seconds
+                                .map(|seconds| {
+                                    (seconds as f32 * self.timeline.pixels_per_second())
+                                        .max(MIN_BLOCK_WIDTH)
+                                })
+                                .unwrap_or(GHOST_FALLBACK_WIDTH);
                             div()
                                 .absolute()
                                 .left(px(left))
                                 .top(px(4.0))
                                 .h(px(LANE_HEIGHT - 8.0))
-                                .w(px(GHOST_WIDTH))
+                                .w(px(width))
                                 .rounded_md()
                                 .bg(rgb(theme::SELECTED))
                                 .border_1()
@@ -1638,6 +1666,7 @@ mod tool_tests {
                 media_id: "m1".into(),
                 name: "Dropped".into(),
                 path: "/clip.mp4".into(),
+                duration_seconds: Some(5.0),
             };
             view.editor.seek(MediaTime::ZERO);
             let at = MediaTime::from_ticks(5 * TICKS_PER_SECOND);
@@ -1696,6 +1725,7 @@ mod tool_tests {
                 media_id: "m3".into(),
                 name: "OnItsOwnLane".into(),
                 path: "/clip.mp4".into(),
+                duration_seconds: Some(5.0),
             };
             view.drop_onto_new_track(&media, MediaTime::ZERO);
 

@@ -55,12 +55,13 @@ impl EditorView {
                         // This read `false` for "not primary" and so shipped a back button that
                         // silently did nothing; it only became visible once buttons started
                         // drawing their disabled state honestly.
-                        self.button("projects", "‹ Projects", true, cx, |this, cx| match this
-                            .save_project()
-                        {
-                            Ok(_) => cx.emit(EditorViewEvent::CloseRequested),
-                            Err(error) => {
-                                this.status = Some(format!("Not closing — save failed: {error}"))
+                        self.button("projects", "‹ Projects", cx, |this, cx| {
+                            match this.save_project() {
+                                Ok(_) => cx.emit(EditorViewEvent::CloseRequested),
+                                Err(error) => {
+                                    this.status =
+                                        Some(format!("Not closing — save failed: {error}"))
+                                }
                             }
                         }),
                     )
@@ -151,7 +152,7 @@ impl EditorView {
                                 },
                             )),
                     )
-                    .child(self.button("save", "Save", true, cx, |this, _cx| {
+                    .child(self.button("save", "Save", cx, |this, _cx| {
                         this.status = Some(match this.save_project() {
                             Ok(path) => format!("Saved to {}", path.display()),
                             Err(error) => format!("Save failed: {error}"),
@@ -160,11 +161,9 @@ impl EditorView {
                     // Where Export Frame and Export Video used to be. Output is the Deliver
                     // page's, and it is one button rather than two because there is one way to
                     // encode now — see this module's own header.
-                    .child(
-                        self.button("go-deliver", "Deliver ⇧", true, cx, |this, _cx| {
-                            this.show_page(crate::page::Page::Deliver);
-                        }),
-                    ),
+                    .child(self.button("go-deliver", "Deliver ⇧", cx, |this, _cx| {
+                        this.show_page(crate::page::Page::Deliver);
+                    })),
             )
     }
 
@@ -274,13 +273,9 @@ impl EditorView {
                                 // A distinct element id per offer. On a clean machine both
                                 // video and speech are offered at once, and two sibling
                                 // stateful elements sharing one id share interactive state.
-                                self.button(
-                                    offer.element_id,
-                                    &offer.label,
-                                    false,
-                                    cx,
-                                    move |this, cx| this.install_runtime(&component, cx),
-                                )
+                                self.button(offer.element_id, &offer.label, cx, move |this, cx| {
+                                    this.install_runtime(&component, cx)
+                                })
                             }),
                     )
                     .child(widgets::note(format!("clipboard: {}", vm.clipboard_len)))

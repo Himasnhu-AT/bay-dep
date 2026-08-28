@@ -6,39 +6,125 @@
 use super::*;
 
 impl EditorView {
-    /// Pick a media file, import it into the project library, and add a clip at the playhead.
+    /// Media file extensions bay will import.
+    const MEDIA_EXTENSIONS: &'static [&'static str] = &[
+        "png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "mov", "mkv", "webm", "avi", "m4v",
+        "mp3", "wav", "m4a", "aac", "flac", "ogg",
+    ];
+
+    /// Pick one or more media files and import them all.
+    ///
+    /// `pick_files`, not `pick_file`. Importing one at a time is not a smaller version of
+    /// importing a shoot — it is a different job, and doing it forty times is not the same as
+    /// doing it once.
     pub(super) fn import_media(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter(
-                "Media",
-                &[
-                    "png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "mov", "mkv", "webm", "avi",
-                    "m4v", "mp3", "wav", "m4a", "aac", "flac", "ogg",
-                ],
-            )
-            .pick_file()
+        let Some(paths) = rfd::FileDialog::new()
+            .add_filter("Media", Self::MEDIA_EXTENSIONS)
+            .pick_files()
         else {
             return;
         };
-        let path = path.to_string_lossy().into_owned();
-        let name = std::path::Path::new(&path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Media".to_string());
+        self.import_paths(paths);
+    }
 
-        self.add_counter += 1;
-        let media_id = format!("media-{}", self.add_counter);
-        let mut asset = MediaAsset::new(media_id.clone(), name.clone(), path.clone());
-        // Probed once at import and kept: a trim can then stop at the end of the file, and
-        // `check` has something to measure a clip against.
-        if let Ok(meta) = bay_preview::probe::probe_media(&path) {
-            asset.duration_seconds = Some(meta.duration.to_seconds_f64());
-            asset.width = Some(meta.width);
-            asset.height = Some(meta.height);
+    /// Pick a folder and import every media file in it, including subfolders.
+    ///
+    /// The other half of how footage actually arrives: a card, a shoot, a folder someone sent.
+    pub(super) fn import_folder(&mut self) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        let mut found = Vec::new();
+        Self::collect_media(&folder, &mut found, 0);
+        if found.is_empty() {
+            self.status = Some(format!(
+                "No media found in {}",
+                folder.file_name().map_or_else(
+                    || folder.display().to_string(),
+                    |n| n.to_string_lossy().into_owned()
+                )
+            ));
+            return;
         }
-        self.editor.add_media(asset);
-        self.place_media(&media_id, &name, &path);
-        self.preview_sig = None; // new media asset → force a re-render
+        self.import_paths(found);
+    }
+
+    /// Walk `dir` for media files, depth-first.
+    ///
+    /// Depth-limited: a folder chosen by accident can be a home directory, and an unbounded walk
+    /// there is a hang with no way to cancel it. Symlinks are not followed for the same reason —
+    /// one loop and the walk never ends.
+    fn collect_media(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>, depth: usize) {
+        const MAX_DEPTH: usize = 6;
+        const MAX_FILES: usize = 2000;
+        if depth > MAX_DEPTH || found.len() >= MAX_FILES {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                Self::collect_media(&path, found, depth + 1);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| Self::MEDIA_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+                .unwrap_or(false)
+            {
+                found.push(path);
+            }
+            if found.len() >= MAX_FILES {
+                return;
+            }
+        }
+    }
+
+    /// Import every path, and place only the first on the timeline.
+    ///
+    /// Importing forty clips must not drop forty clips onto the playhead on top of each other.
+    /// They land in the pool; the timeline is something the user builds deliberately.
+    fn import_paths(&mut self, paths: Vec<std::path::PathBuf>) {
+        let total = paths.len();
+        let mut first: Option<(String, String, String)> = None;
+        for path in paths {
+            let path = path.to_string_lossy().into_owned();
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Media".to_string());
+
+            self.add_counter += 1;
+            let media_id = format!("media-{}", self.add_counter);
+            let mut asset = MediaAsset::new(media_id.clone(), name.clone(), path.clone());
+            // Probed once at import and kept: a trim can then stop at the end of the file, and
+            // `check` has something to measure a clip against.
+            if let Ok(meta) = bay_preview::probe::probe_media(&path) {
+                asset.duration_seconds = Some(meta.duration.to_seconds_f64());
+                asset.width = Some(meta.width);
+                asset.height = Some(meta.height);
+            }
+            self.editor.add_media(asset);
+            if first.is_none() {
+                first = Some((media_id, name, path));
+            }
+        }
+
+        if let Some((media_id, name, path)) = first {
+            if total == 1 {
+                self.place_media(&media_id, &name, &path);
+            } else {
+                self.status = Some(format!("Imported {total} files into the pool"));
+            }
+        }
+        self.preview_sig = None; // new media assets → force a re-render
     }
 
     /// The 56px rail of panel tabs down the left edge.
@@ -213,13 +299,23 @@ impl EditorView {
                     .child(widgets::section("LIBRARY"))
                     .child(widgets::note(format!("{count} items"))),
             )
-            .child(div().px(px(12.0)).child(self.button(
-                "import-media",
-                "Import Media…",
-                false,
-                cx,
-                |this, _cx| this.import_media(),
-            )))
+            .child(
+                widgets::row()
+                    .px(px(12.0))
+                    .gap(px(6.0))
+                    // `true` is *enabled*. This read `false` for "not primary" — the third
+                    // parameter of `EditorView::button` is `enabled`, and `BayApp::button`'s is
+                    // `primary`. Same confusion that shipped a dead "‹ Projects" and "Save": the
+                    // library's own import button did nothing at all.
+                    .child(
+                        self.button("import-media", "Import Files…", cx, |this, _cx| {
+                            this.import_media()
+                        }),
+                    )
+                    .child(self.button("import-folder", "Folder…", cx, |this, _cx| {
+                        this.import_folder()
+                    })),
+            )
             .child(list)
             .child(
                 div()
@@ -246,6 +342,13 @@ impl EditorView {
             media_id: id.clone(),
             name: name.clone(),
             path: path.clone(),
+            duration_seconds: self
+                .editor
+                .project()
+                .media
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.duration_seconds),
         };
         let chip_label = SharedString::from(name.clone());
         let chip_poster = self.poster_image(&id);

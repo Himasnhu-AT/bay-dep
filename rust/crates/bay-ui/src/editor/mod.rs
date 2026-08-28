@@ -76,6 +76,13 @@ pub struct BlockDrag {
     origin_duration_ticks: i64,
 }
 
+/// Where a dragged clip would land, and how much room it would take.
+pub struct DragGhost {
+    pub track: String,
+    pub x: f32,
+    pub duration_seconds: Option<f64>,
+}
+
 /// Everything the editor can be in the middle of dragging.
 ///
 /// One enum in one slot, rather than the three parallel `Option`/`bool` fields this replaced
@@ -417,7 +424,7 @@ pub struct EditorView {
     /// A drop with no preview is a guess — the pointer is over a lane but the clip's *start* is
     /// what lands, and those are not the same pixel once a clip has any width. Cleared on drop
     /// and whenever a drag leaves.
-    drag_ghost: Option<(String, f32)>,
+    drag_ghost: Option<DragGhost>,
     /// Frames along a timeline clip, decoded once per media and uploaded one image per cell.
     strips: bay_preview::poster::FilmstripCache,
     strip_images: std::collections::BTreeMap<String, Vec<Arc<RenderImage>>>,
@@ -893,7 +900,28 @@ impl EditorView {
         SharedString::from(text.into())
     }
 
+    /// An enabled button.
+    ///
+    /// It used to take an `enabled: bool` third parameter — and `BayApp::button`, same name,
+    /// takes `primary: bool` in that position. Four call sites passed `false` meaning "not
+    /// primary" and shipped buttons that did nothing: "‹ Projects", "Save", the library's
+    /// "Import Media…", and the runtime installer that `run.sh` tells people to press. Three of
+    /// them were invisible until buttons started drawing their disabled state honestly.
+    ///
+    /// The parameter is gone rather than fixed. A control that must refuse uses
+    /// [`Self::button_enabled`] and says so out loud; everything else cannot get it wrong.
     fn button(
+        &self,
+        id: &'static str,
+        label: &str,
+        cx: &mut Context<Self>,
+        handler: impl Fn(&mut EditorView, &mut Context<EditorView>) + 'static,
+    ) -> Button {
+        self.button_enabled(id, label, true, cx, handler)
+    }
+
+    /// A button that may be drawn disabled — for a control the engine genuinely cannot back.
+    fn button_enabled(
         &self,
         id: &'static str,
         label: &str,

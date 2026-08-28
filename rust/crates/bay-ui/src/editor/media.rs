@@ -467,7 +467,7 @@ impl EditorView {
             // opens a dialog. `pages.md`: Media must not become a second file picker — this is
             // the first, and every other page browses what it produced.
             .child(
-                self.button("media-import", "Import Media…", true, cx, |this, _cx| {
+                self.button("media-import", "Import Media…", cx, |this, _cx| {
                     this.import_media();
                     // Land the selection on whatever just arrived, so the panel describes the file
                     // the user was thinking about rather than staying on the previous one.
@@ -754,7 +754,7 @@ impl EditorView {
             .overflow_hidden()
             .child(widgets::section("METADATA"))
             .child(body)
-            .child(self.button(
+            .child(self.button_enabled(
                 "media-add-at-playhead",
                 "＋ Add at playhead",
                 selected.is_some(),

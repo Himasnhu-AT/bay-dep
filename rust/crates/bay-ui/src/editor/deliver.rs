@@ -644,17 +644,13 @@ impl EditorView {
                 widgets::row()
                     .gap(px(8.0))
                     .child(widgets::section("Range"))
-                    .child(
-                        self.button("deliver-set-in", "Set In", true, cx, |this, _cx| {
-                            this.set_range_in();
-                        }),
-                    )
-                    .child(
-                        self.button("deliver-set-out", "Set Out", true, cx, |this, _cx| {
-                            this.set_range_out();
-                        }),
-                    )
-                    .child(self.button(
+                    .child(self.button("deliver-set-in", "Set In", cx, |this, _cx| {
+                        this.set_range_in();
+                    }))
+                    .child(self.button("deliver-set-out", "Set Out", cx, |this, _cx| {
+                        this.set_range_out();
+                    }))
+                    .child(self.button_enabled(
                         "deliver-whole",
                         "Whole timeline",
                         ranged,

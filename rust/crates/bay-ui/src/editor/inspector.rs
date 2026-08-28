@@ -558,7 +558,7 @@ impl EditorView {
                 None => {
                     body = body
                         .child(self.info_row("Text", content))
-                        .child(self.button("edit-text", "Edit Text", true, cx, {
+                        .child(self.button("edit-text", "Edit Text", cx, {
                             let reference = selected.reference.clone();
                             let content = content.clone();
                             move |this, _cx| {
@@ -748,7 +748,7 @@ impl EditorView {
             let mut add_row = div().flex().flex_row().flex_wrap().gap_1();
             for (id, effect_type, label) in add_effects {
                 let reference = selected.reference.clone();
-                add_row = add_row.child(self.button(id, label, true, cx, move |this, _cx| {
+                add_row = add_row.child(self.button(id, label, cx, move |this, _cx| {
                     this.add_counter += 1;
                     let effect = bay_core::Effect {
                         id: format!("fx-{}", this.add_counter),
@@ -772,7 +772,7 @@ impl EditorView {
                 body = body
                     .child(div().text_xs().text_color(rgb(theme::MUTED)).child("BLEND"))
                     .child(
-                        self.button("blend-mode", mode.label(), true, cx, move |this, _cx| {
+                        self.button("blend-mode", mode.label(), cx, move |this, _cx| {
                             this.editor.execute(Command::SetBlendMode {
                                 reference: reference.clone(),
                                 blend_mode: mode.next(),
@@ -789,21 +789,15 @@ impl EditorView {
                         .text_color(rgb(theme::MUTED))
                         .child("PRESETS"),
                 )
-                .child(
-                    self.button("save-preset", "Save Preset", true, cx, |this, _cx| {
-                        this.save_preset()
-                    }),
-                )
+                .child(self.button("save-preset", "Save Preset", cx, |this, _cx| {
+                    this.save_preset()
+                }))
                 .child(
                     // The one above lives in this window; this one is written to the library
                     // and survives it.
-                    self.button(
-                        "save-template",
-                        "Save as Template",
-                        true,
-                        cx,
-                        |this, _cx| this.save_template(),
-                    ),
+                    self.button("save-template", "Save as Template", cx, |this, _cx| {
+                        this.save_template()
+                    }),
                 );
             for (index, preset) in self.presets.iter().enumerate() {
                 let label = format!("Apply {}", preset.name);
