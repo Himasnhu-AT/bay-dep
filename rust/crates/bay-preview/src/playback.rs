@@ -22,20 +22,29 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 
-/// Frames held ahead of the playhead.
+/// Frames the worker may run ahead by before it blocks.
 ///
-/// Small on purpose. Each is a decoded preview-sized frame, and the point is to absorb decode
-/// jitter, not to cache the clip — that is what the whole-clip path is for, and holding more
-/// here would reintroduce the memory pressure this design exists to avoid.
-const QUEUE_DEPTH: usize = 8;
+/// Deep enough to be a real head start. The first version used 8, which is a quarter-second at
+/// 30 fps — the worker was permanently racing the playhead and lost whenever a decode came in
+/// late. Scrubbing was smooth in the same build because the whole-clip cache had *already*
+/// decoded everything; the difference was never the compositor, it was how far ahead the frames
+/// were. 48 is about a second and a half, and at preview size costs a few megabytes.
+const QUEUE_DEPTH: usize = 48;
 
-/// How far ahead a request may be before it is cheaper to re-seek than to read forward.
+/// Frames kept in the window, ahead of and behind the playhead.
 ///
-/// Reading forward means pulling and discarding every intervening frame through the pipe. Past
-/// roughly a second that costs more than respawning ffmpeg at the new position.
-const RESEEK_AHEAD_FRAMES: u64 = 30;
+/// Behind matters: playback nudges the playhead backwards on any correction, and a window that
+/// only looks forward would re-seek — respawning ffmpeg — for a move of one frame.
+const WINDOW_FRAMES: usize = 96;
+
+/// How far past the newest decoded frame a request may be before re-seeking beats waiting.
+///
+/// Generous, because a re-seek respawns ffmpeg and that is the expensive thing. Playback drifting
+/// a few frames ahead of the decoder is normal and self-corrects; treating it as a seek turns a
+/// momentary lag into a spawn, which makes it worse — the failure the first version had.
+const RESEEK_AHEAD_FRAMES: u64 = 90;
 
 /// One decoded frame, with the index it sits at in the stream.
 type Decoded = (u64, Vec<u8>);
@@ -48,9 +57,14 @@ struct Worker {
     fps: f32,
     width: u32,
     height: u32,
-    /// The most recent frame handed to the compositor. Held so a frame that has not arrived yet
-    /// shows the last one rather than nothing.
-    latest: Option<Decoded>,
+    /// Decoded frames by index, ahead of and behind the playhead.
+    ///
+    /// A *window*, not a single frame. Holding only the newest — which the first version did —
+    /// means a request for anything already passed is a miss, and a miss is a re-seek. This is
+    /// the whole-clip cache's shape (instant lookup by index) bounded to what playback needs.
+    window: std::collections::BTreeMap<u64, Vec<u8>>,
+    /// The newest index handed out, so a lookup that misses can fall back to something sensible.
+    last_served: Option<u64>,
 }
 
 impl Drop for Worker {
@@ -67,24 +81,35 @@ impl Worker {
         (((source_seconds - self.origin_seconds) * self.fps as f64).floor()).max(0.0) as u64
     }
 
-    /// Take everything the worker has produced, keeping the newest frame at or before `wanted`.
+    /// Move everything the worker has produced into the window, and drop what is far behind.
     ///
-    /// Never blocks: `try_recv` until the queue is empty. Frames past `wanted` are kept as
-    /// `latest` too — the playhead is about to reach them, and dropping them would mean decoding
-    /// them again.
-    fn drain_to(&mut self, wanted: u64) {
-        loop {
-            match self.frames.try_recv() {
-                Ok(frame) => {
-                    let reached = frame.0 >= wanted;
-                    self.latest = Some(frame);
-                    if reached {
-                        return;
-                    }
-                }
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return,
-            }
+    /// Never blocks: `try_recv` until empty. Everything decoded is *kept*, not consumed — that
+    /// is the difference from the first version and the reason a frame the playhead has already
+    /// passed is still there when something asks for it again.
+    fn drain(&mut self, wanted: u64) {
+        while let Ok((index, pixels)) = self.frames.try_recv() {
+            self.window.insert(index, pixels);
         }
+        // Evict well behind the playhead. Split rather than retain: the map is ordered, so this
+        // is a pointer move rather than a walk of every frame held.
+        let floor = wanted.saturating_sub(WINDOW_FRAMES as u64 / 2);
+        if floor > 0 {
+            self.window = self.window.split_off(&floor);
+        }
+    }
+
+    /// The frame at `wanted`, or the newest one before it.
+    ///
+    /// Falling back to an earlier frame is what makes a late decode invisible: the picture holds
+    /// for a frame instead of the window stalling for one.
+    fn frame(&mut self, wanted: u64) -> Option<&[u8]> {
+        let index = if self.window.contains_key(&wanted) {
+            Some(wanted)
+        } else {
+            self.window.range(..=wanted).next_back().map(|(i, _)| *i)
+        }?;
+        self.last_served = Some(index);
+        self.window.get(&index).map(|pixels| pixels.as_slice())
     }
 }
 
@@ -122,12 +147,21 @@ impl PlaybackStreams {
 
         // Re-seek when the playhead moved backwards, or far enough forward that reading through
         // the intervening frames would cost more than a respawn.
+        // Re-seek only when the window genuinely cannot answer: the request is before everything
+        // held, or far enough past the newest frame that reading forward would take longer than
+        // starting again. A request *inside* the window is a lookup, never a respawn.
         let reseek = match self.open.get(element_id) {
             Some(worker) => {
                 let wanted = worker.index_for(source_seconds);
-                match worker.latest.as_ref().map(|(index, _)| *index) {
-                    Some(have) => wanted + 1 < have || wanted > have + RESEEK_AHEAD_FRAMES,
-                    None => false,
+                match (
+                    worker.window.keys().next().copied(),
+                    worker.window.keys().next_back().copied(),
+                ) {
+                    (Some(oldest), Some(newest)) => {
+                        wanted < oldest || wanted > newest + RESEEK_AHEAD_FRAMES
+                    }
+                    // Nothing decoded yet — wait for the worker rather than restart it.
+                    _ => false,
                 }
             }
             None => true,
@@ -149,13 +183,10 @@ impl PlaybackStreams {
 
         let worker = self.open.get_mut(element_id)?;
         let wanted = worker.index_for(source_seconds);
-        worker.drain_to(wanted);
+        worker.drain(wanted);
         let (width, height) = (worker.width, worker.height);
         let _ = path;
-        worker
-            .latest
-            .as_ref()
-            .map(|(_, pixels)| (width, height, pixels.as_slice()))
+        worker.frame(wanted).map(|pixels| (width, height, pixels))
     }
 
     /// Close decoders for elements no longer on screen, so a long timeline does not accumulate
@@ -204,7 +235,8 @@ impl PlaybackSource {
             fps: self.fps.max(1.0),
             width: self.width,
             height: self.height,
-            latest: None,
+            window: std::collections::BTreeMap::new(),
+            last_served: None,
         }
     }
 }
@@ -217,10 +249,15 @@ impl PlaybackSource {
 mod tests {
     use super::*;
 
+    /// A worker pre-loaded with `frames` and no live decoder.
+    ///
+    /// The channel is sized to the batch. A fixed capacity deadlocks the moment a test sends
+    /// more than it — `sync_channel` blocks on a full buffer, and the first version of this
+    /// helper hung the suite by sending 300 frames into a 256-slot channel.
     fn worker_from(frames: Vec<Decoded>, fps: f32) -> Worker {
-        let (tx, rx) = sync_channel::<Decoded>(64);
+        let (tx, rx) = sync_channel::<Decoded>(frames.len().max(1));
         for frame in frames {
-            tx.send(frame).expect("capacity");
+            tx.send(frame).expect("the channel is sized to the batch");
         }
         drop(tx);
         Worker {
@@ -230,35 +267,61 @@ mod tests {
             fps,
             width: 2,
             height: 1,
-            latest: None,
+            window: std::collections::BTreeMap::new(),
+            last_served: None,
         }
     }
 
+    /// The property the first version got wrong: a frame the playhead has already passed is
+    /// still there. Keeping only the newest made every backward step a miss, and a miss is a
+    /// re-seek — which respawns ffmpeg mid-playback.
     #[test]
-    fn draining_stops_at_the_frame_that_was_asked_for() {
-        let mut worker = worker_from((0..10).map(|i| (i, vec![i as u8])).collect(), 30.0);
-        worker.drain_to(3);
+    fn a_frame_already_passed_is_still_in_the_window() {
+        let mut worker = worker_from((0..20).map(|i| (i, vec![i as u8])).collect(), 30.0);
+        worker.drain(19);
+        assert!(worker.frame(19).is_some(), "the newest frame is available");
         assert_eq!(
-            worker.latest.as_ref().map(|(i, _)| *i),
-            Some(3),
-            "it must stop at the wanted frame, not run to the end of the queue"
+            worker.frame(5).map(|p| p[0]),
+            Some(5),
+            "and so is one the playhead went past"
         );
     }
 
-    /// The property that keeps the UI alive: an empty queue returns immediately with whatever
-    /// was last decoded, rather than waiting for the next frame.
+    /// A frame that has not been decoded shows the newest one before it, rather than nothing.
+    /// That is what makes a late decode invisible instead of a stall.
     #[test]
-    fn an_empty_queue_keeps_the_last_frame_and_does_not_block() {
-        let mut worker = worker_from(vec![(0, vec![7])], 30.0);
-        worker.drain_to(0);
-        assert_eq!(worker.latest.as_ref().map(|(i, _)| *i), Some(0));
-
-        // Nothing more will arrive; asking for a later frame must return, not hang.
-        worker.drain_to(99);
+    fn a_missing_frame_falls_back_to_the_one_before_it() {
+        let mut worker = worker_from(vec![(0, vec![0]), (1, vec![1]), (2, vec![2])], 30.0);
+        worker.drain(2);
         assert_eq!(
-            worker.latest.as_ref().map(|(i, _)| *i),
-            Some(0),
-            "a frame that has not been decoded shows the previous one"
+            worker.frame(50).map(|p| p[0]),
+            Some(2),
+            "asking past the end holds the last decoded frame"
+        );
+    }
+
+    /// An empty window answers immediately rather than waiting for a decode.
+    #[test]
+    fn an_empty_window_returns_none_without_blocking() {
+        let mut worker = worker_from(vec![], 30.0);
+        worker.drain(0);
+        assert!(worker.frame(0).is_none());
+    }
+
+    /// Frames far behind are dropped, or a long playback holds the whole clip in memory — which
+    /// is the trap the whole-clip cache fell into and this design exists to avoid.
+    #[test]
+    fn the_window_evicts_what_is_far_behind() {
+        let mut worker = worker_from((0..300).map(|i| (i, vec![i as u8])).collect(), 30.0);
+        worker.drain(299);
+        assert!(
+            worker.window.len() < 300,
+            "the window must not grow without bound, held {}",
+            worker.window.len()
+        );
+        assert!(
+            worker.frame(299).is_some(),
+            "and must still hold the frames near the playhead"
         );
     }
 
