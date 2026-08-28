@@ -175,28 +175,37 @@ fn report(spans: &mut Spans, elapsed: Duration) {
 
     let play = spans.playback;
     if play.requests > 0 {
+        // Distinct frames, not served frames. A 24 fps source on a 120 Hz display *must* repeat
+        // four requests in five — that is the display being faster than the footage, not a
+        // fault, and the first version of this warned about it on every healthy report. A
+        // diagnostic that fires when nothing is wrong is worse than none: it trains you to skip
+        // the line, which is how the real one gets missed.
+        let distinct = play.served.saturating_sub(play.repeats);
+        let distinct_rate = distinct as f64 / seconds;
         eprintln!(
-            "                       playback: served {} repeat {} starved {} reseek {} decoded {} head-start {} frames",
+            "                       playback: {distinct_rate:.1} new frames/s · served {} repeat {} starved {} reseek {} decoded {} head-start {} frames",
             play.served, play.repeats, play.starved, play.reseeks, play.decoded, play.head_start
         );
-        // Each line below names one cause and only that cause. Guessing between them is what
-        // cost two rounds of the wrong fix.
-        if play.reseeks > play.requests / 8 {
-            eprintln!(
-                "                       ^ re-seeking constantly — each one respawns ffmpeg; the window is being thrown away"
-            );
-        } else if play.starved > play.requests / 4 {
-            eprintln!(
-                "                       ^ decoder cannot keep up — frames are not arriving in time"
-            );
-        } else if play.repeats > play.requests / 4 {
-            eprintln!(
-                "                       ^ frames arriving, same one shown twice — the presentation side is ahead of the decoder"
-            );
-        } else if picture_rate < 20.0 && tick_rate < 30.0 {
-            eprintln!(
-                "                       ^ not being asked to draw often enough — this is frame pacing, not decode"
-            );
+        // Only complain when the picture is actually below the floor bay promises, and then say
+        // which of the three causes it is. Each branch names one and only one.
+        if distinct_rate < 20.0 {
+            if play.reseeks > play.requests / 8 {
+                eprintln!(
+                    "                       ^ re-seeking constantly — each one respawns ffmpeg; the window is being thrown away"
+                );
+            } else if play.starved > play.requests / 4 {
+                eprintln!(
+                    "                       ^ decoder cannot keep up — frames are not arriving in time"
+                );
+            } else if tick_rate < 30.0 {
+                eprintln!(
+                    "                       ^ not being asked to draw often enough — this is frame pacing, not decode"
+                );
+            } else {
+                eprintln!(
+                    "                       ^ drawing often and decoding fine, but few new frames — check the source rate"
+                );
+            }
         }
     }
 

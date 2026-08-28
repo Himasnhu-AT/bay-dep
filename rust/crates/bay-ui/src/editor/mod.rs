@@ -242,7 +242,14 @@ const RULER_HEIGHT: f32 = 22.0;
 /// Peaks drawn per audio clip. One bar every couple of pixels at a typical clip width — fine
 /// enough to read the shape, coarse enough that the extraction is cheap. It is also half the
 /// cache key: asking for a different count is a different waveform, not a reuse of this one.
-const WAVEFORM_BUCKETS: usize = 48;
+/// Peak resolution cached per audio clip on the timeline.
+///
+/// Deliberately more buckets than any block needs, because the cache is keyed by
+/// `(media_id, buckets)` — asking for a count derived from the block's pixel width would spawn a
+/// fresh extraction on every zoom step and leave one cache entry per width ever rendered. One
+/// resolution is cached and [`EditorView::waveform_bars`] downsamples it to fit, which is both
+/// bounded and what makes the peaks span the whole block instead of the first 96 pixels of it.
+const WAVEFORM_BUCKETS: usize = 512;
 
 /// Window-space x of the left edge of every lane (and of the ruler). The timeline spans the
 /// window, so its own left edge is zero.
@@ -425,6 +432,9 @@ pub struct EditorView {
     /// what lands, and those are not the same pixel once a clip has any width. Cleared on drop
     /// and whenever a drag leaves.
     drag_ghost: Option<DragGhost>,
+    /// The lane the pointer is over during a block drag, so releasing on a different one moves
+    /// the clip to that track. Set by each lane's own mouse handler; taken by `finish_drag`.
+    hover_track: Option<String>,
     /// Frames along a timeline clip, decoded once per media and uploaded one image per cell.
     strips: bay_preview::poster::FilmstripCache,
     strip_images: std::collections::BTreeMap<String, Vec<Arc<RenderImage>>>,
@@ -536,6 +546,7 @@ impl EditorView {
             media_width: DEFAULT_PANEL_WIDTH,
             posters: bay_preview::poster::PosterCache::new(),
             drag_ghost: None,
+            hover_track: None,
             strips: bay_preview::poster::FilmstripCache::new(),
             strip_images: std::collections::BTreeMap::new(),
             poster_images: std::collections::BTreeMap::new(),

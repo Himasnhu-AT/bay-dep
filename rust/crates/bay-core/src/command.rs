@@ -76,6 +76,19 @@ pub enum Command {
         reference: ElementRef,
         start: MediaTime,
     },
+    /// Move an element to a different track, and to a new start time on it, as **one** undo step.
+    ///
+    /// Distinct from [`Command::MoveElement`], which slides a clip along the lane it is already
+    /// on and cannot change lanes at all — an `ElementRef` names its track, so there is no start
+    /// time that moves a clip down one row. Spelling this as a remove followed by an add would
+    /// work and would be wrong twice: two entries in the history for one gesture, and an
+    /// intermediate state where the clip exists on neither track, which anything reading the
+    /// scene between the two would see.
+    MoveElementToTrack {
+        reference: ElementRef,
+        track_id: String,
+        start: MediaTime,
+    },
     /// Set an element's duration.
     SetElementDuration {
         reference: ElementRef,
@@ -292,6 +305,7 @@ pub enum CommandKind {
     RemoveElement,
     RippleDelete,
     MoveElement,
+    MoveElementToTrack,
     SetElementDuration,
     SplitElement,
     TrimElement,
@@ -1142,6 +1156,59 @@ impl Command {
                         start: *start,
                     }],
                     selection_patch: None,
+                })
+            }
+
+            Command::MoveElementToTrack {
+                reference,
+                track_id,
+                start,
+            } => {
+                let element = scene.element(reference)?;
+                // Refuse a move to a track that is not there. Lowering it anyway would apply the
+                // remove, find no destination, and leave the clip deleted — a drag onto a lane
+                // that had just been removed would silently eat the clip.
+                let destination = scene.tracks.track(track_id)?;
+                // A move onto the lane it is already on is `MoveElement`'s job. Taking it here
+                // would still work, but it would rebuild the element and land it at the end of
+                // the track's order for no reason.
+                if reference.track_id == *track_id {
+                    return Some(Lowered {
+                        kind: CommandKind::MoveElement,
+                        forward: vec![ProjectPatch::SetElementStart {
+                            reference: reference.clone(),
+                            start: *start,
+                        }],
+                        selection_patch: None,
+                    });
+                }
+                let mut moved = element.clone();
+                moved.set_start(*start);
+                let index = destination.elements.len();
+                let new_reference = ElementRef::new(track_id.clone(), reference.element_id.clone());
+                // Remove *then* insert. The other order would put two elements with the same id
+                // in the scene for the length of one patch, and `element_mut` finds by id.
+                Some(Lowered {
+                    kind: CommandKind::MoveElementToTrack,
+                    forward: vec![
+                        ProjectPatch::RemoveElement {
+                            track_id: reference.track_id.clone(),
+                            element_id: reference.element_id.clone(),
+                        },
+                        ProjectPatch::InsertElement {
+                            track_id: track_id.clone(),
+                            index,
+                            element: moved,
+                        },
+                    ],
+                    // The selection has to follow: an `ElementRef` names a track, so leaving it
+                    // pointing at the old one selects a clip that is no longer there — the
+                    // inspector empties and the next keystroke acts on nothing.
+                    selection_patch: state
+                        .selection
+                        .elements
+                        .contains(reference)
+                        .then(|| SelectionPatch::select_elements(vec![new_reference])),
                 })
             }
 

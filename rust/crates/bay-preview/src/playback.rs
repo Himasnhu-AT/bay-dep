@@ -183,6 +183,40 @@ impl PlaybackStreams {
         self.failed.clear();
     }
 
+    /// Start a decoder for a clip the playhead has not reached yet.
+    ///
+    /// **Pre-roll, and it is what removes the flash at a cut.** A decoder is otherwise opened by
+    /// the first `frame_at` that needs it — which happens on the frame the playhead crosses into
+    /// the clip, when ffmpeg has not been spawned, has not seeked, and has not produced anything.
+    /// `frame_at` correctly returns `None`, the compositor correctly falls back to a flat
+    /// placeholder, and the result is correctly a blue rectangle for the tenth of a second it
+    /// takes the process to start. Every part of that behaves as designed and the cut still looks
+    /// broken. The fix is not to make the fallback prettier, it is to have the frame already.
+    ///
+    /// A no-op when the decoder is open or already known bad, so calling it every frame for
+    /// every upcoming clip costs a hash lookup.
+    pub fn warm(
+        &mut self,
+        element_id: &str,
+        source_seconds: f64,
+        open: impl FnOnce(f64) -> Option<PlaybackSource>,
+    ) {
+        if self.failed.contains(element_id) || self.open.contains_key(element_id) {
+            return;
+        }
+        match open(source_seconds) {
+            Some(source) => {
+                self.open
+                    .insert(element_id.to_string(), source.into_worker(source_seconds));
+            }
+            // Remembered, so a broken path costs one failed spawn rather than one per frame for
+            // as long as it stays within the pre-roll window.
+            None => {
+                self.failed.insert(element_id.to_string());
+            }
+        }
+    }
+
     /// Counters since the last [`Self::take_stats`]. See [`PlaybackStats`].
     pub fn take_stats(&mut self) -> PlaybackStats {
         std::mem::take(&mut self.stats)
@@ -445,6 +479,64 @@ mod tests {
             worker.frame(WINDOW_FRAMES as u64).is_some(),
             "the frame under the advanced playhead is present"
         );
+    }
+
+    /// A source that yields one black frame then ends, for tests that only care about whether a
+    /// decoder was opened at all.
+    fn fake_source() -> PlaybackSource {
+        let mut sent = false;
+        PlaybackSource {
+            width: 2,
+            height: 1,
+            fps: 30.0,
+            next_frame: Box::new(move || {
+                if sent {
+                    return None;
+                }
+                sent = true;
+                Some(vec![0u8; 8])
+            }),
+        }
+    }
+
+    /// Pre-roll opens a decoder for a clip the playhead has not reached, which is what removes
+    /// the flat-colour flash at a cut.
+    #[test]
+    fn warming_opens_a_decoder_before_the_playhead_arrives() {
+        let mut streams = PlaybackStreams::default();
+        streams.warm("clip", 0.0, |_| Some(fake_source()));
+        assert!(
+            streams.open.contains_key("clip"),
+            "warming did not open a decoder"
+        );
+    }
+
+    /// Warming an already-open clip must not respawn it. Called every frame for every upcoming
+    /// clip, a second spawn here would be an ffmpeg process per frame.
+    #[test]
+    fn warming_twice_does_not_respawn() {
+        let mut streams = PlaybackStreams::default();
+        streams.warm("clip", 0.0, |_| Some(fake_source()));
+        let mut opened_again = false;
+        streams.warm("clip", 0.0, |_| {
+            opened_again = true;
+            Some(fake_source())
+        });
+        assert!(!opened_again, "an open decoder was opened a second time");
+    }
+
+    /// A clip that cannot be opened is remembered as failed, so a broken path inside the
+    /// pre-roll horizon costs one spawn attempt rather than one per frame for two seconds.
+    #[test]
+    fn warming_remembers_a_clip_it_could_not_open() {
+        let mut streams = PlaybackStreams::default();
+        streams.warm("broken", 0.0, |_| None);
+        let mut tried_again = false;
+        streams.warm("broken", 0.0, |_| {
+            tried_again = true;
+            None
+        });
+        assert!(!tried_again, "a known-bad clip was retried every frame");
     }
 
     /// A frame that has not been decoded shows the newest one before it, rather than nothing.

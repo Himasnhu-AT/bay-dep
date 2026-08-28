@@ -154,7 +154,16 @@ impl EditorView {
         let delta_px = self.snapped_delta_px(&drag, delta_px);
         let delta_ticks =
             (delta_px / self.timeline.pixels_per_second() * TICKS_PER_SECOND as f32) as i64;
-        if delta_ticks == 0 {
+        // A drag straight down moves no time at all, and returning here on `delta_ticks == 0`
+        // alone would make the one gesture that is *purely* a change of lane the one gesture
+        // that does nothing. The guard is still worth keeping for the click that never moved:
+        // committing an edit for it would put an entry in the history for a missed click.
+        let changed_lane = self
+            .hover_track
+            .as_deref()
+            .is_some_and(|track| track != drag.reference.track_id);
+        if delta_ticks == 0 && !(changed_lane && drag.mode == DragMode::Move) {
+            self.hover_track = None;
             return;
         }
         match drag.mode {
@@ -182,10 +191,28 @@ impl EditorView {
                         });
                     }
                 }
-                self.editor.execute(Command::MoveElement {
-                    reference: drag.reference,
-                    start: MediaTime::from_ticks(new_start),
-                });
+                // A release over a different lane is a move *between* tracks, which is a
+                // different command: an `ElementRef` names its track, so there is no start time
+                // that carries a clip down a row.
+                //
+                // Only the dragged clip changes lane. Carrying the rest of a multi-clip selection
+                // across would have to decide what "one lane down" means for clips that started
+                // on different lanes, and every answer to that is a guess about intent.
+                match self.hover_track.take() {
+                    Some(track_id) if track_id != drag.reference.track_id => {
+                        self.editor.execute(Command::MoveElementToTrack {
+                            reference: drag.reference,
+                            track_id,
+                            start: MediaTime::from_ticks(new_start),
+                        });
+                    }
+                    _ => {
+                        self.editor.execute(Command::MoveElement {
+                            reference: drag.reference,
+                            start: MediaTime::from_ticks(new_start),
+                        });
+                    }
+                }
             }
             DragMode::TrimStart => {
                 let new_start = (drag.origin_start_ticks + delta_ticks).max(0);
@@ -488,6 +515,44 @@ impl EditorView {
         });
     }
 
+    /// Downsample cached peaks to as many bars as the block is wide enough to show.
+    ///
+    /// **Chunk max, never mean.** A waveform is a picture of extremes; averaging a chunk pulls a
+    /// loud transient down towards the silence around it, so a drum hit in a quiet passage
+    /// vanishes at exactly the zoom level where someone is looking for it. Taking the max keeps
+    /// the envelope, which is what the bars are for and what every editor draws.
+    ///
+    /// Returning fewer bars than `peaks` when the block is narrow matters as much as filling a
+    /// wide one: 512 divs across 40 pixels is 512 elements nobody can see.
+    fn waveform_bars(peaks: &[f32], width: f32) -> Vec<f32> {
+        // Empty first: `clamp(1, 0)` panics, and `min > max` is exactly what an audio clip whose
+        // extraction returned nothing would hand us. The draw path filters those out today, which
+        // is why this never fired — a guard one caller deep is not a guard.
+        if peaks.is_empty() {
+            return Vec::new();
+        }
+        // About one bar per three pixels: dense enough to read as a waveform, sparse enough that
+        // a screen-wide clip is a few hundred elements rather than a few thousand. A negative or
+        // NaN width casts to 0 and is lifted to 1 by the clamp, so a degenerate block draws one
+        // bar rather than panicking.
+        let wanted = ((width / 3.0) as usize).clamp(1, peaks.len());
+        if wanted >= peaks.len() {
+            return peaks.to_vec();
+        }
+        (0..wanted)
+            .map(|bar| {
+                // Span computed from the bar index rather than by stepping, so rounding cannot
+                // leave the last chunk short or run past the end.
+                let start = bar * peaks.len() / wanted;
+                let end = ((bar + 1) * peaks.len() / wanted).max(start + 1);
+                peaks[start..end.min(peaks.len())]
+                    .iter()
+                    .copied()
+                    .fold(0.0f32, f32::max)
+            })
+            .collect()
+    }
+
     /// Split the selected element at the playhead into two clips.
     pub(super) fn split_selected(&mut self) {
         if let Some(reference) = self.editor.selection().first().cloned() {
@@ -618,12 +683,31 @@ impl EditorView {
     /// pass, so an undo of the drop is not left holding an empty lane.
     pub(super) fn drop_onto_new_track(&mut self, media: &MediaDrag, at: MediaTime) {
         self.add_counter += 1;
-        let count = self.editor.active_scene().tracks.overlay.len() + 1;
-        let id = format!("track-overlay-{}", self.add_counter);
+        // The lane follows the media, which is the whole point of dropping it here. Creating an
+        // overlay whatever was dropped put a `.wav` on a lane called "Overlay 1", drawn above the
+        // picture — and since `Tracks::iter` orders overlay, main, audio, it also sorted the
+        // sound to the top of the timeline. Every NLE puts audio at the bottom; bay's project
+        // model already does too, and only this one path disagreed with it.
+        let audio = matches!(MediaKind::of_path(&media.path), MediaKind::Audio);
+        let (lane, id, name) = if audio {
+            let count = self.editor.active_scene().tracks.audio.len() + 1;
+            (
+                bay_core::command::TrackLane::Audio,
+                format!("track-audio-{}", self.add_counter),
+                format!("Audio {count}"),
+            )
+        } else {
+            let count = self.editor.active_scene().tracks.overlay.len() + 1;
+            (
+                bay_core::command::TrackLane::Overlay,
+                format!("track-overlay-{}", self.add_counter),
+                format!("Overlay {count}"),
+            )
+        };
         self.editor.execute(Command::AddTrack {
-            lane: bay_core::command::TrackLane::Overlay,
+            lane,
             id: id.clone(),
-            name: format!("Overlay {count}"),
+            name,
         });
         self.place_media_at(
             &media.media_id,
@@ -1076,6 +1160,7 @@ impl EditorView {
                     .as_ref()
                     .and_then(|m| self.waveforms.peaks(m, WAVEFORM_BUCKETS))
                     .filter(|peaks| !peaks.is_empty())
+                    .map(|peaks| Self::waveform_bars(peaks, width))
             } else {
                 None
             };
@@ -1091,14 +1176,20 @@ impl EditorView {
                 None
             };
             let body = match (waveform, cells) {
-                (Some(peaks), _) => {
+                (Some(bars), _) => {
                     base_body
                         .flex()
                         .flex_row()
-                        .items_end()
-                        .children(peaks.iter().map(|p| {
+                        .items_center()
+                        .gap(px(1.0))
+                        // `flex_1`, not a fixed 2 px. Fixed-width bars covered `2 * buckets`
+                        // pixels and left the rest of the block as flat fill — 96 px of peaks on
+                        // a clip drawn thousands of pixels wide, which reads as the waveform
+                        // having failed rather than as a clip that long. Same mistake the
+                        // filmstrip made, and the same fix: size from the block, not a constant.
+                        .children(bars.iter().map(|p| {
                             div()
-                                .w(px(2.0))
+                                .flex_1()
                                 .h(px((p * (inner_height - 6.0)).max(1.0)))
                                 .bg(rgb(theme::ACCENT))
                         }))
@@ -1224,6 +1315,26 @@ impl EditorView {
                     // Tint the lane the drop would land on, so the target is unambiguous when
                     // two lanes are adjacent.
                     .drag_over::<MediaDrag>(|style, _, _, _| style.bg(rgb(theme::SELECTED)))
+                    // Which lane the pointer is over during a *block* drag, so releasing on a
+                    // different lane moves the clip there.
+                    //
+                    // Read from the lane's own handler rather than computed from the pointer's y.
+                    // The lanes are a flex column with gaps inside a scrolling region, so
+                    // inverting that layout by hand would be arithmetic that has to be kept in
+                    // step with the styles — and would be wrong the first time a lane got a
+                    // different height. The element that *is* the lane already knows its id.
+                    .on_mouse_move(cx.listener({
+                        let track_id = track.id.clone();
+                        move |this, _event: &gpui::MouseMoveEvent, _window, cx| {
+                            if this.block_drag().is_none() {
+                                return;
+                            }
+                            if this.hover_track.as_deref() != Some(track_id.as_str()) {
+                                this.hover_track = Some(track_id.clone());
+                                cx.notify();
+                            }
+                        }
+                    }))
                     // Track the pointer while it is over this lane, so the ghost below can be
                     // drawn where the clip will actually start.
                     .on_drag_move::<MediaDrag>(cx.listener({
@@ -1326,6 +1437,64 @@ impl EditorView {
 /// it. This is the layer where a mistake shows up as "the playhead is a second off" rather than
 /// as a crash, so it is asserted rather than eyeballed.
 #[cfg(test)]
+mod waveform_bar_tests {
+    use super::*;
+
+    /// The bug this replaced: 48 bars at a fixed 2 px covered 96 px of a block drawn thousands
+    /// of pixels wide, and the rest stayed flat fill. The bar count now follows the block.
+    #[test]
+    fn a_wide_block_gets_more_bars_than_a_narrow_one() {
+        let peaks: Vec<f32> = (0..512).map(|i| (i % 7) as f32 / 7.0).collect();
+        let narrow = EditorView::waveform_bars(&peaks, 60.0);
+        let wide = EditorView::waveform_bars(&peaks, 1200.0);
+        assert!(
+            wide.len() > narrow.len(),
+            "a 1200 px block got {} bars and a 60 px block got {}",
+            wide.len(),
+            narrow.len()
+        );
+        assert!(
+            wide.len() <= peaks.len(),
+            "downsampling invented {} bars from {} peaks",
+            wide.len(),
+            peaks.len()
+        );
+    }
+
+    /// Chunk *max*, not mean. A transient must survive being downsampled — averaging it away at
+    /// the zoom level where someone is looking for it is the whole failure mode.
+    #[test]
+    fn a_loud_transient_survives_downsampling() {
+        // One spike in an otherwise near-silent clip.
+        let mut peaks = vec![0.01f32; 512];
+        peaks[300] = 1.0;
+        let bars = EditorView::waveform_bars(&peaks, 90.0);
+        assert!(
+            bars.iter().copied().fold(0.0f32, f32::max) >= 1.0,
+            "the transient was averaged away; loudest bar was {:?}",
+            bars.iter().copied().fold(0.0f32, f32::max)
+        );
+    }
+
+    /// Degenerate inputs reach this from a clip one pixel wide or a waveform that came back
+    /// empty, and neither may panic or divide by zero.
+    #[test]
+    fn degenerate_widths_and_empty_peaks_are_survivable() {
+        let peaks = vec![0.5f32; 8];
+        for width in [0.0, 1.0, -50.0, f32::NAN, 1e9] {
+            let bars = EditorView::waveform_bars(&peaks, width);
+            assert!(
+                bars.len() <= peaks.len(),
+                "width {width} produced {} bars from {} peaks",
+                bars.len(),
+                peaks.len()
+            );
+        }
+        assert!(EditorView::waveform_bars(&[], 500.0).is_empty());
+    }
+}
+
+#[cfg(test)]
 mod timeline_tests {
     use super::*;
     use gpui::TestAppContext;
@@ -1357,6 +1526,134 @@ mod timeline_tests {
             this.timeline = this.timeline.with_scroll_x(96.0);
             this.scrub_to(lane_origin_x() + 96.0);
             assert_eq!(this.editor.playhead().to_seconds_f64(), 4.0);
+        });
+    }
+
+    /// Releasing a block over a different lane moves the clip there, as ONE undo step.
+    ///
+    /// The gesture every NLE has and bay did not: `Command::MoveElement` only sets a start time,
+    /// and an `ElementRef` names its track, so no amount of horizontal movement changes a lane.
+    #[gpui::test]
+    fn releasing_a_block_over_another_lane_moves_it_there(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.add_overlay_track();
+            let destination = this
+                .editor
+                .active_scene()
+                .tracks
+                .overlay
+                .last()
+                .expect("the overlay lane was just added")
+                .id
+                .clone();
+            // A clip that exists to be moved, on the main lane.
+            this.place_media_at("m1", "Clip", "/tmp/clip.mp4", Some(MediaTime::ZERO), None);
+            let reference = this
+                .editor
+                .selection()
+                .first()
+                .cloned()
+                .expect("placing a clip selects it");
+            let origin = reference.track_id.clone();
+            assert_ne!(origin, destination, "the test needs two distinct lanes");
+
+            let before = this.editor.can_undo();
+            this.hover_track = Some(destination.clone());
+            this.finish_drag(
+                BlockDrag {
+                    reference: reference.clone(),
+                    mode: DragMode::Move,
+                    origin_start_ticks: 0,
+                    origin_duration_ticks: TICKS_PER_SECOND,
+                },
+                120.0,
+            );
+
+            let landed = this
+                .editor
+                .active_scene()
+                .tracks
+                .track(&destination)
+                .expect("the destination lane still exists")
+                .elements
+                .iter()
+                .any(|element| element.id() == reference.element_id);
+            assert!(landed, "the clip did not arrive on the destination lane");
+            let left = this
+                .editor
+                .active_scene()
+                .tracks
+                .track(&origin)
+                .expect("the origin lane still exists")
+                .elements
+                .iter()
+                .any(|element| element.id() == reference.element_id);
+            assert!(!left, "the clip is on both lanes at once");
+
+            // One undo, not two. A remove and an add spelled separately would need two.
+            let _ = before;
+            this.editor.undo();
+            let back = this
+                .editor
+                .active_scene()
+                .tracks
+                .track(&origin)
+                .expect("the origin lane still exists")
+                .elements
+                .iter()
+                .any(|element| element.id() == reference.element_id);
+            assert!(back, "one undo did not put the clip back on its own lane");
+        });
+    }
+
+    /// A drag straight down moves no time at all. The `delta_ticks == 0` early return made that
+    /// exact gesture — the one that is *only* a change of lane — the one that did nothing.
+    #[gpui::test]
+    fn a_purely_vertical_drag_still_changes_lane(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            this.add_overlay_track();
+            let destination = this
+                .editor
+                .active_scene()
+                .tracks
+                .overlay
+                .last()
+                .expect("the overlay lane was just added")
+                .id
+                .clone();
+            this.place_media_at("m1", "Clip", "/tmp/clip.mp4", Some(MediaTime::ZERO), None);
+            let reference = this
+                .editor
+                .selection()
+                .first()
+                .cloned()
+                .expect("placing a clip selects it");
+
+            this.hover_track = Some(destination.clone());
+            // Zero horizontal movement: straight down.
+            this.finish_drag(
+                BlockDrag {
+                    reference: reference.clone(),
+                    mode: DragMode::Move,
+                    origin_start_ticks: 0,
+                    origin_duration_ticks: TICKS_PER_SECOND,
+                },
+                0.0,
+            );
+
+            assert!(
+                this.editor
+                    .active_scene()
+                    .tracks
+                    .track(&destination)
+                    .expect("the destination lane still exists")
+                    .elements
+                    .iter()
+                    .any(|element| element.id() == reference.element_id),
+                "a vertical-only drag left the clip where it was"
+            );
         });
     }
 

@@ -722,6 +722,14 @@ impl VideoClip {
 /// time, so the budget is a memory ceiling: rather than truncating long clips (which froze
 /// anything past ~15s on the last decoded frame), the sample rate is lowered so the cache still
 /// spans the clip's full duration.
+/// How far ahead of the playhead a clip's decoder is started during playback.
+///
+/// Long enough to cover an ffmpeg spawn, an accurate seek and the first decodes — measured at
+/// roughly a tenth of a second for a 1080p H.264 source, so this is generous. Short enough that
+/// a densely cut timeline does not hold a decoder for every clip in it: at one clip per second,
+/// two seconds of horizon is two extra processes, not two hundred.
+const PREROLL_SECONDS: f64 = 2.0;
+
 const VIDEO_MAX_WIDTH: u32 = 480;
 const VIDEO_MAX_FPS: f32 = 30.0;
 const VIDEO_MIN_FPS: f32 = 2.0;
@@ -2268,6 +2276,7 @@ impl PreviewRenderer {
         let texture = if self.playing {
             // Moved out and back so the streams can be borrowed mutably alongside `self`.
             let mut streams = std::mem::take(&mut self.playback);
+            Self::warm_upcoming(scene, playhead, media, &mut streams);
             let texture = self.composite_inner(
                 scene,
                 playhead,
@@ -2326,6 +2335,65 @@ impl PreviewRenderer {
         self.playing = playing;
         if !playing {
             self.playback.close_all();
+        }
+    }
+
+    /// Open decoders for clips the playhead is about to reach.
+    ///
+    /// Playback opens a clip's decoder on the first frame that needs it, which is the frame the
+    /// cut lands on — so the process spawn, the seek and the first decode all happen while that
+    /// clip is already meant to be on screen, and it shows as a flash of flat colour at every
+    /// cut. Starting them [`PREROLL_SECONDS`] early costs one ffmpeg process per upcoming clip
+    /// for a moment and makes the switch seamless.
+    ///
+    /// Bounded by looking *forward only* and by a short horizon: a timeline of two hundred clips
+    /// must not become two hundred decoders. `retain_only` already closes what has gone off
+    /// screen, and the pre-roll horizon is what stops this opening them faster than that closes
+    /// them.
+    fn warm_upcoming(
+        scene: &Scene,
+        playhead: MediaTime,
+        media: &[MediaAsset],
+        streams: &mut playback::PlaybackStreams,
+    ) {
+        let horizon = playhead.as_ticks()
+            + MediaTime::from_seconds_f64(PREROLL_SECONDS)
+                .map(|time| time.as_ticks())
+                .unwrap_or(0);
+        for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+            if track.hidden {
+                continue;
+            }
+            for element in &track.elements {
+                // Ahead of the playhead and inside the horizon. Elements already under the
+                // playhead are opened by `frame_at` on this very frame, and opening them here
+                // too would just be the same hash lookup twice.
+                let start = element.start().as_ticks();
+                if start <= playhead.as_ticks() || start > horizon {
+                    continue;
+                }
+                let Element::Video(video) = element else {
+                    continue;
+                };
+                let Some(path) = media
+                    .iter()
+                    .find(|m| m.id == video.media_id)
+                    .map(|m| m.path.clone())
+                else {
+                    continue;
+                };
+                // The source time at the clip's own first frame — local time zero, which is
+                // where the playhead will be when it arrives.
+                let source_seconds = element
+                    .source_time(MediaTime::ZERO)
+                    .map(|time| time.to_seconds_f64())
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                let owned = path.clone();
+                streams.warm(element.id(), source_seconds, move |at| {
+                    open_playback_source(&owned, at)
+                });
+            }
         }
     }
 
