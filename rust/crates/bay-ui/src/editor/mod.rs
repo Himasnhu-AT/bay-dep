@@ -412,6 +412,12 @@ pub struct EditorView {
     /// `RenderImage` is — and because the conversion costs a channel swap that should happen
     /// once per asset, not once per frame.
     posters: bay_preview::poster::PosterCache,
+    /// Where a dragged clip would land: the track under the pointer and its x on the lane.
+    ///
+    /// A drop with no preview is a guess — the pointer is over a lane but the clip's *start* is
+    /// what lands, and those are not the same pixel once a clip has any width. Cleared on drop
+    /// and whenever a drag leaves.
+    drag_ghost: Option<(String, f32)>,
     /// Frames along a timeline clip, decoded once per media and uploaded one image per cell.
     strips: bay_preview::poster::FilmstripCache,
     strip_images: std::collections::BTreeMap<String, Vec<Arc<RenderImage>>>,
@@ -522,6 +528,7 @@ impl EditorView {
             panel: Panel::Media,
             media_width: DEFAULT_PANEL_WIDTH,
             posters: bay_preview::poster::PosterCache::new(),
+            drag_ghost: None,
             strips: bay_preview::poster::FilmstripCache::new(),
             strip_images: std::collections::BTreeMap::new(),
             poster_images: std::collections::BTreeMap::new(),

@@ -248,13 +248,14 @@ impl EditorView {
             path: path.clone(),
         };
         let chip_label = SharedString::from(name.clone());
+        let chip_poster = self.poster_image(&id);
         div()
             .id(("media-tile", index))
             // Dragged onto the timeline it lands where it is dropped; clicked it lands at the
             // playhead. Both go through `place_media_at`, so the two routes cannot drift.
             .on_drag(payload, move |_, _, _, cx| {
-                let label = chip_label.clone();
-                cx.new(|_| super::timeline::MediaDragChip::new(label))
+                let (label, poster) = (chip_label.clone(), chip_poster.clone());
+                cx.new(|_| super::timeline::MediaDragChip::new(label, poster))
             })
             .flex_1()
             .min_w(px(0.0))

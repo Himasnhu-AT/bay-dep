@@ -6,6 +6,13 @@
 
 use super::*;
 
+/// How wide the drop shadow is drawn.
+///
+/// A fixed width rather than the clip's real duration: the duration needs a probe, and probing
+/// on every pointer move during a drag would spawn ffprobe at pointer rate. The shadow's job is
+/// to say *where the clip starts*, which is the thing a pointer alone does not tell you.
+const GHOST_WIDTH: f32 = 64.0;
+
 /// A media asset being dragged from a library tile onto the timeline.
 ///
 /// gpui's own drag machinery rather than bay's `WidgetState`: this gesture starts in one element
@@ -19,27 +26,42 @@ pub struct MediaDrag {
 }
 
 /// What follows the pointer while a tile is being dragged.
+///
+/// Carries the thumbnail as well as the name: a drag that shows only a filename gives no
+/// feedback about *what* is being dragged, which matters most in a pool of similarly-named takes.
 pub struct MediaDragChip {
     label: SharedString,
+    poster: Option<Arc<RenderImage>>,
 }
 
 impl MediaDragChip {
-    pub fn new(label: SharedString) -> Self {
-        Self { label }
+    pub fn new(label: SharedString, poster: Option<Arc<RenderImage>>) -> Self {
+        Self { label, poster }
     }
 }
 
 impl Render for MediaDragChip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .px(px(8.0))
-            .py(px(4.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .p(px(4.0))
             .rounded(px(4.0))
             .bg(rgb(theme::SELECTED))
             .border_1()
             .border_color(rgb(theme::SELECTED_BORDER))
             .text_xs()
             .text_color(rgb(theme::TEXT))
+            .children(self.poster.clone().map(|image| {
+                div()
+                    .w(px(48.0))
+                    .h(px(32.0))
+                    .rounded(px(2.0))
+                    .overflow_hidden()
+                    .child(img(ImageSource::Render(image)).size_full())
+            }))
             .child(self.label.clone())
     }
 }
@@ -730,6 +752,7 @@ impl EditorView {
                                     let x = f32::from(window.mouse_position().x) - lane_origin_x();
                                     let at = this.geometry().px_to_frame_time(x);
                                     this.drop_onto_new_track(media, at);
+                                    this.drag_ghost = None;
                                     cx.notify();
                                 },
                             )),
@@ -1050,8 +1073,8 @@ impl EditorView {
                 block
                     .media_id
                     .as_ref()
-                    .and_then(|media| self.filmstrip_cells(media, width))
-                    .filter(|cells| !cells.is_empty())
+                    .and_then(|media| self.filmstrip_cells(media, width, inner_height))
+                    .filter(|(cells, _)| !cells.is_empty())
             } else {
                 None
             };
@@ -1068,7 +1091,7 @@ impl EditorView {
                                 .bg(rgb(theme::ACCENT))
                         }))
                 }
-                (None, Some(cells)) => base_body
+                (None, Some((cells, cell_width))) => base_body
                     // No horizontal padding under a filmstrip: `px_2` would leave two bars of
                     // the old flat fill at the ends, which reads as the strip failing to load.
                     .px_0()
@@ -1076,11 +1099,15 @@ impl EditorView {
                     .flex_row()
                     .items_center()
                     .children(cells.into_iter().map(|image| {
+                        // Fixed width from the frame's own aspect, not an equal share of the
+                        // block. `flex_1` gave every cell the same width whatever shape the frame
+                        // was, which squashed a 9:16 clip into vertical stripes.
                         div()
-                            .flex_1()
+                            .flex_none()
+                            .w(px(cell_width))
                             .h(px(inner_height))
                             .overflow_hidden()
-                            .child(img(ImageSource::Render(image)).h(px(inner_height)).w_full())
+                            .child(img(ImageSource::Render(image)).size_full())
                     })),
                 (None, None) => base_body
                     .text_xs()
@@ -1182,6 +1209,22 @@ impl EditorView {
             .child(
                 div()
                     .id(SharedString::from(format!("lane-{}", track.id)))
+                    // Tint the lane the drop would land on, so the target is unambiguous when
+                    // two lanes are adjacent.
+                    .drag_over::<MediaDrag>(|style, _, _, _| style.bg(rgb(theme::SELECTED)))
+                    // Track the pointer while it is over this lane, so the ghost below can be
+                    // drawn where the clip will actually start.
+                    .on_drag_move::<MediaDrag>(cx.listener({
+                        let track_id = track.id.clone();
+                        move |this, event: &gpui::DragMoveEvent<MediaDrag>, _window, cx| {
+                            let x = f32::from(event.event.position.x) - lane_origin_x();
+                            let next = Some((track_id.clone(), x));
+                            if this.drag_ghost != next {
+                                this.drag_ghost = next;
+                                cx.notify();
+                            }
+                        }
+                    }))
                     // Dropping a library tile lands the clip at the pointer, on this track. The
                     // x comes from the window rather than the event because gpui's drop listener
                     // carries the payload and not the position.
@@ -1197,6 +1240,7 @@ impl EditorView {
                                 Some(at),
                                 Some(track_id.as_str()),
                             );
+                            this.drag_ghost = None;
                             cx.notify();
                         }
                     }))
@@ -1206,6 +1250,25 @@ impl EditorView {
                     .rounded_md()
                     .bg(rgb(theme::LANE))
                     .overflow_hidden()
+                    // The shadow of where the clip lands. Drawn from the pointer's x, quantised
+                    // the same way the drop is, so what is shown is where it goes rather than
+                    // an approximation of it.
+                    .children(self.drag_ghost.as_ref().and_then(|(ghost_track, x)| {
+                        (ghost_track == &track.id).then(|| {
+                            let at = geometry.px_to_frame_time(*x);
+                            let left = geometry.ticks_to_px(at).max(zero_x);
+                            div()
+                                .absolute()
+                                .left(px(left))
+                                .top(px(4.0))
+                                .h(px(LANE_HEIGHT - 8.0))
+                                .w(px(GHOST_WIDTH))
+                                .rounded_md()
+                                .bg(rgb(theme::SELECTED))
+                                .border_1()
+                                .border_color(rgb(theme::SELECTED_BORDER))
+                        })
+                    }))
                     // Pressing empty lane space scrubs, the same as the ruler. A press that
                     // lands on a clip never gets here: `begin_drag` stops propagation, so
                     // dragging a clip does not also drag the playhead.

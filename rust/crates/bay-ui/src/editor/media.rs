@@ -1946,26 +1946,43 @@ impl EditorView {
         }
     }
 
-    /// The cells to draw across a clip `width` pixels wide.
+    /// The cells to draw across a clip, and how wide each one is.
     ///
-    /// How many cells fit is decided by the block's width; *which* cells is decided by the
-    /// clip's position in its source. One cell per ~64px, so a short clip shows one frame rather
-    /// than twelve slivers of nothing.
+    /// A cell is **one whole frame**, drawn at lane height with its width following the frame's
+    /// aspect — which is how Resolve draws a filmstrip, and the only way a vertical clip is
+    /// recognisable. Stretching each cell to an equal share of the block width instead turns a
+    /// 9:16 frame into a 2:1 sliver: what shipped looked like vertical stripes, not pictures.
+    ///
+    /// Returns the cells to draw left to right and the width of one, so the caller can lay them
+    /// out and clip the overflow at the block's edge.
     pub(super) fn filmstrip_cells(
         &self,
         media_id: &str,
-        width: f32,
-    ) -> Option<Vec<Arc<RenderImage>>> {
+        block_width: f32,
+        lane_height: f32,
+    ) -> Option<(Vec<Arc<RenderImage>>, f32)> {
         let cells = self.strip_images.get(media_id)?;
-        if cells.is_empty() || !width.is_finite() || width <= 0.0 {
+        let first = cells.first()?;
+        if !block_width.is_finite() || block_width <= 0.0 || lane_height <= 0.0 {
             return None;
         }
-        let wanted = ((width / 64.0).round() as usize).clamp(1, cells.len());
-        Some(
-            (0..wanted)
+
+        let size = first.size(0);
+        let (fw, fh) = (u32::from(size.width) as f32, u32::from(size.height) as f32);
+        if fw <= 0.0 || fh <= 0.0 {
+            return None;
+        }
+        // One whole frame, lane-height tall.
+        let cell_width = (lane_height * (fw / fh)).max(8.0);
+
+        // How many fit, plus one so the strip runs to the edge instead of stopping short and
+        // leaving a bar of flat colour.
+        let fits = ((block_width / cell_width).ceil() as usize).clamp(1, 64);
+        Some((
+            (0..fits)
                 .map(|i| {
-                    let fraction = if wanted > 1 {
-                        i as f32 / (wanted - 1) as f32
+                    let fraction = if fits > 1 {
+                        i as f32 / (fits - 1) as f32
                     } else {
                         0.0
                     };
@@ -1974,6 +1991,7 @@ impl EditorView {
                     Arc::clone(&cells[index])
                 })
                 .collect(),
-        )
+            cell_width,
+        ))
     }
 }
