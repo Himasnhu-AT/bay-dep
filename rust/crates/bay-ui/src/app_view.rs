@@ -138,7 +138,7 @@ pub struct BayApp {
     needs_focus: bool,
     /// The port this window serves agent calls on, so the registry note can name the project
     /// it has open — which is how a human tells two windows apart in `bay --agents`.
-    agent_port: Option<u16>,
+    pub(crate) agent_port: Option<u16>,
 }
 
 impl gpui::Focusable for BayApp {
@@ -1029,6 +1029,10 @@ impl BayApp {
                      with the snippet below before it can reach bay again."
                         .into(),
                 );
+                // Nothing else to do: the server re-reads the token file when a credential it
+                // does not recognise arrives, so the new one is live immediately. It did not
+                // used to be — `AuthToken` cached the value from startup, so this banner was
+                // telling people to adopt a token that would be refused until bay restarted.
             }
             Err(error) => self.settings_complaint = Some(format!("Could not rotate: {error}")),
         }

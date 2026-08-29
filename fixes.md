@@ -325,6 +325,54 @@ Verified by:
 
 ## Open
 
+### 19. Rotating the MCP token locked every client out until bay restarted — FIXED 2026-08-29
+
+Found by a user who could not connect. `AuthToken::load_or_create` read the token file once at
+startup and compared against the cached bytes forever. The settings pane's "Rotate token" rewrote
+that file and updated its own copy, and nothing told the running server — so the token the pane
+displayed, and the one its own snippet told you to paste, was refused with 401 until bay was
+restarted. The banner said the opposite: "Every client configured with the old one must be updated
+with the snippet below before it can reach bay again."
+
+`load_or_create`'s own comment named the hazard — "two definitions of the token would mean a rotate
+in the window that the server never noticed" — and guarded against a second *file*. The cached copy
+in memory was the second definition.
+
+`matches` reads the file per request now, and consults no cache. **The first attempt at the fix
+compared the cached value first and fell back to the file, which made rotation additive: the new
+token started working and the old one never stopped.** A rotate that does not revoke is worse than
+none, because it reports success; its test caught it before it shipped.
+
+Verified when: `a_rotated_token_is_accepted_without_a_restart` — the new token is accepted and the
+old one refused, with no restart — plus an end-to-end probe of the built binary (HTTP 200 with the
+file token, 401 with a wrong one).
+
+### 20. Every client snippet in the MCP pane described a server bay does not run — FIXED 2026-08-29
+
+`config_snippet` emitted `claude mcp add bay -- bay --mcp --token …` for Claude Code and a
+`command`/`args`/`env` JSON for Desktop and Cursor. All three describe a **stdio subprocess**; bay
+serves **HTTP on 127.0.0.1:7333**. Three faults in one function:
+
+- the client spawns its own `bay --mcp`, which fails outright when `bay` is not on `PATH`;
+- when it is, it starts a *second headless instance*, so agent edits land in a process with
+  nobody's project open — defeating the pane's entire purpose, which the status line states as
+  "external agents can read and edit this project";
+- the JSON passed the token as `BAY_TOKEN`, an environment variable **nothing in the workspace
+  reads**. The server takes its credential from the token file.
+
+`bay --help` has printed the correct `--transport http` invocation all along, so the pane and the
+CLI disagreed about how to reach the same server and nothing compared them.
+
+The doc comment claimed the opposite of what was true: "Written from the real command and the
+caller's real token, so copying it out of the pane and pasting it into a terminal works." And
+`the_config_snippet_is_runnable` asserted `--mcp`, `command: "bay"` and `env.BAY_TOKEN` — every
+one of them the wrong thing — and passed. A second test in `settings_model.rs` asserted `--mcp`
+too. **Two tests pinned the bug in place.**
+
+Fixed by emitting the HTTP form for all three clients, threading the *bound* port through so
+`--mcp --port N` is reflected, and adding `the_snippets_agree_with_the_cli`, which reads
+`desktop/src/main.rs` and fails if the pane and the help text drift apart again.
+
 ### 17. Image textures have no budget, no downscale, and are never released — FIXED 2026-08-28
 
 Uploads now downscale to `IMAGE_MAX_DIMENSION` (1024 on the longest side, bounded on *both* axes

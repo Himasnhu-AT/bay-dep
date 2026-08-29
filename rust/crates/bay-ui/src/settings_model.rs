@@ -134,6 +134,12 @@ pub struct SettingsSnapshot {
     /// Every MCP tool bay implements, sorted. Drawn from the full list, not the allowed one:
     /// a pane built from the filtered list would lose the row that switches a tool back on.
     pub tools: Vec<String>,
+    /// The port the server actually bound, which the client snippet has to name.
+    ///
+    /// The real one, not the default: `bay --mcp --port N` exists, and a snippet that hardcoded
+    /// 7333 would be a copy-pasteable command that connects to nothing on any machine where the
+    /// default was taken.
+    pub agent_port: u16,
 }
 
 /// The machine's own answer to "who is this?", with no account involved.
@@ -502,7 +508,7 @@ pub fn mcp_pane(snapshot: &SettingsSnapshot) -> McpPane {
             })
             .collect(),
         snippet: match &token {
-            Some(token) => settings.config_snippet(selected, token),
+            Some(token) => settings.config_snippet(selected, token, snapshot.agent_port),
             None => "No token — bay could not read its data directory, so there is nothing to \
                      configure a client with."
                 .into(),
@@ -647,6 +653,7 @@ mod tests {
             cloud_available: false,
             has_gpu: true,
             tools: vec!["add_clip".into(), "render".into(), "snapshot".into()],
+            agent_port: bay_agent::registry::DEFAULT_PORT,
         }
     }
 
@@ -961,7 +968,19 @@ mod tests {
             pane.snippet.contains(&token),
             "the snippet must be pasteable"
         );
-        assert!(pane.snippet.contains("--mcp"));
+        // `--transport http`, not `--mcp`. This asserted the latter, which is the flag for
+        // spawning a *second* headless bay — the snippet's original bug, pinned by its own test.
+        assert!(
+            pane.snippet.contains("--transport http"),
+            "the snippet must register the running server, not spawn one: {}",
+            pane.snippet
+        );
+        assert!(
+            pane.snippet
+                .contains(&format!("127.0.0.1:{}/mcp", snapshot.agent_port)),
+            "the snippet must name the bound port: {}",
+            pane.snippet
+        );
     }
 
     /// A blank token field looks like an empty credential. It has to say what went wrong.

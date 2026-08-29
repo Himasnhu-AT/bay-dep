@@ -105,18 +105,36 @@ impl McpSettings {
         }
     }
 
-    /// The snippet that adds bay to `client_id`.
+    /// The snippet that adds bay to `client_id`, for a server listening on `port`.
     ///
-    /// Written from the real command and the caller's real token, so copying it out of the pane
-    /// and pasting it into a terminal works. A snippet with a placeholder token would be a
-    /// screenshot, not a feature.
-    pub fn config_snippet(&self, client_id: &str, token: &str) -> String {
+    /// Written from the real command, the real port and the caller's real token, so copying it
+    /// out of the pane and pasting it into a terminal works. A snippet with a placeholder token
+    /// would be a screenshot, not a feature.
+    ///
+    /// **These describe an HTTP connection, and the previous versions described a subprocess.**
+    /// That was wrong three times over. `claude mcp add bay -- bay --mcp --token …` registers a
+    /// *stdio* server, so the client spawns its own `bay --mcp`: it fails outright when `bay` is
+    /// not on `PATH`, and when it is, it starts a second headless instance — which defeats the
+    /// entire point of the pane, because agent edits then land in a process with nobody's project
+    /// open instead of "the window you are looking at". The JSON form had a third fault on top:
+    /// it passed the token as `BAY_TOKEN`, an environment variable **nothing in the workspace
+    /// reads**. The server takes its credential from the token file and its requests from an
+    /// `Authorization: Bearer` header.
+    ///
+    /// `bay --help` has printed the correct `--transport http` invocation all along, so the pane
+    /// and the CLI disagreed about how to reach the same server. `the_snippets_agree_with_the_cli`
+    /// is what stops them drifting apart again.
+    pub fn config_snippet(&self, client_id: &str, token: &str, port: u16) -> String {
+        let url = format!("http://127.0.0.1:{port}/mcp");
         match client_id {
-            "code" => format!("claude mcp add bay -- bay --mcp --token {token}"),
+            "code" => format!(
+                "claude mcp add --transport http bay {url} --header \"Authorization: Bearer {token}\""
+            ),
+            // Cursor and current Claude Desktop both take a remote server as `url` plus
+            // `headers`; neither needs a command, because bay is already running.
             _ => format!(
-                "{{\n  \"mcpServers\": {{\n    \"bay\": {{\n      \"command\": \"bay\",\n      \
-                 \"args\": [\"--mcp\"],\n      \"env\": {{ \"BAY_TOKEN\": \"{token}\" }}\n    \
-                 }}\n  }}\n}}"
+                "{{\n  \"mcpServers\": {{\n    \"bay\": {{\n      \"url\": \"{url}\",\n      \
+                 \"headers\": {{ \"Authorization\": \"Bearer {token}\" }}\n    }}\n  }}\n}}"
             ),
         }
     }
@@ -278,24 +296,80 @@ mod tests {
         assert_eq!(settings.status_line(), "Listening — 2 tools are blocked");
     }
 
-    /// The snippet is meant to be pasted. It must carry the real token and the flag bay's own
-    /// binary accepts, not an invented subcommand.
+    /// The snippet is meant to be pasted, so it must describe the server bay actually runs.
+    ///
+    /// The version this replaced asserted `claude mcp add bay`, `--mcp`, `command: "bay"` and
+    /// `env.BAY_TOKEN` — every one of which was wrong, and it passed. It pinned a stdio
+    /// subprocess for an HTTP server, and `BAY_TOKEN` is read by nothing in the workspace. A
+    /// test can only be as right as the contract it was written against.
     #[test]
-    fn the_config_snippet_is_runnable() {
+    fn the_config_snippet_describes_the_http_server() {
         let settings = McpSettings::default();
-        let code = settings.config_snippet("code", "bay_sk_7f3c9a21");
-        assert!(code.starts_with("claude mcp add bay"), "{code}");
-        assert!(code.contains("--mcp"), "bay's real flag: {code}");
-        assert!(code.contains("bay_sk_7f3c9a21"));
+        let token = "dec566e0b899c66f0c69e80b80687b87b54d283945fb28c2bc2e8f116d7e2fd6";
 
-        let desktop = settings.config_snippet("desktop", "bay_sk_7f3c9a21");
+        let code = settings.config_snippet("code", token, 7333);
+        assert!(
+            code.contains("--transport http"),
+            "the pane must register an HTTP server, not spawn a subprocess: {code}"
+        );
+        assert!(code.contains("http://127.0.0.1:7333/mcp"), "{code}");
+        assert!(
+            code.contains(&format!("Authorization: Bearer {token}")),
+            "the server authenticates on a bearer header: {code}"
+        );
+        assert!(
+            !code.contains("bay --mcp"),
+            "spawning a second bay would not be the window the user has open: {code}"
+        );
+
+        let desktop = settings.config_snippet("desktop", token, 7333);
         let parsed: serde_json::Value =
             serde_json::from_str(&desktop).expect("the JSON snippet must parse");
-        assert_eq!(parsed["mcpServers"]["bay"]["command"], "bay");
-        assert_eq!(parsed["mcpServers"]["bay"]["args"][0], "--mcp");
         assert_eq!(
-            parsed["mcpServers"]["bay"]["env"]["BAY_TOKEN"],
-            "bay_sk_7f3c9a21"
+            parsed["mcpServers"]["bay"]["url"],
+            "http://127.0.0.1:7333/mcp"
+        );
+        assert_eq!(
+            parsed["mcpServers"]["bay"]["headers"]["Authorization"],
+            format!("Bearer {token}")
+        );
+        assert!(
+            parsed["mcpServers"]["bay"]["command"].is_null(),
+            "a command means a subprocess, and bay is already running: {desktop}"
+        );
+    }
+
+    /// A non-default port has to reach the snippet, or `bay --mcp --port N` produces a
+    /// copy-pasteable command that connects to nothing.
+    #[test]
+    fn the_snippet_names_the_port_the_server_bound() {
+        let settings = McpSettings::default();
+        for client in ["code", "desktop", "cursor"] {
+            let snippet = settings.config_snippet(client, "t", 9876);
+            assert!(
+                snippet.contains("9876") && !snippet.contains("7333"),
+                "{client} ignored the bound port: {snippet}"
+            );
+        }
+    }
+
+    /// The pane and `bay --help` must agree about how to reach the same server.
+    ///
+    /// They did not: the CLI printed the correct `--transport http` invocation while the pane
+    /// printed a stdio one, and nothing compared them. Reading the binary's own help text is
+    /// blunt, and it is the only thing that actually couples the two — a test asserting the
+    /// shape of each separately is what allowed them to drift in the first place.
+    #[test]
+    fn the_snippets_agree_with_the_cli() {
+        let help = include_str!("../../../desktop/src/main.rs");
+        assert!(
+            help.contains("claude mcp add --transport http bay"),
+            "the CLI help no longer shows the http invocation — re-anchor this test"
+        );
+        let code = McpSettings::default().config_snippet("code", "t", 7333);
+        assert!(
+            code.starts_with("claude mcp add --transport http bay"),
+            "the pane and `bay --help` disagree about how to reach the server: {code}"
         );
     }
 

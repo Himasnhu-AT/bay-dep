@@ -66,6 +66,9 @@ impl BayApp {
             cloud_available: bay_settings::compute::cloud_available(),
             has_gpu: self.gpu_available,
             tools: bay_mcp_tool_names(),
+            // The bound port, falling back to the default only when the server is not running —
+            // in which case the snippet describes where it *will* listen.
+            agent_port: self.agent_port.unwrap_or(bay_agent::registry::DEFAULT_PORT),
         }
     }
 

@@ -75,8 +75,39 @@ impl AuthToken {
     }
 
     /// Compare token bytes without exposing how many leading bytes matched.
+    ///
+    /// **Reads the file every time, and does not consult a cached copy.** The credential lives in
+    /// the token file; anything else is a second definition of it, and a second definition is the
+    /// whole bug. `load_or_create` used to read once at startup, so the settings pane's "Rotate
+    /// token" — which rewrites that file — left the server authenticating against a value nobody
+    /// could see any more. A user pasting the pane's own snippet got 401 until bay was restarted,
+    /// while the banner told them the new token was live.
+    ///
+    /// The first attempt at this fix compared against the cached value *first* and fell back to
+    /// the file, which made rotation **additive**: the new token started working and the old one
+    /// never stopped. A rotate that does not revoke is worse than no rotate at all, because it
+    /// reports success. Its test caught it, which is the only reason it is not in this commit.
+    ///
+    /// The cost is a 64-byte read from the page cache per request, against a path that has
+    /// already done a TCP accept and is about to parse JSON. MCP traffic is user- and
+    /// agent-driven, not a hot loop.
+    ///
+    /// A missing or malformed file authenticates nothing. Falling back to the last known value
+    /// would mean deleting the credential leaves it working, which is not what deleting it means.
     fn matches(&self, candidate: &[u8]) -> bool {
-        bool::from(self.value.as_slice().ct_eq(candidate))
+        // `BAY_MCP_TOKEN` sets `path: None`. An explicitly configured token is the credential in
+        // its own right and is never overridden by whatever happens to be on disk.
+        let Some(path) = self.path.as_ref() else {
+            return bool::from(self.value.as_slice().ct_eq(candidate));
+        };
+        let Ok(current) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        let current = current.trim();
+        if !bay_settings::token::is_valid(current) {
+            return false;
+        }
+        bool::from(current.as_bytes().ct_eq(candidate))
     }
 
     #[cfg(test)]
@@ -919,6 +950,62 @@ mod tests {
             "{response}"
         );
         assert!(!dispatched, "an unauthenticated request reached dispatch");
+    }
+
+    /// A token rotated in the settings pane is live immediately, without restarting bay.
+    ///
+    /// This is the bug that locked a real user out. `load_or_create` reads the file once at
+    /// startup; "Rotate token" writes a new one and updates the pane. Nothing told the running
+    /// server, so the token displayed in the pane — the one its own snippet told you to paste —
+    /// was refused with 401 until bay was restarted, and the banner said the opposite.
+    ///
+    /// `load_or_create`'s comment already warned that "two definitions of the token would mean a
+    /// rotate in the window that the server never noticed". It guarded against a second *file*.
+    /// The cached copy in memory was the second definition.
+    #[test]
+    fn a_rotated_token_is_accepted_without_a_restart() {
+        // Scratch keyed by name *and pid*: `CLAUDE.md` records two test binaries wiping each
+        // other's state when only the name was used.
+        let dir = std::env::temp_dir().join(format!("bay-rotate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let path = dir.join("mcp-token");
+
+        let first = bay_settings::token::read_or_create(&path).expect("first token");
+        let token = AuthToken {
+            value: first.clone().into_bytes(),
+            path: Some(path.clone()),
+        };
+        assert!(
+            token.matches(first.as_bytes()),
+            "the startup token must work"
+        );
+
+        // The settings pane rotates. The server's cached copy is now stale.
+        let second = bay_settings::token::rotate(&path).expect("rotate");
+        assert_ne!(first, second);
+
+        assert!(
+            token.matches(second.as_bytes()),
+            "the rotated token was refused — a client pasting the pane's own snippet gets 401"
+        );
+        assert!(
+            !token.matches(first.as_bytes()),
+            "the revoked token still works, so rotation does not revoke anything"
+        );
+        assert!(!token.matches(b"not-a-token"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An explicitly configured `BAY_MCP_TOKEN` must never be silently replaced by whatever is
+    /// on disk — the env var exists precisely to override the file.
+    #[test]
+    fn an_env_configured_token_does_not_consult_the_file() {
+        let token = AuthToken::from_test(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+        assert!(token.path.is_none(), "from_test stands in for the env path");
+        assert!(!token.matches(b"anything else"));
     }
 
     #[test]
