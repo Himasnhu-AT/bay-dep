@@ -6,8 +6,8 @@
 use super::*;
 
 impl EditorView {
-    /// A cheap signature of everything that affects the composited preview.
-    /// The playhead the preview draws, quantised to the project's frame rate.
+    /// The playhead the preview draws: quantised to the project's frame rate, **unless the scene
+    /// is animated**.
     ///
     /// **The picture changes once per frame, not once per tick, and the difference is 4x the
     /// GPU work on a 120 Hz display.** `MediaTime` counts 120,000 ticks a second, so the raw
@@ -27,12 +27,52 @@ impl EditorView {
     /// the timeline already quantises scrubs and drops the same way (`geometry::quantize_to_frame`).
     /// The model playhead is untouched, so the timecode still reads continuously.
     pub(super) fn preview_playhead(&self) -> MediaTime {
+        // An animated scene is not quantised, and that exception is the whole of this method.
+        //
+        // Quantising asks "which video frame is this?", and for footage that is the right
+        // question — a frame is a frame, and two playhead positions inside one show the same
+        // picture. A keyframed graphic is a *continuous* function of time: a line drawing on, a
+        // title sliding in. Rounding its playhead to the project's frame rate does not skip a
+        // decode, it makes the motion itself step, and on a 120 Hz display that is the difference
+        // between 120 samples a second and 30.
+        //
+        // The previous version quantised unconditionally and cost exactly that. It was written to
+        // stop the preview compositing 120 times a second to show 30 fps of footage, which it
+        // did — and it took animation smoothness with it, on the first intro anybody built.
+        //
+        // Nothing is given back on the video side by exempting animation: the frame lookup
+        // quantises *itself*. `ClipStream`'s `index_for` floors to a frame index and the cache
+        // lookup floors too, so a truer playhead resolves to the same frame and decodes nothing
+        // extra. The only cost is compositing more often, which is what an animated scene needs.
+        if self.scene_is_animated() {
+            return self.editor.playhead();
+        }
         crate::geometry::quantize_to_frame(
             self.editor.playhead(),
             self.editor.project().settings.fps,
         )
     }
 
+    /// Whether any element under the playhead carries keyframes.
+    ///
+    /// Scoped to what is *on screen*: a title animated at 0:30 must not make the whole timeline
+    /// composite at refresh rate while the playhead sits on plain footage at 0:05.
+    fn scene_is_animated(&self) -> bool {
+        let playhead = self.editor.playhead();
+        let scene = self.editor.active_scene();
+        std::iter::once(&scene.tracks.main)
+            .chain(scene.tracks.overlay.iter())
+            .filter(|track| !track.hidden)
+            .flat_map(|track| track.elements.iter())
+            .filter(|element| element.start() <= playhead && playhead < element.end())
+            .any(|element| element.animations().is_some_and(|set| !set.is_empty()))
+    }
+
+    /// A cheap signature of everything that affects the composited preview.
+    ///
+    /// If this does not change, the picture cannot have changed, and `update_preview` returns
+    /// without compositing. Anything that alters a pixel and is *not* hashed here is a preview
+    /// that goes stale — which is why text content and effect params are in it.
     pub(super) fn preview_signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -412,6 +452,69 @@ mod preview_rate_tests {
                 signatures.len() > 1,
                 "the whole second collapsed to {} composite(s); the preview would not move",
                 signatures.len()
+            );
+        });
+    }
+
+    /// An animated scene is **not** quantised, because its motion is continuous.
+    ///
+    /// The regression this guards: quantising asks "which video frame is this?", which is the
+    /// right question for footage and the wrong one for a keyframed graphic. A title sliding in
+    /// or a line drawing on is a continuous function of time, and rounding its playhead to the
+    /// project's frame rate does not skip a decode — it makes the motion itself step. On a 120 Hz
+    /// display that is 30 samples a second instead of 120, and it showed up on the first intro
+    /// anybody built.
+    #[gpui::test]
+    fn an_animated_scene_is_not_quantised_to_the_frame_rate(cx: &mut TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |this, _| {
+            let fps = this.editor.project().settings.fps;
+            let frame = crate::geometry::time_of_frame(10, fps);
+            // Mid-frame: with quantisation this collapses onto the frame boundary.
+            let between = MediaTime::from_ticks(frame.as_ticks() + 7);
+
+            this.editor.seek(between);
+            assert_eq!(
+                this.preview_playhead(),
+                frame,
+                "an unanimated scene should still quantise — that saving is real"
+            );
+
+            // Give the element under the playhead a keyframe channel.
+            let animated = {
+                let scene = this.editor.project_mut().active_scene_mut();
+                let element = scene
+                    .tracks
+                    .main
+                    .elements
+                    .first_mut()
+                    .or_else(|| scene.tracks.overlay.first_mut()?.elements.first_mut());
+                match element {
+                    Some(element) => {
+                        element.start() <= between && between < element.end() && {
+                            if let Some(channels) = element.animations_mut() {
+                                channels.insert(
+                                    "opacity".into(),
+                                    bay_core::AnimationChannel::default(),
+                                );
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    }
+                    None => false,
+                }
+            };
+            assert!(
+                animated,
+                "the starter project has no element under the playhead to animate"
+            );
+
+            assert_eq!(
+                this.preview_playhead(),
+                between,
+                "an animated scene was rounded to a frame boundary, which steps the motion"
             );
         });
     }
