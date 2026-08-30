@@ -1015,6 +1015,33 @@ impl BayApp {
     }
 
     /// Replace the agent credential. A real revocation, so the pane says what it broke.
+    /// Put `value` on the system clipboard and say so.
+    ///
+    /// The MCP pane's snippet is a 120-character command with a 64-character token in the middle
+    /// of it. Before this it was drawn as text and nothing else, so the only way to get it into a
+    /// terminal was to read it off the screen — one user resorted to screenshotting the settings
+    /// window and copying out of the image. A credential you cannot select is a credential you
+    /// have to transcribe, and a transcribed 64-hex token fails as a 401 with nothing pointing at
+    /// the typo.
+    ///
+    /// The confirmation reuses `settings_complaint` — the banner that already reports rotation —
+    /// rather than a "Copied!" label that reverts on a timer. A transient label needs a frame
+    /// scheduled to clear it, and `cx.notify()` from inside `render` schedules nothing (see
+    /// `EditorView::request_frame`); the banner is stated once, by an event, and needs no clock.
+    pub(crate) fn copy_to_clipboard(
+        &mut self,
+        what: &str,
+        value: String,
+        cx: &mut Context<BayApp>,
+    ) {
+        if value.is_empty() {
+            self.settings_complaint = Some(format!("There is no {what} to copy."));
+            return;
+        }
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(value));
+        self.settings_complaint = Some(format!("Copied the {what} to the clipboard."));
+    }
+
     pub(crate) fn rotate_token(&mut self) {
         let Some(path) = self.paths.token.clone() else {
             self.settings_complaint =

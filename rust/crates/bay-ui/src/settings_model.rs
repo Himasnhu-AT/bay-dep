@@ -466,9 +466,13 @@ pub struct McpPane {
     pub status_line: String,
     pub dot: crate::theme::Role,
     pub toggle_label: String,
-    /// The endpoint line, with the token abbreviated. The full token is only ever put on screen
-    /// through the copyable snippet, which is a deliberate act.
+    /// The endpoint line, with the token abbreviated. The full token is never *drawn* — it
+    /// reaches the user through the clipboard, which is a deliberate act rather than something
+    /// a screenshot of this screen carries away.
     pub endpoint: String,
+    /// The full credential, for the copy button and nothing else. Empty when the token file
+    /// could not be read, which the button reports rather than copying an empty string.
+    pub token: String,
     pub client_tabs: Vec<(String, String, bool)>,
     pub snippet: String,
     pub client_hint: String,
@@ -507,6 +511,7 @@ pub fn mcp_pane(snapshot: &SettingsSnapshot) -> McpPane {
                 )
             })
             .collect(),
+        token: token.clone().unwrap_or_default(),
         snippet: match &token {
             Some(token) => settings.config_snippet(selected, token, snapshot.agent_port),
             None => "No token — bay could not read its data directory, so there is nothing to \
@@ -980,6 +985,43 @@ mod tests {
                 .contains(&format!("127.0.0.1:{}/mcp", snapshot.agent_port)),
             "the snippet must name the bound port: {}",
             pane.snippet
+        );
+    }
+
+    /// What the copy buttons put on the clipboard is the *full* credential, not the elided one
+    /// that is safe to show.
+    ///
+    /// The pane deliberately abbreviates the token in the endpoint line, because that line ends
+    /// up in screenshots. That is only a good decision if the full one is reachable some other
+    /// way — otherwise the abbreviation is just an obstacle, and a user transcribes 64 hex
+    /// characters off their own screen. One did.
+    #[test]
+    fn the_copyable_fields_carry_the_whole_token() {
+        let snapshot = snapshot();
+        let token = snapshot.token.clone().unwrap();
+        let pane = mcp_pane(&snapshot);
+
+        assert_eq!(
+            pane.token, token,
+            "the copy button would paste the wrong thing"
+        );
+        assert!(
+            !pane.endpoint.contains(&token),
+            "the drawn line must stay abbreviated: {}",
+            pane.endpoint
+        );
+        assert!(pane.snippet.contains(&token), "the snippet is copied whole");
+    }
+
+    /// A missing token must not copy an empty string that looks like it worked.
+    #[test]
+    fn a_missing_token_leaves_nothing_to_copy() {
+        let mut snapshot = snapshot();
+        snapshot.token = None;
+        let pane = mcp_pane(&snapshot);
+        assert!(
+            pane.token.is_empty(),
+            "an absent credential must be empty, so the button can refuse rather than paste"
         );
     }
 

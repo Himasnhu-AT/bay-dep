@@ -691,11 +691,27 @@ impl BayApp {
                 widgets::card()
                     .bg(rgb(theme::LANE))
                     .child(
-                        div()
-                            .font_family("ui-monospace")
-                            .text_xs()
-                            .text_color(rgb(theme::ACCENT_SOFT))
-                            .child(text(pane.snippet.clone())),
+                        widgets::row()
+                            .items_start()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .font_family("ui-monospace")
+                                    .text_xs()
+                                    .text_color(rgb(theme::ACCENT_SOFT))
+                                    .child(text(pane.snippet.clone())),
+                            )
+                            // The snippet is a command with a 64-character token in it. Drawn as
+                            // text and nothing else, the only way to run it was to read it off
+                            // the screen — which is what someone actually did, via a screenshot.
+                            .child(self.button("copy-snippet", "Copy", false, cx, {
+                                let snippet = pane.snippet.clone();
+                                move |this, cx| {
+                                    this.copy_to_clipboard("snippet", snippet.clone(), cx);
+                                }
+                            })),
                     )
                     .child(
                         div()
@@ -794,6 +810,15 @@ impl BayApp {
                 .mt(px(11.0))
                 .gap(px(6.0))
                 .child(widgets::readout(pane.endpoint.clone(), false))
+                // The readout abbreviates the token on purpose — it is the line that ends up in
+                // a screenshot of this screen. That makes a way to copy the full one necessary
+                // rather than convenient.
+                .child(self.button("copy-token", "Copy token", false, cx, {
+                    let token = pane.token.clone();
+                    move |this, cx| {
+                        this.copy_to_clipboard("token", token.clone(), cx);
+                    }
+                }))
                 .child(
                     self.button("rotate-token", "Rotate token", false, cx, |this, _cx| {
                         this.rotate_token();
