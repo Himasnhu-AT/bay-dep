@@ -719,6 +719,12 @@ impl BayApp {
                             .child(widgets::note(pane.client_hint.clone())),
                     ),
             )
+            // Named profiles, above the 101 checkboxes they exist to replace. The gating they
+            // drive is `McpSettings::blocked`, which `bay --mcp` already enforces with no window
+            // open — this is the missing *default*, not new machinery. A client that carries the
+            // whole schema list on every request pays for narration tools whether it narrates or
+            // not, and the dialogue profile measures at 52 KB against the full 116 KB.
+            .child(self.mcp_profiles(cx))
             .child(
                 widgets::row()
                     .child(widgets::section("TOOLS EXPOSED"))
@@ -755,6 +761,35 @@ impl BayApp {
             }))
             .child(widgets::section("CONNECTED CLIENTS"))
             .child(clients)
+    }
+
+    /// The profile row: one press instead of a hundred and one.
+    ///
+    /// No profile is shown as "current". A profile is an *action* that sets the blocked list, not
+    /// a stored mode — keeping a name beside the list would be a second answer to "which tools
+    /// are exposed", and the two would disagree the first time someone ticked a box afterwards.
+    fn mcp_profiles(&self, cx: &mut Context<Self>) -> Div {
+        let mut row = widgets::row()
+            .gap(px(6.0))
+            .child(widgets::section("PRESETS"));
+        for profile in bay_settings::mcp::PROFILES {
+            row = row.child(self.button(profile.id, profile.label, false, cx, {
+                move |this, cx| {
+                    let names = bay_mcp_tool_names();
+                    this.settings.mcp.apply_profile(&profile, &names);
+                    this.save_settings();
+                    let exposed = names.len() - this.settings.mcp.blocked.len();
+                    this.settings_complaint = Some(format!(
+                        "{} preset: {exposed} of {} tools exposed. {}",
+                        profile.label,
+                        names.len(),
+                        profile.detail
+                    ));
+                    cx.notify();
+                }
+            }));
+        }
+        row
     }
 
     fn mcp_server_card(&self, pane: &settings_model::McpPane, cx: &mut Context<Self>) -> Div {

@@ -110,3 +110,88 @@ fn the_hoisted_vocabulary_reaches_the_client() {
         );
     }
 }
+
+/// Every tool a profile names has to exist.
+///
+/// A profile is a hand-written list against a surface that changes, so a renamed tool leaves a
+/// dead entry — and a dead entry is invisible: the profile simply keeps one fewer tool than its
+/// author meant, and nothing says so.
+#[test]
+fn every_profile_names_real_tools() {
+    let names = bay_mcp::tools::all_tool_names();
+    let mut dead = Vec::new();
+    for profile in bay_settings::mcp::PROFILES {
+        for tool in profile.tools {
+            if !names.iter().any(|known| known == tool) {
+                dead.push(format!("{}.{tool}", profile.id));
+            }
+        }
+    }
+    assert!(
+        dead.is_empty(),
+        "profiles naming tools that do not exist: {dead:?}"
+    );
+}
+
+/// A profile has to leave a usable surface. The failure this guards is the one that presents as
+/// bay being broken rather than configured: a client connects, sees almost nothing, and there is
+/// no error anywhere to explain it.
+#[test]
+fn every_profile_leaves_a_workable_session() {
+    let names = bay_mcp::tools::all_tool_names();
+    for profile in bay_settings::mcp::PROFILES {
+        let mut settings = bay_settings::McpSettings::default();
+        settings.apply_profile(&profile, &names);
+        let kept: Vec<&String> = names.iter().filter(|n| settings.allows(n)).collect();
+
+        // You cannot start, look at, or finish a session without these.
+        for essential in ["project_create", "timeline", "render", "check", "snapshot"] {
+            assert!(
+                kept.iter().any(|k| *k == essential),
+                "the {} profile drops {essential}, which no session works without",
+                profile.id
+            );
+        }
+        assert!(
+            kept.len() >= 15,
+            "the {} profile keeps only {} tools — that reads as a broken connection",
+            profile.id,
+            kept.len()
+        );
+    }
+}
+
+/// The point of the exercise: a profile has to actually shrink the payload a client carries.
+#[test]
+fn a_profile_shrinks_what_a_client_carries() {
+    let names = bay_mcp::tools::all_tool_names();
+    let whole = serde_json::to_string(&bay_mcp::tools::all_definitions())
+        .unwrap()
+        .len();
+
+    let mut narrowed = bay_settings::McpSettings::default();
+    let dialogue = bay_settings::mcp::profile("dialogue").expect("a dialogue profile");
+    narrowed.apply_profile(dialogue, &names);
+    let after = serde_json::to_string(&bay_mcp::tools::definitions_with(&narrowed))
+        .unwrap()
+        .len();
+
+    println!("dialogue profile: {whole} B -> {after} B");
+    assert!(
+        after * 2 < whole,
+        "the dialogue profile carries {after} B against the full {whole} B — it is meant to be \
+         roughly half, or it is not worth offering"
+    );
+
+    // "Everything" must not shrink anything, or the default silently hides tools.
+    let mut all = bay_settings::McpSettings::default();
+    all.apply_profile(
+        bay_settings::mcp::profile("everything").expect("an everything profile"),
+        &names,
+    );
+    assert_eq!(
+        bay_mcp::tools::definitions_with(&all).len(),
+        bay_mcp::tools::all_definitions().len(),
+        "the default profile dropped a tool"
+    );
+}

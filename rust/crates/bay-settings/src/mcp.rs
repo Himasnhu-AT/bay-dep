@@ -40,6 +40,181 @@ pub const CLIENTS: [ClientKind; 3] = [
     },
 ];
 
+/// A named set of tools, so switching surface is one choice rather than 101 checkboxes.
+///
+/// `optimizations.md` §2.5: the gating machinery already existed — `definitions_with` filters
+/// `all_definitions` through [`McpSettings::allows`], and `bay --mcp` enforces it with no window
+/// open. What was missing was **defaults**. A client that carries the whole schema list in its
+/// system prompt on every request pays for 101 tools whether it narrates or not, and asking
+/// someone to untick sixty boxes is not a feature.
+///
+/// The sets are deliberately *jobs*, not categories. "Everything about audio" is a taxonomy; "I
+/// am cutting dialogue today" is what a person actually has in mind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub detail: &'static str,
+    /// Tools this profile keeps. Empty means every tool — see [`Profile::keeps`].
+    pub tools: &'static [&'static str],
+}
+
+impl Profile {
+    /// Whether `tool` survives this profile.
+    ///
+    /// An empty `tools` list means "everything", not "nothing". The inversion matters: a profile
+    /// that silently blocked the entire surface would present as bay having no tools at all,
+    /// which reads as a broken connection rather than a setting.
+    pub fn keeps(&self, tool: &str) -> bool {
+        self.tools.is_empty() || self.tools.contains(&tool)
+    }
+}
+
+/// The tools every profile keeps, because without them there is no session.
+///
+/// Opening, saving and inspecting a project, and knowing what bay can do at all. A profile that
+/// dropped `project_create` would be a surface you cannot start from.
+const ALWAYS: &[&str] = &[
+    "project_create",
+    "project_load",
+    "project_save",
+    "project_list",
+    "project_info",
+    "timeline",
+    "check",
+    "render",
+    "snapshot",
+    "job_status",
+    "job_cancel",
+    "runtime_status",
+    "media_import",
+    "element_delete",
+    "element_move",
+];
+
+/// Placing and arranging things on the timeline.
+const EDIT: &[&str] = &[
+    "add_text",
+    "add_shape",
+    "add_image",
+    "add_video",
+    "add_audio",
+    "group_create",
+    "animate",
+    "animate_many",
+    "apply_move",
+    "transform_set",
+    "text_update",
+    "blend_set",
+    "crop_set",
+    "mask_set",
+    "fade_set",
+    "transition_add",
+    "effect_add",
+    "effect_set",
+    "effect_remove",
+    "element_trim",
+    "element_split",
+    "element_source",
+    "element_duplicate",
+    "element_rename",
+    "element_retime",
+    "element_ripple_delete",
+    "marker_add",
+    "fonts_check",
+    "fonts_list",
+    "looks_list",
+    "style_pick",
+    "templates_list",
+    "template_place",
+    "contact_sheet",
+    "check_frames",
+    "scopes_read",
+    "media_index",
+    "media_search",
+    "auto_reframe",
+    "shots_detect",
+    "audio_set",
+    "sound_add",
+];
+
+/// Cutting speech: transcripts, captions, narration, and the mix around them.
+const DIALOGUE: &[&str] = &[
+    "transcribe",
+    "transcript_get",
+    "transcript_search",
+    "diarize",
+    "cut_by_transcript",
+    "remove_silence_and_fillers",
+    "silence_detect",
+    "room_tone",
+    "narrate",
+    "speech_status",
+    "subtitles_add",
+    "subtitles_export",
+    "subtitles_to_video",
+    "audio_set",
+    "audio_probe",
+    "audio_beats",
+    "audio_smooth",
+    "audio_react",
+    "duck",
+    "sound_add",
+    "add_audio",
+    "add_text",
+    "text_update",
+    "element_trim",
+    "element_split",
+    "element_source",
+];
+
+/// Getting a finished project out.
+const DELIVER: &[&str] = &[
+    "formats_list",
+    "variant_create",
+    "variant_register_render",
+    "library_save",
+    "library_list",
+    "library_collect",
+    "contact_sheet",
+    "check_frames",
+    "scopes_read",
+    "subtitles_export",
+    "runtime_install",
+    "runtime_remove",
+];
+
+pub const PROFILES: [Profile; 4] = [
+    Profile {
+        id: "everything",
+        label: "Everything",
+        detail: "All 101 tools. The default, and the right one for a client with tool search.",
+        tools: &[],
+    },
+    Profile {
+        id: "edit",
+        label: "Edit",
+        detail: "Placing, arranging and animating. No transcripts, generation or stock.",
+        tools: EDIT,
+    },
+    Profile {
+        id: "dialogue",
+        label: "Dialogue",
+        detail: "Transcripts, captions, narration and the mix around them.",
+        tools: DIALOGUE,
+    },
+    Profile {
+        id: "deliver",
+        label: "Deliver",
+        detail: "Formats, variants, the library and the runtime.",
+        tools: DELIVER,
+    },
+];
+
+pub fn profile(id: &str) -> Option<&'static Profile> {
+    PROFILES.iter().find(|entry| entry.id == id)
+}
+
 pub fn client(id: &str) -> Option<&'static ClientKind> {
     CLIENTS.iter().find(|entry| entry.id == id)
 }
@@ -68,6 +243,20 @@ impl Default for McpSettings {
 }
 
 impl McpSettings {
+    /// Block everything outside `profile`, keeping the tools no session works without.
+    ///
+    /// Expressed as blocks rather than as a stored profile name, so there is exactly one thing
+    /// deciding whether a tool is exposed. A `profile` field beside `blocked` would be a second
+    /// answer to the same question, and the two would disagree the first time someone ticked a
+    /// box after choosing a profile.
+    pub fn apply_profile(&mut self, profile: &Profile, every_tool: &[String]) {
+        self.blocked = every_tool
+            .iter()
+            .filter(|tool| !profile.keeps(tool) && !ALWAYS.contains(&tool.as_str()))
+            .cloned()
+            .collect();
+    }
+
     pub fn allows(&self, tool: &str) -> bool {
         self.enabled && !self.blocked.contains(tool)
     }

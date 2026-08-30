@@ -1,6 +1,6 @@
 # bay — measured optimizations
 
-**Status: §2.1, §2.2 and §2.4 applied 2026-08-30. §2.3 and §2.5 still open.** Written against
+**Status: §2.1, §2.2, §2.4 and §2.5 applied 2026-08-30. §2.3 closed as no longer worth it.** Written against
 the live server on `127.0.0.1:7333` (101 tools); every number came off the wire, not off a
 reading of the source.
 
@@ -13,6 +13,7 @@ figure, reproducible without a running server, and now a ceiling that fails the 
 | `apply_move{}` | 12,066 B | **8,899 B** (−26%) |
 | `looks_list{}` | 13,123 B | **9,956 B** (−24%) |
 | one move's detail | — | 399 B |
+| `tools/list` under the `dialogue` preset | — | **51,854 B** (−55%) |
 
 Tool count unchanged at 101, which per §1.6 is the right answer for a client with tool search.
 
@@ -28,6 +29,16 @@ the remaining rows:
   description** and found 120 that never did (`elementId`, `width`, `start`). That is a fine
   thing for a self-describing name, and a test that fails for what the change did not touch is
   one people learn to skip. It is scoped to the helpers' own properties now.
+- **§2.3 is closed without being done, and re-measuring is why.** This document said to
+  re-measure after each step rather than trust the arithmetic, and that was right. Once §2.1 had
+  taken the shared prose out of `visual_properties`, what remained in those "duplicate" pairs was
+  two tools sharing a parameter block — which is what a shared helper is *for*. Retiring them
+  now means either merging, which §1.4, §1.5 and §1.6 each argue against separately, or thinning
+  a "secondary" tool that does not exist in any of the five pairs: `add_image`/`add_video` are
+  both first-class, `style_pick` browses where `project_create` commits, and `audio_probe`'s
+  description names a real failure ("a bed at `volume: 2.0` against a file that integrates to
+  -35 LUFS is still 9 LU too quiet") which §3 says to keep. Measured, merging all five would now
+  save 8.9 KB and make the schema fetched to place one image about 60% larger.
 
 This is the register of things that are *expensive but correct*, as distinct from
 [`fixes.md`](fixes.md), which is the register of things that are *wrong*.
