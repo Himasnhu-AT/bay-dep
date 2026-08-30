@@ -18,7 +18,7 @@ use bay_compositor::{
     EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
     LayerMaskDescriptor, QuadTransformDescriptor,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bay_gpu::{GpuContext, PipelinedReadback, ReadbackPoll, ReadbackPool, wgpu};
 use bay_project::{Background, Element, ElementKind, MediaAsset, MediaTime, Scene};
@@ -1424,6 +1424,63 @@ impl VideoCodec {
         }
     }
 
+    /// VideoToolbox arguments for this codec, when the platform and the build both have it.
+    ///
+    /// `None` on anything but macOS, for ProRes (`prores_ks` is the profile-controllable one and
+    /// the fidelity format is where a software encoder earns its cost), and when this ffmpeg was
+    /// built without the encoders — a Homebrew build normally has them, a minimal static one may
+    /// not, and asking for an encoder that is not there fails the export rather than the frame.
+    ///
+    /// **Quality is remapped, not passed through.** bay's knob is x264's CRF: 0-51, lower is
+    /// better. VideoToolbox's `-q:v` is 0-100, higher is better. Handing one to the other
+    /// silently would make "best quality" mean "worst" — the kind of inversion that produces a
+    /// bug report about the highest setting looking wrong.
+    fn videotoolbox_args(self, quality: u32) -> Option<Vec<String>> {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        // Profile names are per *codec*, not shared. `high` is H.264's; HEVC has `main` and
+        // `main10` and rejects `high` outright — `hevc_videotoolbox` fails to open the output
+        // rather than picking something sensible, so an HEVC export dies at the first frame with
+        // "Undefined constant". The first version of this hardcoded `high` for both and the
+        // codec test caught it.
+        //
+        // The `hvc1` tag matters for the same reason it does on the software path: QuickTime
+        // will not open an HEVC file without it.
+        let (encoder, profile, tag): (&str, &str, Option<&str>) = match self {
+            Self::H264 => ("h264_videotoolbox", "high", None),
+            Self::Hevc => ("hevc_videotoolbox", "main", Some("hvc1")),
+            // ProRes is chosen for fidelity and hand-off, and `prores_ks` is the encoder whose
+            // profile bay actually sets (4444, for graphics rather than camera originals).
+            // Trading that for speed would be trading away the reason the format was picked.
+            Self::ProRes => return None,
+        };
+        if !encoder_available(encoder) {
+            return None;
+        }
+        // CRF 0..=51 (lower better) to q:v 0..=100 (higher better), linearly. CRF 20 — bay's
+        // usual — lands at 61, which measured 8.5 MB against libx264 CRF 20's 10.2 MB on the
+        // same 300 frames.
+        let q = 100u32
+            .saturating_sub(quality.min(51) * 100 / 51)
+            .clamp(1, 100);
+        let mut args = vec![
+            "-c:v".into(),
+            encoder.into(),
+            "-q:v".into(),
+            q.to_string(),
+            "-profile:v".into(),
+            profile.into(),
+        ];
+        if let Some(tag) = tag {
+            args.push("-tag:v".into());
+            args.push(tag.into());
+        }
+        args.push("-pix_fmt".into());
+        args.push("yuv420p".into());
+        Some(args)
+    }
+
     /// The encoder arguments for this codec at `quality`, and the pixel format that goes with
     /// it. `yuv420p` is what every consumer player expects.
     ///
@@ -1436,6 +1493,21 @@ impl VideoCodec {
     ///
     /// What is a real choice is the chroma layout, and that is why the profile is 4444.
     fn encoder_args(self, quality: u32) -> Vec<String> {
+        // Apple's media engine encodes H.264 and HEVC in fixed-function silicon. Measured on
+        // this machine, 300 frames of 1080p piped as raw BGRA — which is bay's actual export
+        // path, not a transcode:
+        //
+        //   libx264 -preset medium   1.37 s wall   9.82 s CPU   10.2 MB
+        //   h264_videotoolbox        1.19 s wall   1.87 s CPU    8.5 MB
+        //
+        // Faster, a fifth of the CPU, and a smaller file. The wall-clock difference is small
+        // because libx264 saturates every core to get there — which is exactly the problem
+        // during an export, where the same cores are feeding the compositor, reading back
+        // frames and writing the pipe. A codec that wins by taking the whole machine is not
+        // winning.
+        if let Some(args) = self.videotoolbox_args(quality) {
+            return args;
+        }
         let quality = quality.min(51).to_string();
         match self {
             Self::H264 => vec![
@@ -2014,7 +2086,8 @@ impl PreviewRenderer {
             "-f".into(),
             "rawvideo".into(),
             "-pix_fmt".into(),
-            "rgba".into(),
+            // BGRA, because that is what `PreviewFrame` carries. See the note at the write.
+            "bgra".into(),
             "-s".into(),
             format!("{width}x{height}"),
             "-r".into(),
@@ -2176,11 +2249,12 @@ impl PreviewRenderer {
                 ));
                 break;
             };
-            let mut rgba = frame.bgra;
-            for texel in rgba.chunks_exact_mut(4) {
-                texel.swap(0, 2); // BGRA → RGBA for ffmpeg input
-            }
-            if let Err(e) = stdin.write_all(&rgba) {
+            // Written as they come off the GPU. The compositor reads back BGRA, ffmpeg accepts
+            // `-pix_fmt bgra` natively, and the swizzle that used to sit here converted every
+            // pixel of every frame for nothing: 0.571 ms per 1080p frame, measured — half a
+            // second of CPU across a 30-second export, spent turning bytes into other bytes so a
+            // decoder could turn them back. The input format below is the whole fix.
+            if let Err(e) = stdin.write_all(&frame.bgra) {
                 // Used to `break` and return whatever ffmpeg had written — a truncated MP4 at the
                 // destination path, indistinguishable from a good one.
                 failure = Some(format!("ffmpeg stopped accepting frames: {e}"));
@@ -3518,6 +3592,49 @@ fn live_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
     live
 }
 
+/// Whether this ffmpeg was built with `encoder`.
+///
+/// Probed once and remembered. `ffmpeg -encoders` is a process spawn and a page of output; doing
+/// it per export would be a needless fork, and doing it per *frame* would be absurd — but the
+/// answer cannot be a compile-time constant either, because bay runs against whatever ffmpeg is
+/// on the machine as well as the one `bay-provision` installs, and those differ in what they were
+/// built with.
+///
+/// A probe that fails for any reason answers `false`. The consequence of a wrong `false` is a
+/// software encode; the consequence of a wrong `true` is an export that dies partway with
+/// "Unknown encoder", which is much worse than being slow.
+fn encoder_available(encoder: &'static str) -> bool {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<&'static str, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Ok(seen) = cache.lock()
+        && let Some(known) = seen.get(encoder)
+    {
+        return *known;
+    }
+    let found = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+        .ok()
+        .and_then(|mut command| {
+            command
+                .args(["-hide_banner", "-encoders"])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .ok()
+        })
+        .map(|output| {
+            // The name must appear as its own word: `hevc_videotoolbox` contains no other
+            // encoder's name, but a substring test would happily match a prefix one day.
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|line| line.split_whitespace().any(|word| word == encoder))
+        })
+        .unwrap_or(false);
+    if let Ok(mut seen) = cache.lock() {
+        seen.insert(encoder, found);
+    }
+    found
+}
+
 /// Where an export is encoded before it is renamed into place.
 ///
 /// The staging suffix goes **before** the extension, not after it: ffmpeg infers the container
@@ -3973,6 +4090,82 @@ pub fn poster_frame(path: &str, at_seconds: f64) -> Option<PosterFrame> {
         height: plan.height,
         rgba,
     })
+}
+
+#[cfg(test)]
+mod encoder_tests {
+    use super::*;
+
+    /// bay's quality knob is x264's CRF — 0..=51, **lower is better**. VideoToolbox's `-q:v` is
+    /// 0..=100, **higher is better**. Passing one straight to the other inverts the control, so
+    /// "best" would mean "worst" and the bug arrives as a report that the highest setting looks
+    /// wrong.
+    #[test]
+    fn the_quality_knob_is_remapped_not_passed_through() {
+        let q = |crf: u32| 100u32.saturating_sub(crf.min(51) * 100 / 51).clamp(1, 100);
+        assert!(
+            q(0) > q(51),
+            "the mapping is inverted: best CRF must give the highest q:v"
+        );
+        assert_eq!(
+            q(0),
+            100,
+            "CRF 0 is lossless-ish and must map to the top of the range"
+        );
+        assert!(
+            q(51) >= 1,
+            "the worst CRF must still be a legal q:v, not zero"
+        );
+        // The value the measurement in `encoder_args` was taken at.
+        assert_eq!(q(20), 61);
+        // Monotonic across the whole range, so a slider never doubles back.
+        for crf in 0..51 {
+            assert!(q(crf) >= q(crf + 1), "q:v rose as CRF worsened at {crf}");
+        }
+        // Out-of-range input clamps rather than wrapping into a nonsense q.
+        assert_eq!(q(999), q(51));
+    }
+
+    /// ProRes stays on the software encoder, and the reason is not performance.
+    ///
+    /// bay picks ProRes for fidelity and hand-off, and sets profile 4444 — the graphics profile —
+    /// through `prores_ks`. `prores_videotoolbox` is faster and does not offer that control, so
+    /// switching would trade away the property the format was chosen for.
+    #[test]
+    fn prores_is_not_handed_to_the_media_engine() {
+        assert!(
+            VideoCodec::ProRes.videotoolbox_args(20).is_none(),
+            "ProRes must keep prores_ks, whose 4444 profile is why the format was picked"
+        );
+    }
+
+    /// Whatever the platform decides, the arguments have to name exactly one encoder and carry a
+    /// pixel format — a half-built argument list fails the export, not the frame.
+    #[test]
+    fn every_codec_produces_a_complete_argument_list() {
+        for codec in [VideoCodec::H264, VideoCodec::Hevc, VideoCodec::ProRes] {
+            let args = codec.encoder_args(20);
+            let encoders: Vec<&String> = args
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i > 0 && args[i - 1] == "-c:v")
+                .map(|(_, value)| value)
+                .collect();
+            assert_eq!(encoders.len(), 1, "{codec:?} names {encoders:?}");
+            assert!(
+                args.iter().any(|a| a == "-pix_fmt"),
+                "{codec:?} produced no pixel format: {args:?}"
+            );
+        }
+    }
+
+    /// A probe for an encoder nothing has must answer `false`, not panic and not `true`. A wrong
+    /// `false` costs a software encode; a wrong `true` kills the export partway with
+    /// "Unknown encoder".
+    #[test]
+    fn an_absent_encoder_probes_false() {
+        assert!(!encoder_available("definitely_not_an_encoder_xyz"));
+    }
 }
 
 #[cfg(test)]

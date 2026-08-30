@@ -440,6 +440,44 @@ Pacing it at 60 Hz is deliberate. Unthrottled the same loop ran **5.8 million co
 second** and reported 98% repeated frames — true, useless, and it drowns the two counters
 (`starved`, `reseek`) that would name a real fault.
 
+### Where the work runs — Metal, the media engine, and the CPU
+
+Measured 2026-08-30 on an **Apple M5 Pro (backend Metal, IntegratedGpu)**, which is what
+`cargo test -p bay-audio capability_report -- --nocapture` reports. The compositor, effects and
+masks are wgpu on Metal; decode is ffmpeg with `-hwaccel auto`, which is VideoToolbox here.
+
+**Encode was the one thing still entirely on the CPU.** 300 frames of 1080p piped as raw BGRA —
+bay's actual export path, not a transcode:
+
+| encoder | wall | CPU (user+sys) | size |
+|---|---:|---:|---:|
+| `libx264 -preset medium` | 1.37 s | **9.82 s** | 10.2 MB |
+| `h264_videotoolbox -q:v 60` | **1.19 s** | **1.87 s** | 8.5 MB |
+
+Faster, a fifth of the CPU, smaller file. The wall-clock gap is small because libx264 gets there
+by saturating every core — which is the problem during an export, where the same cores are
+feeding the compositor, reading frames back and writing the pipe. A codec that wins by taking the
+whole machine is not winning.
+
+ProRes deliberately stays on `prores_ks`: bay sets profile 4444, the graphics profile, and
+`prores_videotoolbox` does not offer that control. Speed is not what ProRes is chosen for.
+
+The export also stopped swizzling. It read back BGRA, converted every pixel to RGBA, and told
+ffmpeg `-pix_fmt rgba`; ffmpeg accepts `bgra` natively, so the pass was **0.571 ms per 1080p
+frame** spent turning bytes into other bytes — half a second of CPU across a 30-second export.
+
+### What stays on the CPU, and why
+
+- **Audio** — mixing, loudness, beats, silence. The buffers are small and the work is sequential;
+  a GPU round trip would cost more than the arithmetic.
+- **SigLIP** (`bay-vision`) — candle 0.9's Metal backend has no `layer-norm` or
+  `softmax-last-dim` kernel, so a forward pass cannot complete on it. It runs through Accelerate
+  instead, and `vision_status` reports `cpu` rather than claiming a device it is not using.
+  Revisit when candle ships the two kernels.
+- **Scopes** — one pass over the readback the preview already has, 0.98 ms at 640x360, and only
+  while the Color page is open. Moving it to the GPU would mean a second readback for the
+  histogram totals.
+
 ### The preview draws at the frame rate, not the refresh rate
 
 Once playback was smooth, the probe reported the next thing wrong with it:

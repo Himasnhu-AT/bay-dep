@@ -431,6 +431,85 @@ fn exports_a_short_video_via_ffmpeg() {
     let _ = std::fs::remove_file(&out);
 }
 
+/// An exported file carries the colours the compositor produced, not their channels reversed.
+///
+/// The export used to swizzle BGRA to RGBA on the CPU, a pass over every pixel of every frame,
+/// and then tell ffmpeg `-pix_fmt rgba`. Both halves were removed together — ffmpeg takes `bgra`
+/// natively — and if only one had been, or if either is ever "tidied", red and blue swap in every
+/// export bay produces. Nothing else in the suite would notice: the file is the right size, plays
+/// fine, and is the wrong colour.
+///
+/// A saturated non-grey background is the fixture on purpose. Grey survives a channel swap
+/// unchanged, which is exactly the kind of test that passes against the bug it exists to catch.
+#[test]
+fn an_export_keeps_its_channels_the_right_way_round() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    // Strongly red: R=0xe0, G=0x20, B=0x30. Reversed, this reads as blue, and no rounding
+    // anywhere in an h264 round trip can turn one into the other.
+    project.settings.background = bay_project::Background::Color {
+        color: "#e02030".to_string(),
+    };
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements.clear();
+    }
+
+    let out = std::env::temp_dir().join(format!("bay-channels-{}.mp4", std::process::id()));
+    let ok = renderer.export_video(
+        project.active_scene(),
+        0.5,
+        10.0,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
+    );
+    if !require_ffmpeg_step(ok.is_ok(), "encode the exported mp4") {
+        return;
+    }
+
+    // Decode one frame back out and read the middle pixel.
+    let raw = std::env::temp_dir().join(format!("bay-channels-{}.rgba", std::process::id()));
+    let decoded = std::process::Command::new("ffmpeg")
+        .args(["-nostdin", "-loglevel", "error", "-y", "-i"])
+        .arg(&out)
+        .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba"])
+        .arg(&raw)
+        .status();
+    if !require_ffmpeg_step(
+        decoded.map(|s| s.success()).unwrap_or(false),
+        "decode it back",
+    ) {
+        let _ = std::fs::remove_file(&out);
+        return;
+    }
+    let pixels = std::fs::read(&raw).expect("the decoded frame");
+    let middle = ((36 / 2) * 64 + 32) * 4;
+    let (r, g, b) = (
+        pixels[middle] as i32,
+        pixels[middle + 1] as i32,
+        pixels[middle + 2] as i32,
+    );
+
+    assert!(
+        r > b + 40,
+        "the exported frame is not red-dominant: r={r} g={g} b={b} — channels are reversed"
+    );
+    assert!(
+        g < r,
+        "green outranks red in a red frame: r={r} g={g} b={b}"
+    );
+
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&raw);
+}
+
 #[test]
 fn saved_narration_survives_its_temporary_source_and_exports() {
     if !require_ffmpeg() {
@@ -2726,15 +2805,37 @@ fn each_codec_asks_for_itself() {
     use bay_preview::VideoCodec;
     let args = |codec: VideoCodec| bay_preview::encoder_args_for_test(codec, 20).join(" ");
 
+    // H.264 and HEVC take Apple's media engine when this build has it, and the software encoder
+    // otherwise. Asserting `libx264` outright — which this did — pins the *slower* path and
+    // fails the moment the faster one is chosen, so it tests the machine rather than the code.
+    // What has to hold either way is that a codec asks for itself and carries a quality and a
+    // pixel format.
     let h264 = args(VideoCodec::H264);
-    assert!(h264.contains("libx264"), "{h264}");
-    assert!(h264.contains("-crf 20"), "{h264}");
+    assert!(
+        h264.contains("libx264") || h264.contains("h264_videotoolbox"),
+        "H.264 asked for neither of its encoders: {h264}"
+    );
+    assert!(
+        h264.contains("-crf 20") || h264.contains("-q:v"),
+        "no quality reached the encoder: {h264}"
+    );
     assert!(h264.contains("yuv420p"), "{h264}");
+    // `high` is H.264's profile name. HEVC rejects it, which is a real failure mode — see below.
+    assert!(h264.contains("-profile:v high"), "{h264}");
 
     let hevc = args(VideoCodec::Hevc);
-    assert!(hevc.contains("libx265"), "{hevc}");
-    // QuickTime will not open an HEVC file without this tag.
+    assert!(
+        hevc.contains("libx265") || hevc.contains("hevc_videotoolbox"),
+        "HEVC asked for neither of its encoders: {hevc}"
+    );
+    // QuickTime will not open an HEVC file without this tag, on either encoder.
     assert!(hevc.contains("hvc1"), "{hevc}");
+    // Profiles are per codec. `hevc_videotoolbox` fails to open the output at all when handed
+    // H.264's `high`, so an HEVC export dies at the first frame — which is how this was found.
+    assert!(
+        !hevc.contains("-profile:v high"),
+        "`high` is an H.264 profile; HEVC has main/main10 and refuses it: {hevc}"
+    );
 
     let prores = args(VideoCodec::ProRes);
     assert!(prores.contains("prores"), "{prores}");
