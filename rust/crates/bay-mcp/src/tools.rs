@@ -268,45 +268,62 @@ fn optional_role(args: &Value) -> Result<ElementRole, ToolError> {
 }
 
 /// Schema fragment for the shared placement fields, spliced into every visual tool.
+/// The element properties every placeable tool shares.
+///
+/// **Spliced into twelve tools, so a sentence here costs twelve times its length on the wire.**
+/// `optimizations.md` measured this one helper at 18,351 B — 14% of the entire tool payload —
+/// and that is the reason the prose below is terse where the rest of this file is not.
+///
+/// The rule applied when trimming, from that document: keep every sentence that names a
+/// neighbouring tool or a failure this repository has actually had; cut prose that repeats what
+/// a type or an enum already states, and vocabulary that belongs in the server's `instructions`
+/// block, which is sent once rather than twelve times.
+///
+/// So `cover` keeps "a 16:9 photo on a 9:16 canvas fills about a third of the frame" — that is
+/// the failure it exists to prevent — and lost the sentence about ffmpeg. `tiltX` keeps "depth,
+/// not rotation", which is the distinction people get wrong, and lost the paragraph on how many
+/// degrees read as a room.
 fn visual_properties() -> Value {
     json!({
         "cover": { "type": "object",
             "description": "Fill a rectangle of the canvas instead of letterboxing inside it. \
-                            Give it {width, height} as fractions of the canvas — the panel you \
-                            want the picture to occupy — and bay crops the source to that shape \
-                            and scales it to fit exactly. Without this a 16:9 photo on a 9:16 \
-                            canvas fills about a third of the frame. It replaces cropping every \
-                            image with ffmpeg before you import it." },
+                            {width, height} as fractions of the canvas; bay crops the source to \
+                            that shape. Without it a 16:9 photo on a 9:16 canvas fills about a \
+                            third of the frame." },
         "framing": { "type": "string",
-            "description": "One of the committed kit's named framings — project_info and \
-                 style_pick list them. It sets x, y, anchorX, anchorY and scale in one word; \
-                 anything you also pass explicitly still wins. Every kit declares at least one \
-                 bottom-weighted framing, which is the half of the frame the project this rule \
-                 comes from never used at all." },
+            "description": "A named framing from the committed kit — project_info and style_pick \
+                            list them. Sets x, y, anchorX, anchorY and scale in one word; \
+                            anything you pass explicitly still wins." },
         "layer": { "type": "integer", "minimum": 0, "default": 0,
-            "description": "Stacking order. 0 is the bottom (main) layer; higher numbers draw on top. Missing layers are created automatically." },
+            "description": "Stacking order. 0 is the bottom (main) layer; higher draws on top. Missing layers are created." },
         "x": { "type": "number", "default": 0.5,
-            "description": "Horizontal position of the element's anchor, as a fraction of canvas width (0 = left edge, 1 = right edge)." },
+            "description": "Anchor's horizontal position, as a fraction of canvas width (0 = left, 1 = right)." },
         "y": { "type": "number", "default": 0.5,
-            "description": "Vertical position of the element's anchor, as a fraction of canvas height (0 = top, 1 = bottom)." },
+            "description": "Anchor's vertical position, as a fraction of canvas height (0 = top, 1 = bottom)." },
         "scale": { "type": "number", "default": 1.0,
-            "description": "Size as a fraction of the canvas. 1.0 spans the full frame. For text this is the box the type is laid out in." },
+            "description": "Size as a fraction of the canvas; 1.0 spans the frame. For text, the box the type is laid out in." },
         "tiltX": { "type": "number", "default": 0,
-            "description": "Degrees of lean out of the screen about the horizontal axis — positive tips the top away, as CSS rotateX does, and the far edge foreshortens. This is depth, not rotation: use it to make a panel read as a screen standing in a room. 6-12 is a room; past 30 is a special effect. Foreshortening costs legibility, so tilt the panel, not the words on it." },
+            "description": "Degrees of lean about the horizontal axis, as CSS rotateX. Depth, not rotation — the far edge foreshortens. Tilt the panel, not the words on it." },
         "tiltY": { "type": "number", "default": 0,
-            "description": "Degrees of lean about the vertical axis: positive turns the right edge away. Same scale as tiltX." },
+            "description": "Degrees of lean about the vertical axis: positive turns the right edge away." },
         "scaleX": { "type": "number", "default": 1.0,
-            "description": "Extra horizontal-only multiplier on top of `scale`. Animate this to grow a bar sideways." },
+            "description": "Horizontal-only multiplier on top of `scale`. Animate it to grow a bar sideways." },
         "scaleY": { "type": "number", "default": 1.0,
-            "description": "Extra vertical-only multiplier on top of `scale`. Animate this to grow a column upward." },
+            "description": "Vertical-only multiplier on top of `scale`. Animate it to grow a column upward." },
         "anchorX": { "type": "number", "default": 0.5,
-            "description": "Which horizontal point of the element sits at `x`: 0 = its left edge, 0.5 = centre, 1 = right edge. Set 0 so a bar grows rightward from a fixed origin instead of from its middle." },
+            "description": "Which horizontal point sits at `x`: 0 = left edge, 0.5 = centre, 1 = right. Set 0 so a bar grows rightward from a fixed origin." },
         "anchorY": { "type": "number", "default": 0.5,
-            "description": "Which vertical point of the element sits at `y`: 0 = top, 0.5 = centre, 1 = bottom. Set 1 so a column grows upward from a baseline." },
+            "description": "Which vertical point sits at `y`: 0 = top, 1 = bottom. Set 1 so a column grows upward from a baseline." },
         "rotation": { "type": "number", "default": 0.0, "description": "Degrees clockwise, about the element's centre." },
         "opacity": { "type": "number", "default": 1.0, "description": "0 is invisible, 1 is opaque." },
+        // An enum rather than seventeen names in a sentence. The client can validate it, the
+        // model does not have to parse prose to find the spelling, and it is shorter — the
+        // description no longer repeats what the schema already states.
         "blendMode": { "type": "string", "default": "normal",
-            "description": "How this layer composites over what is beneath: normal, darken, multiply, color-burn, lighten, screen, plus-lighter, color-dodge, overlay, soft-light, hard-light, difference, exclusion, hue, saturation, color, luminosity." }
+            "enum": ["normal", "darken", "multiply", "color-burn", "lighten", "screen",
+                     "plus-lighter", "color-dodge", "overlay", "soft-light", "hard-light",
+                     "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
+            "description": "How this layer composites over what is beneath." }
     })
 }
 
@@ -339,15 +356,13 @@ fn kit_properties() -> Value {
 /// of a document that labels it as failing contrast, and the accent three times — never on the
 /// thing that was the point.
 fn tone_property() -> Value {
+    // The enum is the contract; what each name *means* is project vocabulary, and it lives in
+    // the server's instructions block. That block is sent once per session; this fragment is
+    // spliced into four tools, so the essay was carried four times to say the same thing.
     json!({
         "tone": { "type": "string", "enum": Tone::NAMES,
-            "description": "How loud this element is, against the project's committed style kit. \
-                 ink = the loudest value, for the line that carries the beat. dim = secondary \
-                 type: kickers, axis labels, units, source notes. accent = the point — scarce, \
-                 one element per beat, and it must be on the thing that IS the argument. \
-                 accent2 = the opposition: a second series, the down bar, the contrast case. \
-                 surface = a plate or panel behind something else. Omit it and the role picks \
-                 the right one." }
+            "description": "How loud this element is against the committed kit. See TONE in the \
+                 server instructions. Omit it and the role picks the right one." }
     })
 }
 
@@ -361,17 +376,13 @@ fn role_property(required: bool) -> Value {
     } else {
         "Defaults to \"label\"."
     };
+    // Same reasoning as `tone_property`: the enum stays, the glossary moves to the instructions
+    // block. This fragment reaches six tools, and the essay was 610 bytes of it each time.
     json!({
         "role": { "type": "string", "enum": ElementRole::NAMES,
             "description": format!(
-                "What this element is FOR. hook = the opening claim that earns the next two \
-                 seconds. headline = the line a beat is built around. kicker = the small line \
-                 framing a headline. label = names a thing (axis, value, source). caption = \
-                 spoken words on screen (narrate sets this; you should not). lockup = the end \
-                 card or sign-off. data = a bar, line or mark whose size or position IS the \
-                 number. ground = background fills and plates. chrome = rules, borders, frame \
-                 furniture. ground and chrome together are capped at a small share of a \
-                 project, so do not label content as background to duck a rule. {tail}"
+                "What this element is FOR, not what it looks like. See ROLE in the server \
+                 instructions for what each name means. {tail}"
             ) }
     })
 }
@@ -388,36 +399,28 @@ fn caption_properties() -> Value {
     json!({
         "captionStyle": { "type": "string", "enum": crate::narration::CaptionPreset::NAMES,
             "default": "plain",
-            "description": "How loud the spoken word is on screen, against the project's style \
-                 kit. quiet = a small supporting line, in the kit's label step and its quiet \
-                 tone. plain = spoken words at the kit's caption step, in its ink — the default. \
-                 loud = kinetic type, two words at a time at headline size, for when the words \
-                 ARE the picture. There is no captionFontSize, captionColor, captionFontFamily \
-                 or captionFontWeight: this is where they come from." },
+            "description": "How loud the spoken word is on screen. quiet = a small supporting \
+                 line. plain = the kit's caption step, in its ink. loud = kinetic type, two \
+                 words at a time at headline size. There is no captionFontSize, captionColor, \
+                 captionFontFamily or captionFontWeight — this is where they come from." },
         "captionX": { "type": "number",
-            "description": "Horizontal position of the caption box, as a fraction of canvas \
-                 width. Defaults to the kit's lower-third framing — which differs per kit, \
-                 which is the point: every video bay had made until now put its captions at \
-                 x = 0.08." },
+            "description": "Caption box left, as a fraction of canvas width. Defaults to the \
+                 kit's lower-third framing, which differs per kit — every video bay made before \
+                 that default existed put its captions at x = 0.08." },
         "captionY": { "type": "number",
-            "description": "Top of the caption box as a fraction of canvas height. Defaults to \
-                 the kit's lower-third framing, which clears the platform caption band." },
+            "description": "Caption box top, as a fraction of canvas height. Defaults to the \
+                 kit's lower-third framing, which clears the platform caption band." },
         "captionAlign": { "type": "string", "enum": ["left", "center", "right"],
-            "description": "Defaults to whatever the kit's lower-third framing hangs off — left \
-                 on a grid kit, centred on a centred one." },
+            "description": "Defaults to whatever the kit's lower-third framing hangs off." },
         "speakerLabels": { "type": "object",
-            "description": "Display name per speaker id, e.g. {\"speaker-1\": \"JULIE\"}. The ids \
-                 are the ones `diarize` writes into the transcript. Use this whenever more than \
-                 one person talks in a clip: without it the captions say the words and lose who \
-                 said them, and a two-hander reads as one person contradicting themselves. The \
-                 name is written only on the FIRST caption after the floor changes — prefixing \
-                 every line eats the frame and stops being read after the second one." },
+            "description": "Display name per speaker id, e.g. {\"speaker-1\": \"JULIE\"} — the ids \
+                 `diarize` writes. Use it whenever more than one person talks: without it a \
+                 two-hander reads as one person contradicting themselves. Written only on the \
+                 first caption after the floor changes." },
         "speakerColors": { "type": "object",
-            "description": "Caption colour per speaker id, e.g. {\"speaker-1\": \"#RRGGBB\"}. This \
-                 is what carries who is talking on the lines that are not labelled, and it \
-                 spends none of the frame to do it. Two speakers want two colours that still \
-                 read apart at thumbnail size; past three, the labels are doing the work and \
-                 the colour is noise." }
+            "description": "Caption colour per speaker id, e.g. {\"speaker-1\": \"#RRGGBB\"}. \
+                 Carries who is talking on the unlabelled lines, and spends none of the frame \
+                 to do it. Past three speakers the labels do the work and colour is noise." }
     })
 }
 
@@ -564,23 +567,6 @@ fn installable_components() -> Vec<&'static str> {
         .iter()
         .map(|component| component.id.as_str())
         .collect()
-}
-
-/// What each component is and roughly what it costs, from the manifest's own words.
-fn installable_detail() -> String {
-    bay_provision::Manifest::embedded()
-        .components
-        .iter()
-        .map(|component| {
-            format!(
-                "{} (~{} MB) = {}",
-                component.id,
-                component.disk_bytes / 1_000_000,
-                component.detail
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Fold a `cover` request into the transform: crop the source to the panel, scale to fill it.
@@ -1922,7 +1908,8 @@ pub fn all_definitions() -> Vec<Value> {
              this takes minutes — so poll runtime_status with that id until finished is true.",
             json!({
                 "component": { "type": "string", "enum": installable_components(),
-                    "description": installable_detail() }
+                    "description": "Which runtime to act on. runtime_status lists what each one \
+                                    is and what it costs on disk." }
             }),
             &["component"],
         ),
@@ -2523,7 +2510,8 @@ pub fn all_definitions() -> Vec<Value> {
              Refuses while an install of the same component is running.",
             json!({
                 "component": { "type": "string", "enum": installable_components(),
-                    "description": installable_detail() }
+                    "description": "Which runtime to act on. runtime_status lists what each one \
+                                    is and what it costs on disk." }
             }),
             &["component"],
         ),

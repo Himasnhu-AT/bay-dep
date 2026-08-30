@@ -394,6 +394,26 @@ impl Move {
         Some(self.directions[usize::from(index == 0)])
     }
 
+    /// The one-line form, for a listing.
+    ///
+    /// A catalog call is how an agent finds out what moves exist, and it does not need every
+    /// move's channel list and direction set to choose one — it needs the name and what the move
+    /// does. The full registry is 12 KB of response, and it was carried by `apply_move` with no
+    /// arguments *and* by `looks_list`, so two orientation calls cost more context than twenty
+    /// tool schemas. `describe` is still there for the one move a caller asked about.
+    pub fn summarise(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "kind": self.kind.as_str(),
+            // The channel the move is *about*. A few bytes, and a design rule rides on it —
+            // `the_vocabulary_is_listable_from_a_tool_a_live_session_already_has` asserts no
+            // move leads with opacity, and it reads that from this listing. Dropping it from
+            // the summary made the rule unobservable from the catalog.
+            "lead": self.lead,
+            "summary": self.summary,
+        })
+    }
+
     pub fn describe(&self) -> serde_json::Value {
         serde_json::json!({
             "id": self.id,

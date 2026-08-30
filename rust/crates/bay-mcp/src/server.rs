@@ -229,6 +229,15 @@ fn initialize_result() -> Value {
     })
 }
 
+/// The vocabulary that used to live in the tool schemas.
+///
+/// Sent once per session, which is the whole reason ROLE and TONE moved here: as parameter
+/// descriptions they were spliced into six and four tools respectively and carried every time.
+/// See `optimizations.md` §2.1.
+pub fn server_instructions() -> &'static str {
+    INSTRUCTIONS
+}
+
 const INSTRUCTIONS: &str = "\
 bay is a native video editor. Build a timeline with these tools, then render it to MP4.
 
@@ -249,7 +258,29 @@ element_move slides it without changing what it shows. Prefer these to deleting 
 — a rebuilt element loses its animation and its id.
 
 Coordinates are fractions of the canvas: x=0.5,y=0.5 is dead centre. Layers stack upward
-from 0. Keyframe times in `animate` are relative to the element's own start.";
+from 0. Keyframe times in `animate` are relative to the element's own start.
+
+ROLE — what an element is FOR, not what it looks like. Every visual element declares one.
+  hook      the opening claim that earns the next two seconds
+  headline  the line a beat is built around
+  kicker    the small line framing a headline
+  label     names a thing (axis, value, source)
+  caption   spoken words on screen — narrate sets this; you should not
+  lockup    the end card or sign-off
+  data      a bar, line or mark whose size or position IS the number
+  ground    background fills and plates
+  chrome    rules, borders, frame furniture
+ground and chrome together are capped at a small share of a project, so do not label content
+as background to duck a rule.
+
+TONE — how loud an element is, against the project's committed style kit.
+  ink       the loudest value, for the line that carries the beat
+  dim       secondary type: kickers, axis labels, units, source notes
+  accent    the point — scarce, one element per beat, and it must be on the thing that IS
+            the argument
+  accent2   the opposition: a second series, the down bar, the contrast case
+  surface   a plate or panel behind something else
+Omit tone and the role picks the right one.";
 
 /// Serve MCP on stdin/stdout using newline-delimited JSON-RPC.
 pub fn serve_stdio() -> std::io::Result<()> {

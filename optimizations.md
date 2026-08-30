@@ -1,9 +1,33 @@
 # bay — measured optimizations
 
-**Status: measured, not yet implemented.** Written 2026-08-30 against the live server on
-`127.0.0.1:7333` (101 tools). Every number here came off the wire, not off a reading of the
-source. Nothing in this file has been applied yet; each entry says what it would save and what
-would verify it.
+**Status: §2.1, §2.2 and §2.4 applied 2026-08-30. §2.3 and §2.5 still open.** Written against
+the live server on `127.0.0.1:7333` (101 tools); every number came off the wire, not off a
+reading of the source.
+
+Measured after applying, from `bay-mcp`'s `payload_size` test rather than the wire — the same
+figure, reproducible without a running server, and now a ceiling that fails the build:
+
+| | before | after |
+|---|---:|---:|
+| `tools/list` | 126,236 B | **115,833 B** (−8.2%) |
+| `apply_move{}` | 12,066 B | **8,899 B** (−26%) |
+| `looks_list{}` | 13,123 B | **9,956 B** (−24%) |
+| one move's detail | — | 399 B |
+
+Tool count unchanged at 101, which per §1.6 is the right answer for a client with tool search.
+
+Three things came out differently from the estimate, and they are worth reading before trusting
+the remaining rows:
+
+- **`duck_properties` was left alone.** Every line in it names a failure — "under 3 dB nobody
+  hears it", "a release faster than the attack is a pump" — which is precisely what §3 says to
+  keep. 2,862 B across two tools is not worth buying with that.
+- **`kit_properties` was left alone** for the same reason: `customKit`'s description is a
+  validation contract, not prose.
+- **The first attempt at the byte-ceiling test asserted every property in the surface had a
+  description** and found 120 that never did (`elementId`, `width`, `start`). That is a fine
+  thing for a self-describing name, and a test that fails for what the change did not touch is
+  one people learn to skip. It is scoped to the helpers' own properties now.
 
 This is the register of things that are *expensive but correct*, as distinct from
 [`fixes.md`](fixes.md), which is the register of things that are *wrong*.

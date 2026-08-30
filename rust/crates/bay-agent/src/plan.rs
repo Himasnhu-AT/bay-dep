@@ -990,12 +990,20 @@ fn named_move(args: &Value) -> Result<Option<(&'static Move, MoveParams)>, Strin
 
 /// The whole registry, as an agent reads it. Every entry says what it is for and — more usefully
 /// — when it is the wrong choice.
+/// The move registry, one line each.
+///
+/// Summaries rather than `describe()`. The full registry is 12 KB, and this call is how an agent
+/// finds out what moves *exist* — choosing one needs the name and what it does, not its channel
+/// list. A caller who wants the rest asks for a single move by name, which is one more call and
+/// about 300 bytes instead of 12,000 paid by everyone who ever orients.
 fn move_catalogue() -> Value {
     serde_json::json!({
-        "moves": moves::MOVES.iter().map(|m| m.describe()).collect::<Vec<_>>(),
+        "moves": moves::MOVES.iter().map(|m| m.summarise()).collect::<Vec<_>>(),
         "note": "Each move carries its own duration, curve and amplitude. \"direction\" is the \
                  way it TRAVELS; \"distance\" is a multiplier on its own amplitude, not a number \
-                 of pixels. Reach them from animate/animate_many with \"move\" as well.",
+                 of pixels. Reach them from animate/animate_many with \"move\" as well. \
+                 For one move's channels, directions and duration, call apply_move with \"move\" \
+                 and no \"elementId\".",
     })
 }
 
@@ -1273,8 +1281,10 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 .collect::<Vec<_>>(),
             // The move registry rides along here as well as on `apply_move`, because a live MCP
             // session's tool list is cached when it connects: a new tool *name* is unreachable
-            // in one, and a new key on an existing tool's response is not.
-            "moves": moves::MOVES.iter().map(|m| m.describe()).collect::<Vec<_>>(),
+            // in one, and a new key on an existing tool's response is not. Summarised, though —
+            // carrying `describe()` meant this call and `apply_move{}` each shipped the same
+            // 12 KB, so orienting twice cost more than the entire tool list.
+            "moves": moves::MOVES.iter().map(|m| m.summarise()).collect::<Vec<_>>(),
         }))),
 
         // The whole report, envelope and all. `ok: true` used to be the first thing an agent
@@ -1528,6 +1538,19 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
         "animate" | "apply_move" => {
             if name == "apply_move" && args.get("move").is_none() {
                 return Ok(Planned::Read(move_catalogue()));
+            }
+            // A named move with nothing to apply it to is a question about the move, not a
+            // malformed call. It is also the detail half of the catalog above: the listing is
+            // summaries, and this is how a caller gets the channels and directions for the one
+            // move they are choosing between.
+            if name == "apply_move"
+                && args.get("elementId").is_none()
+                && let Some(id) = text(args, "move")
+            {
+                let found = moves::find(&id).ok_or_else(|| {
+                    format!("no move {id:?} — call apply_move with no arguments for the list")
+                })?;
+                return Ok(Planned::Read(found.describe()));
             }
             let element_id = text(args, "elementId")
                 .ok_or_else(|| "missing required string field \"elementId\"".to_string())?;
