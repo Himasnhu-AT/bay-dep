@@ -6,6 +6,9 @@ description = "The bridge an AI agent's edits cross to reach the live editor: pu
 
 [dependencies]
 bay-paths = { path = "../bay-paths" }
+# Caption placement is a setting, not an argument, and the MCP server must honour it with no
+# window open. bay-settings depends only on bay-paths, so this adds no cycle.
+bay-settings = { path = "../bay-settings" }
 bay-jobs = { path = "../bay-jobs" }
 bay-core = { path = "../bay-core" }
 bay-speech = { path = "../bay-speech" }

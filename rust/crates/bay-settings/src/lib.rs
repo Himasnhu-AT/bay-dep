@@ -29,6 +29,7 @@
 //! make a request with.
 
 pub mod account;
+pub mod captions;
 pub mod compute;
 pub mod keys;
 pub mod mcp;
@@ -40,6 +41,7 @@ pub mod token;
 use serde::{Deserialize, Serialize};
 
 pub use account::{Account, Session};
+pub use captions::CaptionSettings;
 pub use compute::ComputeSettings;
 pub use mcp::McpSettings;
 pub use models::ModelRouting;
@@ -59,6 +61,8 @@ pub struct Settings {
     pub models: ModelRouting,
     pub mcp: McpSettings,
     pub compute: ComputeSettings,
+    /// Where captions sit. Enforced by the MCP server, not just drawn by the settings screen.
+    pub captions: CaptionSettings,
 }
 
 /// Why a change was refused.

@@ -129,3 +129,18 @@ fn the_effect_palette_and_the_planner_name_the_same_shaders() {
         );
     }
 }
+
+/// The "Everything" profile tells the user how many tools it turns on. That number is prose in
+/// a `&'static str` and cannot be computed, so nothing stopped it drifting — and it had, by one,
+/// before this test existed. A count the settings screen states and the server contradicts is a
+/// small lie in the one place a user goes to check what an agent can reach.
+#[test]
+fn the_everything_profile_states_the_real_tool_count() {
+    let served = bay_mcp::tools::all_tool_names().len();
+    let profile = bay_settings::mcp::profile("everything").expect("the everything profile exists");
+    assert!(
+        profile.detail.contains(&served.to_string()),
+        "the Everything profile says {:?} but the server serves {served} tools",
+        profile.detail
+    );
+}

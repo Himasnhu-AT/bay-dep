@@ -45,7 +45,7 @@ pub const CLIENTS: [ClientKind; 3] = [
 /// `optimizations.md` §2.5: the gating machinery already existed — `definitions_with` filters
 /// `all_definitions` through [`McpSettings::allows`], and `bay --mcp` enforces it with no window
 /// open. What was missing was **defaults**. A client that carries the whole schema list in its
-/// system prompt on every request pays for 101 tools whether it narrates or not, and asking
+/// system prompt on every request pays for 103 tools whether it narrates or not, and asking
 /// someone to untick sixty boxes is not a feature.
 ///
 /// The sets are deliberately *jobs*, not categories. "Everything about audio" is a taxonomy; "I
@@ -193,7 +193,7 @@ pub const PROFILES: [Profile; 4] = [
     Profile {
         id: "everything",
         label: "Everything",
-        detail: "All 101 tools. The default, and the right one for a client with tool search.",
+        detail: "All 103 tools. The default, and the right one for a client with tool search.",
         tools: &[],
     },
     Profile {

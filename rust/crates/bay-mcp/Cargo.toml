@@ -20,6 +20,7 @@ bay-provision = { path = "../bay-provision" }
 bay-settings = { path = "../bay-settings" }
 bay-stock = { path = "../bay-stock" }
 bay-gen = { path = "../bay-gen" }
+bay-html = { path = "../bay-html" }
 bay-vision = { path = "../bay-vision" }
 bay-time = { path = "../bay-time" }
 serde = { workspace = true }

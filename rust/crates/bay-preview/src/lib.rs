@@ -2102,62 +2102,7 @@ impl PreviewRenderer {
         }
 
         if !audio_clips.is_empty() {
-            // Delay each clip to its timeline start, trim it to its own duration, apply its
-            // gain, then sum them. `adelay` wants milliseconds per channel; `all=1` applies
-            // the same delay to every channel rather than only the first.
-            let mut filters = String::new();
-            for (index, clip) in audio_clips.iter().enumerate() {
-                filters.push_str(&format!(
-                    "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
-                     asetpts=PTS-STARTPTS,{processing}{pan}{volume},\
-                     atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
-                    input = index + 1,
-                    start = clip.trim_start_seconds,
-                    source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
-                    duration = clip.duration_seconds,
-                    processing = clip.processing_filters(),
-                    // Before the level, because the level may be a per-frame expression and
-                    // `pan` is a fixed matrix — putting the matrix after it would make the
-                    // stereo placement depend on where in a duck the frame fell.
-                    pan = clip.pan_filter(),
-                    volume = clip.volume_filter(),
-                    // After the trim, so the tail fade is measured against the clip's real
-                    // length, and before the delay, so `st` is clip-relative.
-                    fades = clip.fade_filters(),
-                    delay_ms = (clip.start_seconds * 1000.0).round() as i64,
-                ));
-            }
-            for index in 0..audio_clips.len() {
-                filters.push_str(&format!("[a{index}]"));
-            }
-            filters.push_str(&format!(
-                "amix=inputs={count}:normalize=0:dropout_transition=0",
-                count = audio_clips.len()
-            ));
-            // One-pass loudnorm. Two passes would measure first and be exact, but that means
-            // decoding the whole mix twice; within about a dB is the difference between a reel
-            // that arrives at a sensible level and one the platform turns up along with its
-            // noise floor.
-            if let Some(target) = settings.loudness_lufs {
-                filters.push_str(&format!(",loudnorm=I={target:.1}:TP=-1.5:LRA=11"));
-            }
-            // `loudnorm` runs internally at 192 kHz and hands back 96 kHz, so a chain that ends
-            // on it delivers a 96 kHz file — double the AAC bitrate for nothing, and a rate every
-            // platform re-encodes anyway. `amix` separately takes its channel layout from its
-            // FIRST input, so a mono narration clip placed before the bed collapsed the whole
-            // mix to mono. Both were measured in shipped files. Pin the delivery format here,
-            // after everything that could have changed it, rather than trusting the chain.
-            filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
-            // Pad the bed with silence, forever. `-shortest` below ends the file at the
-            // shortest stream, and without this that stream is the audio whenever the last
-            // audible clip stops before the picture does — an eight-second reel with a
-            // 0.7 s stinger at 4.85 s came out 5.6 s long, missing its whole end card, and
-            // ffmpeg reported success. Padding makes the audio effectively infinite, so the
-            // picture is always the shortest stream and always the one that sets the length.
-            // Placed after `loudnorm`, which must measure the real mix and not the silence.
-            filters.push_str(",apad");
-            filters.push_str("[aout]");
-
+            let filters = audio_filter_chain(&audio_clips, settings, duration_seconds);
             args.push("-filter_complex".into());
             args.push(filters);
             args.push("-map".into());
@@ -3320,6 +3265,191 @@ fn atempo_filters(speed: f32) -> Vec<String> {
 /// the preview mixer's clip builder calls. Soloing is the kind of state that gets reimplemented
 /// per front end and then disagrees; the export dropping a lane the room still hears is a
 /// difference nobody finds until the file comes back.
+/// How far past the picture the padded silence runs.
+///
+/// Enough that the picture is unambiguously the shortest stream after any rounding in the audio
+/// filter chain, and small enough that a bounded pad can never become an unbounded one.
+pub const AUDIO_PAD_MARGIN: f64 = 1.0;
+
+/// The `-filter_complex` chain that mixes every audible clip into one delivery stream.
+///
+/// Split out of `export_video_observed` so the one property that cannot be observed from a small
+/// test render can be asserted directly: **the silence at the end is bounded.** A bare `apad`
+/// runs forever, and an infinite audio source against a video pipe that delivers one composited
+/// frame at a time fills ffmpeg's inter-thread queue and kills the export with ENOSPC. That
+/// failure needs a slow enough picture to reproduce — a 1080x1920 reel does it, the 64x64
+/// one-second render in the export tests never will — so the guard belongs here, on the string,
+/// where it costs nothing to check.
+#[cfg(test)]
+mod audio_pad_tests {
+    use super::*;
+
+    fn clip(start: f64, duration: f64) -> AudibleClip {
+        AudibleClip {
+            path: "/tmp/bed.wav".into(),
+            start_seconds: start,
+            trim_start_seconds: 0.0,
+            duration_seconds: duration,
+            speed: 1.0,
+            dialogue_chain: None,
+            volume: 1.0,
+            pan: 0.0,
+            track_pan: 0.0,
+            track_gain: 1.0,
+            gain_points: Vec::new(),
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
+        }
+    }
+
+    /// The regression, stated as a property of the chain rather than of a render.
+    ///
+    /// A bare `apad` generates silence forever. The picture arrives one composited frame at a
+    /// time, so an unbounded audio source outruns it, fills ffmpeg's inter-thread queue, and
+    /// the export dies reporting ENOSPC — "No space left on device", with the disk empty. It
+    /// took a 1080x1920 timeline to reproduce; the export tests render 64x64 for one second and
+    /// never will.
+    #[test]
+    fn the_silence_at_the_end_is_bounded() {
+        let chain = audio_filter_chain(&[clip(0.0, 10.0)], &ExportSettings::default(), 47.2667);
+        assert!(
+            chain.contains("apad="),
+            "the pad must be bounded, got: {chain}"
+        );
+        assert!(
+            !chain.contains(",apad[") && !chain.ends_with(",apad"),
+            "a bare apad runs forever: {chain}"
+        );
+    }
+
+    /// Bounded, but still longer than the picture — otherwise `-shortest` could end the file on
+    /// the audio and cut the last frames, which is the bug the pad was added to fix.
+    #[test]
+    fn the_pad_outlasts_the_picture() {
+        for duration in [1.0, 8.0, 47.2667] {
+            let chain = audio_filter_chain(&[clip(0.0, 0.5)], &ExportSettings::default(), duration);
+            let value: f64 = chain
+                .split("apad=whole_dur=")
+                .nth(1)
+                .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit() && c != '.').next())
+                .and_then(|n| n.parse().ok())
+                .unwrap_or_else(|| panic!("no whole_dur in {chain}"));
+            assert!(
+                value > duration,
+                "padded to {value}s for a {duration}s picture — the audio could end the file"
+            );
+        }
+    }
+
+    /// A zero-length or negative window must not produce a negative duration, which ffmpeg
+    /// rejects outright and which would fail every export rather than only the slow ones.
+    #[test]
+    fn a_degenerate_duration_still_produces_a_legal_pad() {
+        for duration in [0.0, -5.0] {
+            let chain = audio_filter_chain(&[clip(0.0, 1.0)], &ExportSettings::default(), duration);
+            assert!(chain.contains("apad=whole_dur="), "{chain}");
+            assert!(!chain.contains("whole_dur=-"), "negative pad: {chain}");
+        }
+    }
+
+    /// The rest of the chain is unchanged by the fix: the mix still ends pinned to the delivery
+    /// format, and the pad still comes after loudnorm so the measurement sees the real mix.
+    #[test]
+    fn the_pad_comes_after_loudnorm_and_before_the_output_label() {
+        let settings = ExportSettings {
+            loudness_lufs: Some(-14.0),
+            ..ExportSettings::default()
+        };
+        let chain = audio_filter_chain(&[clip(0.0, 4.0)], &settings, 8.0);
+        let loudnorm = chain.find("loudnorm").expect("loudnorm present");
+        let pad = chain.find("apad=").expect("pad present");
+        let out = chain.find("[aout]").expect("output label present");
+        assert!(loudnorm < pad, "the pad must not be measured by loudnorm");
+        assert!(pad < out, "the pad must be inside the chain");
+        assert!(
+            chain.contains("aresample=48000"),
+            "delivery rate lost: {chain}"
+        );
+    }
+}
+
+fn audio_filter_chain(
+    audio_clips: &[AudibleClip],
+    settings: &ExportSettings,
+    duration_seconds: f64,
+) -> String {
+    // Delay each clip to its timeline start, trim it to its own duration, apply its
+    // gain, then sum them. `adelay` wants milliseconds per channel; `all=1` applies
+    // the same delay to every channel rather than only the first.
+    let mut filters = String::new();
+    for (index, clip) in audio_clips.iter().enumerate() {
+        filters.push_str(&format!(
+            "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
+             asetpts=PTS-STARTPTS,{processing}{pan}{volume},\
+             atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
+            input = index + 1,
+            start = clip.trim_start_seconds,
+            source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
+            duration = clip.duration_seconds,
+            processing = clip.processing_filters(),
+            // Before the level, because the level may be a per-frame expression and
+            // `pan` is a fixed matrix — putting the matrix after it would make the
+            // stereo placement depend on where in a duck the frame fell.
+            pan = clip.pan_filter(),
+            volume = clip.volume_filter(),
+            // After the trim, so the tail fade is measured against the clip's real
+            // length, and before the delay, so `st` is clip-relative.
+            fades = clip.fade_filters(),
+            delay_ms = (clip.start_seconds * 1000.0).round() as i64,
+        ));
+    }
+    for index in 0..audio_clips.len() {
+        filters.push_str(&format!("[a{index}]"));
+    }
+    filters.push_str(&format!(
+        "amix=inputs={count}:normalize=0:dropout_transition=0",
+        count = audio_clips.len()
+    ));
+    // One-pass loudnorm. Two passes would measure first and be exact, but that means
+    // decoding the whole mix twice; within about a dB is the difference between a reel
+    // that arrives at a sensible level and one the platform turns up along with its
+    // noise floor.
+    if let Some(target) = settings.loudness_lufs {
+        filters.push_str(&format!(",loudnorm=I={target:.1}:TP=-1.5:LRA=11"));
+    }
+    // `loudnorm` runs internally at 192 kHz and hands back 96 kHz, so a chain that ends
+    // on it delivers a 96 kHz file — double the AAC bitrate for nothing, and a rate every
+    // platform re-encodes anyway. `amix` separately takes its channel layout from its
+    // FIRST input, so a mono narration clip placed before the bed collapsed the whole
+    // mix to mono. Both were measured in shipped files. Pin the delivery format here,
+    // after everything that could have changed it, rather than trusting the chain.
+    filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
+    // Pad the bed with silence to just past the picture. `-shortest` below ends the
+    // file at the shortest stream, and without any padding that stream is the audio
+    // whenever the last audible clip stops before the picture does — an eight-second
+    // reel with a 0.7 s stinger at 4.85 s came out 5.6 s long, missing its whole end
+    // card, and ffmpeg reported success.
+    //
+    // **The pad is BOUNDED, and that bound is load-bearing.** A bare `apad` generates
+    // silence forever. The picture arrives one composited frame at a time through
+    // `pipe:0` and a 1080x1920 frame with overlays takes tens of milliseconds, so
+    // ffmpeg drains the audio graph far ahead of the video and queues the result;
+    // with an infinite source it never stops, the inter-thread queue fills, and
+    // ffmpeg 7/8's scheduler reports a full queue as **ENOSPC** — a render that dies
+    // saying "No space left on device" with the disk 117 GB empty. Measured on a
+    // 47 s reel: every export with audio failed around frame 109. `whole_dur` makes
+    // the silence finite while still outlasting the picture, so the picture is still
+    // the shortest stream and still the one that sets the length.
+    //
+    // Placed after `loudnorm`, which must measure the real mix and not the silence.
+    filters.push_str(&format!(
+        ",apad=whole_dur={:.4}",
+        duration_seconds.max(0.0) + AUDIO_PAD_MARGIN
+    ));
+    filters.push_str("[aout]");
+    filters
+}
+
 fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
     let mut clips = Vec::new();
     let any_solo = scene.tracks.any_audio_solo();

@@ -8,6 +8,7 @@ members = [
     "crates/bay-time",
     "crates/bay-effects",
     "crates/bay-gpu",
+    "crates/bay-html",
     "crates/bay-masks",
     "crates/bay-compositor",
     "crates/bay-agent",

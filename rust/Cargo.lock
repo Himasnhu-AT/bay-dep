@@ -598,6 +598,7 @@ dependencies = [
  "bay-preview",
  "bay-project",
  "bay-provision",
+ "bay-settings",
  "bay-speech",
  "bay-stock",
  "bay-test-support",
@@ -655,6 +656,7 @@ name = "bay-desktop"
 version = "0.1.1"
 dependencies = [
  "bay-agent",
+ "bay-html",
  "bay-mcp",
  "bay-ui",
  "serde_json",
@@ -718,6 +720,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bay-html"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "image",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "bay-jobs"
 version = "0.1.0"
 dependencies = [
@@ -754,6 +772,7 @@ dependencies = [
  "bay-audio",
  "bay-core",
  "bay-gen",
+ "bay-html",
  "bay-jobs",
  "bay-listen",
  "bay-paths",
@@ -5238,6 +5257,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfc194758a2d5d7540b1ad283bfb9ca318ec608991892326e95b428230b2689b"
 dependencies = [
  "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-web-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2e5aaab980c433cf470df9d7af96a7b46a9d892d521a2cbbb2f8a4c16751e7f"
+dependencies = [
+ "bitflags 2.11.0",
+ "block2",
+ "objc2",
+ "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-foundation",
 ]

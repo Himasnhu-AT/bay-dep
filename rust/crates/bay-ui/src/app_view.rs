@@ -1004,6 +1004,47 @@ impl BayApp {
         }
     }
 
+    /// Which platform's chrome captions must clear.
+    pub(crate) fn choose_caption_safe_area(&mut self, area: bay_settings::captions::SafeArea) {
+        self.settings.captions.safe_area = area;
+        self.settings_complaint = None;
+        self.save_settings();
+    }
+
+    pub(crate) fn choose_caption_align(&mut self, align: bay_settings::captions::CaptionAlign) {
+        // Clicking the alignment already chosen clears it, handing the decision back to the
+        // style kit. Without that there is no way to undo a choice short of editing the file.
+        self.settings.captions.align = if self.settings.captions.align == Some(align) {
+            None
+        } else {
+            Some(align)
+        };
+        self.settings_complaint = None;
+        self.save_settings();
+    }
+
+    /// Move the caption band, in fractions of the frame.
+    ///
+    /// The first nudge on an unset band starts from the kit's own position rather than from
+    /// zero, so the control moves what is on screen instead of jumping to the top of the frame.
+    pub(crate) fn nudge_caption_band(&mut self, delta: f32) {
+        let from = self
+            .settings
+            .captions
+            .band_top
+            .unwrap_or(crate::settings_model::KIT_DEFAULT_BAND_TOP);
+        self.settings.captions.band_top = Some((from + delta).clamp(0.0, 1.0));
+        self.settings_complaint = None;
+        self.save_settings();
+    }
+
+    /// Hand the position back to the style kit.
+    pub(crate) fn reset_caption_band(&mut self) {
+        self.settings.captions.band_top = None;
+        self.settings_complaint = None;
+        self.save_settings();
+    }
+
     pub(crate) fn choose_plan(&mut self, id: &str) {
         match self.settings.compute.choose_plan(id) {
             Ok(()) => {
@@ -1903,6 +1944,111 @@ mod shell_tests {
 }
 
 /// Agent routing when nothing is open — the deadlock this fixes, and the guards around it.
+/// The settings screen, painted.
+///
+/// `pages.md`'s rule applies to panes too: a pane that compiles and passes its model tests is
+/// not a pane that works. This drives GPUI's whole layout → prepaint → paint pass over each one,
+/// which is what catches a colliding element id, a `relative()` height built from a NaN, or a
+/// preview strip squeezed to a negative size — none of which a test over `captions_pane`'s
+/// return value can see.
+#[cfg(test)]
+mod settings_paint_tests {
+    use super::tests::*;
+    use super::*;
+    use crate::paint_harness::{paint, window};
+    use gpui::{TestAppContext, VisualTestContext};
+
+    fn settings(cx: &mut TestAppContext, pane: Pane) -> (Entity<BayApp>, &mut VisualTestContext) {
+        window(cx, |_window, cx| {
+            let focus = cx.focus_handle();
+            let paths = ShellPaths::under(data_root("settings-paint"));
+            let mut app = BayApp::over_at(Some(library("settings-paint")), None, focus, paths);
+            app.screen = Screen::Settings;
+            app.settings_pane = pane;
+            app
+        })
+    }
+
+    #[gpui::test]
+    fn every_settings_pane_paints(cx: &mut TestAppContext) {
+        for pane in Pane::ALL {
+            let (view, cx) = settings(cx, pane);
+            paint(&view, cx, 1440.0, 900.0);
+            // And at a small window, where the sidebar and the body compete for width.
+            paint(&view, cx, 900.0, 640.0);
+        }
+    }
+
+    /// The Captions pane in each of the states its preview strip has to draw: nothing set, a
+    /// platform chosen, and a band low enough to be clamped — which is the one that draws the
+    /// extra "asked for" line and the warning banner. The 0.0 and 1.0 rows are the edges where
+    /// a fractional height is most likely to come out negative or past the frame.
+    #[gpui::test]
+    fn the_captions_pane_paints_in_every_state(cx: &mut TestAppContext) {
+        let (view, cx) = settings(cx, Pane::Captions);
+        paint(&view, cx, 1440.0, 900.0);
+
+        for (band, area) in [
+            (None, bay_settings::captions::SafeArea::InstagramReels),
+            (
+                Some(806.0 / 960.0),
+                bay_settings::captions::SafeArea::InstagramReels,
+            ),
+            (
+                Some(690.0 / 960.0),
+                bay_settings::captions::SafeArea::TikTok,
+            ),
+            (Some(0.0), bay_settings::captions::SafeArea::None),
+            (Some(1.0), bay_settings::captions::SafeArea::YouTubeShorts),
+        ] {
+            view.update(cx, |app, _| {
+                app.settings.captions.band_top = band;
+                app.settings.captions.safe_area = area;
+            });
+            paint(&view, cx, 1440.0, 900.0);
+            paint(&view, cx, 900.0, 640.0);
+        }
+    }
+
+    /// The controls must actually change the setting — a pane whose buttons paint and do
+    /// nothing is the dead control this repository keeps a register for.
+    #[gpui::test]
+    fn the_caption_controls_change_the_setting(cx: &mut TestAppContext) {
+        let app = app(cx, library("caption-controls"));
+        app.update(cx, |app, _| {
+            assert!(
+                app.settings.captions.band_top.is_none(),
+                "starts on the kit"
+            );
+
+            app.nudge_caption_band(0.05);
+            let moved = app.settings.captions.band_top.expect("a position was set");
+            assert!(
+                (moved - (crate::settings_model::KIT_DEFAULT_BAND_TOP + 0.05)).abs() < 1e-6,
+                "the first nudge must start from the kit's position, got {moved}"
+            );
+
+            app.choose_caption_safe_area(bay_settings::captions::SafeArea::InstagramReels);
+            assert_eq!(
+                app.settings.captions.safe_area,
+                bay_settings::captions::SafeArea::InstagramReels
+            );
+
+            app.choose_caption_align(bay_settings::captions::CaptionAlign::Center);
+            assert_eq!(
+                app.settings.captions.align,
+                Some(bay_settings::captions::CaptionAlign::Center)
+            );
+            // Clicking the chosen alignment again hands it back to the kit.
+            app.choose_caption_align(bay_settings::captions::CaptionAlign::Center);
+            assert_eq!(app.settings.captions.align, None);
+
+            app.reset_caption_band();
+            assert!(app.settings.captions.band_top.is_none(), "back to the kit");
+        });
+    }
+}
+
 #[cfg(test)]
 mod agent_routing_tests {
     use super::tests::*;

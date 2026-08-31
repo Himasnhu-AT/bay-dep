@@ -155,6 +155,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "contact_sheet",
         "fonts_list",
         "formats_list",
+        "html_import",
         "critic_prepare",
         "critic_refresh",
         "critic_submit",
@@ -4719,6 +4720,36 @@ pub fn caption_style_from(
     kit: Option<&bay_project::StyleKit>,
     tool: &str,
 ) -> Result<CaptionStyle, String> {
+    caption_style_with(args, kit, tool, &captions_setting())
+}
+
+/// The caption placement this machine is configured for.
+///
+/// Read from disk rather than threaded through every caller because there is exactly one answer
+/// per machine and four call sites, and a parameter that three of them pass correctly is a
+/// parameter the fourth gets wrong silently. Falls back to the default — follow the kit, reserve
+/// nothing — when there is no settings file, which is the state of a fresh install.
+fn captions_setting() -> bay_settings::CaptionSettings {
+    // `current` rather than `load`: the editor publishes its settings into a process-wide
+    // snapshot as they change, and the agent server that shares this process must honour a band
+    // position the moment it is moved — not only after the next write reaches disk.
+    bay_settings::store::current().captions
+}
+
+/// [`caption_style_from`] with the placement setting supplied explicitly.
+///
+/// Exists so the precedence can be tested without writing to the user's real settings file.
+///
+/// **Precedence: an explicit `captionY` on the call, then the setting, then the kit — and the
+/// safe area clamps whichever won.** The clamp is not a preference: it describes the part of
+/// the frame the platform draws its own chrome over, so a caller asking for a position under
+/// Instagram's action rail is asking for a caption nobody reads.
+pub fn caption_style_with(
+    args: &Value,
+    kit: Option<&bay_project::StyleKit>,
+    tool: &str,
+    captions: &bay_settings::CaptionSettings,
+) -> Result<CaptionStyle, String> {
     reject_raw_caption_style(args, tool)?;
     let preset = match args.get("captionStyle").and_then(|v| v.as_str()) {
         Some(name) => CaptionPreset::parse(name)?,
@@ -4758,7 +4789,21 @@ pub fn caption_style_from(
     let speaker_labels = map_of_strings("speakerLabels");
     let speaker_colors = map_of_strings("speakerColors");
 
-    Ok(match kit {
+    // The setting stands in for the kit where the caller said nothing, so the kit still answers
+    // everything else about a caption — face, size, colour — and only the position is overridden.
+    let placement = CaptionPlacement {
+        y: placement.y.or(captions.band_top.filter(|v| v.is_finite())),
+        align: placement.align.or_else(|| {
+            captions.align.map(|align| match align {
+                bay_settings::captions::CaptionAlign::Left => TextAlign::Left,
+                bay_settings::captions::CaptionAlign::Center => TextAlign::Center,
+                bay_settings::captions::CaptionAlign::Right => TextAlign::Right,
+            })
+        }),
+        ..placement
+    };
+
+    let mut style = match kit {
         Some(kit) => CaptionStyle {
             speaker_labels,
             speaker_colors,
@@ -4773,7 +4818,12 @@ pub fn caption_style_from(
             speaker_colors,
             ..CaptionStyle::default()
         },
-    })
+    };
+    // Applied last, and to every path: a kit whose lower third sits under the platform's UI is
+    // exactly the case the safe area exists for, and clamping only explicit values would leave
+    // the default broken.
+    style.y = captions.clamp_top(style.y);
+    Ok(style)
 }
 
 fn parse_text_align(name: &str) -> Result<TextAlign, String> {

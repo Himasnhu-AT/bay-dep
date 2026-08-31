@@ -20,15 +20,17 @@ pub enum Pane {
     Models,
     Mcp,
     Compute,
+    Captions,
 }
 
 impl Pane {
-    pub const ALL: [Pane; 5] = [
+    pub const ALL: [Pane; 6] = [
         Pane::Account,
         Pane::Providers,
         Pane::Models,
         Pane::Mcp,
         Pane::Compute,
+        Pane::Captions,
     ];
 
     pub fn title(self) -> &'static str {
@@ -38,6 +40,7 @@ impl Pane {
             Pane::Models => "Models",
             Pane::Mcp => "MCP access",
             Pane::Compute => "Compute",
+            Pane::Captions => "Captions",
         }
     }
 
@@ -49,6 +52,7 @@ impl Pane {
             Pane::Models => "What bay has installed",
             Pane::Mcp => "Drive bay from an agent",
             Pane::Compute => "Where work runs",
+            Pane::Captions => "Where subtitles sit",
         }
     }
 
@@ -71,6 +75,11 @@ impl Pane {
                  your timeline. Blocking a tool here refuses it, and hides it from the agent."
             }
             Pane::Compute => "Choose where renders and model inference run.",
+            Pane::Captions => {
+                "Captions are the one block of type bay places for you, so where they sit is a \
+                 setting rather than an argument. This applies to every project on this machine, \
+                 and the MCP server honours it with no window open."
+            }
         }
     }
 }
@@ -639,6 +648,98 @@ pub fn provider_catalog() -> &'static [CatalogEntry] {
     &CATALOG
 }
 
+/// One platform whose chrome captions must clear.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SafeAreaOption {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// How much of the bottom of the frame it covers, as a percentage, for the row's caption.
+    pub reserves: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlignOption {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub selected: bool,
+}
+
+/// The Captions pane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptionsPane {
+    /// Where the band is asked to sit, as a fraction of frame height.
+    pub band_top: f32,
+    /// True when no explicit position is set and the style kit answers instead.
+    pub follows_kit: bool,
+    /// Where captions will ACTUALLY land, after the safe area has had its say.
+    ///
+    /// Drawn beside the requested value rather than in place of it: a control that silently
+    /// corrects the number typed into it reads as broken.
+    pub resolved_top: f32,
+    pub clamped: bool,
+    /// The fraction of the frame the chosen platform draws over, for the preview strip.
+    pub reserved_bottom: f32,
+    pub safe_areas: Vec<SafeAreaOption>,
+    pub aligns: Vec<AlignOption>,
+    pub note: String,
+}
+
+/// What the kit would choose if the setting said nothing.
+///
+/// The panes are pure functions of a snapshot and cannot resolve a project's kit, so this is the
+/// shared default the caption planner falls back to. It is only ever a *preview* value — the
+/// real placement resolves against the open project's kit at caption time.
+pub const KIT_DEFAULT_BAND_TOP: f32 = 0.70;
+
+pub fn captions_pane(snapshot: &SettingsSnapshot) -> CaptionsPane {
+    let captions = &snapshot.settings.captions;
+    let requested = captions.band_top.unwrap_or(KIT_DEFAULT_BAND_TOP);
+    let resolved = captions.resolve_band_top(KIT_DEFAULT_BAND_TOP);
+
+    let safe_areas = bay_settings::captions::SafeArea::ALL
+        .iter()
+        .map(|area| SafeAreaOption {
+            id: match area {
+                bay_settings::captions::SafeArea::None => "none",
+                bay_settings::captions::SafeArea::InstagramReels => "instagram-reels",
+                bay_settings::captions::SafeArea::TikTok => "tiktok",
+                bay_settings::captions::SafeArea::YouTubeShorts => "youtube-shorts",
+            },
+            label: area.label(),
+            reserves: if area.bottom_fraction() > 0.0 {
+                format!(
+                    "reserves the lowest {}%",
+                    (area.bottom_fraction() * 100.0).round()
+                )
+            } else {
+                "reserves nothing".to_string()
+            },
+            selected: *area == captions.safe_area,
+        })
+        .collect();
+
+    let aligns = bay_settings::captions::CaptionAlign::ALL
+        .iter()
+        .map(|align| AlignOption {
+            id: align.wire_name(),
+            label: align.label(),
+            selected: captions.align == Some(*align),
+        })
+        .collect();
+
+    CaptionsPane {
+        band_top: requested,
+        follows_kit: captions.band_top.is_none(),
+        resolved_top: resolved,
+        clamped: captions.is_clamped(KIT_DEFAULT_BAND_TOP),
+        reserved_bottom: captions.safe_area.bottom_fraction(),
+        safe_areas,
+        aligns,
+        note: captions.safe_area.note().to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1139,8 +1240,83 @@ mod tests {
             list.sort_unstable();
             list.dedup();
         }
-        assert_eq!(titles.len(), 5);
-        assert_eq!(subtitles.len(), 5);
-        assert_eq!(blurbs.len(), 5);
+        // Counted off `Pane::ALL` rather than written out: the point of this test is that no
+        // two panes share a line, and a hardcoded number turns adding a pane into a failure
+        // about arithmetic instead of about duplication.
+        assert_eq!(titles.len(), Pane::ALL.len());
+        assert_eq!(subtitles.len(), Pane::ALL.len());
+        assert_eq!(blurbs.len(), Pane::ALL.len());
+    }
+
+    fn snapshot_with(captions: bay_settings::CaptionSettings) -> SettingsSnapshot {
+        let mut snapshot = snapshot();
+        snapshot.settings.captions = captions;
+        snapshot
+    }
+
+    #[test]
+    fn an_unset_band_says_it_follows_the_kit() {
+        let pane = captions_pane(&snapshot_with(bay_settings::CaptionSettings::default()));
+        assert!(pane.follows_kit);
+        assert_eq!(pane.band_top, KIT_DEFAULT_BAND_TOP);
+        assert!(!pane.clamped);
+        assert_eq!(pane.reserved_bottom, 0.0);
+    }
+
+    #[test]
+    fn choosing_a_platform_marks_exactly_one_row_and_reserves_a_band() {
+        let pane = captions_pane(&snapshot_with(bay_settings::CaptionSettings {
+            safe_area: bay_settings::captions::SafeArea::InstagramReels,
+            ..Default::default()
+        }));
+        let chosen: Vec<&str> = pane
+            .safe_areas
+            .iter()
+            .filter(|area| area.selected)
+            .map(|area| area.id)
+            .collect();
+        assert_eq!(chosen, ["instagram-reels"]);
+        assert!(pane.reserved_bottom > 0.0);
+    }
+
+    /// The pane must show BOTH numbers when it moves one: the requested position and where it
+    /// actually landed. A control that silently corrects its own input reads as broken.
+    #[test]
+    fn a_clamped_band_reports_the_requested_and_the_resolved_position() {
+        let pane = captions_pane(&snapshot_with(bay_settings::CaptionSettings {
+            band_top: Some(806.0 / 960.0),
+            safe_area: bay_settings::captions::SafeArea::InstagramReels,
+            ..Default::default()
+        }));
+        assert!(pane.clamped);
+        assert_eq!(pane.band_top, 806.0 / 960.0);
+        assert!(pane.resolved_top < pane.band_top);
+        assert!(!pane.follows_kit);
+    }
+
+    #[test]
+    fn a_band_that_clears_the_chrome_is_not_reported_as_moved() {
+        let pane = captions_pane(&snapshot_with(bay_settings::CaptionSettings {
+            band_top: Some(690.0 / 960.0),
+            safe_area: bay_settings::captions::SafeArea::InstagramReels,
+            ..Default::default()
+        }));
+        assert!(!pane.clamped);
+        assert_eq!(pane.resolved_top, pane.band_top);
+    }
+
+    #[test]
+    fn every_safe_area_and_alignment_is_offered_exactly_once() {
+        let pane = captions_pane(&snapshot_with(bay_settings::CaptionSettings::default()));
+        assert_eq!(
+            pane.safe_areas.len(),
+            bay_settings::captions::SafeArea::ALL.len()
+        );
+        assert_eq!(
+            pane.aligns.len(),
+            bay_settings::captions::CaptionAlign::ALL.len()
+        );
+        // Nothing chosen means the kit decides, so no alignment is lit.
+        assert!(pane.aligns.iter().all(|align| !align.selected));
     }
 }

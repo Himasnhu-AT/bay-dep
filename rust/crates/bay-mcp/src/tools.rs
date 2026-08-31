@@ -883,6 +883,36 @@ pub fn all_definitions() -> Vec<Value> {
             &[],
         ),
         tool(
+            "html_import",
+            "Rasterise an HTML composition to a PNG with a real alpha channel and import it,              returning a mediaId ready for add_image. WebKit does the drawing — the engine              already on this Mac, so nothing is downloaded.
+
+For the graphics that are              genuinely easier to author as markup than as a stack of add_shape calls: a card,              a chart, a timeline, a lower third. Give it `html` for inline markup or `path` for              a composition directory, whose own stylesheets, fonts and scripts resolve relative              to the file.
+
+Motion belongs to bay, not to the page: import the still and              animate it with `animate`. `atSeconds` is for a composition that declares its own              paused timeline at window.__timelines — it seeks before snapping, so one file              yields any frame of its animation.
+
+A composition that draws nothing is              REFUSED rather than imported. A blank overlay and a correct one are the same size              and the same dimensions, and the difference is otherwise not discovered until an              export comes back unchanged.",
+            json!({
+                "html": { "type": "string",
+                    "description": "Markup to render. Relative URLs have nothing to resolve against — use `path` for anything with assets beside it." },
+                "path": { "type": "string",
+                    "description": "An .html file on disk. Its directory is granted read access, so a self-contained composition directory works." },
+                "width": { "type": "integer", "description": "Canvas width in CSS pixels." },
+                "height": { "type": "integer", "description": "Canvas height in CSS pixels." },
+                "scale": { "type": "number", "default": 1.0, "minimum": 0.0,
+                    "description": "Device pixel ratio. 2.0 rasterises at twice the size WITHOUT re-laying-out the type — which is how a card authored at 540x960 is delivered sharp on a 1080x1920 canvas instead of being upscaled afterwards." },
+                "transparent": { "type": "boolean", "default": true,
+                    "description": "Leave the page background transparent so the PNG carries alpha. Turn it off only for a full-frame card that is meant to be opaque." },
+                "atSeconds": { "type": "number", "default": 0.0,
+                    "description": "Seek a declared timeline to this time before snapping." },
+                "timelineId": { "type": "string",
+                    "description": "Which entry in window.__timelines to seek. Only needed when the composition declares more than one. Naming one that does not exist is an error, not a silent frame zero." },
+                "output": { "type": "string",
+                    "description": "Where to write the PNG. Defaults to a file beside bay's other renders." },
+                "id": { "type": "string", "description": "Optional explicit media id." }
+            }),
+            &["width", "height"],
+        ),
+        tool(
             "audio_probe",
             "Measure an imported sound: `lufs` (EBU R128 integrated loudness — the unit a mix is \
              specified in), `peakDb`, `rmsDb`, and `accentSeconds` (where its transients are, \
@@ -2684,6 +2714,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         // `media_import` is the same call reachable from a session whose tool list was cached
         // before `audio_probe` existed.
         "audio_probe" => studio.audio_probe(&required_text(args, "mediaId")?),
+        "html_import" => html_import(studio, args),
         "media_import" => match text(args, "mediaId") {
             Some(media_id) => studio.audio_probe(&media_id),
             None => {
@@ -3287,6 +3318,100 @@ fn narrate_args(
 
 /// Caption appearance: the preset and the placement the caller asked for, resolved against the
 /// committed kit. The eleven arguments this replaces are refused here rather than ignored.
+/// `html_import`: markup in, an imported still with an alpha channel out.
+///
+/// Two refusals are deliberate and are the whole reason this is a tool rather than a documented
+/// two-call recipe:
+///
+/// - **A composition that drew nothing does not become a mediaId.** `ink` is the fraction of
+///   pixels with any opacity, and a zero there means the page rendered empty. Importing it
+///   anyway produces a timeline that looks right in every listing and exports without the
+///   graphic, which is discovered after the encode.
+/// - **An unreachable renderer says so.** Off macOS, or in a build with no `bay` binary to
+///   spawn, this reports why instead of writing a blank file.
+fn html_import(studio: &mut Studio, args: &Value) -> ToolResult {
+    if !bay_html::available() {
+        return Err(err(bay_html::unavailable_reason()
+            .unwrap_or_else(|| "HTML rendering is unavailable".to_string())));
+    }
+
+    let source = match (text(args, "html"), text(args, "path")) {
+        (Some(_), Some(_)) => {
+            return Err(err(
+                "pass `html` or `path`, not both — one composition has one source",
+            ));
+        }
+        (Some(html), None) => bay_html::Source::Html(html),
+        (None, Some(path)) => bay_html::Source::File(std::path::PathBuf::from(path)),
+        (None, None) => return Err(err("html_import needs either `html` or `path`")),
+    };
+
+    let width = number(args, "width", 0.0) as u32;
+    let height = number(args, "height", 0.0) as u32;
+    let mut shot = bay_html::Shot::new(source, width, height);
+    shot.scale = number(args, "scale", 1.0) as f32;
+    shot.transparent = args
+        .get("transparent")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    shot.at_seconds = number(args, "atSeconds", 0.0);
+    shot.timeline_id = text(args, "timelineId");
+
+    let output = match text(args, "output") {
+        Some(path) => std::path::PathBuf::from(path),
+        None => default_html_output(&shot),
+    };
+
+    let rendered = shot
+        .render_to(&output)
+        .map_err(|error| err(error.to_string()))?;
+    if rendered.is_blank() {
+        return Err(err(format!(
+            "the composition rendered nothing — {} is fully transparent. Check that the markup \
+             draws inside {}x{} and that any timeline is seeked to a time where something is on \
+             screen.",
+            rendered.path.display(),
+            width,
+            height
+        )));
+    }
+
+    let imported = studio.media_import(&output.to_string_lossy(), text(args, "id"), None)?;
+    let mut result = imported;
+    if let Some(object) = result.as_object_mut() {
+        object.insert("path".to_string(), json!(rendered.path.to_string_lossy()));
+        object.insert("width".to_string(), json!(rendered.width));
+        object.insert("height".to_string(), json!(rendered.height));
+        // Reported so a caller can see at a glance whether a card is nearly empty — a 0.002
+        // here is technically not blank and is almost certainly still a mistake.
+        object.insert("ink".to_string(), json!(rendered.ink));
+    }
+    Ok(result)
+}
+
+/// Where a rendered composition goes when the caller does not say.
+///
+/// Keyed by the shot itself, so re-rendering the same composition at the same time overwrites
+/// rather than littering, and two different frames of one animation do not collide.
+fn default_html_output(shot: &bay_html::Shot) -> std::path::PathBuf {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match &shot.source {
+        bay_html::Source::Html(html) => html.hash(&mut hasher),
+        bay_html::Source::File(path) => path.hash(&mut hasher),
+    }
+    shot.width.hash(&mut hasher);
+    shot.height.hash(&mut hasher);
+    shot.at_seconds.to_bits().hash(&mut hasher);
+    shot.scale.to_bits().hash(&mut hasher);
+    let stamp = hasher.finish();
+
+    let directory = bay_paths::data_dir()
+        .map(|dir| dir.join("html"))
+        .unwrap_or_else(std::env::temp_dir);
+    directory.join(format!("comp-{stamp:016x}.png"))
+}
+
 fn caption_style_for(
     studio: &mut Studio,
     args: &Value,
