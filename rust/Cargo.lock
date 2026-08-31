@@ -659,6 +659,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bay-detect"
+version = "0.1.0"
+dependencies = [
+ "bay-paths",
+ "bay-project",
+ "bay-test-support",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-vision",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "bay-effects"
 version = "0.1.0"
 dependencies = [
@@ -5151,7 +5166,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
  "bitflags 2.11.0",
+ "block2",
  "dispatch2",
+ "libc",
  "objc2",
 ]
 
@@ -5168,6 +5185,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.11.0",
+ "block2",
+ "libc",
  "objc2",
  "objc2-core-foundation",
 ]
@@ -5208,6 +5227,17 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "objc2-quartz-core",
+]
+
+[[package]]
+name = "objc2-vision"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc194758a2d5d7540b1ad283bfb9ca318ec608991892326e95b428230b2689b"
+dependencies = [
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@
 #
 #   ./test.sh              cargo fmt --check, clippy -D warnings, cargo test
 #   SLOW=1 ./test.sh       also run the 40 tests that drive the Kokoro sidecar or load SigLIP
-#   STRICT=1 ./test.sh     also fail if the GPU or ffmpeg is unavailable instead of skipping
+#   STRICT=1 ./test.sh     also fail if the GPU, ffmpeg or Vision.framework is unavailable
 #   BAY_ONLINE=1 ./test.sh let cargo reach the network (needed only after changing a dependency)
 #
 # Runs offline by default. Cargo's `.package-cache` lock lives in $CARGO_HOME and is shared by
@@ -57,8 +57,10 @@ else
 fi
 
 if [ "${STRICT:-0}" = "1" ]; then
-  # Turn the graceful GPU/ffmpeg skips into hard failures for capability verification.
-  BAY_REQUIRE_GPU=1 BAY_REQUIRE_FFMPEG=1 env -u CARGO_TARGET_DIR cargo test ${OFFLINE[@]+"${OFFLINE[@]}"} --workspace "$@" ${SLOW_TESTS[@]+"${SLOW_TESTS[@]}"}
+  # Turn the graceful skips into hard failures for capability verification. BAY_REQUIRE_DETECT
+  # covers Apple's Vision framework, which needs nothing installed but is macOS-only — so on a
+  # runner that has it, it must never quietly stop being exercised.
+  BAY_REQUIRE_GPU=1 BAY_REQUIRE_FFMPEG=1 BAY_REQUIRE_DETECT=1 env -u CARGO_TARGET_DIR cargo test ${OFFLINE[@]+"${OFFLINE[@]}"} --workspace "$@" ${SLOW_TESTS[@]+"${SLOW_TESTS[@]}"}
 else
   env -u CARGO_TARGET_DIR cargo test ${OFFLINE[@]+"${OFFLINE[@]}"} --workspace "$@" ${SLOW_TESTS[@]+"${SLOW_TESTS[@]}"}
 fi

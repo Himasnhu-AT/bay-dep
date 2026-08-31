@@ -19,6 +19,9 @@
 pub enum Capability {
     Gpu,
     Ffmpeg,
+    /// Apple's Vision framework — face and torso rectangles. macOS only, and absent from a
+    /// build that cannot reach the classes at runtime.
+    Detect,
 }
 
 impl Capability {
@@ -27,6 +30,7 @@ impl Capability {
         match self {
             Capability::Gpu => "BAY_REQUIRE_GPU",
             Capability::Ffmpeg => "BAY_REQUIRE_FFMPEG",
+            Capability::Detect => "BAY_REQUIRE_DETECT",
         }
     }
 
@@ -35,6 +39,7 @@ impl Capability {
         match self {
             Capability::Gpu => "GPU",
             Capability::Ffmpeg => "ffmpeg",
+            Capability::Detect => "face detection",
         }
     }
 

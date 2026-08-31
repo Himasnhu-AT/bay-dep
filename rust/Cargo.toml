@@ -12,6 +12,7 @@ members = [
     "crates/bay-compositor",
     "crates/bay-agent",
     "crates/bay-core",
+    "crates/bay-detect",
     "crates/bay-repair",
     "crates/bay-mcp",
     "crates/bay-listen",
