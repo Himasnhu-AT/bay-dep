@@ -21,7 +21,7 @@ half. Five gaps, all now closed:
 | **Linear keyframes only** | Everything moved at constant speed, which reads as mechanical. | `Easing` on `AnimationChannel` (8 curves) |
 | **Text was size + colour** | No family, weight, alignment, tracking or line height — no house typography. | All five on `TextElement`, honoured by `bay-text` |
 
-Plus the surface to drive it: `bay --mcp`, <!-- bay-tool-count -->95<!-- /bay-tool-count -->
+Plus the surface to drive it: `bay --mcp`, <!-- bay-tool-count -->102<!-- /bay-tool-count -->
 generated tools over HTTP or stdio.
 
 ---
