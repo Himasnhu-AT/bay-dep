@@ -863,46 +863,17 @@ fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
         },
     )
     .map_err(|error| error.to_string())?;
-    let source_aspect = source_width as f32 / source_height.max(1) as f32;
-    let target_aspect = target_width as f32 / target_height as f32;
-    let crop_for = |point: &bay_vision::SubjectPoint| {
-        if target_aspect < source_aspect {
-            let kept = (target_aspect / source_aspect).clamp(0.01, 1.0);
-            let left = (point.x - kept * 0.5).clamp(0.0, 1.0 - kept);
-            (left, 0.0, 1.0 - kept - left, 0.0)
-        } else {
-            let kept = (source_aspect / target_aspect).clamp(0.01, 1.0);
-            let top = (point.y - kept * 0.5).clamp(0.0, 1.0 - kept);
-            (0.0, top, 0.0, 1.0 - kept - top)
-        }
-    };
-    let mut channels = std::collections::BTreeMap::new();
-    for name in ["cropLeft", "cropTop", "cropRight", "cropBottom"] {
-        channels.insert(name.to_string(), AnimationChannel::default());
-    }
-    for point in &path {
-        let local =
-            bay_project::MediaTime::from_seconds_f64((point.time_seconds - source_start).max(0.0))
-                .ok_or("tracked time is outside the representable range")?;
-        let crop = crop_for(point);
-        for (name, value) in [
-            ("cropLeft", crop.0),
-            ("cropTop", crop.1),
-            ("cropRight", crop.2),
-            ("cropBottom", crop.3),
-        ] {
-            channels
-                .get_mut(name)
-                .expect("channel exists")
-                .upsert(local, value);
-        }
-    }
-    let first_crop = path.first().map(crop_for).unwrap_or((0.0, 0.0, 0.0, 0.0));
+    // Shared with `bay_mcp::studio::auto_reframe`, which is the point: this arithmetic was
+    // duplicated character for character between the attached and headless paths.
+    let plan = bay_project::reframe::plan_reframe(
+        &path,
+        source_start,
+        source_width as f32 / source_height.max(1) as f32,
+        target_width as f32 / target_height as f32,
+    )?;
+    let channels = plan.channels;
     let mut transform = video.transform;
-    transform.crop_left = first_crop.0;
-    transform.crop_top = first_crop.1;
-    transform.crop_right = first_crop.2;
-    transform.crop_bottom = first_crop.3;
+    plan.first.apply_to(&mut transform);
     let raw_x = path.iter().map(|point| point.raw_x).collect::<Vec<_>>();
     let smooth_x = path.iter().map(|point| point.x).collect::<Vec<_>>();
     Ok(SlowResult {

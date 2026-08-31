@@ -27,6 +27,7 @@ pub mod mix;
 pub mod moves;
 pub mod plan;
 mod project;
+pub mod reframe;
 mod refs;
 mod scene;
 mod settings;
@@ -61,6 +62,10 @@ pub use plan::{
 pub use project::{
     AssetLoudness, GeneratedMediaProvenance, MediaAsset, MediaKind, Project, ProjectMetadata,
     SemanticMediaIndex, SemanticShot, Transcript, TranscriptUtterance, TranscriptWord,
+};
+pub use reframe::{
+    Crop, ReframePlan, ReframeTrackingConfig, SubjectPoint, TrackingConfig, crop_for, path_jitter,
+    plan_reframe, smooth_path,
 };
 pub use refs::ElementRef;
 pub use scene::{BySource, ElementGroup, Marker, Scene, compose_group_transform};

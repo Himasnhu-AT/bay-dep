@@ -1312,41 +1312,19 @@ impl Studio {
             },
         )
         .map_err(|error| err(error.to_string()))?;
-        let source_aspect = source_width as f32 / source_height.max(1) as f32;
-        let target_aspect = target_width as f32 / target_height as f32;
-        let mut left = AnimationChannel::default();
-        let mut right = AnimationChannel::default();
-        let mut top = AnimationChannel::default();
-        let mut bottom = AnimationChannel::default();
-        let crop_for = |point: &bay_vision::SubjectPoint| {
-            if target_aspect < source_aspect {
-                let kept = (target_aspect / source_aspect).clamp(0.01, 1.0);
-                let left = (point.x - kept * 0.5).clamp(0.0, 1.0 - kept);
-                (left, 0.0, 1.0 - kept - left, 0.0)
-            } else {
-                let kept = (source_aspect / target_aspect).clamp(0.01, 1.0);
-                let top = (point.y - kept * 0.5).clamp(0.0, 1.0 - kept);
-                (0.0, top, 0.0, 1.0 - kept - top)
-            }
-        };
-        for point in &path {
-            let local = secs((point.time_seconds - source_start).max(0.0))?;
-            let crop = crop_for(point);
-            left.upsert(local, crop.0);
-            top.upsert(local, crop.1);
-            right.upsert(local, crop.2);
-            bottom.upsert(local, crop.3);
-        }
-        let first_crop = path.first().map(crop_for).unwrap_or((0.0, 0.0, 0.0, 0.0));
+        // The geometry lives in `bay_project::reframe`, not here. It used to be written out
+        // twice — identically — in this method and in `bay_agent::slow::auto_reframe`, which is
+        // two places for a detector change to land and one of them to be missed.
+        let plan = bay_project::reframe::plan_reframe(
+            &path,
+            source_start,
+            source_width as f32 / source_height.max(1) as f32,
+            target_width as f32 / target_height as f32,
+        )
+        .map_err(&err)?;
         let mut transform = video.transform;
-        transform.crop_left = first_crop.0;
-        transform.crop_top = first_crop.1;
-        transform.crop_right = first_crop.2;
-        transform.crop_bottom = first_crop.3;
-        animations.insert("cropLeft".into(), left);
-        animations.insert("cropTop".into(), top);
-        animations.insert("cropRight".into(), right);
-        animations.insert("cropBottom".into(), bottom);
+        plan.first.apply_to(&mut transform);
+        animations.extend(plan.channels);
         if !self.editor.execute(Command::SetTransform {
             reference: reference.clone(),
             transform,

@@ -909,6 +909,7 @@ name = "bay-vision"
 version = "0.1.0"
 dependencies = [
  "bay-paths",
+ "bay-project",
  "bay-test-support",
  "candle-core",
  "candle-nn",

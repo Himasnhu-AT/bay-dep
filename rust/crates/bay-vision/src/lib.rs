@@ -35,8 +35,15 @@ mod seeing;
 pub use encoder::{Embedding, Encoder};
 pub use rank::{Ranked, Scored, cosine, rank};
 pub use seeing::{
-    IndexedShot, ReframeTrackingConfig, ShotRange, SubjectPoint, TrackingConfig, index_shots,
-    path_jitter, search_shots, track_subject, track_subject_siglip,
+    IndexedShot, ShotRange, index_shots, search_shots, track_subject, track_subject_siglip,
+};
+
+// The subject-path types moved down into `bay-project` so that anything which learns where a
+// face is — Vision.framework, an external provider — can say so without linking candle and an
+// 813 MB encoder. Re-exported here because `bay_vision::SubjectPoint` is the name two callers
+// already use, and a rename would be churn with nothing behind it.
+pub use bay_project::reframe::{
+    ReframeTrackingConfig, SubjectPoint, TrackingConfig, path_jitter, smooth_path,
 };
 
 /// The width and height SigLIP's patch-16-224 towers expect.
