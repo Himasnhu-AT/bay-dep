@@ -1295,58 +1295,41 @@ impl Studio {
             .filter(|time| *time > source_start && *time < source_end)
             .collect(),
         };
-        let encoder = bay_vision::Encoder::load().map_err(|error| err(error.to_string()))?;
-        let path = bay_vision::track_subject_siglip(
-            &encoder,
+        let tracked = bay_agent::tracking::track(
             &asset.path,
             source_start,
             source_end,
-            bay_vision::ReframeTrackingConfig {
+            bay_project::reframe::ReframeTrackingConfig {
                 source_aspect: source_width as f32 / source_height.max(1) as f32,
                 target_aspect: target_width as f32 / target_height as f32,
                 shot_boundaries: &shot_boundaries,
-                tracking: bay_vision::TrackingConfig {
+                tracking: bay_project::reframe::TrackingConfig {
                     sample_seconds,
                     smoothing_seconds,
                 },
             },
         )
-        .map_err(|error| err(error.to_string()))?;
-        let source_aspect = source_width as f32 / source_height.max(1) as f32;
-        let target_aspect = target_width as f32 / target_height as f32;
-        let mut left = AnimationChannel::default();
-        let mut right = AnimationChannel::default();
-        let mut top = AnimationChannel::default();
-        let mut bottom = AnimationChannel::default();
-        let crop_for = |point: &bay_vision::SubjectPoint| {
-            if target_aspect < source_aspect {
-                let kept = (target_aspect / source_aspect).clamp(0.01, 1.0);
-                let left = (point.x - kept * 0.5).clamp(0.0, 1.0 - kept);
-                (left, 0.0, 1.0 - kept - left, 0.0)
-            } else {
-                let kept = (source_aspect / target_aspect).clamp(0.01, 1.0);
-                let top = (point.y - kept * 0.5).clamp(0.0, 1.0 - kept);
-                (0.0, top, 0.0, 1.0 - kept - top)
-            }
-        };
-        for point in &path {
-            let local = secs((point.time_seconds - source_start).max(0.0))?;
-            let crop = crop_for(point);
-            left.upsert(local, crop.0);
-            top.upsert(local, crop.1);
-            right.upsert(local, crop.2);
-            bottom.upsert(local, crop.3);
-        }
-        let first_crop = path.first().map(crop_for).unwrap_or((0.0, 0.0, 0.0, 0.0));
+        .map_err(&err)?;
+        let path = tracked.path;
+        // The geometry lives in `bay_project::reframe`, not here. It used to be written out
+        // twice — identically — in this method and in `bay_agent::slow::auto_reframe`, which is
+        // two places for a detector change to land and one of them to be missed.
+        // Measured before the crop is applied, so the tool can say what the reframe costs in
+        // sharpness rather than leaving someone to discover it in the export.
+        let sharpness = bay_project::reframe::Sharpness::measure(
+            (source_width, source_height),
+            (target_width, target_height),
+        );
+        let plan = bay_project::reframe::plan_reframe(
+            &path,
+            source_start,
+            source_width as f32 / source_height.max(1) as f32,
+            target_width as f32 / target_height as f32,
+        )
+        .map_err(&err)?;
         let mut transform = video.transform;
-        transform.crop_left = first_crop.0;
-        transform.crop_top = first_crop.1;
-        transform.crop_right = first_crop.2;
-        transform.crop_bottom = first_crop.3;
-        animations.insert("cropLeft".into(), left);
-        animations.insert("cropTop".into(), top);
-        animations.insert("cropRight".into(), right);
-        animations.insert("cropBottom".into(), bottom);
+        plan.first.apply_to(&mut transform);
+        animations.extend(plan.channels);
         if !self.editor.execute(Command::SetTransform {
             reference: reference.clone(),
             transform,
@@ -1365,12 +1348,18 @@ impl Studio {
         Ok(serde_json::json!({
             "elementId": element_id,
             "target": { "width": target_width, "height": target_height },
-            "detector": "SigLIP-ranked subject crops with local appearance prior",
+            "detector": tracked.detector,
+            "warning": tracked.warning,
+            "framing": {
+                "mode": "tracked-crop",
+                "sharpness": sharpness,
+                "note": sharpness.note(),
+            },
             "smoothing": {
                 "method": "exponential damping",
                 "seconds": smoothing_seconds,
-                "rawJitter": bay_vision::path_jitter(&raw_x),
-                "smoothedJitter": bay_vision::path_jitter(&smooth_x),
+                "rawJitter": bay_project::reframe::path_jitter(&raw_x),
+                "smoothedJitter": bay_project::reframe::path_jitter(&smooth_x),
             },
             "points": path,
         }))
@@ -1540,6 +1529,8 @@ impl Studio {
                     time,
                     value: (f64::from(under) * (1.0 + depth * amount)) as f32,
                     easing: None,
+                    handles: None,
+                    id: 0,
                 }
             })
             .collect();
@@ -2476,6 +2467,7 @@ impl Studio {
             media_id,
             muted: false,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: (source == ElementSource::Tool && role == AudioRole::Speech)
                 .then(bay_project::SpeechProsody::default),
@@ -2784,34 +2776,12 @@ impl Studio {
         }))
     }
 
-    /// The whole timeline as data: what is on each layer, when, and where. This is how an
-    /// agent re-reads its own work between edits without keeping a parallel model in its head.
-    pub fn timeline(&self) -> ToolResult {
-        let scene = self.editor.active_scene();
-        let mut layers = Vec::new();
-        for (index, track) in std::iter::once(&scene.tracks.main)
-            .chain(scene.tracks.overlay.iter())
-            .enumerate()
-        {
-            layers.push(serde_json::json!({
-                "layer": index,
-                "trackId": track.id,
-                "elements": track.elements.iter().map(describe_element).collect::<Vec<_>>(),
-            }));
-        }
-        let audio: Vec<_> = scene
-            .tracks
-            .audio
-            .iter()
-            .flat_map(|t| t.elements.iter())
-            .map(describe_element)
-            .collect();
-        Ok(serde_json::json!({
-            "durationSeconds": self.editor.duration().to_seconds_f64(),
-            "layers": layers,
-            "audio": audio,
-        }))
-    }
+    // `Studio::timeline` used to live here, over a second `describe_element` below it. Both
+    // are gone. The copy had drifted behind `bay_agent::plan`'s: it reported no effects, no
+    // trim in-point and no media id — so an agent that added a blur over the wire and then
+    // re-read the timeline could not see it, and one that trimmed a clip could read its
+    // position and length but not what was playing. `timeline` is planned like every other
+    // tool now, and there is one description of an element.
 
     pub fn variant_create(&mut self, label: &str) -> ToolResult {
         let library = self.library()?;
@@ -3190,6 +3160,52 @@ impl Studio {
         }))
     }
 
+    /// Read the four scopes off one composited frame.
+    ///
+    /// Waits for decodes first, and says so if one never arrives: a placeholder is an honest
+    /// interactive preview fallback, but measuring one and reporting its histogram as the shot's
+    /// would be a scope that lies. Follows `check_frames` in returning `unevaluated` rather than
+    /// an error when there is no GPU — a machine that cannot composite has not found a problem
+    /// with the grade, it has failed to look.
+    pub fn scopes_read(&mut self, at: f64, scale: f32, stride: usize) -> ToolResult {
+        let project = self.editor.project().clone();
+        let canvas = project.settings.canvas;
+        let width = ((canvas.width as f32 * scale) as u32).max(16);
+        let height = ((canvas.height as f32 * scale) as u32).max(16);
+        let playhead = secs(at)?;
+        let renderer = match self.renderer() {
+            Ok(renderer) => renderer,
+            Err(error) => return Ok(scopes_unevaluated(&error.0)),
+        };
+        if let Err(reason) = renderer.await_decodes_checked(project.active_scene(), &project.media)
+        {
+            return Ok(scopes_unevaluated(&reason));
+        }
+        let Some(frame) = renderer.render(
+            project.active_scene(),
+            playhead,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        ) else {
+            return Ok(scopes_unevaluated(
+                "the GPU could not produce a frame — the device may have been lost",
+            ));
+        };
+
+        let options = bay_preview::scopes::ScopeOptions {
+            stride,
+            ..Default::default()
+        };
+        let scopes = bay_preview::scopes::Scopes::from_preview_frame(&frame, options)
+            .map_err(|e| err(e.to_string()))?;
+        let mut report = scopes.summary().to_json();
+        report["status"] = serde_json::json!("measured");
+        report["atSeconds"] = serde_json::json!(at);
+        Ok(report)
+    }
+
     /// Pixel-level checks kept separate from the pure project pass.
     pub fn check_frames(&mut self, requested_duration: Option<f64>) -> ToolResult {
         let project = self.editor.project().clone();
@@ -3385,6 +3401,15 @@ impl Studio {
     }
 }
 
+/// A scope reading that did not happen, and why. Shaped so a caller cannot mistake it for a
+/// black frame: there are no numbers in it at all, only the reason there are none.
+fn scopes_unevaluated(reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "status": "unevaluated",
+        "reason": reason,
+    })
+}
+
 fn frame_unevaluated(reason: &str) -> serde_json::Value {
     serde_json::json!({
         "status": "unevaluated",
@@ -3442,44 +3467,6 @@ fn draw_label(image: &mut image::RgbaImage, x: u32, y: u32, text: &str) {
             }
         }
     }
-}
-
-fn describe_element(element: &Element) -> serde_json::Value {
-    let mut out = serde_json::json!({
-        "id": element.id(),
-        "kind": element.kind().label(),
-        "startSeconds": element.start().to_seconds_f64(),
-        "durationSeconds": element.duration().to_seconds_f64(),
-        // Read back what an element is and who put it there. Without this an agent re-reading
-        // its own timeline cannot tell its work from the captions bay added underneath it.
-        "source": element.source().as_str(),
-        "role": element
-            .role()
-            .map(|role| role.as_str())
-            .or_else(|| element.audio_role().map(|role| role.as_str())),
-    });
-    if let Some(t) = element.transform() {
-        out["transform"] = serde_json::json!({
-            "x": t.x, "y": t.y, "scale": t.scale,
-            "scaleX": t.scale_x, "scaleY": t.scale_y,
-            "anchorX": t.anchor_x, "anchorY": t.anchor_y,
-            "rotation": t.rotation, "opacity": t.opacity,
-        });
-    }
-    if let Some(animations) = element.animations()
-        && !animations.is_empty()
-    {
-        out["animated"] = serde_json::json!(animations.keys().collect::<Vec<_>>());
-    }
-    if let Element::Text(text) = element {
-        out["content"] = serde_json::json!(text.content);
-        out["fontSize"] = serde_json::json!(text.font_size);
-        out["color"] = serde_json::json!(text.color);
-    }
-    if let Element::Shape(shape) = element {
-        out["color"] = serde_json::json!(shape.color);
-    }
-    out
 }
 
 /// How a shape is painted, beyond the flat tone every shape has always had.

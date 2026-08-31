@@ -32,6 +32,10 @@ enum Mode {
     },
     /// Report whether a window is open and how to reach it.
     Agents,
+    /// Rasterise one HTML composition to a PNG and exit. Spawned by `bay-html`, never typed
+    /// by a person: WKWebView needs the main thread and a run loop, and both the editor and
+    /// the MCP server have already spent theirs. Reads its spec on stdin.
+    HtmlShot,
     /// Print the version and exit. What an installer checks to prove the copy it just put in
     /// place is the copy that is now running.
     Version,
@@ -40,6 +44,12 @@ enum Mode {
 
 fn parse_mode() -> Result<Mode, String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // First, and before `--help`: this mode is machine-spawned with a spec already queued on
+    // stdin, and any other reading of the command line would leave the parent waiting on a
+    // pipe nobody is going to answer.
+    if args.iter().any(|a| a == bay_html::SHOT_FLAG) {
+        return Ok(Mode::HtmlShot);
+    }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return Ok(Mode::Help);
     }
@@ -151,12 +161,15 @@ fn main() {
         }
     };
 
-    // Every mode but the editor talks to a terminal.
-    if !matches!(mode, Mode::Editor) {
+    // Every mode but the editor and the rasteriser talks to a terminal. The rasteriser's
+    // stdout carries a JSON result its parent parses, so nothing else may be written there.
+    if !matches!(mode, Mode::Editor | Mode::HtmlShot) {
         attach_console();
     }
 
     match mode {
+        // Never returns: it owns the main thread from here, which is the point of the mode.
+        Mode::HtmlShot => bay_html::shot_main(),
         Mode::Help => return say(USAGE),
         Mode::Version => return say(concat!("bay ", env!("CARGO_PKG_VERSION"))),
         Mode::Agents => return print_agents(),

@@ -264,11 +264,7 @@ fn tracked_crop(id: &str, right_values: [f32; 3]) -> Element {
         keys: times
             .into_iter()
             .zip(values)
-            .map(|(time, value)| Keyframe {
-                time: MediaTime::from_seconds_f64(time).unwrap(),
-                value,
-                easing: None,
-            })
+            .map(|(time, value)| Keyframe::new(MediaTime::from_seconds_f64(time).unwrap(), value))
             .collect(),
         easing: Easing::Linear,
     };
@@ -504,6 +500,7 @@ fn a_move_an_element_cannot_perform_is_refused() {
         media_id: "m".into(),
         muted: false,
         volume: 1.0,
+        pan: 0.0,
         speed: 1.0,
         prosody: None,
         dialogue_chain: None,

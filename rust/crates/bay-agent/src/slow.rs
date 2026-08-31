@@ -42,6 +42,9 @@ pub fn slow_tools() -> &'static [&'static str] {
         "media_index",
         "media_search",
         "auto_reframe",
+        // One ffmpeg extraction and one Vision pass per sample. Bounded by
+        // `tracking::MAX_SAMPLES`, and still minutes at the ceiling.
+        "faces_detect",
         // Decodes the complete take and runs Whisper over it.
         "transcribe",
         "diarize",
@@ -62,8 +65,6 @@ pub fn slow_tools() -> &'static [&'static str] {
         "gen_image",
         "gen_video",
         "gen_music",
-        // Decoding a whole take to find the dead air in it.
-        "silence_detect",
     ]
 }
 
@@ -87,6 +88,7 @@ pub fn job_tools() -> &'static [&'static str] {
         "shots_detect",
         "media_index",
         "auto_reframe",
+        "faces_detect",
         "transcribe",
         "diarize",
     ]
@@ -211,6 +213,7 @@ pub fn run(
         "media_import" => media_import(args, context),
         "audio_probe" => audio_probe(args, context),
         "shots_detect" => shots_detect(args, context),
+        "faces_detect" => faces_detect(args, context, job),
         "media_index" => media_index(args, context),
         "media_search" => media_search(args, context).map(SlowResult::value),
         "auto_reframe" => auto_reframe(args, context),
@@ -251,7 +254,7 @@ fn render(
         context.timeline_duration,
         context.project.settings.fps.as_f64(),
         settings.start_seconds,
-        args.get("duration").and_then(|v| v.as_f64()),
+        requested_range(args, settings.start_seconds)?,
     )?;
     if duration <= 0.0 {
         return Err(
@@ -358,7 +361,7 @@ pub fn render_stamp(project: &Project, args: &Value) -> Result<Option<String>, S
         timeline_duration,
         project.settings.fps.as_f64(),
         settings.start_seconds,
-        args.get("duration").and_then(|value| value.as_f64()),
+        requested_range(args, settings.start_seconds)?,
     )?;
     Ok(stamp)
 }
@@ -464,30 +467,86 @@ pub fn frame_stamp(
 
 /// Resolve the export length, refusing a caller-supplied duration that would silently omit the
 /// populated tail of the timeline.
+/// How much of the timeline a `render` was asked for, and — the part that matters — whether
+/// leaving the tail out was the point.
+///
+/// `duration` and `endSeconds` compute the same number and mean opposite things, which is why
+/// they are two variants rather than one field. `duration` is a convenience: "encode this much
+/// from the in point", and a value that stops short of the populated timeline is almost always
+/// an agent that forgot the tail, so it is refused. `endSeconds` is an **out point** — a
+/// deliberate statement that everything past it is not wanted — so the same arithmetic is
+/// allowed. Collapsing them would mean either losing the guard or losing the out point, and the
+/// Deliver page needs the second while the guard exists for the first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Requested {
+    /// Nothing asked for: the rest of the timeline from the in point.
+    Rest,
+    /// `duration` — guarded against silently dropping the tail.
+    Duration(f64),
+    /// `endSeconds` — an out point. The tail is meant to be left out.
+    Until(f64),
+}
+
+/// Read [`Requested`] off a `render` call. `duration` and `endSeconds` are alternatives; asking
+/// for both is a caller that has not decided, and guessing which one it meant is how a render
+/// comes back the wrong length with nothing to explain it.
+fn requested_range(args: &Value, start_seconds: f64) -> Result<Requested, String> {
+    let duration = args.get("duration").and_then(|v| v.as_f64());
+    let end = args.get("endSeconds").and_then(|v| v.as_f64());
+    match (duration, end) {
+        (Some(_), Some(_)) => Err("pass duration or endSeconds, not both — duration counts \
+                                   forward from startSeconds, endSeconds is an out point on the \
+                                   timeline"
+            .into()),
+        (Some(duration), None) => Ok(Requested::Duration(duration)),
+        (None, Some(end)) => {
+            if !end.is_finite() {
+                return Err("endSeconds must be a finite number".into());
+            }
+            if end <= start_seconds {
+                return Err(format!(
+                    "endSeconds {end:.2}s is not after startSeconds {start_seconds:.2}s — an \
+                     out point before the in point encodes nothing"
+                ));
+            }
+            Ok(Requested::Until(end))
+        }
+        (None, None) => Ok(Requested::Rest),
+    }
+}
+
 fn render_duration(
     timeline_duration: f64,
     fps: f64,
     start_seconds: f64,
-    requested: Option<f64>,
+    requested: Requested,
 ) -> Result<f64, String> {
     let remaining = (timeline_duration - start_seconds).max(0.0);
     let requested = match requested {
-        Some(duration) if duration.is_finite() && duration > 0.0 => Some(duration),
-        Some(_) => return Err("duration must be a finite number greater than zero".into()),
-        None => None,
-    };
-    if let Some(duration) = requested {
-        let tolerance = 1.0 / fps.max(1.0);
-        if remaining > tolerance && duration + tolerance < remaining {
-            return Err(format!(
-                "render refused: duration {duration:.2}s ends at {:.2}s, but the populated \
-                 timeline continues to {timeline_duration:.2}s ({:.2}s would be omitted). \
-                 Remove duration to render the whole timeline, or trim/delete the tail first.",
-                start_seconds + duration,
-                remaining - duration
-            ));
+        Requested::Rest => None,
+        Requested::Duration(duration) if duration.is_finite() && duration > 0.0 => {
+            // The guard, and only here: a bare duration that stops short of the populated
+            // timeline drops the tail without saying so.
+            let tolerance = 1.0 / fps.max(1.0);
+            if remaining > tolerance && duration + tolerance < remaining {
+                return Err(format!(
+                    "render refused: duration {duration:.2}s ends at {:.2}s, but the populated \
+                     timeline continues to {timeline_duration:.2}s ({:.2}s would be omitted). \
+                     Remove duration to render the whole timeline, pass endSeconds if stopping \
+                     there is deliberate, or trim/delete the tail first.",
+                    start_seconds + duration,
+                    remaining - duration
+                ));
+            }
+            Some(duration)
         }
-    }
+        Requested::Duration(_) => {
+            return Err("duration must be a finite number greater than zero".into());
+        }
+        // An out point is a decision, so the tail it leaves out is not an error. The clamp
+        // below still stops it running past the end of the timeline.
+        Requested::Until(end) => Some(end - start_seconds),
+    };
     let duration = requested
         .unwrap_or(remaining)
         .min(remaining.max(f64::MIN_POSITIVE));
@@ -592,6 +651,57 @@ fn shots_detect(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
                 }))
                 .collect::<Vec<_>>(),
         }),
+        follow_up: FollowUp::None,
+    })
+}
+
+/// Where the people are in an imported clip.
+///
+/// A read, like `shots_detect`: it answers "who is on screen and where", and what to do about
+/// the answer — cut to them, reframe onto them, decide this is a two-shot — is the caller's.
+fn faces_detect(
+    args: &Value,
+    context: &SlowContext,
+    job: Option<&bay_jobs::Handle>,
+) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+    let duration = asset.duration_seconds.unwrap_or_default();
+    let start = args
+        .get("startSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let end = args
+        .get("endSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(duration);
+    let sample_seconds = args
+        .get("sampleSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.5);
+    let want = crate::tracking::want_from(args);
+    let handle = job.cloned();
+    let mut value = crate::tracking::detect_people(
+        &asset.path,
+        start,
+        end,
+        sample_seconds,
+        want,
+        &mut |done, total| {
+            if let Some(handle) = handle.as_ref() {
+                handle.progress(done as u64, total as u64, format!("{done}/{total} frames"));
+            }
+        },
+    )?;
+    value["mediaId"] = serde_json::json!(media_id);
+    value["name"] = serde_json::json!(asset.name);
+    Ok(SlowResult {
+        value,
         follow_up: FollowUp::None,
     })
 }
@@ -790,75 +900,56 @@ fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
         .get("smoothingSeconds")
         .and_then(Value::as_f64)
         .unwrap_or(0.9);
-    let encoder = bay_vision::Encoder::load().map_err(|error| error.to_string())?;
-    let path = bay_vision::track_subject_siglip(
-        &encoder,
+    let tracked = crate::tracking::track(
         &asset.path,
         source_start,
         source_end,
-        bay_vision::ReframeTrackingConfig {
+        bay_project::reframe::ReframeTrackingConfig {
             source_aspect: source_width as f32 / source_height.max(1) as f32,
             target_aspect: target_width as f32 / target_height as f32,
             shot_boundaries: &shot_boundaries,
-            tracking: bay_vision::TrackingConfig {
+            tracking: bay_project::reframe::TrackingConfig {
                 sample_seconds,
                 smoothing_seconds,
             },
         },
-    )
-    .map_err(|error| error.to_string())?;
-    let source_aspect = source_width as f32 / source_height.max(1) as f32;
-    let target_aspect = target_width as f32 / target_height as f32;
-    let crop_for = |point: &bay_vision::SubjectPoint| {
-        if target_aspect < source_aspect {
-            let kept = (target_aspect / source_aspect).clamp(0.01, 1.0);
-            let left = (point.x - kept * 0.5).clamp(0.0, 1.0 - kept);
-            (left, 0.0, 1.0 - kept - left, 0.0)
-        } else {
-            let kept = (source_aspect / target_aspect).clamp(0.01, 1.0);
-            let top = (point.y - kept * 0.5).clamp(0.0, 1.0 - kept);
-            (0.0, top, 0.0, 1.0 - kept - top)
-        }
-    };
-    let mut channels = std::collections::BTreeMap::new();
-    for name in ["cropLeft", "cropTop", "cropRight", "cropBottom"] {
-        channels.insert(name.to_string(), AnimationChannel::default());
-    }
-    for point in &path {
-        let local =
-            bay_project::MediaTime::from_seconds_f64((point.time_seconds - source_start).max(0.0))
-                .ok_or("tracked time is outside the representable range")?;
-        let crop = crop_for(point);
-        for (name, value) in [
-            ("cropLeft", crop.0),
-            ("cropTop", crop.1),
-            ("cropRight", crop.2),
-            ("cropBottom", crop.3),
-        ] {
-            channels
-                .get_mut(name)
-                .expect("channel exists")
-                .upsert(local, value);
-        }
-    }
-    let first_crop = path.first().map(crop_for).unwrap_or((0.0, 0.0, 0.0, 0.0));
+    )?;
+    let path = tracked.path;
+    // Shared with `bay_mcp::studio::auto_reframe`, which is the point: this arithmetic was
+    // duplicated character for character between the attached and headless paths.
+    // Measured before the crop is applied, so the tool can say what the reframe costs in
+    // sharpness rather than leaving someone to discover it in the export.
+    let sharpness = bay_project::reframe::Sharpness::measure(
+        (source_width, source_height),
+        (target_width, target_height),
+    );
+    let plan = bay_project::reframe::plan_reframe(
+        &path,
+        source_start,
+        source_width as f32 / source_height.max(1) as f32,
+        target_width as f32 / target_height as f32,
+    )?;
+    let channels = plan.channels;
     let mut transform = video.transform;
-    transform.crop_left = first_crop.0;
-    transform.crop_top = first_crop.1;
-    transform.crop_right = first_crop.2;
-    transform.crop_bottom = first_crop.3;
+    plan.first.apply_to(&mut transform);
     let raw_x = path.iter().map(|point| point.raw_x).collect::<Vec<_>>();
     let smooth_x = path.iter().map(|point| point.x).collect::<Vec<_>>();
     Ok(SlowResult {
         value: serde_json::json!({
             "elementId": element_id,
             "target": { "width": target_width, "height": target_height },
-        "detector": "SigLIP-ranked subject crops with local appearance prior",
+            "detector": tracked.detector,
+            "warning": tracked.warning,
+            "framing": {
+                "mode": "tracked-crop",
+                "sharpness": sharpness,
+                "note": sharpness.note(),
+            },
             "smoothing": {
                 "method": "exponential damping",
                 "seconds": smoothing_seconds,
-                "rawJitter": bay_vision::path_jitter(&raw_x),
-                "smoothedJitter": bay_vision::path_jitter(&smooth_x),
+                "rawJitter": bay_project::reframe::path_jitter(&raw_x),
+                "smoothedJitter": bay_project::reframe::path_jitter(&smooth_x),
             },
             "points": path,
         }),
@@ -1502,16 +1593,74 @@ mod tests {
 
     #[test]
     fn an_explicit_duration_cannot_silently_cut_off_the_timeline() {
-        let error = render_duration(155.0, 30.0, 0.0, Some(61.0)).expect_err("must refuse");
+        let error =
+            render_duration(155.0, 30.0, 0.0, Requested::Duration(61.0)).expect_err("must refuse");
         assert!(error.contains("94.00s would be omitted"), "{error}");
         assert!(error.contains("Remove duration"), "{error}");
+        // And it names the way to say "stopping there is what I meant", which is the whole
+        // reason the out point exists.
+        assert!(error.contains("endSeconds"), "{error}");
     }
 
     #[test]
     fn a_duration_within_one_frame_of_the_tail_is_not_called_truncation() {
         assert_eq!(
-            render_duration(5.0, 30.0, 0.0, Some(4.99)).expect("rounding tolerance"),
+            render_duration(5.0, 30.0, 0.0, Requested::Duration(4.99)).expect("rounding tolerance"),
             4.99
+        );
+    }
+
+    /// The gap the Deliver page's range control was built on. Dragging an out point *is* asking
+    /// for the tail to be left out, so the guard above must not fire on it — before this the
+    /// only way to render a section was to delete the rest of the film.
+    #[test]
+    fn an_out_point_renders_a_section_the_duration_guard_would_refuse() {
+        let refused =
+            render_duration(155.0, 30.0, 10.0, Requested::Duration(61.0)).expect_err("guarded");
+        assert!(refused.contains("would be omitted"), "{refused}");
+
+        // The same 61 seconds, stated as an out point at 71s.
+        let allowed = render_duration(155.0, 30.0, 10.0, Requested::Until(71.0))
+            .expect("an out point is a decision, not an oversight");
+        assert!((allowed - 61.0).abs() < 1e-9, "{allowed}");
+    }
+
+    #[test]
+    fn an_out_point_never_runs_past_the_end_of_the_timeline() {
+        let duration = render_duration(12.0, 30.0, 2.0, Requested::Until(9_999.0))
+            .expect("clamped, not refused");
+        assert!((duration - 10.0).abs() < 1e-9, "{duration}");
+    }
+
+    #[test]
+    fn an_out_point_before_the_in_point_is_refused_by_name() {
+        let error = requested_range(&serde_json::json!({ "endSeconds": 2.0 }), 5.0)
+            .expect_err("an out point before the in point encodes nothing");
+        assert!(error.contains("endSeconds"), "{error}");
+        assert!(error.contains("startSeconds"), "{error}");
+    }
+
+    /// They compute the same number and mean opposite things. A caller that passes both has not
+    /// decided which, and picking one silently is how a render comes back the wrong length.
+    #[test]
+    fn duration_and_an_out_point_together_are_refused_rather_than_guessed() {
+        let error = requested_range(
+            &serde_json::json!({ "duration": 4.0, "endSeconds": 9.0 }),
+            0.0,
+        )
+        .expect_err("ambiguous");
+        assert!(error.contains("not both"), "{error}");
+    }
+
+    #[test]
+    fn no_range_argument_still_means_the_rest_of_the_timeline() {
+        assert_eq!(
+            requested_range(&serde_json::json!({}), 3.0).expect("no range is legal"),
+            Requested::Rest
+        );
+        assert_eq!(
+            render_duration(20.0, 30.0, 3.0, Requested::Rest).expect("the rest of it"),
+            17.0
         );
     }
 

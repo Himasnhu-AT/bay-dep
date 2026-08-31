@@ -6,6 +6,7 @@ description = "SigLIP image-text embeddings, so a picture can be found by descri
 
 [dependencies]
 bay-paths = { path = "../bay-paths" }
+bay-project = { path = "../bay-project" }
 serde = { workspace = true }
 serde_json = "1"
 thiserror = { workspace = true }

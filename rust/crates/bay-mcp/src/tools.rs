@@ -40,6 +40,19 @@ static MOVE_HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     )
 });
 
+/// The `type` enum on `effect_add`, read off the same list `plan` validates against.
+///
+/// Written out longhand beside the validator, the two drifted: `drop-shadow` was renderable
+/// and legal, and missing from this enum, so the shader an agent reaches for most was
+/// undiscoverable from the tool definition. A `LazyLock` rather than the slice inlined because
+/// the enum is sorted for a stable schema — a tool definition that reorders between builds is
+/// a diff in every client that caches it.
+static EFFECT_TYPES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let mut types = bay_agent::plan::SUPPORTED_EFFECTS.to_vec();
+    types.sort_unstable();
+    types
+});
+
 fn number(value: &Value, key: &str, fallback: f64) -> f64 {
     value.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
 }
@@ -255,45 +268,62 @@ fn optional_role(args: &Value) -> Result<ElementRole, ToolError> {
 }
 
 /// Schema fragment for the shared placement fields, spliced into every visual tool.
+/// The element properties every placeable tool shares.
+///
+/// **Spliced into twelve tools, so a sentence here costs twelve times its length on the wire.**
+/// `optimizations.md` measured this one helper at 18,351 B — 14% of the entire tool payload —
+/// and that is the reason the prose below is terse where the rest of this file is not.
+///
+/// The rule applied when trimming, from that document: keep every sentence that names a
+/// neighbouring tool or a failure this repository has actually had; cut prose that repeats what
+/// a type or an enum already states, and vocabulary that belongs in the server's `instructions`
+/// block, which is sent once rather than twelve times.
+///
+/// So `cover` keeps "a 16:9 photo on a 9:16 canvas fills about a third of the frame" — that is
+/// the failure it exists to prevent — and lost the sentence about ffmpeg. `tiltX` keeps "depth,
+/// not rotation", which is the distinction people get wrong, and lost the paragraph on how many
+/// degrees read as a room.
 fn visual_properties() -> Value {
     json!({
         "cover": { "type": "object",
             "description": "Fill a rectangle of the canvas instead of letterboxing inside it. \
-                            Give it {width, height} as fractions of the canvas — the panel you \
-                            want the picture to occupy — and bay crops the source to that shape \
-                            and scales it to fit exactly. Without this a 16:9 photo on a 9:16 \
-                            canvas fills about a third of the frame. It replaces cropping every \
-                            image with ffmpeg before you import it." },
+                            {width, height} as fractions of the canvas; bay crops the source to \
+                            that shape. Without it a 16:9 photo on a 9:16 canvas fills about a \
+                            third of the frame." },
         "framing": { "type": "string",
-            "description": "One of the committed kit's named framings — project_info and \
-                 style_pick list them. It sets x, y, anchorX, anchorY and scale in one word; \
-                 anything you also pass explicitly still wins. Every kit declares at least one \
-                 bottom-weighted framing, which is the half of the frame the project this rule \
-                 comes from never used at all." },
+            "description": "A named framing from the committed kit — project_info and style_pick \
+                            list them. Sets x, y, anchorX, anchorY and scale in one word; \
+                            anything you pass explicitly still wins." },
         "layer": { "type": "integer", "minimum": 0, "default": 0,
-            "description": "Stacking order. 0 is the bottom (main) layer; higher numbers draw on top. Missing layers are created automatically." },
+            "description": "Stacking order. 0 is the bottom (main) layer; higher draws on top. Missing layers are created." },
         "x": { "type": "number", "default": 0.5,
-            "description": "Horizontal position of the element's anchor, as a fraction of canvas width (0 = left edge, 1 = right edge)." },
+            "description": "Anchor's horizontal position, as a fraction of canvas width (0 = left, 1 = right)." },
         "y": { "type": "number", "default": 0.5,
-            "description": "Vertical position of the element's anchor, as a fraction of canvas height (0 = top, 1 = bottom)." },
+            "description": "Anchor's vertical position, as a fraction of canvas height (0 = top, 1 = bottom)." },
         "scale": { "type": "number", "default": 1.0,
-            "description": "Size as a fraction of the canvas. 1.0 spans the full frame. For text this is the box the type is laid out in." },
+            "description": "Size as a fraction of the canvas; 1.0 spans the frame. For text, the box the type is laid out in." },
         "tiltX": { "type": "number", "default": 0,
-            "description": "Degrees of lean out of the screen about the horizontal axis — positive tips the top away, as CSS rotateX does, and the far edge foreshortens. This is depth, not rotation: use it to make a panel read as a screen standing in a room. 6-12 is a room; past 30 is a special effect. Foreshortening costs legibility, so tilt the panel, not the words on it." },
+            "description": "Degrees of lean about the horizontal axis, as CSS rotateX. Depth, not rotation — the far edge foreshortens. Tilt the panel, not the words on it." },
         "tiltY": { "type": "number", "default": 0,
-            "description": "Degrees of lean about the vertical axis: positive turns the right edge away. Same scale as tiltX." },
+            "description": "Degrees of lean about the vertical axis: positive turns the right edge away." },
         "scaleX": { "type": "number", "default": 1.0,
-            "description": "Extra horizontal-only multiplier on top of `scale`. Animate this to grow a bar sideways." },
+            "description": "Horizontal-only multiplier on top of `scale`. Animate it to grow a bar sideways." },
         "scaleY": { "type": "number", "default": 1.0,
-            "description": "Extra vertical-only multiplier on top of `scale`. Animate this to grow a column upward." },
+            "description": "Vertical-only multiplier on top of `scale`. Animate it to grow a column upward." },
         "anchorX": { "type": "number", "default": 0.5,
-            "description": "Which horizontal point of the element sits at `x`: 0 = its left edge, 0.5 = centre, 1 = right edge. Set 0 so a bar grows rightward from a fixed origin instead of from its middle." },
+            "description": "Which horizontal point sits at `x`: 0 = left edge, 0.5 = centre, 1 = right. Set 0 so a bar grows rightward from a fixed origin." },
         "anchorY": { "type": "number", "default": 0.5,
-            "description": "Which vertical point of the element sits at `y`: 0 = top, 0.5 = centre, 1 = bottom. Set 1 so a column grows upward from a baseline." },
+            "description": "Which vertical point sits at `y`: 0 = top, 1 = bottom. Set 1 so a column grows upward from a baseline." },
         "rotation": { "type": "number", "default": 0.0, "description": "Degrees clockwise, about the element's centre." },
         "opacity": { "type": "number", "default": 1.0, "description": "0 is invisible, 1 is opaque." },
+        // An enum rather than seventeen names in a sentence. The client can validate it, the
+        // model does not have to parse prose to find the spelling, and it is shorter — the
+        // description no longer repeats what the schema already states.
         "blendMode": { "type": "string", "default": "normal",
-            "description": "How this layer composites over what is beneath: normal, darken, multiply, color-burn, lighten, screen, plus-lighter, color-dodge, overlay, soft-light, hard-light, difference, exclusion, hue, saturation, color, luminosity." }
+            "enum": ["normal", "darken", "multiply", "color-burn", "lighten", "screen",
+                     "plus-lighter", "color-dodge", "overlay", "soft-light", "hard-light",
+                     "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
+            "description": "How this layer composites over what is beneath." }
     })
 }
 
@@ -326,15 +356,13 @@ fn kit_properties() -> Value {
 /// of a document that labels it as failing contrast, and the accent three times — never on the
 /// thing that was the point.
 fn tone_property() -> Value {
+    // The enum is the contract; what each name *means* is project vocabulary, and it lives in
+    // the server's instructions block. That block is sent once per session; this fragment is
+    // spliced into four tools, so the essay was carried four times to say the same thing.
     json!({
         "tone": { "type": "string", "enum": Tone::NAMES,
-            "description": "How loud this element is, against the project's committed style kit. \
-                 ink = the loudest value, for the line that carries the beat. dim = secondary \
-                 type: kickers, axis labels, units, source notes. accent = the point — scarce, \
-                 one element per beat, and it must be on the thing that IS the argument. \
-                 accent2 = the opposition: a second series, the down bar, the contrast case. \
-                 surface = a plate or panel behind something else. Omit it and the role picks \
-                 the right one." }
+            "description": "How loud this element is against the committed kit. See TONE in the \
+                 server instructions. Omit it and the role picks the right one." }
     })
 }
 
@@ -348,17 +376,13 @@ fn role_property(required: bool) -> Value {
     } else {
         "Defaults to \"label\"."
     };
+    // Same reasoning as `tone_property`: the enum stays, the glossary moves to the instructions
+    // block. This fragment reaches six tools, and the essay was 610 bytes of it each time.
     json!({
         "role": { "type": "string", "enum": ElementRole::NAMES,
             "description": format!(
-                "What this element is FOR. hook = the opening claim that earns the next two \
-                 seconds. headline = the line a beat is built around. kicker = the small line \
-                 framing a headline. label = names a thing (axis, value, source). caption = \
-                 spoken words on screen (narrate sets this; you should not). lockup = the end \
-                 card or sign-off. data = a bar, line or mark whose size or position IS the \
-                 number. ground = background fills and plates. chrome = rules, borders, frame \
-                 furniture. ground and chrome together are capped at a small share of a \
-                 project, so do not label content as background to duck a rule. {tail}"
+                "What this element is FOR, not what it looks like. See ROLE in the server \
+                 instructions for what each name means. {tail}"
             ) }
     })
 }
@@ -375,36 +399,28 @@ fn caption_properties() -> Value {
     json!({
         "captionStyle": { "type": "string", "enum": crate::narration::CaptionPreset::NAMES,
             "default": "plain",
-            "description": "How loud the spoken word is on screen, against the project's style \
-                 kit. quiet = a small supporting line, in the kit's label step and its quiet \
-                 tone. plain = spoken words at the kit's caption step, in its ink — the default. \
-                 loud = kinetic type, two words at a time at headline size, for when the words \
-                 ARE the picture. There is no captionFontSize, captionColor, captionFontFamily \
-                 or captionFontWeight: this is where they come from." },
+            "description": "How loud the spoken word is on screen. quiet = a small supporting \
+                 line. plain = the kit's caption step, in its ink. loud = kinetic type, two \
+                 words at a time at headline size. There is no captionFontSize, captionColor, \
+                 captionFontFamily or captionFontWeight — this is where they come from." },
         "captionX": { "type": "number",
-            "description": "Horizontal position of the caption box, as a fraction of canvas \
-                 width. Defaults to the kit's lower-third framing — which differs per kit, \
-                 which is the point: every video bay had made until now put its captions at \
-                 x = 0.08." },
+            "description": "Caption box left, as a fraction of canvas width. Defaults to the \
+                 kit's lower-third framing, which differs per kit — every video bay made before \
+                 that default existed put its captions at x = 0.08." },
         "captionY": { "type": "number",
-            "description": "Top of the caption box as a fraction of canvas height. Defaults to \
-                 the kit's lower-third framing, which clears the platform caption band." },
+            "description": "Caption box top, as a fraction of canvas height. Defaults to the \
+                 kit's lower-third framing, which clears the platform caption band." },
         "captionAlign": { "type": "string", "enum": ["left", "center", "right"],
-            "description": "Defaults to whatever the kit's lower-third framing hangs off — left \
-                 on a grid kit, centred on a centred one." },
+            "description": "Defaults to whatever the kit's lower-third framing hangs off." },
         "speakerLabels": { "type": "object",
-            "description": "Display name per speaker id, e.g. {\"speaker-1\": \"JULIE\"}. The ids \
-                 are the ones `diarize` writes into the transcript. Use this whenever more than \
-                 one person talks in a clip: without it the captions say the words and lose who \
-                 said them, and a two-hander reads as one person contradicting themselves. The \
-                 name is written only on the FIRST caption after the floor changes — prefixing \
-                 every line eats the frame and stops being read after the second one." },
+            "description": "Display name per speaker id, e.g. {\"speaker-1\": \"JULIE\"} — the ids \
+                 `diarize` writes. Use it whenever more than one person talks: without it a \
+                 two-hander reads as one person contradicting themselves. Written only on the \
+                 first caption after the floor changes." },
         "speakerColors": { "type": "object",
-            "description": "Caption colour per speaker id, e.g. {\"speaker-1\": \"#RRGGBB\"}. This \
-                 is what carries who is talking on the lines that are not labelled, and it \
-                 spends none of the frame to do it. Two speakers want two colours that still \
-                 read apart at thumbnail size; past three, the labels are doing the work and \
-                 the colour is noise." }
+            "description": "Caption colour per speaker id, e.g. {\"speaker-1\": \"#RRGGBB\"}. \
+                 Carries who is talking on the unlabelled lines, and spends none of the frame \
+                 to do it. Past three speakers the labels do the work and colour is noise." }
     })
 }
 
@@ -551,23 +567,6 @@ fn installable_components() -> Vec<&'static str> {
         .iter()
         .map(|component| component.id.as_str())
         .collect()
-}
-
-/// What each component is and roughly what it costs, from the manifest's own words.
-fn installable_detail() -> String {
-    bay_provision::Manifest::embedded()
-        .components
-        .iter()
-        .map(|component| {
-            format!(
-                "{} (~{} MB) = {}",
-                component.id,
-                component.disk_bytes / 1_000_000,
-                component.detail
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Fold a `cover` request into the transform: crop the source to the panel, scale to fill it.
@@ -882,6 +881,36 @@ pub fn all_definitions() -> Vec<Value> {
                     "description": "Measure an asset that is already in the project instead of importing a new one. Same answer as audio_probe." }
             }),
             &[],
+        ),
+        tool(
+            "html_import",
+            "Rasterise an HTML composition to a PNG with a real alpha channel and import it,              returning a mediaId ready for add_image. WebKit does the drawing — the engine              already on this Mac, so nothing is downloaded.
+
+For the graphics that are              genuinely easier to author as markup than as a stack of add_shape calls: a card,              a chart, a timeline, a lower third. Give it `html` for inline markup or `path` for              a composition directory, whose own stylesheets, fonts and scripts resolve relative              to the file.
+
+Motion belongs to bay, not to the page: import the still and              animate it with `animate`. `atSeconds` is for a composition that declares its own              paused timeline at window.__timelines — it seeks before snapping, so one file              yields any frame of its animation.
+
+A composition that draws nothing is              REFUSED rather than imported. A blank overlay and a correct one are the same size              and the same dimensions, and the difference is otherwise not discovered until an              export comes back unchanged.",
+            json!({
+                "html": { "type": "string",
+                    "description": "Markup to render. Relative URLs have nothing to resolve against — use `path` for anything with assets beside it." },
+                "path": { "type": "string",
+                    "description": "An .html file on disk. Its directory is granted read access, so a self-contained composition directory works." },
+                "width": { "type": "integer", "description": "Canvas width in CSS pixels." },
+                "height": { "type": "integer", "description": "Canvas height in CSS pixels." },
+                "scale": { "type": "number", "default": 1.0, "minimum": 0.0,
+                    "description": "Device pixel ratio. 2.0 rasterises at twice the size WITHOUT re-laying-out the type — which is how a card authored at 540x960 is delivered sharp on a 1080x1920 canvas instead of being upscaled afterwards." },
+                "transparent": { "type": "boolean", "default": true,
+                    "description": "Leave the page background transparent so the PNG carries alpha. Turn it off only for a full-frame card that is meant to be opaque." },
+                "atSeconds": { "type": "number", "default": 0.0,
+                    "description": "Seek a declared timeline to this time before snapping." },
+                "timelineId": { "type": "string",
+                    "description": "Which entry in window.__timelines to seek. Only needed when the composition declares more than one. Naming one that does not exist is an error, not a silent frame zero." },
+                "output": { "type": "string",
+                    "description": "Where to write the PNG. Defaults to a file beside bay's other renders." },
+                "id": { "type": "string", "description": "Optional explicit media id." }
+            }),
+            &["width", "height"],
         ),
         tool(
             "audio_probe",
@@ -1301,11 +1330,11 @@ pub fn all_definitions() -> Vec<Value> {
             "effect_add",
             "Add a picture effect to a clip. Returns the effect id, which effect_set and \
              effect_remove take. `amount` is the usual parameter: 1.0 is unchanged for the \
-             colour adjustments, sigma in pixels for blur, and how much of the grade to apply \
-             for a lut.",
+             colour adjustments, sigma in pixels for blur, how much of the grade to apply for \
+             a lut, and the shadow's opacity for drop-shadow.",
             json!({
                 "elementId": { "type": "string" },
-                "type": { "type": "string", "enum": ["brightness", "contrast", "saturation", "blur", "lut"] },
+                "type": { "type": "string", "enum": EFFECT_TYPES.as_slice() },
                 "look": { "type": "string",
                     "description": "A built-in grade by id — call looks_list first. Generated on the machine, so there is nothing to download and nothing to go missing." },
                 "lut": { "type": "string",
@@ -1319,7 +1348,23 @@ pub fn all_definitions() -> Vec<Value> {
                          1.0 is unchanged — 1.06 is a gentle lift and 0.9 pulls it back, so \
                          0.06 is not a six percent adjustment but a ninety-four percent \
                          removal, which on contrast flattens the whole frame to mid-grey. \
-                         `blur`: radius in pixels.",
+                         `blur`: radius in pixels. `drop-shadow` is the one effect with more \
+                         than one dial: `amount` is the shadow's opacity (0.18 is a card \
+                         sitting on a page), `offsetX`/`offsetY` its displacement in pixels, \
+                         `blur` its softness in pixels, `spread` how much it grows before \
+                         blurring, and `colorR`/`colorG`/`colorB` its colour in 0-1. \
+                         `lift-gamma-gain` is the three-way colour balance, and the one to \
+                         reach for when a shot needs a *look* rather than more of one dial: \
+                         `liftR`/`liftG`/`liftB` offset the shadows and hold white (0 is \
+                         neutral), `gammaR`/`gammaG`/`gammaB` bend the midtones and hold both \
+                         ends (1 is neutral, above 1 brightens the mids), \
+                         `gainR`/`gainG`/`gainB` multiply the highlights and hold black (1 is \
+                         neutral), each with a `…Master` applying to all three channels at \
+                         once, and `amount` is how much of the whole balance to apply, as on \
+                         `lut`. A cool lift with a warm gain is the split most graded footage \
+                         has in it. Omitted parameters take those defaults rather than zero, \
+                         so a shadow added with no params is already visible and a balance \
+                         with one wheel set leaves the other two at rest.",
                 },
                 "effectId": { "type": "string", "description": "Minted if omitted." }
             }),
@@ -1682,6 +1727,25 @@ pub fn all_definitions() -> Vec<Value> {
             &["mediaId"],
         ),
         tool(
+            "faces_detect",
+            "Find the people in a clip: a face rectangle per person per sampled frame, and \
+             optionally their upper bodies. `mostFacesAtOnce` tells a two-shot from a single. \
+             Bounds are fractions of the frame, origin at the TOP left. On-device and macOS-only \
+             with nothing to install, so runtime_install has no part to play. Extracts a frame \
+             per sample, so it returns a job id: poll job_status.",
+            json!({
+                "mediaId": { "type": "string", "description": "An imported asset. Either this or `path`." },
+                "path": { "type": "string", "description": "An absolute path, if it is not imported." },
+                "startSeconds": { "type": "number", "default": 0 },
+                "endSeconds": { "type": "number", "description": "Defaults to the end of the clip." },
+                "sampleSeconds": { "type": "number", "default": 0.5,
+                    "description": "Seconds between samples. Widen this before widening the range: a whole take at 0.5 is thousands of extractions and is refused." },
+                "want": { "type": "string", "enum": ["faces", "everyone"], "default": "faces",
+                    "description": "`everyone` adds upper-body rectangles, at a second pass per frame." }
+            }),
+            &[],
+        ),
+        tool(
             "media_index",
             "Build and persist a semantic index for imported footage. Detects cuts, samples one \
              midpoint frame per shot, and embeds those frames with bay's existing local SigLIP \
@@ -1707,7 +1771,10 @@ pub fn all_definitions() -> Vec<Value> {
             "auto_reframe",
             "Track the subject in a video clip and animate crop insets for a new aspect ratio. \
              The tracked path is exponentially damped before keyframes are written, avoiding \
-             jittery per-frame camera jumps. Returns a job id; poll job_status.",
+             jittery per-frame camera jumps. Read `framing.note` in the result: cropping 16:9 to \
+             9:16 upscales a 1080-tall source 1.78x, and placing the clip with no crop at all \
+             already gives a full-width band with black above and below, which is sharper and \
+             cannot lose anyone at the edge of a two-shot. Returns a job id; poll job_status.",
             json!({
                 "elementId": { "type": "string", "description": "A video element on the timeline." },
                 "targetWidth": { "type": "integer", "default": 1080 },
@@ -1753,10 +1820,41 @@ pub fn all_definitions() -> Vec<Value> {
             &[],
         ),
         tool(
+            "scopes_read",
+            "Measure one frame the way a colourist reads it: luma waveform, RGB parade, \
+             vectorscope and histogram, reduced to where the exposure sits, what is clipped and \
+             which way the colour leans. Answers questions a PNG cannot — whether the blacks are \
+             crushed, whether a cast is real or the monitor, how far off neutral a grade drifted. \
+             Needs a GPU; without one it returns status unevaluated and says why.",
+            json!({
+                "at": { "type": "number", "description": "Timeline position to measure, in seconds." },
+                "scale": { "type": "number", "default": 0.5,
+                    "description": "Fraction of full canvas resolution to composite. Downscaling \
+                                    resamples, which invents code values the frame never had; for \
+                                    a faithful read of a large canvas use scale 1 with a stride." },
+                "stride": { "type": "integer", "default": 1,
+                    "description": "Sample every Nth pixel in each axis. 1 reads every pixel. A \
+                                    4K frame costs ~35ms at stride 1 and ~2ms at stride 4; the \
+                                    reply always reports sampledPixels so shares are readable as \
+                                    shares of what was measured." }
+            }),
+            &["at"],
+        ),
+        tool(
             "timeline",
-            "Dump the whole timeline: every layer, its elements, their timings, transforms and \
-             which properties are animated. Use this to re-read your own work between edits.",
-            json!({}),
+            "Dump the whole timeline: every layer, its elements, their timings, transforms, \
+             effects, and the animation on them. Use this to re-read your own work between \
+             edits. `animated` lists the channel names; `keyframes` gives the keys themselves, \
+             each with an `id` you can pass back to move or re-curve it, and a `t` in seconds \
+             from the ELEMENT's start.",
+            json!({
+                "animatable": { "type": "boolean", "default": false,
+                    "description": "Also list what each element COULD be animated on — every \
+                         property path with its label, unit, default and drawable range. Off by \
+                         default because it is a dozen near-identical rows per element and this \
+                         read returns every element. Ask for it once before your first animate \
+                         call on an unfamiliar element, not on every re-read." }
+            }),
             &[],
         ),
         tool(
@@ -1796,9 +1894,11 @@ pub fn all_definitions() -> Vec<Value> {
             json!({
                 "path": { "type": "string", "description": "Output path. .mp4 for h264/hevc, .mov for prores." },
                 "duration": { "type": "number",
-                    "description": "How many seconds to encode. Defaults to the rest of the timeline from startSeconds." },
+                    "description": "How many seconds to encode, counting forward from startSeconds. Defaults to the rest of the timeline. A duration that stops before the end of the populated timeline is REFUSED, because that is almost always a forgotten tail — pass endSeconds instead when stopping early is the point." },
                 "startSeconds": { "type": "number", "default": 0,
-                    "description": "Where in the timeline the file begins — for exporting one section rather than the whole thing. The sound moves with it." },
+                    "description": "Where in the timeline the file begins — the in point. The sound moves with it." },
+                "endSeconds": { "type": "number",
+                    "description": "The out point: where the file stops. Unlike duration this is a deliberate range, so the part of the timeline after it is left out without complaint. Pass this or duration, never both." },
                 "preset": { "type": "string", "enum": ["social", "youtube", "master"],
                     "description": "social = Reels/TikTok/Shorts (H.264, CRF 20, -14 LUFS). youtube = a little more bitrate. master = ProRes with no loudness processing, for handing to another editor." },
                 "codec": { "type": "string", "enum": ["h264", "hevc", "prores"],
@@ -1860,7 +1960,8 @@ pub fn all_definitions() -> Vec<Value> {
              this takes minutes — so poll runtime_status with that id until finished is true.",
             json!({
                 "component": { "type": "string", "enum": installable_components(),
-                    "description": installable_detail() }
+                    "description": "Which runtime to act on. runtime_status lists what each one \
+                                    is and what it costs on disk." }
             }),
             &["component"],
         ),
@@ -2461,7 +2562,8 @@ pub fn all_definitions() -> Vec<Value> {
              Refuses while an install of the same component is running.",
             json!({
                 "component": { "type": "string", "enum": installable_components(),
-                    "description": installable_detail() }
+                    "description": "Which runtime to act on. runtime_status lists what each one \
+                                    is and what it costs on disk." }
             }),
             &["component"],
         ),
@@ -2612,6 +2714,7 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         // `media_import` is the same call reachable from a session whose tool list was cached
         // before `audio_probe` existed.
         "audio_probe" => studio.audio_probe(&required_text(args, "mediaId")?),
+        "html_import" => html_import(studio, args),
         "media_import" => match text(args, "mediaId") {
             Some(media_id) => studio.audio_probe(&media_id),
             None => {
@@ -2764,6 +2867,39 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             number(args, "level", 0.7) as f32,
             number(args, "volume", 1.0) as f32,
         ),
+        "faces_detect" => {
+            let path = source_path(studio, args)?;
+            let start = number(args, "startSeconds", 0.0);
+            let end = args
+                .get("endSeconds")
+                .and_then(Value::as_f64)
+                .or_else(|| {
+                    studio
+                        .project()
+                        .media
+                        .iter()
+                        .find(|asset| asset.path == path)
+                        .and_then(|asset| asset.duration_seconds)
+                })
+                .unwrap_or(0.0);
+            let sample_seconds = number(args, "sampleSeconds", 0.5);
+            let want = bay_agent::tracking::want_from(args);
+            // No progress callback here on purpose: `headless_job` runs the work synchronously
+            // and only then registers the job, so nothing can poll it mid-flight. The attached
+            // arm in `bay_agent::slow` does report, because there the work is on a worker and
+            // `job_status` can see it.
+            headless_job("faces_detect", &path.clone(), || {
+                bay_agent::tracking::detect_people(
+                    &path,
+                    start,
+                    end,
+                    sample_seconds,
+                    want,
+                    &mut |_, _| {},
+                )
+                .map_err(err)
+            })
+        }
         "shots_detect" => {
             let media_id = required_text(args, "mediaId")?;
             let asset = studio
@@ -2970,7 +3106,11 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
         // falls through to `apply_planned` like every other revising tool, so the wire and the
         // editor window plan it identically.
         "element_delete" => studio.element_delete(&required_text(args, "elementId")?),
-        "timeline" => studio.timeline(),
+        // `timeline` has no arm here either, and for the same reason. It had one, into a
+        // second `describe_element` that had fallen behind the planner's: it reported no
+        // effects, no trim in-point and no media id. An agent that added a blur over the wire
+        // and re-read the timeline could not see it, and nothing failed — the two copies just
+        // quietly described different timelines.
         "check_frames" => {
             studio.check_frames(args.get("duration").and_then(|value| value.as_f64()))
         }
@@ -2978,6 +3118,11 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             required_number(args, "at")?,
             &required_text(args, "path")?,
             number(args, "scale", 0.5) as f32,
+        ),
+        "scopes_read" => studio.scopes_read(
+            required_number(args, "at")?,
+            number(args, "scale", 0.5) as f32,
+            number(args, "stride", 1.0).max(1.0) as usize,
         ),
         "contact_sheet" => {
             let times = args
@@ -3173,6 +3318,100 @@ fn narrate_args(
 
 /// Caption appearance: the preset and the placement the caller asked for, resolved against the
 /// committed kit. The eleven arguments this replaces are refused here rather than ignored.
+/// `html_import`: markup in, an imported still with an alpha channel out.
+///
+/// Two refusals are deliberate and are the whole reason this is a tool rather than a documented
+/// two-call recipe:
+///
+/// - **A composition that drew nothing does not become a mediaId.** `ink` is the fraction of
+///   pixels with any opacity, and a zero there means the page rendered empty. Importing it
+///   anyway produces a timeline that looks right in every listing and exports without the
+///   graphic, which is discovered after the encode.
+/// - **An unreachable renderer says so.** Off macOS, or in a build with no `bay` binary to
+///   spawn, this reports why instead of writing a blank file.
+fn html_import(studio: &mut Studio, args: &Value) -> ToolResult {
+    if !bay_html::available() {
+        return Err(err(bay_html::unavailable_reason()
+            .unwrap_or_else(|| "HTML rendering is unavailable".to_string())));
+    }
+
+    let source = match (text(args, "html"), text(args, "path")) {
+        (Some(_), Some(_)) => {
+            return Err(err(
+                "pass `html` or `path`, not both — one composition has one source",
+            ));
+        }
+        (Some(html), None) => bay_html::Source::Html(html),
+        (None, Some(path)) => bay_html::Source::File(std::path::PathBuf::from(path)),
+        (None, None) => return Err(err("html_import needs either `html` or `path`")),
+    };
+
+    let width = number(args, "width", 0.0) as u32;
+    let height = number(args, "height", 0.0) as u32;
+    let mut shot = bay_html::Shot::new(source, width, height);
+    shot.scale = number(args, "scale", 1.0) as f32;
+    shot.transparent = args
+        .get("transparent")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    shot.at_seconds = number(args, "atSeconds", 0.0);
+    shot.timeline_id = text(args, "timelineId");
+
+    let output = match text(args, "output") {
+        Some(path) => std::path::PathBuf::from(path),
+        None => default_html_output(&shot),
+    };
+
+    let rendered = shot
+        .render_to(&output)
+        .map_err(|error| err(error.to_string()))?;
+    if rendered.is_blank() {
+        return Err(err(format!(
+            "the composition rendered nothing — {} is fully transparent. Check that the markup \
+             draws inside {}x{} and that any timeline is seeked to a time where something is on \
+             screen.",
+            rendered.path.display(),
+            width,
+            height
+        )));
+    }
+
+    let imported = studio.media_import(&output.to_string_lossy(), text(args, "id"), None)?;
+    let mut result = imported;
+    if let Some(object) = result.as_object_mut() {
+        object.insert("path".to_string(), json!(rendered.path.to_string_lossy()));
+        object.insert("width".to_string(), json!(rendered.width));
+        object.insert("height".to_string(), json!(rendered.height));
+        // Reported so a caller can see at a glance whether a card is nearly empty — a 0.002
+        // here is technically not blank and is almost certainly still a mistake.
+        object.insert("ink".to_string(), json!(rendered.ink));
+    }
+    Ok(result)
+}
+
+/// Where a rendered composition goes when the caller does not say.
+///
+/// Keyed by the shot itself, so re-rendering the same composition at the same time overwrites
+/// rather than littering, and two different frames of one animation do not collide.
+fn default_html_output(shot: &bay_html::Shot) -> std::path::PathBuf {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    match &shot.source {
+        bay_html::Source::Html(html) => html.hash(&mut hasher),
+        bay_html::Source::File(path) => path.hash(&mut hasher),
+    }
+    shot.width.hash(&mut hasher);
+    shot.height.hash(&mut hasher);
+    shot.at_seconds.to_bits().hash(&mut hasher);
+    shot.scale.to_bits().hash(&mut hasher);
+    let stamp = hasher.finish();
+
+    let directory = bay_paths::data_dir()
+        .map(|dir| dir.join("html"))
+        .unwrap_or_else(std::env::temp_dir);
+    directory.join(format!("comp-{stamp:016x}.png"))
+}
+
 fn caption_style_for(
     studio: &mut Studio,
     args: &Value,

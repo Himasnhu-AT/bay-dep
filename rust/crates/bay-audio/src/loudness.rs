@@ -53,7 +53,7 @@ const RELATIVE_GATE_LU: f64 = 10.0;
 
 /// BS.1770's calibration constant, which is what puts a K-weighted mean square on the LUFS
 /// scale.
-const OFFSET_LU: f64 = -0.691;
+pub(crate) const OFFSET_LU: f64 = -0.691;
 
 /// What a signal measures, independent of any gain a timeline later applies to it.
 ///
@@ -121,7 +121,7 @@ pub fn measure(pcm: &AudioPcm) -> Loudness {
 }
 
 /// Power (a mean square, or a squared peak) as dB, floored so silence is a number.
-fn to_db(power: f64) -> f32 {
+pub(crate) fn to_db(power: f64) -> f32 {
     if !power.is_finite() || power <= 0.0 {
         return FLOOR_DB;
     }
@@ -192,7 +192,7 @@ fn integrated(samples: &[f32], channels: usize, rate: f64) -> Option<f64> {
 }
 
 /// One biquad section, transposed direct form II.
-struct Biquad {
+pub(crate) struct Biquad {
     b0: f64,
     b1: f64,
     b2: f64,
@@ -207,7 +207,7 @@ impl Biquad {
     /// head in the sound field. Coefficients are derived from the sample rate rather than
     /// tabulated at 48 kHz, so a 44.1 kHz asset measures correctly instead of being measured
     /// through a filter designed for a different rate.
-    fn high_shelf(rate: f64) -> Self {
+    pub(crate) fn high_shelf(rate: f64) -> Self {
         let f0 = 1681.974450955533;
         let gain_db = 3.999843853973347;
         let q = 0.7071752369554196;
@@ -228,7 +228,7 @@ impl Biquad {
 
     /// BS.1770's stage 2: the RLB high pass, which is what stops a rumble under the programme
     /// counting as loudness.
-    fn high_pass(rate: f64) -> Self {
+    pub(crate) fn high_pass(rate: f64) -> Self {
         let f0 = 38.13547087602444;
         let q = 0.5003270373238773;
         let k = (std::f64::consts::PI * f0 / rate).tan();
@@ -244,7 +244,7 @@ impl Biquad {
         }
     }
 
-    fn step(&mut self, input: f64) -> f64 {
+    pub(crate) fn step(&mut self, input: f64) -> f64 {
         let output = self.b0 * input + self.z1;
         self.z1 = self.b1 * input - self.a1 * output + self.z2;
         self.z2 = self.b2 * input - self.a2 * output;

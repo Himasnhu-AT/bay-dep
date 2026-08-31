@@ -5,8 +5,9 @@
 //! this file decides what a pane says — if a claim is wrong, it is wrong in the model, where
 //! there is a test for it.
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Context, Div, SharedString};
+use gpui::{div, px, Context, Div, SharedString};
 
 use crate::app_view::{BayApp, Screen};
 use crate::input::TextField;
@@ -65,6 +66,9 @@ impl BayApp {
             cloud_available: bay_settings::compute::cloud_available(),
             has_gpu: self.gpu_available,
             tools: bay_mcp_tool_names(),
+            // The bound port, falling back to the default only when the server is not running —
+            // in which case the snippet describes where it *will* listen.
+            agent_port: self.agent_port.unwrap_or(bay_agent::registry::DEFAULT_PORT),
         }
     }
 
@@ -118,6 +122,7 @@ impl BayApp {
                                 Pane::Models => self.models_pane(&snapshot, cx),
                                 Pane::Mcp => self.mcp_pane(&snapshot, cx),
                                 Pane::Compute => self.compute_pane(&snapshot, cx),
+                                Pane::Captions => self.captions_pane(&snapshot, cx),
                             }),
                     ),
             )
@@ -687,11 +692,27 @@ impl BayApp {
                 widgets::card()
                     .bg(rgb(theme::LANE))
                     .child(
-                        div()
-                            .font_family("ui-monospace")
-                            .text_xs()
-                            .text_color(rgb(theme::ACCENT_SOFT))
-                            .child(text(pane.snippet.clone())),
+                        widgets::row()
+                            .items_start()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .font_family("ui-monospace")
+                                    .text_xs()
+                                    .text_color(rgb(theme::ACCENT_SOFT))
+                                    .child(text(pane.snippet.clone())),
+                            )
+                            // The snippet is a command with a 64-character token in it. Drawn as
+                            // text and nothing else, the only way to run it was to read it off
+                            // the screen — which is what someone actually did, via a screenshot.
+                            .child(self.button("copy-snippet", "Copy", false, cx, {
+                                let snippet = pane.snippet.clone();
+                                move |this, cx| {
+                                    this.copy_to_clipboard("snippet", snippet.clone(), cx);
+                                }
+                            })),
                     )
                     .child(
                         div()
@@ -699,6 +720,12 @@ impl BayApp {
                             .child(widgets::note(pane.client_hint.clone())),
                     ),
             )
+            // Named profiles, above the 101 checkboxes they exist to replace. The gating they
+            // drive is `McpSettings::blocked`, which `bay --mcp` already enforces with no window
+            // open — this is the missing *default*, not new machinery. A client that carries the
+            // whole schema list on every request pays for narration tools whether it narrates or
+            // not, and the dialogue profile measures at 52 KB against the full 116 KB.
+            .child(self.mcp_profiles(cx))
             .child(
                 widgets::row()
                     .child(widgets::section("TOOLS EXPOSED"))
@@ -735,6 +762,35 @@ impl BayApp {
             }))
             .child(widgets::section("CONNECTED CLIENTS"))
             .child(clients)
+    }
+
+    /// The profile row: one press instead of a hundred and one.
+    ///
+    /// No profile is shown as "current". A profile is an *action* that sets the blocked list, not
+    /// a stored mode — keeping a name beside the list would be a second answer to "which tools
+    /// are exposed", and the two would disagree the first time someone ticked a box afterwards.
+    fn mcp_profiles(&self, cx: &mut Context<Self>) -> Div {
+        let mut row = widgets::row()
+            .gap(px(6.0))
+            .child(widgets::section("PRESETS"));
+        for profile in bay_settings::mcp::PROFILES {
+            row = row.child(self.button(profile.id, profile.label, false, cx, {
+                move |this, cx| {
+                    let names = bay_mcp_tool_names();
+                    this.settings.mcp.apply_profile(&profile, &names);
+                    this.save_settings();
+                    let exposed = names.len() - this.settings.mcp.blocked.len();
+                    this.settings_complaint = Some(format!(
+                        "{} preset: {exposed} of {} tools exposed. {}",
+                        profile.label,
+                        names.len(),
+                        profile.detail
+                    ));
+                    cx.notify();
+                }
+            }));
+        }
+        row
     }
 
     fn mcp_server_card(&self, pane: &settings_model::McpPane, cx: &mut Context<Self>) -> Div {
@@ -790,6 +846,15 @@ impl BayApp {
                 .mt(px(11.0))
                 .gap(px(6.0))
                 .child(widgets::readout(pane.endpoint.clone(), false))
+                // The readout abbreviates the token on purpose — it is the line that ends up in
+                // a screenshot of this screen. That makes a way to copy the full one necessary
+                // rather than convenient.
+                .child(self.button("copy-token", "Copy token", false, cx, {
+                    let token = pane.token.clone();
+                    move |this, cx| {
+                        this.copy_to_clipboard("token", token.clone(), cx);
+                    }
+                }))
                 .child(
                     self.button("rotate-token", "Rotate token", false, cx, |this, _cx| {
                         this.rotate_token();
@@ -828,6 +893,261 @@ impl BayApp {
     }
 
     // ---- Compute -------------------------------------------------------------------------
+
+    /// The Captions pane.
+    ///
+    /// The preview strip is the point of this pane. A band position is a number between 0 and 1
+    /// and means nothing on its own; what the user needs to see is where the line lands relative
+    /// to the part of the frame Instagram is going to cover, which is why the reserved band and
+    /// the caption line are drawn together against one frame.
+    fn captions_pane(&self, snapshot: &SettingsSnapshot, cx: &mut Context<Self>) -> Div {
+        let pane = settings_model::captions_pane(snapshot);
+
+        // A 9:16 frame, small enough to sit beside the controls.
+        let preview_height = 190.0;
+        let mut frame = div()
+            .relative()
+            .w(px(preview_height * 9.0 / 16.0))
+            .h(px(preview_height))
+            .flex_none()
+            .rounded(px(6.0))
+            .bg(rgb(theme::LANE))
+            .border_1()
+            .border_color(rgb(theme::BORDER_SOFT))
+            .overflow_hidden();
+
+        if pane.reserved_bottom > 0.0 {
+            frame = frame.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(gpui::relative(pane.reserved_bottom))
+                    .bg(rgb(theme::PANEL))
+                    .border_t_1()
+                    .border_color(rgb(theme::WARN)),
+            );
+        }
+        // Where captions will actually land.
+        frame = frame.child(
+            div()
+                .absolute()
+                .left(px(8.0))
+                .right(px(8.0))
+                .top(gpui::relative(pane.resolved_top.clamp(0.0, 0.98)))
+                .h(px(3.0))
+                .rounded(px(2.0))
+                .bg(rgb(theme::ACCENT)),
+        );
+        // And where it was asked to go, when the safe area moved it.
+        if pane.clamped {
+            frame = frame.child(
+                div()
+                    .absolute()
+                    .left(px(8.0))
+                    .right(px(8.0))
+                    .top(gpui::relative(pane.band_top.clamp(0.0, 0.98)))
+                    .h(px(1.0))
+                    .bg(rgb(theme::FAINT)),
+            );
+        }
+
+        let position_label = if pane.follows_kit {
+            "Following the style kit".to_string()
+        } else {
+            format!("{}% down the frame", (pane.band_top * 100.0).round())
+        };
+
+        let controls = div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(widgets::section("BAND POSITION"))
+            .child(
+                widgets::row()
+                    .child(
+                        widgets::pressable(
+                            widgets::ButtonKind::Normal,
+                            div().id("caption-band-up").child("↑").on_click(cx.listener(
+                                |this, _event, _window, cx| {
+                                    this.nudge_caption_band(-0.01);
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .px(px(10.0))
+                        .py(px(4.0)),
+                    )
+                    .child(
+                        widgets::pressable(
+                            widgets::ButtonKind::Normal,
+                            div()
+                                .id("caption-band-down")
+                                .child("↓")
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.nudge_caption_band(0.01);
+                                    cx.notify();
+                                })),
+                        )
+                        .px(px(10.0))
+                        .py(px(4.0)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(rgb(theme::TEXT))
+                            .child(text(position_label)),
+                    )
+                    .child(
+                        widgets::pressable(
+                            widgets::ButtonKind::Normal,
+                            div()
+                                .id("caption-band-reset")
+                                .child("Use the kit")
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.reset_caption_band();
+                                    cx.notify();
+                                })),
+                        )
+                        .px(px(10.0))
+                        .py(px(4.0)),
+                    ),
+            );
+
+        let mut areas = div().flex().flex_col().gap(px(6.0));
+        for (index, area) in pane.safe_areas.iter().enumerate() {
+            let id = area.id;
+            areas = areas.child(
+                div()
+                    .id(("caption-safe-area", index))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(10.0))
+                    .py(px(7.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::PANEL))
+                    .border_1()
+                    .border_color(rgb(if area.selected {
+                        theme::ACCENT
+                    } else {
+                        theme::BORDER_SOFT
+                    }))
+                    .child(
+                        div()
+                            .w(px(10.0))
+                            .h(px(10.0))
+                            .rounded_full()
+                            .flex_none()
+                            .bg(rgb(if area.selected {
+                                theme::ACCENT
+                            } else {
+                                theme::DIM_DOT
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(rgb(theme::TEXT))
+                            .child(area.label),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme::MUTED))
+                            .child(text(area.reserves.clone())),
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.choose_caption_safe_area(match id {
+                            "instagram-reels" => bay_settings::captions::SafeArea::InstagramReels,
+                            "tiktok" => bay_settings::captions::SafeArea::TikTok,
+                            "youtube-shorts" => bay_settings::captions::SafeArea::YouTubeShorts,
+                            _ => bay_settings::captions::SafeArea::None,
+                        });
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let mut aligns = widgets::row();
+        for (index, align) in pane.aligns.iter().enumerate() {
+            let id = align.id;
+            aligns = aligns.child(
+                div()
+                    .id(("caption-align", index))
+                    .px(px(10.0))
+                    .py(px(5.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::PANEL))
+                    .border_1()
+                    .border_color(rgb(if align.selected {
+                        theme::ACCENT
+                    } else {
+                        theme::BORDER_SOFT
+                    }))
+                    .text_xs()
+                    .text_color(rgb(if align.selected {
+                        theme::TEXT
+                    } else {
+                        theme::MUTED
+                    }))
+                    .child(align.label)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.choose_caption_align(match id {
+                            "center" => bay_settings::captions::CaptionAlign::Center,
+                            "right" => bay_settings::captions::CaptionAlign::Right,
+                            _ => bay_settings::captions::CaptionAlign::Left,
+                        });
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(16.0))
+                    .child(frame)
+                    .child(controls),
+            )
+            .child(widgets::section("KEEP CLEAR OF"))
+            .child(areas)
+            .child(widgets::note(pane.note.clone()))
+            .child(widgets::section("ALIGNMENT"))
+            .child(aligns)
+            .child(widgets::note(
+                "Alignment and position follow the project's style kit until you choose here. \
+                 Click a chosen alignment again to hand it back.",
+            ));
+
+        if pane.clamped {
+            body = body.child(widgets::banner(
+                format!(
+                    "Moved up to {}% to clear {}. The faint line is where it was asked to go.",
+                    (pane.resolved_top * 100.0).round(),
+                    pane.safe_areas
+                        .iter()
+                        .find(|area| area.selected)
+                        .map(|area| area.label)
+                        .unwrap_or("the platform"),
+                ),
+                theme::WARN,
+            ));
+        }
+
+        body
+    }
 
     fn compute_pane(&self, snapshot: &SettingsSnapshot, cx: &mut Context<Self>) -> Div {
         let pane = settings_model::compute_pane(snapshot);

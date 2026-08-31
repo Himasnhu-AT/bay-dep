@@ -13,6 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 bay-paths = { path = "../bay-paths" }
+bay-audio = { version = "0.1.0", path = "../bay-audio" }
 bay-core = { version = "0.1.0", path = "../bay-core" }
 bay-compositor = { version = "0.1.0", path = "../bay-compositor" }
 bay-effects = { version = "0.1.0", path = "../bay-effects" }

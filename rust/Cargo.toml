@@ -8,10 +8,12 @@ members = [
     "crates/bay-time",
     "crates/bay-effects",
     "crates/bay-gpu",
+    "crates/bay-html",
     "crates/bay-masks",
     "crates/bay-compositor",
     "crates/bay-agent",
     "crates/bay-core",
+    "crates/bay-detect",
     "crates/bay-repair",
     "crates/bay-mcp",
     "crates/bay-listen",
@@ -26,6 +28,7 @@ members = [
     "crates/bay-gen",
     "crates/bay-vision",
     "crates/bay-test-support",
+    "crates/bay-bench",
 ]
 
 # P0-GPU-01 — single frozen wgpu major for the whole native workspace.

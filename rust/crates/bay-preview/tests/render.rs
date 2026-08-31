@@ -101,12 +101,18 @@ fn renders_a_clip_with_a_brightness_effect_without_error() {
 }
 
 #[test]
-fn renders_contrast_saturation_blur_and_drop_shadow_on_gpu() {
+fn every_effect_type_renders_on_gpu() {
     // Exercises the new effect shaders end-to-end (WGSL compiles + runs on the real GPU).
     let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
         return;
     };
-    for effect_type in ["contrast", "saturation", "blur", "drop-shadow"] {
+    for effect_type in [
+        "contrast",
+        "saturation",
+        "blur",
+        "drop-shadow",
+        "lift-gamma-gain",
+    ] {
         let mut project = Project::starter();
         if let Element::Text(title) = &mut project.active_scene_mut().tracks.main.elements[0] {
             title.effects.push(Effect {
@@ -423,6 +429,85 @@ fn exports_a_short_video_via_ffmpeg() {
         "a successful export should leave no staging files, found {leftovers:?}"
     );
     let _ = std::fs::remove_file(&out);
+}
+
+/// An exported file carries the colours the compositor produced, not their channels reversed.
+///
+/// The export used to swizzle BGRA to RGBA on the CPU, a pass over every pixel of every frame,
+/// and then tell ffmpeg `-pix_fmt rgba`. Both halves were removed together — ffmpeg takes `bgra`
+/// natively — and if only one had been, or if either is ever "tidied", red and blue swap in every
+/// export bay produces. Nothing else in the suite would notice: the file is the right size, plays
+/// fine, and is the wrong colour.
+///
+/// A saturated non-grey background is the fixture on purpose. Grey survives a channel swap
+/// unchanged, which is exactly the kind of test that passes against the bug it exists to catch.
+#[test]
+fn an_export_keeps_its_channels_the_right_way_round() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    let mut project = Project::starter();
+    // Strongly red: R=0xe0, G=0x20, B=0x30. Reversed, this reads as blue, and no rounding
+    // anywhere in an h264 round trip can turn one into the other.
+    project.settings.background = bay_project::Background::Color {
+        color: "#e02030".to_string(),
+    };
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.main.elements.clear();
+    }
+
+    let out = std::env::temp_dir().join(format!("bay-channels-{}.mp4", std::process::id()));
+    let ok = renderer.export_video(
+        project.active_scene(),
+        0.5,
+        10.0,
+        64,
+        36,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportSettings::default(),
+    );
+    if !require_ffmpeg_step(ok.is_ok(), "encode the exported mp4") {
+        return;
+    }
+
+    // Decode one frame back out and read the middle pixel.
+    let raw = std::env::temp_dir().join(format!("bay-channels-{}.rgba", std::process::id()));
+    let decoded = std::process::Command::new("ffmpeg")
+        .args(["-nostdin", "-loglevel", "error", "-y", "-i"])
+        .arg(&out)
+        .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba"])
+        .arg(&raw)
+        .status();
+    if !require_ffmpeg_step(
+        decoded.map(|s| s.success()).unwrap_or(false),
+        "decode it back",
+    ) {
+        let _ = std::fs::remove_file(&out);
+        return;
+    }
+    let pixels = std::fs::read(&raw).expect("the decoded frame");
+    let middle = ((36 / 2) * 64 + 32) * 4;
+    let (r, g, b) = (
+        pixels[middle] as i32,
+        pixels[middle + 1] as i32,
+        pixels[middle + 2] as i32,
+    );
+
+    assert!(
+        r > b + 40,
+        "the exported frame is not red-dominant: r={r} g={g} b={b} — channels are reversed"
+    );
+    assert!(
+        g < r,
+        "green outranks red in a red frame: r={r} g={g} b={b}"
+    );
+
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&raw);
 }
 
 #[test]
@@ -1490,6 +1575,7 @@ fn audible_clips_skips_everything_that_would_contribute_no_sound() {
             trim_start: MediaTime::ZERO,
             muted,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -1539,6 +1625,7 @@ fn an_audio_clips_in_point_reaches_the_mixer() {
         media_id: "m-ok".into(),
         muted: false,
         volume: 1.0,
+        pan: 0.0,
         speed: 1.0,
         prosody: None,
         dialogue_chain: None,
@@ -1605,6 +1692,7 @@ fn an_exported_video_carries_its_soundtrack() {
             media_id: "media-music".into(),
             muted: false,
             volume: 1.0,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -2399,6 +2487,9 @@ fn a_moving_level_becomes_an_ffmpeg_expression() {
         trim_start_seconds: 0.0,
         duration_seconds: 4.0,
         volume: 0.5,
+        pan: 0.0,
+        track_pan: 0.0,
+        track_gain: 1.0,
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 0.5)],
@@ -2457,6 +2548,7 @@ fn a_six_line_duck_fits_inside_the_expression_budget() {
             media_id: "m".into(),
             muted: false,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -2566,6 +2658,7 @@ fn an_audio_fade_reaches_the_export_mixer() {
             media_id: "m-ok".into(),
             muted: false,
             volume: 1.0,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -2638,6 +2731,9 @@ fn a_range_moves_the_sound_with_the_picture() {
         trim_start_seconds: 0.0,
         duration_seconds: duration,
         volume: 1.0,
+        pan: 0.0,
+        track_pan: 0.0,
+        track_gain: 1.0,
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
@@ -2689,6 +2785,9 @@ fn a_range_of_zero_leaves_every_clip_alone() {
         trim_start_seconds: 1.0,
         duration_seconds: 2.0,
         volume: 1.0,
+        pan: 0.0,
+        track_pan: 0.0,
+        track_gain: 1.0,
         speed: 1.0,
         dialogue_chain: None,
         gain_points: vec![(0.0, 1.0)],
@@ -2706,21 +2805,51 @@ fn each_codec_asks_for_itself() {
     use bay_preview::VideoCodec;
     let args = |codec: VideoCodec| bay_preview::encoder_args_for_test(codec, 20).join(" ");
 
+    // H.264 and HEVC take Apple's media engine when this build has it, and the software encoder
+    // otherwise. Asserting `libx264` outright — which this did — pins the *slower* path and
+    // fails the moment the faster one is chosen, so it tests the machine rather than the code.
+    // What has to hold either way is that a codec asks for itself and carries a quality and a
+    // pixel format.
     let h264 = args(VideoCodec::H264);
-    assert!(h264.contains("libx264"), "{h264}");
-    assert!(h264.contains("-crf 20"), "{h264}");
+    assert!(
+        h264.contains("libx264") || h264.contains("h264_videotoolbox"),
+        "H.264 asked for neither of its encoders: {h264}"
+    );
+    assert!(
+        h264.contains("-crf 20") || h264.contains("-q:v"),
+        "no quality reached the encoder: {h264}"
+    );
     assert!(h264.contains("yuv420p"), "{h264}");
+    // `high` is H.264's profile name. HEVC rejects it, which is a real failure mode — see below.
+    assert!(h264.contains("-profile:v high"), "{h264}");
 
     let hevc = args(VideoCodec::Hevc);
-    assert!(hevc.contains("libx265"), "{hevc}");
-    // QuickTime will not open an HEVC file without this tag.
+    assert!(
+        hevc.contains("libx265") || hevc.contains("hevc_videotoolbox"),
+        "HEVC asked for neither of its encoders: {hevc}"
+    );
+    // QuickTime will not open an HEVC file without this tag, on either encoder.
     assert!(hevc.contains("hvc1"), "{hevc}");
+    // Profiles are per codec. `hevc_videotoolbox` fails to open the output at all when handed
+    // H.264's `high`, so an HEVC export dies at the first frame — which is how this was found.
+    assert!(
+        !hevc.contains("-profile:v high"),
+        "`high` is an H.264 profile; HEVC has main/main10 and refuses it: {hevc}"
+    );
 
     let prores = args(VideoCodec::ProRes);
     assert!(prores.contains("prores"), "{prores}");
+    // 4:4:4, not the 4:2:2 this asserted until the chroma was actually measured. 422 is the
+    // profile for camera originals; bay renders type, where a coloured stem is a pixel wide and
+    // halving the chroma costs up to 61 code values. What the picture survives is pinned by
+    // `a_prores_master_returns_the_pixels_it_was_given`; this only pins the flags.
     assert!(
-        prores.contains("yuv422p10le"),
-        "10-bit 4:2:2, or ProRes is pointless: {prores}"
+        prores.contains("yuv444p10le"),
+        "ProRes mastering must keep full chroma: {prores}"
+    );
+    assert!(
+        prores.contains("-profile:v 4"),
+        "profile 4 is 4444, the graphics profile: {prores}"
     );
 }
 
@@ -3113,6 +3242,7 @@ fn an_export_delivers_48k_stereo_however_the_mix_was_assembled() {
             media_id: id.into(),
             muted: false,
             volume: 1.0,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -3351,6 +3481,7 @@ fn a_short_audio_fade_renders_as_a_ramp_rather_than_a_hole() {
                 media_id: "tone".into(),
                 muted: false,
                 volume: 1.0,
+                pan: 0.0,
                 speed: 1.0,
                 prosody: None,
                 dialogue_chain: None,
@@ -4069,4 +4200,413 @@ fn a_discarded_composite_is_not_delivered_to_the_next_collect() {
     ));
     let frame = collect_until_ready(&mut renderer);
     assert_eq!(frame.bgra.len(), 64 * 36 * 4);
+}
+
+/// A fused colour run has to survive the whole preview path, not just the effects pipeline.
+///
+/// The stack-vs-staged comparison lives in `bay-effects/tests/color_stack.rs`, where both paths
+/// are still reachable. What that cannot check is the wiring on the way in: the mapper building
+/// a stage program, the compositor handing it to `apply_effect_groups`, and the pass finding a
+/// LUT bind group even though its run contains no grade. Every other multi-effect test applies
+/// one effect at a time, so a run of two was never rendered through this path at all.
+///
+/// A full-canvas shape rather than the starter title, because effects apply to the *element*:
+/// the background is a separate clear that no layer effect touches, so a frame-wide assertion
+/// would be reading the backdrop rather than the grade.
+///
+/// Relational, because fusing changes bytes by design: a saturation of 0 must leave the shape
+/// grey whatever else is in the run, and a brightness of 1.6 must leave it brighter than 0.4
+/// does. A dropped stage, an empty program or a reordered one each fail one of the two.
+#[test]
+fn a_fused_colour_run_renders_through_the_whole_preview_path() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+
+    let mut render_with = |amount: f32| {
+        let mut project = Project::starter();
+        project.settings.canvas = bay_project::CanvasSize {
+            width: 64,
+            height: 64,
+        };
+        {
+            let scene = project.active_scene_mut();
+            scene.tracks.overlay.clear();
+            scene.tracks.audio.clear();
+            // Three consecutive per-pixel colour ops: one run, one pass, and no grade in it —
+            // the case that needs the identity cube bound.
+            let effects = [
+                ("brightness", amount),
+                ("contrast", 1.1),
+                ("saturation", 0.0),
+            ]
+            .into_iter()
+            .map(|(effect_type, value)| Effect {
+                id: format!("fx-{effect_type}"),
+                effect_type: effect_type.into(),
+                enabled: true,
+                params: [("amount".to_string(), value)].into_iter().collect(),
+                asset: None,
+            })
+            .collect();
+            scene.tracks.main.elements = vec![Element::Shape(bay_project::ShapeElement {
+                id: "s".into(),
+                name: "s".into(),
+                start: MediaTime::ZERO,
+                duration: MediaTime::from_ticks(120_000),
+                fade_in: MediaTime::ZERO,
+                fade_out: MediaTime::ZERO,
+                shape: bay_project::ShapeKind::Rect { radius: 0.0 },
+                // Fully saturated, so "did saturation reach the frame" is unambiguous.
+                color: "#c02020".into(),
+                gradient: None,
+                stroke: None,
+                transform: bay_project::Transform::default(),
+                effects,
+                animations: Default::default(),
+                blend_mode: Default::default(),
+                mask: None,
+                source: Default::default(),
+                role: Default::default(),
+            })];
+        }
+        renderer
+            .render(
+                project.active_scene(),
+                MediaTime::ZERO,
+                64,
+                64,
+                &project.settings.background,
+                &project.media,
+            )
+            .expect("the GPU produced a frame")
+    };
+
+    let dim = render_with(0.4);
+    let bright = render_with(1.6);
+
+    // Centre of the shape, BGRA.
+    let centre = ((32 * 64) + 32) * 4;
+    let grey_at = |frame: &bay_preview::PreviewFrame| {
+        let (b, g, r) = (
+            frame.bgra[centre] as i32,
+            frame.bgra[centre + 1] as i32,
+            frame.bgra[centre + 2] as i32,
+        );
+        (r - g).abs() <= 2 && (g - b).abs() <= 2
+    };
+    assert!(
+        grey_at(&bright) && grey_at(&dim),
+        "a saturation of 0 in a fused run left colour behind: dim={:?} bright={:?}",
+        &dim.bgra[centre..centre + 3],
+        &bright.bgra[centre..centre + 3]
+    );
+
+    // And the brightness stage, which sits before it, still moved the level.
+    assert!(
+        bright.bgra[centre + 2] > dim.bgra[centre + 2],
+        "the brightness stage did not reach the frame: dim={}, bright={}",
+        dim.bgra[centre + 2],
+        bright.bgra[centre + 2]
+    );
+}
+
+/// Decode a file's first frame back to tightly-packed RGBA.
+fn first_frame_rgba(path: &std::path::Path) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            path.to_str()?,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "pipe:1",
+        ])
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// A ProRes master must return the pixels it was given.
+///
+/// `Master` promises "no generation loss" and ProRes is chosen to deliver it, but nothing
+/// asserted any relationship between the frames bay pipes in and the frames that come back —
+/// which is how the export sat on ProRes **422** HQ, a profile whose 4:2:2 chroma is right for
+/// camera originals and wrong for a tool that renders type. Measured before the switch to
+/// 4444: one-pixel coloured strokes came back off by up to 61 code values, and a 1px red/blue
+/// alternation by 153. Two-pixel detail survived either profile, so nothing coarse would have
+/// revealed it — the test has to use fine coloured detail or it proves nothing.
+///
+/// Exact equality, not a tolerance: 4:4:4 10-bit round-trips 8-bit RGB losslessly, so any
+/// drift at all means the pixel format or the profile moved.
+#[test]
+fn a_prores_master_returns_the_pixels_it_was_given() {
+    let Some(mut renderer) = require_gpu_backed("a PreviewRenderer", PreviewRenderer::new) else {
+        return;
+    };
+    if !require_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir().join("bay-prores-fidelity");
+    let _ = std::fs::create_dir_all(&dir);
+    let out = dir.join("master.mov");
+    let _ = std::fs::remove_file(&out);
+
+    // Vertical 1px red stripes on white: the finest coloured detail real type produces, and
+    // the exact regime 4:2:2 destroys. Even dimensions — yuv cannot encode an odd side.
+    let (width, height) = (64u32, 64u32);
+    let source = dir.join("stripes.png");
+    let mut image = image::RgbaImage::new(width, height);
+    for (x, _y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = if x % 4 == 0 {
+            image::Rgba([200, 30, 30, 255])
+        } else {
+            image::Rgba([255, 255, 255, 255])
+        };
+    }
+    image.save(&source).expect("write the stripes");
+
+    let mut project = Project::starter();
+    project.settings.canvas = bay_project::CanvasSize { width, height };
+    let mut asset = MediaAsset::new("m", "stripes.png", source.to_string_lossy());
+    asset.duration_seconds = Some(1.0);
+    asset.width = Some(width);
+    asset.height = Some(height);
+    project.media = vec![asset];
+    {
+        let scene = project.active_scene_mut();
+        scene.tracks.overlay.clear();
+        scene.tracks.audio.clear();
+        scene.tracks.main.elements = vec![Element::Image(ImageElement {
+            id: "i".into(),
+            name: "stripes".into(),
+            media_id: "m".into(),
+            start: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            transform: Transform::default(),
+            effects: vec![],
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })];
+    }
+
+    // The frame bay composites, before it reaches the encoder.
+    let composited = renderer
+        .render(
+            project.active_scene(),
+            MediaTime::ZERO,
+            width,
+            height,
+            &project.settings.background,
+            &project.media,
+        )
+        .expect("the GPU produced a frame");
+
+    let result = renderer.export_video(
+        project.active_scene(),
+        0.2,
+        10.0,
+        width,
+        height,
+        &project.settings.background,
+        &project.media,
+        out.to_str().unwrap(),
+        &bay_preview::ExportPreset::Master.settings(),
+    );
+    assert!(result.is_ok(), "prores master export failed: {result:?}");
+
+    let Some(decoded) = first_frame_rgba(&out) else {
+        panic!("the exported master could not be decoded back");
+    };
+    assert_eq!(decoded.len(), (width * height * 4) as usize);
+
+    // `composited` is BGRA; the decode is RGBA. Compare colour channels only — alpha is not
+    // carried by any export and is not what this asserts.
+    let worst = composited
+        .bgra
+        .chunks_exact(4)
+        .zip(decoded.chunks_exact(4))
+        .map(|(src, got)| {
+            let r = src[2].abs_diff(got[0]);
+            let g = src[1].abs_diff(got[1]);
+            let b = src[0].abs_diff(got[2]);
+            r.max(g).max(b)
+        })
+        .max()
+        .expect("the frame is not empty");
+
+    assert_eq!(
+        worst, 0,
+        "a ProRes master altered the picture by {worst} code values; 4:4:4 10-bit round-trips \
+         8-bit RGB exactly, so the profile or the pixel format has moved"
+    );
+}
+
+/// A poster frame comes back with a picture in it, at a size a tile can use.
+///
+/// The content assertion is the point. A decode that produced nothing would still hand back a
+/// correctly-sized buffer of zeroes, which satisfies every dimension check and shows on screen
+/// as the black rectangle this feature exists to remove. `bay-bench` was nearly fooled by the
+/// same shape of non-result.
+#[test]
+fn a_poster_frame_has_a_picture_in_it() {
+    let dir = std::env::temp_dir().join("bay-poster-frame");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("poster.mp4");
+    // A moving gradient, so every frame differs from flat and from its neighbours.
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=10:duration=2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the poster test clip") {
+        return;
+    }
+
+    let Some(frame) = bay_preview::poster_frame(path.to_str().unwrap(), 1.0) else {
+        if !require_ffmpeg() {
+            return;
+        }
+        panic!("ffmpeg is available but no poster frame came back");
+    };
+
+    assert!(frame.width > 0 && frame.height > 0, "a poster needs a size");
+    assert_eq!(
+        frame.rgba.len() as u32,
+        frame.width * frame.height * 4,
+        "the buffer must match the size it claims"
+    );
+    let first = &frame.rgba[0..4];
+    assert!(
+        frame.rgba.chunks_exact(4).any(|texel| texel != first),
+        "the poster is a single flat colour, so nothing was actually decoded"
+    );
+    assert!(
+        frame.width <= 320,
+        "a poster wider than a tile is bytes decoded and thrown away, got {}",
+        frame.width
+    );
+}
+
+/// Seeking past the end returns the last frame rather than nothing.
+///
+/// A clip whose thumbnail is requested at its own duration is the ordinary case — the pool asks
+/// for a frame partway in, and rounding puts it at the boundary. Returning `None` there would
+/// leave a placeholder on a file that plays perfectly.
+#[test]
+fn a_poster_seek_past_the_end_still_returns_a_frame() {
+    let dir = std::env::temp_dir().join("bay-poster-frame");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("poster-short.mp4");
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x180:rate=10:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the short poster clip") {
+        return;
+    }
+
+    // 30s into a 1s file.
+    let frame = bay_preview::poster_frame(path.to_str().unwrap(), 30.0);
+    if !require_ffmpeg() {
+        return;
+    }
+    assert!(
+        frame.is_some(),
+        "a seek past the end must clamp into the file, not return nothing"
+    );
+}
+
+/// A filmstrip walks the clip once and comes back with distinct pictures.
+///
+/// Two claims, and the second is the one that matters. Frame count alone would pass if ffmpeg
+/// handed back the same frame six times — which is exactly what a wrong `-r` produces, and it
+/// would look like a working filmstrip of a frozen clip.
+#[test]
+fn a_filmstrip_returns_distinct_frames_across_the_clip() {
+    let dir = std::env::temp_dir().join("bay-filmstrip");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("strip.mp4");
+    // `testsrc` counts up on screen, so every frame genuinely differs from every other.
+    let generated = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x180:rate=10:duration=6",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !require_ffmpeg_step(generated, "generate the filmstrip test clip") {
+        return;
+    }
+
+    let Some(frames) = bay_preview::filmstrip(path.to_str().unwrap(), 6) else {
+        if !require_ffmpeg() {
+            return;
+        }
+        panic!("ffmpeg is available but no filmstrip came back");
+    };
+
+    assert!(frames.len() > 1, "a strip of one is not a strip");
+    for frame in &frames {
+        assert_eq!(
+            frame.rgba.len() as u32,
+            frame.width * frame.height * 4,
+            "each cell must match the size it claims"
+        );
+        assert!(
+            frame.width <= 96,
+            "a lane cell wider than 96px is pixels thrown away, got {}",
+            frame.width
+        );
+    }
+
+    // The point of a strip: the cells are different moments, not one moment repeated.
+    assert_ne!(
+        frames.first().expect("non-empty").rgba,
+        frames.last().expect("non-empty").rgba,
+        "first and last cell are identical — the strip is one frame repeated"
+    );
 }

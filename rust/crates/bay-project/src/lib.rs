@@ -17,6 +17,7 @@
 //! Time is [`bay_time::MediaTime`] (i64 ticks, 120 000/s) — the one time type shared with the
 //! compositor and the web/wasm core.
 
+pub mod animatable;
 pub mod duck;
 mod element;
 pub mod format;
@@ -26,21 +27,24 @@ pub mod mix;
 pub mod moves;
 pub mod plan;
 mod project;
+pub mod reframe;
 mod refs;
 mod scene;
 mod settings;
 pub mod shelf;
+pub mod storage;
 pub mod templates;
 mod track;
 
+pub use animatable::{AnimatableProperty, PropertyKind, Unit, describe_path};
 pub use duck::{Duck, DuckKey, DuckParams};
 pub use element::{
-    AnimationChannel, AudioElement, AudioRole, BUILTIN_LOOKS, BlendMode, DialogueAudioChain,
-    DialogueCompressor, DialogueEq, DialogueLimiter, Easing, Effect, Element, ElementKind,
-    ElementRole, ElementSource, FreezeFrame, Gradient, ImageElement, KaraokeSpec, KaraokeWord,
-    Keyframe, LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody, Stroke,
-    TextAlign, TextDecorations, TextElement, TextPlate, TextShadow, TextStroke, Transform, TypeOn,
-    VideoElement, is_builtin_look, is_caption_id, look_id,
+    AnimationChannel, AudioElement, AudioRole, BUILTIN_LOOKS, BezierHandles, BlendMode,
+    DialogueAudioChain, DialogueCompressor, DialogueEq, DialogueLimiter, Easing, Effect, Element,
+    ElementKind, ElementRole, ElementSource, FreezeFrame, Gradient, ImageElement, KaraokeSpec,
+    KaraokeWord, Keyframe, LOOK_PREFIX, Mask, MaskShape, ShapeElement, ShapeKind, SpeechProsody,
+    Stroke, TextAlign, TextDecorations, TextElement, TextPlate, TextShadow, TextStroke, Transform,
+    TypeOn, VideoElement, is_builtin_look, is_caption_id, look_id, scale_gain_points,
 };
 pub use kit::{
     Framing, OffToken, Palette, ResolvedStyle, StyleHistory, StyleKit, Tone, TypeFace, TypeRamp,
@@ -58,6 +62,10 @@ pub use plan::{
 pub use project::{
     AssetLoudness, GeneratedMediaProvenance, MediaAsset, MediaKind, Project, ProjectMetadata,
     SemanticMediaIndex, SemanticShot, Transcript, TranscriptUtterance, TranscriptWord,
+};
+pub use reframe::{
+    Crop, ReframePlan, ReframeTrackingConfig, Sharpness, SubjectPoint, TrackingConfig, crop_for,
+    path_jitter, plan_reframe, smooth_path,
 };
 pub use refs::ElementRef;
 pub use scene::{BySource, ElementGroup, Marker, Scene, compose_group_transform};

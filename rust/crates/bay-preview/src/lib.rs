@@ -7,14 +7,18 @@
 //! lands; the compositing (background, transform, opacity, blend) is real.
 
 pub mod frame_check;
+pub mod playback;
+pub mod poster;
 pub mod probe;
+pub mod scopes;
+pub mod waveform;
 
 use bay_compositor::{
     BlendMode, CanvasClearDescriptor, Compositor, EffectPassDescriptor,
     EffectUniformValueDescriptor, FrameDescriptor, FrameItemDescriptor, LayerDescriptor,
     LayerMaskDescriptor, QuadTransformDescriptor,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bay_gpu::{GpuContext, PipelinedReadback, ReadbackPoll, ReadbackPool, wgpu};
 use bay_project::{Background, Element, ElementKind, MediaAsset, MediaTime, Scene};
@@ -32,7 +36,7 @@ fn effect_groups(
         EffectUniformValueDescriptor::Number(amount)
     }
 
-    effects
+    let groups = effects
         .iter()
         .filter(|effect| effect.enabled)
         .filter_map(|effect| {
@@ -116,10 +120,136 @@ fn effect_groups(
                         lut: None,
                     }])
                 }
+                // Three-way colour balance. Each wheel is three channel scalars plus its
+                // master, flat in `params` for the same reason the shadow's colour is —
+                // `params` is a map of `f32`, so a flat scalar is the only shape an
+                // `effect.<id>.<param>` animation channel can reach. Warming the highlights
+                // over a shot is a keyframe, not a feature.
+                //
+                // Each wheel falls back to *its own* neutral rather than to zero: a partially
+                // written effect grades with the wheels it was given and leaves the rest at
+                // rest, instead of multiplying the frame to black through a gain of 0.
+                "lift-gamma-gain" => {
+                    let wheel = |prefix: &str, neutral: f32| {
+                        let param = |suffix: &str| {
+                            effect
+                                .params
+                                .get(&format!("{prefix}{suffix}"))
+                                .copied()
+                                .unwrap_or(neutral)
+                        };
+                        EffectUniformValueDescriptor::Vector(vec![
+                            param("R"),
+                            param("G"),
+                            param("B"),
+                            param("Master"),
+                        ])
+                    };
+                    Some(vec![EffectPassDescriptor {
+                        shader: "lift-gamma-gain".to_string(),
+                        uniforms: [
+                            ("u_lift".to_string(), wheel("lift", 0.0)),
+                            ("u_gamma".to_string(), wheel("gamma", 1.0)),
+                            ("u_gain".to_string(), wheel("gain", 1.0)),
+                            // As on `lut`, and unlike the colour adjustments: how much of the
+                            // grade to apply, so 1.0 is the full balance.
+                            ("u_amount".to_string(), number(amount.unwrap_or(1.0))),
+                        ]
+                        .into(),
+                        lut: None,
+                    }])
+                }
                 _ => None,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    coalesce_color_runs(groups)
+}
+
+/// Fuse consecutive per-pixel colour effects into a single `color-stack` pass.
+///
+/// Runs on the *lowered* form rather than on `Effect`s, which is what keeps this cheap: every
+/// collapsible effect has already been reduced to one descriptor carrying one `u_amount` and,
+/// for a grade, its resolved table — so defaults, the look vocabulary and the drop-a-missing-
+/// `.cube` rule all keep working untouched, and this step only has to recognise the shape.
+///
+/// A run ends at anything that is not a per-pixel colour op, because `gaussian-blur` and
+/// `drop-shadow` read neighbouring texels and cannot be folded into a per-texel loop. It also
+/// ends at a second grade (one cube is bound per pass) and at
+/// [`MAX_COLOR_STACK_STAGES`](bay_effects::MAX_COLOR_STACK_STAGES). Order is preserved
+/// throughout: `brightness → blur → contrast` stays three groups, because the blur genuinely
+/// sits between them.
+///
+/// A run of one is left exactly as it was. Collapsing it would buy no quantisation back and
+/// would cost it a LUT bind group it has no use for.
+fn coalesce_color_runs(groups: Vec<Vec<EffectPassDescriptor>>) -> Vec<Vec<EffectPassDescriptor>> {
+    /// The `(op, amount)` of a group that is a lone collapsible colour pass, or `None`.
+    fn collapsible(group: &[EffectPassDescriptor]) -> Option<(f32, f32)> {
+        let [pass] = group else { return None };
+        let op = bay_effects::color_stack_op(&pass.shader)?;
+        // `u_amount` alone: the shape every collapsible pass is lowered into above. Anything
+        // richer is a pass this fusion does not understand, and guessing at it is how a
+        // parameter goes quietly missing.
+        if pass.uniforms.len() != 1 {
+            return None;
+        }
+        let Some(EffectUniformValueDescriptor::Number(amount)) = pass.uniforms.get("u_amount")
+        else {
+            return None;
+        };
+        Some((op, *amount))
+    }
+
+    let mut out: Vec<Vec<EffectPassDescriptor>> = Vec::with_capacity(groups.len());
+    let mut run: Vec<Vec<EffectPassDescriptor>> = Vec::new();
+
+    // Emit whatever has accumulated: unchanged if it is a single group, fused if it is a run.
+    fn flush(run: &mut Vec<Vec<EffectPassDescriptor>>, out: &mut Vec<Vec<EffectPassDescriptor>>) {
+        match run.len() {
+            0 => {}
+            1 => out.push(run.remove(0)),
+            _ => {
+                let mut stages = Vec::with_capacity(run.len() * 2);
+                let mut lut = None;
+                for group in run.iter() {
+                    let pass = &group[0];
+                    let (op, amount) =
+                        collapsible(group).expect("a run only ever holds collapsible groups");
+                    stages.push(op);
+                    stages.push(amount);
+                    if pass.lut.is_some() {
+                        lut = pass.lut.clone();
+                    }
+                }
+                out.push(vec![EffectPassDescriptor {
+                    shader: "color-stack".to_string(),
+                    uniforms: [(
+                        "u_stages".to_string(),
+                        EffectUniformValueDescriptor::Vector(stages),
+                    )]
+                    .into(),
+                    lut,
+                }]);
+                run.clear();
+            }
+        }
+    }
+
+    for group in groups {
+        let Some((op, _)) = collapsible(&group) else {
+            flush(&mut run, &mut out);
+            out.push(group);
+            continue;
+        };
+        let second_grade =
+            op == bay_effects::COLOR_STACK_OP_LUT && run.iter().any(|held| held[0].lut.is_some());
+        if run.len() == bay_effects::MAX_COLOR_STACK_STAGES || second_grade {
+            flush(&mut run, &mut out);
+        }
+        run.push(group);
+    }
+    flush(&mut run, &mut out);
+    out
 }
 
 /// How far a card may lean before the projection stops being a picture.
@@ -592,6 +722,14 @@ impl VideoClip {
 /// time, so the budget is a memory ceiling: rather than truncating long clips (which froze
 /// anything past ~15s on the last decoded frame), the sample rate is lowered so the cache still
 /// spans the clip's full duration.
+/// How far ahead of the playhead a clip's decoder is started during playback.
+///
+/// Long enough to cover an ffmpeg spawn, an accurate seek and the first decodes — measured at
+/// roughly a tenth of a second for a 1080p H.264 source, so this is generous. Short enough that
+/// a densely cut timeline does not hold a decoder for every clip in it: at one clip per second,
+/// two seconds of horizon is two extra processes, not two hundred.
+const PREROLL_SECONDS: f64 = 2.0;
+
 const VIDEO_MAX_WIDTH: u32 = 480;
 const VIDEO_MAX_FPS: f32 = 30.0;
 const VIDEO_MIN_FPS: f32 = 2.0;
@@ -618,6 +756,18 @@ pub enum DecodeIntent {
     /// Export: source resolution at the delivered frame rate, **streamed**. No memory budget
     /// applies because no whole clip is ever resident — a 4K clip cannot fit one and must not try.
     Export { fps: f32 },
+    /// Playback: preview size at **full rate**, streamed around the playhead.
+    ///
+    /// The third case, and it exists because the first two answer different questions than
+    /// "what does the next frame look like". `Preview` holds the whole clip so scrubbing is
+    /// instant, and pays for that in frame rate — a 29s vertical reel came out at 4.2 fps
+    /// against a 23.976 fps source, which on screen is a slideshow. `Export` streams at full
+    /// rate but at source resolution, which is far more pixels than a 640x360 preview can show.
+    ///
+    /// This is what a video player does: stream a window at full rate, throw it away behind,
+    /// and seek when the playhead jumps. Nothing is resident, so no budget applies and no
+    /// coverage promise has to be bought with frames.
+    Playback { fps: f32 },
 }
 
 /// The outcome of [`plan_decode`].
@@ -642,6 +792,7 @@ fn plan_decode(
     rotation: i32,
     duration_secs: f64,
     intent: DecodeIntent,
+    preview_budget: usize,
 ) -> DecodePlan {
     let (nw, nh) = natural;
     let (nw, nh) = if nw == 0 || nh == 0 {
@@ -680,13 +831,41 @@ fn plan_decode(
         };
     }
 
+    // Playback shares the preview's *size* and the export's *streaming*: small enough for a
+    // 640x360 composite, full rate, and `max_frames: None` because nothing is held.
+    if let DecodeIntent::Playback { fps } = intent {
+        let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32)
+            .min(VIDEO_MAX_WIDTH as f32 / nh as f32)
+            .min(1.0);
+        return DecodePlan {
+            width: even(nw as f32 * scale),
+            height: even(nh as f32 * scale),
+            fps: if fps.is_finite() && fps > 0.0 {
+                fps.min(VIDEO_MAX_FPS)
+            } else {
+                VIDEO_MAX_FPS
+            },
+            max_frames: None,
+        };
+    }
+
     // Downscale to the preview budget, keeping aspect; ffmpeg wants even dimensions.
-    let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32).min(1.0);
+    //
+    // Bounded on **both** sides, not just width. Capping width alone penalises portrait footage
+    // for being portrait: 1920x1080 lands at 480x270 (130k pixels) while 1080x1920 lands at
+    // 480x853 (409k) — 3.2x the pixels per frame, so 3.2x fewer frames fit the same budget, so
+    // the frame rate collapses. A 29s vertical reel decoded at 4.2 fps against a 23.976 fps
+    // source, which on screen is a slideshow. Nothing is lost by the tighter bound: the preview
+    // composites at 640x360, so a portrait clip is displayed about 202x360 and 270x480 is still
+    // oversampled.
+    let scale = (VIDEO_MAX_WIDTH as f32 / nw as f32)
+        .min(VIDEO_MAX_WIDTH as f32 / nh as f32)
+        .min(1.0);
     let (mut w, mut h) = (even(nw as f32 * scale), even(nh as f32 * scale));
 
     let duration = duration_secs.max(0.05);
     let frames_affordable =
-        (VIDEO_MEMORY_BUDGET / ((w as usize) * (h as usize) * 4).max(1)).max(1) as f64;
+        (preview_budget.max(1) / ((w as usize) * (h as usize) * 4).max(1)).max(1) as f64;
 
     // Coverage of the whole clip is non-negotiable — truncating it is what made long clips
     // freeze on their last decoded frame. So spend the budget on frame RATE first, and only
@@ -735,7 +914,13 @@ pub fn plan_decode_for_test(
     rotation: i32,
     duration_secs: f64,
 ) -> (u32, u32, f32, u32) {
-    let plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        VIDEO_MEMORY_BUDGET,
+    );
     (
         plan.width,
         plan.height,
@@ -761,7 +946,13 @@ pub fn clip_stream_samples_for_test(path: &str, fps: f32, at_seconds: &[f64]) ->
         ),
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
     };
-    let plan = plan_decode(natural, rotation, duration, DecodeIntent::Export { fps });
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration,
+        DecodeIntent::Export { fps },
+        VIDEO_MEMORY_BUDGET,
+    );
     let start = at_seconds.first().copied().unwrap_or(0.0);
     let Some(mut stream) = ClipStream::open(path, plan, start) else {
         return at_seconds.iter().map(|_| None).collect();
@@ -790,6 +981,7 @@ pub fn plan_export_decode_for_test(
         rotation,
         duration_secs,
         DecodeIntent::Export { fps },
+        VIDEO_MEMORY_BUDGET,
     )
 }
 
@@ -913,6 +1105,15 @@ impl ClipStream {
         })
     }
 
+    /// Pull the next frame and hand it over.
+    ///
+    /// The streaming *export* path lends `buffer` to its caller and re-uses it, which is right
+    /// there — one buffer, no allocation per frame. A playback worker cannot: the frame crosses
+    /// a thread boundary and has to own its pixels.
+    fn next_owned(&mut self) -> Option<Vec<u8>> {
+        self.advance().then(|| self.buffer.clone())
+    }
+
     /// Pull the next frame off the pipe into `buffer`. `false` once the source is exhausted.
     fn advance(&mut self) -> bool {
         if self.exhausted {
@@ -972,9 +1173,8 @@ impl Drop for ClipStream {
     }
 }
 
-/// The decoders an export has open, one per video element, opened on first use and closed once
-/// the timeline has moved past the element that needed them.
-#[derive(Default)]
+/// The decoders a stream-based pass has open, one per video element, opened on first use and
+/// closed once the timeline has moved past the element that needed them.
 struct ExportStreams {
     open: std::collections::HashMap<String, ClipStream>,
     /// Elements whose decoder could not be started. Remembered so a broken path costs one failed
@@ -986,8 +1186,9 @@ struct ExportStreams {
 impl ExportStreams {
     fn new(fps: f32) -> Self {
         Self {
+            open: std::collections::HashMap::new(),
+            failed: HashSet::new(),
             fps,
-            ..Default::default()
         }
     }
 
@@ -1015,6 +1216,7 @@ impl ExportStreams {
                 rotation,
                 duration,
                 DecodeIntent::Export { fps: self.fps },
+                VIDEO_MEMORY_BUDGET,
             );
             match ClipStream::open(path, plan, source_seconds) {
                 Some(stream) => {
@@ -1041,17 +1243,55 @@ impl ExportStreams {
 enum FrameSource<'a> {
     /// Preview: the whole clip, decoded once at preview size, indexed by time.
     Cache,
-    /// Export: source-resolution frames streamed in timeline order.
+    /// Export: source-resolution frames streamed in timeline order. Blocking is correct here —
+    /// an export must not skip a frame it has not decoded yet.
     Streams(&'a mut ExportStreams),
+    /// Playback: preview-sized frames taken from decoder threads, never waited for. A frame that
+    /// has not arrived shows the previous one; the render path does not stall for it.
+    Playback(&'a mut playback::PlaybackStreams),
 }
 
 /// Max distinct text rasters kept resident in the compositor store before the least-recently
 /// inserted is evicted. Static captions reuse one entry; inline editing churns keys, so we cap.
 const TEXT_CACHE_CAP: usize = 64;
 
+/// Longest side an image media asset is uploaded at.
+///
+/// The preview composites at 640x360 and export re-reads the source, so a texture larger than
+/// this is paid for and never seen. 1024 leaves headroom for a still scaled up inside the frame
+/// — a Ken Burns push on a photo is an ordinary thing to do — without letting a phone camera's
+/// 4000x3000 become 48 MB of resident texture. See `ensure_image_texture`.
+const IMAGE_MAX_DIMENSION: u32 = 1024;
+
 /// Ceiling on decoded video frames held across **all** clips. [`VIDEO_MEMORY_BUDGET`] bounds a
 /// single clip; without a global cap, ten imported clips would each claim their own budget.
 const GLOBAL_VIDEO_MEMORY_BUDGET: usize = 384 * 1024 * 1024;
+
+/// What one clip may claim when `clips` of them share [`GLOBAL_VIDEO_MEMORY_BUDGET`].
+///
+/// Without this every clip planned against the full 192 MB [`VIDEO_MEMORY_BUDGET`] regardless of
+/// how many others existed. Eight clips therefore planned 1.5 GB against a 384 MB ceiling, and
+/// the LRU spent playback evicting a clip to make room for the next one and then re-decoding it
+/// — on screen, a solid placeholder with real frames flashing through it for under a second at a
+/// time. `CLAUDE.md` names this exact regression: "cache budgets are global, not per clip …
+/// regressing this means N clips get N budgets."
+///
+/// Still capped at the single-clip budget, so one clip on its own is unchanged.
+fn distinct_video_clips(scene: &Scene) -> usize {
+    let mut seen = HashSet::new();
+    for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+        for element in &track.elements {
+            if let Element::Video(video) = element {
+                seen.insert(video.media_id.as_str());
+            }
+        }
+    }
+    seen.len()
+}
+
+fn preview_budget_per_clip(clips: usize) -> usize {
+    (GLOBAL_VIDEO_MEMORY_BUDGET / clips.max(1)).min(VIDEO_MEMORY_BUDGET)
+}
 
 /// Where a clip's decode has got to. Decoding runs on a worker thread so the render path never
 /// blocks: a 10-minute clip took ~33s of frozen UI when this was a synchronous call.
@@ -1084,13 +1324,28 @@ pub struct PreviewRenderer {
     readback: ReadbackPool,
     /// The interactive preview's readback, submitted on one tick and collected on a later one.
     pipelined: PipelinedReadback,
+    /// Decoders held open while the transport is running.
+    ///
+    /// Empty whenever playback is stopped, so a paused editor holds no ffmpeg processes. See
+    /// [`Self::set_playing`].
+    playback: playback::PlaybackStreams,
+    /// Whether the transport is running, and so whether frames come from streams or the cache.
+    playing: bool,
 }
 
 /// The container the picture and sound are wrapped in — as opposed to what is on the timeline.
 ///
 /// Before this existed the encoder was invoked with `-pix_fmt yuv420p` and nothing else, so
 /// every export took libx264's defaults whatever it was for: no way to ask for a smaller file,
-/// a better one, an alpha-capable codec, or a level a phone would play at a sensible volume.
+/// a better one, an editing codec, or a level a phone would play at a sensible volume.
+///
+/// **No export carries alpha.** H.264 and HEVC go out as `yuv420p` and ProRes as `yuv444p10le`,
+/// none of which has an alpha channel, so the composite's alpha is discarded at the encoder
+/// however transparent the timeline was. Nothing is lost today because
+/// [`bay_project::Background`] has only `Color` and `Blur` — a transparent canvas cannot be
+/// authored, so there is no alpha to keep. Both halves would have to change together, and
+/// naming the codec half here is what stops someone shipping one of them and believing it
+/// worked.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportSettings {
     pub codec: VideoCodec,
@@ -1141,6 +1396,13 @@ pub enum VideoCodec {
     Hevc,
     /// An editing codec: huge files, no generation loss, what you hand to someone else's
     /// timeline.
+    ///
+    /// bay asks for **ProRes 4444**, not the 422 HQ an editor would pick for camera footage.
+    /// The difference is chroma resolution, and it matters here because bay's output is
+    /// synthetic: 4:2:2 halves the horizontal chroma, which is invisible on a photographed
+    /// image and destructive on a one-pixel coloured stem. Measured, on 1px coloured strokes:
+    /// 4:2:2 is off by up to **61** code values, 4:4:4 by **0**. Two-pixel detail is fine
+    /// either way — the cliff is sharp and it lands exactly where small text lives.
     ProRes,
 }
 
@@ -1162,10 +1424,90 @@ impl VideoCodec {
         }
     }
 
+    /// VideoToolbox arguments for this codec, when the platform and the build both have it.
+    ///
+    /// `None` on anything but macOS, for ProRes (`prores_ks` is the profile-controllable one and
+    /// the fidelity format is where a software encoder earns its cost), and when this ffmpeg was
+    /// built without the encoders — a Homebrew build normally has them, a minimal static one may
+    /// not, and asking for an encoder that is not there fails the export rather than the frame.
+    ///
+    /// **Quality is remapped, not passed through.** bay's knob is x264's CRF: 0-51, lower is
+    /// better. VideoToolbox's `-q:v` is 0-100, higher is better. Handing one to the other
+    /// silently would make "best quality" mean "worst" — the kind of inversion that produces a
+    /// bug report about the highest setting looking wrong.
+    fn videotoolbox_args(self, quality: u32) -> Option<Vec<String>> {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        // Profile names are per *codec*, not shared. `high` is H.264's; HEVC has `main` and
+        // `main10` and rejects `high` outright — `hevc_videotoolbox` fails to open the output
+        // rather than picking something sensible, so an HEVC export dies at the first frame with
+        // "Undefined constant". The first version of this hardcoded `high` for both and the
+        // codec test caught it.
+        //
+        // The `hvc1` tag matters for the same reason it does on the software path: QuickTime
+        // will not open an HEVC file without it.
+        let (encoder, profile, tag): (&str, &str, Option<&str>) = match self {
+            Self::H264 => ("h264_videotoolbox", "high", None),
+            Self::Hevc => ("hevc_videotoolbox", "main", Some("hvc1")),
+            // ProRes is chosen for fidelity and hand-off, and `prores_ks` is the encoder whose
+            // profile bay actually sets (4444, for graphics rather than camera originals).
+            // Trading that for speed would be trading away the reason the format was picked.
+            Self::ProRes => return None,
+        };
+        if !encoder_available(encoder) {
+            return None;
+        }
+        // CRF 0..=51 (lower better) to q:v 0..=100 (higher better), linearly. CRF 20 — bay's
+        // usual — lands at 61, which measured 8.5 MB against libx264 CRF 20's 10.2 MB on the
+        // same 300 frames.
+        let q = 100u32
+            .saturating_sub(quality.min(51) * 100 / 51)
+            .clamp(1, 100);
+        let mut args = vec![
+            "-c:v".into(),
+            encoder.into(),
+            "-q:v".into(),
+            q.to_string(),
+            "-profile:v".into(),
+            profile.into(),
+        ];
+        if let Some(tag) = tag {
+            args.push("-tag:v".into());
+            args.push(tag.into());
+        }
+        args.push("-pix_fmt".into());
+        args.push("yuv420p".into());
+        Some(args)
+    }
+
     /// The encoder arguments for this codec at `quality`, and the pixel format that goes with
-    /// it. `yuv420p` is what every consumer player expects; ProRes wants a 10-bit 4:2:2 layout
-    /// and would otherwise be pointless.
+    /// it. `yuv420p` is what every consumer player expects.
+    ///
+    /// **ProRes is 10-bit whatever we ask for** — `prores_ks` offers `yuv422p10le`,
+    /// `yuv444p10le` and `yuva444p10le` and nothing else. That is a property of the codec, not
+    /// a claim about where the pixels came from, and transcoding 8-bit sources into it is the
+    /// ordinary case rather than a deception: the extra headroom is what stops the *encode*
+    /// adding a second rounding on top of the one the source already has. There is no 8-bit
+    /// ProRes to fall back to and asking for one is not a thing the format permits.
+    ///
+    /// What is a real choice is the chroma layout, and that is why the profile is 4444.
     fn encoder_args(self, quality: u32) -> Vec<String> {
+        // Apple's media engine encodes H.264 and HEVC in fixed-function silicon. Measured on
+        // this machine, 300 frames of 1080p piped as raw BGRA — which is bay's actual export
+        // path, not a transcode:
+        //
+        //   libx264 -preset medium   1.37 s wall   9.82 s CPU   10.2 MB
+        //   h264_videotoolbox        1.19 s wall   1.87 s CPU    8.5 MB
+        //
+        // Faster, a fifth of the CPU, and a smaller file. The wall-clock difference is small
+        // because libx264 saturates every core to get there — which is exactly the problem
+        // during an export, where the same cores are feeding the compositor, reading back
+        // frames and writing the pipe. A codec that wins by taking the whole machine is not
+        // winning.
+        if let Some(args) = self.videotoolbox_args(quality) {
+            return args;
+        }
         let quality = quality.min(51).to_string();
         match self {
             Self::H264 => vec![
@@ -1198,9 +1540,15 @@ impl VideoCodec {
                 "-c:v".into(),
                 "prores_ks".into(),
                 "-profile:v".into(),
-                "3".into(), // 422 HQ
+                // 4444, not 422 HQ. 4444 is the profile ProRes has for graphics and
+                // compositing handoff; 422 is the one for camera originals. bay produces the
+                // former. The cost is roughly 1.4x the file, on a format chosen for fidelity.
+                "4".into(),
                 "-pix_fmt".into(),
-                "yuv422p10le".into(),
+                // 4:4:4, so a coloured pixel survives as the colour it was. The alpha-carrying
+                // sibling `yuva444p10le` is the same profile and would be the one to reach for
+                // if a transparent background ever becomes authorable — see `Background`.
+                "yuv444p10le".into(),
             ],
         }
     }
@@ -1278,6 +1626,8 @@ impl PreviewRenderer {
             raster_order: std::collections::VecDeque::new(),
             readback: ReadbackPool::new(),
             pipelined: PipelinedReadback::new(),
+            playback: playback::PlaybackStreams::default(),
+            playing: false,
         })
     }
 
@@ -1398,6 +1748,20 @@ impl PreviewRenderer {
     /// compositor died with `MissingTexture`. Eviction now happens in [`Self::evict_rasters`]
     /// after the frame is submitted, and never touches a key that frame used.
     fn remember_raster(&mut self, key: String) {
+        // Move-to-back, not push-back, so touching a key already in the cache does not append a
+        // duplicate. Text rasters are remembered once each on creation and never noticed this;
+        // images are touched on *every frame they are on screen*, which under a plain push would
+        // grow the queue by one entry per frame — thirty a second — and make the eviction pass
+        // walk a queue that is mostly stale copies of the same handful of keys.
+        //
+        // This is also what `touch_clip` does for the video LRU, and for the same reason.
+        if let Some(index) = self
+            .raster_order
+            .iter()
+            .position(|existing| *existing == key)
+        {
+            self.raster_order.remove(index);
+        }
         self.raster_keys.insert(key.clone());
         self.raster_order.push_back(key);
     }
@@ -1421,6 +1785,13 @@ impl PreviewRenderer {
             }
             self.raster_keys.remove(&candidate);
             self.compositor.release_texture(&candidate);
+            // An image's *decoded size* is remembered separately from its texture, and evicting
+            // one without the other is worse than not evicting at all: `ensure_image_texture`
+            // short-circuits on `uploaded_media`, so the entry would keep claiming the image was
+            // uploaded while its texture had just been released, and the layer would draw with a
+            // texture id the compositor no longer has. Text rasters are not in this map, so this
+            // is a no-op for them.
+            self.uploaded_media.remove(&candidate);
             skipped = 0;
         }
     }
@@ -1451,7 +1822,7 @@ impl PreviewRenderer {
 
     /// Advance a clip's decode state: start a worker if this is the first sighting, otherwise
     /// check whether the worker has finished. Never blocks.
-    fn poll_decode(&mut self, media_id: &str, path: Option<&str>) {
+    fn poll_decode(&mut self, media_id: &str, path: Option<&str>, budget: usize) {
         match self.video_cache.get(media_id) {
             None => {
                 let Some(path) = path else {
@@ -1465,7 +1836,7 @@ impl PreviewRenderer {
                 // Detached worker: the receiver is the only handle we keep. If the renderer is
                 // dropped first the send simply fails and the thread exits.
                 std::thread::spawn(move || {
-                    let _ = tx.send(decode_video_clip(&owned));
+                    let _ = tx.send(decode_video_clip(&owned, budget));
                 });
                 self.video_cache
                     .insert(media_id.to_string(), ClipState::Pending(rx));
@@ -1508,28 +1879,62 @@ impl PreviewRenderer {
     }
 
     /// Decode + upload an image media asset once, returning its texture id, or `None` on failure.
-    /// Returns the texture id and the image's natural pixel size (needed to fit it without
-    /// distortion); the size is cached alongside the upload so repeats stay cheap.
+    ///
+    /// Returns the texture id and the image's **natural** pixel size — the caller fits the layer
+    /// with it, so it must stay the source's aspect and not the uploaded texture's.
+    ///
+    /// The upload itself is downscaled to [`IMAGE_MAX_DIMENSION`] and the entry joins the raster
+    /// LRU. Neither was true before (`fixes.md` 17): images uploaded at full source size and sat
+    /// outside every budget in the file. Video has `GLOBAL_VIDEO_MEMORY_BUDGET`, text has
+    /// `TEXT_CACHE_CAP`; images had neither, because `remember_raster` was never called for them,
+    /// so `evict_rasters` could not see them. A 4000x3000 photo was 48 MB of texture held for the
+    /// session to draw a preview that composites at 640x360 — and a twenty-photo project was
+    /// most of a gigabyte to draw postcards.
+    ///
+    /// The downscale is the larger half of the saving and the smaller half of the change.
     fn ensure_image_texture(
         &mut self,
         media_id: &str,
         media: &[MediaAsset],
     ) -> Option<(String, (u32, u32))> {
         if let Some(size) = self.uploaded_media.get(media_id) {
-            return Some((media_id.to_string(), *size));
+            let size = *size;
+            // Touch it, or the LRU evicts the image the frame is using.
+            self.remember_raster(media_id.to_string());
+            return Some((media_id.to_string(), size));
         }
         let path = media.iter().find(|m| m.id == media_id)?.path.clone();
         let decoded = image::open(&path).ok()?;
-        let rgba = decoded.to_rgba8();
-        let (width, height) = rgba.dimensions();
+        let natural = (decoded.width().max(1), decoded.height().max(1));
+
+        // Bounded on both sides, for the reason `plan_decode` is: capping width alone penalises
+        // a portrait source for being portrait, and a panorama for being wide.
+        let scale = (IMAGE_MAX_DIMENSION as f32 / natural.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / natural.1 as f32)
+            .min(1.0);
+        let upload = if scale < 1.0 {
+            decoded
+                .resize(
+                    ((natural.0 as f32 * scale).round() as u32).max(1),
+                    ((natural.1 as f32 * scale).round() as u32).max(1),
+                    image::imageops::FilterType::Triangle,
+                )
+                .to_rgba8()
+        } else {
+            decoded.to_rgba8()
+        };
+        let (width, height) = upload.dimensions();
         let texture =
             self.ctx
-                .upload_rgba_texture(&rgba.into_raw(), width, height, "preview-image")?;
+                .upload_rgba_texture(&upload.into_raw(), width, height, "preview-image")?;
         self.compositor
             .upsert_texture(media_id.to_string(), texture);
-        self.uploaded_media
-            .insert(media_id.to_string(), (width, height));
-        Some((media_id.to_string(), (width, height)))
+        // The *natural* size is what the caller fits with; the upload is only how many pixels
+        // back it. Recording the uploaded size here would letterbox every downscaled image by
+        // whatever rounding the resize introduced.
+        self.uploaded_media.insert(media_id.to_string(), natural);
+        self.remember_raster(media_id.to_string());
+        Some((media_id.to_string(), natural))
     }
 
     /// Upload an 8×8 solid placeholder for an element and return its texture id.
@@ -1568,6 +1973,7 @@ impl PreviewRenderer {
         scene: &Scene,
         media: &[MediaAsset],
     ) -> Result<(), String> {
+        let budget = preview_budget_per_clip(distinct_video_clips(scene));
         for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
             for element in &track.elements {
                 let Element::Video(video) = element else {
@@ -1578,7 +1984,7 @@ impl PreviewRenderer {
                     .find(|m| m.id == video.media_id)
                     .map(|m| m.path.clone());
                 loop {
-                    self.poll_decode(&video.media_id, path.as_deref());
+                    self.poll_decode(&video.media_id, path.as_deref(), budget);
                     match self.video_cache.get(&video.media_id) {
                         Some(ClipState::Pending(_)) => {
                             std::thread::sleep(std::time::Duration::from_millis(10))
@@ -1680,7 +2086,8 @@ impl PreviewRenderer {
             "-f".into(),
             "rawvideo".into(),
             "-pix_fmt".into(),
-            "rgba".into(),
+            // BGRA, because that is what `PreviewFrame` carries. See the note at the write.
+            "bgra".into(),
             "-s".into(),
             format!("{width}x{height}"),
             "-r".into(),
@@ -1695,58 +2102,7 @@ impl PreviewRenderer {
         }
 
         if !audio_clips.is_empty() {
-            // Delay each clip to its timeline start, trim it to its own duration, apply its
-            // gain, then sum them. `adelay` wants milliseconds per channel; `all=1` applies
-            // the same delay to every channel rather than only the first.
-            let mut filters = String::new();
-            for (index, clip) in audio_clips.iter().enumerate() {
-                filters.push_str(&format!(
-                    "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
-                     asetpts=PTS-STARTPTS,{processing}{volume},\
-                     atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
-                    input = index + 1,
-                    start = clip.trim_start_seconds,
-                    source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
-                    duration = clip.duration_seconds,
-                    processing = clip.processing_filters(),
-                    volume = clip.volume_filter(),
-                    // After the trim, so the tail fade is measured against the clip's real
-                    // length, and before the delay, so `st` is clip-relative.
-                    fades = clip.fade_filters(),
-                    delay_ms = (clip.start_seconds * 1000.0).round() as i64,
-                ));
-            }
-            for index in 0..audio_clips.len() {
-                filters.push_str(&format!("[a{index}]"));
-            }
-            filters.push_str(&format!(
-                "amix=inputs={count}:normalize=0:dropout_transition=0",
-                count = audio_clips.len()
-            ));
-            // One-pass loudnorm. Two passes would measure first and be exact, but that means
-            // decoding the whole mix twice; within about a dB is the difference between a reel
-            // that arrives at a sensible level and one the platform turns up along with its
-            // noise floor.
-            if let Some(target) = settings.loudness_lufs {
-                filters.push_str(&format!(",loudnorm=I={target:.1}:TP=-1.5:LRA=11"));
-            }
-            // `loudnorm` runs internally at 192 kHz and hands back 96 kHz, so a chain that ends
-            // on it delivers a 96 kHz file — double the AAC bitrate for nothing, and a rate every
-            // platform re-encodes anyway. `amix` separately takes its channel layout from its
-            // FIRST input, so a mono narration clip placed before the bed collapsed the whole
-            // mix to mono. Both were measured in shipped files. Pin the delivery format here,
-            // after everything that could have changed it, rather than trusting the chain.
-            filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
-            // Pad the bed with silence, forever. `-shortest` below ends the file at the
-            // shortest stream, and without this that stream is the audio whenever the last
-            // audible clip stops before the picture does — an eight-second reel with a
-            // 0.7 s stinger at 4.85 s came out 5.6 s long, missing its whole end card, and
-            // ffmpeg reported success. Padding makes the audio effectively infinite, so the
-            // picture is always the shortest stream and always the one that sets the length.
-            // Placed after `loudnorm`, which must measure the real mix and not the silence.
-            filters.push_str(",apad");
-            filters.push_str("[aout]");
-
+            let filters = audio_filter_chain(&audio_clips, settings, duration_seconds);
             args.push("-filter_complex".into());
             args.push(filters);
             args.push("-map".into());
@@ -1838,11 +2194,12 @@ impl PreviewRenderer {
                 ));
                 break;
             };
-            let mut rgba = frame.bgra;
-            for texel in rgba.chunks_exact_mut(4) {
-                texel.swap(0, 2); // BGRA → RGBA for ffmpeg input
-            }
-            if let Err(e) = stdin.write_all(&rgba) {
+            // Written as they come off the GPU. The compositor reads back BGRA, ffmpeg accepts
+            // `-pix_fmt bgra` natively, and the swizzle that used to sit here converted every
+            // pixel of every frame for nothing: 0.571 ms per 1080p frame, measured — half a
+            // second of CPU across a 30-second export, spent turning bytes into other bytes so a
+            // decoder could turn them back. The input format below is the whole fix.
+            if let Err(e) = stdin.write_all(&frame.bgra) {
                 // Used to `break` and return whatever ffmpeg had written — a truncated MP4 at the
                 // destination path, indistinguishable from a good one.
                 failure = Some(format!("ffmpeg stopped accepting frames: {e}"));
@@ -1991,15 +2348,53 @@ impl PreviewRenderer {
         if self.pipelined.is_pending() {
             return false;
         }
-        let Some(texture) = self.composite_inner(
-            scene,
-            playhead,
-            width,
-            height,
-            background,
-            media,
-            FrameSource::Cache,
-        ) else {
+        // While the transport runs, frames come from streams positioned at the playhead rather
+        // than from the whole-clip cache. The cache buys instant scrubbing by lowering the frame
+        // *rate* to fit a memory budget — the right trade when the playhead is being dragged and
+        // the wrong one when it is running, where it shows as a slideshow.
+        //
+        // `close_all` on stop means a paused editor holds no decoders; playback re-opens them,
+        // and `ClipStream` seeks by respawning, so a jump costs one spawn rather than a stall.
+        let texture = if self.playing {
+            // Moved out and back so the streams can be borrowed mutably alongside `self`.
+            let mut streams = std::mem::take(&mut self.playback);
+            // Open what is about to be needed, then close what no longer is — in that order and
+            // from the same set, so a clip inside the horizon is never opened and closed on the
+            // same frame.
+            //
+            // The eviction is not optional bookkeeping. `PlaybackStreams::retain_only` existed
+            // with a doc comment promising exactly this and **had no caller at all**; the only
+            // pruning was `close_all` when the transport stopped. Every clip a playback pass
+            // touched kept its window (~99 MB) and its ffmpeg child until you pressed stop, so a
+            // hundred-clip timeline played through once held a hundred processes. The comment on
+            // `warm_upcoming` asserted this was handled, which made it worse — a false claim of a
+            // bound reads as a checked one.
+            let live = playback_video_elements(scene, playhead);
+            Self::warm_upcoming(scene, playhead, media, &live, &mut streams);
+            streams.retain_only(&live);
+            let texture = self.composite_inner(
+                scene,
+                playhead,
+                width,
+                height,
+                background,
+                media,
+                FrameSource::Playback(&mut streams),
+            );
+            self.playback = streams;
+            texture
+        } else {
+            self.composite_inner(
+                scene,
+                playhead,
+                width,
+                height,
+                background,
+                media,
+                FrameSource::Cache,
+            )
+        };
+        let Some(texture) = texture else {
             return false;
         };
         self.ctx
@@ -2018,6 +2413,115 @@ impl PreviewRenderer {
     /// Loading a different project is the case that needs this: the composite in flight is of
     /// the *old* project, and collecting it would put the previous project's last frame up as
     /// the new one's first.
+    /// Tell the renderer whether the transport is running.
+    ///
+    /// Playing switches the preview onto streaming decoders positioned at the playhead: preview
+    /// size, full rate, nothing resident. Stopping closes every one of them, so a paused editor
+    /// holds no ffmpeg processes — a window left open overnight must not be a decoder per clip.
+    ///
+    /// The two modes exist because they answer different questions. The whole-clip cache buys
+    /// instant scrubbing by spending its memory budget on coverage and lowering the frame *rate*
+    /// to fit; measured on a 29s vertical reel that was 4.2 fps against a 23.976 fps source.
+    /// Streaming buys frame rate and pays for a seek. A scrub wants the first, a play the second.
+    pub fn set_playing(&mut self, playing: bool) {
+        if self.playing == playing {
+            return;
+        }
+        self.playing = playing;
+        if !playing {
+            self.playback.close_all();
+        }
+    }
+
+    /// Open decoders for clips the playhead is about to reach.
+    ///
+    /// Playback opens a clip's decoder on the first frame that needs it, which is the frame the
+    /// cut lands on — so the process spawn, the seek and the first decode all happen while that
+    /// clip is already meant to be on screen, and it shows as a flash of flat colour at every
+    /// cut. Starting them [`PREROLL_SECONDS`] early costs one ffmpeg process per upcoming clip
+    /// for a moment and makes the switch seamless.
+    ///
+    /// Bounded by the horizon in [`playback_video_elements`], which is also what the eviction
+    /// beside this call keeps. A timeline of two hundred clips holds decoders for the handful
+    /// inside the horizon, not for two hundred.
+    fn warm_upcoming(
+        scene: &Scene,
+        playhead: MediaTime,
+        media: &[MediaAsset],
+        live: &HashSet<String>,
+        streams: &mut playback::PlaybackStreams,
+    ) {
+        for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+            if track.hidden {
+                continue;
+            }
+            for element in &track.elements {
+                // Inside the horizon, and not already under the playhead — those are opened by
+                // `frame_at` on this very frame, so warming them is the same hash lookup twice.
+                if !live.contains(element.id()) || element.start() <= playhead {
+                    continue;
+                }
+                let Element::Video(video) = element else {
+                    continue;
+                };
+                let Some(path) = media
+                    .iter()
+                    .find(|m| m.id == video.media_id)
+                    .map(|m| m.path.clone())
+                else {
+                    continue;
+                };
+                // The source time at the clip's own first frame — local time zero, which is
+                // where the playhead will be when it arrives.
+                let source_seconds = element
+                    .source_time(MediaTime::ZERO)
+                    .map(|time| time.to_seconds_f64())
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                let owned = path.clone();
+                streams.warm(element.id(), source_seconds, move |at| {
+                    open_playback_source(&owned, at)
+                });
+            }
+        }
+    }
+
+    /// Drop every cache keyed by media id, because a different project is about to use the same
+    /// keys for different files.
+    ///
+    /// Media ids are `media-{n}` from a per-view counter (`editor/panels.rs`), so `media-1` in
+    /// one project and `media-1` in another are the *same key*. Every one of these maps is keyed
+    /// by it, and none of them was cleared on a project switch — so opening a second project drew
+    /// the first project's video frames and image textures under the second one's clips. That is
+    /// a correctness bug wearing a memory bug's clothes: the leak is what you measure, the wrong
+    /// picture is what you see.
+    ///
+    /// Textures are released through the compositor rather than dropped with the map. Removing a
+    /// key from `uploaded_media` alone leaves the GPU texture alive in the compositor's own store
+    /// under the same id, which is both the leak and the stale picture again.
+    pub fn clear_media_caches(&mut self) {
+        for media_id in self.uploaded_media.keys() {
+            self.compositor.release_texture(media_id);
+        }
+        self.uploaded_media.clear();
+        self.video_cache.clear();
+        self.luts = LutCache::default();
+        self.playback.close_all();
+    }
+
+    /// Whether the preview is currently streaming rather than reading the cache.
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    /// Playback window counters since the last call, for the frame-time probe.
+    ///
+    /// Reset on read, so the caller reports a rate over its own window rather than a total that
+    /// has to be differenced. See [`playback::PlaybackStats`] for what each field distinguishes.
+    pub fn take_playback_stats(&mut self) -> playback::PlaybackStats {
+        self.playback.take_stats()
+    }
+
     pub fn discard_composite(&mut self) {
         self.ctx.discard_readback(&mut self.pipelined);
     }
@@ -2048,6 +2552,10 @@ impl PreviewRenderer {
             Background::Color { color } => hex_to_rgba(color),
             Background::Blur { .. } => [0.06, 0.06, 0.08, 1.0],
         };
+        // What each clip may hold, given how many share the global cache. Computed per frame
+        // because the answer changes when a clip is added or removed, and a stale share is how
+        // the cache ends up over-committed again.
+        let clip_budget = preview_budget_per_clip(distinct_video_clips(scene));
 
         // Main lane first (bottom), then overlay lanes (on top) — the compositor blends in order.
         let mut items = Vec::new();
@@ -2223,7 +2731,7 @@ impl PreviewRenderer {
                             // Doing this inline used to block the render path for the whole
                             // decode (~33s of frozen UI for a 10-minute clip).
                             FrameSource::Cache => {
-                                self.poll_decode(&media_id, path.as_deref());
+                                self.poll_decode(&media_id, path.as_deref(), clip_budget);
                                 let frame = self
                                     .video_cache
                                     .get(&media_id)
@@ -2255,6 +2763,25 @@ impl PreviewRenderer {
                                 .and_then(|(w, h, rgba)| {
                                     self.ctx
                                         .upload_rgba_texture(rgba, w, h, "export-video")
+                                        .map(|texture| (texture, w, h))
+                                }),
+                            // Whatever a decoder thread has ready. Opening a clip builds the
+                            // ffmpeg stream *inside* the worker, so even the spawn is off the
+                            // render path — that spawn on the render thread was half the stall.
+                            FrameSource::Playback(streams) => path
+                                .as_deref()
+                                .and_then(|path| {
+                                    let owned = path.to_string();
+                                    streams.frame_at(
+                                        element.id(),
+                                        path,
+                                        source_seconds,
+                                        move |at| open_playback_source(&owned, at),
+                                    )
+                                })
+                                .and_then(|(w, h, rgba)| {
+                                    self.ctx
+                                        .upload_rgba_texture(rgba, w, h, "playback-video")
                                         .map(|texture| (texture, w, h))
                                 }),
                         };
@@ -2386,7 +2913,7 @@ impl PreviewRenderer {
 ///
 /// NOTE: this blocks for the whole decode (seconds, for a long clip) and is currently called
 /// from the render path. Moving it off-thread is tracked as M9 in the parity plan.
-fn decode_video_clip(path: &str) -> Option<VideoClip> {
+fn decode_video_clip(path: &str, budget: usize) -> Option<VideoClip> {
     // Probe first so the decode matches the source's real display aspect and length.
     let (natural, rotation, duration_secs) = match probe::probe_media(path) {
         Ok(meta) => (
@@ -2396,7 +2923,13 @@ fn decode_video_clip(path: &str) -> Option<VideoClip> {
         ),
         Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 10.0),
     };
-    let plan = plan_decode(natural, rotation, duration_secs, DecodeIntent::Preview);
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        budget,
+    );
     let (decode_w, decode_h, fps) = (plan.width, plan.height, plan.fps);
 
     let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
@@ -2438,6 +2971,15 @@ pub struct AudibleClip {
     pub dialogue_chain: Option<bay_project::DialogueAudioChain>,
     /// Linear gain. 1.0 is unity. Constant when `gain_points` holds one point or none.
     pub volume: f32,
+    /// Where the clip sits across the stereo field, `-1.0` left to `1.0` right — the clip's own
+    /// pan, before its lane has had a say.
+    pub pan: f32,
+    /// The lane's pan, composed with the clip's the same way the streaming mixer composes them:
+    /// multiplied per channel, clip stage first. See [`bay_audio::composed_pan_gains`].
+    pub track_pan: f32,
+    /// The lane's fader, linear. A second gain stage on top of `volume`/`gain_points`, exactly
+    /// as `bay_audio::stream::StreamClip::track_gain` is for the preview.
+    pub track_gain: f32,
     /// The clip's level over its own length as `(seconds, gain)` — volume keyframes, taken
     /// from the same model function the preview mixer reads, so the export cannot duck in a
     /// different place than the room did.
@@ -2624,11 +3166,57 @@ impl AudibleClip {
         out
     }
 
+    /// The ffmpeg fragment that places this clip across the stereo field.
+    ///
+    /// Empty for a centred clip on a centred lane, so a project that has never touched pan
+    /// exports the byte-identical filtergraph it always did — and a centred clip is not
+    /// re-levelled by a law that puts centre anywhere but unity.
+    ///
+    /// The two coefficients come from [`bay_audio::composed_pan_gains`], the *same* function
+    /// the preview block mixer multiplies by. That is the whole point: a new audio capability
+    /// has to be expressible as a filter string here **and** as Rust DSP in `bay-audio`, or it
+    /// is audible in only one of the two, and this one is expressible as both because both read
+    /// one implementation of the law.
+    ///
+    /// `aformat` first because `pan=stereo|c0=…|c1=…` names two input channels and a mono
+    /// source has one. Forcing the clip to stereo duplicates it into both, which is exactly
+    /// what the block mixer does with a mono source before applying the same gains.
+    fn pan_filter(&self) -> String {
+        let gains = bay_audio::composed_pan_gains(self.pan, self.track_pan);
+        if gains == bay_audio::CENTRE {
+            return String::new();
+        }
+        format!(
+            "aformat=channel_layouts=stereo,pan=stereo|c0={:.6}*c0|c1={:.6}*c1,",
+            gains[0], gains[1]
+        )
+    }
+
+    /// The lane's fader, folded into the clip's own level.
+    ///
+    /// Gain stages multiply, so the export applies the product exactly as the block mixer does.
+    /// Non-finite is unity rather than silence: a fader that arrived as `NaN` must not be able
+    /// to delete a track from a render.
+    fn track_gain(&self) -> f32 {
+        if self.track_gain.is_finite() {
+            self.track_gain.max(0.0)
+        } else {
+            1.0
+        }
+    }
+
     fn volume_filter(&self) -> String {
-        let decimated = decimate_gain_points(&self.gain_points, MAX_GAIN_EXPRESSION_POINTS);
+        let track_gain = self.track_gain();
+        // Through the model's own scaler, so the export folds a lane's fader into the level
+        // curve by exactly the arithmetic the preview does.
+        let scaled = bay_project::scale_gain_points(&self.gain_points, track_gain);
+        let decimated = decimate_gain_points(&scaled, MAX_GAIN_EXPRESSION_POINTS);
         let points: Vec<&(f64, f32)> = decimated.iter().collect();
         if points.len() < 2 {
-            let gain = points.first().map(|(_, g)| *g).unwrap_or(self.volume);
+            let gain = points
+                .first()
+                .map(|(_, g)| *g)
+                .unwrap_or(self.volume * track_gain);
             return format!("volume={gain:.4}");
         }
         // Built from the last segment backwards, so each `if` only has to decide "before this
@@ -2672,10 +3260,202 @@ fn atempo_filters(speed: f32) -> Vec<String> {
 /// Skips muted tracks, muted clips, silent clips (`volume <= 0`), zero-length clips, and any
 /// clip whose `media_id` does not resolve to a file — each of those would otherwise become an
 /// ffmpeg input that contributes nothing, and an unresolvable path would fail the whole encode.
+///
+/// **Solo is decided here, once, through [`bay_project::Track::mix_gain`]** — the same function
+/// the preview mixer's clip builder calls. Soloing is the kind of state that gets reimplemented
+/// per front end and then disagrees; the export dropping a lane the room still hears is a
+/// difference nobody finds until the file comes back.
+/// How far past the picture the padded silence runs.
+///
+/// Enough that the picture is unambiguously the shortest stream after any rounding in the audio
+/// filter chain, and small enough that a bounded pad can never become an unbounded one.
+pub const AUDIO_PAD_MARGIN: f64 = 1.0;
+
+/// The `-filter_complex` chain that mixes every audible clip into one delivery stream.
+///
+/// Split out of `export_video_observed` so the one property that cannot be observed from a small
+/// test render can be asserted directly: **the silence at the end is bounded.** A bare `apad`
+/// runs forever, and an infinite audio source against a video pipe that delivers one composited
+/// frame at a time fills ffmpeg's inter-thread queue and kills the export with ENOSPC. That
+/// failure needs a slow enough picture to reproduce — a 1080x1920 reel does it, the 64x64
+/// one-second render in the export tests never will — so the guard belongs here, on the string,
+/// where it costs nothing to check.
+#[cfg(test)]
+mod audio_pad_tests {
+    use super::*;
+
+    fn clip(start: f64, duration: f64) -> AudibleClip {
+        AudibleClip {
+            path: "/tmp/bed.wav".into(),
+            start_seconds: start,
+            trim_start_seconds: 0.0,
+            duration_seconds: duration,
+            speed: 1.0,
+            dialogue_chain: None,
+            volume: 1.0,
+            pan: 0.0,
+            track_pan: 0.0,
+            track_gain: 1.0,
+            gain_points: Vec::new(),
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
+        }
+    }
+
+    /// The regression, stated as a property of the chain rather than of a render.
+    ///
+    /// A bare `apad` generates silence forever. The picture arrives one composited frame at a
+    /// time, so an unbounded audio source outruns it, fills ffmpeg's inter-thread queue, and
+    /// the export dies reporting ENOSPC — "No space left on device", with the disk empty. It
+    /// took a 1080x1920 timeline to reproduce; the export tests render 64x64 for one second and
+    /// never will.
+    #[test]
+    fn the_silence_at_the_end_is_bounded() {
+        let chain = audio_filter_chain(&[clip(0.0, 10.0)], &ExportSettings::default(), 47.2667);
+        assert!(
+            chain.contains("apad="),
+            "the pad must be bounded, got: {chain}"
+        );
+        assert!(
+            !chain.contains(",apad[") && !chain.ends_with(",apad"),
+            "a bare apad runs forever: {chain}"
+        );
+    }
+
+    /// Bounded, but still longer than the picture — otherwise `-shortest` could end the file on
+    /// the audio and cut the last frames, which is the bug the pad was added to fix.
+    #[test]
+    fn the_pad_outlasts_the_picture() {
+        for duration in [1.0, 8.0, 47.2667] {
+            let chain = audio_filter_chain(&[clip(0.0, 0.5)], &ExportSettings::default(), duration);
+            let value: f64 = chain
+                .split("apad=whole_dur=")
+                .nth(1)
+                .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit() && c != '.').next())
+                .and_then(|n| n.parse().ok())
+                .unwrap_or_else(|| panic!("no whole_dur in {chain}"));
+            assert!(
+                value > duration,
+                "padded to {value}s for a {duration}s picture — the audio could end the file"
+            );
+        }
+    }
+
+    /// A zero-length or negative window must not produce a negative duration, which ffmpeg
+    /// rejects outright and which would fail every export rather than only the slow ones.
+    #[test]
+    fn a_degenerate_duration_still_produces_a_legal_pad() {
+        for duration in [0.0, -5.0] {
+            let chain = audio_filter_chain(&[clip(0.0, 1.0)], &ExportSettings::default(), duration);
+            assert!(chain.contains("apad=whole_dur="), "{chain}");
+            assert!(!chain.contains("whole_dur=-"), "negative pad: {chain}");
+        }
+    }
+
+    /// The rest of the chain is unchanged by the fix: the mix still ends pinned to the delivery
+    /// format, and the pad still comes after loudnorm so the measurement sees the real mix.
+    #[test]
+    fn the_pad_comes_after_loudnorm_and_before_the_output_label() {
+        let settings = ExportSettings {
+            loudness_lufs: Some(-14.0),
+            ..ExportSettings::default()
+        };
+        let chain = audio_filter_chain(&[clip(0.0, 4.0)], &settings, 8.0);
+        let loudnorm = chain.find("loudnorm").expect("loudnorm present");
+        let pad = chain.find("apad=").expect("pad present");
+        let out = chain.find("[aout]").expect("output label present");
+        assert!(loudnorm < pad, "the pad must not be measured by loudnorm");
+        assert!(pad < out, "the pad must be inside the chain");
+        assert!(
+            chain.contains("aresample=48000"),
+            "delivery rate lost: {chain}"
+        );
+    }
+}
+
+fn audio_filter_chain(
+    audio_clips: &[AudibleClip],
+    settings: &ExportSettings,
+    duration_seconds: f64,
+) -> String {
+    // Delay each clip to its timeline start, trim it to its own duration, apply its
+    // gain, then sum them. `adelay` wants milliseconds per channel; `all=1` applies
+    // the same delay to every channel rather than only the first.
+    let mut filters = String::new();
+    for (index, clip) in audio_clips.iter().enumerate() {
+        filters.push_str(&format!(
+            "[{input}:a]atrim=start={start:.4}:duration={source_duration:.4},\
+             asetpts=PTS-STARTPTS,{processing}{pan}{volume},\
+             atrim=duration={duration:.4},{fades}adelay={delay_ms}:all=1[a{index}];",
+            input = index + 1,
+            start = clip.trim_start_seconds,
+            source_duration = clip.duration_seconds * f64::from(clip.speed.max(0.01)),
+            duration = clip.duration_seconds,
+            processing = clip.processing_filters(),
+            // Before the level, because the level may be a per-frame expression and
+            // `pan` is a fixed matrix — putting the matrix after it would make the
+            // stereo placement depend on where in a duck the frame fell.
+            pan = clip.pan_filter(),
+            volume = clip.volume_filter(),
+            // After the trim, so the tail fade is measured against the clip's real
+            // length, and before the delay, so `st` is clip-relative.
+            fades = clip.fade_filters(),
+            delay_ms = (clip.start_seconds * 1000.0).round() as i64,
+        ));
+    }
+    for index in 0..audio_clips.len() {
+        filters.push_str(&format!("[a{index}]"));
+    }
+    filters.push_str(&format!(
+        "amix=inputs={count}:normalize=0:dropout_transition=0",
+        count = audio_clips.len()
+    ));
+    // One-pass loudnorm. Two passes would measure first and be exact, but that means
+    // decoding the whole mix twice; within about a dB is the difference between a reel
+    // that arrives at a sensible level and one the platform turns up along with its
+    // noise floor.
+    if let Some(target) = settings.loudness_lufs {
+        filters.push_str(&format!(",loudnorm=I={target:.1}:TP=-1.5:LRA=11"));
+    }
+    // `loudnorm` runs internally at 192 kHz and hands back 96 kHz, so a chain that ends
+    // on it delivers a 96 kHz file — double the AAC bitrate for nothing, and a rate every
+    // platform re-encodes anyway. `amix` separately takes its channel layout from its
+    // FIRST input, so a mono narration clip placed before the bed collapsed the whole
+    // mix to mono. Both were measured in shipped files. Pin the delivery format here,
+    // after everything that could have changed it, rather than trusting the chain.
+    filters.push_str(",aresample=48000,aformat=channel_layouts=stereo");
+    // Pad the bed with silence to just past the picture. `-shortest` below ends the
+    // file at the shortest stream, and without any padding that stream is the audio
+    // whenever the last audible clip stops before the picture does — an eight-second
+    // reel with a 0.7 s stinger at 4.85 s came out 5.6 s long, missing its whole end
+    // card, and ffmpeg reported success.
+    //
+    // **The pad is BOUNDED, and that bound is load-bearing.** A bare `apad` generates
+    // silence forever. The picture arrives one composited frame at a time through
+    // `pipe:0` and a 1080x1920 frame with overlays takes tens of milliseconds, so
+    // ffmpeg drains the audio graph far ahead of the video and queues the result;
+    // with an infinite source it never stops, the inter-thread queue fills, and
+    // ffmpeg 7/8's scheduler reports a full queue as **ENOSPC** — a render that dies
+    // saying "No space left on device" with the disk 117 GB empty. Measured on a
+    // 47 s reel: every export with audio failed around frame 109. `whole_dur` makes
+    // the silence finite while still outlasting the picture, so the picture is still
+    // the shortest stream and still the one that sets the length.
+    //
+    // Placed after `loudnorm`, which must measure the real mix and not the silence.
+    filters.push_str(&format!(
+        ",apad=whole_dur={:.4}",
+        duration_seconds.max(0.0) + AUDIO_PAD_MARGIN
+    ));
+    filters.push_str("[aout]");
+    filters
+}
+
 fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
     let mut clips = Vec::new();
+    let any_solo = scene.tracks.any_audio_solo();
     for track in &scene.tracks.audio {
-        if track.muted || track.hidden {
+        let track_gain = track.mix_gain(any_solo);
+        if track_gain <= 0.0 {
             continue;
         }
         for element in &track.elements {
@@ -2700,6 +3480,9 @@ fn audible_clips(scene: &Scene, media: &[MediaAsset]) -> Vec<AudibleClip> {
                 speed: audio.speed,
                 dialogue_chain: audio.dialogue_chain.clone(),
                 volume: audio.volume,
+                pan: audio.pan,
+                track_pan: track.pan,
+                track_gain,
                 gain_points: element.gain_points_without_fades(),
                 fade_in_seconds: audio.fade_in.to_seconds_f64().max(0.0),
                 fade_out_seconds: audio.fade_out.to_seconds_f64().max(0.0),
@@ -2773,6 +3556,13 @@ pub fn volume_filter_for_test(clip: &AudibleClip) -> String {
     clip.volume_filter()
 }
 
+/// Test hook for [`AudibleClip::pan_filter`]. A pan that never reaches the filtergraph is a
+/// control that moves in the room and does nothing to the file, which is the exact failure the
+/// project forbids — so the string is asserted, not assumed.
+pub fn pan_filter_for_test(clip: &AudibleClip) -> String {
+    clip.pan_filter()
+}
+
 /// Test hook for [`decimate_gain_points`], with the limit the export uses.
 pub fn decimate_gain_points_for_test(points: &[(f64, f32)]) -> Vec<(f64, f32)> {
     decimate_gain_points(points, MAX_GAIN_EXPRESSION_POINTS)
@@ -2840,6 +3630,9 @@ mod craft_tests {
             speed: 1.25,
             dialogue_chain: Some(bay_project::DialogueAudioChain::default()),
             volume: 1.0,
+            pan: 0.0,
+            track_pan: 0.0,
+            track_gain: 1.0,
             gain_points: vec![(0.0, 1.0)],
             fade_in_seconds: 0.0,
             fade_out_seconds: 0.0,
@@ -2879,6 +3672,38 @@ fn solid_rgba(color: [u8; 4]) -> Vec<u8> {
 ///
 /// Export uses this to close decoders it has finished with. Hidden tracks count as not on
 /// screen, matching what the compositor draws.
+/// Video elements playback should hold a decoder for: those under the playhead, and those the
+/// playhead reaches within [`PREROLL_SECONDS`].
+///
+/// **One predicate, used by both the pre-roll and the eviction.** Written separately they
+/// disagree in one of two ways and both are silent: an eviction narrower than the pre-roll closes
+/// the decoder that was just opened, once per frame, which is an ffmpeg spawn per frame; an
+/// eviction wider than the pre-roll leaks. Deriving both from this function makes the two agree
+/// by construction rather than by matching two edits.
+fn playback_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
+    let horizon = MediaTime::from_ticks(
+        playhead.as_ticks()
+            + MediaTime::from_seconds_f64(PREROLL_SECONDS)
+                .map(|time| time.as_ticks())
+                .unwrap_or(0),
+    );
+    let mut live = HashSet::new();
+    for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
+        if track.hidden {
+            continue;
+        }
+        for element in &track.elements {
+            if matches!(element, Element::Video(_))
+                && element.start() <= horizon
+                && playhead < element.end()
+            {
+                live.insert(element.id().to_string());
+            }
+        }
+    }
+    live
+}
+
 fn live_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
     let mut live = HashSet::new();
     for track in std::iter::once(&scene.tracks.main).chain(scene.tracks.overlay.iter()) {
@@ -2895,6 +3720,49 @@ fn live_video_elements(scene: &Scene, playhead: MediaTime) -> HashSet<String> {
         }
     }
     live
+}
+
+/// Whether this ffmpeg was built with `encoder`.
+///
+/// Probed once and remembered. `ffmpeg -encoders` is a process spawn and a page of output; doing
+/// it per export would be a needless fork, and doing it per *frame* would be absurd — but the
+/// answer cannot be a compile-time constant either, because bay runs against whatever ffmpeg is
+/// on the machine as well as the one `bay-provision` installs, and those differ in what they were
+/// built with.
+///
+/// A probe that fails for any reason answers `false`. The consequence of a wrong `false` is a
+/// software encode; the consequence of a wrong `true` is an export that dies partway with
+/// "Unknown encoder", which is much worse than being slow.
+fn encoder_available(encoder: &'static str) -> bool {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<&'static str, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Ok(seen) = cache.lock()
+        && let Some(known) = seen.get(encoder)
+    {
+        return *known;
+    }
+    let found = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+        .ok()
+        .and_then(|mut command| {
+            command
+                .args(["-hide_banner", "-encoders"])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .ok()
+        })
+        .map(|output| {
+            // The name must appear as its own word: `hevc_videotoolbox` contains no other
+            // encoder's name, but a substring test would happily match a prefix one day.
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|line| line.split_whitespace().any(|word| word == encoder))
+        })
+        .unwrap_or(false);
+    if let Ok(mut seen) = cache.lock() {
+        seen.insert(encoder, found);
+    }
+    found
 }
 
 /// Where an export is encoded before it is renamed into place.
@@ -3013,4 +3881,778 @@ mod staging_collision_tests {
             assert!(path.contains(".part."), "{path} must look temporary");
         }
     }
+}
+
+#[cfg(test)]
+mod effect_group_tests {
+    use super::*;
+
+    fn fx(effect_type: &str) -> bay_project::Effect {
+        bay_project::Effect {
+            id: format!("fx-{effect_type}"),
+            effect_type: effect_type.to_string(),
+            enabled: true,
+            params: [("amount".to_string(), 1.0)].into(),
+            asset: None,
+        }
+    }
+
+    /// A built-in look, so the mapper resolves a real table without touching the disk.
+    fn grade(id: &str) -> bay_project::Effect {
+        let mut effect = fx("lut");
+        effect.id = id.to_string();
+        effect.asset = Some(format!("{LOOK_PREFIX}neutral-contrast"));
+        effect
+    }
+
+    fn shaders(groups: &[Vec<EffectPassDescriptor>]) -> Vec<&str> {
+        groups
+            .iter()
+            .map(|group| group[0].shader.as_str())
+            .collect()
+    }
+
+    fn stages(pass: &EffectPassDescriptor) -> Vec<f32> {
+        match pass.uniforms.get("u_stages") {
+            Some(EffectUniformValueDescriptor::Vector(values)) => values.clone(),
+            other => panic!("expected a stage program, got {other:?}"),
+        }
+    }
+
+    /// The headline case, and the one the whole change exists for: four colour operations that
+    /// used to cost four draws and three quantisations now cost one of each.
+    #[test]
+    fn a_four_effect_grade_becomes_one_pass() {
+        let effects = [
+            fx("brightness"),
+            fx("contrast"),
+            fx("saturation"),
+            grade("g"),
+        ];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["color-stack"]);
+        assert_eq!(
+            stages(&groups[0][0]),
+            [
+                bay_effects::COLOR_STACK_OP_BRIGHTNESS,
+                1.0,
+                bay_effects::COLOR_STACK_OP_CONTRAST,
+                1.0,
+                bay_effects::COLOR_STACK_OP_SATURATION,
+                1.0,
+                bay_effects::COLOR_STACK_OP_LUT,
+                1.0,
+            ]
+        );
+        assert!(groups[0][0].lut.is_some(), "the run carries its cube");
+    }
+
+    /// The saving, counted rather than claimed.
+    ///
+    /// A pass is a full-screen draw *and* a fresh render target (`bay-effects` allocates one
+    /// per pass at `pipeline.rs`, unpooled), so the pass count is simultaneously the draw count
+    /// and the allocation count. Every stack here is a shape a real grade takes.
+    #[test]
+    fn the_pass_count_is_what_the_fusion_claims_it_is() {
+        let count = |effects: &[bay_project::Effect]| -> usize {
+            effect_groups(effects, &mut LutCache::default())
+                .iter()
+                .map(Vec::len)
+                .sum()
+        };
+
+        // The headline grade: was 4 passes, is 1. Three draws and three 1080p targets saved
+        // per layer per frame, and three quantisations of the intermediate.
+        assert_eq!(
+            count(&[
+                fx("brightness"),
+                fx("contrast"),
+                fx("saturation"),
+                grade("g")
+            ]),
+            1
+        );
+        // A colour grade around a blur: was 5 (2 colour + 2 blur + 1 colour), is 4.
+        assert_eq!(
+            count(&[
+                fx("brightness"),
+                fx("contrast"),
+                fx("blur"),
+                fx("saturation"),
+                grade("g"),
+            ]),
+            4
+        );
+        // Nothing to fuse: unchanged, and that is the point of leaving runs of one alone.
+        assert_eq!(count(&[fx("brightness")]), 1);
+        assert_eq!(count(&[fx("blur")]), 2);
+    }
+
+    /// Order is the user's list order. Reversing the effects must reverse the program, or the
+    /// fusion has quietly reordered someone's grade.
+    #[test]
+    fn the_stage_program_follows_list_order() {
+        let forward = effect_groups(
+            &[fx("brightness"), fx("saturation")],
+            &mut LutCache::default(),
+        );
+        let backward = effect_groups(
+            &[fx("saturation"), fx("brightness")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(
+            stages(&forward[0][0])[0],
+            bay_effects::COLOR_STACK_OP_BRIGHTNESS
+        );
+        assert_eq!(
+            stages(&backward[0][0])[0],
+            bay_effects::COLOR_STACK_OP_SATURATION
+        );
+    }
+
+    /// A blur reads neighbouring texels, so it cannot join a run — and, more importantly, it
+    /// genuinely sits *between* the two colour ops here. Fusing across it would compute a
+    /// different picture, not a cheaper one.
+    #[test]
+    fn a_blur_splits_a_colour_run_rather_than_being_absorbed() {
+        let effects = [
+            fx("brightness"),
+            fx("contrast"),
+            fx("blur"),
+            fx("saturation"),
+            grade("g"),
+        ];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(
+            shaders(&groups),
+            ["color-stack", "gaussian-blur", "color-stack"]
+        );
+        // The blur is still its own two-pass separable group.
+        assert_eq!(groups[1].len(), 2);
+    }
+
+    /// A drop shadow reads a 7x7 neighbourhood; same rule.
+    #[test]
+    fn a_drop_shadow_splits_a_colour_run() {
+        let effects = [fx("brightness"), fx("drop-shadow"), fx("contrast")];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["brightness", "drop-shadow", "contrast"]);
+    }
+
+    /// Nothing to fuse: a lone effect keeps the pass it always had. Wrapping it in a stack
+    /// would buy no quantisation back and cost it a LUT bind group it has no use for.
+    #[test]
+    fn a_lone_colour_effect_is_left_exactly_as_it_was() {
+        let groups = effect_groups(&[fx("brightness")], &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["brightness"]);
+        assert!(groups[0][0].uniforms.contains_key("u_amount"));
+    }
+
+    /// One cube is bound per pass, so a second grade has to start a new run.
+    #[test]
+    fn a_second_grade_starts_a_new_run() {
+        let effects = [fx("brightness"), grade("a"), grade("b"), fx("contrast")];
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["color-stack", "color-stack"]);
+        assert_eq!(
+            stages(&groups[0][0]).len(),
+            4,
+            "brightness + the first grade"
+        );
+        assert_eq!(
+            stages(&groups[1][0]).len(),
+            4,
+            "the second grade + contrast"
+        );
+    }
+
+    /// A run longer than the shader's array splits rather than losing its tail.
+    #[test]
+    fn a_run_past_the_stage_limit_splits_and_keeps_every_stage() {
+        let effects: Vec<_> = (0..bay_effects::MAX_COLOR_STACK_STAGES + 2)
+            .map(|_| fx("contrast"))
+            .collect();
+        let groups = effect_groups(&effects, &mut LutCache::default());
+        assert_eq!(shaders(&groups), ["color-stack", "color-stack"]);
+        let total: usize = groups.iter().map(|g| stages(&g[0]).len() / 2).sum();
+        assert_eq!(
+            total,
+            bay_effects::MAX_COLOR_STACK_STAGES + 2,
+            "splitting a long run must not drop a stage"
+        );
+    }
+
+    /// A disabled effect is not in the run at all, so it cannot silently join two neighbours
+    /// that the user still sees as separated by it.
+    #[test]
+    fn a_disabled_effect_leaves_the_run_it_was_in() {
+        let mut blur = fx("blur");
+        blur.enabled = false;
+        let groups = effect_groups(
+            &[fx("brightness"), blur, fx("contrast")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(shaders(&groups), ["color-stack"]);
+    }
+
+    /// A grade whose `.cube` is missing is dropped by the lowering above — and dropping it
+    /// must join the effects on either side of it, exactly as a disabled one does.
+    #[test]
+    fn a_missing_cube_drops_its_stage_without_breaking_the_run() {
+        let mut missing = fx("lut");
+        missing.asset = Some("/definitely/not/here.cube".to_string());
+        let groups = effect_groups(
+            &[fx("brightness"), missing, fx("contrast")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(shaders(&groups), ["color-stack"]);
+        assert_eq!(stages(&groups[0][0]).len(), 4, "two stages, no grade");
+        assert!(groups[0][0].lut.is_none());
+    }
+
+    /// An effect type nothing renders is skipped, and skipping it joins its neighbours.
+    #[test]
+    fn an_unknown_effect_is_skipped_and_does_not_split_a_run() {
+        let groups = effect_groups(
+            &[fx("brightness"), fx("not-an-effect"), fx("contrast")],
+            &mut LutCache::default(),
+        );
+        assert_eq!(shaders(&groups), ["color-stack"]);
+    }
+}
+
+/// One frame of a video, decoded for use as a thumbnail.
+///
+/// Tightly packed RGBA — the same order [`decode_args`] asks ffmpeg for, and the order
+/// `image::RgbaImage` wants, so a caller can hand it straight on without a swizzle. Note this is
+/// *not* the BGRA that [`PreviewFrame`] carries: that comes off the GPU, this comes out of
+/// ffmpeg, and they genuinely differ.
+pub struct PosterFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The widest a poster frame is decoded to.
+///
+/// A media-pool tile is ~180px and a timeline strip is shorter still, so anything larger is
+/// bytes decoded, copied and thrown away. Small enough that a pool of forty assets is a few
+/// megabytes rather than a few hundred.
+const POSTER_MAX_W: u32 = 320;
+
+/// The widest a single filmstrip cell is decoded to.
+///
+/// A timeline lane is about 40px tall, so a cell is smaller than a pool tile by an order of
+/// magnitude. Decoding at poster size would be pixels thrown away N times per clip.
+const FILMSTRIP_MAX_W: u32 = 96;
+
+/// Decode a single frame of `path` at `at_seconds`, for a thumbnail.
+///
+/// Deliberately its own one-shot ffmpeg call rather than a read through the preview cache. The
+/// preview cache is a budgeted LRU sized for *playback* of the clips on the timeline; a media
+/// pool wants one frame each for assets that are mostly not on the timeline at all, and letting
+/// those evict playback frames would trade a visible stutter for a thumbnail.
+///
+/// Returns `None` when ffmpeg is absent or the file yields no frame — a missing thumbnail is a
+/// placeholder, never an error dialog and never a panic.
+pub fn poster_frame(path: &str, at_seconds: f64) -> Option<PosterFrame> {
+    let (natural, rotation, duration_secs) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        // No probe is not a reason to give up: ffmpeg will still decode, and the fallback size
+        // only decides the aspect of the buffer we ask for. Same fallback the montage path uses.
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
+    };
+
+    let mut plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        VIDEO_MEMORY_BUDGET,
+    );
+    // One frame, and no larger than a tile needs.
+    plan.max_frames = Some(1);
+    if plan.width > POSTER_MAX_W {
+        let scale = POSTER_MAX_W as f32 / plan.width as f32;
+        plan.width = POSTER_MAX_W;
+        // Even, because several pixel formats cannot encode an odd side and ffmpeg refuses.
+        plan.height = (((plan.height as f32 * scale).round() as u32).max(2) / 2) * 2;
+    }
+
+    // Clamp the seek roughly inside the file, then **fall back to the first frame** if that
+    // still yields nothing.
+    //
+    // The fallback is the load-bearing half. Two attempts at computing a safe margin were wrong:
+    // a fixed 0.05s ignores that a 10 fps source has 0.1s between frames, and one frame of
+    // `plan.fps` is the wrong frame — the *plan's* rate is not the *source's*, so a 30 fps plan
+    // backs off 0.033s and still lands past the last frame of a 10 fps file. Rather than a third
+    // guess at arithmetic that depends on facts we do not have, ask, and if nothing comes back
+    // ask again from the start. A thumbnail of frame zero beats a black rectangle.
+    let clamped = if duration_secs > 0.0 {
+        at_seconds.clamp(0.0, duration_secs * 0.9)
+    } else {
+        at_seconds.max(0.0)
+    };
+
+    let frame_size = (plan.width * plan.height * 4) as usize;
+    if frame_size == 0 {
+        return None;
+    }
+
+    let decode = |at: f64| -> Option<Vec<u8>> {
+        let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+            .ok()?
+            .args(decode_args(path, &plan, Some(at)))
+            .output()
+            .ok()?;
+        (output.status.success() && output.stdout.len() >= frame_size)
+            .then(|| output.stdout[..frame_size].to_vec())
+    };
+
+    let rgba = decode(clamped).or_else(|| decode(0.0))?;
+
+    Some(PosterFrame {
+        width: plan.width,
+        height: plan.height,
+        rgba,
+    })
+}
+
+#[cfg(test)]
+mod encoder_tests {
+    use super::*;
+
+    /// bay's quality knob is x264's CRF — 0..=51, **lower is better**. VideoToolbox's `-q:v` is
+    /// 0..=100, **higher is better**. Passing one straight to the other inverts the control, so
+    /// "best" would mean "worst" and the bug arrives as a report that the highest setting looks
+    /// wrong.
+    #[test]
+    fn the_quality_knob_is_remapped_not_passed_through() {
+        let q = |crf: u32| 100u32.saturating_sub(crf.min(51) * 100 / 51).clamp(1, 100);
+        assert!(
+            q(0) > q(51),
+            "the mapping is inverted: best CRF must give the highest q:v"
+        );
+        assert_eq!(
+            q(0),
+            100,
+            "CRF 0 is lossless-ish and must map to the top of the range"
+        );
+        assert!(
+            q(51) >= 1,
+            "the worst CRF must still be a legal q:v, not zero"
+        );
+        // The value the measurement in `encoder_args` was taken at.
+        assert_eq!(q(20), 61);
+        // Monotonic across the whole range, so a slider never doubles back.
+        for crf in 0..51 {
+            assert!(q(crf) >= q(crf + 1), "q:v rose as CRF worsened at {crf}");
+        }
+        // Out-of-range input clamps rather than wrapping into a nonsense q.
+        assert_eq!(q(999), q(51));
+    }
+
+    /// ProRes stays on the software encoder, and the reason is not performance.
+    ///
+    /// bay picks ProRes for fidelity and hand-off, and sets profile 4444 — the graphics profile —
+    /// through `prores_ks`. `prores_videotoolbox` is faster and does not offer that control, so
+    /// switching would trade away the property the format was chosen for.
+    #[test]
+    fn prores_is_not_handed_to_the_media_engine() {
+        assert!(
+            VideoCodec::ProRes.videotoolbox_args(20).is_none(),
+            "ProRes must keep prores_ks, whose 4444 profile is why the format was picked"
+        );
+    }
+
+    /// Whatever the platform decides, the arguments have to name exactly one encoder and carry a
+    /// pixel format — a half-built argument list fails the export, not the frame.
+    #[test]
+    fn every_codec_produces_a_complete_argument_list() {
+        for codec in [VideoCodec::H264, VideoCodec::Hevc, VideoCodec::ProRes] {
+            let args = codec.encoder_args(20);
+            let encoders: Vec<&String> = args
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i > 0 && args[i - 1] == "-c:v")
+                .map(|(_, value)| value)
+                .collect();
+            assert_eq!(encoders.len(), 1, "{codec:?} names {encoders:?}");
+            assert!(
+                args.iter().any(|a| a == "-pix_fmt"),
+                "{codec:?} produced no pixel format: {args:?}"
+            );
+        }
+    }
+
+    /// A probe for an encoder nothing has must answer `false`, not panic and not `true`. A wrong
+    /// `false` costs a software encode; a wrong `true` kills the export partway with
+    /// "Unknown encoder".
+    #[test]
+    fn an_absent_encoder_probes_false() {
+        assert!(!encoder_available("definitely_not_an_encoder_xyz"));
+    }
+}
+
+#[cfg(test)]
+mod image_budget_tests {
+    use super::*;
+
+    /// An oversized still is uploaded at preview scale, not at source scale.
+    ///
+    /// `fixes.md` 17. The preview composites at 640x360 and export re-reads the source, so every
+    /// pixel above `IMAGE_MAX_DIMENSION` was paid for and never seen: a 4000x3000 photo was
+    /// 48 MB of resident texture to draw a postcard.
+    #[test]
+    fn an_oversized_still_is_uploaded_at_preview_scale() {
+        // The scale `ensure_image_texture` computes, checked without needing a GPU.
+        let natural = (4000u32, 3000u32);
+        let scale = (IMAGE_MAX_DIMENSION as f32 / natural.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / natural.1 as f32)
+            .min(1.0);
+        let uploaded = (
+            ((natural.0 as f32 * scale).round() as u32).max(1),
+            ((natural.1 as f32 * scale).round() as u32).max(1),
+        );
+        assert!(
+            uploaded.0 <= IMAGE_MAX_DIMENSION && uploaded.1 <= IMAGE_MAX_DIMENSION,
+            "uploaded {uploaded:?} exceeds the {IMAGE_MAX_DIMENSION}px bound"
+        );
+        // Aspect survives, or a photo is letterboxed by the downscale itself.
+        let source_aspect = natural.0 as f32 / natural.1 as f32;
+        let upload_aspect = uploaded.0 as f32 / uploaded.1 as f32;
+        assert!(
+            (source_aspect - upload_aspect).abs() < 0.01,
+            "the downscale changed the aspect from {source_aspect} to {upload_aspect}"
+        );
+        // Bounded on both sides: a portrait source must not be penalised for being portrait.
+        let portrait = (3000u32, 4000u32);
+        let portrait_scale = (IMAGE_MAX_DIMENSION as f32 / portrait.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / portrait.1 as f32)
+            .min(1.0);
+        assert!(
+            (portrait.1 as f32 * portrait_scale) <= IMAGE_MAX_DIMENSION as f32 + 1.0,
+            "a portrait still was bounded on width only"
+        );
+        // And an image already smaller than the bound is left alone.
+        let small = (320u32, 200u32);
+        let small_scale = (IMAGE_MAX_DIMENSION as f32 / small.0 as f32)
+            .min(IMAGE_MAX_DIMENSION as f32 / small.1 as f32)
+            .min(1.0);
+        assert_eq!(small_scale, 1.0, "a small still was scaled");
+    }
+
+    /// Touching a cached raster must not append a duplicate.
+    ///
+    /// Images are touched on every frame they are on screen. Under the previous plain push-back
+    /// that grew the queue by one entry per frame — thirty a second — so the fix for one leak
+    /// would have introduced another.
+    #[test]
+    fn touching_a_raster_moves_it_rather_than_duplicating_it() {
+        let mut order: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        let remember = |key: &str, order: &mut std::collections::VecDeque<String>| {
+            if let Some(index) = order.iter().position(|existing| existing == key) {
+                order.remove(index);
+            }
+            order.push_back(key.to_string());
+        };
+        for _ in 0..100 {
+            remember("image-1", &mut order);
+        }
+        assert_eq!(
+            order.len(),
+            1,
+            "a hundred frames of one on-screen image left {} queue entries",
+            order.len()
+        );
+        remember("image-2", &mut order);
+        remember("image-1", &mut order);
+        assert_eq!(
+            order.back().map(String::as_str),
+            Some("image-1"),
+            "touching a key did not move it to the most-recent end"
+        );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    /// The regression `CLAUDE.md` names: "cache budgets are global, not per clip — regressing
+    /// this means N clips get N budgets."
+    ///
+    /// Eight clips each planning against the full 192 MB single-clip budget commits 1.5 GB
+    /// against a 384 MB ceiling. The LRU then spends playback evicting a clip to make room for
+    /// the next and re-decoding it, which on screen is a solid placeholder with real frames
+    /// flashing through it for under a second at a time.
+    #[test]
+    fn many_clips_share_the_global_budget_rather_than_each_claiming_it_all() {
+        let eight = preview_budget_per_clip(8);
+        assert!(
+            eight * 8 <= GLOBAL_VIDEO_MEMORY_BUDGET,
+            "eight clips must fit the global cap together, got {} each",
+            eight
+        );
+        assert!(
+            eight < VIDEO_MEMORY_BUDGET,
+            "with eight clips a single clip cannot still claim the whole single-clip budget"
+        );
+    }
+
+    /// One clip on its own is unchanged — the share is capped at the single-clip budget rather
+    /// than handing a lone clip the entire global cap.
+    #[test]
+    fn one_clip_is_unchanged_by_the_share() {
+        assert_eq!(preview_budget_per_clip(1), VIDEO_MEMORY_BUDGET);
+        assert_eq!(preview_budget_per_clip(0), VIDEO_MEMORY_BUDGET);
+    }
+
+    /// Portrait footage must not be punished for its orientation.
+    ///
+    /// `VIDEO_MAX_WIDTH` used to bound width alone, so a 1080x1920 reel decoded at 480x853 —
+    /// 3.2x the pixels per frame of a 1920x1080 clip at 480x270 — and therefore afforded 3.2x
+    /// fewer frames from the same budget. The measured result was 4.2 fps against a 23.976 fps
+    /// source: a slideshow, reported as "video is not smooth".
+    #[test]
+    fn a_portrait_clip_gets_the_same_frame_rate_as_a_landscape_one() {
+        let duration = 29.32;
+        let landscape = plan_decode(
+            (1920, 1080),
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        let portrait = plan_decode(
+            (1080, 1920),
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        assert!(
+            (landscape.fps - portrait.fps).abs() < 1.0,
+            "orientation must not decide the frame rate: landscape {} fps vs portrait {} fps",
+            landscape.fps,
+            portrait.fps
+        );
+        assert!(
+            portrait.width <= VIDEO_MAX_WIDTH && portrait.height <= VIDEO_MAX_WIDTH,
+            "both sides must be bounded, got {}x{}",
+            portrait.width,
+            portrait.height
+        );
+    }
+
+    /// Playback streams at full rate; the cache does not, and cannot.
+    ///
+    /// This is the whole reason `DecodeIntent::Playback` exists. The cache spends a fixed memory
+    /// budget on covering the entire clip, so its frame rate is whatever is left over — measured
+    /// at 4.2 fps for a 29s vertical reel against a 23.976 fps source, which reads on screen as
+    /// a slideshow rather than as lag. Streaming holds nothing, so the rate is simply the rate.
+    #[test]
+    fn playback_streams_at_full_rate_where_the_cache_cannot() {
+        let (natural, duration) = ((1080, 1920), 29.32);
+        let cached = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        let streamed = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Playback { fps: 24.0 },
+            VIDEO_MEMORY_BUDGET,
+        );
+
+        assert_eq!(
+            streamed.fps, 24.0,
+            "playback asks for the rate it was given"
+        );
+        assert!(
+            streamed.fps > cached.fps,
+            "streaming exists to beat the cache's rate: {} vs {}",
+            streamed.fps,
+            cached.fps
+        );
+        assert_eq!(
+            streamed.max_frames, None,
+            "nothing is resident, so nothing bounds the frame count"
+        );
+        assert!(
+            streamed.width <= VIDEO_MAX_WIDTH && streamed.height <= VIDEO_MAX_WIDTH,
+            "playback is preview-sized, not source-sized: {}x{}",
+            streamed.width,
+            streamed.height
+        );
+    }
+
+    /// Playback must not inherit export's sizing. Decoding a 4K source at source resolution to
+    /// fill a 640x360 preview is the mirror of the bug that made a 4K export a 480px upscale.
+    #[test]
+    fn playback_is_not_export_sized() {
+        let export = plan_decode(
+            (3840, 2160),
+            0,
+            10.0,
+            DecodeIntent::Export { fps: 30.0 },
+            VIDEO_MEMORY_BUDGET,
+        );
+        let playback = plan_decode(
+            (3840, 2160),
+            0,
+            10.0,
+            DecodeIntent::Playback { fps: 30.0 },
+            VIDEO_MEMORY_BUDGET,
+        );
+        assert_eq!(export.width, 3840, "export keeps the source");
+        assert!(
+            playback.width <= VIDEO_MAX_WIDTH,
+            "playback fills a 640x360 composite, got {}",
+            playback.width
+        );
+    }
+
+    /// A smaller share must buy a lower frame rate, not a truncated clip. Coverage of the whole
+    /// duration is the promise `plan_decode` is built around: truncating is what made long clips
+    /// freeze on their last decoded frame.
+    #[test]
+    fn a_smaller_share_lowers_the_rate_and_still_covers_the_clip() {
+        let (natural, duration) = ((1920, 1080), 103.0);
+        let generous = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Preview,
+            VIDEO_MEMORY_BUDGET,
+        );
+        let shared = plan_decode(
+            natural,
+            0,
+            duration,
+            DecodeIntent::Preview,
+            preview_budget_per_clip(8),
+        );
+
+        assert!(
+            shared.fps <= generous.fps,
+            "a smaller share cannot afford a higher rate"
+        );
+        for plan in [&generous, &shared] {
+            let frames = plan
+                .max_frames
+                .expect("preview plans bound their frame count");
+            let covered = frames as f64 / plan.fps as f64;
+            assert!(
+                covered >= duration - 1.0,
+                "the plan must still span the clip: {covered:.1}s of {duration}s"
+            );
+        }
+    }
+}
+
+/// Evenly spaced frames across a clip, for a timeline filmstrip.
+///
+/// **One** ffmpeg process for the whole strip, not one per thumbnail. `decode_args` already asks
+/// for a frame *rate* and a frame *count*, so asking for `count / duration` fps and `count`
+/// frames walks the clip once and hands back frames spread across it. Six separate seeks would
+/// be six spawns, six probes and six pipe setups for the same pixels.
+///
+/// Returns fewer frames than asked for rather than failing, and `None` only when nothing decoded
+/// at all — a short strip is a usable strip.
+pub fn filmstrip(path: &str, count: u32) -> Option<Vec<PosterFrame>> {
+    let count = count.clamp(1, 24);
+    let (natural, rotation, duration_secs) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
+    };
+    if duration_secs <= 0.0 {
+        return poster_frame(path, 0.0).map(|frame| vec![frame]);
+    }
+
+    let mut plan = plan_decode(
+        natural,
+        rotation,
+        duration_secs,
+        DecodeIntent::Preview,
+        VIDEO_MEMORY_BUDGET,
+    );
+    // A filmstrip cell is tiny — a timeline lane is ~40px tall. Decoding at preview size would
+    // be ~30x the pixels that ever reach the screen.
+    let scale = (FILMSTRIP_MAX_W as f32 / plan.width as f32).min(1.0);
+    plan.width = (((plan.width as f32 * scale).round() as u32).max(2) / 2) * 2;
+    plan.height = (((plan.height as f32 * scale).round() as u32).max(2) / 2) * 2;
+    plan.fps = (count as f64 / duration_secs) as f32;
+    plan.max_frames = Some(count);
+
+    let output = bay_paths::tools::command(bay_paths::tools::Tool::Ffmpeg)
+        .ok()?
+        .args(decode_args(path, &plan, None))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let frame_size = (plan.width * plan.height * 4) as usize;
+    if frame_size == 0 {
+        return None;
+    }
+    let frames: Vec<PosterFrame> = output
+        .stdout
+        .chunks_exact(frame_size)
+        .map(|chunk| PosterFrame {
+            width: plan.width,
+            height: plan.height,
+            rgba: chunk.to_vec(),
+        })
+        .collect();
+    (!frames.is_empty()).then_some(frames)
+}
+
+/// Build a decoder for one clip, positioned at `at_seconds`.
+///
+/// Everything here runs on the **worker** thread: probing, planning, and spawning ffmpeg. That
+/// matters — the first attempt at streaming playback spawned the process on the render thread,
+/// and a spawn during a scrub is a visible stall on its own.
+fn open_playback_source(path: &str, at_seconds: f64) -> Option<playback::PlaybackSource> {
+    let (natural, rotation, duration) = match probe::probe_media(path) {
+        Ok(meta) => (
+            (meta.width, meta.height),
+            meta.rotation,
+            meta.duration.to_seconds_f64(),
+        ),
+        Err(_) => ((VIDEO_FALLBACK_W, VIDEO_FALLBACK_H), 0, 0.0),
+    };
+    let plan = plan_decode(
+        natural,
+        rotation,
+        duration,
+        DecodeIntent::Playback { fps: VIDEO_MAX_FPS },
+        VIDEO_MEMORY_BUDGET,
+    );
+    let (width, height, fps) = (plan.width, plan.height, plan.fps);
+    let mut stream = ClipStream::open(path, plan, at_seconds)?;
+    Some(playback::PlaybackSource {
+        width,
+        height,
+        fps,
+        next_frame: Box::new(move || {
+            // One clone per frame, because the frame crosses a thread boundary. The alternative
+            // is handing out a borrow of the stream's buffer, which cannot outlive the worker.
+            stream.next_owned()
+        }),
+    })
 }

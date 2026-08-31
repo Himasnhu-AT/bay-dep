@@ -9,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use image::{DynamicImage, GenericImageView, Pixel};
 
+use bay_project::reframe::{ReframeTrackingConfig, SubjectPoint, TrackingConfig, smooth_path};
+
 use crate::{Embedding, Encoder, VisionError, cosine};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,40 +24,6 @@ pub struct IndexedShot {
     pub range: ShotRange,
     pub sample_seconds: f64,
     pub embedding: Embedding,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubjectPoint {
-    pub time_seconds: f64,
-    pub raw_x: f32,
-    pub raw_y: f32,
-    pub x: f32,
-    pub y: f32,
-    pub confidence: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TrackingConfig {
-    pub sample_seconds: f64,
-    pub smoothing_seconds: f64,
-}
-
-impl Default for TrackingConfig {
-    fn default() -> Self {
-        Self {
-            sample_seconds: 0.5,
-            smoothing_seconds: 0.9,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ReframeTrackingConfig<'a> {
-    pub source_aspect: f32,
-    pub target_aspect: f32,
-    pub shot_boundaries: &'a [f64],
-    pub tracking: TrackingConfig,
 }
 
 /// Embed one representative frame per detected shot.
@@ -271,47 +239,6 @@ pub fn track_subject_siglip(
     ))
 }
 
-fn smooth_path(
-    raw: Vec<(f64, (f32, f32, f32))>,
-    smoothing_seconds: f64,
-    shot_boundaries: &[f64],
-) -> Vec<SubjectPoint> {
-    let tau = smoothing_seconds.clamp(0.05, 10.0);
-    let mut points = Vec::with_capacity(raw.len());
-    let mut smooth = raw
-        .first()
-        .map(|(_, found)| (found.0, found.1))
-        .unwrap_or((0.5, 0.5));
-    let mut previous_time = raw.first().map(|(time, _)| *time).unwrap_or(0.0);
-    for (time, (x, y, confidence)) in raw {
-        let dt = (time - previous_time).max(0.0) as f32;
-        let alpha = 1.0 - (-dt / tau as f32).exp();
-        let crossed_cut = shot_boundaries
-            .iter()
-            .any(|boundary| *boundary > previous_time && *boundary <= time);
-        // A cut is not camera motion. Snap to the incoming composition, then damp motion within
-        // that shot so no interpolation sweeps across an edit.
-        if crossed_cut {
-            smooth = (x, y);
-        } else {
-            smooth.0 += alpha * (x - smooth.0);
-            smooth.1 += alpha * (y - smooth.1);
-        }
-        smooth.0 = smooth.0.clamp(0.0, 1.0);
-        smooth.1 = smooth.1.clamp(0.0, 1.0);
-        points.push(SubjectPoint {
-            time_seconds: time,
-            raw_x: x,
-            raw_y: y,
-            x: smooth.0,
-            y: smooth.1,
-            confidence,
-        });
-        previous_time = time;
-    }
-    points
-}
-
 /// Pick a temporally coherent candidate sequence. A one-column change must improve the SigLIP
 /// score enough to pay for the move; shot boundaries split the optimisation and allow hard cuts.
 fn viterbi_choices(scores: &[Vec<f32>], choices: &mut [usize]) {
@@ -345,14 +272,6 @@ fn viterbi_choices(scores: &[Vec<f32>], choices: &mut [usize]) {
         choices[frame] = candidate;
         candidate = back[frame][candidate];
     }
-}
-
-/// Total absolute second derivative, a compact numeric measure of camera-path jitter.
-pub fn path_jitter(values: &[f32]) -> f32 {
-    values
-        .windows(3)
-        .map(|window| (window[2] - 2.0 * window[1] + window[0]).abs())
-        .sum()
 }
 
 fn detect_subject(image: &DynamicImage) -> (f32, f32, f32) {
@@ -472,21 +391,6 @@ impl Drop for FrameTemp {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn smoothing_reduces_camera_path_jitter() {
-        let raw = [0.50, 0.64, 0.48, 0.66, 0.49, 0.63, 0.51];
-        let detections = raw
-            .iter()
-            .enumerate()
-            .map(|(index, value)| (index as f64 * 0.5, (*value, 0.5, 0.1)))
-            .collect();
-        let smooth = smooth_path(detections, 1.0, &[])
-            .iter()
-            .map(|point| point.x)
-            .collect::<Vec<_>>();
-        assert!(path_jitter(&smooth) < path_jitter(&raw) * 0.5);
-    }
 
     #[test]
     fn temporal_ranking_refuses_a_one_frame_candidate_jump() {

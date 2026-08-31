@@ -67,6 +67,25 @@ pub struct ElementGroup {
 }
 
 impl ElementGroup {
+    /// What can be keyframed on a *group*, which is a shorter list than [`Element::ANIMATABLE`].
+    ///
+    /// A group owns no pixels. Everything it does, it does by [`compose_group_transform`]
+    /// folding its transform into each child's, and that function carries exactly these seven
+    /// channels — position, uniform and per-axis scale, rotation, opacity. It does not carry
+    /// crop or tilt, and it could not: cropping a group means rasterising the group to its own
+    /// surface and cutting that, which the compositor has no pass for, and per-child crop
+    /// insets are a different picture entirely (four elements each losing their own left edge,
+    /// not one rectangle losing its left edge).
+    ///
+    /// So the six are refused by name. They were accepted until now — `plan` validated a group
+    /// `animate` against all thirteen of `Element::ANIMATABLE` — and an agent that keyed
+    /// `cropLeft` on a group got a written channel, a successful tool result, and a frame that
+    /// never moved. Refusing loudly is the only honest answer while the pass does not exist.
+    ///
+    /// [`Element::ANIMATABLE`]: crate::Element::ANIMATABLE
+    pub const ANIMATABLE: [&'static str; 7] =
+        ["opacity", "scale", "x", "y", "rotation", "scaleX", "scaleY"];
+
     pub fn sampled_transform(&self, scene_time: MediaTime) -> Transform {
         let mut transform = self.transform;
         let sample = |name: &str| self.animations.get(name).and_then(|c| c.sample(scene_time));
@@ -262,5 +281,105 @@ mod tests {
         assert!((composed.scale - 1.0).abs() < 0.0001);
         assert!((composed.rotation - 100.0).abs() < 0.0001);
         assert!((composed.opacity - 0.4).abs() < 0.0001);
+    }
+
+    /// A group with one channel written on `property`, running 0 → 1 over the first second.
+    fn group_animated_on(property: &str) -> ElementGroup {
+        let mut channel = AnimationChannel::default();
+        channel.upsert(MediaTime::ZERO, 0.0);
+        channel.upsert(MediaTime::from_seconds_f64(1.0).unwrap(), 1.0);
+        ElementGroup {
+            id: "grp-1".to_string(),
+            children: vec!["el-1".to_string()],
+            // Non-default everywhere, so "the channel did nothing" cannot be confused with
+            // "the channel wrote the value the field already held".
+            transform: Transform {
+                opacity: 0.5,
+                scale: 0.5,
+                x: 0.25,
+                y: 0.25,
+                rotation: 30.0,
+                scale_x: 0.5,
+                scale_y: 0.5,
+                crop_left: 0.1,
+                crop_top: 0.1,
+                crop_right: 0.1,
+                crop_bottom: 0.1,
+                tilt_x: 5.0,
+                tilt_y: 5.0,
+                ..Transform::default()
+            },
+            animations: BTreeMap::from([(property.to_string(), channel)]),
+        }
+    }
+
+    /// Direction one: every channel the validator lets through must reach the transform.
+    #[test]
+    fn every_group_animatable_channel_changes_the_sampled_transform() {
+        for property in ElementGroup::ANIMATABLE {
+            let group = group_animated_on(property);
+            assert_ne!(
+                group.sampled_transform(MediaTime::from_seconds_f64(1.0).unwrap()),
+                group.transform,
+                "{property:?} is offered on a group but sampling it moves nothing"
+            );
+        }
+    }
+
+    /// Direction two: the six `Element::ANIMATABLE` channels a group does *not* take are inert
+    /// here — which is why `plan` refuses them by name rather than writing a channel that
+    /// samples into nowhere. If a later build teaches `compose_group_transform` to carry crop
+    /// or tilt, this test fails and `ElementGroup::ANIMATABLE` is what has to grow.
+    #[test]
+    fn the_channels_a_group_refuses_would_have_sampled_into_nowhere() {
+        let refused: Vec<&str> = crate::Element::ANIMATABLE
+            .into_iter()
+            .filter(|name| !ElementGroup::ANIMATABLE.contains(name))
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                "cropLeft",
+                "cropTop",
+                "cropRight",
+                "cropBottom",
+                "tiltX",
+                "tiltY"
+            ]
+        );
+        for property in refused {
+            let group = group_animated_on(property);
+            assert_eq!(
+                group.sampled_transform(MediaTime::from_seconds_f64(1.0).unwrap()),
+                group.transform,
+                "{property:?} now does something on a group — offer it instead of refusing it"
+            );
+        }
+    }
+
+    /// And even if it were sampled, the group's crop and tilt never reach a child: composition
+    /// carries seven fields and drops the rest. This is the fact `ElementGroup::ANIMATABLE`
+    /// is derived from.
+    #[test]
+    fn group_crop_and_tilt_do_not_compose_onto_a_child() {
+        let child = Transform::default();
+        let group = Transform {
+            crop_left: 0.3,
+            crop_top: 0.3,
+            crop_right: 0.3,
+            crop_bottom: 0.3,
+            tilt_x: 20.0,
+            tilt_y: 20.0,
+            ..Transform::default()
+        };
+
+        let composed = compose_group_transform(child, group);
+
+        assert_eq!(composed.crop_left, child.crop_left);
+        assert_eq!(composed.crop_top, child.crop_top);
+        assert_eq!(composed.crop_right, child.crop_right);
+        assert_eq!(composed.crop_bottom, child.crop_bottom);
+        assert_eq!(composed.tilt_x, child.tilt_x);
+        assert_eq!(composed.tilt_y, child.tilt_y);
     }
 }

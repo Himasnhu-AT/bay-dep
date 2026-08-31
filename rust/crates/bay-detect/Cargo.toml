@@ -1,0 +1,49 @@
+[package]
+name = "bay-detect"
+version = "0.1.0"
+edition = "2024"
+description = "Where the people are: faces and torsos, from Apple's Vision framework. No model, no download."
+
+# Deliberately not a module of bay-vision. That crate links candle, tokenizers and Accelerate and
+# needs an 813 MB provisioned encoder; this one needs a framework that is already on the machine.
+# A caller that wants face boxes must not have to link a transformer to get them.
+[dependencies]
+bay-paths = { path = "../bay-paths" }
+bay-project = { path = "../bay-project" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+# Vision.framework, not a downloaded model.
+#
+# The alternative was a YOLO/RetinaFace checkpoint through candle, which would need a manifest
+# artifact with an immutable URL, a redistributable licence and a few hundred megabytes — for a
+# capability macOS already ships, runs on the Neural Engine, and updates with the OS. There is no
+# `bay-provision` component for this on purpose: a zero-artifact component is `generation-local`'s
+# "reports unsupported" shape, and `runtime_status` saying "not installed" about something built
+# into the operating system would be a lie in the one place a user goes to check.
+#
+# objc2 0.6 / objc2-foundation 0.3 are already resolved for the workspace through GPUI, so this
+# adds one crate rather than a family.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = "0.3"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSURL"] }
+# Default features pull objc2-av-foundation, core-graphics, core-image, core-media, core-ml,
+# core-video and image-io for request types bay will never make. Two detectors and a URL handler
+# need none of them.
+objc2-vision = { version = "0.3", default-features = false, features = [
+    "std",
+    "VNRequest",
+    "VNRequestHandler",
+    "VNObservation",
+    # `VNConfidence`, and therefore `VNObservation::confidence`, lives here.
+    "VNTypes",
+    "VNDetectFaceRectanglesRequest",
+    "VNDetectHumanRectanglesRequest",
+    # `boundingBox` is behind this one, and it is the only thing this crate reads.
+    "objc2-core-foundation",
+] }
+
+[dev-dependencies]
+bay-test-support = { path = "../bay-test-support" }
+bay-paths = { path = "../bay-paths" }

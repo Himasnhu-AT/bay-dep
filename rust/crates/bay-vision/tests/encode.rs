@@ -36,6 +36,7 @@ fn swatch(name: &str, rgb: [u8; 3]) -> PathBuf {
 }
 
 #[test]
+#[ignore = "loads the SigLIP model; run it with `SLOW=1 ./test.sh`"]
 fn text_embeddings_are_unit_length_and_the_right_width() {
     let Some(encoder) = encoder() else { return };
     let embeddings = encoder
@@ -50,6 +51,7 @@ fn text_embeddings_are_unit_length_and_the_right_width() {
 /// Two phrasings of the same idea must land closer together than two unrelated ones. This is the
 /// weakest claim that still proves the text tower is loaded correctly rather than emitting noise.
 #[test]
+#[ignore = "loads the SigLIP model; run it with `SLOW=1 ./test.sh`"]
 fn related_phrases_embed_closer_than_unrelated_ones() {
     let Some(encoder) = encoder() else { return };
     let texts = [
@@ -70,6 +72,7 @@ fn related_phrases_embed_closer_than_unrelated_ones() {
 /// score its own swatch above the others. Colour is used rather than subject matter because it
 /// needs no fixture and cannot be satisfied by a caption the model memorised.
 #[test]
+#[ignore = "loads the SigLIP model; run it with `SLOW=1 ./test.sh`"]
 fn an_image_scores_highest_against_its_own_description() {
     let Some(encoder) = encoder() else { return };
 
@@ -110,6 +113,7 @@ fn an_image_scores_highest_against_its_own_description() {
 /// Encoding nothing is a caller bug and must say so rather than returning an empty answer that
 /// silently ranks nothing.
 #[test]
+#[ignore = "loads the SigLIP model; run it with `SLOW=1 ./test.sh`"]
 fn embedding_an_empty_batch_is_an_error() {
     let Some(encoder) = encoder() else { return };
     assert!(encoder.embed_text(&[]).is_err());
@@ -119,6 +123,7 @@ fn embedding_an_empty_batch_is_an_error() {
 /// A text longer than the 64-token window must truncate, not panic. Beat narration routinely
 /// runs longer than the window and this is the path every search takes.
 #[test]
+#[ignore = "loads the SigLIP model; run it with `SLOW=1 ./test.sh`"]
 fn a_text_longer_than_the_window_truncates_instead_of_panicking() {
     let Some(encoder) = encoder() else { return };
     let long = "a very long description of a photograph ".repeat(40);

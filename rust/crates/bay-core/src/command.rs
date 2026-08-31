@@ -8,12 +8,29 @@
 use serde::{Deserialize, Serialize};
 
 use bay_project::{
-    AnimationChannel, BlendMode, Effect, Element, ElementGroup, ElementKind, ElementRef, MediaTime,
-    PlanArtifact, Project, Scene, StyleKit, Track, TrackKind, Transform,
+    AnimationChannel, BezierHandles, BlendMode, Easing, Effect, Element, ElementGroup, ElementKind,
+    ElementRef, MediaTime, PlanArtifact, Project, Scene, StyleKit, Track, TrackKind, Transform,
 };
 
 use crate::selection::SelectionPatch;
 use crate::state::EditorState;
+
+/// What curve the segment leaving a keyframe travels on.
+///
+/// The three states of one setting, so they cannot contradict. A key that carried both a named
+/// easing and drawn handles would be resolved by the sampler's precedence rule rather than by
+/// what the author last chose, and the inspector would show one while the frame showed the
+/// other.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum KeyframeCurve {
+    /// Clear the override: travel on the channel's own easing.
+    Channel,
+    /// One of the named curves from the vocabulary.
+    Named { easing: Easing },
+    /// A curve drawn by hand in the curve editor.
+    Drawn { handles: BezierHandles },
+}
 
 /// Which addable/removable lane a track lives in (the `main` lane is fixed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +76,19 @@ pub enum Command {
         reference: ElementRef,
         start: MediaTime,
     },
+    /// Move an element to a different track, and to a new start time on it, as **one** undo step.
+    ///
+    /// Distinct from [`Command::MoveElement`], which slides a clip along the lane it is already
+    /// on and cannot change lanes at all — an `ElementRef` names its track, so there is no start
+    /// time that moves a clip down one row. Spelling this as a remove followed by an add would
+    /// work and would be wrong twice: two entries in the history for one gesture, and an
+    /// intermediate state where the clip exists on neither track, which anything reading the
+    /// scene between the two would see.
+    MoveElementToTrack {
+        reference: ElementRef,
+        track_id: String,
+        start: MediaTime,
+    },
     /// Set an element's duration.
     SetElementDuration {
         reference: ElementRef,
@@ -102,6 +132,24 @@ pub enum Command {
         fade_in: MediaTime,
         fade_out: MediaTime,
     },
+    /// Set an audio clip's level. Linear gain; `1.0` is unity. No-op on anything silent.
+    ///
+    /// A command of its own rather than a [`Command::ReplaceElement`] with an edited copy,
+    /// because a mixer strip is a control that is *dragged*: it emits a level a hundred times a
+    /// second, each of which has to coalesce into history as one gesture and be undoable as
+    /// one. Replacing the whole element on every sample of a drag puts a hundred copies of a
+    /// clip in the undo stack.
+    SetVolume { reference: ElementRef, volume: f32 },
+    /// Set an audio clip's pan: `-1.0` hard left, `0.0` centre, `1.0` hard right.
+    SetPan { reference: ElementRef, pan: f32 },
+    /// Mute or unmute a single clip.
+    SetMuted { reference: ElementRef, muted: bool },
+    /// Set a lane's fader. Linear gain on top of every clip's own level.
+    SetTrackVolume { track_id: String, gain: f32 },
+    /// Set a lane's pan.
+    SetTrackPan { track_id: String, pan: f32 },
+    /// Solo a lane, silencing every audio lane that is not soloed.
+    SetTrackSolo { track_id: String, solo: bool },
     /// Replace an element with an edited copy of itself, in place.
     ///
     /// For the properties that have no command of their own — typography, a shape's fill, an
@@ -164,6 +212,40 @@ pub enum Command {
         property: String,
         time: MediaTime,
     },
+    /// Move one keyframe along the time axis, keeping its value, curve and identity.
+    ///
+    /// One command rather than remove-plus-add, which is what dragging a key used to be: two
+    /// commands, so two undo entries for one drag, and the key ceased to exist in between —
+    /// so whatever was holding it (a selection, a pointer) was holding nothing by the time the
+    /// second landed.
+    ///
+    /// `keyframe_id` is [`bay_project::Keyframe::identity`], the same string
+    /// [`crate::KeyframeRef`] carries.
+    MoveKeyframe {
+        reference: ElementRef,
+        property: String,
+        keyframe_id: String,
+        time: MediaTime,
+    },
+    /// Set the curve for the segment leaving one keyframe.
+    ///
+    /// One command for both a named easing and a drawn one, because they are one setting with
+    /// three states — inherit, named, drawn — and two commands writing two fields could leave
+    /// a key claiming both, which the sampler would resolve by precedence rather than by what
+    /// the author last did.
+    SetKeyframeCurve {
+        reference: ElementRef,
+        property: String,
+        keyframe_id: String,
+        curve: KeyframeCurve,
+    },
+    /// Set the whole channel's default easing — the curve every key that does not override it
+    /// travels on.
+    SetChannelEasing {
+        reference: ElementRef,
+        property: String,
+        easing: Easing,
+    },
     /// Apply a motion preset (a bundle of effects + animation channels) to an element in one
     /// undoable step. Effect ids should be pre-minted by the caller to avoid collisions.
     ApplyMotionPreset {
@@ -223,11 +305,18 @@ pub enum CommandKind {
     RemoveElement,
     RippleDelete,
     MoveElement,
+    MoveElementToTrack,
     SetElementDuration,
     SplitElement,
     TrimElement,
     SetSourceStart,
     SetFades,
+    SetVolume,
+    SetPan,
+    SetMuted,
+    SetTrackVolume,
+    SetTrackPan,
+    SetTrackSolo,
     ReplaceElement,
     RenameElement,
     SetTextContent,
@@ -239,6 +328,9 @@ pub enum CommandKind {
     SetEffectParam,
     AddKeyframe,
     RemoveKeyframe,
+    MoveKeyframe,
+    SetKeyframeCurve,
+    SetChannelEasing,
     ApplyMotionPreset,
     AddTrack,
     RemoveTrack,
@@ -284,6 +376,18 @@ pub(crate) enum ProjectPatch {
         reference: ElementRef,
         fade_in: MediaTime,
         fade_out: MediaTime,
+    },
+    SetElementVolume {
+        reference: ElementRef,
+        volume: f32,
+    },
+    SetElementPan {
+        reference: ElementRef,
+        pan: f32,
+    },
+    SetElementMuted {
+        reference: ElementRef,
+        muted: bool,
     },
     ReplaceElement {
         reference: ElementRef,
@@ -340,6 +444,18 @@ pub(crate) enum ProjectPatch {
     SetTrackMuted {
         track_id: String,
         muted: bool,
+    },
+    SetTrackGain {
+        track_id: String,
+        gain: f32,
+    },
+    SetTrackPan {
+        track_id: String,
+        pan: f32,
+    },
+    SetTrackSolo {
+        track_id: String,
+        solo: bool,
     },
     InsertMarker {
         index: usize,
@@ -498,6 +614,48 @@ impl ProjectPatch {
                 }
                 None => ProjectPatch::Noop,
             },
+            // The three mixer-strip writes. Each reports the value it displaced, which is what
+            // makes a fader drag undoable in one step: the history keeps the level the strip
+            // was at when the gesture began.
+            ProjectPatch::SetElementVolume { reference, volume } => {
+                match scene.element_mut(&reference).and_then(Element::audio_mut) {
+                    Some(audio) => {
+                        let previous = audio.volume;
+                        audio.volume = sane_gain(volume);
+                        ProjectPatch::SetElementVolume {
+                            reference,
+                            volume: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetElementPan { reference, pan } => {
+                match scene.element_mut(&reference).and_then(Element::audio_mut) {
+                    Some(audio) => {
+                        let previous = audio.pan;
+                        audio.pan = sane_pan(pan);
+                        ProjectPatch::SetElementPan {
+                            reference,
+                            pan: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetElementMuted { reference, muted } => {
+                match scene.element_mut(&reference).and_then(Element::audio_mut) {
+                    Some(audio) => {
+                        let previous = audio.muted;
+                        audio.muted = muted;
+                        ProjectPatch::SetElementMuted {
+                            reference,
+                            muted: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
             ProjectPatch::ReplaceElement { reference, element } => {
                 match scene.element_mut(&reference) {
                     Some(slot) => {
@@ -715,6 +873,45 @@ impl ProjectPatch {
                         ProjectPatch::SetTrackMuted {
                             track_id,
                             muted: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackGain { track_id, gain } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.gain;
+                        track.gain = sane_gain(gain);
+                        ProjectPatch::SetTrackGain {
+                            track_id,
+                            gain: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackPan { track_id, pan } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.pan;
+                        track.pan = sane_pan(pan);
+                        ProjectPatch::SetTrackPan {
+                            track_id,
+                            pan: previous,
+                        }
+                    }
+                    None => ProjectPatch::Noop,
+                }
+            }
+            ProjectPatch::SetTrackSolo { track_id, solo } => {
+                match scene.tracks.track_mut(&track_id) {
+                    Some(track) => {
+                        let previous = track.solo;
+                        track.solo = solo;
+                        ProjectPatch::SetTrackSolo {
+                            track_id,
+                            solo: previous,
                         }
                     }
                     None => ProjectPatch::Noop,
@@ -962,6 +1159,59 @@ impl Command {
                 })
             }
 
+            Command::MoveElementToTrack {
+                reference,
+                track_id,
+                start,
+            } => {
+                let element = scene.element(reference)?;
+                // Refuse a move to a track that is not there. Lowering it anyway would apply the
+                // remove, find no destination, and leave the clip deleted — a drag onto a lane
+                // that had just been removed would silently eat the clip.
+                let destination = scene.tracks.track(track_id)?;
+                // A move onto the lane it is already on is `MoveElement`'s job. Taking it here
+                // would still work, but it would rebuild the element and land it at the end of
+                // the track's order for no reason.
+                if reference.track_id == *track_id {
+                    return Some(Lowered {
+                        kind: CommandKind::MoveElement,
+                        forward: vec![ProjectPatch::SetElementStart {
+                            reference: reference.clone(),
+                            start: *start,
+                        }],
+                        selection_patch: None,
+                    });
+                }
+                let mut moved = element.clone();
+                moved.set_start(*start);
+                let index = destination.elements.len();
+                let new_reference = ElementRef::new(track_id.clone(), reference.element_id.clone());
+                // Remove *then* insert. The other order would put two elements with the same id
+                // in the scene for the length of one patch, and `element_mut` finds by id.
+                Some(Lowered {
+                    kind: CommandKind::MoveElementToTrack,
+                    forward: vec![
+                        ProjectPatch::RemoveElement {
+                            track_id: reference.track_id.clone(),
+                            element_id: reference.element_id.clone(),
+                        },
+                        ProjectPatch::InsertElement {
+                            track_id: track_id.clone(),
+                            index,
+                            element: moved,
+                        },
+                    ],
+                    // The selection has to follow: an `ElementRef` names a track, so leaving it
+                    // pointing at the old one selects a clip that is no longer there — the
+                    // inspector empties and the next keystroke acts on nothing.
+                    selection_patch: state
+                        .selection
+                        .elements
+                        .contains(reference)
+                        .then(|| SelectionPatch::select_elements(vec![new_reference])),
+                })
+            }
+
             Command::SetElementDuration {
                 reference,
                 duration,
@@ -1105,6 +1355,100 @@ impl Command {
                         reference: reference.clone(),
                         fade_in,
                         fade_out,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetVolume { reference, volume } => {
+                let audio = scene.element(reference)?.audio()?;
+                let volume = sane_gain(*volume);
+                if volume == audio.volume {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetVolume,
+                    forward: vec![ProjectPatch::SetElementVolume {
+                        reference: reference.clone(),
+                        volume,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetPan { reference, pan } => {
+                let audio = scene.element(reference)?.audio()?;
+                let pan = sane_pan(*pan);
+                if pan == audio.pan {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetPan,
+                    forward: vec![ProjectPatch::SetElementPan {
+                        reference: reference.clone(),
+                        pan,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetMuted { reference, muted } => {
+                let audio = scene.element(reference)?.audio()?;
+                if *muted == audio.muted {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetMuted,
+                    forward: vec![ProjectPatch::SetElementMuted {
+                        reference: reference.clone(),
+                        muted: *muted,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackVolume { track_id, gain } => {
+                let track = scene.tracks.track(track_id)?;
+                let gain = sane_gain(*gain);
+                if gain == track.gain {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetTrackVolume,
+                    forward: vec![ProjectPatch::SetTrackGain {
+                        track_id: track_id.clone(),
+                        gain,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackPan { track_id, pan } => {
+                let track = scene.tracks.track(track_id)?;
+                let pan = sane_pan(*pan);
+                if pan == track.pan {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetTrackPan,
+                    forward: vec![ProjectPatch::SetTrackPan {
+                        track_id: track_id.clone(),
+                        pan,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetTrackSolo { track_id, solo } => {
+                let track = scene.tracks.track(track_id)?;
+                if *solo == track.solo {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetTrackSolo,
+                    forward: vec![ProjectPatch::SetTrackSolo {
+                        track_id: track_id.clone(),
+                        solo: *solo,
                     }],
                     selection_patch: None,
                 })
@@ -1267,9 +1611,11 @@ impl Command {
                 value,
             } => {
                 let element = scene.element(reference)?;
-                // Checked against the kind: a music bed has a level and no position, and a
-                // key on a property it does not have would be stored and never read.
-                if !element.animatable().contains(&property.as_str()) {
+                // Against everything this element actually reads, not against the flat
+                // thirteen. The old check refused `mask.x` and `effect.<id>.<param>` — which
+                // `animate` over MCP accepts and the renderer samples — so the same edit
+                // worked from an agent and silently vanished from the editor.
+                if !element.can_animate(property) {
                     return None;
                 }
                 let animations = element.animations()?;
@@ -1301,6 +1647,91 @@ impl Command {
                         reference: reference.clone(),
                         property: property.clone(),
                         channel,
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::MoveKeyframe {
+                reference,
+                property,
+                keyframe_id,
+                time,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                // Give the channel names before moving, so a key from a project written
+                // before ids existed acquires one on its first drag rather than being
+                // addressable only until it moves.
+                channel.assign_missing_ids();
+                if !channel.move_key(keyframe_id, *time) {
+                    return None;
+                }
+                Some(Lowered {
+                    kind: CommandKind::MoveKeyframe,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetKeyframeCurve {
+                reference,
+                property,
+                keyframe_id,
+                curve,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                let index = channel.index_of(keyframe_id)?;
+                let key = &mut channel.keys[index];
+                // Set as a unit: whichever state is chosen, the other two are cleared, so the
+                // key cannot end up claiming a named curve and a drawn one at once.
+                match curve {
+                    KeyframeCurve::Channel => {
+                        key.easing = None;
+                        key.handles = None;
+                    }
+                    KeyframeCurve::Named { easing } => {
+                        key.easing = Some(*easing);
+                        key.handles = None;
+                    }
+                    KeyframeCurve::Drawn { handles } => {
+                        key.easing = None;
+                        key.handles = Some(*handles);
+                    }
+                }
+                Some(Lowered {
+                    kind: CommandKind::SetKeyframeCurve,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
+                    }],
+                    selection_patch: None,
+                })
+            }
+
+            Command::SetChannelEasing {
+                reference,
+                property,
+                easing,
+            } => {
+                let element = scene.element(reference)?;
+                let mut channel = element.animations()?.get(property).cloned()?;
+                if channel.easing == *easing {
+                    return None;
+                }
+                channel.easing = *easing;
+                Some(Lowered {
+                    kind: CommandKind::SetChannelEasing,
+                    forward: vec![ProjectPatch::SetAnimationChannel {
+                        reference: reference.clone(),
+                        property: property.clone(),
+                        channel: Some(channel),
                     }],
                     selection_patch: None,
                 })
@@ -1526,5 +1957,32 @@ impl Command {
 
             Command::Paste => None, // resolved in Editor::execute (mints ids)
         }
+    }
+}
+
+/// The most gain a fader may apply.
+///
+/// Not a taste limit — a *render-path* limit. The summing mixer clamps to ±1 after summing, so
+/// gain past a point buys nothing but distortion, and a fader dragged to a number with no top
+/// can be handed `1e30` by a UI that scaled a drag wrong. 4× is +12 dB, which is as far up as a
+/// clip that was mastered quiet ever needs to come.
+const MAX_GAIN: f32 = 4.0;
+
+/// A level a mixer may actually be set to. Non-finite is unity: a `NaN` level would silence a
+/// clip and there would be nothing on screen saying why.
+fn sane_gain(gain: f32) -> f32 {
+    if gain.is_finite() {
+        gain.clamp(0.0, MAX_GAIN)
+    } else {
+        1.0
+    }
+}
+
+/// A pan position a mixer may actually be set to. Non-finite is centre, for the same reason.
+fn sane_pan(pan: f32) -> f32 {
+    if pan.is_finite() {
+        pan.clamp(-1.0, 1.0)
+    } else {
+        0.0
     }
 }

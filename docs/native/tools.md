@@ -11,22 +11,23 @@ default value, because a printed default is the value that comes back.
 The tool prefix is whatever name the server was registered under (`mcp__bay__…`,
 `mcp__vii__…`). Every tool is written bare here for that reason.
 
-95 tools.
+102 tools.
 
 | tool | required | also takes |
 |---|---|---|
-| **project_create** — Start a new, empty project | — | `background`, `brief`, `customKit`, `fps`, `height`, `kit`, `name`, `width` |
+| **project_create** — Start a new, empty project | — | `background`, `brief`, `customKit`, `format`, `fps`, `fpsDenominator`, `height`, `kit`, `name`, `width` |
 | **style_pick** — Choose the project's STYLE KIT: three typefaces (display, body, mono), a type ramp that maps each element role to a size, a six-colour palette, and at least four named framings | — | `brief`, `customKit`, `kit` |
 | **project_info** — Canvas size, fps, timeline duration and element counts for the current project | — | — |
 | **fonts_check** — Report which of the given font families are actually installed | `families` | — |
+| **fonts_list** — Every typeface installed on this machine | — | `contains`, `weight` |
 | **media_import** — Register a media file (image, video or audio) and probe its real duration and dimensions | — | `generationReceipt`, `id`, `mediaId`, `path` |
 | **audio_probe** — Measure an imported sound: `lufs` (EBU R128 integrated loudness — the unit a mix is specified in), `peakDb`, `rmsDb`, and `accentSeconds` (where its transients are, for landing a cut on the music) | `mediaId` | — |
-| **add_text** — Place a text element on the timeline | `start`, `duration`, `content`, `role` | `align`, `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `letterSpacing`, `lineHeight`, `opacity`, `plate`, `rotation`, `scale`, `scaleX`, `scaleY`, `shadow`, `stroke`, `tone`, `x`, `y` |
-| **add_shape** — Place a solid rectangle or ellipse: bars, rules, dots, panels, underlines | `start`, `duration`, `role` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `radius`, `rotation`, `scale`, `scaleX`, `scaleY`, `shape`, `tone`, `x`, `y` |
-| **add_image** — Place an imported image | `mediaId`, `start`, `duration` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `role`, `rotation`, `scale`, `scaleX`, `scaleY`, `x`, `y` |
-| **add_video** — Place an imported video clip | `mediaId`, `start`, `duration` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `role`, `rotation`, `scale`, `scaleX`, `scaleY`, `speed`, `trimStart`, `x`, `y` |
-| **add_audio** — Place an audio clip (music bed, sound effect) on the audio lane | `mediaId`, `start`, `duration` | `id`, `role`, `speed`, `trimStart`, `volume` |
-| **group_create** — Parent several visual elements to one transform | `elementIds` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `rotation`, `scale`, `scaleX`, `scaleY`, `x`, `y` |
+| **add_text** — Place a text element on the timeline | `start`, `duration`, `content`, `role` | `align`, `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `letterSpacing`, `lineHeight`, `opacity`, `plate`, `rotation`, `scale`, `scaleX`, `scaleY`, `shadow`, `stroke`, `tiltX`, `tiltY`, `tone`, `typeOn`, `x`, `y` |
+| **add_shape** — Place a rectangle or ellipse: bars, rules, dots, panels, underlines, and the orbs and grounds a composed film is built out of | `start`, `duration`, `role` | `anchorX`, `anchorY`, `blendMode`, `cover`, `dash`, `framing`, `gap`, `gradientAngle`, `gradientFrom`, `gradientTo`, `id`, `layer`, `opacity`, `radius`, `rotation`, `scale`, `scaleX`, `scaleY`, `shape`, `strokeTone`, `strokeWidth`, `tiltX`, `tiltY`, `tone`, `x`, `y` |
+| **add_image** — Place an imported image | `mediaId`, `start`, `duration` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `role`, `rotation`, `scale`, `scaleX`, `scaleY`, `tiltX`, `tiltY`, `x`, `y` |
+| **add_video** — Place an imported video clip | `mediaId`, `start`, `duration` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `role`, `rotation`, `scale`, `scaleX`, `scaleY`, `speed`, `tiltX`, `tiltY`, `trimStart`, `x`, `y` |
+| **add_audio** — Place an audio clip (music bed, sound effect) on the audio lane | `mediaId`, `start`, `duration` | `id`, `processDialogue`, `role`, `speed`, `trimStart`, `volume` |
+| **group_create** — Parent several visual elements to one transform | `elementIds` | `anchorX`, `anchorY`, `blendMode`, `cover`, `framing`, `id`, `layer`, `opacity`, `rotation`, `scale`, `scaleX`, `scaleY`, `tiltX`, `tiltY`, `x`, `y` |
 | **element_retime** — Change a video or audio clip's constant playback speed | `elementId` | `freezeAt`, `freezeDuration`, `speed` |
 | **apply_move** — Put a NAMED MOVE from bay's vocabulary on an element | — | `at`, `direction`, `distance`, `elementId`, `move` |
 | **animate** — Give an element motion | `elementId` | `at`, `direction`, `distance`, `easing`, `keys`, `move`, `property` |
@@ -38,7 +39,7 @@ The tool prefix is whatever name the server was registered under (`mcp__bay__…
 | **element_source** — Slip: change WHICH part of a video or audio file a clip plays, keeping it exactly where it is on the timeline and exactly as long | `elementId`, `trimStart` | — |
 | **element_duplicate** — Copy a clip, effects and animation included, placed right after it | `elementId` | `newId` |
 | **element_rename** — Rename an element | `elementId`, `name` | — |
-| **transform_set** — Reposition, scale, rotate or fade an element already on the timeline | `elementId` | `anchorX`, `anchorY`, `opacity`, `rotation`, `scale`, `scaleX`, `scaleY`, `x`, `y` |
+| **transform_set** — Reposition, scale, rotate or fade an element already on the timeline | `elementId` | `anchorX`, `anchorY`, `opacity`, `rotation`, `scale`, `scaleX`, `scaleY`, `tiltX`, `tiltY`, `x`, `y` |
 | **text_update** — Change a title's words, or what it is for, in place — keeping its id, position and animation | `elementId` | `align`, `content`, `letterSpacing`, `lineHeight`, `role`, `tone` |
 | **effect_add** — Add a picture effect to a clip | `elementId`, `type` | `effectId`, `look`, `lut`, `params` |
 | **effect_set** — Retune an effect that is already on a clip, or switch it off without removing it | `elementId`, `effectId` | `enabled`, `params` |
@@ -46,6 +47,10 @@ The tool prefix is whatever name the server was registered under (`mcp__bay__…
 | **blend_set** — Change how a clip composites over what is under it | `elementId`, `mode` | — |
 | **audio_set** — Change an audio clip's level, mute it, or move its in-point — and duck it under the lines it plays behind | `elementId` | `attackMs`, `depthDb`, `duckUnder`, `holdMs`, `joinGapMs`, `muted`, `preRollMs`, `releaseMs`, `trimStart`, `volume` |
 | **duck** — Duck a music bed under narration: four volume keyframes per line, on ONE clip | `bedId` | `attackMs`, `depthDb`, `holdMs`, `joinGapMs`, `preRollMs`, `releaseMs`, `underIds` |
+| **formats_list** — What kinds of video bay knows, what each is built out of, and which checks each one relaxes and why | — | — |
+| **audio_react** — Drive an element's scale from how loud the sound is, moment to moment — the orb that pulses with the voice | `elementId`, `mediaId` | `channel`, `depth`, `floorDb` |
+| **room_tone** — Lay the room itself under the whole cut, lifted from a pause in the recording | `mediaId` | `crossfadeMs`, `levelDb`, `seconds` |
+| **audio_smooth** — Crossfade every place two sounds meet, so a dialogue edit stops ticking at its joins | — | `elementIds`, `joinMs` |
 | **fade_set** — Fade a clip up at its head and down at its tail | `elementId` | `fadeIn`, `fadeOut` |
 | **transition_add** — Cross-dissolve between two clips on the same lane | `fromId`, `toId` | `duration` |
 | **element_ripple_delete** — Remove a clip and close the hole it leaves: every later clip on the same lane moves back by its length | `elementId` | — |
@@ -60,15 +65,17 @@ The tool prefix is whatever name the server was registered under (`mcp__bay__…
 | **sfx_add** — Synthesise a sound effect and place it on the audio lane in one call | `sfx`, `start` | `duration`, `level`, `tone`, `volume` |
 | **looks_list** — The grades bay ships with: id, name, and what each one is for | — | — |
 | **shots_detect** — Find the cuts in an imported clip and return the stretches between them | `mediaId` | `minSeconds`, `threshold` |
+| **faces_detect** — Find the people in a clip: a face rectangle per person per sampled frame, and optionally their upper bodies | — | `endSeconds`, `mediaId`, `path`, `sampleSeconds`, `startSeconds`, `want` |
 | **media_index** — Build and persist a semantic index for imported footage | `mediaId` | — |
 | **media_search** — Find footage by meaning rather than filename | `query` | `limit`, `mediaId` |
 | **auto_reframe** — Track the subject in a video clip and animate crop insets for a new aspect ratio | `elementId` | `sampleSeconds`, `smoothingSeconds`, `targetHeight`, `targetWidth` |
 | **check** — Inspect the timeline for the mistakes that make a finished video look wrong: a large fill too close in colour to what it sits on to be seen, a card with nothing legible in it, an easing that overshoots a bar past its own number, an opening frame emptier than the rest of the video, two consecutive beats that carry nothing between them, elements off the canvas, type too small to read at thumbnail size, clips pointing at media nobody imported, black gaps in the picture | — | `duration` |
 | **check_frames** — Render low-resolution, caption-suppressed samples and inspect the picture itself | — | `duration` |
-| **timeline** — Dump the whole timeline: every layer, its elements, their timings, transforms and which properties are animated | — | — |
+| **scopes_read** — Measure one frame the way a colourist reads it: luma waveform, RGB parade, vectorscope and histogram, reduced to where the exposure sits, what is clipped and which way the colour leans | `at` | `scale`, `stride` |
+| **timeline** — Dump the whole timeline: every layer, its elements, their timings, transforms, effects, and the animation on them | — | `animatable` |
 | **snapshot** — Render ONE frame to a PNG so you can look at it | `at`, `path` | `scale` |
 | **contact_sheet** — Render review frames into one labelled PNG | `path` | `columns`, `times` |
-| **render** — Encode the timeline, picture and sound | `path` | `audioBitrateKbps`, `codec`, `duration`, `ignoreChecks`, `loudness`, `preset`, `quality`, `reason`, `startSeconds` |
+| **render** — Encode the timeline, picture and sound | `path` | `audioBitrateKbps`, `codec`, `duration`, `endSeconds`, `ignoreChecks`, `loudness`, `preset`, `quality`, `reason`, `startSeconds` |
 | **job_status** — Follow work that runs in the background | — | `job` |
 | **job_cancel** — Ask a running job to stop | `job` | — |
 | **runtime_status** — What bay needs to work, and whether it is installed on this machine — ffmpeg for decode and export, Kokoro for narration | — | `job` |
@@ -85,10 +92,10 @@ The tool prefix is whatever name the server was registered under (`mcp__bay__…
 | **library_collect** — Copy a whole collection into a folder — usually one beside the project file | `collection`, `into` | — |
 | **stock_credits** — The attribution for everything downloaded, as text you can paste | — | — |
 | **image_rank** — Score images already on disk against a phrase, best first | `query`, `paths` | — |
-| **narrate** — Speak text with Kokoro, put the audio on the timeline, and place word-synced captions for it | `text` | `audioPath`, `captionAlign`, `captionStyle`, `captionX`, `captionY`, `captions`, `energy`, `langCode`, `peakDb`, `pitchSemitones`, `speed`, `start`, `targetWordsPerSecond`, `voice`, `volume` |
-| **subtitles_add** — Read an SRT or WebVTT file and place every cue on the timeline as a caption | `path` | `captionAlign`, `captionStyle`, `captionX`, `captionY`, `offset` |
+| **narrate** — Speak text with Kokoro, put the audio on the timeline, and place word-synced captions for it | `text` | `audioPath`, `captionAlign`, `captionStyle`, `captionX`, `captionY`, `captions`, `energy`, `langCode`, `peakDb`, `pitchSemitones`, `speakerColors`, `speakerLabels`, `speed`, `start`, `targetWordsPerSecond`, `voice`, `volume` |
+| **subtitles_add** — Read an SRT or WebVTT file and place every cue on the timeline as a caption | `path` | `captionAlign`, `captionStyle`, `captionX`, `captionY`, `offset`, `speakerColors`, `speakerLabels` |
 | **subtitles_export** — Write the timeline's captions out as an SRT or WebVTT file | `path` | `format` |
-| **subtitles_to_video** — Turn a subtitle file straight into a video: create a project, place every cue as a caption, optionally narrate each cue with Kokoro, and render an MP4 | `path`, `output` | `background`, `brief`, `captionAlign`, `captionStyle`, `captionX`, `captionY`, `customKit`, `fps`, `height`, `kit`, `langCode`, `narrate`, `speed`, `targetWordsPerSecond`, `voice`, `width` |
+| **subtitles_to_video** — Turn a subtitle file straight into a video: create a project, place every cue as a caption, optionally narrate each cue with Kokoro, and render an MP4 | `path`, `output` | `background`, `brief`, `captionAlign`, `captionStyle`, `captionX`, `captionY`, `customKit`, `fps`, `height`, `kit`, `langCode`, `narrate`, `speakerColors`, `speakerLabels`, `speed`, `targetWordsPerSecond`, `voice`, `width` |
 | **project_save** — Save the project | — | `path` |
 | **project_list** — List the projects in the user's bay library — the same list the desktop app opens on | — | — |
 | **project_load** — Replace the current project with one from the library (by id) or from a JSON file (by path) | — | `id`, `path` |

@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use bay_core::{Command, ElementRef, TrackLane};
 use bay_project::moves::{self, Direction, Move, MoveParams};
 use bay_project::{
-    AnimationChannel, Easing, Effect, Element, ElementRole, ElementSource, MediaTime, Project,
-    ShapeElement, ShapeKind, TextAlign, TextElement, Transform, is_caption_id,
+    AnimationChannel, Easing, Effect, Element, ElementGroup, ElementRole, ElementSource, MediaTime,
+    Project, ShapeElement, ShapeKind, TextAlign, TextElement, Transform, is_caption_id,
 };
 use serde_json::Value;
 
@@ -155,6 +155,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "contact_sheet",
         "fonts_list",
         "formats_list",
+        "html_import",
         "critic_prepare",
         "critic_refresh",
         "critic_submit",
@@ -162,6 +163,7 @@ pub fn server_only_tools() -> &'static [&'static str] {
         "remove_silence_and_fillers",
         "room_tone",
         "runtime_remove",
+        "scopes_read",
         "sfx_add",
         "sfx_list",
         "sfx_search",
@@ -598,6 +600,20 @@ fn round4(value: f64) -> f64 {
     (value * 10_000.0).round() / 10_000.0
 }
 
+/// The wire spelling of a unit. Named rather than numbered so a client reading the table does
+/// not have to know the enum's declaration order.
+fn unit_name(unit: bay_project::Unit) -> &'static str {
+    use bay_project::Unit;
+    match unit {
+        Unit::Fraction => "fraction",
+        Unit::CanvasFraction => "canvas-fraction",
+        Unit::Degrees => "degrees",
+        Unit::Pixels => "pixels",
+        Unit::Multiplier => "multiplier",
+        Unit::Scalar => "scalar",
+    }
+}
+
 /// The wire spelling of an easing, from the same table the parser reads — so a curve reported
 /// back can be passed straight into `animate` without a translation step.
 fn easing_name(easing: Easing) -> &'static str {
@@ -610,13 +626,20 @@ fn easing_name(easing: Easing) -> &'static str {
 
 /// The effects the compositor actually renders. Naming one it does not know would attach a
 /// no-op the agent then cannot see the absence of — worse than refusing it.
-const SUPPORTED_EFFECTS: &[&str] = &[
+///
+/// Public because it is the *only* list: `effect_add`'s JSON Schema `enum` is read off this
+/// slice rather than written out beside it. Written out, the two drifted — `drop-shadow` was
+/// validated here and absent from the schema, so an agent reading the tool definition could
+/// not discover the one effect it most obviously wanted, and a call naming it looked like a
+/// schema violation on the way in while being perfectly legal on the way through.
+pub const SUPPORTED_EFFECTS: &[&str] = &[
     "brightness",
     "contrast",
     "saturation",
     "blur",
     "lut",
     "drop-shadow",
+    "lift-gamma-gain",
 ];
 
 /// Resolve the `elementId` argument every revising tool takes.
@@ -774,7 +797,11 @@ fn text_decorations(args: &Value) -> Option<bay_project::TextDecorations> {
     )
 }
 
-fn describe_element(element: &Element) -> Value {
+/// One element, as an agent reads it.
+///
+/// `include_animatable` adds the property table — see the note at its use below for why it is
+/// a choice rather than always on.
+fn describe_element(element: &Element, include_animatable: bool) -> Value {
     let mut out = serde_json::json!({
         "id": element.id(),
         "kind": element.kind().label(),
@@ -808,6 +835,78 @@ fn describe_element(element: &Element) -> Value {
         && !animations.is_empty()
     {
         out["animated"] = serde_json::json!(animations.keys().collect::<Vec<_>>());
+        // Alongside `animated`, never instead of it. `animated` is a list of channel names
+        // and anything already reading it keeps working unchanged; `keys` is what you need to
+        // revise one — the keyframes themselves, each addressable by id, with the curve
+        // leaving it spelled the way `animate` would take it back.
+        out["keyframes"] = serde_json::json!(
+            animations
+                .iter()
+                .map(|(property, channel)| {
+                    serde_json::json!({
+                        "property": property,
+                        "channelEasing": easing_name(channel.easing),
+                        "keys": channel
+                            .keys
+                            .iter()
+                            .map(|key| {
+                                let mut entry = serde_json::json!({
+                                    "id": key.identity(),
+                                    "t": round4(key.time.to_seconds_f64()),
+                                    "value": round4(f64::from(key.value)),
+                                });
+                                // Only when the key overrides the channel, so the absence of
+                                // a curve here means "travels on the channel's" rather than
+                                // "linear" — which are different answers.
+                                if let Some(easing) = key.easing {
+                                    entry["easing"] = serde_json::json!(easing_name(easing));
+                                }
+                                // A drawn curve has no name to report. Reporting the nearest
+                                // named easing would be a lie an agent would then write back.
+                                if let Some(handles) = key.handles {
+                                    entry["curve"] = serde_json::json!([
+                                        round4(f64::from(handles.out_x)),
+                                        round4(f64::from(handles.out_y)),
+                                        round4(f64::from(handles.in_x)),
+                                        round4(f64::from(handles.in_y)),
+                                    ]);
+                                }
+                                entry
+                            })
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+    // What this element *could* carry — a different question, and the one an agent asks
+    // before its first `animate` call.
+    //
+    // Behind a flag because `timeline` describes **every** element and this is thirteen
+    // near-identical rows on each of them whether or not anything is animated. `keyframes`
+    // above is not gated: it is proportional to work someone actually did, and it is the only
+    // form of the answer that can be acted on — `animated` names a channel and cannot say
+    // where its keys are.
+    if include_animatable {
+        out["animatable"] = serde_json::json!(
+            element
+                .animatable_paths()
+                .into_iter()
+                .map(|property| {
+                    let mut entry = serde_json::json!({
+                        "path": property.path,
+                        "label": property.label,
+                        "unit": unit_name(property.unit),
+                        "default": round4(f64::from(property.default)),
+                    });
+                    if let Some((low, high)) = property.range {
+                        entry["range"] =
+                            serde_json::json!([round4(f64::from(low)), round4(f64::from(high))]);
+                    }
+                    entry
+                })
+                .collect::<Vec<_>>()
+        );
     }
     if !element.effects().is_empty() {
         out["effects"] = serde_json::json!(
@@ -892,12 +991,20 @@ fn named_move(args: &Value) -> Result<Option<(&'static Move, MoveParams)>, Strin
 
 /// The whole registry, as an agent reads it. Every entry says what it is for and — more usefully
 /// — when it is the wrong choice.
+/// The move registry, one line each.
+///
+/// Summaries rather than `describe()`. The full registry is 12 KB, and this call is how an agent
+/// finds out what moves *exist* — choosing one needs the name and what it does, not its channel
+/// list. A caller who wants the rest asks for a single move by name, which is one more call and
+/// about 300 bytes instead of 12,000 paid by everyone who ever orients.
 fn move_catalogue() -> Value {
     serde_json::json!({
-        "moves": moves::MOVES.iter().map(|m| m.describe()).collect::<Vec<_>>(),
+        "moves": moves::MOVES.iter().map(|m| m.summarise()).collect::<Vec<_>>(),
         "note": "Each move carries its own duration, curve and amplitude. \"direction\" is the \
                  way it TRAVELS; \"distance\" is a multiplier on its own amplitude, not a number \
-                 of pixels. Reach them from animate/animate_many with \"move\" as well.",
+                 of pixels. Reach them from animate/animate_many with \"move\" as well. \
+                 For one move's channels, directions and duration, call apply_move with \"move\" \
+                 and no \"elementId\".",
     })
 }
 
@@ -1175,8 +1282,10 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 .collect::<Vec<_>>(),
             // The move registry rides along here as well as on `apply_move`, because a live MCP
             // session's tool list is cached when it connects: a new tool *name* is unreachable
-            // in one, and a new key on an existing tool's response is not.
-            "moves": moves::MOVES.iter().map(|m| m.describe()).collect::<Vec<_>>(),
+            // in one, and a new key on an existing tool's response is not. Summarised, though —
+            // carrying `describe()` meant this call and `apply_move{}` each shipped the same
+            // 12 KB, so orienting twice cost more than the entire tool list.
+            "moves": moves::MOVES.iter().map(|m| m.summarise()).collect::<Vec<_>>(),
         }))),
 
         // The whole report, envelope and all. `ok: true` used to be the first thing an agent
@@ -1203,6 +1312,12 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
 
         "timeline" => {
             let scene = project.active_scene();
+            // Off by default: the property table is thirteen near-identical rows per element,
+            // and this read returns every element on the timeline.
+            let animatable = args
+                .get("animatable")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
             let layers: Vec<Value> = std::iter::once(&scene.tracks.main)
                 .chain(scene.tracks.overlay.iter())
                 .enumerate()
@@ -1210,7 +1325,11 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     serde_json::json!({
                         "layer": index,
                         "trackId": track.id,
-                        "elements": track.elements.iter().map(describe_element).collect::<Vec<_>>(),
+                        "elements": track
+                            .elements
+                            .iter()
+                            .map(|element| describe_element(element, animatable))
+                            .collect::<Vec<_>>(),
                     })
                 })
                 .collect();
@@ -1219,7 +1338,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 .audio
                 .iter()
                 .flat_map(|t| t.elements.iter())
-                .map(describe_element)
+                .map(|element| describe_element(element, animatable))
                 .collect();
             let duration = scene
                 .tracks
@@ -1421,6 +1540,19 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
             if name == "apply_move" && args.get("move").is_none() {
                 return Ok(Planned::Read(move_catalogue()));
             }
+            // A named move with nothing to apply it to is a question about the move, not a
+            // malformed call. It is also the detail half of the catalog above: the listing is
+            // summaries, and this is how a caller gets the channels and directions for the one
+            // move they are choosing between.
+            if name == "apply_move"
+                && args.get("elementId").is_none()
+                && let Some(id) = text(args, "move")
+            {
+                let found = moves::find(&id).ok_or_else(|| {
+                    format!("no move {id:?} — call apply_move with no arguments for the list")
+                })?;
+                return Ok(Planned::Read(found.describe()));
+            }
             let element_id = text(args, "elementId")
                 .ok_or_else(|| "missing required string field \"elementId\"".to_string())?;
 
@@ -1488,10 +1620,25 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
             }
 
             if let Some(group) = project.active_scene().groups.get(&element_id) {
-                if !Element::ANIMATABLE.contains(&property.as_str()) {
+                // Against the *group's* list, not the element's. A group is a transform parent
+                // and `compose_group_transform` carries seven channels; validating against all
+                // thirteen of `Element::ANIMATABLE` accepted crop and tilt, wrote the channel,
+                // returned success — and nothing moved, because nothing downstream reads them.
+                // See `ElementGroup::ANIMATABLE` for why the six cannot simply be sampled.
+                if !ElementGroup::ANIMATABLE.contains(&property.as_str()) {
+                    let element_only: Vec<&str> = Element::ANIMATABLE
+                        .into_iter()
+                        .filter(|name| !ElementGroup::ANIMATABLE.contains(name))
+                        .collect();
+                    let hint = if element_only.contains(&property.as_str()) {
+                        " — a group is a transform parent and carries no crop or tilt onto its \
+                         children; animate it on the child element instead"
+                    } else {
+                        ""
+                    };
                     return Err(format!(
-                        "{property:?} cannot be animated on a group — pick one of {:?}",
-                        Element::ANIMATABLE
+                        "{property:?} cannot be animated on a group{hint}. A group takes {:?}",
+                        ElementGroup::ANIMATABLE
                     ));
                 }
                 let mut group = group.clone();
@@ -1510,29 +1657,24 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                 .active_scene()
                 .element(&reference)
                 .ok_or_else(|| format!("no element {element_id:?} on the timeline"))?;
-            // Checked against the kind, not one global list: audio has `volume` and no
-            // position, everything visual has a position and no level. Accepting `x` on a
-            // music bed and then quietly doing nothing with the keys is worse than refusing.
-            let nested_mask = matches!(
-                property.as_str(),
-                "mask.x" | "mask.y" | "mask.width" | "mask.height" | "mask.feather"
-            ) && element.mask().is_some();
-            let nested_effect = property
-                .strip_prefix("effect.")
-                .and_then(|rest| rest.split_once('.'))
-                .is_some_and(|(id, param)| {
-                    element
-                        .effects()
-                        .iter()
-                        .any(|effect| effect.id == id && effect.params.contains_key(param))
-                });
-            if !element.animatable().contains(&property.as_str()) && !nested_mask && !nested_effect
-            {
+            // Checked against what this element actually reads, not against a list. Audio has
+            // `volume` and no position; a clip with no mask has no `mask.x`; only the effects
+            // attached contribute `effect.<id>.<param>`. Accepting `x` on a music bed and then
+            // quietly doing nothing with the keys is worse than refusing.
+            //
+            // This check used to be assembled inline from three conditions and was missing
+            // `shape.radius`, `stroke.width` and `fontSize` — all three sampled by the
+            // renderer, none reachable from any surface. `AddKeyframe` assembled a *different*
+            // subset and was missing five more.
+            if !element.can_animate(&property) {
+                let offered: Vec<String> = element
+                    .animatable_paths()
+                    .into_iter()
+                    .map(|path| path.path)
+                    .collect();
                 return Err(format!(
-                    "{property:?} cannot be animated on a {} — pick a transform channel, an \
-                     existing mask field, or effect.<id>.<param>; transform channels are {:?}",
+                    "{property:?} cannot be animated on a {} — it takes {offered:?}",
                     element.kind().label().to_lowercase(),
-                    element.animatable()
                 ));
             }
             let mut animations = element
@@ -2616,6 +2758,7 @@ pub fn plan(name: &str, args: &Value, project: &Project) -> Result<Planned, Stri
                     media_id,
                     muted: false,
                     volume: number(args, "volume", 1.0) as f32,
+                    pan: 0.0,
                     speed: number(args, "speed", 1.0) as f32,
                     prosody: None,
                     dialogue_chain: (role == bay_project::AudioRole::Speech)
@@ -2972,6 +3115,7 @@ mod tests {
             media_id: "m1".into(),
             muted: false,
             volume: 1.0,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -3312,6 +3456,7 @@ mod tests {
             media_id: "m1".into(),
             muted: false,
             volume: 1.0,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -3566,6 +3711,7 @@ mod tests {
             media_id: "m1".into(),
             muted: false,
             volume: 1.0,
+            pan: 0.0,
             speed: 1.0,
             prosody: None,
             dialogue_chain: None,
@@ -3710,6 +3856,261 @@ mod tests {
             &commands[..],
             [Command::SetGroup { group }] if group.id == "hero" && group.children == ["v1"]
         ));
+    }
+
+    /// A project with one clip in a group, which is what a group `animate` needs.
+    fn project_with_group() -> Project {
+        let mut project = project_with_clip();
+        project.active_scene_mut().groups.insert(
+            "hero".into(),
+            ElementGroup {
+                id: "hero".into(),
+                children: vec!["v1".into()],
+                transform: Transform::default(),
+                animations: BTreeMap::new(),
+            },
+        );
+        project
+    }
+
+    fn animate_group(property: &str, project: &Project) -> Result<Planned, String> {
+        plan(
+            "animate",
+            &serde_json::json!({
+                "elementId": "hero",
+                "property": property,
+                "keys": [{ "t": 0.0, "value": 0.0 }, { "t": 1.0, "value": 1.0 }],
+            }),
+            project,
+        )
+    }
+
+    /// The seven channels `compose_group_transform` carries are the seven a group accepts.
+    #[test]
+    fn a_group_takes_every_channel_that_composes_onto_its_children() {
+        let project = project_with_group();
+        for property in ElementGroup::ANIMATABLE {
+            let (_, commands, _) =
+                tx(animate_group(property, &project).unwrap_or_else(|e| panic!("{property}: {e}")));
+            let [Command::SetGroup { group }] = &commands[..] else {
+                panic!("{property} should set the group: {commands:?}");
+            };
+            assert!(
+                group.animations.contains_key(property),
+                "{property} planned without writing its channel"
+            );
+        }
+    }
+
+    /// And the six it does not carry are refused by name, rather than written into a channel
+    /// nothing downstream reads.
+    ///
+    /// This is the whole defect: `animate` validated a group against `Element::ANIMATABLE`, so
+    /// keying `cropLeft` on a group returned success, wrote the channel, round-tripped through
+    /// the project file — and moved nothing, because a group's crop never reaches a child.
+    /// `bay-project`'s `the_channels_a_group_refuses_would_have_sampled_into_nowhere` pins the
+    /// other half: that these six really are inert there.
+    #[test]
+    fn a_group_refuses_the_channels_it_cannot_carry_by_name() {
+        let project = project_with_group();
+        let refused: Vec<&str> = Element::ANIMATABLE
+            .into_iter()
+            .filter(|name| !ElementGroup::ANIMATABLE.contains(name))
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                "cropLeft",
+                "cropTop",
+                "cropRight",
+                "cropBottom",
+                "tiltX",
+                "tiltY"
+            ],
+            "the refused set changed — the error message and the docs have to change with it"
+        );
+
+        for property in refused {
+            let error = animate_group(property, &project)
+                .err()
+                .unwrap_or_else(|| panic!("{property} on a group must be refused, not accepted"));
+            assert!(
+                error.contains(property) && error.contains("group"),
+                "{property} was refused without saying what was refused: {error}"
+            );
+            // The refusal has to point somewhere: the same channel on the child element works.
+            assert!(
+                Element::ANIMATABLE.contains(&property),
+                "{property} should still be animatable on an element"
+            );
+        }
+    }
+
+    /// The refusal is about the group, not about the name: the same six are legal on a child.
+    #[test]
+    fn the_channels_a_group_refuses_still_animate_on_an_element() {
+        let project = project_with_group();
+        for property in ["cropLeft", "tiltY"] {
+            let planned = plan(
+                "animate",
+                &serde_json::json!({
+                    "elementId": "v1",
+                    "property": property,
+                    "keys": [{ "t": 0.0, "value": 0.0 }, { "t": 1.0, "value": 0.2 }],
+                }),
+                &project,
+            );
+            assert!(planned.is_ok(), "{property} on an element: {planned:?}");
+        }
+    }
+
+    fn animate(element_id: &str, property: &str, project: &Project) -> Result<Planned, String> {
+        plan(
+            "animate",
+            &serde_json::json!({
+                "elementId": element_id,
+                "property": property,
+                "keys": [{ "t": 0.0, "value": 0.0 }, { "t": 1.0, "value": 1.0 }],
+            }),
+            project,
+        )
+    }
+
+    /// Three channels the renderer has sampled all along and no surface would let anyone
+    /// write. `animate` assembled its check from three inline conditions covering transform,
+    /// mask and effect params, and simply did not know about these.
+    #[test]
+    fn the_channels_the_renderer_samples_and_nothing_accepted_now_plan() {
+        assert!(
+            animate("t1", "fontSize", &title_project()).is_ok(),
+            "sampled_font_size has read fontSize since it was written"
+        );
+
+        let mut project = project();
+        project.active_scene_mut().tracks.main.elements = vec![Element::Shape(ShapeElement {
+            id: "s1".into(),
+            name: "Card".into(),
+            start: MediaTime::ZERO,
+            duration: secs(3.0).unwrap(),
+            fade_in: MediaTime::ZERO,
+            fade_out: MediaTime::ZERO,
+            shape: ShapeKind::Rect { radius: 0.1 },
+            color: "#ffffff".into(),
+            gradient: None,
+            stroke: Some(bay_project::Stroke {
+                color: "#000000".into(),
+                width: 0.02,
+                dash: None,
+                gap: None,
+            }),
+            transform: Transform::default(),
+            effects: Vec::new(),
+            animations: Default::default(),
+            blend_mode: Default::default(),
+            mask: None,
+            source: Default::default(),
+            role: Default::default(),
+        })];
+        assert!(animate("s1", "shape.radius", &project).is_ok());
+        assert!(animate("s1", "stroke.width", &project).is_ok());
+    }
+
+    /// And the refusal still refuses, with the paths this element actually takes rather than
+    /// a fixed list that was wrong for most elements.
+    #[test]
+    fn a_path_with_nothing_behind_it_is_refused_and_the_message_says_what_is_offered() {
+        let project = title_project();
+        let error = animate("t1", "wobble", &project).expect_err("refused");
+        assert!(error.contains("wobble"), "{error}");
+        assert!(
+            error.contains("fontSize"),
+            "the offer must be real: {error}"
+        );
+
+        // A mask field on an element with no mask: the path is known, the element has nothing
+        // behind it, and a channel there would be stored and never read. The refusal names it
+        // — that is the point — so the check is that the *offer* does not.
+        let error = animate("t1", "mask.x", &project).expect_err("refused");
+        let (_, offered) = error.split_once("it takes").expect("the offer: {error}");
+        assert!(
+            !offered.contains("mask.x"),
+            "offered what it just refused: {error}"
+        );
+        assert!(
+            offered.contains("opacity"),
+            "the offer must be real: {error}"
+        );
+    }
+
+    /// `animated` is a list of channel names and cannot be acted on; `keyframes` is the same
+    /// channels with their keys, each addressable. Both, because anything already reading
+    /// `animated` keeps working.
+    #[test]
+    fn the_timeline_read_reports_keys_beside_the_channel_names() {
+        let mut project = title_project();
+        let (_, commands, _) = tx(animate("t1", "opacity", &project).expect("plans"));
+        for command in commands {
+            if let Command::ApplyMotionPreset { animations, .. } = command {
+                let Some(Element::Text(text)) =
+                    project.active_scene_mut().tracks.main.elements.first_mut()
+                else {
+                    panic!("the title");
+                };
+                text.animations = animations;
+            }
+        }
+
+        let Planned::Read(read) = plan("timeline", &serde_json::json!({}), &project).unwrap()
+        else {
+            panic!("timeline is a read");
+        };
+        let element = &read["layers"][0]["elements"][0];
+
+        assert_eq!(
+            element["animated"],
+            serde_json::json!(["opacity"]),
+            "the old key must be untouched — something is already reading it"
+        );
+        let channel = &element["keyframes"][0];
+        assert_eq!(channel["property"], "opacity");
+        assert_eq!(channel["keys"].as_array().unwrap().len(), 2);
+        assert_eq!(channel["keys"][1]["t"], 1.0);
+        assert!(
+            channel["keys"][0]["id"].is_string(),
+            "a key has to be addressable to be moved"
+        );
+    }
+
+    /// The property table is a request, not a default: `timeline` describes every element and
+    /// the table is thirteen near-identical rows on each.
+    #[test]
+    fn the_property_table_is_asked_for_rather_than_always_sent() {
+        let project = title_project();
+        let read = |args| {
+            let Planned::Read(read) = plan("timeline", &args, &project).unwrap() else {
+                panic!("timeline is a read");
+            };
+            read
+        };
+
+        let lean = read(serde_json::json!({}));
+        assert!(lean["layers"][0]["elements"][0]["animatable"].is_null());
+
+        let full = read(serde_json::json!({ "animatable": true }));
+        let table = full["layers"][0]["elements"][0]["animatable"]
+            .as_array()
+            .expect("the table");
+        let opacity = table
+            .iter()
+            .find(|entry| entry["path"] == "opacity")
+            .expect("opacity is animatable on a title");
+        assert_eq!(opacity["label"], "Opacity");
+        assert_eq!(opacity["unit"], "fraction");
+        assert_eq!(opacity["range"], serde_json::json!([0.0, 1.0]));
+        assert!(
+            table.iter().any(|entry| entry["path"] == "fontSize"),
+            "the table has to name what animate will accept"
+        );
     }
 
     /// A layer above the last overlay must carry the AddTrack commands with it, in the same
@@ -4319,6 +4720,36 @@ pub fn caption_style_from(
     kit: Option<&bay_project::StyleKit>,
     tool: &str,
 ) -> Result<CaptionStyle, String> {
+    caption_style_with(args, kit, tool, &captions_setting())
+}
+
+/// The caption placement this machine is configured for.
+///
+/// Read from disk rather than threaded through every caller because there is exactly one answer
+/// per machine and four call sites, and a parameter that three of them pass correctly is a
+/// parameter the fourth gets wrong silently. Falls back to the default — follow the kit, reserve
+/// nothing — when there is no settings file, which is the state of a fresh install.
+fn captions_setting() -> bay_settings::CaptionSettings {
+    // `current` rather than `load`: the editor publishes its settings into a process-wide
+    // snapshot as they change, and the agent server that shares this process must honour a band
+    // position the moment it is moved — not only after the next write reaches disk.
+    bay_settings::store::current().captions
+}
+
+/// [`caption_style_from`] with the placement setting supplied explicitly.
+///
+/// Exists so the precedence can be tested without writing to the user's real settings file.
+///
+/// **Precedence: an explicit `captionY` on the call, then the setting, then the kit — and the
+/// safe area clamps whichever won.** The clamp is not a preference: it describes the part of
+/// the frame the platform draws its own chrome over, so a caller asking for a position under
+/// Instagram's action rail is asking for a caption nobody reads.
+pub fn caption_style_with(
+    args: &Value,
+    kit: Option<&bay_project::StyleKit>,
+    tool: &str,
+    captions: &bay_settings::CaptionSettings,
+) -> Result<CaptionStyle, String> {
     reject_raw_caption_style(args, tool)?;
     let preset = match args.get("captionStyle").and_then(|v| v.as_str()) {
         Some(name) => CaptionPreset::parse(name)?,
@@ -4358,7 +4789,21 @@ pub fn caption_style_from(
     let speaker_labels = map_of_strings("speakerLabels");
     let speaker_colors = map_of_strings("speakerColors");
 
-    Ok(match kit {
+    // The setting stands in for the kit where the caller said nothing, so the kit still answers
+    // everything else about a caption — face, size, colour — and only the position is overridden.
+    let placement = CaptionPlacement {
+        y: placement.y.or(captions.band_top.filter(|v| v.is_finite())),
+        align: placement.align.or_else(|| {
+            captions.align.map(|align| match align {
+                bay_settings::captions::CaptionAlign::Left => TextAlign::Left,
+                bay_settings::captions::CaptionAlign::Center => TextAlign::Center,
+                bay_settings::captions::CaptionAlign::Right => TextAlign::Right,
+            })
+        }),
+        ..placement
+    };
+
+    let mut style = match kit {
         Some(kit) => CaptionStyle {
             speaker_labels,
             speaker_colors,
@@ -4373,7 +4818,12 @@ pub fn caption_style_from(
             speaker_colors,
             ..CaptionStyle::default()
         },
-    })
+    };
+    // Applied last, and to every path: a kit whose lower third sits under the platform's UI is
+    // exactly the case the safe area exists for, and clamping only explicit values would leave
+    // the default broken.
+    style.y = captions.clamp_top(style.y);
+    Ok(style)
 }
 
 fn parse_text_align(name: &str) -> Result<TextAlign, String> {
@@ -4641,6 +5091,7 @@ pub fn place_narration(
             muted: false,
             trim_start: MediaTime::ZERO,
             volume,
+            pan: 0.0,
             speed: 1.0,
             prosody: Some(bay_project::SpeechProsody::default()),
             dialogue_chain: Some(bay_project::DialogueAudioChain::default()),

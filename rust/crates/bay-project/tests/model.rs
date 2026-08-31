@@ -105,6 +105,7 @@ fn the_source_range_fields_keep_their_wire_names() {
         media_id: "m".into(),
         muted: false,
         volume: 1.0,
+        pan: 0.0,
         speed: 1.0,
         prosody: None,
         dialogue_chain: None,
@@ -253,6 +254,7 @@ fn audio_clip(duration: f64, volume: f32) -> Element {
         media_id: "m".into(),
         muted: false,
         volume,
+        pan: 0.0,
         speed: 1.0,
         prosody: None,
         dialogue_chain: None,
@@ -1320,4 +1322,129 @@ fn load_external_project() {
         project, reparsed,
         "the project does not survive a round trip"
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// The mixer's state on the wire: clip pan, and a lane's gain, pan and solo.
+//
+// The project file is the web↔native interop contract, so every one of these is pinned twice —
+// once by the name and spelling it is written under, and once by what a project written *before*
+// it existed loads as. A field that defaults wrong is worse than a field that is missing: the
+// project opens, and every mix in it is quietly different.
+
+#[test]
+fn clip_pan_keeps_its_wire_name_and_round_trips() {
+    let mut clip = audio_clip(5.0, 1.0);
+    let Element::Audio(audio) = &mut clip else {
+        panic!("an audio clip");
+    };
+    audio.pan = -0.75;
+
+    let json = serde_json::to_string(&clip).expect("serialize");
+    assert!(json.contains("\"pan\":-0.75"), "{json}");
+
+    let restored: Element = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(restored, clip);
+    assert_eq!(restored.audio().expect("audio").pan, -0.75);
+}
+
+/// A centred clip writes **no** `pan` at all, so a project that has never touched pan produces
+/// byte-identical JSON to the one it produced before pan existed. The web app reads this file;
+/// a field appearing on every audio clip in every project is a wire change, and this one would
+/// have said nothing.
+#[test]
+fn a_centred_clip_writes_no_pan_field() {
+    let clip = audio_clip(5.0, 1.0);
+    let json = serde_json::to_string(&clip).expect("serialize");
+    assert!(!json.contains("\"pan\""), "{json}");
+}
+
+/// **A project written before pan existed must load as centred, not as hard left.** `0.0` is
+/// the rest value of the field and the identity of the pan law, and a default that landed
+/// anywhere else would move every clip in every existing project to one side without a single
+/// visible edit.
+#[test]
+fn a_clip_without_pan_loads_as_centred() {
+    let clip: bay_project::AudioElement = serde_json::from_str(
+        r#"{"id":"a","name":"a","start":0,"duration":120000,"mediaId":"m","muted":false,"volume":1.0}"#,
+    )
+    .expect("an audio clip written before pan existed");
+    assert_eq!(clip.pan, 0.0, "centre, and nowhere else");
+}
+
+#[test]
+fn track_gain_pan_and_solo_keep_their_wire_names_and_round_trip() {
+    use bay_project::Track;
+
+    let mut track = Track::new("track-audio", "Audio", TrackKind::Audio);
+    track.gain = 0.5;
+    track.pan = 0.25;
+    track.solo = true;
+
+    let json = serde_json::to_string(&track).expect("serialize");
+    assert!(json.contains("\"gain\":0.5"), "{json}");
+    assert!(json.contains("\"pan\":0.25"), "{json}");
+    assert!(json.contains("\"solo\":true"), "{json}");
+
+    let restored: Track = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(restored, track);
+}
+
+/// A lane at its rest values writes nothing new, for the same reason a centred clip does not.
+#[test]
+fn an_untouched_lane_writes_none_of_the_new_fields() {
+    use bay_project::Track;
+
+    let json = serde_json::to_string(&Track::new("track-audio", "Audio", TrackKind::Audio))
+        .expect("serialize");
+    assert!(!json.contains("\"gain\""), "{json}");
+    assert!(!json.contains("\"pan\""), "{json}");
+    assert!(!json.contains("\"solo\""), "{json}");
+}
+
+/// **A project written before the mixer existed opens with every lane at unity, centred, and
+/// not soloed** — which is what it was. `gain` is the one that has to default to `1.0` rather
+/// than to `f32::default()`: a lane defaulting to `0.0` would open every existing project
+/// silent, and the mix envelope would have nothing left to measure.
+#[test]
+fn a_track_without_the_mixer_fields_loads_at_unity_centred_and_unsoloed() {
+    use bay_project::Track;
+
+    let track: Track =
+        serde_json::from_str(r#"{"id":"track-audio","name":"Audio","kind":"audio","elements":[]}"#)
+            .expect("a track written before the mixer existed");
+    assert_eq!(track.gain, 1.0, "silence is not the rest value of a fader");
+    assert_eq!(track.pan, 0.0);
+    assert!(!track.solo);
+    assert!(track.is_audible(false), "and it is heard");
+}
+
+/// Solo is a rule about the other lanes, so it is decided in one place. A lone soloed lane
+/// silences the rest; nothing soloed silences nothing.
+#[test]
+fn solo_silences_every_lane_that_is_not_soloed() {
+    use bay_project::{Track, Tracks};
+
+    let mut music = Track::new("track-music", "Music", TrackKind::Audio);
+    let voice = Track::new("track-voice", "Voice", TrackKind::Audio);
+    let mut tracks = Tracks {
+        overlay: Vec::new(),
+        main: Track::new("track-main", "Main", TrackKind::Video),
+        audio: vec![music.clone(), voice.clone()],
+    };
+    assert!(!tracks.any_audio_solo());
+    assert_eq!(music.mix_gain(false), 1.0);
+    assert_eq!(voice.mix_gain(false), 1.0);
+
+    music.solo = true;
+    tracks.audio[0] = music.clone();
+    assert!(tracks.any_audio_solo());
+    assert_eq!(music.mix_gain(true), 1.0, "the soloed lane is heard");
+    assert_eq!(voice.mix_gain(true), 0.0, "and nothing else is");
+
+    // A soloed lane still obeys its own fader, and a muted one is silent however it is soloed.
+    music.gain = 0.25;
+    assert_eq!(music.mix_gain(true), 0.25);
+    music.muted = true;
+    assert_eq!(music.mix_gain(true), 0.0);
 }

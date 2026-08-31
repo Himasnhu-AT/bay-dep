@@ -66,6 +66,7 @@ fn tmp(name: &str) -> String {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn speaks_a_line_and_reports_word_timings() {
     let Some((mut engine, _sidecar)) = engine_on(7431) else {
         return;
@@ -138,6 +139,7 @@ fn speaks_a_line_and_reports_word_timings() {
 /// Three lines rather than one: the rate of a single short line swings on where its commas fall,
 /// and the claim is about a read, not about a sentence.
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn a_stated_rate_lands_within_five_words_a_minute_of_it() {
     let Some((mut engine, _sidecar)) = engine_on(7437) else {
         return;
@@ -176,6 +178,7 @@ fn a_stated_rate_lands_within_five_words_a_minute_of_it() {
 /// The cue floors, on real speech at the rate `narrate` now targets. This is the §1.4 proof:
 /// every cue at least 0.833 s, and at least 0.30 s a word.
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn real_captions_clear_the_reading_floors() {
     let Some((mut engine, _sidecar)) = engine_on(7438) else {
         return;
@@ -216,6 +219,7 @@ fn real_captions_clear_the_reading_floors() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn captions_built_from_speech_stay_inside_the_audio() {
     let Some((mut engine, _sidecar)) = engine_on(7432) else {
         return;
@@ -265,6 +269,7 @@ fn captions_built_from_speech_stay_inside_the_audio() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn an_empty_line_is_refused_without_starting_the_model() {
     let mut engine = SpeechEngine::new(SpeechConfig::default());
     let error = engine
@@ -277,6 +282,7 @@ fn an_empty_line_is_refused_without_starting_the_model() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn an_absurd_speed_is_refused() {
     let mut engine = SpeechEngine::new(SpeechConfig::default());
     let error = engine
@@ -286,6 +292,7 @@ fn an_absurd_speed_is_refused() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn the_engine_reuses_one_hot_process_across_calls() {
     let Some((mut engine, _sidecar)) = engine_on(7433) else {
         return;
@@ -311,6 +318,7 @@ fn the_engine_reuses_one_hot_process_across_calls() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn shutdown_is_idempotent_and_the_engine_restarts_afterwards() {
     let Some((mut engine, _sidecar)) = engine_on(7434) else {
         return;
@@ -332,6 +340,7 @@ fn shutdown_is_idempotent_and_the_engine_restarts_afterwards() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn voices_are_listed_per_language() {
     let Some((mut engine, _sidecar)) = engine_on(7435) else {
         return;
@@ -347,6 +356,7 @@ fn voices_are_listed_per_language() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn peak_normalization_evens_out_the_delivery_level() {
     let Some((mut engine, _sidecar)) = engine_on(7436) else {
         return;
@@ -401,6 +411,7 @@ fn peak_normalization_evens_out_the_delivery_level() {
 }
 
 #[test]
+#[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
 fn a_peak_above_full_scale_is_refused() {
     let mut engine = SpeechEngine::new(SpeechConfig::default());
     let error = engine

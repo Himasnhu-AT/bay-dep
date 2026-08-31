@@ -41,7 +41,7 @@ Not a wish list — this is verified by tests in the tree.
 | Speech | Kokoro TTS with word-synced captions from one synthesis, SRT in/out |
 | Undo | every edit is a `Command` → self-inverting `ProjectPatch`; agent edits undo with Cmd+Z |
 | Provisioning | ffmpeg + Python + Kokoro from a pinned, SHA-256-verified manifest |
-| MCP | <!-- bay-tool-count -->95<!-- /bay-tool-count --> generated tools; an agent can build a reel end to end and look at frames before rendering |
+| MCP | <!-- bay-tool-count -->102<!-- /bay-tool-count --> generated tools; an agent can build a reel end to end and look at frames before rendering |
 
 ---
 

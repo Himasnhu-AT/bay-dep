@@ -19,9 +19,9 @@
 
 use gpui::{App, Menu, MenuItem, OsAction, SystemMenuType};
 
-use crate::editor_view::{
-    CopyClip, DeleteSelected, PasteClip, Redo, SeekBackward, SeekForward, SplitClip, TogglePlay,
-    Undo,
+use crate::editor::{
+    CopyClip, DeleteSelected, PasteClip, Redo, SeekBackward, SeekForward, ShowAudio, ShowColor,
+    ShowCut, ShowDeliver, ShowMedia, ShowMotion, SplitClip, TogglePlay, Undo,
 };
 
 gpui::actions!(
@@ -78,6 +78,19 @@ pub fn menus() -> Vec<Menu> {
                 MenuItem::os_action("Cut", CopyClip, OsAction::Cut),
                 MenuItem::os_action("Copy", CopyClip, OsAction::Copy),
                 MenuItem::os_action("Paste", PasteClip, OsAction::Paste),
+            ],
+        },
+        // The only place the page shortcuts are written down. bay hides every other shortcut
+        // from the UI, so without this menu Shift+2..7 exist and nobody finds them.
+        Menu {
+            name: "View".into(),
+            items: vec![
+                MenuItem::action("Media", ShowMedia),
+                MenuItem::action("Cut", ShowCut),
+                MenuItem::action("Motion", ShowMotion),
+                MenuItem::action("Color", ShowColor),
+                MenuItem::action("Audio", ShowAudio),
+                MenuItem::action("Deliver", ShowDeliver),
             ],
         },
         Menu {

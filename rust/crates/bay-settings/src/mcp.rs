@@ -40,6 +40,186 @@ pub const CLIENTS: [ClientKind; 3] = [
     },
 ];
 
+/// A named set of tools, so switching surface is one choice rather than 101 checkboxes.
+///
+/// `optimizations.md` §2.5: the gating machinery already existed — `definitions_with` filters
+/// `all_definitions` through [`McpSettings::allows`], and `bay --mcp` enforces it with no window
+/// open. What was missing was **defaults**. A client that carries the whole schema list in its
+/// system prompt on every request pays for 103 tools whether it narrates or not, and asking
+/// someone to untick sixty boxes is not a feature.
+///
+/// The sets are deliberately *jobs*, not categories. "Everything about audio" is a taxonomy; "I
+/// am cutting dialogue today" is what a person actually has in mind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub detail: &'static str,
+    /// Tools this profile keeps. Empty means every tool — see [`Profile::keeps`].
+    pub tools: &'static [&'static str],
+}
+
+impl Profile {
+    /// Whether `tool` survives this profile.
+    ///
+    /// An empty `tools` list means "everything", not "nothing". The inversion matters: a profile
+    /// that silently blocked the entire surface would present as bay having no tools at all,
+    /// which reads as a broken connection rather than a setting.
+    pub fn keeps(&self, tool: &str) -> bool {
+        self.tools.is_empty() || self.tools.contains(&tool)
+    }
+}
+
+/// The tools every profile keeps, because without them there is no session.
+///
+/// Opening, saving and inspecting a project, and knowing what bay can do at all. A profile that
+/// dropped `project_create` would be a surface you cannot start from.
+const ALWAYS: &[&str] = &[
+    "project_create",
+    "project_load",
+    "project_save",
+    "project_list",
+    "project_info",
+    "timeline",
+    "check",
+    "render",
+    "snapshot",
+    "job_status",
+    "job_cancel",
+    "runtime_status",
+    "media_import",
+    "element_delete",
+    "element_move",
+];
+
+/// Placing and arranging things on the timeline.
+const EDIT: &[&str] = &[
+    "add_text",
+    "add_shape",
+    "add_image",
+    "add_video",
+    "add_audio",
+    "group_create",
+    "animate",
+    "animate_many",
+    "apply_move",
+    "transform_set",
+    "text_update",
+    "blend_set",
+    "crop_set",
+    "mask_set",
+    "fade_set",
+    "transition_add",
+    "effect_add",
+    "effect_set",
+    "effect_remove",
+    "element_trim",
+    "element_split",
+    "element_source",
+    "element_duplicate",
+    "element_rename",
+    "element_retime",
+    "element_ripple_delete",
+    "marker_add",
+    "fonts_check",
+    "fonts_list",
+    "looks_list",
+    "style_pick",
+    "templates_list",
+    "template_place",
+    "contact_sheet",
+    "check_frames",
+    "scopes_read",
+    "media_index",
+    "media_search",
+    "auto_reframe",
+    "shots_detect",
+    "faces_detect",
+    "audio_set",
+    "sound_add",
+];
+
+/// Cutting speech: transcripts, captions, narration, and the mix around them.
+const DIALOGUE: &[&str] = &[
+    "transcribe",
+    "transcript_get",
+    "transcript_search",
+    "diarize",
+    // A conversation edit chooses angles as well as words: `faces_detect` is what says whether a
+    // frame holds one speaker or both, which is the difference between a single and a wide.
+    "faces_detect",
+    "add_video",
+    "cut_by_transcript",
+    "remove_silence_and_fillers",
+    "silence_detect",
+    "room_tone",
+    "narrate",
+    "speech_status",
+    "subtitles_add",
+    "subtitles_export",
+    "subtitles_to_video",
+    "audio_set",
+    "audio_probe",
+    "audio_beats",
+    "audio_smooth",
+    "audio_react",
+    "duck",
+    "sound_add",
+    "add_audio",
+    "add_text",
+    "text_update",
+    "element_trim",
+    "element_split",
+    "element_source",
+];
+
+/// Getting a finished project out.
+const DELIVER: &[&str] = &[
+    "formats_list",
+    "variant_create",
+    "variant_register_render",
+    "library_save",
+    "library_list",
+    "library_collect",
+    "contact_sheet",
+    "check_frames",
+    "scopes_read",
+    "subtitles_export",
+    "runtime_install",
+    "runtime_remove",
+];
+
+pub const PROFILES: [Profile; 4] = [
+    Profile {
+        id: "everything",
+        label: "Everything",
+        detail: "All 103 tools. The default, and the right one for a client with tool search.",
+        tools: &[],
+    },
+    Profile {
+        id: "edit",
+        label: "Edit",
+        detail: "Placing, arranging and animating. No transcripts, generation or stock.",
+        tools: EDIT,
+    },
+    Profile {
+        id: "dialogue",
+        label: "Dialogue",
+        detail: "Transcripts, captions, narration and the mix around them.",
+        tools: DIALOGUE,
+    },
+    Profile {
+        id: "deliver",
+        label: "Deliver",
+        detail: "Formats, variants, the library and the runtime.",
+        tools: DELIVER,
+    },
+];
+
+pub fn profile(id: &str) -> Option<&'static Profile> {
+    PROFILES.iter().find(|entry| entry.id == id)
+}
+
 pub fn client(id: &str) -> Option<&'static ClientKind> {
     CLIENTS.iter().find(|entry| entry.id == id)
 }
@@ -68,6 +248,20 @@ impl Default for McpSettings {
 }
 
 impl McpSettings {
+    /// Block everything outside `profile`, keeping the tools no session works without.
+    ///
+    /// Expressed as blocks rather than as a stored profile name, so there is exactly one thing
+    /// deciding whether a tool is exposed. A `profile` field beside `blocked` would be a second
+    /// answer to the same question, and the two would disagree the first time someone ticked a
+    /// box after choosing a profile.
+    pub fn apply_profile(&mut self, profile: &Profile, every_tool: &[String]) {
+        self.blocked = every_tool
+            .iter()
+            .filter(|tool| !profile.keeps(tool) && !ALWAYS.contains(&tool.as_str()))
+            .cloned()
+            .collect();
+    }
+
     pub fn allows(&self, tool: &str) -> bool {
         self.enabled && !self.blocked.contains(tool)
     }
@@ -105,18 +299,36 @@ impl McpSettings {
         }
     }
 
-    /// The snippet that adds bay to `client_id`.
+    /// The snippet that adds bay to `client_id`, for a server listening on `port`.
     ///
-    /// Written from the real command and the caller's real token, so copying it out of the pane
-    /// and pasting it into a terminal works. A snippet with a placeholder token would be a
-    /// screenshot, not a feature.
-    pub fn config_snippet(&self, client_id: &str, token: &str) -> String {
+    /// Written from the real command, the real port and the caller's real token, so copying it
+    /// out of the pane and pasting it into a terminal works. A snippet with a placeholder token
+    /// would be a screenshot, not a feature.
+    ///
+    /// **These describe an HTTP connection, and the previous versions described a subprocess.**
+    /// That was wrong three times over. `claude mcp add bay -- bay --mcp --token …` registers a
+    /// *stdio* server, so the client spawns its own `bay --mcp`: it fails outright when `bay` is
+    /// not on `PATH`, and when it is, it starts a second headless instance — which defeats the
+    /// entire point of the pane, because agent edits then land in a process with nobody's project
+    /// open instead of "the window you are looking at". The JSON form had a third fault on top:
+    /// it passed the token as `BAY_TOKEN`, an environment variable **nothing in the workspace
+    /// reads**. The server takes its credential from the token file and its requests from an
+    /// `Authorization: Bearer` header.
+    ///
+    /// `bay --help` has printed the correct `--transport http` invocation all along, so the pane
+    /// and the CLI disagreed about how to reach the same server. `the_snippets_agree_with_the_cli`
+    /// is what stops them drifting apart again.
+    pub fn config_snippet(&self, client_id: &str, token: &str, port: u16) -> String {
+        let url = format!("http://127.0.0.1:{port}/mcp");
         match client_id {
-            "code" => format!("claude mcp add bay -- bay --mcp --token {token}"),
+            "code" => format!(
+                "claude mcp add --transport http bay {url} --header \"Authorization: Bearer {token}\""
+            ),
+            // Cursor and current Claude Desktop both take a remote server as `url` plus
+            // `headers`; neither needs a command, because bay is already running.
             _ => format!(
-                "{{\n  \"mcpServers\": {{\n    \"bay\": {{\n      \"command\": \"bay\",\n      \
-                 \"args\": [\"--mcp\"],\n      \"env\": {{ \"BAY_TOKEN\": \"{token}\" }}\n    \
-                 }}\n  }}\n}}"
+                "{{\n  \"mcpServers\": {{\n    \"bay\": {{\n      \"url\": \"{url}\",\n      \
+                 \"headers\": {{ \"Authorization\": \"Bearer {token}\" }}\n    }}\n  }}\n}}"
             ),
         }
     }
@@ -278,24 +490,80 @@ mod tests {
         assert_eq!(settings.status_line(), "Listening — 2 tools are blocked");
     }
 
-    /// The snippet is meant to be pasted. It must carry the real token and the flag bay's own
-    /// binary accepts, not an invented subcommand.
+    /// The snippet is meant to be pasted, so it must describe the server bay actually runs.
+    ///
+    /// The version this replaced asserted `claude mcp add bay`, `--mcp`, `command: "bay"` and
+    /// `env.BAY_TOKEN` — every one of which was wrong, and it passed. It pinned a stdio
+    /// subprocess for an HTTP server, and `BAY_TOKEN` is read by nothing in the workspace. A
+    /// test can only be as right as the contract it was written against.
     #[test]
-    fn the_config_snippet_is_runnable() {
+    fn the_config_snippet_describes_the_http_server() {
         let settings = McpSettings::default();
-        let code = settings.config_snippet("code", "bay_sk_7f3c9a21");
-        assert!(code.starts_with("claude mcp add bay"), "{code}");
-        assert!(code.contains("--mcp"), "bay's real flag: {code}");
-        assert!(code.contains("bay_sk_7f3c9a21"));
+        let token = "dec566e0b899c66f0c69e80b80687b87b54d283945fb28c2bc2e8f116d7e2fd6";
 
-        let desktop = settings.config_snippet("desktop", "bay_sk_7f3c9a21");
+        let code = settings.config_snippet("code", token, 7333);
+        assert!(
+            code.contains("--transport http"),
+            "the pane must register an HTTP server, not spawn a subprocess: {code}"
+        );
+        assert!(code.contains("http://127.0.0.1:7333/mcp"), "{code}");
+        assert!(
+            code.contains(&format!("Authorization: Bearer {token}")),
+            "the server authenticates on a bearer header: {code}"
+        );
+        assert!(
+            !code.contains("bay --mcp"),
+            "spawning a second bay would not be the window the user has open: {code}"
+        );
+
+        let desktop = settings.config_snippet("desktop", token, 7333);
         let parsed: serde_json::Value =
             serde_json::from_str(&desktop).expect("the JSON snippet must parse");
-        assert_eq!(parsed["mcpServers"]["bay"]["command"], "bay");
-        assert_eq!(parsed["mcpServers"]["bay"]["args"][0], "--mcp");
         assert_eq!(
-            parsed["mcpServers"]["bay"]["env"]["BAY_TOKEN"],
-            "bay_sk_7f3c9a21"
+            parsed["mcpServers"]["bay"]["url"],
+            "http://127.0.0.1:7333/mcp"
+        );
+        assert_eq!(
+            parsed["mcpServers"]["bay"]["headers"]["Authorization"],
+            format!("Bearer {token}")
+        );
+        assert!(
+            parsed["mcpServers"]["bay"]["command"].is_null(),
+            "a command means a subprocess, and bay is already running: {desktop}"
+        );
+    }
+
+    /// A non-default port has to reach the snippet, or `bay --mcp --port N` produces a
+    /// copy-pasteable command that connects to nothing.
+    #[test]
+    fn the_snippet_names_the_port_the_server_bound() {
+        let settings = McpSettings::default();
+        for client in ["code", "desktop", "cursor"] {
+            let snippet = settings.config_snippet(client, "t", 9876);
+            assert!(
+                snippet.contains("9876") && !snippet.contains("7333"),
+                "{client} ignored the bound port: {snippet}"
+            );
+        }
+    }
+
+    /// The pane and `bay --help` must agree about how to reach the same server.
+    ///
+    /// They did not: the CLI printed the correct `--transport http` invocation while the pane
+    /// printed a stdio one, and nothing compared them. Reading the binary's own help text is
+    /// blunt, and it is the only thing that actually couples the two — a test asserting the
+    /// shape of each separately is what allowed them to drift in the first place.
+    #[test]
+    fn the_snippets_agree_with_the_cli() {
+        let help = include_str!("../../../desktop/src/main.rs");
+        assert!(
+            help.contains("claude mcp add --transport http bay"),
+            "the CLI help no longer shows the http invocation — re-anchor this test"
+        );
+        let code = McpSettings::default().config_snippet("code", "t", 7333);
+        assert!(
+            code.starts_with("claude mcp add --transport http bay"),
+            "the pane and `bay --help` disagree about how to reach the server: {code}"
         );
     }
 

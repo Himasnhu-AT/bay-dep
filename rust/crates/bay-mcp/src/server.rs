@@ -75,8 +75,39 @@ impl AuthToken {
     }
 
     /// Compare token bytes without exposing how many leading bytes matched.
+    ///
+    /// **Reads the file every time, and does not consult a cached copy.** The credential lives in
+    /// the token file; anything else is a second definition of it, and a second definition is the
+    /// whole bug. `load_or_create` used to read once at startup, so the settings pane's "Rotate
+    /// token" — which rewrites that file — left the server authenticating against a value nobody
+    /// could see any more. A user pasting the pane's own snippet got 401 until bay was restarted,
+    /// while the banner told them the new token was live.
+    ///
+    /// The first attempt at this fix compared against the cached value *first* and fell back to
+    /// the file, which made rotation **additive**: the new token started working and the old one
+    /// never stopped. A rotate that does not revoke is worse than no rotate at all, because it
+    /// reports success. Its test caught it, which is the only reason it is not in this commit.
+    ///
+    /// The cost is a 64-byte read from the page cache per request, against a path that has
+    /// already done a TCP accept and is about to parse JSON. MCP traffic is user- and
+    /// agent-driven, not a hot loop.
+    ///
+    /// A missing or malformed file authenticates nothing. Falling back to the last known value
+    /// would mean deleting the credential leaves it working, which is not what deleting it means.
     fn matches(&self, candidate: &[u8]) -> bool {
-        bool::from(self.value.as_slice().ct_eq(candidate))
+        // `BAY_MCP_TOKEN` sets `path: None`. An explicitly configured token is the credential in
+        // its own right and is never overridden by whatever happens to be on disk.
+        let Some(path) = self.path.as_ref() else {
+            return bool::from(self.value.as_slice().ct_eq(candidate));
+        };
+        let Ok(current) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        let current = current.trim();
+        if !bay_settings::token::is_valid(current) {
+            return false;
+        }
+        bool::from(current.as_bytes().ct_eq(candidate))
     }
 
     #[cfg(test)]
@@ -198,6 +229,15 @@ fn initialize_result() -> Value {
     })
 }
 
+/// The vocabulary that used to live in the tool schemas.
+///
+/// Sent once per session, which is the whole reason ROLE and TONE moved here: as parameter
+/// descriptions they were spliced into six and four tools respectively and carried every time.
+/// See `optimizations.md` §2.1.
+pub fn server_instructions() -> &'static str {
+    INSTRUCTIONS
+}
+
 const INSTRUCTIONS: &str = "\
 bay is a native video editor. Build a timeline with these tools, then render it to MP4.
 
@@ -218,7 +258,29 @@ element_move slides it without changing what it shows. Prefer these to deleting 
 — a rebuilt element loses its animation and its id.
 
 Coordinates are fractions of the canvas: x=0.5,y=0.5 is dead centre. Layers stack upward
-from 0. Keyframe times in `animate` are relative to the element's own start.";
+from 0. Keyframe times in `animate` are relative to the element's own start.
+
+ROLE — what an element is FOR, not what it looks like. Every visual element declares one.
+  hook      the opening claim that earns the next two seconds
+  headline  the line a beat is built around
+  kicker    the small line framing a headline
+  label     names a thing (axis, value, source)
+  caption   spoken words on screen — narrate sets this; you should not
+  lockup    the end card or sign-off
+  data      a bar, line or mark whose size or position IS the number
+  ground    background fills and plates
+  chrome    rules, borders, frame furniture
+ground and chrome together are capped at a small share of a project, so do not label content
+as background to duck a rule.
+
+TONE — how loud an element is, against the project's committed style kit.
+  ink       the loudest value, for the line that carries the beat
+  dim       secondary type: kickers, axis labels, units, source notes
+  accent    the point — scarce, one element per beat, and it must be on the thing that IS
+            the argument
+  accent2   the opposition: a second series, the down bar, the contrast case
+  surface   a plate or panel behind something else
+Omit tone and the role picks the right one.";
 
 /// Serve MCP on stdin/stdout using newline-delimited JSON-RPC.
 pub fn serve_stdio() -> std::io::Result<()> {
@@ -919,6 +981,62 @@ mod tests {
             "{response}"
         );
         assert!(!dispatched, "an unauthenticated request reached dispatch");
+    }
+
+    /// A token rotated in the settings pane is live immediately, without restarting bay.
+    ///
+    /// This is the bug that locked a real user out. `load_or_create` reads the file once at
+    /// startup; "Rotate token" writes a new one and updates the pane. Nothing told the running
+    /// server, so the token displayed in the pane — the one its own snippet told you to paste —
+    /// was refused with 401 until bay was restarted, and the banner said the opposite.
+    ///
+    /// `load_or_create`'s comment already warned that "two definitions of the token would mean a
+    /// rotate in the window that the server never noticed". It guarded against a second *file*.
+    /// The cached copy in memory was the second definition.
+    #[test]
+    fn a_rotated_token_is_accepted_without_a_restart() {
+        // Scratch keyed by name *and pid*: `CLAUDE.md` records two test binaries wiping each
+        // other's state when only the name was used.
+        let dir = std::env::temp_dir().join(format!("bay-rotate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let path = dir.join("mcp-token");
+
+        let first = bay_settings::token::read_or_create(&path).expect("first token");
+        let token = AuthToken {
+            value: first.clone().into_bytes(),
+            path: Some(path.clone()),
+        };
+        assert!(
+            token.matches(first.as_bytes()),
+            "the startup token must work"
+        );
+
+        // The settings pane rotates. The server's cached copy is now stale.
+        let second = bay_settings::token::rotate(&path).expect("rotate");
+        assert_ne!(first, second);
+
+        assert!(
+            token.matches(second.as_bytes()),
+            "the rotated token was refused — a client pasting the pane's own snippet gets 401"
+        );
+        assert!(
+            !token.matches(first.as_bytes()),
+            "the revoked token still works, so rotation does not revoke anything"
+        );
+        assert!(!token.matches(b"not-a-token"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An explicitly configured `BAY_MCP_TOKEN` must never be silently replaced by whatever is
+    /// on disk — the env var exists precisely to override the file.
+    #[test]
+    fn an_env_configured_token_does_not_consult_the_file() {
+        let token = AuthToken::from_test(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+        assert!(token.path.is_none(), "from_test stands in for the env path");
+        assert!(!token.matches(b"anything else"));
     }
 
     #[test]
@@ -1902,6 +2020,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn subtitles_add_places_one_caption_per_cue() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-subs");
@@ -1935,6 +2054,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn subtitles_round_trip_through_the_timeline() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-subs-rt");
@@ -1961,6 +2081,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn exporting_with_no_captions_says_so() {
         let mut studio = new_studio();
         let (is_error, message) = unwrap_call(&call(
@@ -1973,6 +2094,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn a_subtitle_file_that_is_not_one_is_rejected() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-badsubs");
@@ -1988,6 +2110,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn an_offset_shifts_every_caption() {
         let mut studio = new_studio();
         let dir = tmpdir("bay-mcp-offset");
@@ -2003,6 +2126,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn speech_status_answers_without_throwing_however_the_machine_is_set_up() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
@@ -2026,6 +2150,7 @@ mod narration_tests {
     /// on any machine — including one where nothing is installed, which is exactly when it is
     /// called — and it must never start a download by being asked a question.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn runtime_status_reports_without_installing_anything() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(&mut studio, "runtime_status", json!({})));
@@ -2046,6 +2171,7 @@ mod narration_tests {
     /// A component that does not exist must come back as a tool error the agent can correct,
     /// not a panic and not a silent success.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn runtime_install_refuses_a_component_it_does_not_have() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(
@@ -2058,6 +2184,7 @@ mod narration_tests {
     }
 
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn runtime_install_requires_a_component() {
         let mut studio = new_studio();
         let (is_error, body) = unwrap_call(&call(&mut studio, "runtime_install", json!({})));
@@ -2069,6 +2196,7 @@ mod narration_tests {
     /// re-download — an agent that calls this defensively before every render should cost
     /// nothing on a provisioned machine.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn installing_what_is_already_there_starts_no_job() {
         let mut studio = new_studio();
         let (_, status) = unwrap_call(&call(&mut studio, "runtime_status", json!({})));
@@ -2095,13 +2223,28 @@ mod narration_tests {
         assert!(body["job"].is_null(), "no job should have started: {body}");
     }
 
+    /// A speech-sidecar port that no other process on this machine will pick.
+    ///
+    /// `fixes.md` 13. These were the literals 7451 and 7452, with a comment explaining that a
+    /// port of their own was needed — which was the right diagnosis and only half the fix. A
+    /// fixed port is still shared with every *other* copy of this test binary, so two concurrent
+    /// runs, or one left-over sidecar from a previous run, fail them for reasons outside the
+    /// repository. That is the failure `CLAUDE.md` records twice: the registry tests had the pid
+    /// on their port and not on their scratch directory, and 11 of 12 concurrent runs failed.
+    ///
+    /// Derived from the pid, in the IANA dynamic range, and never the product's 7334. `slot`
+    /// separates the tests within one binary; they run in the same process and must not collide
+    /// with each other either.
+    fn unique_speech_port(slot: u16) -> u16 {
+        // Two ports per process, so `slot` cannot collide with the next pid's base.
+        let base = 49_152u32 + (u32::from(std::process::id() as u16) % 7_000) * 2;
+        (base as u16).saturating_add(slot)
+    }
+
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn narrating_reuses_one_hot_sidecar_across_calls() {
-        // A port of its own, never the product's 7334. Sharing it meant this test failed
-        // whenever anything else on the machine held that port — another test binary spawning a
-        // sidecar, or a `bay --mcp` someone left running — and a test that fails for reasons
-        // outside the repository is one people learn to re-run rather than read.
-        let mut studio = Studio::for_test(test_library_root(), 7451);
+        let mut studio = Studio::for_test(test_library_root(), unique_speech_port(0));
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
         let status: Value = serde_json::from_str(&status).unwrap();
         if status["available"] != Value::Bool(true) {
@@ -2160,8 +2303,9 @@ mod narration_tests {
     /// §1.4 end to end, on real speech: the read is planned as a rate and measured as one, and
     /// every cue it places clears both reading floors.
     #[test]
+    #[ignore = "drives the Kokoro TTS sidecar; run it with `SLOW=1 ./test.sh`"]
     fn a_real_narration_reports_its_rate_and_places_readable_cues() {
-        let mut studio = Studio::for_test(test_library_root(), 7452);
+        let mut studio = Studio::for_test(test_library_root(), unique_speech_port(1));
         let (_, status) = unwrap_call(&call(&mut studio, "speech_status", json!({})));
         let status: Value = serde_json::from_str(&status).unwrap();
         if status["available"] != Value::Bool(true) {

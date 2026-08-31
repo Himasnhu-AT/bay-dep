@@ -22,10 +22,12 @@
 //! arrow pointing one way — `bay-ui` and `bay-mcp` both depend on this, and never on each
 //! other.
 
+pub mod deliver;
 pub mod illustrate;
 pub mod plan;
 pub mod registry;
 pub mod slow;
+pub mod tracking;
 pub mod trust;
 
 pub use plan::{

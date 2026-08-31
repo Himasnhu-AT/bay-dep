@@ -26,7 +26,13 @@ pub struct ProjectCard {
     /// The stage the project is at, as the coloured chip draws it.
     pub status: bay_core::ProjectStatus,
     pub status_label: String,
-    pub status_color: u32,
+    /// A literal colour, not a role.
+    ///
+    /// `ProjectStatus::color` lives in `bay-project` and says why: "on hold" is grey in every
+    /// skin, and a front end picking its own would make two bay windows disagree about what
+    /// amber means. That is the case `theme::Paint::Rgb` exists for — a colour that comes from
+    /// the document rather than the design.
+    pub status_color: crate::theme::Paint,
     /// The user's labels, in the order they added them.
     pub tags: Vec<String>,
     /// Whether the card can show a still. bay does not cache a poster frame today, so this is
@@ -77,7 +83,7 @@ impl HomeViewModel {
                         .unwrap_or_else(|| "—".to_string()),
                     status: summary.shelf.status,
                     status_label: summary.shelf.status.label().to_string(),
-                    status_color: summary.shelf.status.color(),
+                    status_color: summary.shelf.status.color().into(),
                     tags: summary.shelf.tags.clone(),
                     has_poster: false,
                 })
@@ -553,7 +559,7 @@ mod tests {
         assert_eq!(card.status_label, "Client review");
         assert_eq!(
             card.status_color,
-            bay_core::ProjectStatus::ClientReview.color()
+            crate::theme::Paint::Rgb(bay_core::ProjectStatus::ClientReview.color())
         );
         assert_eq!(card.tags, vec!["Priority", "Reel"]);
 

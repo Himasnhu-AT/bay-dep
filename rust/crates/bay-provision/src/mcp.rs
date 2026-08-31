@@ -33,6 +33,26 @@ pub fn runtime_status(args: &Value) -> Value {
     status["jobs"] = Value::Array(active);
     status["canRender"] = Value::Bool(report.can_render());
     status["hint"] = Value::String(hint(&report));
+    // What each component is and what it costs on disk. This used to be the `component`
+    // parameter's *description* on both `runtime_install` and `runtime_remove` — 1,265 bytes
+    // each, the most expensive property per tool in the whole surface, carried by every client
+    // on every request whether or not it ever installed anything.
+    //
+    // It is an answer to "what can I install?", which is this call's question. You cannot
+    // install a component without knowing it exists, and finding out is one call.
+    status["installable"] = Value::Array(
+        crate::Manifest::embedded()
+            .components
+            .iter()
+            .map(|component| {
+                json!({
+                    "id": component.id,
+                    "diskMb": component.disk_bytes / 1_000_000,
+                    "detail": component.detail,
+                })
+            })
+            .collect(),
+    );
     status
 }
 

@@ -19,7 +19,46 @@ const LUT_SHADER_ID: &str = "lut";
 const LUT_SHADER_SOURCE: &str = include_str!("shaders/lut.wgsl");
 const DROP_SHADOW_SHADER_ID: &str = "drop-shadow";
 const DROP_SHADOW_SHADER_SOURCE: &str = include_str!("shaders/drop_shadow.wgsl");
+const COLOR_STACK_SHADER_ID: &str = "color-stack";
+const COLOR_STACK_SHADER_SOURCE: &str = include_str!("shaders/color_stack.wgsl");
+const LIFT_GAMMA_GAIN_SHADER_ID: &str = "lift-gamma-gain";
+const LIFT_GAMMA_GAIN_SHADER_SOURCE: &str = include_str!("shaders/lift_gamma_gain.wgsl");
 
+/// How many colour stages one `color-stack` pass carries.
+///
+/// Pinned to `MAX_COLOR_STACK_STAGES` in `color_stack.wgsl` by a test. A longer run is split
+/// across two passes by the caller, which costs one quantisation — the thing this whole pass
+/// exists to avoid — so the number is set well above any plausible grade rather than snugly.
+pub const MAX_COLOR_STACK_STAGES: usize = 8;
+
+/// The op codes `color_stack.wgsl` switches on. Public because the mapper that builds a stage
+/// program has to name them, and a second copy of these numbers is how the two drift apart.
+pub const COLOR_STACK_OP_BRIGHTNESS: f32 = 1.0;
+pub const COLOR_STACK_OP_CONTRAST: f32 = 2.0;
+pub const COLOR_STACK_OP_SATURATION: f32 = 3.0;
+pub const COLOR_STACK_OP_LUT: f32 = 4.0;
+
+/// Whether `shader` is one of the per-pixel colour operations a `color-stack` pass can absorb.
+///
+/// The single source of truth for what collapses. `gaussian-blur` and `drop-shadow` read
+/// neighbouring texels, so they can never join a run.
+pub fn is_collapsible_color_shader(shader: &str) -> bool {
+    matches!(
+        shader,
+        BRIGHTNESS_SHADER_ID | CONTRAST_SHADER_ID | SATURATION_SHADER_ID | LUT_SHADER_ID
+    )
+}
+
+/// The op code for a collapsible shader, or `None` if it does not collapse.
+pub fn color_stack_op(shader: &str) -> Option<f32> {
+    match shader {
+        BRIGHTNESS_SHADER_ID => Some(COLOR_STACK_OP_BRIGHTNESS),
+        CONTRAST_SHADER_ID => Some(COLOR_STACK_OP_CONTRAST),
+        SATURATION_SHADER_ID => Some(COLOR_STACK_OP_SATURATION),
+        LUT_SHADER_ID => Some(COLOR_STACK_OP_LUT),
+        _ => None,
+    }
+}
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
     pub width: u32,
@@ -38,6 +77,13 @@ pub struct EffectPipeline {
     /// Uploaded cubes, by the id the pass named. A grade repeated across twenty clips and
     /// every frame of each is one upload.
     lut_textures: std::cell::RefCell<HashMap<String, wgpu::Texture>>,
+    /// A 2³ identity cube, uploaded once.
+    ///
+    /// `color-stack` binds a LUT unconditionally so that one pipeline serves runs with and
+    /// without a grade in them. When the run has no `lut` stage nothing samples this texture —
+    /// it exists so the bind group is satisfiable, not so it is read. The alternative was a
+    /// second pipeline and a second copy of the shader differing only in one binding.
+    identity_lut: wgpu::Texture,
 }
 
 #[derive(Debug, Error)]
@@ -76,6 +122,45 @@ struct EffectUniformBuffer {
     /// them whether or not they read it. Appended rather than inserted: `vec4f` wants 16-byte
     /// alignment and the three fields before it already total 32 bytes.
     color: [f32; 4],
+}
+
+/// The uniform a `color-stack` pass reads: a small program rather than a fixed parameter set.
+///
+/// A separate struct from [`EffectUniformBuffer`] because it is a different shape, not a
+/// bigger one — every other effect has a fixed contract, and widening the shared struct by 128
+/// bytes to suit one shader would make five shaders declare an array they never read. The bind
+/// group *layout* is shared: it describes a uniform buffer at binding 0 and nothing about its
+/// size (`min_binding_size: None`), so two buffer types can front the same layout.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ColorStackUniformBuffer {
+    resolution: [f32; 2],
+    stage_count: u32,
+    lut_size: f32,
+    /// `(op, amount, 0, 0)` per stage. A uniform array's element stride is 16 bytes whatever
+    /// the element type, so a tighter packing would save nothing and cost clarity.
+    stages: [[f32; 4]; MAX_COLOR_STACK_STAGES],
+}
+
+/// The uniform a `lift-gamma-gain` pass reads: three wheels, each with its master in `w`.
+///
+/// A third buffer type over the same bind group layout, for the same reason
+/// [`ColorStackUniformBuffer`] is a second one. Twelve numbers plus a strength do not fit the
+/// shared struct's `scalars: vec4f`, and widening that struct to hold them would make six
+/// other shaders declare fields they never read.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct LiftGammaGainUniformBuffer {
+    resolution: [f32; 2],
+    /// How much of the grade to apply. 0 is the source, 1 the full balance — the same sense
+    /// `lut`'s amount has, and the opposite of the colour adjustments' multiplier.
+    strength: f32,
+    /// `vec4f` wants 16-byte alignment and the three fields before it total 12 bytes. Declared
+    /// in the shader too, so the two layouts stay legible side by side.
+    padding: f32,
+    lift: [f32; 4],
+    gamma: [f32; 4],
+    gain: [f32; 4],
 }
 
 impl EffectPipeline {
@@ -144,6 +229,20 @@ impl EffectPipeline {
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("effects-lut-shader"),
                     source: wgpu::ShaderSource::Wgsl(LUT_SHADER_SOURCE.into()),
+                });
+        let color_stack_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-color-stack-shader"),
+                    source: wgpu::ShaderSource::Wgsl(COLOR_STACK_SHADER_SOURCE.into()),
+                });
+        let lift_gamma_gain_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-lift-gamma-gain-shader"),
+                    source: wgpu::ShaderSource::Wgsl(LIFT_GAMMA_GAIN_SHADER_SOURCE.into()),
                 });
         let pipeline_layout =
             context
@@ -248,6 +347,19 @@ impl EffectPipeline {
                 ),
             ),
             (
+                // The plain pipeline layout: three wheels need no cube, and a bigger uniform
+                // is not a different layout — the layout pins a buffer at binding 0 and says
+                // nothing about its size.
+                LIFT_GAMMA_GAIN_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    &lift_gamma_gain_shader_module,
+                    "effects-lift-gamma-gain-pipeline",
+                ),
+            ),
+            (
                 SATURATION_SHADER_ID.to_string(),
                 create_effect_pipeline(
                     context,
@@ -267,7 +379,22 @@ impl EffectPipeline {
                     "effects-lut-pipeline",
                 ),
             ),
+            (
+                // Shares the LUT layout: a colour run may or may not contain a grade, and one
+                // pipeline that always has the binding beats two that differ only in whether
+                // they do.
+                COLOR_STACK_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &lut_pipeline_layout,
+                    &vertex_shader_module,
+                    &color_stack_shader_module,
+                    "effects-color-stack-pipeline",
+                ),
+            ),
         ]);
+
+        let identity_lut = upload_lut(context, &crate::Lut3d::identity(2));
 
         Self {
             uniform_bind_group_layout,
@@ -275,6 +402,7 @@ impl EffectPipeline {
             lut_bind_group_layout,
             lut_sampler,
             lut_textures: std::cell::RefCell::new(HashMap::new()),
+            identity_lut,
         }
     }
 
@@ -344,14 +472,32 @@ impl EffectPipeline {
                             },
                         ],
                     });
-            let uniform_buffer =
+            // Three uniform shapes, one bind group layout. Each branch packs into a stack local
+            // and borrows it directly: a `Vec` here would be a heap allocation per pass per
+            // frame, on the path this change exists to make cheaper.
+            let make_uniform_buffer = |bytes: &[u8]| {
                 context
                     .device()
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("effects-uniform-buffer"),
-                        contents: bytemuck::bytes_of(&pack_effect_uniforms(pass, width, height)?),
+                        contents: bytes,
                         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    });
+                    })
+            };
+            let uniform_buffer = match pass.shader.as_str() {
+                COLOR_STACK_SHADER_ID => {
+                    let packed = pack_color_stack_uniforms(pass, width, height)?;
+                    make_uniform_buffer(bytemuck::bytes_of(&packed))
+                }
+                LIFT_GAMMA_GAIN_SHADER_ID => {
+                    let packed = pack_lift_gamma_gain_uniforms(pass, width, height)?;
+                    make_uniform_buffer(bytemuck::bytes_of(&packed))
+                }
+                _ => {
+                    let packed = pack_effect_uniforms(pass, width, height)?;
+                    make_uniform_buffer(bytemuck::bytes_of(&packed))
+                }
+            };
             let uniform_bind_group =
                 context
                     .device()
@@ -370,17 +516,32 @@ impl EffectPipeline {
             })?;
             // The grade's own bind group. Built per pass because the texture it points at is
             // cached across frames but the view and group are cheap.
-            let lut_bind_group = if pass.shader == LUT_SHADER_ID {
-                let (id, table) = pass.lut.as_ref().ok_or(EffectsError::MissingLut)?;
-                let view = {
-                    let mut cache = self.lut_textures.borrow_mut();
-                    let texture = cache
-                        .entry(id.clone())
-                        .or_insert_with(|| upload_lut(context, table));
-                    texture.create_view(&wgpu::TextureViewDescriptor {
+            let needs_lut_group =
+                pass.shader == LUT_SHADER_ID || pass.shader == COLOR_STACK_SHADER_ID;
+            let lut_bind_group = if needs_lut_group {
+                // A `lut` pass without a table is a pass the shader cannot execute. A
+                // `color-stack` without one is ordinary — it just has no grade in its run — so
+                // it falls back to the identity cube, which nothing will sample.
+                let table = match pass.lut.as_ref() {
+                    Some(table) => Some(table),
+                    None if pass.shader == COLOR_STACK_SHADER_ID => None,
+                    None => return Err(EffectsError::MissingLut),
+                };
+                let view = match table {
+                    Some((id, table)) => {
+                        let mut cache = self.lut_textures.borrow_mut();
+                        let texture = cache
+                            .entry(id.clone())
+                            .or_insert_with(|| upload_lut(context, table));
+                        texture.create_view(&wgpu::TextureViewDescriptor {
+                            dimension: Some(wgpu::TextureViewDimension::D3),
+                            ..Default::default()
+                        })
+                    }
+                    None => self.identity_lut.create_view(&wgpu::TextureViewDescriptor {
                         dimension: Some(wgpu::TextureViewDimension::D3),
                         ..Default::default()
-                    })
+                    }),
                 };
                 Some(
                     context
@@ -602,6 +763,102 @@ fn pack_effect_uniforms(
     }
 }
 
+/// Pack a `color-stack` pass's stage program.
+///
+/// `u_stages` is a flat `[op, amount, op, amount, …]` because [`UniformValue`] has exactly two
+/// shapes — a number and a vector of numbers — and threading a list of pairs through the
+/// compositor's descriptor would have meant a new variant on a serialized wire type for the
+/// benefit of one shader.
+fn pack_color_stack_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<ColorStackUniformBuffer, EffectsError> {
+    let flat = read_vector_uniform(pass, "u_stages")?;
+    reject_unsupported_uniforms(pass, &["u_stages"])?;
+    if flat.is_empty() || flat.len() % 2 != 0 {
+        // A half-written pair means the caller lost track of its own program; rendering the
+        // truncated half would be a grade nobody asked for.
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: "u_stages".to_string(),
+            expected_length: flat.len().next_multiple_of(2).max(2),
+        });
+    }
+    let count = flat.len() / 2;
+    if count > MAX_COLOR_STACK_STAGES {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: "u_stages".to_string(),
+            expected_length: MAX_COLOR_STACK_STAGES * 2,
+        });
+    }
+
+    let mut stages = [[0.0_f32; 4]; MAX_COLOR_STACK_STAGES];
+    for (slot, pair) in flat.chunks_exact(2).enumerate() {
+        stages[slot] = [pair[0], pair[1], 0.0, 0.0];
+    }
+
+    // Only a `lut` stage reads the cube, and only one cube travels per pass — so a run may
+    // carry at most one grade. The mapper enforces that by ending a run at a second `lut`;
+    // this is the assertion that it did.
+    let lut_stages = flat
+        .chunks_exact(2)
+        .filter(|pair| pair[0] == COLOR_STACK_OP_LUT)
+        .count();
+    if lut_stages > 1 {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: "u_stages".to_string(),
+            expected_length: 2,
+        });
+    }
+    if lut_stages == 1 && pass.lut.is_none() {
+        return Err(EffectsError::MissingLut);
+    }
+
+    Ok(ColorStackUniformBuffer {
+        resolution: [width as f32, height as f32],
+        stage_count: count as u32,
+        // As in the single-pass `lut`: read from the table rather than trusted from a uniform.
+        lut_size: pass
+            .lut
+            .as_ref()
+            .map(|(_, table)| table.size as f32)
+            .unwrap_or(2.0),
+        stages,
+    })
+}
+
+/// Pack a `lift-gamma-gain` pass's three wheels.
+///
+/// Each wheel arrives as one `vec4`: `(r, g, b, master)`. Four values rather than a `vec3` and
+/// a separate scalar because the master is *part of* the wheel — it is the slider drawn under
+/// it — and splitting them into six uniforms would let a caller set three and forget three.
+///
+/// Nothing here defaults. A wheel omitted is a `MissingUniform`, not a silent identity: the
+/// caller that forgot `u_gain` gets told, rather than getting a grade with a third of it
+/// missing and no way to see which third.
+fn pack_lift_gamma_gain_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<LiftGammaGainUniformBuffer, EffectsError> {
+    let lift = read_vec4_uniform(pass, "u_lift")?;
+    let gamma = read_vec4_uniform(pass, "u_gamma")?;
+    let gain = read_vec4_uniform(pass, "u_gain")?;
+    let strength = read_number_uniform(pass, "u_amount")?;
+    reject_unsupported_uniforms(pass, &["u_lift", "u_gamma", "u_gain", "u_amount"])?;
+    Ok(LiftGammaGainUniformBuffer {
+        resolution: [width as f32, height as f32],
+        strength,
+        padding: 0.0,
+        lift,
+        gamma,
+        gain,
+    })
+}
+
 fn reject_unsupported_uniforms(pass: &EffectPass, allowed: &[&str]) -> Result<(), EffectsError> {
     for uniform in pass.uniforms.keys() {
         if !allowed.contains(&uniform.as_str()) {
@@ -612,6 +869,25 @@ fn reject_unsupported_uniforms(pass: &EffectPass, allowed: &[&str]) -> Result<()
         }
     }
     Ok(())
+}
+
+/// A vector uniform of any length. The fixed-length readers pin a shape; a stage program's
+/// length is the thing that varies.
+fn read_vector_uniform<'a>(pass: &'a EffectPass, uniform: &str) -> Result<&'a [f32], EffectsError> {
+    let Some(value) = pass.uniforms.get(uniform) else {
+        return Err(EffectsError::MissingUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+        });
+    };
+    match value {
+        UniformValue::Vector(values) => Ok(values),
+        UniformValue::Number(_) => Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 2,
+        }),
+    }
 }
 
 fn read_number_uniform(pass: &EffectPass, uniform: &str) -> Result<f32, EffectsError> {
@@ -654,6 +930,30 @@ fn read_vec3_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 3], Effec
     Ok([values[0], values[1], values[2]])
 }
 
+fn read_vec4_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 4], EffectsError> {
+    let Some(value) = pass.uniforms.get(uniform) else {
+        return Err(EffectsError::MissingUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+        });
+    };
+    let UniformValue::Vector(values) = value else {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 4,
+        });
+    };
+    if values.len() != 4 {
+        return Err(EffectsError::InvalidVectorUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+            expected_length: 4,
+        });
+    }
+    Ok([values[0], values[1], values[2], values[3]])
+}
+
 fn read_vec2_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 2], EffectsError> {
     let Some(value) = pass.uniforms.get(uniform) else {
         return Err(EffectsError::MissingUniform {
@@ -692,6 +992,337 @@ mod tests {
                 .collect(),
             lut: None,
         }
+    }
+
+    fn stack_pass(stages: &[f32]) -> EffectPass {
+        pass(
+            COLOR_STACK_SHADER_ID,
+            &[("u_stages", UniformValue::Vector(stages.to_vec()))],
+        )
+    }
+
+    /// The stage limit lives in two languages and there is no compiler that checks both.
+    #[test]
+    fn the_shader_and_rust_agree_on_the_stage_limit() {
+        let declared = COLOR_STACK_SHADER_SOURCE
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("const MAX_COLOR_STACK_STAGES: u32 = ")?
+                    .strip_suffix("u;")?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .expect("the shader declares its stage limit");
+        assert_eq!(
+            declared, MAX_COLOR_STACK_STAGES,
+            "color_stack.wgsl and pipeline.rs disagree about how many stages fit"
+        );
+    }
+
+    /// Same problem, and a worse failure: a mismatched op code renders the wrong effect rather
+    /// than failing, which is the one outcome the panel vocabulary rules exist to prevent.
+    #[test]
+    fn the_shader_and_rust_agree_on_every_op_code() {
+        let declared = |name: &str| {
+            COLOR_STACK_SHADER_SOURCE
+                .lines()
+                .find_map(|line| {
+                    line.trim()
+                        .strip_prefix(&format!("const {name}: u32 = "))?
+                        .strip_suffix("u;")?
+                        .parse::<f32>()
+                        .ok()
+                })
+                .unwrap_or_else(|| panic!("the shader declares {name}"))
+        };
+        assert_eq!(declared("OP_BRIGHTNESS"), COLOR_STACK_OP_BRIGHTNESS);
+        assert_eq!(declared("OP_CONTRAST"), COLOR_STACK_OP_CONTRAST);
+        assert_eq!(declared("OP_SATURATION"), COLOR_STACK_OP_SATURATION);
+        assert_eq!(declared("OP_LUT"), COLOR_STACK_OP_LUT);
+    }
+
+    /// The two halves of the collapsibility question have to give the same answer, or an
+    /// effect gets swept into a run the shader has no code for.
+    #[test]
+    fn collapsibility_and_op_codes_agree_across_the_whole_vocabulary() {
+        for shader in [
+            BRIGHTNESS_SHADER_ID,
+            CONTRAST_SHADER_ID,
+            SATURATION_SHADER_ID,
+            LUT_SHADER_ID,
+            GAUSSIAN_BLUR_SHADER_ID,
+            DROP_SHADOW_SHADER_ID,
+            COLOR_STACK_SHADER_ID,
+            LIFT_GAMMA_GAIN_SHADER_ID,
+            "not-an-effect",
+        ] {
+            assert_eq!(
+                is_collapsible_color_shader(shader),
+                color_stack_op(shader).is_some(),
+                "{shader} disagrees with itself about whether it collapses"
+            );
+        }
+        // The neighbourhood-reading effects must never collapse: folding them into a per-texel
+        // loop would silently drop the taps that make them what they are.
+        assert!(!is_collapsible_color_shader(GAUSSIAN_BLUR_SHADER_ID));
+        assert!(!is_collapsible_color_shader(DROP_SHADOW_SHADER_ID));
+        // And a stack is not itself a stage — nesting one would lose every stage but the first.
+        assert!(!is_collapsible_color_shader(COLOR_STACK_SHADER_ID));
+        // Three wheels are twelve numbers; a stage in the fused program carries one. Sweeping
+        // this into a run would hand the loop a stage code it has no branch for.
+        assert!(!is_collapsible_color_shader(LIFT_GAMMA_GAIN_SHADER_ID));
+    }
+
+    fn wheels(uniforms: &[(&str, UniformValue)]) -> EffectPass {
+        pass(LIFT_GAMMA_GAIN_SHADER_ID, uniforms)
+    }
+
+    fn vec4(values: [f32; 4]) -> UniformValue {
+        UniformValue::Vector(values.to_vec())
+    }
+
+    /// A neutral wheel set packs to the numbers the shader treats as an identity. The GPU test
+    /// proves the identity renders; this proves the buffer carrying it is the one it thinks.
+    #[test]
+    fn packs_three_wheels_and_a_strength() {
+        let packed = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", vec4([0.02, -0.01, 0.03, 0.005])),
+                ("u_gamma", vec4([1.1, 1.0, 0.95, 1.02])),
+                ("u_gain", vec4([1.05, 1.0, 0.9, 0.98])),
+                ("u_amount", UniformValue::Number(0.75)),
+            ]),
+            1920,
+            1080,
+        )
+        .expect("a complete wheel set packs");
+        assert_eq!(packed.resolution, [1920.0, 1080.0]);
+        assert_eq!(packed.strength, 0.75);
+        assert_eq!(packed.lift, [0.02, -0.01, 0.03, 0.005]);
+        assert_eq!(packed.gamma, [1.1, 1.0, 0.95, 1.02]);
+        assert_eq!(packed.gain, [1.05, 1.0, 0.9, 0.98]);
+    }
+
+    /// The order of the three wheels is the whole contract, and a transposed pair is the
+    /// defect a grading shader hides longest. Three distinguishable wheels, checked by slot.
+    #[test]
+    fn the_wheels_do_not_swap_slots() {
+        let packed = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", vec4([1.0, 0.0, 0.0, 0.0])),
+                ("u_gamma", vec4([0.0, 1.0, 0.0, 0.0])),
+                ("u_gain", vec4([0.0, 0.0, 1.0, 0.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+            ]),
+            8,
+            8,
+        )
+        .expect("a complete wheel set packs");
+        assert_eq!(packed.lift[0], 1.0, "lift landed in another wheel's slot");
+        assert_eq!(packed.gamma[1], 1.0, "gamma landed in another wheel's slot");
+        assert_eq!(packed.gain[2], 1.0, "gain landed in another wheel's slot");
+    }
+
+    /// Every wheel is required. A missing one used to be the tempting default — identity, no
+    /// harm — but a caller that dropped `u_gain` would then get two thirds of a grade and no
+    /// signal, which is the whole failure mode `reject_unsupported_uniforms` exists to avoid
+    /// in the other direction.
+    #[test]
+    fn a_missing_wheel_is_refused_rather_than_defaulted() {
+        for omitted in ["u_lift", "u_gamma", "u_gain", "u_amount"] {
+            let mut uniforms: Vec<(&str, UniformValue)> = vec![
+                ("u_lift", vec4([0.0; 4])),
+                ("u_gamma", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_gain", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+            ];
+            uniforms.retain(|(name, _)| *name != omitted);
+            let error = pack_lift_gamma_gain_uniforms(&wheels(&uniforms), 8, 8)
+                .expect_err("an incomplete wheel set is refused");
+            assert!(
+                matches!(error, EffectsError::MissingUniform { ref uniform, .. } if uniform == omitted),
+                "omitting {omitted} gave {error:?}"
+            );
+        }
+    }
+
+    /// A wheel is four numbers — three channels and its master. Three is the shape someone
+    /// reaching for `read_vec3_uniform` would write, and it would silently lose the master.
+    #[test]
+    fn a_three_component_wheel_is_refused() {
+        let error = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", UniformValue::Vector(vec![0.0, 0.0, 0.0])),
+                ("u_gamma", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_gain", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+            ]),
+            8,
+            8,
+        )
+        .expect_err("a three-component wheel is refused");
+        assert!(matches!(
+            error,
+            EffectsError::InvalidVectorUniform {
+                ref uniform,
+                expected_length: 4,
+                ..
+            } if uniform == "u_lift"
+        ));
+    }
+
+    #[test]
+    fn lift_gamma_gain_rejects_unknown_uniforms() {
+        let error = pack_lift_gamma_gain_uniforms(
+            &wheels(&[
+                ("u_lift", vec4([0.0; 4])),
+                ("u_gamma", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_gain", vec4([1.0, 1.0, 1.0, 1.0])),
+                ("u_amount", UniformValue::Number(1.0)),
+                ("u_offset", vec4([0.0; 4])),
+            ]),
+            8,
+            8,
+        )
+        .expect_err("an uniform this shader does not read is refused");
+        assert!(matches!(
+            error,
+            EffectsError::UnsupportedUniform { ref uniform, .. } if uniform == "u_offset"
+        ));
+    }
+
+    /// The uniform buffer and the WGSL struct are two declarations of one memory layout, and
+    /// nothing but this test pins them together — a reordered field would read the gain wheel
+    /// as a gamma and still compile on both sides.
+    #[test]
+    fn the_shader_and_rust_agree_on_the_wheel_layout() {
+        // vec2 + f32 + f32, then three vec4s at 16-byte alignment.
+        assert_eq!(std::mem::size_of::<LiftGammaGainUniformBuffer>(), 64);
+        let declared: Vec<&str> = LIFT_GAMMA_GAIN_SHADER_SOURCE
+            .split_once("struct LiftGammaGainUniforms {")
+            .expect("the shader declares its uniform struct")
+            .1
+            .split_once('}')
+            .expect("the struct is closed")
+            .0
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .filter_map(|line| line.split(':').next())
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                "resolution",
+                "strength",
+                "_padding",
+                "lift",
+                "gamma",
+                "gain"
+            ],
+            "the WGSL struct's field order drifted from LiftGammaGainUniformBuffer's"
+        );
+    }
+
+    #[test]
+    fn packs_a_stage_program_in_order() {
+        let packed = pack_color_stack_uniforms(
+            &stack_pass(&[
+                COLOR_STACK_OP_BRIGHTNESS,
+                1.2,
+                COLOR_STACK_OP_CONTRAST,
+                1.15,
+            ]),
+            1920,
+            1080,
+        )
+        .expect("the pass packs");
+        assert_eq!(packed.stage_count, 2);
+        assert_eq!(packed.stages[0], [COLOR_STACK_OP_BRIGHTNESS, 1.2, 0.0, 0.0]);
+        assert_eq!(packed.stages[1], [COLOR_STACK_OP_CONTRAST, 1.15, 0.0, 0.0]);
+        // Unused slots stay zeroed, and op 0 is not an op — so a stage_count bug reads
+        // nothing rather than reading a stale grade.
+        assert_eq!(packed.stages[2], [0.0; 4]);
+        assert_eq!(packed.resolution, [1920.0, 1080.0]);
+    }
+
+    #[test]
+    fn a_half_written_stage_pair_is_refused() {
+        assert!(
+            pack_color_stack_uniforms(
+                &stack_pass(&[COLOR_STACK_OP_BRIGHTNESS, 1.2, COLOR_STACK_OP_CONTRAST]),
+                64,
+                64
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_empty_stage_program_is_refused() {
+        assert!(pack_color_stack_uniforms(&stack_pass(&[]), 64, 64).is_err());
+    }
+
+    #[test]
+    fn a_run_past_the_stage_limit_is_refused_rather_than_truncated() {
+        let mut stages = Vec::new();
+        for _ in 0..=MAX_COLOR_STACK_STAGES {
+            stages.extend_from_slice(&[COLOR_STACK_OP_CONTRAST, 1.0]);
+        }
+        // Truncating would drop the tail of someone's grade and render happily.
+        assert!(pack_color_stack_uniforms(&stack_pass(&stages), 64, 64).is_err());
+    }
+
+    /// One cube is bound per pass, so a run holds at most one grade. The mapper ends a run at
+    /// the second; this is the check that it did, rather than a silent wrong-cube render.
+    #[test]
+    fn two_grades_in_one_run_are_refused() {
+        let mut p = stack_pass(&[COLOR_STACK_OP_LUT, 1.0, COLOR_STACK_OP_LUT, 1.0]);
+        p.lut = Some((
+            "a".to_string(),
+            std::sync::Arc::new(crate::Lut3d::identity(2)),
+        ));
+        assert!(pack_color_stack_uniforms(&p, 64, 64).is_err());
+    }
+
+    #[test]
+    fn a_grade_stage_with_no_table_is_refused() {
+        assert!(
+            pack_color_stack_uniforms(&stack_pass(&[COLOR_STACK_OP_LUT, 1.0]), 64, 64).is_err()
+        );
+    }
+
+    /// A run with no grade in it is the ordinary case, and must not be mistaken for a `lut`
+    /// pass that lost its table.
+    #[test]
+    fn a_run_without_a_grade_needs_no_table() {
+        let packed =
+            pack_color_stack_uniforms(&stack_pass(&[COLOR_STACK_OP_SATURATION, 0.0]), 64, 64)
+                .expect("a grade-free run packs without a cube");
+        assert_eq!(packed.stage_count, 1);
+    }
+
+    #[test]
+    fn the_cube_edge_length_is_read_from_the_table_not_from_a_uniform() {
+        let mut p = stack_pass(&[COLOR_STACK_OP_LUT, 1.0]);
+        p.lut = Some((
+            "a".to_string(),
+            std::sync::Arc::new(crate::Lut3d::identity(17)),
+        ));
+        let packed = pack_color_stack_uniforms(&p, 64, 64).expect("the pass packs");
+        assert_eq!(packed.lut_size, 17.0);
+    }
+
+    #[test]
+    fn a_stack_rejects_the_uniforms_of_the_effects_it_replaces() {
+        // `u_amount` is what a single-effect pass carries. A stack that quietly accepted it
+        // would render an empty program and look like a no-op grade.
+        let p = pass(
+            COLOR_STACK_SHADER_ID,
+            &[("u_amount", UniformValue::Number(1.2))],
+        );
+        assert!(pack_color_stack_uniforms(&p, 64, 64).is_err());
     }
 
     #[test]

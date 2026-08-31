@@ -6,6 +6,9 @@ description = "The bridge an AI agent's edits cross to reach the live editor: pu
 
 [dependencies]
 bay-paths = { path = "../bay-paths" }
+# Caption placement is a setting, not an argument, and the MCP server must honour it with no
+# window open. bay-settings depends only on bay-paths, so this adds no cycle.
+bay-settings = { path = "../bay-settings" }
 bay-jobs = { path = "../bay-jobs" }
 bay-core = { path = "../bay-core" }
 bay-speech = { path = "../bay-speech" }
@@ -14,6 +17,7 @@ bay-provision = { path = "../bay-provision" }
 bay-audio = { path = "../bay-audio" }
 bay-stock = { path = "../bay-stock" }
 bay-gen = { path = "../bay-gen" }
+bay-detect = { path = "../bay-detect" }
 bay-vision = { path = "../bay-vision" }
 bay-preview = { path = "../bay-preview" }
 # For validating a .cube before it is attached, so a broken grade is an error rather than a
@@ -24,3 +28,7 @@ bay-text = { path = "../bay-text" }
 bay-time = { path = "../bay-time" }
 serde_json = "1"
 async-channel = "2.5"
+
+[dev-dependencies]
+bay-test-support = { path = "../bay-test-support" }
+bay-detect = { path = "../bay-detect" }

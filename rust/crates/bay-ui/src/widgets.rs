@@ -7,13 +7,83 @@
 //! Everything here is a plain `Div` with no click handler. Interaction needs a `Context<V>`,
 //! which would tie these to one view; the caller wraps what it needs in `.id().on_click()`.
 
+use crate::theme::rgb;
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Div, SharedString};
+use gpui::{div, px, Div, SharedString, Stateful};
 
 use crate::theme;
 
 pub fn text(value: impl Into<String>) -> SharedString {
     SharedString::from(value.into())
+}
+
+/// What a button is *for*, which is what decides its colour.
+///
+/// Three kinds, not a colour argument, so a call site cannot invent a fourth accent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonKind {
+    /// The default: a control on a panel.
+    Normal,
+    /// The one action a screen exists to perform. At most one per group.
+    Primary,
+    /// Armed and destructive. See [`theme::Severity::Danger`].
+    Danger,
+    /// Switched on — an active tab, a toggle that is currently true.
+    On,
+}
+
+impl ButtonKind {
+    fn fill(self) -> theme::Role {
+        match self {
+            ButtonKind::Normal => theme::PANEL_ALT,
+            ButtonKind::Primary => theme::ACCENT,
+            ButtonKind::Danger => theme::DANGER,
+            ButtonKind::On => theme::SELECTED,
+        }
+    }
+
+    fn label(self) -> theme::Role {
+        match self {
+            ButtonKind::Normal | ButtonKind::On => theme::TEXT,
+            ButtonKind::Primary => theme::ON_ACCENT,
+            ButtonKind::Danger => theme::DANGER_TEXT,
+        }
+    }
+}
+
+/// The shared appearance of a button, before anyone attaches a handler.
+///
+/// Fill and label only — no padding, no size. Six builders across two views want six different
+/// shapes and the same four states, and it was the *states* that were missing: before this,
+/// "disabled" everywhere in bay was grey text on an identical fill with the click handler simply
+/// not attached, which is indistinguishable from an enabled button with a quiet label. A user
+/// found out by clicking and getting nothing.
+///
+/// Hover is applied here. Pressed needs an `ElementId`, so it is [`pressable`], which the caller
+/// applies after `.id()`.
+pub fn button_face(kind: ButtonKind, enabled: bool) -> Div {
+    let state = if enabled {
+        theme::Interaction::Idle
+    } else {
+        theme::Interaction::Disabled
+    };
+    let face = div()
+        .bg(rgb(theme::control_fill(kind.fill(), state)))
+        .text_color(rgb(theme::control_text(kind.label(), state)));
+    if enabled {
+        let hover = theme::control_fill(kind.fill(), theme::Interaction::Hover);
+        face.hover(move |style| style.bg(rgb(hover)))
+    } else {
+        face
+    }
+}
+
+/// The pressed state, for a button that has an id. Split from [`button_face`] because GPUI's
+/// `.active()` refinement only exists on a stateful element; it takes the kind again because a
+/// coloured button presses within its own hue rather than to the neutral grey.
+pub fn pressable(kind: ButtonKind, button: Stateful<Div>) -> Stateful<Div> {
+    let pressed = theme::control_fill(kind.fill(), theme::Interaction::Pressed);
+    button.active(move |style| style.bg(rgb(pressed)))
 }
 
 /// "INSPECTOR", "TOOLS EXPOSED" — a quiet, letter-spaced heading over a group.
@@ -37,12 +107,12 @@ pub fn card() -> Div {
 }
 
 /// [`card`], outlined in a colour that says something — a live server, a selected option.
-pub fn card_edged(color: u32) -> Div {
+pub fn card_edged(color: impl Into<theme::Paint>) -> Div {
     card().border_color(rgb(color))
 }
 
 /// A small status light.
-pub fn dot(color: u32) -> Div {
+pub fn dot(color: impl Into<theme::Paint>) -> Div {
     div()
         .w(px(8.0))
         .h(px(8.0))
@@ -100,7 +170,7 @@ pub fn readout(value: impl Into<String>, muted: bool) -> Div {
 ///
 /// `fraction` of `None` draws an empty trough: the venv step has no byte count, and a bar that
 /// invents a position there tells the user a download is further along than anyone knows.
-pub fn progress(fraction: Option<f32>, color: u32) -> Div {
+pub fn progress(fraction: Option<f32>, color: impl Into<theme::Paint>) -> Div {
     let trough = div()
         .h(px(4.0))
         .rounded(px(3.0))
@@ -126,7 +196,7 @@ pub fn note(value: impl Into<String>) -> Div {
 }
 
 /// A message the user should read once — a status, a complaint, an explanation.
-pub fn banner(message: impl Into<String>, accent: u32) -> Div {
+pub fn banner(message: impl Into<String>, accent: impl Into<theme::Paint>) -> Div {
     div()
         .px(px(10.0))
         .py(px(8.0))
