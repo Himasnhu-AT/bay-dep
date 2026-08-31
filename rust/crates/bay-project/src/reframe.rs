@@ -214,6 +214,67 @@ pub fn plan_reframe(
 /// The four channels a tracked reframe writes, in the order `plan_reframe` fills them.
 pub const CROP_CHANNELS: [&str; 4] = ["cropLeft", "cropTop", "cropRight", "cropBottom"];
 
+/// What a reframe does to source pixels, and what the alternative would have done.
+///
+/// bay fits *contain* with `scale: 1.0` by default, so a 16:9 clip placed on a 9:16 canvas
+/// already renders as a full-width band with black above and below — 1920×1080 into 1080×1920 is
+/// a **0.56× downscale**. Cropping to the target aspect instead keeps a 608-wide column of a
+/// 1080-tall source and stretches it to fill: a **1.78× upscale** of the same footage.
+///
+/// Neither is wrong. A close-up you want tighter than the source frames is worth the upscale; a
+/// wide two-shot almost never is, and the platforms cover roughly the top 15% and bottom 20% of a
+/// 9:16 frame with their own chrome, which is where the band's black goes. What was wrong was
+/// that `auto_reframe` did the second one silently, so nobody could see the trade it made.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sharpness {
+    /// What the tracked crop does to source pixels. Above 1.0 is an upscale.
+    pub tracked_scale: f32,
+    /// What placing the whole frame as a band would do instead.
+    pub panel_scale: f32,
+}
+
+impl Sharpness {
+    /// Below this, an upscale is not worth a sentence. 4% is inside what a resample hides.
+    const WORTH_SAYING: f32 = 1.04;
+
+    pub fn measure(source: (u32, u32), target: (u32, u32)) -> Self {
+        let (sw, sh) = (source.0.max(1) as f32, source.1.max(1) as f32);
+        let (tw, th) = (target.0.max(1) as f32, target.1.max(1) as f32);
+        let source_aspect = sw / sh;
+        let target_aspect = tw / th;
+        // A fixed aperture of the target's shape, cut from the source and blown up to fill.
+        let tracked_scale = if target_aspect < source_aspect {
+            th / sh
+        } else {
+            tw / sw
+        };
+        // The whole frame, contained: limited by whichever axis runs out first.
+        let panel_scale = (tw / sw).min(th / sh);
+        Self {
+            tracked_scale,
+            panel_scale,
+        }
+    }
+
+    /// The sentence to put in front of someone, or `None` when the crop costs nothing worth
+    /// mentioning. Deliberately not an error: a tracked reframe of a close-up is often the right
+    /// call, and refusing it would be substituting a taste for a measurement.
+    pub fn note(&self) -> Option<String> {
+        (self.tracked_scale > Self::WORTH_SAYING
+            && self.tracked_scale > self.panel_scale * Self::WORTH_SAYING)
+            .then(|| {
+                format!(
+                    "this crop upscales the source {:.2}x. Placing the whole frame as a band \
+                     instead is {:.2}x — sharper, it cannot lose anyone at the edge of a \
+                     two-shot, and the black lands where the platform puts its own chrome. \
+                     A band is what `add_video` already does with no crop at all.",
+                    self.tracked_scale, self.panel_scale
+                )
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +417,50 @@ mod tests {
         let left = &plan.channels["cropLeft"];
         assert_eq!(left.keys.len(), 2);
         assert_eq!(left.keys[0].time, MediaTime::ZERO);
+    }
+
+    /// The measurement behind the framing decision: 1920x1080 into 1080x1920 upscales 1.78x if
+    /// you crop and downscales to 0.56x if you band it. Those two numbers are why the podcast
+    /// reels were soft.
+    #[test]
+    fn cropping_a_landscape_source_to_portrait_upscales_and_banding_does_not() {
+        let sharpness = Sharpness::measure((1920, 1080), (1080, 1920));
+        assert!(
+            (sharpness.tracked_scale - 1.7778).abs() < 0.001,
+            "{sharpness:?}"
+        );
+        assert!(
+            (sharpness.panel_scale - 0.5625).abs() < 0.001,
+            "{sharpness:?}"
+        );
+        assert!(sharpness.note().is_some(), "1.78x deserves a sentence");
+    }
+
+    /// Same shape in and out is no trade at all, and must not produce a note — a warning that
+    /// fires when nothing is wrong is a warning people learn to skip.
+    #[test]
+    fn reframing_to_the_shape_it_already_is_says_nothing() {
+        let sharpness = Sharpness::measure((1920, 1080), (1920, 1080));
+        assert_eq!(sharpness.tracked_scale, 1.0);
+        assert_eq!(sharpness.panel_scale, 1.0);
+        assert_eq!(sharpness.note(), None);
+    }
+
+    /// A 4K source cropped to a 1080-wide vertical is a *downscale*, so there is nothing to warn
+    /// about — the crop is free and tracking is the better answer. This is the case that stops
+    /// the note from being "always say banding is sharper".
+    #[test]
+    fn cropping_an_oversized_source_costs_nothing_and_says_nothing() {
+        let sharpness = Sharpness::measure((3840, 2160), (1080, 1920));
+        assert!(sharpness.tracked_scale < 1.0, "{sharpness:?}");
+        assert_eq!(sharpness.note(), None);
+    }
+
+    /// A degenerate size must not divide by zero or produce a NaN that serialises as null.
+    #[test]
+    fn a_zero_dimension_still_measures_a_finite_number() {
+        let sharpness = Sharpness::measure((0, 0), (1080, 1920));
+        assert!(sharpness.tracked_scale.is_finite(), "{sharpness:?}");
+        assert!(sharpness.panel_scale.is_finite(), "{sharpness:?}");
     }
 }

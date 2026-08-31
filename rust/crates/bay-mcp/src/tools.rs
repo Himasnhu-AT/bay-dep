@@ -1741,7 +1741,10 @@ pub fn all_definitions() -> Vec<Value> {
             "auto_reframe",
             "Track the subject in a video clip and animate crop insets for a new aspect ratio. \
              The tracked path is exponentially damped before keyframes are written, avoiding \
-             jittery per-frame camera jumps. Returns a job id; poll job_status.",
+             jittery per-frame camera jumps. Read `framing.note` in the result: cropping 16:9 to \
+             9:16 upscales a 1080-tall source 1.78x, and placing the clip with no crop at all \
+             already gives a full-width band with black above and below, which is sharper and \
+             cannot lose anyone at the edge of a two-shot. Returns a job id; poll job_status.",
             json!({
                 "elementId": { "type": "string", "description": "A video element on the timeline." },
                 "targetWidth": { "type": "integer", "default": 1080 },

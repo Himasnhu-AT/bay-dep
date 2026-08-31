@@ -115,22 +115,25 @@ fn extract_frame(
     Ok(())
 }
 
-/// A scratch directory keyed by pid, removed on drop.
+/// A scratch directory unique to this process *and* this scan, removed on drop.
 ///
-/// The pid is not decoration. A scratch path keyed only by purpose is a shared machine resource,
-/// and two test binaries sharing one wiped each other's state — eleven of twelve concurrent runs
-/// failed before that was fixed elsewhere in this workspace.
+/// Both halves of the key are load-bearing, and the second was learned the hard way. The pid
+/// separates processes; the counter separates concurrent scans **inside** one. Keyed by pid and a
+/// nanosecond clock alone, two scans on two threads read the same nanosecond, landed in the same
+/// directory, and the first to finish deleted the frames the second was still reading — ffmpeg
+/// reporting `Could not open file: .../detect-00003.png` in the middle of a scan that had been
+/// working. Same shape as the registry scratch directory keyed by test name with no pid, and it
+/// is why this is a counter and not a finer clock: a clock is a guess about granularity, and a
+/// counter is not a guess.
 struct FrameTemp {
     path: PathBuf,
 }
 
 impl FrameTemp {
     fn new() -> Result<Self, DetectError> {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|since| since.as_nanos())
-            .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!("bay-detect-{}-{stamp}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let ticket = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("bay-detect-{}-{ticket}", std::process::id()));
         std::fs::create_dir_all(&path).map_err(|error| DetectError::Extract(error.to_string()))?;
         Ok(Self { path })
     }
@@ -170,14 +173,36 @@ mod tests {
         assert_eq!(sample_times(4.0, 4.0, 0.5), vec![4.0]);
     }
 
-    /// Two scratch directories in the same process must not collide, or a second scan deletes
-    /// the first one's frames while it is still reading them.
+    /// Two scratch directories in the same process must not collide, **including when they are
+    /// created at the same instant on different threads** — which is the case that actually
+    /// happened. The sequential version of this test passed against the bug: two calls a
+    /// microsecond apart get different nanosecond stamps, and two calls on two threads did not.
     #[test]
-    fn two_scratch_directories_do_not_collide() {
-        let (a, b) = (
-            FrameTemp::new().expect("temp dir"),
-            FrameTemp::new().expect("temp dir"),
+    fn concurrent_scratch_directories_do_not_collide() {
+        const THREADS: usize = 16;
+        let barrier = std::sync::Barrier::new(THREADS);
+        let paths: Vec<PathBuf> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..THREADS)
+                .map(|_| {
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        // Start together, so the clock is as close to identical as it can be.
+                        barrier.wait();
+                        FrameTemp::new().expect("temp dir").path.clone()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("thread"))
+                .collect()
+        });
+        let unique: std::collections::BTreeSet<_> = paths.iter().collect();
+        assert_eq!(
+            unique.len(),
+            THREADS,
+            "two concurrent scans shared a scratch directory, so one would delete the other's \
+             frames mid-scan: {paths:?}"
         );
-        assert_ne!(a.path, b.path);
     }
 }

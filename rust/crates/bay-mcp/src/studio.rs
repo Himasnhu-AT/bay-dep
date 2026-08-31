@@ -1314,6 +1314,12 @@ impl Studio {
         // The geometry lives in `bay_project::reframe`, not here. It used to be written out
         // twice — identically — in this method and in `bay_agent::slow::auto_reframe`, which is
         // two places for a detector change to land and one of them to be missed.
+        // Measured before the crop is applied, so the tool can say what the reframe costs in
+        // sharpness rather than leaving someone to discover it in the export.
+        let sharpness = bay_project::reframe::Sharpness::measure(
+            (source_width, source_height),
+            (target_width, target_height),
+        );
         let plan = bay_project::reframe::plan_reframe(
             &path,
             source_start,
@@ -1344,6 +1350,11 @@ impl Studio {
             "target": { "width": target_width, "height": target_height },
             "detector": tracked.detector,
             "warning": tracked.warning,
+            "framing": {
+                "mode": "tracked-crop",
+                "sharpness": sharpness,
+                "note": sharpness.note(),
+            },
             "smoothing": {
                 "method": "exponential damping",
                 "seconds": smoothing_seconds,

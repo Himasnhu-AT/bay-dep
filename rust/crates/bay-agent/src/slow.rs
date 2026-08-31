@@ -917,6 +917,12 @@ fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
     let path = tracked.path;
     // Shared with `bay_mcp::studio::auto_reframe`, which is the point: this arithmetic was
     // duplicated character for character between the attached and headless paths.
+    // Measured before the crop is applied, so the tool can say what the reframe costs in
+    // sharpness rather than leaving someone to discover it in the export.
+    let sharpness = bay_project::reframe::Sharpness::measure(
+        (source_width, source_height),
+        (target_width, target_height),
+    );
     let plan = bay_project::reframe::plan_reframe(
         &path,
         source_start,
@@ -934,6 +940,11 @@ fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
             "target": { "width": target_width, "height": target_height },
             "detector": tracked.detector,
             "warning": tracked.warning,
+            "framing": {
+                "mode": "tracked-crop",
+                "sharpness": sharpness,
+                "note": sharpness.note(),
+            },
             "smoothing": {
                 "method": "exponential damping",
                 "seconds": smoothing_seconds,
