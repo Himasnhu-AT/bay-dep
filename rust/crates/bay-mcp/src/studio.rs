@@ -1295,23 +1295,22 @@ impl Studio {
             .filter(|time| *time > source_start && *time < source_end)
             .collect(),
         };
-        let encoder = bay_vision::Encoder::load().map_err(|error| err(error.to_string()))?;
-        let path = bay_vision::track_subject_siglip(
-            &encoder,
+        let tracked = bay_agent::tracking::track(
             &asset.path,
             source_start,
             source_end,
-            bay_vision::ReframeTrackingConfig {
+            bay_project::reframe::ReframeTrackingConfig {
                 source_aspect: source_width as f32 / source_height.max(1) as f32,
                 target_aspect: target_width as f32 / target_height as f32,
                 shot_boundaries: &shot_boundaries,
-                tracking: bay_vision::TrackingConfig {
+                tracking: bay_project::reframe::TrackingConfig {
                     sample_seconds,
                     smoothing_seconds,
                 },
             },
         )
-        .map_err(|error| err(error.to_string()))?;
+        .map_err(&err)?;
+        let path = tracked.path;
         // The geometry lives in `bay_project::reframe`, not here. It used to be written out
         // twice — identically — in this method and in `bay_agent::slow::auto_reframe`, which is
         // two places for a detector change to land and one of them to be missed.
@@ -1343,12 +1342,13 @@ impl Studio {
         Ok(serde_json::json!({
             "elementId": element_id,
             "target": { "width": target_width, "height": target_height },
-            "detector": "SigLIP-ranked subject crops with local appearance prior",
+            "detector": tracked.detector,
+            "warning": tracked.warning,
             "smoothing": {
                 "method": "exponential damping",
                 "seconds": smoothing_seconds,
-                "rawJitter": bay_vision::path_jitter(&raw_x),
-                "smoothedJitter": bay_vision::path_jitter(&smooth_x),
+                "rawJitter": bay_project::reframe::path_jitter(&raw_x),
+                "smoothedJitter": bay_project::reframe::path_jitter(&smooth_x),
             },
             "points": path,
         }))

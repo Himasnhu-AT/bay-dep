@@ -27,6 +27,7 @@ pub mod illustrate;
 pub mod plan;
 pub mod registry;
 pub mod slow;
+pub mod tracking;
 pub mod trust;
 
 pub use plan::{

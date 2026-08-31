@@ -20,6 +20,20 @@ const SAMPLE_WIDTH: u32 = 640;
 /// see *where* detection failed — a gap in the middle of a shot is a subject turning away, and a
 /// gap covering the whole range is a detector that is not working.
 pub fn detect_frames(media: &str, times: &[f64], want: Want) -> Result<Vec<Frame>, DetectError> {
+    detect_frames_reporting(media, times, want, &mut |_, _| {})
+}
+
+/// [`detect_frames`], reporting `(done, total)` as it goes.
+///
+/// A scan is one ffmpeg invocation per sample, so a long range is minutes of work. A job that
+/// shows nothing for two minutes is indistinguishable from a job that has hung, which is why the
+/// callback exists rather than being something a caller could add later.
+pub fn detect_frames_reporting(
+    media: &str,
+    times: &[f64],
+    want: Want,
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<Vec<Frame>, DetectError> {
     if !crate::available() {
         return Err(DetectError::Unavailable(
             crate::unavailable_reason().unwrap_or_default(),
@@ -42,6 +56,7 @@ pub fn detect_frames(media: &str, times: &[f64], want: Want) -> Result<Vec<Frame
             time_seconds: *time,
             detections,
         });
+        progress(index + 1, times.len());
     }
     Ok(frames)
 }

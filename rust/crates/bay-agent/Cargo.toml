@@ -14,6 +14,7 @@ bay-provision = { path = "../bay-provision" }
 bay-audio = { path = "../bay-audio" }
 bay-stock = { path = "../bay-stock" }
 bay-gen = { path = "../bay-gen" }
+bay-detect = { path = "../bay-detect" }
 bay-vision = { path = "../bay-vision" }
 bay-preview = { path = "../bay-preview" }
 # For validating a .cube before it is attached, so a broken grade is an error rather than a
@@ -24,3 +25,7 @@ bay-text = { path = "../bay-text" }
 bay-time = { path = "../bay-time" }
 serde_json = "1"
 async-channel = "2.5"
+
+[dev-dependencies]
+bay-test-support = { path = "../bay-test-support" }
+bay-detect = { path = "../bay-detect" }

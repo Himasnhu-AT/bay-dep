@@ -42,6 +42,9 @@ pub fn slow_tools() -> &'static [&'static str] {
         "media_index",
         "media_search",
         "auto_reframe",
+        // One ffmpeg extraction and one Vision pass per sample. Bounded by
+        // `tracking::MAX_SAMPLES`, and still minutes at the ceiling.
+        "faces_detect",
         // Decodes the complete take and runs Whisper over it.
         "transcribe",
         "diarize",
@@ -62,8 +65,6 @@ pub fn slow_tools() -> &'static [&'static str] {
         "gen_image",
         "gen_video",
         "gen_music",
-        // Decoding a whole take to find the dead air in it.
-        "silence_detect",
     ]
 }
 
@@ -87,6 +88,7 @@ pub fn job_tools() -> &'static [&'static str] {
         "shots_detect",
         "media_index",
         "auto_reframe",
+        "faces_detect",
         "transcribe",
         "diarize",
     ]
@@ -211,6 +213,7 @@ pub fn run(
         "media_import" => media_import(args, context),
         "audio_probe" => audio_probe(args, context),
         "shots_detect" => shots_detect(args, context),
+        "faces_detect" => faces_detect(args, context, job),
         "media_index" => media_index(args, context),
         "media_search" => media_search(args, context).map(SlowResult::value),
         "auto_reframe" => auto_reframe(args, context),
@@ -652,6 +655,57 @@ fn shots_detect(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
     })
 }
 
+/// Where the people are in an imported clip.
+///
+/// A read, like `shots_detect`: it answers "who is on screen and where", and what to do about
+/// the answer — cut to them, reframe onto them, decide this is a two-shot — is the caller's.
+fn faces_detect(
+    args: &Value,
+    context: &SlowContext,
+    job: Option<&bay_jobs::Handle>,
+) -> Result<SlowResult, String> {
+    let media_id = require_str(args, "mediaId")?;
+    let asset = context
+        .project
+        .media
+        .iter()
+        .find(|asset| asset.id == media_id)
+        .ok_or_else(|| format!("no media {media_id:?} — call media_import first"))?;
+    let duration = asset.duration_seconds.unwrap_or_default();
+    let start = args
+        .get("startSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let end = args
+        .get("endSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(duration);
+    let sample_seconds = args
+        .get("sampleSeconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.5);
+    let want = crate::tracking::want_from(args);
+    let handle = job.cloned();
+    let mut value = crate::tracking::detect_people(
+        &asset.path,
+        start,
+        end,
+        sample_seconds,
+        want,
+        &mut |done, total| {
+            if let Some(handle) = handle.as_ref() {
+                handle.progress(done as u64, total as u64, format!("{done}/{total} frames"));
+            }
+        },
+    )?;
+    value["mediaId"] = serde_json::json!(media_id);
+    value["name"] = serde_json::json!(asset.name);
+    Ok(SlowResult {
+        value,
+        follow_up: FollowUp::None,
+    })
+}
+
 fn media_index(args: &Value, context: &SlowContext) -> Result<SlowResult, String> {
     let media_id = require_str(args, "mediaId")?;
     let mut asset = context
@@ -846,23 +900,21 @@ fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
         .get("smoothingSeconds")
         .and_then(Value::as_f64)
         .unwrap_or(0.9);
-    let encoder = bay_vision::Encoder::load().map_err(|error| error.to_string())?;
-    let path = bay_vision::track_subject_siglip(
-        &encoder,
+    let tracked = crate::tracking::track(
         &asset.path,
         source_start,
         source_end,
-        bay_vision::ReframeTrackingConfig {
+        bay_project::reframe::ReframeTrackingConfig {
             source_aspect: source_width as f32 / source_height.max(1) as f32,
             target_aspect: target_width as f32 / target_height as f32,
             shot_boundaries: &shot_boundaries,
-            tracking: bay_vision::TrackingConfig {
+            tracking: bay_project::reframe::TrackingConfig {
                 sample_seconds,
                 smoothing_seconds,
             },
         },
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
+    let path = tracked.path;
     // Shared with `bay_mcp::studio::auto_reframe`, which is the point: this arithmetic was
     // duplicated character for character between the attached and headless paths.
     let plan = bay_project::reframe::plan_reframe(
@@ -880,12 +932,13 @@ fn auto_reframe(args: &Value, context: &SlowContext) -> Result<SlowResult, Strin
         value: serde_json::json!({
             "elementId": element_id,
             "target": { "width": target_width, "height": target_height },
-        "detector": "SigLIP-ranked subject crops with local appearance prior",
+            "detector": tracked.detector,
+            "warning": tracked.warning,
             "smoothing": {
                 "method": "exponential damping",
                 "seconds": smoothing_seconds,
-                "rawJitter": bay_vision::path_jitter(&raw_x),
-                "smoothedJitter": bay_vision::path_jitter(&smooth_x),
+                "rawJitter": bay_project::reframe::path_jitter(&raw_x),
+                "smoothedJitter": bay_project::reframe::path_jitter(&smooth_x),
             },
             "points": path,
         }),

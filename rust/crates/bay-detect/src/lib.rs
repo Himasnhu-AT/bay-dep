@@ -24,7 +24,7 @@ mod frames;
 #[cfg(target_os = "macos")]
 mod vision;
 
-pub use frames::{detect_frames, sample_times};
+pub use frames::{detect_frames, detect_frames_reporting, sample_times};
 
 /// A rectangle in the picture, as fractions of the frame, **top-left origin**.
 ///

@@ -1697,6 +1697,25 @@ pub fn all_definitions() -> Vec<Value> {
             &["mediaId"],
         ),
         tool(
+            "faces_detect",
+            "Find the people in a clip: a face rectangle per person per sampled frame, and \
+             optionally their upper bodies. `mostFacesAtOnce` tells a two-shot from a single. \
+             Bounds are fractions of the frame, origin at the TOP left. On-device and macOS-only \
+             with nothing to install, so runtime_install has no part to play. Extracts a frame \
+             per sample, so it returns a job id: poll job_status.",
+            json!({
+                "mediaId": { "type": "string", "description": "An imported asset. Either this or `path`." },
+                "path": { "type": "string", "description": "An absolute path, if it is not imported." },
+                "startSeconds": { "type": "number", "default": 0 },
+                "endSeconds": { "type": "number", "description": "Defaults to the end of the clip." },
+                "sampleSeconds": { "type": "number", "default": 0.5,
+                    "description": "Seconds between samples. Widen this before widening the range: a whole take at 0.5 is thousands of extractions and is refused." },
+                "want": { "type": "string", "enum": ["faces", "everyone"], "default": "faces",
+                    "description": "`everyone` adds upper-body rectangles, at a second pass per frame." }
+            }),
+            &[],
+        ),
+        tool(
             "media_index",
             "Build and persist a semantic index for imported footage. Detects cuts, samples one \
              midpoint frame per shot, and embeds those frames with bay's existing local SigLIP \
@@ -2814,6 +2833,39 @@ pub fn dispatch(studio: &mut Studio, name: &str, args: &Value) -> ToolResult {
             number(args, "level", 0.7) as f32,
             number(args, "volume", 1.0) as f32,
         ),
+        "faces_detect" => {
+            let path = source_path(studio, args)?;
+            let start = number(args, "startSeconds", 0.0);
+            let end = args
+                .get("endSeconds")
+                .and_then(Value::as_f64)
+                .or_else(|| {
+                    studio
+                        .project()
+                        .media
+                        .iter()
+                        .find(|asset| asset.path == path)
+                        .and_then(|asset| asset.duration_seconds)
+                })
+                .unwrap_or(0.0);
+            let sample_seconds = number(args, "sampleSeconds", 0.5);
+            let want = bay_agent::tracking::want_from(args);
+            // No progress callback here on purpose: `headless_job` runs the work synchronously
+            // and only then registers the job, so nothing can poll it mid-flight. The attached
+            // arm in `bay_agent::slow` does report, because there the work is on a worker and
+            // `job_status` can see it.
+            headless_job("faces_detect", &path.clone(), || {
+                bay_agent::tracking::detect_people(
+                    &path,
+                    start,
+                    end,
+                    sample_seconds,
+                    want,
+                    &mut |_, _| {},
+                )
+                .map_err(err)
+            })
+        }
         "shots_detect" => {
             let media_id = required_text(args, "mediaId")?;
             let asset = studio

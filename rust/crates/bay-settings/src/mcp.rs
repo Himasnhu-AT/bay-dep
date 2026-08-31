@@ -134,6 +134,7 @@ const EDIT: &[&str] = &[
     "media_search",
     "auto_reframe",
     "shots_detect",
+    "faces_detect",
     "audio_set",
     "sound_add",
 ];
@@ -144,6 +145,10 @@ const DIALOGUE: &[&str] = &[
     "transcript_get",
     "transcript_search",
     "diarize",
+    // A conversation edit chooses angles as well as words: `faces_detect` is what says whether a
+    // frame holds one speaker or both, which is the difference between a single and a wide.
+    "faces_detect",
+    "add_video",
     "cut_by_transcript",
     "remove_silence_and_fillers",
     "silence_detect",
