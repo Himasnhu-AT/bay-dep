@@ -99,6 +99,61 @@ export interface Track {
   items: Item[]
 }
 
+/**
+ * What a transition draws. The names are the ones every editor uses, so an agent asking for
+ * a "cross dissolve" gets one; the set is deliberately the universal intersection rather
+ * than a catalogue, because a transition nobody recognises is a control nobody reaches for.
+ */
+export type TransitionKind =
+  | 'cross-dissolve'
+  | 'dip-to-black'
+  | 'dip-to-white'
+  | 'wipe'
+  | 'push'
+  | 'slide'
+  | 'iris'
+
+/** Where a directional transition comes from. Ignored by kinds that have no direction. */
+export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
+
+/**
+ * A transition across the cut between two adjacent items on one track.
+ *
+ * **It belongs to the junction, not to either clip**, which is why it lives on the timeline
+ * rather than on an `Item`. `fadeInFrames` could live on an item because a fade involves one
+ * clip and its own edge; a transition is a relationship, and putting it on one side would
+ * make "which clip owns it" a question every reader has to answer.
+ *
+ * **It straddles the cut and moves nothing.** The outgoing clip keeps playing for
+ * `durationInFrames / 2` past its own end, and the incoming clip starts the same amount
+ * early — both reading source material outside the range they normally occupy, which editors
+ * call handles. The alternative model, used by Premiere and Resolve, physically overlaps the
+ * two clips and shortens the timeline. We cannot: two items on one track must never overlap,
+ * and relaxing that to support transitions would put every existing operation — placement,
+ * ripple, collision refusal — into a world where overlap is sometimes legal. Straddling keeps
+ * the invariant and costs only handles.
+ *
+ * **A clip without handles cannot support the full duration**, and this is where a naive
+ * implementation lies. If the outgoing clip ends at its source's last frame, there is nothing
+ * to play during its half of the transition, and drawing its final frame repeatedly is a
+ * freeze that reads as a stutter. `resolveTransition` clamps to what the handles allow and
+ * **reports the clamp**, so a caller can say "this dissolve is 8 frames, not 30, because the
+ * clip has no more footage" rather than silently producing something worse than a cut.
+ */
+export interface Transition {
+  id: string
+  kind: TransitionKind
+  /** The item being left. The cut is at `itemEnd(fromItem)`. */
+  fromItemId: string
+  /** The item being entered. Must start exactly where `fromItem` ends. */
+  toItemId: string
+  /** Total length across the cut, half on each side. Always >= 2 so each side gets one. */
+  durationInFrames: Frames
+  direction?: TransitionDirection
+  /** Kind-specific extras — feather width, iris shape. Absent means the kind's default. */
+  params?: Record<string, number | string>
+}
+
 export interface Timeline {
   id: string
   name: string
@@ -112,6 +167,12 @@ export interface Timeline {
    * parallel and their order carries no meaning beyond display.
    */
   tracks: Track[]
+  /**
+   * Transitions across cuts. Optional so every project written before transitions existed
+   * still loads — `.bay` files on disk are a compatibility surface and a required field
+   * would reject all of them.
+   */
+  transitions?: Transition[]
 }
 
 export interface Project {
@@ -266,6 +327,149 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
 export function sourceTimeAt(item: Item, frame: Frames, fps: number): Micros {
   const elapsed = framesToUs(frame - item.from, fps)
   return item.sourceStartUs + Math.round(elapsed * item.speed)
+}
+
+// ---------------------------------------------------------------------------
+// Transitions
+// ---------------------------------------------------------------------------
+
+/**
+ * How many timeline frames of source a clip has left *after* its out-point, and *before* its
+ * in-point. These are its handles, and they are what a transition spends.
+ *
+ * A still — an image, or text — has no source duration and can be held for any length, so its
+ * handles are unbounded. Reporting zero for a still would refuse transitions on exactly the
+ * clips where they are safest.
+ */
+export function handlesFor(asset: Asset | undefined, item: Item, fps: number): {
+  before: Frames
+  after: Frames
+} {
+  if (!asset || asset.durationUs <= 0) {
+    return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
+  }
+  const speed = item.speed > 0 ? item.speed : 1
+  const consumedUs = framesToUs(item.durationInFrames, fps) * speed
+  const sourceEndUs = item.sourceStartUs + consumedUs
+  const beforeUs = Math.max(0, item.sourceStartUs)
+  const afterUs = Math.max(0, asset.durationUs - sourceEndUs)
+  return {
+    before: Math.floor(usToFrames(beforeUs, fps) / speed),
+    after: Math.floor(usToFrames(afterUs, fps) / speed)
+  }
+}
+
+export interface ResolvedTransition {
+  transition: Transition
+  from: Item
+  to: Item
+  /** Effective length after clamping to the handles both clips actually have. */
+  durationInFrames: Frames
+  /** The frame the two clips meet on. */
+  cutFrame: Frames
+  /** Inclusive window the transition occupies. */
+  firstFrame: Frames
+  lastFrame: Frames
+  /**
+   * Why the effective duration is shorter than the one asked for, or null.
+   *
+   * Present so a caller can say "8 frames, not 30, because the outgoing clip has no footage
+   * past its end" instead of quietly producing a freeze. A transition that silently shortens
+   * is a control that does not do what it says.
+   */
+  clampedBecause: string | null
+}
+
+/**
+ * Turn a stored transition into the window and the two items it plays across, or null if it
+ * no longer describes a real junction — the items were deleted, moved apart, or are no longer
+ * adjacent. A stale transition is dropped rather than drawn somewhere it does not belong.
+ */
+export function resolveTransition(
+  project: Project,
+  timeline: Timeline,
+  transition: Transition
+): ResolvedTransition | null {
+  const from = findItem(timeline, transition.fromItemId)?.item
+  const to = findItem(timeline, transition.toItemId)?.item
+  if (!from || !to) return null
+  // Abutting is the whole premise: the window is centred on a cut, and there is no cut if
+  // the clips have drifted apart or overlap.
+  if (itemEnd(from) !== to.from) return null
+
+  const cutFrame = to.from
+  const asked = Math.max(2, Math.floor(transition.durationInFrames))
+  const half = Math.floor(asked / 2)
+
+  const fromHandles = handlesFor(findAsset(project, from.assetId), from, timeline.fps)
+  const toHandles = handlesFor(findAsset(project, to.assetId), to, timeline.fps)
+
+  // Each side also cannot eat more than the clip's own length, or the transition would begin
+  // before the clip it is leaving.
+  const fromRoom = Math.min(fromHandles.after, from.durationInFrames)
+  const toRoom = Math.min(toHandles.before, to.durationInFrames)
+
+  let clampedBecause: string | null = null
+  let effectiveHalf = half
+  if (fromRoom < effectiveHalf) {
+    effectiveHalf = Math.max(0, fromRoom)
+    clampedBecause = `the outgoing clip has only ${fromRoom} frames of footage past its end`
+  }
+  if (toRoom < effectiveHalf) {
+    effectiveHalf = Math.max(0, toRoom)
+    clampedBecause = `the incoming clip has only ${toRoom} frames of footage before its start`
+  }
+
+  const duration = effectiveHalf * 2
+  if (duration < 2) return null
+
+  return {
+    transition,
+    from,
+    to,
+    durationInFrames: duration,
+    cutFrame,
+    firstFrame: cutFrame - effectiveHalf,
+    lastFrame: cutFrame + effectiveHalf - 1,
+    clampedBecause
+  }
+}
+
+/**
+ * The transition playing at `frame`, with its progress 0..1, or null.
+ *
+ * Progress is the only number a renderer needs: 0 means show the outgoing clip alone, 1 the
+ * incoming alone. That contract is worth stating because every gl-transitions shader assumes
+ * it, so a future WebGL path can consume the same value unchanged.
+ */
+export function transitionAtFrame(
+  project: Project,
+  timeline: Timeline,
+  frame: Frames
+): { resolved: ResolvedTransition; progress: number } | null {
+  for (const transition of timeline.transitions ?? []) {
+    const resolved = resolveTransition(project, timeline, transition)
+    if (!resolved) continue
+    if (frame < resolved.firstFrame || frame > resolved.lastFrame) continue
+    const span = resolved.lastFrame - resolved.firstFrame + 1
+    const progress = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
+    return { resolved, progress: Math.max(0, Math.min(1, progress)) }
+  }
+  return null
+}
+
+/**
+ * Where in the source an item is reading at `frame`, **allowing frames outside its own
+ * range** so a transition can play its handles.
+ *
+ * `sourceTimeAt` requires the caller to have checked the frame is inside the item, which is
+ * right for ordinary drawing and wrong here: during a transition the outgoing clip is asked
+ * for time past its end and the incoming for time before its start. Same arithmetic, without
+ * the precondition, and named differently so nobody removes the check from the other one.
+ */
+export function sourceTimeAtUnclamped(item: Item, frame: Frames, fps: number): Micros {
+  const elapsed = framesToUs(frame - item.from, fps)
+  return Math.max(0, item.sourceStartUs + Math.round(elapsed * item.speed))
 }
 
 /** The item's own fade envelope at `frame`, 0..1. Multiplies layout opacity / volume. */
