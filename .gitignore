@@ -44,3 +44,6 @@ downloaded-assets/
 
 # Agent worktrees — isolated checkouts, never part of a commit
 .claude/worktrees/
+
+# --- Electron product build artifacts ---
+*.tsbuildinfo
