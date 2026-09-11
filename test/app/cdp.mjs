@@ -27,7 +27,10 @@ export async function findRenderer(port, attempts = 60) {
     }
     await new Promise((r) => setTimeout(r, 400))
   }
-  throw new Error(`no renderer target on port ${port} — is the app built and running?`)
+  throw new PreconditionError(
+    `no renderer target on port ${port}`,
+    'is the app built and running? it may have been killed by someone else'
+  )
 }
 
 function socket(url) {
@@ -38,11 +41,12 @@ function socket(url) {
     ws.addEventListener('open', resolve)
     ws.addEventListener('error', reject)
   })
-  const abort = (why) => {
-    for (const [, entry] of pending) entry.reject(new Error(why))
+  const abort = (error) => {
+    for (const [, entry] of pending) entry.reject(error)
     pending.clear()
   }
-  ws.addEventListener('close', () => abort('the debugging socket closed - the renderer died'))
+  ws.addEventListener('close', () =>
+    abort(new PreconditionError('the debugging socket closed', 'the renderer died')))
   ws.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
     const entry = pending.get(message.id)
@@ -67,7 +71,9 @@ function socket(url) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(mine)
-          reject(new Error(`CDP ${method} did not answer within ${timeoutMs}ms`))
+          // A harness failure, not a finding about the code: the page stopped answering.
+          reject(new PreconditionError(`CDP ${method} did not answer within ${timeoutMs}ms`,
+            'the renderer is gone, frozen, or mid-reload'))
         }, timeoutMs)
         pending.set(mine, {
           resolve: (value) => { clearTimeout(timer); resolve(value) },
@@ -240,3 +246,30 @@ export const CANVAS_READY = {
              const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
              return !!tl && tl.tracks.some(t => t.items.length > 0) })()`]
 }
+
+
+/**
+ * The same three-outcome discipline, applied to failures that escape `runProbe`.
+ *
+ * Every probe here calls `attach()` at module top level, *outside* the wrapper — so a
+ * connection failure was landing as an unhandled rejection and exiting **1**, which this
+ * file defines as "measured, and it is wrong: a finding about the code". An app that
+ * someone else killed was reading as a bug in the compositor. That is the false-accusation
+ * class again, one level below where it was fixed last time.
+ *
+ * Installed at import rather than asked of each probe, because the probes that most need it
+ * are the ones whose author did not think about it.
+ */
+function classifyAndExit(error) {
+  if (error instanceof PreconditionError) {
+    console.error(`\nCANNOT MEASURE: ${error.message}`)
+    console.error('This is a setup failure, not a fault in the code under test.')
+  } else {
+    console.error(`\nPROBE ERROR: ${error?.stack ?? error?.message ?? error}`)
+    console.error('The probe itself failed; nothing was measured.')
+  }
+  process.exit(2)
+}
+
+process.on('uncaughtException', classifyAndExit)
+process.on('unhandledRejection', classifyAndExit)
