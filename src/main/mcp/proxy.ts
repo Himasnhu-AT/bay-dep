@@ -74,9 +74,23 @@ export interface ProxyOptions {
  * Polls rather than watches the directory: a launch takes seconds and a poll every 250ms is
  * both simpler and immune to the case where the socket is created and `chmod`ed in two steps.
  */
-async function connectOrLaunch(options: ProxyOptions): Promise<Socket | null> {
-  const direct = (await exists(options.socketPath)) ? await openSocket(options.socketPath) : null
-  if (direct) return direct
+async function connectOrLaunch(
+  options: ProxyOptions
+): Promise<{ socket: Socket } | { socket: null; reason: string }> {
+  if (await exists(options.socketPath)) {
+    const direct = await openSocket(options.socketPath)
+    if (direct) return { socket: direct }
+    // The file is there and refuses connections: a bay that crashed without cleaning up, or
+    // one still starting. Saying "bay is not running" here would be a guess, and launching a
+    // second copy over a stale file would make it worse.
+    return {
+      socket: null,
+      reason:
+        `bay's agent socket exists at ${options.socketPath} but is not accepting connections. ` +
+        `That usually means bay crashed without cleaning it up — start bay again, which ` +
+        `replaces the stale socket.`
+    }
+  }
 
   note('bay is not running — launching it')
   options.launch()
@@ -86,9 +100,20 @@ async function connectOrLaunch(options: ProxyOptions): Promise<Socket | null> {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
     if (!(await exists(options.socketPath))) continue
     const socket = await openSocket(options.socketPath)
-    if (socket) return socket
+    if (socket) return { socket }
   }
-  return null
+
+  // Deliberately not "bay did not start". The proxy cannot see processes, only the socket, and
+  // a bay running on a profile whose socket failed to open looks identical from here — that
+  // case cost thirty seconds to be told the wrong thing. Naming both possibilities is the
+  // honest answer, and the second one is checkable from bay's own log.
+  return {
+    socket: null,
+    reason:
+      `No agent socket appeared at ${options.socketPath} within ` +
+      `${Math.round(LAUNCH_TIMEOUT_MS / 1000)}s. Either bay did not start, or it is running ` +
+      `and its agent socket failed to open — bay logs the reason at startup when that happens.`
+  }
 }
 
 /**
@@ -132,15 +157,9 @@ export async function runProxy(options: ProxyOptions): Promise<void> {
 
   /** Tool calls go to the app; everything else is answered here. */
   const runTool = async (tool: string, args: Record<string, unknown>): Promise<ToolOutcome> => {
-    const socket = await connectOrLaunch(options)
-    if (!socket) {
-      return {
-        ok: false,
-        value:
-          `bay did not start within ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}s, so "${tool}" was ` +
-          `not applied. Open bay and try again.`
-      }
-    }
+    const attempt = await connectOrLaunch(options)
+    if (!attempt.socket) return { ok: false, value: `"${tool}" was not applied. ${attempt.reason}` }
+    const socket = attempt.socket
     const id = `proxy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const reply = (await forward(
       socket,

@@ -10,14 +10,12 @@
  * permission bits are the mechanism, as you asked — there is no handshake to forge.
  */
 
-import { chmod, unlink } from 'node:fs/promises'
-import { createServer, type Server, type Socket } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, type WebContents } from 'electron'
 import { IPC } from '@shared/ipc'
 import { MCP_CALL_TIMEOUT_MS, type McpToolCall, type McpToolResult } from '@shared/mcp'
-import { LineBuffer, RPC_INTERNAL_ERROR, encode, failure, parseLine } from './jsonrpc'
-import { handleRequest, type ToolOutcome } from './protocol'
+import { type ToolOutcome } from './protocol'
+import { startSocketServer, type RunningSocket, type SocketStatus } from './socket-server'
 import { substituteFileArgs } from './file-args'
 import { socketPathIn } from './socket-path'
 import { readFile } from 'node:fs/promises'
@@ -114,78 +112,38 @@ export async function runTool(
 // The socket
 // ---------------------------------------------------------------------------
 
-let server: Server | null = null
+let running: RunningSocket | null = null
 
-function attach(socket: Socket): void {
-  const buffer = new LineBuffer()
-  socket.setEncoding('utf8')
-
-  socket.on('data', (chunk: string) => {
-    for (const line of buffer.push(chunk)) {
-      const parsed = parseLine(line)
-      if (!parsed) continue
-      if (parsed.error) {
-        socket.write(encode(parsed.error))
-        continue
-      }
-      void handleRequest(parsed.request!, runTool)
-        .then((answer) => {
-          if (answer && !socket.destroyed) socket.write(encode(answer))
-        })
-        .catch((error: unknown) => {
-          // A throw here is a bug in bay, not in the client's request. It still has to come
-          // back as a message: a silent drop leaves the agent waiting on its own timeout.
-          const message = error instanceof Error ? error.message : String(error)
-          if (!socket.destroyed) {
-            socket.write(encode(failure(parsed.request!.id ?? null, RPC_INTERNAL_ERROR, message)))
-          }
-        })
-    }
-  })
-
-  // Both are expected: a proxy exits when its MCP client does, and that closes this abruptly.
-  socket.on('error', () => undefined)
-  socket.on('close', () => undefined)
+/**
+ * Starts the agent socket. Never throws and never rejects — the failure is a status.
+ *
+ * The previous version let `socketPathIn` throw straight out of here into a call site with no
+ * `.catch()`, which turned "agent control is unavailable" into an unhandled rejection naming
+ * an internal frame. The degradation the comment promised did not happen. It does now, and
+ * `socket-server.test.ts` holds it rather than the comment doing so.
+ */
+export async function startMcpServer(): Promise<SocketStatus> {
+  if (running) return running.status
+  const started = await startSocketServer(() => socketPathIn(app.getPath('userData')), runTool)
+  running = started
+  return started.status
 }
 
-export async function startMcpServer(): Promise<string | null> {
-  if (server) return socketPathIn(app.getPath('userData'))
-
-  const path = socketPathIn(app.getPath('userData'))
-  // A socket file left by a crash makes `listen` fail with EADDRINUSE even though nothing is
-  // listening. Removing it first is safe: if a live bay held it, this instance would not be
-  // starting a second server.
-  await unlink(path).catch(() => undefined)
-
-  const created = createServer(attach)
-  // Multiple connections are accepted deliberately — see the report. Rejecting a second
-  // client would lock out a reconnect before a stale socket is reaped, and would only appear
-  // to address two agents sharing a timeline, which this layer cannot arbitrate.
-  created.maxConnections = 8
-
-  return new Promise<string | null>((resolve) => {
-    created.once('error', (error: NodeJS.ErrnoException) => {
-      console.error(
-        `[bay] The MCP socket could not be opened at ${path}: ${error.message}. ` +
-          `Agent control is unavailable this session; everything else is unaffected.`
-      )
-      resolve(null)
-    })
-    created.listen(path, () => {
-      server = created
-      // Owner-only. This is the access control, not a check in the handler.
-      void chmod(path, 0o600).catch(() => undefined)
-      resolve(path)
-    })
-  })
+/** For the status surface. Opening has not been attempted until `startMcpServer` runs. */
+export function mcpStatus(): SocketStatus {
+  return (
+    running?.status ?? {
+      ready: false,
+      path: null,
+      error: 'The agent socket has not been started yet.'
+    }
+  )
 }
 
 export async function stopMcpServer(): Promise<void> {
   for (const [, waiting] of pending) clearTimeout(waiting.timer)
   pending.clear()
-  const current = server
-  server = null
-  if (!current) return
-  await new Promise<void>((resolve) => current.close(() => resolve()))
-  await unlink(socketPathIn(app.getPath('userData'))).catch(() => undefined)
+  const current = running
+  running = null
+  await current?.close()
 }

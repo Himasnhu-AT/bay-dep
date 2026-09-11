@@ -18,6 +18,7 @@ import { cacheDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
+import { describeSocket } from './mcp/socket-server'
 import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
@@ -182,11 +183,19 @@ void app.whenReady().then(() => {
   // One pass at startup, before anything is in use. This is the only moment the whole cache
   // is evictable, so it is where a session that ended over budget gets reclaimed — and why
   // being over budget at quit is survivable rather than permanent.
-  // The agent surface. Non-fatal: a socket that will not open costs agent control and
-  // nothing else, so it reports and the editor carries on.
-  void startMcpServer().then((path) => {
-    if (path) console.log(`[bay] MCP socket listening at ${path}`)
-  })
+  // The agent surface. Non-fatal by construction now rather than by comment: `startMcpServer`
+  // returns a status instead of throwing, and the `.catch()` is here because its absence is
+  // what turned a degradation into an unhandled rejection last time.
+  void startMcpServer()
+    .then((status) => {
+      const problem = describeSocket(status)
+      if (problem) console.error(`[bay] ${problem}`)
+      else console.log(`[bay] MCP socket listening at ${status.path}`)
+    })
+    .catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error)
+      console.error(`[bay] The agent socket failed to start: ${reason}. bay is otherwise fine.`)
+    })
 
   void runCacheUpkeep()
 
