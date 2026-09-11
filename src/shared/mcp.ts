@@ -433,7 +433,11 @@ export const TOOLS: ToolSpec[] = [
           minimum: 2,
           description:
             'Total across the cut, half each side. Around a second reads as a dissolve; ' +
-            'much longer reads as a statement.'
+            'much longer reads as a statement.\n' +
+            '**Omit it** and bay picks about a second, or the most this junction can take if ' +
+            'that is less. There is no way to ask how long a transition *could* be here ' +
+            'without creating one, so the result always reports `maxDurationInFrames` — read ' +
+            'that rather than guessing and retrying.'
         },
         direction: {
           type: 'string',
@@ -441,7 +445,7 @@ export const TOOLS: ToolSpec[] = [
           description: 'For wipe, push and slide. Ignored by the others.'
         }
       },
-      required: ['fromItemId', 'toItemId', 'kind', 'durationInFrames']
+      required: ['fromItemId', 'toItemId', 'kind']
     }
   },
   {
