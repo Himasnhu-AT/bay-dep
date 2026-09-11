@@ -10,10 +10,10 @@ importers:
     dependencies:
       '@electron-toolkit/preload':
         specifier: ^3.0.2
-        version: 3.0.2(electron@40.10.6(supports-color@7.2.0))
+        version: 3.0.2(electron@41.10.7(supports-color@7.2.0))
       '@electron-toolkit/utils':
         specifier: ^4.0.0
-        version: 4.0.0(electron@40.10.6(supports-color@7.2.0))
+        version: 4.0.0(electron@41.10.7(supports-color@7.2.0))
       ffmpeg-ffprobe-static:
         specifier: ^6.1.2-rc.1
         version: 6.1.2-rc.1(supports-color@7.2.0)
@@ -40,8 +40,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       electron:
-        specifier: ^40.0.0
-        version: 40.10.6(supports-color@7.2.0)
+        specifier: ^41.10.3
+        version: 41.10.7(supports-color@7.2.0)
       electron-builder:
         specifier: ^26.0.0
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@7.2.0)
@@ -1195,8 +1195,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@40.10.6:
-    resolution: {integrity: sha512-TGjlkOU9Lg6K4KjDbsErywCWCIDaNgLh0q+xj0nlpRoQhevI7VBIxBTtJI/V30lypyLAaXMpnP9O9jui1/qRFw==}
+  electron@41.10.7:
+    resolution: {integrity: sha512-AqIiefddlf5i+HYCGatr8VlBuEbWJpad4/yloBFYcMB2r57j7xhW1ogiJ+BfA5kxQyfmSs5yjwy54Me+wJn1jw==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -2251,17 +2251,17 @@ snapshots:
 
   '@electron-internal/extract-zip@1.0.5': {}
 
-  '@electron-toolkit/preload@3.0.2(electron@40.10.6(supports-color@7.2.0))':
+  '@electron-toolkit/preload@3.0.2(electron@41.10.7(supports-color@7.2.0))':
     dependencies:
-      electron: 40.10.6(supports-color@7.2.0)
+      electron: 41.10.7(supports-color@7.2.0)
 
   '@electron-toolkit/tsconfig@2.0.0(@types/node@24.13.4)':
     dependencies:
       '@types/node': 24.13.4
 
-  '@electron-toolkit/utils@4.0.0(electron@40.10.6(supports-color@7.2.0))':
+  '@electron-toolkit/utils@4.0.0(electron@41.10.7(supports-color@7.2.0))':
     dependencies:
-      electron: 40.10.6(supports-color@7.2.0)
+      electron: 41.10.7(supports-color@7.2.0)
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -3180,7 +3180,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@40.10.6(supports-color@7.2.0):
+  electron@41.10.7(supports-color@7.2.0):
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0(supports-color@7.2.0)
@@ -3402,7 +3402,7 @@ snapshots:
       es6-error: 4.1.1
       matcher: 3.0.0
       roarr: 2.15.4
-      semver: 7.7.4
+      semver: 7.8.5
       serialize-error: 7.0.1
     optional: true
 
@@ -3667,11 +3667,11 @@ snapshots:
 
   node-abi@4.35.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
 
   node-api-version@0.2.1:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
 
   node-gyp@12.4.0:
     dependencies:
@@ -3680,7 +3680,7 @@ snapshots:
       graceful-fs: 4.2.11
       nopt: 9.0.0
       proc-log: 6.1.0
-      semver: 7.7.4
+      semver: 7.8.5
       tar: 7.5.22
       tinyglobby: 0.2.17
       undici: 6.28.1
