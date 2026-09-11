@@ -18,6 +18,19 @@ never a pass, and neither is a stale one.
 Line numbers were read on 2026-08-27. Several of these files are under concurrent edit and the
 numbers move; the surrounding names are what to search for.
 
+**Which tree an entry is about.** Numbered entries (1–16) are the **Rust tree**, now at
+`dep/rust/`; `E`-numbered entries are the **Electron product** at the repo root. Every path below
+was re-checked on 2026-09-11 and all 17 cited files resolve.
+
+They very nearly read as dead. The Rust tree moved from `rust/` to `dep/rust/` and every path in
+this file pointed at the old location — 17 of 17 citations resolving to nothing — while
+`editor_view.rs` had additionally been split into `editor/*.rs`, so three references named a file
+that no longer existed even after the move. None of it made a single entry *wrong*: `place_media`,
+`request_waveforms` and `has_pending` are all still there, doing what these entries describe. The
+register was stale in its **addresses**, not in its substance, and the difference matters — a
+defect register whose paths 404 gets read as historical and quietly stops being consulted, which
+is the same way a control that does nothing stops being trusted.
+
 ---
 
 ## Fixed
@@ -26,12 +39,12 @@ numbers move; the surrounding names are what to search for.
 
 `bay-agent`'s `animate` validated a group `animate` against `Element::ANIMATABLE` — all thirteen
 transform properties — while `ElementGroup::sampled_transform`
-(`rust/crates/bay-project/src/scene.rs:90`) read seven of them. An agent that keyed `cropLeft`
+(`dep/rust/crates/bay-project/src/scene.rs:90`) read seven of them. An agent that keyed `cropLeft`
 or `tiltY` on a group got a written channel, a successful tool result, a project file that
 round-tripped it, and a frame that never moved.
 
 Sampling the other six would not have helped, and that is the part worth recording:
-`compose_group_transform` (`rust/crates/bay-project/src/scene.rs:240`) folds a group's transform
+`compose_group_transform` (`dep/rust/crates/bay-project/src/scene.rs:240`) folds a group's transform
 into each child's and carries exactly seven fields — x, y, scale, scaleX, scaleY, rotation,
 opacity. Crop and tilt are dropped there too. Even a group whose *static* `crop_left` is 0.3
 crops nothing.
@@ -44,9 +57,9 @@ their own left edge, a different picture that happens to be reachable. Implement
 one of those quietly is worse than refusing both loudly, and the refusal now says where the
 channel does work: on the child element, where all thirteen are real.
 
-- `rust/crates/bay-project/src/scene.rs:70` — `ElementGroup::ANIMATABLE`, the seven, with why
+- `dep/rust/crates/bay-project/src/scene.rs:70` — `ElementGroup::ANIMATABLE`, the seven, with why
   the six are not there.
-- `rust/crates/bay-agent/src/plan.rs:1496` — validates against it, and the message tells an
+- `dep/rust/crates/bay-agent/src/plan.rs:1496` — validates against it, and the message tells an
   agent to animate crop on the child instead of leaving it guessing.
 
 Verified by:
@@ -63,7 +76,7 @@ Verified by:
 
 ### 2. `drop-shadow` was renderable, legal, and missing from `effect_add`'s schema
 
-`SUPPORTED_EFFECTS` (`rust/crates/bay-agent/src/plan.rs:619`) listed six effects; `effect_add`'s
+`SUPPORTED_EFFECTS` (`dep/rust/crates/bay-agent/src/plan.rs:619`) listed six effects; `effect_add`'s
 `type` enum in `bay-mcp/src/tools.rs` wrote out five. The two lists were maintained by hand next
 to each other and drifted. An agent reading the tool definition could not discover `drop-shadow`
 at all — the effect it most obviously wants for a card or a title — and a call naming it looked
@@ -71,12 +84,12 @@ like a schema violation going in while being perfectly legal going through.
 
 Fixed by deriving the enum, so the drift cannot recur:
 
-- `rust/crates/bay-agent/src/plan.rs:619` — `SUPPORTED_EFFECTS` is now `pub`. It is the one list.
-- `rust/crates/bay-mcp/src/tools.rs:43` — `EFFECT_TYPES`, a `LazyLock` reading it (sorted, so a
+- `dep/rust/crates/bay-agent/src/plan.rs:619` — `SUPPORTED_EFFECTS` is now `pub`. It is the one list.
+- `dep/rust/crates/bay-mcp/src/tools.rs:43` — `EFFECT_TYPES`, a `LazyLock` reading it (sorted, so a
   cached tool definition does not churn between builds), following `MOVE_IDS` at
   `tools.rs:25`.
-- `rust/crates/bay-mcp/src/tools.rs:1321` — the schema uses it.
-- `rust/crates/bay-mcp/src/tools.rs:1335` — and the `params` description now documents
+- `dep/rust/crates/bay-mcp/src/tools.rs:1321` — the schema uses it.
+- `dep/rust/crates/bay-mcp/src/tools.rs:1335` — and the `params` description now documents
   drop-shadow's six parameters, which no surface stated. Offering an effect whose parameters are
   undocumented is only half a fix.
 
@@ -87,16 +100,16 @@ Verified by, in `bay-mcp/tests/tool_vocabulary.rs`, both directions — read off
 
 ### 3. `lut` had no tile — a whole grading capability unreachable by clicking
 
-The quieter half of the same rule. `EFFECT_BLOCKS` (`rust/crates/bay-core/src/blocks.rs:177`)
+The quieter half of the same rule. `EFFECT_BLOCKS` (`dep/rust/crates/bay-core/src/blocks.rs:177`)
 named five of the six shaders the compositor compiles. `lut` was implemented in the shader,
 translated by `bay-preview`, validated by `check`, exposed over MCP — and had no tile, so it
 could not be reached from the app at all. A tile naming a missing shader is a dead control and
 is caught by a test; a shader with *no* tile is a missing control, and only a person reading
 both lists side by side would ever find it.
 
-- `rust/crates/bay-core/src/blocks.rs:209` — the `fx.lut` tile ("Look").
-- `rust/crates/bay-core/src/blocks.rs:398` — its `plan` arm, seeded from `default_effect_params`.
-- `rust/crates/bay-core/src/blocks.rs:606` — an explicit `lut` arm in `default_effect_params`.
+- `dep/rust/crates/bay-core/src/blocks.rs:209` — the `fx.lut` tile ("Look").
+- `dep/rust/crates/bay-core/src/blocks.rs:398` — its `plan` arm, seeded from `default_effect_params`.
+- `dep/rust/crates/bay-core/src/blocks.rs:606` — an explicit `lut` arm in `default_effect_params`.
   It seeds the same 1.0 the fallback did, but `amount` on a lut is *how much of the grade to
   apply*, not "no change" as it is for the colour adjustments; a grade arriving at 0 would be
   another silent control, and telling that from a subtle look by eye is exactly what nobody can
@@ -129,9 +142,9 @@ window for as long as the decode took — the same defect as "decode never runs 
 render path", on the audio side.
 
 **In progress.** At the time of writing it has become `request_waveforms`
-(`rust/crates/bay-ui/src/editor_view.rs:722`), dispatching to a worker, with the render tick
+(`dep/rust/crates/bay-ui/src/editor/timeline.rs`), dispatching to a worker, with the render tick
 requesting an animation frame while `self.waveforms.has_pending()`
-(`editor_view.rs:3901`) so finished peaks appear without waiting for an unrelated repaint. The
+(`editor/mod.rs`) so finished peaks appear without waiting for an unrelated repaint. The
 verification belongs to that agent, not to this document — do not read the code shape above as a
 passing test.
 
@@ -157,7 +170,7 @@ outside the repository teaches people to re-run until green, which is how a real
 ignored.* It failed once in a full-workspace run and then passed 73/73 five times in a row when
 run alone — which is exactly the shape that gets filed as flake and re-run.
 
-- `rust/crates/bay-agent/src/registry.rs:392` — the scratch directory is now per-process, for the
+- `dep/rust/crates/bay-agent/src/registry.rs:392` — the scratch directory is now per-process, for the
   same stated reason the port beside it is.
 
 Measured by running two copies of the test binary concurrently and counting failed runs:
@@ -175,7 +188,7 @@ single-threaded developer and routine under parallel agents.
 
 `ExportSettings` offers ProRes as the handoff format and `ExportPreset::Master` promises "no
 generation loss". It asked `prores_ks` for **profile 3, ProRes 422 HQ**, at `yuv422p10le`
-(`rust/crates/bay-preview/src/lib.rs`, `VideoCodec::encoder_args`).
+(`dep/rust/crates/bay-preview/src/lib.rs`, `VideoCodec::encoder_args`).
 
 422 is the ProRes profile for camera originals, and its 4:2:2 layout halves horizontal chroma
 resolution. That is invisible on a photographed image, whose chroma is smooth. bay does not
@@ -248,10 +261,10 @@ why: *"a second adapter is what makes rendering concurrent with editing rather t
 it."* Borrowing the editor's would have darkened the preview for the length of the encode and
 would still have been a third way to encode.
 
-- `rust/crates/bay-ui/src/editor/deliver.rs` — the page, `queue_render`, and the cancel button.
-- `rust/crates/bay-ui/src/editor/toolbar.rs` — where the two exports used to be; the header
+- `dep/rust/crates/bay-ui/src/editor/deliver.rs` — the page, `queue_render`, and the cancel button.
+- `dep/rust/crates/bay-ui/src/editor/toolbar.rs` — where the two exports used to be; the header
   says what was there and why it is not.
-- `rust/crates/bay-agent/src/deliver.rs` — the form as a headless value. `pages.md` rule 4: if
+- `dep/rust/crates/bay-agent/src/deliver.rs` — the form as a headless value. `pages.md` rule 4: if
   a headless test cannot reach a behaviour it is in the wrong crate, and "does every control on
   this page reach the encoder?" must be answerable without a window.
 
@@ -285,7 +298,7 @@ through the old button wrote the file and said nothing. That is this entry, obse
 Found while building the Deliver page's range control, and it had to be fixed before the
 control could exist.
 
-`render_duration` (`rust/crates/bay-agent/src/slow.rs`) refused any explicit `duration` that
+`render_duration` (`dep/rust/crates/bay-agent/src/slow.rs`) refused any explicit `duration` that
 ended before the populated timeline:
 
 > render refused: duration 61.00s ends at 61.00s, but the populated timeline continues to
@@ -307,8 +320,8 @@ it leaves out is the point. Passing both is refused rather than guessed — pick
 is how a render comes back the wrong length with nothing on screen to explain it. The
 `duration` refusal now names `endSeconds`, so the way out is discoverable from the error.
 
-- `rust/crates/bay-agent/src/slow.rs` — `Requested`, `requested_range`, `render_duration`.
-- `rust/crates/bay-mcp/src/tools.rs` — the `render` schema, so an agent can find it too.
+- `dep/rust/crates/bay-agent/src/slow.rs` — `Requested`, `requested_range`, `render_duration`.
+- `dep/rust/crates/bay-mcp/src/tools.rs` — the `render` schema, so an agent can find it too.
 
 Verified by:
 - `bay-agent` `an_out_point_renders_a_section_the_duration_guard_would_refuse` — the same 61
@@ -556,8 +569,8 @@ running — held it, which is precisely how a real failure gets dismissed as fla
 
 The two callers then pass **literals**:
 
-- `rust/crates/bay-mcp/src/server.rs:2104` — `Studio::for_test(test_library_root(), 7451)`
-- `rust/crates/bay-mcp/src/server.rs:2164` — `Studio::for_test(test_library_root(), 7452)`
+- `dep/rust/crates/bay-mcp/src/server.rs:2104` — `Studio::for_test(test_library_root(), 7451)`
+- `dep/rust/crates/bay-mcp/src/server.rs:2164` — `Studio::for_test(test_library_root(), 7452)`
 
 So the fix moved off the product's fixed port 7334 and onto two different fixed ports. Any second
 test binary — another checkout, an agent building in a worktree, a concurrent `cargo test` — takes
@@ -612,10 +625,10 @@ create-lane-if-missing placement command in `bay-core`.
 The original entry follows.
 
 
-`place_media` (`rust/crates/bay-ui/src/editor_view.rs:1235`) chooses a lane by media kind and
+`place_media` (`dep/rust/crates/bay-ui/src/editor/timeline.rs`) chooses a lane by media kind and
 names it with a **string literal**: `"track-audio"` for audio, `"track-main"` for video and
 images. It then executes `Command::AddElement` and ignores the result. Lowering that command is
-`scene.tracks.track(track_id)?` (`rust/crates/bay-core/src/command.rs:880`) — a `?` on an
+`scene.tracks.track(track_id)?` (`dep/rust/crates/bay-core/src/command.rs:880`) — a `?` on an
 `Option`, so a track that does not exist produces `None`: no patch, no undo entry, no error, no
 status line. The file imports, the media panel lists it, the timeline does not change, and
 nothing anywhere says why.
@@ -641,7 +654,7 @@ cannot); placing any media on a non-starter scene lands on that scene's own main
 
 ### 7. `SceneEffect` is fully implemented and constructed nowhere
 
-`FrameItemDescriptor::SceneEffect` (`rust/crates/bay-compositor/src/frame.rs:26`) is handled by
+`FrameItemDescriptor::SceneEffect` (`dep/rust/crates/bay-compositor/src/frame.rs:26`) is handled by
 the compositor in **both** render paths — offscreen at `compositor.rs:333` and onscreen at
 `compositor.rs:389`. Nothing in the workspace ever builds one. Grep finds three hits: the
 definition and the two arms that consume it.
@@ -677,7 +690,7 @@ The original entry follows.
 
 ### 8-original. Three geometry helpers are written, tested, and called by nothing
 
-`rust/crates/bay-ui/src/geometry.rs`:
+`dep/rust/crates/bay-ui/src/geometry.rs`:
 
 - `fit_rect` (line 440) — letterbox a canvas into a viewport with zoom and pan.
 - `track_y_offsets` (line 471) — cumulative lane tops.
@@ -709,7 +722,7 @@ The original entry follows.
 
 ### 9-original. `GPU_TEXTURE_FORMAT` is a public constant nothing reads
 
-`rust/crates/bay-gpu/src/lib.rs:8`:
+`dep/rust/crates/bay-gpu/src/lib.rs:8`:
 
 ```rust
 pub const GPU_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -748,7 +761,7 @@ The original entry follows.
 
 ### 10-original. The JFA mask shaders pack coordinates into colour, and take their format from the global accessor
 
-`rust/crates/bay-masks/src/shaders/jfa_init.wgsl` encodes integer seed coordinates as colour
+`dep/rust/crates/bay-masks/src/shaders/jfa_init.wgsl` encodes integer seed coordinates as colour
 channels:
 
 ```wgsl
