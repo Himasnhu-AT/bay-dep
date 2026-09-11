@@ -1,32 +1,21 @@
 /**
  * `preview_frame` — the only tool that lets an agent see its own work.
  *
- * The rendering belongs to the engine, not here, and that is a boundary worth keeping: a
- * still has to **await every seek** before it draws, the way the exporter does, rather than
- * drawing whatever the decoder currently holds the way the live preview does. A
- * `preview_frame` that returns the frame before, or black because a seek had not landed, is
- * worse than no tool at all — the agent looks at it, concludes a correct edit is wrong, and
- * confidently breaks something. Writing a second copy of that logic here is how one copy
- * gets fixed and the other does not.
+ * The rendering belongs to the engine and this file is the adapter. That boundary is worth
+ * keeping: a still has to **await every seek** before it draws, rather than drawing whatever
+ * the decoder currently holds the way the live preview does. A `preview_frame` that returned
+ * the frame before, or black because a seek had not landed, would be worse than no tool —
+ * the agent looks at it, concludes a correct edit is wrong, and confidently breaks it.
  *
- * So this file is the adapter and nothing more. It reads the engine's still-rendering seam
- * through a namespace import so that it compiles before the seam lands and wires itself the
- * moment it does.
+ * The adapter's own job is the honesty around the picture. `renderFrame` reports how many
+ * items never became drawable, and that count has to reach the agent as words rather than
+ * be dropped in favour of the image: a frame missing two of its three clips looks exactly
+ * like a frame of a nearly-empty timeline, and a model cannot tell those apart by looking.
  */
 
-import * as engine from '@/engine'
+import { renderFrame } from '@/engine'
 import { fail, project, timeline } from './helpers'
 import { frameOrPlayhead } from './read'
-
-/** The shape asked of the engine. Kept here so the expectation is checkable, not implied. */
-interface StillRenderer {
-  renderFrame(options: {
-    project: ReturnType<typeof project>
-    timelineId: string
-    frame: number
-    maxSize?: number
-  }): Promise<{ dataUrl: string; width: number; height: number }>
-}
 
 /**
  * Bounded on purpose: the result is base64 inside a JSON-RPC message, and a 4K still would
@@ -39,29 +28,36 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
   const tl = timeline()
   const frame = frameOrPlayhead(args)
 
-  const renderer = engine as Partial<StillRenderer>
-  if (typeof renderer.renderFrame !== 'function') {
-    fail(
-      'preview_frame cannot render in this build: the engine exposes no still renderer yet. ' +
-        'Nothing else is affected — read_project and inspect_item still describe the edit, ' +
-        'they just cannot show it.'
-    )
+  let still
+  try {
+    still = await renderFrame({ project: project(), timelineId: tl.id, frame, maxSize: MAX_EDGE })
+  } catch (error) {
+    fail(`Frame ${frame} could not be rendered: ${error instanceof Error ? error.message : String(error)}`)
   }
 
-  const still = await renderer.renderFrame({
-    project: project(),
-    timelineId: tl.id,
-    frame,
-    maxSize: MAX_EDGE
-  })
-
+  const incomplete = still.pending > 0 || still.placeholders > 0
   return {
     frame,
     width: still.width,
     height: still.height,
-    // The canvas size is reported beside the image size so the agent can reason about
-    // layout numbers, which are in canvas pixels, against a picture that is not.
+    // Layout numbers are in canvas pixels and the image is not, so both are reported
+    // rather than leaving the agent to infer a scale it would get wrong.
     canvas: { width: tl.width, height: tl.height },
-    image: still.dataUrl
+    itemsDrawn: still.drawn,
+    image: still.dataUrl,
+    ...(incomplete
+      ? {
+          incomplete: true,
+          pending: still.pending,
+          placeholders: still.placeholders,
+          unresolved: still.unresolved,
+          warning:
+            `This picture is missing ${still.pending + still.placeholders} of its items ` +
+            `(${still.unresolved.join(', ')}), so it does not show what an export would ` +
+            `produce. Do not judge the edit from it — call preview_frame again in a moment ` +
+            `if the media was still loading, or check browse_assets for an asset that could ` +
+            `not be read.`
+        }
+      : {})
   }
 }

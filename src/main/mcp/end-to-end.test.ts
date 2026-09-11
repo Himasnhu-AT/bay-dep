@@ -20,8 +20,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createServer, type Server } from 'node:net'
-import { mkdtempSync } from 'node:fs'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LineBuffer, encode, parseLine } from './jsonrpc'
@@ -106,10 +105,30 @@ const refuse: RunTool = async () => ({ ok: false, value: 'the stub app refuses e
 // The milestone
 // ---------------------------------------------------------------------------
 
-test('the proxy bundle exists — pnpm build produced it', () => {
-  // Every test below spawns this. Without the assertion their failures would all read as
-  // transport bugs rather than as a missing build step.
+test('the proxy bundle exists and is not stale', () => {
+  // Every test below spawns the *built* bundle, not the source. That makes staleness a
+  // false-pass rather than a false-fail: edit the transport, skip `pnpm build`, and the suite
+  // happily proves that the previous build still works. Found exactly that way — a restored
+  // source file with a mutated bundle still on disk.
+  //
+  // So the bundle's age is part of the assertion. It must be at least as new as everything it
+  // is built from, and the message has to name the fix, because "transport broken" and "you
+  // did not rebuild" look identical from the failures below.
   assert.ok(existsSync(PROXY_BUNDLE), `no proxy bundle at ${PROXY_BUNDLE}; run pnpm build`)
+
+  const bundleMs = statSync(PROXY_BUNDLE).mtimeMs
+  const sourceDir = join(process.cwd(), 'src', 'main', 'mcp')
+  const newest = readdirSync(sourceDir)
+    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+    .map((name) => ({ name, mtimeMs: statSync(join(sourceDir, name)).mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
+
+  assert.ok(newest, 'no transport sources found, which cannot be right')
+  assert.ok(
+    bundleMs >= newest.mtimeMs,
+    `${newest.name} is newer than the proxy bundle, so these tests would exercise a stale ` +
+      `build and could pass over a broken transport. Run pnpm build.`
+  )
 })
 
 test('a client can initialize and list tools with bay not running', async () => {
