@@ -35,20 +35,33 @@ export {
 } from './sync'
 
 /**
- * The probe surface.
+ * The probe surface, and the flag that gates it.
  *
- * Every performance number this engine has produced so far came from a harness driving a
- * fake clock — which cannot answer the only question that matters: what reaches the screen
- * when a real decoder is feeding a real display. Nothing inside the bundle is reachable
- * from outside it, so measuring the running app needs one handle hung somewhere a debugger
- * can find it. This is that handle, and it is the same trade the Rust tree makes with
- * `BAY_UI_FRAMETIME=1`.
+ * Every performance number this engine has produced came from a harness driving a fake
+ * clock, which cannot answer the only question that matters: what reaches the screen when a
+ * real decoder feeds a real display. Nothing inside the bundle is reachable from outside it,
+ * so measuring the running app needs one handle a debugger can find — the same trade the
+ * Rust tree makes with `BAY_UI_FRAMETIME=1`.
  *
- * It exposes no capability the page does not already have — the renderer is local, has no
- * network, and the store is already the single source of truth every component mutates. If
- * this should be gated behind a flag rather than always present, gate it; it is deliberately
- * one assignment in one place.
+ * It is **off unless asked for**. A handle that lets arbitrary page script read and mutate
+ * the whole project should not exist in a release build merely because the page happens to
+ * be local today. `localStorage` is the mechanism because it is the only one available to
+ * the renderer alone: an env var or `app.isPackaged` would have to cross the preload bridge
+ * and so becomes main's API rather than a debugging detail of this file. It survives the
+ * reload a harness needs, and a release user never has the key.
+ *
+ *     localStorage.setItem('bay.debug', '1')   // then reload
  */
+const DEBUG_FLAG = 'bay.debug'
+
+function probeSurfaceEnabled(): boolean {
+  try {
+    return localStorage.getItem(DEBUG_FLAG) === '1'
+  } catch {
+    // Storage can be unavailable (disabled, or a partitioned context). No flag, no handle.
+    return false
+  }
+}
 declare global {
   interface Window {
     bayEngine?: { engine: EngineHandle; store: typeof useEditor }
@@ -139,7 +152,9 @@ class Engine {
 
     this.clock.seek(state.playhead)
     this.redraw()
-    if (this.handle) window.bayEngine = { engine: this.handle, store: useEditor }
+    if (this.handle && probeSurfaceEnabled()) {
+      window.bayEngine = { engine: this.handle, store: useEditor }
+    }
     return () => this.detach()
   }
 

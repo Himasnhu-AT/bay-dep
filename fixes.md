@@ -779,3 +779,55 @@ is smaller; the second is what the data actually wants.
 Verified when: the JFA pipelines name their own format rather than inheriting one, and a test
 rasterizes a known mask, feathers it, and asserts the alpha ramp — so that a format change to
 the *rest* of the compositor cannot move the result at all.
+
+---
+
+## The Electron product (`src/`)
+
+The entries above are all the Rust tree. This section is the same register for the Electron
+app, which has its own tree under `src/` and its own gate (`pnpm typecheck` + `pnpm test`).
+
+### E1. Nothing ever evicts the media cache
+
+`thumbnailsDir()` and `peaksDir()` accumulate posters, filmstrip frames and peak files and
+nothing in `src/main/media` ever removes one. There is no unlink, no byte budget, no LRU. The
+only way a user reclaims the space is deleting the app's userData directory by hand, which
+they have no reason to know about.
+
+**Measured, not estimated,** against `assets/podcast-cut/output/goodall-transcript-cut.mp4`
+with the parameters the renderer actually asks for today:
+
+| entry | parameters | size |
+|---|---|---|
+| filmstrip | `count=24, height=100` (`Clip.tsx`) | 24 files, 32 KB |
+| poster | `size=220` (`MediaPanel.tsx`) | ~14 KB at 480; less at 220 |
+| peaks | `buckets=600` (`Clip.tsx`) | ~6 KB of JSON |
+
+So roughly **50 KB per asset**, and every parameter is a fixed constant — a few hundred
+imported clips is tens of megabytes. That is a cache behaving like a cache, and it is why this
+is recorded rather than fixed.
+
+**What is actually unbounded is re-encoding, not browsing.** Keys include the source's mtime
+and size (`cacheKey` in `media/cache-key.ts`), which is what correctly invalidates a poster
+when a file changes — and also means a user who re-exports over the same filename fifty times
+leaves fifty orphaned strip sets that nothing will ever collect. Growth is driven by *edits to
+source files*, not by how much the user scrolls or zooms.
+
+A note against a plausible wrong fix: quantising the key inputs into buckets bounds the key
+*space*, but the key space is not what grows here — the renderer already passes constants, so
+each asset has exactly one strip key at a time. Bucketing would defend against a hazard that
+does not exist while making the returned frame count no longer mean what the caller asked for.
+The fix this wants is eviction.
+
+Not fixed because a byte-budgeted LRU is real work with its own failure modes — deciding the
+budget, not evicting an entry mid-read, and staying correct when two windows share the
+directory — and none of it stands between this build and an app that runs.
+
+Partly mitigated: cache directories carry the scheme version in their name (`thumbs-v1`,
+`peaks-v1`) and `sweepStaleCaches` reclaims other schemes at startup, so at least a change to
+how keys are derived invalidates the old cache instead of orphaning it permanently. That is
+the one unbounded case that is now bounded.
+
+Verified when: the cache directory has a byte budget that is enforced across all assets rather
+than per asset, an entry in use is never evicted, and a test fills the cache past the budget
+and asserts the total on disk comes back under it.
