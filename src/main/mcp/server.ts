@@ -129,15 +129,31 @@ export async function startMcpServer(): Promise<SocketStatus> {
   return started.status
 }
 
+export interface McpSurfaceStatus {
+  ready: boolean
+  error: string | null
+  /** The socket to point an MCP client at, or null when there is not one. */
+  socketPath: string | null
+  /** Distinguishes "never opened" from "open and unused" — the two the UI conflates. */
+  connectionsSeen: number
+}
+
 /** For the status surface. Opening has not been attempted until `startMcpServer` runs. */
-export function mcpStatus(): SocketStatus {
-  return (
-    running?.status ?? {
+export function mcpStatus(): McpSurfaceStatus {
+  if (!running) {
+    return {
       ready: false,
-      path: null,
-      error: 'The agent socket has not been started yet.'
+      error: 'The agent socket has not been started yet.',
+      socketPath: null,
+      connectionsSeen: 0
     }
-  )
+  }
+  return {
+    ready: running.status.ready,
+    error: running.status.error,
+    socketPath: running.status.path,
+    connectionsSeen: running.connectionsSeen()
+  }
 }
 
 export async function stopMcpServer(): Promise<void> {

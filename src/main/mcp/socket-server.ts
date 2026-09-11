@@ -33,6 +33,15 @@ export interface SocketStatus {
 
 export interface RunningSocket {
   status: SocketStatus
+  /**
+   * How many clients have ever connected.
+   *
+   * Live rather than a snapshot, and it exists because "the socket never opened" and "the
+   * socket is fine and no agent has ever connected" are indistinguishable from the UI — which
+   * is exactly the shape that let a database that had never loaded pass for one nobody had
+   * used. A count separates them without needing a connection event to be observed.
+   */
+  connectionsSeen(): number
   close(): Promise<void>
 }
 
@@ -81,8 +90,11 @@ export async function startSocketServer(
 ): Promise<RunningSocket> {
   const degraded = (error: string): RunningSocket => ({
     status: { ready: false, path: null, error },
+    connectionsSeen: () => 0,
     close: async () => undefined
   })
+
+  let connections = 0
 
   let path: string
   try {
@@ -98,7 +110,10 @@ export async function startSocketServer(
 
   let server: Server
   try {
-    server = createServer((socket) => attach(socket, runTool))
+    server = createServer((socket) => {
+      connections += 1
+      attach(socket, runTool)
+    })
   } catch (error) {
     return degraded(error instanceof Error ? error.message : String(error))
   }
@@ -117,6 +132,7 @@ export async function startSocketServer(
       void chmod(path, 0o600).catch(() => undefined)
       resolve({
         status: { ready: true, path, error: null },
+        connectionsSeen: () => connections,
         close: async () => {
           await new Promise<void>((done) => server.close(() => done()))
           await unlink(path).catch(() => undefined)
@@ -133,4 +149,18 @@ export function describeSocket(status: SocketStatus): string | null {
     `The agent socket could not be opened, so bay cannot be driven over MCP this session. ` +
     `Editing, playback and export are unaffected. Reason: ${status.error ?? 'unknown'}`
   )
+}
+
+/**
+ * The three states the UI has to tell apart, as one line.
+ *
+ * `waiting` and `failed` look identical from outside — nothing is happening either way — and
+ * conflating them is how a subsystem that never worked survives as one nobody used. So the
+ * wording is deliberately different in kind: a failure names a reason, waiting names the
+ * socket path, because the path is what a user needs in order to configure a client.
+ */
+export function summariseAgentSurface(status: SocketStatus, connections: number): string {
+  if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
+  if (connections === 0) return `Agent control ready — no agent has connected yet (${status.path})`
+  return `Agent control ready — ${connections} connection${connections === 1 ? '' : 's'} this session`
 }

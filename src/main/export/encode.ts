@@ -31,6 +31,7 @@ import { findTimeline, timelineDuration } from '@shared/project'
 import { exportScratchDir } from '../paths'
 import { ffmpegBin, MediaToolError } from '../media/ffmpeg'
 import { buildAudioGraph } from './audio-graph'
+import { checkExportDestination } from './destination'
 import { frameProblem, writeFrame } from './frame-pipe'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
@@ -254,6 +255,29 @@ export async function start(request: ExportRequest, sender: WebContents): Promis
     framesTotal: job.framesTotal,
     stage: 'preparing'
   })
+
+  // Before anything is spawned or composited. A destination that cannot be written fails at
+  // the ffmpeg write otherwise — after the entire render, which on a long 4K timeline is
+  // minutes of work to be told the folder was wrong. One stat against the most expensive
+  // operation in the app.
+  //
+  // A PNG sequence is checked against the folder it will create its directory *in*, since
+  // the directory itself is made by the export.
+  const destination =
+    request.format === 'png-sequence' ? pngDirectoryFor(request.outputPath) : request.outputPath
+  const problem = await checkExportDestination(destination)
+  if (problem) {
+    job.failed = true
+    jobs.delete(job.id)
+    emit(job, {
+      progress: null,
+      framesDone: 0,
+      framesTotal: job.framesTotal,
+      stage: 'failed',
+      error: problem.message
+    })
+    return { jobId: job.id }
+  }
 
   try {
     if (AUDIO_ONLY.has(request.format)) {
