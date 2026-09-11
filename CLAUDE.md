@@ -28,9 +28,26 @@ pnpm install          # pnpm, not npm — the workspace standard for TS projects
 pnpm dev              # electron-vite dev server + app, with HMR in the renderer
 pnpm build            # typecheck, then build main/preload/renderer into out/
 pnpm typecheck        # tsc over both projects; the renderer and node halves are separate
+pnpm test             # main-process tests, on node:test — no test framework in the tree
 pnpm pack             # unpacked app bundle, for checking real app identity
 pnpm dist             # signed/packaged artifact via electron-builder
 ```
+
+`pnpm test` uses Node's built-in runner against Node 26's native type stripping, so no test
+framework enters the dependency tree. The `--import ./src/main/test-hooks.mjs` is a four-line
+resolver hook: Node's resolver wants `./serve.ts`, while the project is on `moduleResolution:
+bundler` where extensionless imports are correct and every other module is written that way. The
+hook keeps that oddity inside the one odd file rather than setting `allowImportingTsExtensions`
+across the whole build to suit it.
+
+**A test must be proven to fail against the bug it guards.** The `bay://` suite was mutation-tested
+before it was trusted — six deliberate regressions, five caught. The sixth passed: the traversal
+test built its specimen with `path.join(dir, '..', 'secret.txt')`, and `join` normalises its own
+result, so the test handed the code an already-clean path and asserted on it. Deleting the path
+normalisation it existed to protect changed nothing. A green test over the exact bug it guards is
+worse than no test, because it is also a claim that the bug cannot happen. The rewrite builds the
+path by concatenation and asserts up front that the specimen defeats a naive prefix check, so it
+cannot quietly stop testing anything again. Write that assertion into any test guarding a check.
 
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
