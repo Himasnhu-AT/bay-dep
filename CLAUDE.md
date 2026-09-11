@@ -218,6 +218,14 @@ underneath an opaque full-frame clip. The measurement traps are collected in
 [`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
 purpose to confirm the probe notices.
 
+**Write the sentence before the type.** Before designing a status, result or error type, write the
+line a person reads for each state it can be in. If two states produce the same sentence, or one
+produces a sentence you cannot write, the type is missing a field. `{ ready, error }` was complete
+on its own terms and could not answer *"the socket is fine and nothing has connected"* — which is
+exactly the state that let a database nobody knew had never loaded pass for one nobody had used.
+Adding `connectionsSeen` was obvious the moment the sentence had to exist, and invisible while only
+the type did. This is the inverse of the usual order and it is worth doing deliberately.
+
 **"The other component happens to handle it" is not "this component reports it."** The distance
 between those two is where most of this file's entries live. The export destination check first
 deleted a failed job from the map — which made a failed job indistinguishable from a cancelled
