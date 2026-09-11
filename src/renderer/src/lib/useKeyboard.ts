@@ -109,7 +109,11 @@ export function useKeyboard(options: KeyboardOptions): void {
         case 'Delete':
         case 'Backspace':
           event.preventDefault()
-          state.deleteSelected()
+          // Shift is ripple, as it is in Premiere and Resolve: remove the span and close it.
+          // Plain delete lifts and leaves the gap. Two operations, one key, and the modifier
+          // is the one editors already have in their fingers.
+          if (event.shiftKey) state.rippleDelete()
+          else state.deleteSelected()
           break
         case '=':
         case '+':

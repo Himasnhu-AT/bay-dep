@@ -18,13 +18,16 @@
 import {
   allItems,
   findAsset,
+  framesToUs,
   itemEnd,
   timelineDuration,
+  usToFrames,
   type Item,
   type Layout,
   type TrackKind
 } from '@shared/project'
-import { resolveId } from '@shared/mcp'
+import { findTool, resolveId } from '@shared/mcp'
+import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { bay } from '@/lib/bay'
 import {
   assertNoCollision,
@@ -177,6 +180,66 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   if (args.fadeInFrames !== undefined) patch.fadeInFrames = Math.round(Number(args.fadeInFrames))
   if (args.fadeOutFrames !== undefined) patch.fadeOutFrames = Math.round(Number(args.fadeOutFrames))
 
+  // Which part of the source plays here. **Seconds in, seconds out** — the schema takes
+  // seconds because six zeros are easy to get wrong and the error is silent: a clip reading
+  // from the wrong place still plays and nothing in the result says otherwise. So the
+  // conversion happens here, at the boundary, and `inspect_item` reports the same unit.
+  //
+  // It deliberately does not touch `from`. Only what plays at that position changes, and
+  // conflating the two produces a clip that appears to jump when it is retimed — which reads
+  // as a timeline bug rather than a unit one.
+  const sourceAsset = findAsset(project(), item.assetId)
+  let sourceTailWarning: string | null = null
+  if (args.sourceStartSeconds !== undefined) {
+    const seconds = Number(args.sourceStartSeconds)
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      fail(
+        `sourceStartSeconds must be a number of seconds from the beginning of the file, at ` +
+          `least 0; got ${JSON.stringify(args.sourceStartSeconds)}.`
+      )
+    }
+    const sourceStartUs = Math.round(seconds * 1_000_000)
+    // Stills have no source duration and can be held anywhere, so there is nothing to run off
+    // the end of. Reporting a limit for them would refuse the clips where this is safest.
+    if (sourceAsset && sourceAsset.durationUs > 0 && sourceStartUs >= sourceAsset.durationUs) {
+      const length = (sourceAsset.durationUs / 1_000_000).toFixed(2)
+      fail(
+        `${seconds}s is past the end of ${sourceAsset.name}, which is ${length}s long, so the ` +
+          `clip would have no footage in it at all. Use a value below ${length}.`
+      )
+    }
+    patch.sourceStartUs = sourceStartUs
+  }
+
+  // A start point *inside* the source whose tail runs past the end is warned about rather than
+  // refused, and the distinction matters: pushing a clip's read point forward to give it
+  // handles for a transition does exactly this, so refusing it would block the workflow the
+  // field was added for. The clip still plays; it runs out early.
+  if (sourceAsset && sourceAsset.durationUs > 0) {
+    const startUs = patch.sourceStartUs ?? item.sourceStartUs
+    const speed = (patch.speed ?? item.speed) > 0 ? (patch.speed ?? item.speed) : 1
+    const consumedUs = framesToUs(durationInFrames, timeline().fps) * speed
+    if (startUs + consumedUs > sourceAsset.durationUs) {
+      const availableFrames = Math.floor(
+        usToFrames(Math.max(0, sourceAsset.durationUs - startUs), timeline().fps) / speed
+      )
+      sourceTailWarning =
+        `The clip is ${durationInFrames} frames long but only ${availableFrames} frames of ` +
+        `${sourceAsset.name} remain from this start point, so the tail has no footage. ` +
+        `Shorten it to ${availableFrames} frames, or start earlier in the source.`
+    }
+  }
+
+  if (args.adjustments !== undefined) {
+    patch.adjustments = mergeAdjustments(item.adjustments, args.adjustments)
+  }
+  if (args.blendMode !== undefined) {
+    const spec = findTool('edit_item')
+    const allowed =
+      (spec?.inputSchema.properties.blendMode as { enum?: string[] } | undefined)?.enum ?? []
+    patch.blendMode = asBlendMode(args.blendMode, allowed)
+  }
+
   if (args.text !== undefined) {
     // Refused rather than stored on a clip that cannot draw it. A `text` field on a video
     // item would read back exactly as it was written and change nothing on the canvas,
@@ -210,6 +273,11 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   })
 
   const after = resolveItem(item.id)
+  // Ordered by how well each fault hides: the tail warning is about footage that is missing
+  // from a clip that still plays, and identity adjustments produce a picture identical to the
+  // one before. Neither is visible as a fault, so neither may be left to be noticed.
+  const look = lookWarnings(after.item, after.track, timeline())
+  const warnings = [...(sourceTailWarning ? [sourceTailWarning] : []), ...look.warnings]
   return {
     itemId: after.item.id,
     trackId: after.track.id,
@@ -221,7 +289,76 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     speed: after.item.speed,
     fadeInFrames: after.item.fadeInFrames,
     fadeOutFrames: after.item.fadeOutFrames,
-    ...(after.item.text ? { text: after.item.text } : {})
+    // Seconds, matching the unit the argument is in. Reporting microseconds from a surface
+    // that accepts seconds is a trap with a plausible-looking value in it.
+    sourceStartSeconds: after.item.sourceStartUs / 1_000_000,
+    ...(after.item.text ? { text: after.item.text } : {}),
+    ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
+    ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
+    ...(look.filter !== null ? { filter: look.filter } : {}),
+    ...(warnings.length > 0 ? { warnings } : {})
+  }
+}
+
+/**
+ * `remove_range` — take a passage out and close the hole, across every unlocked track.
+ *
+ * The distinction from `delete_items(ripple: true)` is worth stating because an agent will
+ * otherwise reach for the wrong one: that tool removes *clips* and shifts only the tracks it
+ * removed from, which desynchronises everything else and is documented as doing so. This one
+ * removes *time*, on every unlocked track at once, so sync is preserved by construction. It is
+ * also the only one of the two that can cut the middle out of a single long take, because
+ * `delete_items` can only remove items whole.
+ */
+export function removeRange(args: Record<string, unknown>): Record<string, unknown> {
+  const from = Math.round(args.fromFrame as number)
+  const to = Math.round(args.toFrame as number)
+
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    fail('fromFrame and toFrame must both be numbers of frames.')
+  }
+  if (to <= from) {
+    fail(
+      `toFrame (${to}) must be greater than fromFrame (${from}) — toFrame is the first frame ` +
+        `kept, so an equal pair removes nothing. To remove one frame, pass toFrame = fromFrame + 1.`
+    )
+  }
+  if (from < 0) fail(`fromFrame cannot be negative, and ${from} is.`)
+
+  const before = timelineDuration(timeline())
+  const result = store().rippleDelete(from, to)
+
+  if (!result || result.removedFrames === 0) {
+    fail(
+      `Nothing occupies frames ${from}-${to}, so there was nothing to remove. The timeline is ` +
+        `${before} frames long.`
+    )
+  }
+
+  const tl = timeline()
+  const desyncedTracks = tl.tracks
+    .filter((track) => result.desyncedTrackIds.includes(track.id))
+    .map((track) => ({ id: track.id, name: track.name }))
+
+  return {
+    removedFrames: result.removedFrames,
+    removedItems: result.removedItemIds,
+    trimmedItems: result.trimmedItemIds,
+    createdItems: result.createdItemIds,
+    removedTransitions: result.removedTransitionIds,
+    durationInFrames: timelineDuration(tl),
+    ...(desyncedTracks.length > 0
+      ? {
+          desyncedTracks,
+          note:
+            `${desyncedTracks.map((t) => t.name).join(', ')} ` +
+            `${desyncedTracks.length === 1 ? 'is' : 'are'} locked, so ` +
+            `${desyncedTracks.length === 1 ? 'it was' : 'they were'} not shifted and ` +
+            `${desyncedTracks.length === 1 ? 'is' : 'are'} now ${result.removedFrames} frames ` +
+            `out of sync with everything else. Unlock and redo the cut, or move ` +
+            `${desyncedTracks.length === 1 ? 'that track' : 'those tracks'} back by hand.`
+        }
+      : {})
   }
 }
 

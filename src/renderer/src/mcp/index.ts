@@ -24,6 +24,7 @@ import {
   editItem,
   importMedia,
   placeAsset,
+  removeRange,
   setPlayhead,
   splitAt,
   undo
@@ -44,6 +45,7 @@ const HANDLERS: Record<string, Handler> = {
   edit_item: (args) => editItem(args),
   split_at: (args) => splitAt(args),
   delete_items: (args) => deleteItems(args),
+  remove_range: (args) => removeRange(args),
   add_track: (args) => addTrack(args),
   add_transition: (args) => addTransition(args),
   remove_transition: (args) => removeTransition(args),

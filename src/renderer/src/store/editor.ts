@@ -41,6 +41,7 @@ import {
   type TransitionDirection,
   type TransitionKind
 } from '@shared/project'
+import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 
 const HISTORY_LIMIT = 100
 
@@ -84,6 +85,16 @@ export interface EditorActions {
   trimItem(itemId: string, edge: 'start' | 'end', toFrame: Frames): void
   splitAt(frame?: Frames): void
   deleteSelected(): void
+  /**
+   * Removes a span of timeline and closes the hole, keeping every unlocked track in step.
+   *
+   * `deleteSelected` lifts and leaves the gap; this one ripples. With no range given it uses
+   * the span the selection covers — from the earliest selected frame to the latest — which
+   * means selecting two clips with a gap between them removes the gap too. That is what
+   * "remove this stretch" means, and the alternative (closing up only the clips and keeping
+   * the hole between them) is not an operation anybody wants.
+   */
+  rippleDelete(fromFrame?: Frames, toFrame?: Frames): RippleDeleteResult | null
   duplicateSelected(): void
   patchItem(itemId: string, patch: Partial<Omit<Item, 'id' | 'trackId'>>): void
   patchLayout(itemId: string, patch: Partial<Layout>): void
@@ -557,6 +568,56 @@ export const useEditor = create<EditorStore>((set, get) => {
         }
       })
       set({ selection: [] })
+    },
+
+    rippleDelete(fromFrame, toFrame) {
+      const state = get()
+      const timeline = activeTimeline(state.project)
+      if (!timeline) return null
+
+      let start = fromFrame
+      let end = toFrame
+      if (start === undefined || end === undefined) {
+        const selected = timeline.tracks
+          .flatMap((track) => track.items)
+          .filter((item) => state.selection.includes(item.id))
+        if (selected.length === 0) {
+          state.notify('Select what to remove first, then ripple delete.')
+          return null
+        }
+        start = Math.min(...selected.map((item) => item.from))
+        end = Math.max(...selected.map((item) => itemEnd(item)))
+      }
+
+      // A holder rather than a `let`: TypeScript cannot see that a closure passed to
+      // `editTimeline` runs, so it narrows a closure-assigned local to `never`.
+      const holder: { value: RippleDeleteResult | null } = { value: null }
+      // One undo step: the removal and every shift it caused are one action to the user, and
+      // reversing half of it would leave the tracks out of sync — the exact state the
+      // operation exists to avoid.
+      get().transact(() => {
+        editTimeline((tl) => {
+          holder.value = rippleDelete(tl, start!, end!, () => newId('itm'))
+        })
+      })
+
+      const removed = holder.value
+      if (!removed || removed.removedFrames === 0) return removed
+      set({ selection: [] })
+      if (removed.desyncedTrackIds.length > 0) {
+        const names = timeline.tracks
+          .filter((track) => removed.desyncedTrackIds.includes(track.id))
+          .map((track) => track.name)
+          .join(', ')
+        // Named rather than counted: the user has to unlock a specific track to fix it.
+        state.notify(
+          `${names} ${names.includes(',') ? 'are' : 'is'} locked, so ${
+            names.includes(',') ? 'they' : 'it'
+          } did not move and is now ${removed.removedFrames} frames out of sync.`,
+          'error'
+        )
+      }
+      return removed
     },
 
     duplicateSelected() {
