@@ -34,13 +34,19 @@ export class MediaToolsMissingError extends Error {
 
 /** An ffmpeg/ffprobe run that exited non-zero, with the tail of stderr attached. */
 export class MediaToolError extends Error {
-  constructor(
-    readonly tool: string,
-    readonly code: number | null,
-    readonly stderrTail: string
-  ) {
+  // Declared and assigned rather than written as constructor parameter properties: those are
+  // not erasable syntax, and this tree is typechecked with `erasableSyntaxOnly` so that Node
+  // can strip types natively for `pnpm test` without a compile step.
+  readonly tool: string
+  readonly code: number | null
+  readonly stderrTail: string
+
+  constructor(tool: string, code: number | null, stderrTail: string) {
     super(`${tool} exited with ${code ?? 'no code'}: ${stderrTail || '(no stderr)'}`)
     this.name = 'MediaToolError'
+    this.tool = tool
+    this.code = code
+    this.stderrTail = stderrTail
   }
 }
 

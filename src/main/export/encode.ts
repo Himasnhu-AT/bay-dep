@@ -31,6 +31,7 @@ import { findTimeline, timelineDuration } from '@shared/project'
 import { exportScratchDir } from '../paths'
 import { ffmpegBin, MediaToolError } from '../media/ffmpeg'
 import { buildAudioGraph } from './audio-graph'
+import { frameProblem, writeFrame } from './frame-pipe'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
 
@@ -156,30 +157,6 @@ function runFfmpeg(args: readonly string[]): Promise<void> {
       if (code === 0) resolve()
       else reject(new MediaToolError('ffmpeg', code, tailOf(stderr)))
     })
-  })
-}
-
-function writeFrame(job: Job, buffer: Buffer): Promise<void> {
-  const child = job.child
-  if (!child || child.stdin.destroyed) {
-    return Promise.reject(new Error('The encoder is no longer running.'))
-  }
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const done = (error?: Error | null): void => {
-      if (settled) return
-      settled = true
-      if (error) reject(error)
-      else resolve()
-    }
-    const flushed = child.stdin.write(buffer, (error) => {
-      if (error) done(error)
-    })
-    // Resolving only once the pipe has drained is what paces the renderer: `pushFrame` does
-    // not come back until ffmpeg has actually taken the bytes, so a slow encoder cannot be
-    // outrun into an unbounded buffer of 8 MB frames.
-    if (flushed) done()
-    else child.stdin.once('drain', () => done())
   })
 }
 
@@ -341,26 +318,14 @@ export async function pushFrame(frame: ExportFrame): Promise<void> {
   if (AUDIO_ONLY.has(job.request.format)) return
   if (!job.child) throw new Error('That export job has no encoder running.')
 
-  if (frame.width !== job.width || frame.height !== job.height) {
-    throw new Error(
-      `Frame ${frame.frame} is ${frame.width}×${frame.height}; the encoder was opened for ${job.width}×${job.height}.`
-    )
-  }
-  // A rawvideo pipe carries no frame numbers, so arrival order *is* the edit. Accepting an
-  // out-of-order frame would produce a scrambled video that looks like a render bug.
-  if (frame.frame !== job.nextFrame) {
-    throw new Error(`Expected frame ${job.nextFrame} but got ${frame.frame}.`)
-  }
-
   const buffer = Buffer.from(frame.data)
-  const expected = job.width * job.height * 4
-  if (buffer.byteLength !== expected) {
-    throw new Error(
-      `Frame ${frame.frame} carries ${buffer.byteLength} bytes; RGBA at ${job.width}×${job.height} is ${expected}.`
-    )
-  }
+  const problem = frameProblem(
+    { frame: frame.frame, width: frame.width, height: frame.height, byteLength: buffer.byteLength },
+    { nextFrame: job.nextFrame, width: job.width, height: job.height }
+  )
+  if (problem) throw new Error(problem)
 
-  await writeFrame(job, buffer)
+  await writeFrame(job.child.stdin, buffer)
   job.nextFrame += 1
   job.framesDone += 1
 
