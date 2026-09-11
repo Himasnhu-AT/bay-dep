@@ -17,6 +17,7 @@ import type {
   ExportRequest,
   FilmstripRequest,
   ImportedAsset,
+  MenuCommand,
   ProbeResult,
   RecentProject,
   ThumbnailRequest
@@ -38,7 +39,16 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.appStorageReady) as Promise<{
         ready: boolean
         error: string | null
-      }>
+      }>,
+    onMenuCommand: (listener: (command: MenuCommand) => void) => {
+      // The wrapper is held for the same reason as `onProgress`: `removeListener` matches by
+      // identity, so building a fresh arrow inside the unsubscribe would remove nothing.
+      const wrapped = (_event: unknown, command: MenuCommand): void => listener(command)
+      ipcRenderer.on(IPC.appMenuCommand, wrapped)
+      return () => {
+        ipcRenderer.removeListener(IPC.appMenuCommand, wrapped)
+      }
+    }
   },
 
   media: {

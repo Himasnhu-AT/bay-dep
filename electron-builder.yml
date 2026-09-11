@@ -26,11 +26,21 @@ asarUnpack:
 publish: null
 
 mac:
+  icon: build/icon.icns
   category: public.app-category.video
   target:
     - target: dmg
       arch: [arm64, x64]
   darkModeSupport: true
+  # Signing is deliberately off: it needs the user's Developer ID certificate and an Apple ID
+  # for notarisation, neither of which is ours to set up or to guess at. `identity: null` makes
+  # that explicit — without it electron-builder hunts the keychain and silently picks whatever
+  # it finds, so a build's signature would depend on which machine ran it.
+  #
+  # To turn it on later: set `identity` to the Developer ID Application name, drop this line,
+  # keep `hardenedRuntime: true`, and add notarisation with an Apple ID and app-specific
+  # password. The entitlements file is already written for a signed hardened-runtime build.
+  identity: null
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

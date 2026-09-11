@@ -114,6 +114,34 @@ export interface RecentProject {
 }
 
 // ---------------------------------------------------------------------------
+// Menu and document commands
+// ---------------------------------------------------------------------------
+
+/**
+ * A command raised by the application menu, or by macOS handing bay a document.
+ *
+ * These travel main → renderer, which is the opposite of everything else here, and they have
+ * to: the renderer owns the project. `project.save(project)` takes the project as an argument
+ * and a menu item in the main process does not have one, so a File menu without this channel
+ * is a File menu whose every item is dead.
+ */
+export type MenuCommand =
+  | { type: 'open' }
+  | { type: 'save' }
+  | { type: 'save-as' }
+  | { type: 'import' }
+  | { type: 'export' }
+  /**
+   * macOS handed us a `.bay` file — a double-click, or a drop on the Dock icon.
+   *
+   * Only needed while bay is already running. At launch, `open-file` fires before `ready`,
+   * so main queues the path and `project.initial()` returns that project instead of the
+   * last-opened one, which needs no channel at all. Same message either way, so the
+   * renderer's handler does not care which case it is.
+   */
+  | { type: 'open-path'; path: string }
+
+// ---------------------------------------------------------------------------
 // The bridge
 // ---------------------------------------------------------------------------
 
@@ -132,6 +160,13 @@ export interface BayApi {
      * simply has nothing in it look identical unless something says which.
      */
     storageReady(): Promise<{ ready: boolean; error: string | null }>
+    /**
+     * Menu and document-open commands. Returns an unsubscribe function.
+     *
+     * Deliberately the same push-and-unsubscribe shape as `export.onProgress` — one listener
+     * pattern in this interface, not two.
+     */
+    onMenuCommand(listener: (command: MenuCommand) => void): () => void
   }
 
   media: {
@@ -204,6 +239,7 @@ export const IPC = {
   appPlatform: 'app:platform',
   appMediaToolsReady: 'app:media-tools-ready',
   appStorageReady: 'app:storage-ready',
+  appMenuCommand: 'app:menu-command',
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',

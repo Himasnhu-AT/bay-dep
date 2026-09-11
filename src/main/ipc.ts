@@ -19,8 +19,9 @@ import { importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
 
-/** `exportProgress` is pushed to the renderer, not invoked from it, so it has no handler. */
-type InvokeChannel = Exclude<keyof typeof IPC, 'exportProgress'>
+/** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
+type PushChannel = 'exportProgress' | 'appMenuCommand'
+type InvokeChannel = Exclude<keyof typeof IPC, PushChannel>
 
 interface ChannelApi {
   appVersion: BayApi['app']['version']

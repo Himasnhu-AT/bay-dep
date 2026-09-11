@@ -9,6 +9,12 @@ import { BrowserWindow, dialog } from 'electron'
 import type { RecentProject } from '@shared/ipc'
 import type { Project } from '@shared/project'
 import { appDbPath, autosaveDir } from '../paths'
+import {
+  WINDOW_BOUNDS_KEY,
+  parseBounds,
+  serialiseBounds,
+  type Bounds
+} from '../window-state'
 import { allowPaths } from '../protocol'
 import { adoptAssets } from '../media/import'
 import { describeStorage, openDatabase, type AppDatabase } from './db'
@@ -56,6 +62,43 @@ function database(): AppDatabase | null {
 export function storageStatus(): StorageStatus {
   database()
   return status ?? { ready: false, error: 'The database was never opened.' }
+}
+
+// ---------------------------------------------------------------------------
+// Window bounds
+// ---------------------------------------------------------------------------
+
+export function readWindowBounds(): Bounds | null {
+  return parseBounds(database()?.getState(WINDOW_BOUNDS_KEY) ?? null)
+}
+
+export function writeWindowBounds(bounds: Bounds): void {
+  database()?.setState(WINDOW_BOUNDS_KEY, serialiseBounds(bounds))
+}
+
+// ---------------------------------------------------------------------------
+// A document handed to us before there was anywhere to put it
+// ---------------------------------------------------------------------------
+
+/**
+ * macOS fires `open-file` before `ready` on a cold launch, so the path arrives before any
+ * window exists. It is held here and claimed by `initial()`, which is the first thing the
+ * renderer asks for — so a double-clicked project opens that project rather than the last one.
+ *
+ * In memory rather than in `app_state` on purpose: this is a fact about *this launch*, and
+ * persisting it would reopen the document on every subsequent launch too.
+ */
+let pendingOpenPath: string | null = null
+
+export function rememberOpenPath(path: string): void {
+  pendingOpenPath = path
+}
+
+/** Reads and clears. Claiming it twice would reopen the document on the next window. */
+export function takePendingOpen(): string | null {
+  const path = pendingOpenPath
+  pendingOpenPath = null
+  return path
 }
 
 export function closeStore(): void {
@@ -110,6 +153,17 @@ function admitAssets(project: Project): Project {
 }
 
 export async function initial(): Promise<Project> {
+  // A document double-clicked in Finder outranks the last-opened project: the user named
+  // which file they wanted by launching it.
+  const requested = takePendingOpen()
+  if (requested) {
+    try {
+      return await openPath(requested)
+    } catch {
+      // A .bay that will not open must not strand the launch on an error screen; fall
+      // through to the normal path and the user gets their last project or an empty one.
+    }
+  }
   return admitAssets(await resolveInitialProject(database()))
 }
 

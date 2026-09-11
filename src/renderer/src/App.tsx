@@ -69,6 +69,71 @@ export function App(): ReactNode {
     notify('Project saved.')
   }, [notify, markSaved])
 
+  const onSaveAs = useCallback(async (): Promise<void> => {
+    setSaving(true)
+    const saved = await call('Save as', (api) => api.project.saveAs(useEditor.getState().project))
+    setSaving(false)
+    if (!saved) return
+    markSaved()
+    notify(`Saved to ${saved.filePath}`)
+  }, [notify, markSaved])
+
+  const onImport = useCallback(async (): Promise<void> => {
+    const imported = await call('Import', (api) => api.media.importDialog())
+    if (!imported || imported.length === 0) return
+    addAssets(imported.map((entry) => entry.asset))
+    const fresh = imported.filter((entry) => !entry.reused).length
+    notify(
+      fresh === imported.length
+        ? `Imported ${fresh} file${fresh === 1 ? '' : 's'}.`
+        : `Imported ${fresh}, reused ${imported.length - fresh} already in the project.`
+    )
+  }, [addAssets, notify])
+
+  /**
+   * The application menu, which is the one channel that runs main -> renderer.
+   *
+   * It has to: the renderer owns the project, and `project.save(project)` needs a project
+   * that a menu item in the main process does not have. Without this subscription every
+   * item in the File menu is drawn, enabled, and does nothing at all when clicked.
+   */
+  useEffect(() => {
+    const api = bay()
+    if (!api) return
+    // Not routed through `call`: this registers a listener and returns an unsubscribe,
+    // so there is no promise to reject.
+    return api.app.onMenuCommand((command) => {
+      switch (command.type) {
+        case 'save':
+          void onSave()
+          break
+        case 'save-as':
+          void onSaveAs()
+          break
+        case 'import':
+          void onImport()
+          break
+        case 'export':
+          setExportOpen(true)
+          break
+        case 'open':
+          void call('Open project', (client) => client.project.open()).then((project) => {
+            // Null is either a failed call, already reported, or the user cancelling the
+            // picker. Neither should replace what they are working on.
+            if (project) setProject(project)
+          })
+          break
+        case 'open-path':
+          void call('Open project', (client) =>
+            client.project.openPath(command.path)
+          ).then((project) => {
+            if (project) setProject(project)
+          })
+          break
+      }
+    })
+  }, [onSave, onSaveAs, onImport, setProject])
+
   useKeyboard({
     onSave: () => void onSave(),
     onExport: () => setExportOpen(true),
