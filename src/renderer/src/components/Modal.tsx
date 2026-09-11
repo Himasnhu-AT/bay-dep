@@ -37,6 +37,14 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
     focusables()[0]?.focus()
 
     const onKeyDown = (event: KeyboardEvent): void => {
+      // Escape closes. Listed here rather than on the panel's React props because the panel
+      // is not always what holds focus — a `<select>` inside it swallows keydown — and a
+      // dialog that traps Tab but cannot be dismissed from the keyboard is a trap.
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose()
+        return
+      }
       if (event.key !== 'Tab') return
       const items = focusables()
       if (items.length === 0) return
@@ -51,12 +59,14 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
         first.focus()
       }
     }
-    panel.addEventListener('keydown', onKeyDown)
+    // On the window, not the panel: a native `<select>` popup takes focus out of the panel
+    // entirely on macOS, and Escape pressed while it is open would otherwise reach nothing.
+    window.addEventListener('keydown', onKeyDown, true)
     return () => {
-      panel.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDown, true)
       previous?.focus()
     }
-  }, [open])
+  }, [open, onClose])
 
   if (!open) return null
 

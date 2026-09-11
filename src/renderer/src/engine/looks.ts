@@ -23,6 +23,19 @@ function finite(value: number, fallback: number): number {
 }
 
 /**
+ * Is this value the identity, to within a tolerance?
+ *
+ * A strict `!==` looks right and is a performance bug: a slider that lands on `1.0000001`, or a
+ * value that has been through a JSON round trip, emits `brightness(1.0000001)` and puts the clip
+ * on the filtered draw path for an image nobody can distinguish from the unfiltered one. That
+ * path costs roughly twice as much at 4K. The epsilon is inherited from the shared builder that
+ * used to duplicate this function and has now been deleted in its favour.
+ */
+function isIdentity(value: number, identity: number): boolean {
+  return Math.abs(value - identity) < 1e-6
+}
+
+/**
  * The `ctx.filter` string for these adjustments, or `'none'` when they are the identity.
  *
  * Order is fixed and matters: filters compose left to right, so blurring before a brightness
@@ -49,15 +62,15 @@ export function adjustmentFilter(adjustments: Adjustments | undefined): string {
   const invert = finite(adjustments.invert, d.invert)
   const blur = finite(adjustments.blur, d.blur)
 
-  if (brightness !== d.brightness) parts.push(`brightness(${brightness})`)
-  if (contrast !== d.contrast) parts.push(`contrast(${contrast})`)
-  if (saturate !== d.saturate) parts.push(`saturate(${saturate})`)
-  if (hueRotate !== d.hueRotate) parts.push(`hue-rotate(${hueRotate}deg)`)
-  if (grayscale !== d.grayscale) parts.push(`grayscale(${grayscale})`)
-  if (sepia !== d.sepia) parts.push(`sepia(${sepia})`)
-  if (invert !== d.invert) parts.push(`invert(${invert})`)
+  if (!isIdentity(brightness, d.brightness)) parts.push(`brightness(${brightness})`)
+  if (!isIdentity(contrast, d.contrast)) parts.push(`contrast(${contrast})`)
+  if (!isIdentity(saturate, d.saturate)) parts.push(`saturate(${saturate})`)
+  if (!isIdentity(hueRotate, d.hueRotate)) parts.push(`hue-rotate(${hueRotate}deg)`)
+  if (!isIdentity(grayscale, d.grayscale)) parts.push(`grayscale(${grayscale})`)
+  if (!isIdentity(sepia, d.sepia)) parts.push(`sepia(${sepia})`)
+  if (!isIdentity(invert, d.invert)) parts.push(`invert(${invert})`)
   // Last, so it blurs the corrected colour rather than colour about to be corrected.
-  if (blur !== d.blur) parts.push(`blur(${blur}px)`)
+  if (!isIdentity(blur, d.blur)) parts.push(`blur(${blur}px)`)
 
   return parts.length === 0 ? NO_FILTER : parts.join(' ')
 }

@@ -17,7 +17,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { TransitionKind, TransitionDirection } from '@shared/project'
-import { planTransition, type TransitionStep } from './transitions'
+import { planTransition, transitionAudioGains, type TransitionStep } from './transitions'
 
 const CANVAS = { width: 1920, height: 1080 }
 const KINDS: TransitionKind[] = [
@@ -238,6 +238,49 @@ test('a 1x1 canvas produces finite geometry', () => {
       assert.ok(Number.isFinite(step.offsetX) && Number.isFinite(step.offsetY))
       if (step.clipRect) assert.ok(step.clipRect.width >= 0 && step.clipRect.height >= 0)
       if (step.clipCircle) assert.ok(step.clipCircle.radius >= 0)
+    }
+  }
+})
+
+// -- audio ------------------------------------------------------------------
+
+test('a visual transition cross-fades the sound rather than cutting it', () => {
+  // A hard audio cut in the middle of a two-second wipe sounds like a mistake, so every kind
+  // except a dip cross-fades. This is a judgement rather than a derivation, which is why it is
+  // pinned: someone could reasonably assume a wipe cuts the audio at the wipe edge.
+  for (const kind of ['cross-dissolve', 'wipe', 'push', 'slide', 'iris'] as TransitionKind[]) {
+    assert.deepEqual(transitionAudioGains(kind, 0), { from: 1, to: 0 }, kind)
+    assert.deepEqual(transitionAudioGains(kind, 1), { from: 0, to: 1 }, kind)
+    const mid = transitionAudioGains(kind, 0.5)
+    assert.ok(Math.abs(mid.from - 0.5) < 0.001 && Math.abs(mid.to - 0.5) < 0.001, kind)
+  }
+})
+
+test('a dip passes through silence at the midpoint, where the picture is fully the dip colour', () => {
+  for (const kind of ['dip-to-black', 'dip-to-white'] as TransitionKind[]) {
+    assert.deepEqual(transitionAudioGains(kind, 0), { from: 1, to: 0 }, kind)
+    assert.deepEqual(transitionAudioGains(kind, 1), { from: 0, to: 1 }, kind)
+    const mid = transitionAudioGains(kind, 0.5)
+    assert.equal(mid.from, 0, `${kind} should be silent at the midpoint`)
+    assert.equal(mid.to, 0, `${kind} should be silent at the midpoint`)
+  }
+})
+
+test('a dip is audible on both sides of its silence', () => {
+  // The sound must come back, not stay at zero for the second half.
+  const quarter = transitionAudioGains('dip-to-black', 0.25)
+  const threeQuarters = transitionAudioGains('dip-to-black', 0.75)
+  assert.ok(quarter.from > 0 && quarter.to === 0)
+  assert.ok(threeQuarters.to > 0 && threeQuarters.from === 0)
+})
+
+test('audio gains never exceed the range a gain node should see', () => {
+  for (const kind of KINDS) {
+    for (const p of [-5, 0, 0.1, 0.5, 0.9, 1, 5, Number.NaN]) {
+      const g = transitionAudioGains(kind, p)
+      for (const v of [g.from, g.to]) {
+        assert.ok(Number.isFinite(v) && v >= 0 && v <= 1, `${kind} at ${p} gave ${v}`)
+      }
     }
   }
 })

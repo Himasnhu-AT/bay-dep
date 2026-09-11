@@ -6,7 +6,10 @@ import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
+import { junctionsForTrack } from '@/lib/junctions'
 import { Clip } from './Clip'
+import { JunctionMarkers } from './JunctionMarkers'
+import { TransitionDialog } from './TransitionDialog'
 import { TimelineRuler } from './TimelineRuler'
 import { TrackHeader } from './TrackHeader'
 
@@ -59,9 +62,24 @@ export function Timeline(): ReactNode {
   const [view, setView] = useState({ left: 0, width: 0 })
   const [move, setMove] = useState<MoveGesture | null>(null)
   const [trim, setTrim] = useState<TrimGesture | null>(null)
+  // The junction under edit. Local because a cut is not a selectable object in the store —
+  // `selection` holds item ids — and inventing a second kind of selection there to carry a
+  // transient dialog would be a worse trade than holding it here.
+  const [junctionKey, setJunctionKey] = useState<string | null>(null)
 
   const fps = timeline?.fps ?? 30
   const tracks = timeline?.tracks ?? []
+
+  // Looked up by key every render rather than held as an object: a trim or an undo while the
+  // dialog is open changes what this cut can do, and a snapshot would keep describing the
+  // project as it was. Resolves to null when the cut stops existing, which closes the dialog.
+  const openJunction =
+    junctionKey === null || !timeline
+      ? null
+      : (tracks
+          .filter((track) => track.kind === 'video')
+          .flatMap((track) => junctionsForTrack(project, timeline, track))
+          .find((junction) => junction.key === junctionKey) ?? null)
   const contentFrames = Math.max(duration, fps * 10) + fps * TAIL_SECONDS
   const contentWidth = Math.max(contentFrames * pixelsPerFrame, view.width - HEADER_WIDTH, 320)
 
@@ -422,6 +440,20 @@ export function Timeline(): ReactNode {
                       />
                     )
                   })}
+
+                  {/* After the clips, so a marker sitting on a cut is never underneath the
+                      clip edge it belongs to. Video only: an audio cut crossfades through
+                      the mixer and has no picture to dissolve. */}
+                  {timeline && track.kind === 'video' && (
+                    <JunctionMarkers
+                      project={project}
+                      timeline={timeline}
+                      track={track}
+                      pixelsPerFrame={pixelsPerFrame}
+                      height={height}
+                      onOpen={(junction) => setJunctionKey(junction.key)}
+                    />
+                  )}
                 </div>
               </div>
             )
@@ -499,6 +531,12 @@ export function Timeline(): ReactNode {
           </p>
         </div>
       )}
+
+      <TransitionDialog
+        junction={openJunction}
+        fps={fps}
+        onClose={() => setJunctionKey(null)}
+      />
     </div>
   )
 }

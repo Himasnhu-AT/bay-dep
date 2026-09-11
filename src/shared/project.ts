@@ -197,42 +197,23 @@ export function defaultAdjustments(): Adjustments {
 }
 
 /**
- * The CSS filter string for these adjustments, or `null` when they change nothing.
+ * There is deliberately no filter-string builder here.
  *
- * Null rather than `'none'` so a caller can skip touching `ctx.filter` at all. Setting it —
- * even to `none` — is not free on every implementation, and the overwhelmingly common case
- * is a clip with no adjustments.
+ * There were two — this one and `adjustmentFilter` in `renderer/src/engine/looks.ts` — and they
+ * disagreed in ways that mattered: this one emitted `blur` fifth, in field order, while the
+ * engine emits it last so it blurs corrected colour rather than colour about to be corrected,
+ * and `contrast(0.5) blur(4px) grayscale(1)` is a different picture from
+ * `contrast(0.5) grayscale(1) blur(4px)`. `mcp/adjustments.ts` reported this one's output as
+ * "the filter the compositor will use" while the canvas drew the other's, which made a tool
+ * result a confident lie about a picture the agent cannot see.
+ *
+ * The engine's is the survivor, because a CSS filter string is only ever consumed by a canvas
+ * and the thing that composites is the only honest source for it. Its `1e-6` identity epsilon
+ * came from here: a strict comparison puts `brightness: 1.0000001` on the filtered path, which
+ * costs roughly twice as much at 4K to produce an image nobody can tell apart.
+ *
+ * `Adjustments` and `defaultAdjustments` stay — they are the model. Only the mapping to CSS left.
  */
-export function filterStringFor(adjustments: Adjustments | undefined): string | null {
-  if (!adjustments) return null
-  const parts: string[] = []
-  const near = (value: number, to: number): boolean => Math.abs(value - to) < 1e-6
-  if (Number.isFinite(adjustments.brightness) && !near(adjustments.brightness, 1)) {
-    parts.push(`brightness(${adjustments.brightness})`)
-  }
-  if (Number.isFinite(adjustments.contrast) && !near(adjustments.contrast, 1)) {
-    parts.push(`contrast(${adjustments.contrast})`)
-  }
-  if (Number.isFinite(adjustments.saturate) && !near(adjustments.saturate, 1)) {
-    parts.push(`saturate(${adjustments.saturate})`)
-  }
-  if (Number.isFinite(adjustments.hueRotate) && !near(adjustments.hueRotate, 0)) {
-    parts.push(`hue-rotate(${adjustments.hueRotate}deg)`)
-  }
-  if (Number.isFinite(adjustments.blur) && adjustments.blur > 0) {
-    parts.push(`blur(${adjustments.blur}px)`)
-  }
-  if (Number.isFinite(adjustments.grayscale) && adjustments.grayscale > 0) {
-    parts.push(`grayscale(${Math.min(1, adjustments.grayscale)})`)
-  }
-  if (Number.isFinite(adjustments.sepia) && adjustments.sepia > 0) {
-    parts.push(`sepia(${Math.min(1, adjustments.sepia)})`)
-  }
-  if (Number.isFinite(adjustments.invert) && adjustments.invert > 0) {
-    parts.push(`invert(${Math.min(1, adjustments.invert)})`)
-  }
-  return parts.length > 0 ? parts.join(' ') : null
-}
 
 export interface Item {
   id: string

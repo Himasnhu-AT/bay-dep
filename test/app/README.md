@@ -342,6 +342,33 @@ storage one — and that one *is* verified, by `storage-warning.mjs`.
 | `text-style.mjs` | text draws as styled, and the engine reports what it could not honour | flags on |
 | `filter-support.mjs` | `ctx.filter` and blend modes apply on the **export** context, and what they cost | flags on |
 | `transitions-ui.mjs` | a cut can be given a transition, and says so when it cannot | flags on |
+| `item-source-look.mjs` | `sourceStartSeconds`, `adjustments` and `blendMode` behave as documented | flags on |
+| `export-readback-synthetic.mjs` | draw+readback cost with a CPU-side source — **reports, does not assert** | flags on |
+| `adjustments-ui.mjs` | the Adjustments panel reaches the compositor, in the compositor's order | flags on |
+
+## `electron .` runs the last build, not your working tree
+
+The probes launch `./node_modules/.bin/electron .`, and `package.json` points `main` at
+`./out/main/index.js`. **Nothing in that path compiles anything.** A probe run after an edit
+tests whatever `pnpm build` last produced, which on a tree several agents share is whenever
+someone else last built.
+
+This is not hypothetical and it fails in the most expensive direction — *passing*. A fix to
+`TransitionDialog` was verified green by a probe that could not have exercised it: `out/` had
+been rebuilt by another agent at a point that happened to include the new files but not the
+newest edit, so the markers appeared, the dialog opened, every check passed, and the one
+assertion aimed at the change failed with a diff that made no sense against the source. The
+source was right. The build was old.
+
+Run `pnpm build` before probing, and when a result contradicts the code in front of you,
+compare mtimes before debugging the code:
+
+```bash
+find src -name '*.ts*' | xargs stat -f '%m %N' | sort -rn | head -3
+find out -name '*.js'  | xargs stat -f '%m %N' | sort -rn | head -3
+```
+
+A source file newer than every build artefact means the probe is measuring the past.
 
 ### `transitions-ui.mjs`, and two ways it accused working code
 

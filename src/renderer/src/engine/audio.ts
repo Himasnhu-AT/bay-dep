@@ -32,6 +32,8 @@ import {
   type Track
 } from '@shared/project'
 import { MediaPool, type MediaEntry } from './mediaPool'
+import { elementSlots, itemsToDraw } from './compositor'
+import { transitionAudioGains } from './transitions'
 import { DRIFT_TOLERANCE_SECONDS, clamp, clamp01, finite, playbackRateFor, sourceSecondsAt } from './sync'
 
 export interface TrackLevel {
@@ -46,6 +48,24 @@ export interface AudioRouting {
   item: Item
   track: Track
   asset: Asset
+  /**
+   * Which of the asset's elements this item's sound comes from.
+   *
+   * Non-zero only when one asset is drawn twice in a frame — a transition between two halves
+   * of a split clip. The two clips need two elements to show two source times, and therefore
+   * two source nodes: one node per asset would mean the dissolve shows both pictures and
+   * plays one. **Taken from the same `elementSlots` the compositor uses**, because a source
+   * node bound to a different element than the one being drawn is a lip-sync bug with no
+   * single place to look.
+   */
+  slot: number
+  /**
+   * A cross-fade multiplier from a transition playing over this item, 1 otherwise.
+   *
+   * Separate from `item.volume` and the fade envelope so all three compose: a clip at volume
+   * 0.5 with a fade-in, inside a dissolve, is the product of the three.
+   */
+  transitionGain: number
   /**
    * True when this item reaches its track's analyser — i.e. the meter shows it. Mute does
    * not switch this off: the meter must keep showing what is on a muted track, or it is
@@ -70,16 +90,52 @@ export interface AudioRouting {
  */
 export function audioRoutingAt(project: Project, timeline: Timeline, frame: number): AudioRouting[] {
   const out: AudioRouting[] = []
+  // The same list and the same slot assignment the compositor draws from, so a source node is
+  // always bound to the element its picture comes from.
+  const { items: drawing, active } = itemsToDraw(project, timeline, frame)
+  const slots = elementSlots(drawing)
+  const gains = active
+    ? transitionAudioGains(active.resolved.transition.kind, active.progress)
+    : null
+
+  const push = (item: Item, track: Track, transitionGain: number): void => {
+    const asset = findAsset(project, item.assetId)
+    // An asset that failed to probe has no decodable audio; ffmpeg refuses to open it, and on
+    // the export side one bad input fails the whole mix.
+    if (!asset || asset.error || !asset.hasAudio) return
+    out.push({
+      item,
+      track,
+      asset,
+      slot: slots.get(item.id) ?? 0,
+      transitionGain,
+      metered: true,
+      audible: !track.muted
+    })
+  }
+
+  const trackOf = (item: Item): Track | undefined =>
+    timeline.tracks.find((t) => t.items.some((i) => i.id === item.id))
+
   for (const track of timeline.tracks) {
     for (const item of track.items) {
+      // A transition's two clips are handled below: inside the window only one of them
+      // contains the frame, and both must sound.
+      if (active && (item.id === active.resolved.from.id || item.id === active.resolved.to.id)) {
+        continue
+      }
       if (frame < item.from || frame >= itemEnd(item)) continue
-      const asset = findAsset(project, item.assetId)
-      // An asset that failed to probe has no decodable audio; ffmpeg refuses to open it,
-      // and on the export side one bad input fails the whole mix.
-      if (!asset || asset.error || !asset.hasAudio) continue
-      out.push({ item, track, asset, metered: true, audible: !track.muted })
+      push(item, track, 1)
     }
   }
+
+  if (active && gains) {
+    const fromTrack = trackOf(active.resolved.from)
+    const toTrack = trackOf(active.resolved.to)
+    if (fromTrack) push(active.resolved.from, fromTrack, gains.from)
+    if (toTrack) push(active.resolved.to, toTrack, gains.to)
+  }
+
   return out
 }
 
@@ -106,6 +162,11 @@ interface SourceNodes {
 }
 
 const ANALYSER_FFT_SIZE = 1024
+
+/** Source nodes are per element, not per asset. Mirrors the pool's own slot keying. */
+function sourceKey(assetId: string, slot: number): string {
+  return slot === 0 ? assetId : `${assetId}#${slot}`
+}
 
 export class AudioEngine {
   readonly #pool: MediaPool
@@ -175,22 +236,33 @@ export class AudioEngine {
     }
 
     {
-      for (const { item, track, asset } of audioRoutingAt(project, timeline, frame)) {
+      for (const routed of audioRoutingAt(project, timeline, frame)) {
+        const { item, track, asset } = routed
         const nodes = this.#tracks.get(track.id)
         if (!nodes) continue
 
-        const entry = this.#pool.acquire(asset)
+        const entry = this.#pool.acquire(asset, routed.slot)
         const element = entry.element
         if (!(element instanceof HTMLVideoElement) && !(element instanceof HTMLAudioElement)) {
           continue
         }
 
-        const source = this.#sourceNodes(context, asset.id, element)
+        // Keyed by element. A `MediaElementAudioSourceNode` is bound to one element for life,
+        // so an asset drawn twice in a frame needs two nodes — one per element — or the
+        // transition shows two pictures and plays one.
+        const key = sourceKey(asset.id, routed.slot)
+        const source = this.#sourceNodes(context, key, element)
         if (!source) continue
-        active.add(asset.id)
+        active.add(key)
 
         this.#route(source, nodes, track.id)
-        source.gain.gain.value = clamp(finite(item.volume, 1), 0, 2) * fadeGainAt(item, frame)
+        // Three independent things multiply: the item's own volume, its fade envelope, and
+        // any transition cross-fade over it. Collapsing any two of them would make one
+        // unreachable while the other is set.
+        source.gain.gain.value =
+          clamp(finite(item.volume, 1), 0, 2) *
+          fadeGainAt(item, frame) *
+          clamp(finite(routed.transitionGain, 1), 0, 1)
 
         this.#drive(element, item, asset, frame, fps, playing)
       }
@@ -280,17 +352,17 @@ export class AudioEngine {
 
   #sourceNodes(
     context: AudioContext,
-    assetId: string,
+    key: string,
     element: HTMLVideoElement | HTMLAudioElement
   ): SourceNodes | null {
-    const existing = this.#sources.get(assetId)
+    const existing = this.#sources.get(key)
     if (existing) return existing
     try {
       const source = context.createMediaElementSource(element)
       const gain = context.createGain()
       source.connect(gain)
       const nodes: SourceNodes = { source, gain, trackId: null }
-      this.#sources.set(assetId, nodes)
+      this.#sources.set(key, nodes)
       return nodes
     } catch {
       // Creating a second source node for one element throws. That means something else
@@ -378,15 +450,14 @@ export class AudioEngine {
   }
 
   #forget(entry: MediaEntry): void {
-    // Only slot 0 carries this graph's source node. The pool holds extra elements for an
-    // asset drawn twice in one frame, and evicting one of those must not disconnect the node
-    // bound to the element this engine is actually playing — the sound would stop for a
-    // reason nothing in the audio path could explain.
-    if (entry.slot !== 0) return
-    const source = this.#sources.get(entry.assetId)
+    // Keyed by element, so evicting one of an asset's elements drops only its own node. An
+    // earlier version keyed by asset and would have silenced the element still playing — a
+    // sound stopping for a reason nothing in the audio path could explain.
+    const key = sourceKey(entry.assetId, entry.slot)
+    const source = this.#sources.get(key)
     if (!source) return
     source.gain.disconnect()
     source.source.disconnect()
-    this.#sources.delete(entry.assetId)
+    this.#sources.delete(key)
   }
 }

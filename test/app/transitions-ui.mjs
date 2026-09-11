@@ -224,6 +224,32 @@ check(
 await evaluate(`(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true })()`)
 await dialogGone()
 
+// -- editing keeps the transition's identity -------------------------------
+// Remove-then-add would renumber what the user experiences as editing one transition, so an
+// agent holding the id from `add_transition` would find it gone after someone nudged the
+// duration. The id is the observable, so the id is what this asserts.
+const idsBefore = await evaluate(
+  `window.bayEngine.store.getState().project.timelines[0].transitions.map((t) => t.id)`
+)
+check('exactly one transition is stored before the edit', idsBefore.length, 1)
+check('editing it opens the dialog', await openDialog(200), true)
+await evaluate(`(() => {
+  const input = document.querySelector('[role="dialog"] input')
+  input.focus()
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true }))
+  return true
+})()`)
+await evaluate(`(() => {
+  [...document.querySelectorAll('[role="dialog"] button')].find((x) => /Update/.test(x.textContent)).click()
+  return true
+})()`)
+await dialogGone()
+const idsAfter = await evaluate(
+  `window.bayEngine.store.getState().project.timelines[0].transitions.map((t) => t.id)`
+)
+check('still exactly one transition after the edit', idsAfter.length, 1)
+check('and it kept its id rather than being replaced', idsAfter[0], idsBefore[0])
+
 // -- a junction with NO handles --------------------------------------------
 // Two clips that each use their whole source: they abut, and there is nothing to dissolve.
 await mcp('add_track', { kind: 'video' })

@@ -11,53 +11,32 @@
  * asked for. Returning the requested duration as though it were honoured would be the same
  * lie as a playhead that clamps without saying so, or type that auto-shrinks in silence —
  * so the result reports the effective window and why it is short.
+ *
+ * The reasoning about *why* a cut cannot take a transition lives in `@/lib/junctions` and is
+ * shared with the timeline's junction markers, deliberately. An agent and a user looking at
+ * the same cut must be given the same explanation, and two copies of that prose would drift
+ * apart on the first edit to either.
  */
 
-import {
-  findAsset,
-  findItem,
-  handlesFor,
-  itemEnd,
-  resolveTransition,
-  type Transition
-} from '@shared/project'
+import { findItem, resolveTransition, type Transition } from '@shared/project'
 import { resolveId } from '@shared/mcp'
+import { roomAt, whyInactive } from '@/lib/junctions'
 import { fail, project, resolveItem, store, timeline } from './helpers'
 
 /**
- * Why a stored transition will not draw.
+ * One transition as a tool result.
  *
- * `resolveTransition` returns null for three different reasons and the caller cannot tell
- * them apart from the null alone. An earlier version of this file reported all three as "the
- * clips are no longer adjacent", which was wrong in the most common case: two clips that abut
- * perfectly but each use their whole source have nowhere to dissolve *from*, and being told
- * they are not adjacent sends an agent to move clips that are already touching.
+ * `maxDurationInFrames` is on **every** answer, including the refusals' sibling cases, and the
+ * schema promises it for a specific reason: there is no tool that asks how long a transition
+ * could be at a junction, so without it a caller's only way to find the ceiling is to create a
+ * transition and read what it got. Returning it turns a guess-and-retry loop into one call.
  */
-function whyInactive(transition: Transition): string {
-  const tl = timeline()
-  const from = findItem(tl, transition.fromItemId)?.item
-  const to = findItem(tl, transition.toItemId)?.item
-  if (!from || !to) {
-    return 'One of the two clips no longer exists. Remove the transition, or re-add it between clips that do.'
-  }
-  if (itemEnd(from) !== to.from) {
-    return (
-      `The clips are no longer adjacent — ${transition.fromItemId} ends at ${itemEnd(from)} and ` +
-      `${transition.toItemId} starts at ${to.from}. Close the gap and it will draw again.`
-    )
-  }
-  const fromRoom = Math.min(handlesFor(findAsset(project(), from.assetId), from, tl.fps).after, from.durationInFrames)
-  const toRoom = Math.min(handlesFor(findAsset(project(), to.assetId), to, tl.fps).before, to.durationInFrames)
-  return (
-    `The clips abut, but neither has footage to spare across the cut: the outgoing clip has ` +
-    `${fromRoom} frames past its end and the incoming has ${toRoom} before its start, so there ` +
-    `is nothing to dissolve between. Trim one of them shorter than its source — a transition ` +
-    `borrows the frames on either side of the cut.`
-  )
-}
-
 function describe(transition: Transition): Record<string, unknown> {
   const resolved = resolveTransition(project(), timeline(), transition)
+  const from = findItem(timeline(), transition.fromItemId)?.item
+  const to = findItem(timeline(), transition.toItemId)?.item
+  const capacity =
+    from && to ? roomAt(project(), timeline(), from, to).capacityInFrames : 0
   if (!resolved) {
     return {
       transitionId: transition.id,
@@ -65,8 +44,9 @@ function describe(transition: Transition): Record<string, unknown> {
       fromItemId: transition.fromItemId,
       toItemId: transition.toItemId,
       requestedDurationInFrames: transition.durationInFrames,
+      maxDurationInFrames: capacity,
       active: false,
-      warning: `Stored, but nothing will draw. ${whyInactive(transition)}`
+      warning: `Stored, but nothing will draw. ${whyInactive(project(), timeline(), transition)}`
     }
   }
   return {
@@ -75,6 +55,7 @@ function describe(transition: Transition): Record<string, unknown> {
     fromItemId: transition.fromItemId,
     toItemId: transition.toItemId,
     requestedDurationInFrames: transition.durationInFrames,
+    maxDurationInFrames: capacity,
     effectiveDurationInFrames: resolved.lastFrame - resolved.firstFrame + 1,
     firstFrame: resolved.firstFrame,
     lastFrame: resolved.lastFrame,
@@ -94,12 +75,25 @@ function describe(transition: Transition): Record<string, unknown> {
 export function addTransition(args: Record<string, unknown>): Record<string, unknown> {
   const from = resolveItem(String(args.fromItemId))
   const to = resolveItem(String(args.toItemId))
-  const durationInFrames = Math.round(Number(args.durationInFrames))
-  if (!Number.isFinite(durationInFrames) || durationInFrames < 2) {
-    fail(
-      `durationInFrames must be at least 2 so each side of the cut gets a frame; got ` +
-        `${args.durationInFrames}.`
-    )
+  // The room this junction has, needed before anything else: it is both the default duration
+  // and the number reported back, and there is no other way for a caller to ask.
+  const room = roomAt(project(), timeline(), from.item, to.item)
+
+  // **Omitting the duration is documented behaviour**, so it cannot be a refusal. About a
+  // second reads as a dissolve, or the most the junction can take when that is less — which is
+  // the choice an editor makes anyway, and it means the common call is `{ from, to, kind }`.
+  let durationInFrames: number
+  if (args.durationInFrames === undefined) {
+    durationInFrames = Math.min(Math.round(timeline().fps), Math.max(2, room.capacityInFrames))
+  } else {
+    durationInFrames = Math.round(Number(args.durationInFrames))
+    if (!Number.isFinite(durationInFrames) || durationInFrames < 2) {
+      fail(
+        `durationInFrames must be at least 2 so each side of the cut gets a frame; got ` +
+          `${args.durationInFrames}. Omit it entirely and bay picks a sensible length — ` +
+          `this junction can take up to ${room.capacityInFrames}.`
+      )
+    }
   }
 
   let added: string | null = null

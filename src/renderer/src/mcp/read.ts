@@ -126,14 +126,28 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       from: item.from,
       durationInFrames: item.durationInFrames,
       endFrame: itemEnd(item),
-      sourceStartUs: item.sourceStartUs,
-      speed: item.speed
+      // Seconds, because that is the unit `edit_item` accepts. A surface that takes seconds
+      // and reports microseconds is a trap with a plausible-looking value in it — 10 read
+      // back as 10000000 invites a round trip that lands the clip 115 days into the file.
+      sourceStartSeconds: item.sourceStartUs / 1_000_000,
+      speed: item.speed,
+      // What is left of the source from here, so a caller can size a trim or a transition's
+      // handles without deriving it from two other numbers in different units.
+      ...(asset && asset.durationUs > 0
+        ? {
+            sourceRemainingSeconds: Math.max(0, asset.durationUs - item.sourceStartUs) / 1_000_000
+          }
+        : {})
     },
     layout: { ...item.layout },
     canvas: { width: tl.width, height: tl.height },
     // Only on text items, and only once something has been set: absent means the item draws
     // the default look, which is a different statement from "styled, with these defaults".
     ...(item.text ? { text: item.text } : {}),
+    // Absent means "no adjustments", which is a different statement from "adjustments, all at
+    // their identity values" — the second is a caller having set something that does nothing.
+    ...(item.adjustments ? { adjustments: item.adjustments } : {}),
+    ...(item.blendMode ? { blendMode: item.blendMode } : {}),
     audio: { volume: item.volume, fadeInFrames: item.fadeInFrames, fadeOutFrames: item.fadeOutFrames },
     asset: asset
       ? {

@@ -13,10 +13,15 @@ import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
 
 /**
- * Everything on this panel maps to a field the project format actually has. Filters,
- * transitions and colour grades are listed as disabled rather than omitted: the greyed-out
- * rows are the honest map of what the engine cannot do yet, and a tile that adds an effect
- * nothing renders is a dead control you only discover when the export comes back unchanged.
+ * Everything on this panel maps to a field the project format actually has. Filters and
+ * colour grades are listed as disabled rather than omitted: the greyed-out rows are the
+ * honest map of what the engine cannot do yet, and a tile that adds an effect nothing
+ * renders is a dead control you only discover when the export comes back unchanged.
+ *
+ * The obligation runs both ways, which is easy to forget. Transitions sat in that disabled
+ * list while the engine had no way to draw one; it draws seven kinds now, so leaving the row
+ * greyed out would be the same lie pointing the other way — a working feature advertised as
+ * absent, which nobody thinks to check.
  */
 export function EffectsPanel(): ReactNode {
   const selected = useSelectedItems()
@@ -139,7 +144,7 @@ export function EffectsPanel(): ReactNode {
 
         <Section title="Not yet in the engine">
           <div className="grid grid-cols-2 gap-1.5">
-            {['Blur', 'Colour grade', 'Crop', 'Transitions'].map((name) => (
+            {['Blur', 'Colour grade', 'Crop'].map((name) => (
               <Button key={name} variant="subtle" disabled>
                 {name}
               </Button>
@@ -149,9 +154,22 @@ export function EffectsPanel(): ReactNode {
             <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
             <p className="text-[10px] leading-relaxed">
               These are drawn disabled rather than hidden because the project format has no
-              field for them. They will light up when it does.
+              field for them. They will light up when it does. The canvas can blur — that much
+              is measured — but nothing reads a blur off an item yet, and a tile that sets a
+              field no renderer consults is the dead control this panel exists to avoid.
             </p>
           </div>
+        </Section>
+
+        {/* Transitions were in the list above until the engine could draw them. They are not
+            here as a tile because a transition belongs to a cut rather than to the selected
+            clip — there is no correct answer to "which edge did you mean" from a panel. */}
+        <Section title="Transitions">
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            Click the marker on any cut in the timeline. A transition lives on the junction
+            between two touching clips, not on either one of them, so the timeline is where it
+            is set — including the cuts that cannot take one, which say why.
+          </p>
         </Section>
       </ScrollArea>
     </Panel>

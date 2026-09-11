@@ -20,6 +20,7 @@ import {
 import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
+import { AdjustmentsSection } from './AdjustmentsSection'
 import { TextStyleSection } from './TextStyleSection'
 
 /**
@@ -294,6 +295,15 @@ export function Inspector(): ReactNode {
           <TextStyleSection
             items={textItems}
             asset={findAsset(project, textItems[0]!.assetId)}
+          />
+        )}
+
+        {/* Adjustments apply to anything with a picture. Audio-only items have nothing to
+            filter, so they get no section rather than a set of sliders that do nothing. */}
+        {timeline && selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false) && (
+          <AdjustmentsSection
+            items={selected.filter((item) => findAsset(project, item.assetId)?.hasVideo !== false)}
+            timeline={timeline}
           />
         )}
 
