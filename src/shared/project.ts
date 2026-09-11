@@ -225,6 +225,26 @@ export function allItems(timeline: Timeline): Item[] {
 /**
  * Every item playing at `frame`, ordered the way the compositor must draw them:
  * lowest video track first, so later entries paint on top.
+ *
+ * **This answers a question about picture, not about sound.** `hidden` and `muted` are two
+ * independent properties of a track and they govern two independent outputs:
+ *
+ * - `hidden` blanks the **picture** and nothing else. A hidden video track carrying speech
+ *   keeps being heard. This is what every NLE does, and the reason is editorial: hiding a
+ *   layer to see what is underneath it must not silently change the mix you are judging.
+ * - `muted` silences the **sound** and nothing else, on a track of either kind — a video
+ *   track carries audio, so it needs a mute of its own, and `AudioEngine` honours
+ *   `track.muted` regardless of `track.kind`.
+ *
+ * So a consumer that wants sound must not filter on `hidden`, and must not reach this
+ * function for the list — `AudioEngine.update` walks the tracks itself, deliberately,
+ * because a muted track still has to reach its analyser or the meter goes dark and the user
+ * cannot see what they muted.
+ *
+ * The trap this replaced: the compositor's "pause anything I did not draw" sweep silenced a
+ * hidden track as a side effect, so hiding a picture killed its sound with no way to get it
+ * back short of un-hiding. An element is idle only when *neither* the compositor nor the
+ * audio engine wants it.
  */
 export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind): Item[] {
   const out: Item[] = []

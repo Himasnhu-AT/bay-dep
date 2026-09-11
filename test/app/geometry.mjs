@@ -20,33 +20,33 @@ const { evaluate, close } = await attach()
 
 await runProbe(async () => {
 
-const placed = await evaluate(`(async () => {
-  const { store } = window.bayEngine
-  const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
-  if (!imported.length) throw new Error('import returned nothing')
-  const asset = imported[0].asset
-  store.getState().addAssets([asset])
-  const itemId = store.getState().placeAsset(asset.id, 0)
-  return { assetId: asset.id, itemId, source: [asset.width, asset.height] }
-})()`)
+const skipPlacement = process.env.VERIFY_PRECONDITION === '1'
 
-// Wait on the preconditions, not on a timer. A fixed sleep is a guess about how long a cold
-// start takes, and when the guess is wrong this probe used to report an unsized 300x150
-// canvas as "the drawn rect does not match the layout" — accusing the compositor of a fault
-// when the compositor had never run.
-if (process.env.VERIFY_PRECONDITION !== '1') {
-  for (const [label, expression] of Object.values(CANVAS_READY)) {
-    await requirePrecondition(evaluate, label, expression)
-  }
-  await requirePrecondition(
-    evaluate,
-    'the clip has decoded a picture to draw',
-    `window.bayEngine.engine.pool.readiness(${JSON.stringify('PLACED_ASSET')}).hasPicture`.replace(
-      JSON.stringify('PLACED_ASSET'),
-      JSON.stringify(placed.assetId)
-    )
-  )
+const placed = skipPlacement
+  ? { assetId: null, source: ['-', '-'] }
+  : await evaluate(`(async () => {
+      const { store } = window.bayEngine
+      const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+      if (!imported.length) throw new Error('import returned nothing')
+      const asset = imported[0].asset
+      store.getState().addAssets([asset])
+      const itemId = store.getState().placeAsset(asset.id, 0)
+      return { assetId: asset.id, itemId, source: [asset.width, asset.height] }
+    })()`)
+
+// Wait on the preconditions, never on a timer. A fixed sleep is a guess about how long a
+// cold start takes, and when the guess was wrong this probe reported an unsized 300x150
+// canvas as "the drawn rect does not match the layout" — accusing the compositor of a
+// fault when the compositor had never run. `VERIFY_PRECONDITION=1` places nothing, so the
+// preconditions cannot hold and the probe must say CANNOT MEASURE rather than FAIL.
+for (const [label, expression] of Object.values(CANVAS_READY)) {
+  await requirePrecondition(evaluate, label, expression, { timeoutMs: skipPlacement ? 4000 : 20000 })
 }
+await requirePrecondition(
+  evaluate,
+  'the clip has decoded a picture to draw',
+  `window.bayEngine.engine.pool.readiness(${JSON.stringify(placed.assetId)}).hasPicture`
+)
 
 /**
  * Self-check: break the draw and confirm the probe notices.

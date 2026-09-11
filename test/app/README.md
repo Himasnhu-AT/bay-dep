@@ -160,3 +160,47 @@ a reason to suspect it rather than trust it. Settling it needs an environment wh
 be applied *and removed* on demand. If you can produce one, the experiment is: arm a plain
 `requestAnimationFrame` while hidden, return the page to visible, and check whether it ever fires.
 If it always fires, delete the staleness re-arm.
+
+
+## "I could not measure" is a third result, and it needs its own exit code
+
+`geometry.mjs` once ran against a freshly launched instance and printed:
+
+    timeline          1920x1080 -> canvas 300x150
+    measured columns  [300,-1]      all 20 bands 0% nonZero
+    FAIL: drawn rect does not match the layout
+
+**300x150 is the HTML default canvas size.** The element had never been sized by the engine, so
+nothing had been composited — and the probe rendered that as a claim about the compositor's
+arithmetic. That is worse than a flake. A flake teaches people to re-run; a false accusation
+sends them into code that was working.
+
+So every probe here distinguishes three outcomes:
+
+    0   measured, and it is right
+    1   measured, and it is wrong        <- a finding about the code
+    2   could not measure                <- a finding about the harness
+
+`cdp.mjs` provides `requirePrecondition(evaluate, label, expression)` and `runProbe(body)`. A
+precondition that does not hold throws `PreconditionError`, which `runProbe` turns into
+`CANNOT MEASURE: <the precondition, named>` and exit 2. `CANVAS_READY` collects the three that
+every canvas measurement depends on: the canvas has been sized by the engine, the engine has
+composited at least once, and the timeline has an item under the playhead.
+
+**Wait on the precondition, never on a timer.** Every fixed sleep is a guess about how long a
+cold start takes, and the guess is wrong on the machine that happens to be compiling something
+else. The 300x150 run above was a 2.5s sleep that was not enough.
+
+Self-check for the machinery itself, because it is subject to the same rule as everything else:
+
+```bash
+PORT=<port> VERIFY_PRECONDITION=1 node test/app/geometry.mjs   # places nothing; must exit 2
+PORT=<port> VERIFY_PROBE=1        node test/app/geometry.mjs   # breaks the draw; must exit 0
+```
+
+Verified: the first prints `CANNOT MEASURE: the timeline has an item under the playhead` and
+exits 2; the second still detects a halved destination rect and exits 0.
+
+**And read the probe's real exit code.** `node probe.mjs | head` reports `head`'s status, not the
+probe's — the same pipe trap the Rust tree records for `./test.sh | tail`. It has already caused
+one probe to be reported as a broken gate when it was working correctly.
