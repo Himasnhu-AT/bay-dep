@@ -4,32 +4,86 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**bay** — a native macOS video editor. A Rust workspace under `rust/`: a GPUI desktop shell
-(`bay-ui`, reached by a 5-line `rust/desktop/src/main.rs`) over a platform-agnostic engine (wgpu
-compositor, effects, masks, audio, text, project model, tick math), plus `bay-mcp`, which exposes
-the same engine as an MCP server.
+**bay** — a video editor. There are **two trees**, and which one you are in decides everything:
 
-**`rust/` is the product.** The JS/web stack this was forked from used to live in `dep/` as a
-parity reference; it has been deleted.
+- **`/` (repo root) — the product that ships.** An Electron app: React 19 + Vite 7 + Tailwind 4 +
+  TypeScript. Main process owns the filesystem, ffmpeg and persistence; the renderer owns the
+  interface and the compositing engine; `src/shared/` holds the contracts both are checked against.
+- **`dep/rust/` — the native engine, still live.** The Rust workspace (GPUI shell over a wgpu
+  compositor, effects, masks, audio, text, project model, tick math, plus `bay-mcp`). It was moved
+  here, not retired: work on it continues in parallel and it is expected to come back.
+
+**Read the section that matches the tree you are editing.** The Electron conventions are directly
+below; everything from "Architecture" onward describes `dep/rust/` and its paths are relative to
+that directory unless stated otherwise.
 
 See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 [`todo.completed.md`](./todo.completed.md), [`todo.pending.md`](./todo.pending.md) and
 [`todo.testing.md`](./todo.testing.md) — and `docs/native/`.
 
-## Commands
+## Commands — the Electron product (repo root)
 
 ```bash
-./run.sh              # debug build + launch — fastest loop
-BAY_UI_FRAMETIME=1 RELEASE=1 ./run.sh   # frame pacing: ticks/s, pictures/s, playback counters
-RELEASE=1 ./run.sh    # release build — much smoother playback
-./build.sh            # release build of the desktop app
-./test.sh             # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
-SLOW=1 ./test.sh      # also run the 40 tests that drive the Kokoro sidecar or load SigLIP
-STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures for capability verification
-BAY_ONLINE=1 ./test.sh   # let cargo reach the network — only needed after changing a dependency
-
-cd rust && env -u CARGO_TARGET_DIR cargo test --workspace
+pnpm install          # pnpm, not npm — the workspace standard for TS projects
+pnpm dev              # electron-vite dev server + app, with HMR in the renderer
+pnpm build            # typecheck, then build main/preload/renderer into out/
+pnpm typecheck        # tsc over both projects; the renderer and node halves are separate
+pnpm pack             # unpacked app bundle, for checking real app identity
+pnpm dist             # signed/packaged artifact via electron-builder
 ```
+
+`pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
+`tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
+point: it is the only code that crosses the process boundary.
+
+`out/` is gitignored, as is `node_modules/`. `strict` and `noUncheckedIndexedAccess` are on in both
+projects — indexing an array yields `T | undefined` and you must handle it.
+
+## Conventions — the Electron product
+
+- **`src/shared/` is the contract, and it is written before the implementation.** `project.ts` is
+  the model, `ipc.ts` is every call the renderer may make into main. If the preload bridge, a main
+  handler and a React component disagree, it is because someone added a channel without adding it
+  here. Don't.
+- **Timeline time is frames at the timeline's fps, never seconds.** Source offsets into media are
+  microseconds, because the source has a frame rate we do not control. The conversions live in
+  `project.ts` and are the only place the two are allowed to meet.
+- **Assets are the "what", items the "where and when".** One asset backs many items. Moving a clip
+  must never touch the asset.
+- **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
+  `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
+  not land on the undo stack.
+- **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
+  serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
+  without them, and that is the most common way this goes wrong.
+- **Nothing reaches the network.** No telemetry, no analytics, no remote fonts or images. The CSP in
+  `src/renderer/index.html` permits no remote origin; loosening it is a product decision, not a fix.
+- **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
+  component re-renders at the frame rate during playback.
+- **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at
+  the *project's* fps rather than the display's. Counting callbacks makes playback correct at 60Hz
+  and double speed at 120Hz; compositing per refresh makes a 120Hz screen pay four times over to show
+  30fps of footage. A frame-rate probe must therefore count **pictures**, not ticks — a tick that
+  redraws the same image is indistinguishable from a new frame, so "p99 2ms" is entirely compatible
+  with a picture updating four times a second.
+
+## Commands — the Rust engine (`dep/`)
+
+```bash
+dep/run.sh            # debug build + launch — fastest loop
+BAY_UI_FRAMETIME=1 RELEASE=1 dep/run.sh   # frame pacing: ticks/s, pictures/s, playback counters
+RELEASE=1 dep/run.sh  # release build — much smoother playback
+dep/build.sh          # release build of the desktop app
+dep/test.sh           # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
+SLOW=1 dep/test.sh    # also run the 40 tests that drive the Kokoro sidecar or load SigLIP
+STRICT=1 dep/test.sh  # turn GPU/ffmpeg skips into hard failures for capability verification
+BAY_ONLINE=1 dep/test.sh   # let cargo reach the network — only needed after changing a dependency
+
+cd dep/rust && env -u CARGO_TARGET_DIR cargo test --workspace
+```
+
+These scripts resolve `$ROOT/rust` relative to themselves, so they kept working after the move;
+`$REPO` was introduced for the few paths that point at the repo root (`script/`, `dist/`).
 
 **Forty tests are `#[ignore]`d and run only under `SLOW=1`** — `bay-speech/tests/{kokoro,lifecycle}.rs`,
 `bay-mcp/tests/captions.rs`, `bay-vision/tests/encode.rs`, and `bay-mcp`'s `narration_tests`. They
@@ -79,7 +133,11 @@ When several agents share this tree, scope commands to the crates you own (`carg
 and **never** run `cargo fmt --all` — it rewrites other people's in-flight files. The full gate is
 the lead's job, on a quiet tree.
 
-## Architecture
+## Architecture — the Rust engine
+
+Everything from here to the end of the file describes `dep/rust/`. Paths are written relative to
+`dep/`, so `rust/crates/bay-ui` on disk is `dep/rust/crates/bay-ui`. None of it applies to the
+Electron product at the repo root.
 
 ```
 rust/

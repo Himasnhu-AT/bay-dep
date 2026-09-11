@@ -13,8 +13,6 @@
     "start": "electron-vite preview",
     "build": "pnpm typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "lint": "eslint . --max-warnings 0",
-    "format": "prettier --write .",
     "pack": "pnpm build && electron-builder --dir",
     "dist": "pnpm build && electron-builder"
   },
