@@ -90,6 +90,19 @@ reports FAIL. Run it after changing a probe:
 PORT=<port> VERIFY_PROBE=1 node test/app/geometry.mjs   # exits 0 only if the probe caught it
 ```
 
+**8. Agreement between instruments is not evidence when they share a premise.** Trap 6 was
+believed because three people measured the same boundary independently and got the same answer.
+They were not three observers; they were one method applied three times, and what agreed was the
+assumption underneath it — that a 0.0% band meant nothing had been drawn there. Corroboration only
+counts when the second measurement can fail in a way the first cannot: decoding the source
+directly is independent of the canvas, so it settled in one run what three canvas measurements
+had entrenched. When a result is confirmed, ask what the confirmations have in common before
+counting them.
+
+The same error has a mirror image, and both bit this project within an hour: a *single* real
+measurement standing beside an unverified premise, lending it authority it had not earned. One
+number checked and one assumed reads exactly like two things checked.
+
 **The probe surface is opt-in.** `window.bayEngine` only exists when `localStorage['bay.debug']`
 is `'1'`, so it is absent from a release build unless someone deliberately sets it. `cdp.mjs`
 sets the flag and reloads before waiting for the engine; any new probe should use `attach()`

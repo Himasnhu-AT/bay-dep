@@ -328,15 +328,25 @@ export class Compositor {
   }
 }
 
-interface Box {
+export interface Box {
   left: number
   top: number
   width: number
   height: number
 }
 
-/** A drawable box, or null when the layout cannot produce one. */
-function layoutBox(item: Item): Box | null {
+/**
+ * The destination rectangle `drawImage` is given, in timeline coordinates, or null when the
+ * layout cannot produce one.
+ *
+ * Exported because it is the whole of the compositor's placement arithmetic and it is worth
+ * pinning. A `coverLayout` for a portrait clip in a landscape project legitimately produces a
+ * negative `top` and a `height` three times the canvas — the image is meant to overflow on
+ * both sides — and that shape looks wrong enough that three people have now read it as a bug.
+ * The rect goes to `drawImage` unclamped, on purpose: clamping it into the canvas is what
+ * would actually break cover framing.
+ */
+export function layoutBox(item: Item): Box | null {
   const layout = item.layout
   const width = finite(layout.width, 0)
   const height = finite(layout.height, 0)
