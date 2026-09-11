@@ -1,0 +1,185 @@
+@import 'tailwindcss';
+
+/*
+ * The palette is deliberately narrow: four greys with a faint cool cast, three ink levels,
+ * two border weights, one warm accent. The footage in the preview is the brightest thing
+ * on screen and nothing in the chrome is allowed to compete with it — which is why there
+ * are no gradients on surfaces and why the only saturated colour is the accent.
+ *
+ * Declaring these inside `@theme` (rather than a plain `:root`) is what makes them real
+ * Tailwind utilities: `bg-surface-1`, `text-ink-1`, `border-line`, `ring-accent`.
+ */
+@theme {
+  --color-surface-0: #0b0c0e;
+  --color-surface-1: #121317;
+  --color-surface-2: #191b20;
+  --color-surface-3: #22252b;
+
+  --color-ink-0: #e8eaed;
+  --color-ink-1: #9ba1ab;
+  --color-ink-2: #61666f;
+
+  --color-line: #24272e;
+  --color-line-strong: #32363f;
+
+  --color-accent: #e9a23b;
+  --color-accent-ink: #0b0c0e;
+  --color-playhead: #f5f7fa;
+  --color-danger: #e5484d;
+
+  /* Track-kind tints. Clip bodies are these; their borders are the -edge variant. */
+  --color-clip-video: #2c3a4a;
+  --color-clip-video-edge: #3d5166;
+  --color-clip-audio: #25382f;
+  --color-clip-audio-edge: #356047;
+  /* The waveform has to read on top of `clip-audio`, so it is lighter than the edge. */
+  --color-waveform: #5fd39a;
+
+  --font-sans:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+
+  /* Nothing in this app is rounder than 6px. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 6px;
+  --radius-2xl: 6px;
+  --radius-3xl: 6px;
+
+  /* The one elevation, for popovers and the modal. Borders do the rest of the work. */
+  --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.72), 0 0 0 1px var(--color-line-strong);
+
+  /* Motion only where it communicates. Both are referenced from utilities below. */
+  --duration-fast: 120ms;
+  --duration-panel: 150ms;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    /* An NLE is a fixed-frame application: the window never scrolls, panels do. */
+    overflow: hidden;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    cursor: default;
+  }
+
+  /* Text the user is meant to read or edit opts back into selection. */
+  input,
+  textarea,
+  [contenteditable='true'] {
+    user-select: text;
+    cursor: text;
+  }
+
+  :focus {
+    outline: none;
+  }
+
+  /*
+   * One focus treatment everywhere, and it is the accent. Keyboard users must be able to
+   * see where they are in a UI this dense; mouse users never see it because it is
+   * :focus-visible, not :focus.
+   */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Scrollbars are part of the chrome here, not the OS's idea of it. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #454a55;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  input[type='range'] {
+    accent-color: var(--color-accent);
+  }
+}
+
+@layer components {
+  /*
+   * The transparency checkerboard behind the preview canvas. Two overlapping 45° gradients
+   * at a 12px cell; kept dark enough that it never reads brighter than the footage on top.
+   */
+  .checkerboard {
+    background-color: #15171b;
+    background-image:
+      linear-gradient(45deg, #1d2026 25%, transparent 25%, transparent 75%, #1d2026 75%),
+      linear-gradient(45deg, #1d2026 25%, transparent 25%, transparent 75%, #1d2026 75%);
+    background-size: 12px 12px;
+    background-position:
+      0 0,
+      6px 6px;
+  }
+
+  /* The only two motion primitives. Everything that animates uses one of them. */
+  .t-fast {
+    transition-property: color, background-color, border-color, opacity, box-shadow;
+    transition-duration: var(--duration-fast);
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .t-panel {
+    transition-property: opacity, transform;
+    transition-duration: var(--duration-panel);
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  /* macOS window drag regions. Children of a drag region must opt out explicitly. */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/*
+ * A video editor that animates against the user's stated wishes is a video editor they
+ * stop trusting. Motion here is decoration on top of instant state changes, so removing
+ * it costs nothing.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

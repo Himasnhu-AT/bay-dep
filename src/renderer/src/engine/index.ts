@@ -1,0 +1,292 @@
+/**
+ * Where the engine meets React and the store — and the only file in `engine/` that knows
+ * either exists. Everything else here takes its inputs as arguments, which is what makes
+ * the clock, the compositor and the audio graph testable without a window.
+ *
+ * The wiring is one rule: **the clock is the only thing that says which frame to draw.**
+ * An edit, a scrub, a seek and playback all arrive as a frame number from the same place,
+ * so there is no second path that can draw a different frame than the playhead claims.
+ */
+
+import { useEffect, useRef, type RefObject } from 'react'
+import { timelineDuration } from '@shared/project'
+import { selectTimeline, useEditor, type EditorStore } from '@/store/editor'
+import { AudioEngine, type TrackLevel } from './audio'
+import { Compositor } from './compositor'
+import { PlaybackClock, type ClockStats } from './clock'
+import { MediaPool } from './mediaPool'
+
+export { MediaPool, assetUrl, isDrawable, DEFAULT_MAX_VIDEO_ELEMENTS } from './mediaPool'
+export type { MediaEntry, MediaReadiness, MediaStatus } from './mediaPool'
+export { PlaybackClock } from './clock'
+export type { ClockStats, ClockOptions, FrameListener } from './clock'
+export { Compositor } from './compositor'
+export type { DrawOptions, DrawStats, RenderTarget } from './compositor'
+export { AudioEngine } from './audio'
+export type { AudioUpdate, TrackLevel } from './audio'
+export { FrameExporter, ExportCancelled } from './exporter'
+export type { ExporterOptions, ExportOutcome, ExportProgressReport } from './exporter'
+export {
+  DRIFT_TOLERANCE_SECONDS,
+  clamp,
+  clamp01,
+  finite,
+  sourceSecondsAt
+} from './sync'
+
+export interface EngineHandle {
+  clock: PlaybackClock
+  pool: MediaPool
+  compositor: Compositor
+  audio: AudioEngine
+  /** Frame pacing and compositing cost. Poll it; it allocates nothing worth caching. */
+  stats(): ClockStats
+  /** Per-track audio levels, keyed by track id. Reads the analysers at call time. */
+  levels(): Record<string, TrackLevel>
+  /** Redraws the current frame on the next animation frame. Coalesced. */
+  redraw(): void
+}
+
+/**
+ * The engine as one object, free of React. The hook below owns its lifetime; nothing else
+ * should construct one, because two engines would mean two pools and two sets of elements
+ * fighting over the same `currentTime`.
+ */
+class Engine {
+  readonly pool = new MediaPool()
+  readonly compositor = new Compositor(this.pool)
+  readonly audio = new AudioEngine(this.pool)
+  readonly clock = new PlaybackClock()
+
+  #getCanvas: () => HTMLCanvasElement | null = () => null
+  #offs: Array<() => void> = []
+  #pendingDraw: number | null = null
+  /** The canvas currently under the resize observer, and the CSS size it last reported. */
+  #observed: HTMLCanvasElement | null = null
+  #resizeObserver: ResizeObserver | null = null
+  #lastClientWidth = 0
+  #lastClientHeight = 0
+
+  attach(getCanvas: () => HTMLCanvasElement | null): () => void {
+    this.#getCanvas = getCanvas
+    const state = useEditor.getState()
+    this.#syncTimeline(state)
+
+    this.#offs.push(this.clock.onFrame(this.#onFrame))
+    this.#offs.push(
+      this.clock.onEnd(() => {
+        useEditor.getState().setPlaying(false)
+      })
+    )
+    this.#offs.push(useEditor.subscribe(this.#onStoreChange))
+
+    this.clock.seek(state.playhead)
+    this.redraw()
+    return () => this.detach()
+  }
+
+  detach(): void {
+    for (const off of this.#offs) off()
+    this.#offs = []
+    if (this.#pendingDraw !== null) {
+      cancelAnimationFrame(this.#pendingDraw)
+      this.#pendingDraw = null
+    }
+    this.#resizeObserver?.disconnect()
+    this.#resizeObserver = null
+    this.#observed = null
+    this.clock.dispose()
+    this.audio.dispose()
+    this.compositor.reset()
+    this.pool.dispose()
+    this.#getCanvas = () => null
+  }
+
+  redraw(): void {
+    if (this.#pendingDraw !== null) return
+    this.#pendingDraw = requestAnimationFrame(() => {
+      this.#pendingDraw = null
+      this.#drawTimed(this.clock.frame)
+    })
+  }
+
+  // -- internals ------------------------------------------------------------
+
+  readonly #onFrame = (frame: number): void => {
+    this.#drawTimed(frame)
+    // Only when the clock is the author of the playhead. During a scrub the drag owns it,
+    // and writing it back would fight the pointer. `setPlayhead` clamps, so this cannot
+    // run past the end.
+    if (this.#clockOwnsPlayhead(useEditor.getState())) useEditor.getState().setPlayhead(frame)
+  }
+
+  readonly #onStoreChange = (state: EditorStore, previous: EditorStore): void => {
+    // The store notifies on every change, including a toast or a selection. Deriving the
+    // duration walks every item on every track, so it is gated on the project actually
+    // having changed rather than run per keystroke.
+    if (state.project !== previous.project) this.#syncTimeline(state)
+
+    if (state.scrubbing !== previous.scrubbing) this.clock.setYielding(state.scrubbing)
+
+    if (state.playing !== previous.playing) {
+      if (state.playing) {
+        void this.audio.resume()
+        this.clock.seek(state.playhead)
+        this.clock.start()
+      } else {
+        this.clock.stop()
+        this.audio.stop()
+        // Repaint in scrub mode so the video elements are paused and pinned rather than
+        // left running past the point the user stopped at.
+        this.redraw()
+      }
+    }
+
+    // While the clock is the author of the playhead, echoing its own writes back into
+    // `seek` would re-anchor it every frame. But "running" alone is the wrong test: a
+    // scrub that starts *during* playback leaves the clock running and yielding, and the
+    // drag is then the author — without this the picture would sit still under the
+    // pointer for the whole drag and only catch up on release.
+    if (!this.#clockOwnsPlayhead(state) && state.playhead !== previous.playhead) {
+      this.clock.seek(state.playhead)
+    }
+
+    if (state.project !== previous.project) this.redraw()
+  }
+
+  /**
+   * Redraws when the canvas's CSS box changes, because the backing store is sized from it.
+   * The interface sets only the CSS size; nothing else would tell the engine that the
+   * preview now has more pixels to fill, and it would stay at the resolution it was first
+   * laid out at. Guarded on the size actually changing so that a layout whose CSS size
+   * depends on the backing store cannot drive this in a loop.
+   */
+  #observe(canvas: HTMLCanvasElement): void {
+    if (this.#observed === canvas) return
+    this.#resizeObserver?.disconnect()
+    this.#lastClientWidth = 0
+    this.#lastClientHeight = 0
+    this.#resizeObserver = new ResizeObserver(() => {
+      const observed = this.#observed
+      if (!observed) return
+      if (
+        observed.clientWidth === this.#lastClientWidth &&
+        observed.clientHeight === this.#lastClientHeight
+      ) {
+        return
+      }
+      this.#lastClientWidth = observed.clientWidth
+      this.#lastClientHeight = observed.clientHeight
+      this.redraw()
+    })
+    this.#resizeObserver.observe(canvas)
+    this.#observed = canvas
+  }
+
+  #clockOwnsPlayhead(state: EditorStore): boolean {
+    return this.clock.running && !state.scrubbing
+  }
+
+  #syncTimeline(state: EditorStore): void {
+    const timeline = selectTimeline(state)
+    this.clock.setFps(timeline?.fps ?? 30)
+    this.clock.setDuration(timeline ? timelineDuration(timeline) : 0)
+  }
+
+  #drawTimed(frame: number): void {
+    const canvas = this.#getCanvas()
+    if (!canvas) return
+    this.#observe(canvas)
+    const state = useEditor.getState()
+    const timeline = selectTimeline(state)
+    if (!timeline) return
+
+    const projectWidth = Math.max(1, Math.round(timeline.width))
+    const projectHeight = Math.max(1, Math.round(timeline.height))
+    const { width, height } = previewBacking(canvas, projectWidth, projectHeight)
+    if (canvas.width !== width) canvas.width = width
+    if (canvas.height !== height) canvas.height = height
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    // Resizing a canvas resets its transform, and the compositor draws in timeline
+    // coordinates whatever the backing store is — the same mechanism the exporter uses to
+    // composite at delivery size rather than upscaling a preview.
+    ctx.setTransform(width / projectWidth, 0, 0, height / projectHeight, 0, 0)
+
+    const playing = this.clock.running && !state.scrubbing
+    const started = performance.now()
+    this.compositor.drawFrame(ctx, state.project, timeline, frame, {
+      mode: playing ? 'playback' : 'scrub'
+    })
+    this.clock.recordComposite(performance.now() - started)
+
+    // Creating an AudioContext before anything wants sound leaves a suspended context on
+    // every launch; once one exists it has to be kept in step even while paused, so that
+    // pressing play starts from the right sample.
+    if (playing || this.audio.hasContext) {
+      this.audio.update({ project: state.project, timeline, frame, playing })
+    }
+  }
+}
+
+/**
+ * The backing-store size for the preview: the project's resolution, capped at what the
+ * canvas can actually show.
+ *
+ * Compositing more pixels than the project has is invention, and compositing more than the
+ * screen displays is waste — a 4K project in an 800px panel would otherwise composite 8.3M
+ * pixels every frame to show 0.5M of them. Export is unaffected: it runs its own canvas at
+ * the delivery size, which is what keeps a 4K export from being a preview scaled up.
+ *
+ * The scale is quantised to sixteenths and rounded *up*, so dragging a panel divider
+ * reallocates the backing store a handful of times rather than on every pixel, and never
+ * lands below the resolution the display is asking for.
+ */
+function previewBacking(
+  canvas: HTMLCanvasElement,
+  projectWidth: number,
+  projectHeight: number
+): { width: number; height: number } {
+  const cssWidth = canvas.clientWidth
+  const cssHeight = canvas.clientHeight
+  // Before first layout there is no box to size against; the project's own resolution is
+  // the honest default, and the resize observer corrects it as soon as there is one.
+  if (cssWidth <= 0 || cssHeight <= 0) return { width: projectWidth, height: projectHeight }
+
+  const dpr = window.devicePixelRatio || 1
+  const needed = Math.max((cssWidth * dpr) / projectWidth, (cssHeight * dpr) / projectHeight)
+  const scale = Math.min(1, Math.ceil(needed * 16) / 16)
+  return {
+    width: Math.max(1, Math.round(projectWidth * scale)),
+    height: Math.max(1, Math.round(projectHeight * scale))
+  }
+}
+
+/**
+ * Wires the engine to a canvas for the life of the component.
+ *
+ * The canvas is read through the ref on every draw rather than captured once, so a remount
+ * that swaps the element is picked up without re-attaching the store subscription.
+ */
+export function useEngine(canvasRef: RefObject<HTMLCanvasElement | null>): EngineHandle {
+  const engineRef = useRef<Engine | null>(null)
+  if (engineRef.current === null) engineRef.current = new Engine()
+  const engine = engineRef.current
+
+  useEffect(() => engine.attach(() => canvasRef.current), [engine, canvasRef])
+
+  const handleRef = useRef<EngineHandle | null>(null)
+  if (handleRef.current === null) {
+    handleRef.current = {
+      clock: engine.clock,
+      pool: engine.pool,
+      compositor: engine.compositor,
+      audio: engine.audio,
+      stats: () => engine.clock.stats(),
+      levels: () => engine.audio.levels(),
+      redraw: () => engine.redraw()
+    }
+  }
+  return handleRef.current
+}

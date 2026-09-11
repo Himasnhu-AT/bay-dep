@@ -1,0 +1,56 @@
+appId: com.freeholt.bay
+productName: bay
+copyright: Freeholt
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+
+# Two things cannot live inside the asar archive. The ffmpeg binaries because the OS cannot
+# spawn a file that is not on disk, and better-sqlite3 because a .node module has to be
+# dlopen'd from a real path. Both work perfectly in development and fail only in a packaged
+# build, which is the worst kind of packaging bug to find late.
+asarUnpack:
+  - node_modules/ffmpeg-ffprobe-static/**
+  - node_modules/better-sqlite3/**
+
+# bay is offline software. No update feed is configured, and none should be: an editor that
+# phones a server on launch is exactly what this is not.
+publish: null
+
+mac:
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: bay does not use the camera.
+    NSMicrophoneUsageDescription: bay does not use the microphone.
+  # Every document bay opens is one of its own; it claims nothing else.
+  fileAssociations:
+    - ext: bay
+      name: bay project
+      role: Editor
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+linux:
+  target:
+    - AppImage
+  category: AudioVideo
