@@ -21,18 +21,29 @@ export function StatusBar(): ReactNode {
   const selectionCount = useEditor((state) => state.selection.length)
   const assetCount = useEditor((state) => state.project.assets.length)
   const [tools, setTools] = useState<{ ready: boolean } | null>(null)
+  const [storage, setStorage] = useState<{ ready: boolean; error: string | null } | null>(null)
 
   useEffect(() => {
     const api = bay()
     if (!api) return
     let live = true
+    // Both of these stay null when the bridge cannot answer, and the bar then says
+    // nothing. A subsystem that failed and one we could not ask about are different
+    // things, and only the first is worth accusing on screen.
     void api.app
       .mediaToolsReady()
       .then((result) => {
         if (live) setTools(result)
       })
-      // A bridge that cannot answer is not the same as ffmpeg being absent, so this stays
-      // null and the bar says nothing rather than accusing a working install.
+      .catch(() => undefined)
+    // Recents and reopen-last-project degrade silently without the database: an empty
+    // recents list looks identical whether storage is broken or you simply have no
+    // projects yet. This is the only thing that tells them apart.
+    void api.app
+      .storageReady()
+      .then((result) => {
+        if (live) setStorage(result)
+      })
       .catch(() => undefined)
     return () => {
       live = false
@@ -59,6 +70,19 @@ export function StatusBar(): ReactNode {
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Media tools missing
+          </span>
+        </Tooltip>
+      )}
+
+      {storage && !storage.ready && (
+        <Tooltip
+          side="top"
+          label={storage.error ?? 'The project database did not open'}
+          shortcut="recent projects will stay empty"
+        >
+          <span className="flex items-center gap-1 text-danger">
+            <AlertTriangle aria-hidden="true" className="size-3" />
+            Storage unavailable
           </span>
         </Tooltip>
       )}

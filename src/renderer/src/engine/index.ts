@@ -104,6 +104,12 @@ class Engine {
     )
     this.#offs.push(useEditor.subscribe(this.#onStoreChange))
 
+    // Media becoming drawable is the fourth thing that changes the picture, alongside the
+    // clock, the store and the canvas size — and it was the missing one. A decode or a
+    // seek completing has to ask for a frame, or the draw that found it loading is the
+    // last one anybody schedules.
+    this.#offs.push(this.pool.onReady(() => this.redraw()))
+
     // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
     // producing frames while the media elements play on, so the sound runs away from a
     // frozen picture — measured at 4.5 seconds of drift in six. Pausing is the honest

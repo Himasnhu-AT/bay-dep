@@ -63,6 +63,7 @@ interface PoolSlot extends MediaEntry {
 }
 
 export type EvictListener = (entry: MediaEntry) => void
+export type ReadyListener = (entry: MediaEntry) => void
 
 /**
  * The URL a media element loads from. The main process serves files over the `bay://`
@@ -107,6 +108,7 @@ function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
 export class MediaPool {
   readonly #slots = new Map<string, PoolSlot>()
   readonly #evictListeners = new Set<EvictListener>()
+  readonly #readyListeners = new Set<ReadyListener>()
   readonly #maxVideoElements: number
   #clock = 0
   #generation = 0
@@ -173,6 +175,21 @@ export class MediaPool {
     for (const slot of this.#slots.values()) visit(slot)
   }
 
+  /**
+   * Fires when an element becomes drawable — decoded, or finished seeking.
+   *
+   * This exists because media readiness is the one input to the picture that is not a
+   * store change, a clock tick or a resize, and those are the only things that schedule a
+   * draw. Without it a frame that found its media still loading draws the background,
+   * returns `pending`, and nothing ever asks again: the preview stays black over a clip
+   * that loaded correctly milliseconds later. Measured, in the running app, as a timeline
+   * with one ready clip and a canvas of exactly one colour.
+   */
+  onReady(listener: ReadyListener): () => void {
+    this.#readyListeners.add(listener)
+    return () => this.#readyListeners.delete(listener)
+  }
+
   onEvict(listener: EvictListener): () => void {
     this.#evictListeners.add(listener)
     return () => this.#evictListeners.delete(listener)
@@ -181,6 +198,7 @@ export class MediaPool {
   dispose(): void {
     for (const slot of [...this.#slots.values()]) this.#evict(slot)
     this.#evictListeners.clear()
+    this.#readyListeners.clear()
   }
 
   // -- internals ------------------------------------------------------------
@@ -242,7 +260,12 @@ export class MediaPool {
     const onReady = (): void => {
       slot.status = 'ready'
       delete slot.error
+      this.#announceReady(slot)
     }
+    // A completed seek is the second way an element becomes drawable, and it is the one
+    // that bites at a standing playhead: `readyState` drops below HAVE_CURRENT_DATA while
+    // a seek is in flight, so the frame that asked for it draws nothing.
+    const onSeeked = (): void => this.#announceReady(slot)
     const onError = (): void => {
       if (!slot.retriedWithoutCors && element.crossOrigin !== null) {
         // The protocol handler sends `Access-Control-Allow-Origin`, so this should never
@@ -266,14 +289,20 @@ export class MediaPool {
     const readyEvent = element instanceof HTMLImageElement ? 'load' : 'loadeddata'
     element.addEventListener(readyEvent, onReady)
     element.addEventListener('error', onError)
+    if (element instanceof HTMLVideoElement) element.addEventListener('seeked', onSeeked)
     slot.detach = () => {
       element.removeEventListener(readyEvent, onReady)
       element.removeEventListener('error', onError)
+      if (element instanceof HTMLVideoElement) element.removeEventListener('seeked', onSeeked)
     }
 
     element.src = url
     if (!(element instanceof HTMLImageElement)) element.load()
     return slot
+  }
+
+  #announceReady(slot: PoolSlot): void {
+    for (const listener of this.#readyListeners) listener(slot)
   }
 
   #evictIfOverCap(): void {

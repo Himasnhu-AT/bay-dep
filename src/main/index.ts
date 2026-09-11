@@ -12,6 +12,8 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { registerBayScheme, registerBayProtocolHandler } from './protocol'
 import { registerIpcHandlers } from './ipc'
 import { closeStore } from './project/store'
+import { cacheDir } from './paths'
+import { sweepStaleCaches } from './media/cache-key'
 import { cancelAll } from './export/encode'
 
 // The main bundle is ESM, where `__dirname` does not exist. Everything loaded by path — the
@@ -84,6 +86,15 @@ void app.whenReady().then(() => {
 
   registerBayProtocolHandler()
   registerIpcHandlers()
+
+  // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
+  // in bay evicts, so without this a scheme change leaks its entire previous cache for the
+  // life of the install. Startup is the only moment nothing is reading them.
+  void sweepStaleCaches(cacheDir()).then((removed) => {
+    if (removed.length > 0) {
+      console.log(`[bay] Reclaimed ${removed.length} stale cache director${removed.length === 1 ? 'y' : 'ies'}: ${removed.join(', ')}`)
+    }
+  })
 
   createWindow()
 

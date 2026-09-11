@@ -96,6 +96,17 @@ export class PlaybackClock {
     return this.#running
   }
 
+  /**
+   * The timeline length the clock is working to, in frames.
+   *
+   * Exposed because it is the one value that separates "the engine never heard about the
+   * project" from "the engine heard and something else is wrong": it is derived from the
+   * store's timeline, so a non-zero duration proves the store reached the engine.
+   */
+  get duration(): number {
+    return this.#duration
+  }
+
   setFps(fps: number): void {
     const next = Number.isFinite(fps) && fps > 0 ? fps : 30
     if (next === this.#fps) return

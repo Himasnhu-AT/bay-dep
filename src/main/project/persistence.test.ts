@@ -163,6 +163,125 @@ test('a saved project is readable JSON on disk, not an opaque blob', async () =>
   assert.ok(Array.isArray(parsed.timelines))
 })
 
+/**
+ * A version-1 `.bay` file, written out as a literal.
+ *
+ * The round-trip test below cannot hold the format still: it writes and reads through the
+ * same code, so renaming `durationInFrames` to `duration` would move both sides together and
+ * still pass — while every project already on a user's disk stopped loading. This fixture is
+ * the fixed point. Every key here is a promise made to files that already exist.
+ */
+const V1_ON_DISK = `{
+  "id": "prj_fixed",
+  "name": "Fixture",
+  "version": 1,
+  "assets": [
+    {
+      "id": "asset_1",
+      "kind": "video",
+      "name": "goodall.mp4",
+      "path": "/footage/goodall.mp4",
+      "durationUs": 67833333,
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "hasAudio": true,
+      "hasVideo": true,
+      "posterPath": null,
+      "waveformPath": null,
+      "createdAt": 1700000000000
+    }
+  ],
+  "timelines": [
+    {
+      "id": "tl_1",
+      "name": "Timeline 1",
+      "fps": 30,
+      "width": 1080,
+      "height": 1920,
+      "background": "#000000",
+      "tracks": [
+        {
+          "id": "trk_v1",
+          "kind": "video",
+          "name": "V1",
+          "locked": false,
+          "muted": false,
+          "hidden": false,
+          "items": [
+            {
+              "id": "item_1",
+              "assetId": "asset_1",
+              "trackId": "trk_v1",
+              "from": 0,
+              "durationInFrames": 150,
+              "sourceStartUs": 20000000,
+              "layout": {
+                "left": 0,
+                "top": 0,
+                "width": 1080,
+                "height": 1920,
+                "opacity": 1,
+                "rotation": 0
+              },
+              "volume": 1,
+              "fadeInFrames": 15,
+              "fadeOutFrames": 15,
+              "speed": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "activeTimelineId": "tl_1",
+  "createdAt": 1700000000000,
+  "updatedAt": 1700000000001
+}`
+
+test('a .bay file already on disk still loads, field for field', async () => {
+  const dir = scratch()
+  const target = join(dir, 'existing.bay')
+  writeFileSync(target, V1_ON_DISK, 'utf8')
+
+  const project = await readProjectFile(target)
+  assert.equal(project.name, 'Fixture')
+  assert.equal(project.activeTimelineId, 'tl_1')
+
+  const asset = project.assets[0]
+  assert.equal(asset?.path, '/footage/goodall.mp4')
+  assert.equal(asset?.durationUs, 67833333)
+  assert.equal(asset?.hasAudio, true)
+  assert.equal(asset?.posterPath, null)
+
+  const timeline = project.timelines[0]
+  assert.equal(timeline?.fps, 30)
+  assert.equal(timeline?.background, '#000000')
+
+  const item = timeline?.tracks[0]?.items[0]
+  assert.equal(item?.from, 0)
+  assert.equal(item?.durationInFrames, 150)
+  assert.equal(item?.sourceStartUs, 20000000)
+  assert.equal(item?.fadeInFrames, 15)
+  assert.equal(item?.speed, 1)
+  assert.equal(item?.layout.opacity, 1)
+  assert.equal(item?.layout.height, 1920)
+})
+
+test('what bay writes today is still loadable by the version-1 reader', async () => {
+  // The other direction: today's writer must not emit something the fixture's shape would
+  // not recognise. Compares key sets rather than values, since ids and timestamps differ.
+  const dir = scratch()
+  const written = join(dir, 'written.bay')
+  await writeProjectFile(namedProject('Today'), written)
+
+  const fresh = JSON.parse(readFileSync(written, 'utf8')) as Record<string, unknown>
+  const onDisk = JSON.parse(V1_ON_DISK) as Record<string, unknown>
+  for (const key of Object.keys(onDisk)) {
+    assert.ok(key in fresh, `today's writer no longer emits "${key}" — old readers will break`)
+  }
+})
+
 test('a project round-trips through write and read unchanged', async () => {
   const dir = scratch()
   const target = join(dir, 'round-trip.bay')

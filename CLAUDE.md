@@ -88,15 +88,33 @@ unfalsifiable code accumulates a suite around it.
 This shape — a correct-looking construct that nothing can reach — has now appeared four times in
 two days, across three subsystems and two authors. Expect it rather than being surprised by it.
 
-**Anything persisted outside the process is a compatibility surface, and a test that reads it
-through the same constant cannot hold it still.** Renaming `LAST_PROJECT_KEY` survived mutation
-because every test read and wrote through the constant, so the rename moved both sides together
-and nothing noticed — while on a real machine the new key finds nothing and every existing user
-silently loses their last project on upgrade. Database keys, the `.bay` field names, cache
-filenames and IPC channel strings all outlive the code that writes them. Pin them as **literals**
-in the test, never as a reference to the thing under test. This is the same discipline the Rust
-tree applies to the project wire format, and the reason is identical: the value is a promise made
-to data already on disk.
+**A test cannot hold still anything it defines jointly with the code.** Ask of every test: *if I
+renamed this, would the test rename with it?* If yes, it asserts a tautology. Four separate
+failures this week were that one structure — the key constant read by both sides, the
+writer/reader round trip, the mutation harness and the code it mutates, the harness and its own
+reporter. It is recognisable before it bites.
+
+The sharpest case is **persisted data, because its reader is one you cannot update**. Renaming
+`LAST_PROJECT_KEY` survived mutation: every test read and wrote through the constant, so the
+rename moved both sides together while on a real machine the new key finds nothing and every
+existing user silently loses their last project on upgrade. The same held for `.bay` documents —
+a round-trip test that writes with `writeProjectFile` and reads with `readProjectFile` passes
+through any field rename, while every project already on disk stops loading. The fix in both
+cases is a **literal**: a version-1 `.bay` file spelled out key by key in the test, plus the
+reverse check that today's writer still emits every key the fixture has.
+
+Scope it deliberately, though — not everything durable is a compatibility surface:
+
+- **Yes:** `.bay` field names, database keys, anything read back from disk by a build that is not
+  the build that wrote it.
+- **No:** IPC channel strings — preload and main ship in the same binary and move together by
+  construction, so there is no older reader to break.
+- **No:** cache filenames (`cacheKey`). A changed hash *orphans* entries rather than losing data;
+  the cost is re-deriving posters and peaks once. Pinning it would freeze an implementation detail
+  in exchange for no promise.
+
+The test is whether a reader you cannot change will see the old bytes. If not, pinning buys
+nothing and costs you the freedom to refactor.
 
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
