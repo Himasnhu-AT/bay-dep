@@ -16,6 +16,7 @@
 # downloads bay.app never gets.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$ROOT/.." && pwd)"
 
 cd "$ROOT/rust"
 echo "── build ──"
@@ -27,7 +28,7 @@ else
   # Idempotent: a provisioned venv costs one interpreter start here, not a dependency resolve.
   # A failure is reported but does not fail the build — narration is optional, and an editor
   # that cannot speak is still an editor.
-  "$ROOT/script/setup-speech.sh" || {
+  "$REPO/script/setup-speech.sh" || {
     echo "⚠ speech sidecar unavailable — narration tools will report why at call time"
   }
 fi
@@ -37,7 +38,7 @@ echo "Editor      : $ROOT/rust/target/release/bay"
 echo "MCP server  : the same binary — bay --mcp"
 echo "Runtimes    : ffmpeg and Kokoro are installed by the app on request, not by this script"
 echo "Speech      : ${BAY_KOKORO_PYTHON:-$HOME/.local/share/bay/kokoro-venv/bin/python}"
-echo "              sidecar script: $ROOT/script/bay-kokoro.py"
+echo "              sidecar script: $REPO/script/bay-kokoro.py"
 echo
 echo "Register the MCP server with:"
 echo "  claude mcp add --transport http bay http://127.0.0.1:7333/mcp"
