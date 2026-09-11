@@ -74,7 +74,6 @@ export class Compositor {
    * and nothing in the product asks for it yet.
    */
   readonly #seeks = new Map<string, SeekState>()
-  #touched = new Set<string>()
 
   constructor(pool: MediaPool) {
     this.#pool = pool
@@ -100,7 +99,6 @@ export class Compositor {
     const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0 }
 
     this.#pool.beginGeneration()
-    this.#touched.clear()
 
     const width = Math.max(1, finite(timeline.width, 1))
     const height = Math.max(1, finite(timeline.height, 1))
@@ -122,7 +120,6 @@ export class Compositor {
       }
 
       const entry = this.#pool.acquire(asset)
-      this.#touched.add(asset.id)
 
       if (entry.status === 'error') {
         this.#drawPlaceholder(ctx, item, asset.name)
@@ -151,15 +148,17 @@ export class Compositor {
     }
 
     ctx.restore()
-    this.#retireUntouched()
+    // No retire sweep here. Pausing what the *picture* did not use would silence a hidden
+    // track, and `hidden` governs picture only. `MediaPool.retireIdle()` does it once both
+    // consumers have voted — see the engine.
     return stats
   }
 
   /**
    * Pauses every video element immediately, without waiting for a draw.
    *
-   * `#retireUntouched` normally does this as part of compositing, which is fine while
-   * frames are arriving. It is not fine when they stop: an occluded window stops
+   * The generation sweep normally handles this while frames are arriving. It is not
+   * enough when they stop: an occluded window stops
    * `requestAnimationFrame`, so the next draw never comes, and a "stop playing" that is
    * only carried out by the next draw leaves the element running — measured at 4.5 seconds
    * of sound continuing past a frozen picture.
@@ -174,7 +173,6 @@ export class Compositor {
   /** Drops seek bookkeeping for assets no longer on screen. */
   reset(): void {
     this.#seeks.clear()
-    this.#touched.clear()
   }
 
   // -- internals ------------------------------------------------------------
@@ -314,18 +312,6 @@ export class Compositor {
     }
   }
 
-  /**
-   * Pauses video elements that are no longer on screen. A hidden track's items never reach
-   * the draw loop, so without this an element left playing keeps decoding — and keeps
-   * making sound — for a clip that is not in the picture.
-   */
-  #retireUntouched(): void {
-    this.#pool.forEach((entry) => {
-      if (this.#touched.has(entry.assetId)) return
-      const element = entry.element
-      if (element instanceof HTMLVideoElement && !element.paused) element.pause()
-    })
-  }
 }
 
 export interface Box {

@@ -323,6 +323,11 @@ class Engine {
     if (playing || this.audio.hasContext) {
       this.audio.update({ project: state.project, timeline, frame, playing })
     }
+
+    // Both consumers have now voted for this generation, so anything neither asked for is
+    // genuinely idle. Doing this inside the compositor would silence hidden tracks, whose
+    // sound is still in the mix — `hidden` is a picture property, `muted` is the sound one.
+    this.pool.retireIdle()
   }
 }
 

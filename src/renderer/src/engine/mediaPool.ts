@@ -171,6 +171,30 @@ export class MediaPool {
     if (slot) this.#evict(slot)
   }
 
+  /**
+   * Pauses video elements that no consumer asked for this generation.
+   *
+   * "Consumer" is the whole point, and it is why this lives on the pool rather than in the
+   * compositor. An element is idle only when *neither* the picture nor the sound wants it,
+   * and the compositor alone cannot know that: a hidden video track never reaches the draw
+   * loop, so a sweep driven by the draw loop pauses the element — and a paused element is
+   * silent however correctly the audio graph is wired. Hiding a track to see what is under
+   * it would change the mix you are judging.
+   *
+   * `acquire` stamps the current generation, so both consumers vote simply by asking for
+   * the asset. A hidden track whose clip has no audio is asked for by nobody and is still
+   * retired, which is the decode leak this sweep exists to prevent.
+   *
+   * Call it after every consumer has run, not inside one of them.
+   */
+  retireIdle(): void {
+    for (const slot of this.#slots.values()) {
+      if (slot.generation === this.#generation) continue
+      const element = slot.element
+      if (element instanceof HTMLVideoElement && !element.paused) element.pause()
+    }
+  }
+
   forEach(visit: (entry: MediaEntry) => void): void {
     for (const slot of this.#slots.values()) visit(slot)
   }

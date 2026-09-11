@@ -131,6 +131,8 @@ export class FrameExporter {
         if (this.#cancelled) break
 
         this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
+        // Export has no audio consumer, so the picture is the only vote there is.
+        this.#pool.retireIdle()
 
         // getImageData is in device pixels, so it ignores the transform above — which is
         // what we want: the whole target, once. Its `data` is a fresh view spanning its own
