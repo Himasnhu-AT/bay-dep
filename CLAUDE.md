@@ -196,6 +196,21 @@ underneath an opaque full-frame clip. The measurement traps are collected in
 [`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
 purpose to confirm the probe notices.
 
+**Every negative control needs its own positive control.** "The call that should have been refused
+was refused" passes trivially against a surface that refuses *everything* — a tool that is simply
+broken and a tool that is correctly strict produce identical output. So pair each refusal with the
+nearest **legal** call that must still succeed: an unresolvable id beside a resolvable one, a
+locked track beside an unlocked one, occupied time beside free time. Without the pair the suite is
+a description of current behaviour rather than a test of intended behaviour, which is the
+`sweepStaleCaches` shape one level along.
+
+**Assert on an error's content, not its existence.** This codebase holds that an error is a
+recovery instruction rather than a diagnosis, and that is only a real standard if something checks
+it. A refusal naming the candidate ids lets the next call succeed; one saying "not found" ends the
+agent's run — both are correct refusals and only one is usable. So the assertion is that the
+message carries what the caller needs in order to retry: the candidates, the conflicting item, the
+occupied range. An error that is merely correct should fail the test.
+
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
 point: it is the only code that crosses the process boundary.
