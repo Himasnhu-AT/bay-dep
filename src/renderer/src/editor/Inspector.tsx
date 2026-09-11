@@ -27,11 +27,24 @@ import { selectTimeline, useEditor } from '@/store/editor'
  * Showing the first item's value and pretending it speaks for the rest is how an
  * inspector silently flattens five different opacities into one on the next keystroke.
  */
+/**
+ * `===` plus NaN-equals-NaN, which `===` gets wrong and `Object.is` over-corrects.
+ *
+ * A single selected clip whose value is NaN reported "Mixed" — one item disagreeing with
+ * itself — because `NaN !== NaN`. `Object.is` would fix that and introduce the mirror bug:
+ * it separates `-0` from `0`, and `Math.round` produces `-0` readily, so two clips that
+ * look identical would read as mixed instead.
+ */
+function same<T>(a: T, b: T): boolean {
+  if (a === b) return true
+  return typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)
+}
+
 function common<T>(items: Item[], read: (item: Item) => T): { value: T; mixed: boolean } {
   const first = items[0]
   if (!first) return { value: undefined as T, mixed: false }
   const value = read(first)
-  return { value, mixed: items.some((item) => read(item) !== value) }
+  return { value, mixed: items.some((item) => !same(read(item), value)) }
 }
 
 function Readout({ label, value }: { label: string; value: ReactNode }): ReactNode {

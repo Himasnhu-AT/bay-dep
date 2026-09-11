@@ -103,6 +103,26 @@ want three different responses:
 Treating every survivor as a test gap is exactly how unfalsifiable code accumulates a suite
 around it.
 
+**But a differential verdict is itself a measurement in a state, and this is the dangerous
+direction.** The other errors in this file send someone to read working code; this one deletes a
+live guard. `NumberField.commit`'s `if (!Number.isFinite(rounded)) return` looked transitively
+unreachable — every typed route in is already gated by a `Number.isFinite` at its call site — and
+a differential over seven adversarial strings (`abc`, `1e999`, `-`, `Infinity`, `NaN`, empty,
+arrow-on-garbage) gave **identical results with and without it**. On that evidence the guard
+should have gone. The uncovered input class was a non-finite value arriving *from the store*:
+seed `layout.left = NaN`, drag the label, and NaN survives the arithmetic into `commit`.
+
+So before accepting "no input distinguishes them", ask **which inputs you did not try**, and
+specifically whether every *source* of the value is represented — not just every syntax the user
+can type. An input set drawn from one entry path proves something about that path and nothing
+about the others.
+
+That case also needed its own observable, which is the general lesson: the value is NaN before
+*and* after, so reading it back cannot tell "wrote NaN" from "returned early". The undo stack can,
+because a commit goes through `edit()` and pushes history — `past 3 → 4` without the guard,
+`3 → 3` with it. When the obvious observable cannot distinguish the two outcomes, find one that
+can rather than concluding from the one that cannot.
+
 This shape — a correct-looking construct that nothing can reach — has now appeared five times in
 two days, across four subsystems and three authors. Expect it rather than being surprised by it.
 

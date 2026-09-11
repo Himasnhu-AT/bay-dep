@@ -57,6 +57,15 @@ export function NumberField({
 
   const commit = (next: number): void => {
     const rounded = Number(clamp(next, min, max).toFixed(precision))
+    // Not defensive — measured. Every *typed* route into here is already gated by a
+    // `Number.isFinite` at its call site, so it is tempting to read this as unreachable and
+    // delete it. The reachable input is a non-finite value arriving from the store: drag
+    // the label of a field whose value is NaN and the arithmetic stays NaN all the way in.
+    //
+    // Told apart differentially, with the undo stack as the observable, because the value
+    // is NaN both before and after and cannot distinguish "wrote" from "returned early":
+    // without this line, seeding `layout.left = NaN` and dragging takes `past` 3 -> 4 and
+    // commits NaN to the project; with it, 3 -> 3.
     if (!Number.isFinite(rounded)) return
     onCommit(rounded)
   }
