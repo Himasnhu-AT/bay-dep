@@ -35,6 +35,14 @@ export {
   DEFAULT_SOURCE_TIMEOUT_MS
 } from './render'
 export type { RenderFrameOptions, RenderedFrame } from './render'
+export {
+  layoutText,
+  wrapLines,
+  anchorFor,
+  fontIsAvailable,
+  MIN_FONT_SIZE
+} from './text'
+export type { TextFit, LaidOutText, TextBox } from './text'
 export type { ExporterOptions, ExportOutcome, ExportProgressReport } from './exporter'
 export {
   DRIFT_TOLERANCE_SECONDS,

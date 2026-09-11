@@ -597,3 +597,31 @@ Two attempts, both dead ends, before settling on "run the real export and read t
 The first is the dangerous one: the frames went to the real encoder, the probe's array stayed
 empty, and "no black frames among zero frames" reported **PASS**. Any probe that collects
 results into an array must assert it collected something — `if (frames.length === 0) throw`.
+
+### The same trap, seven times, and what actually stops it
+
+The rule above was written after four. Three more followed in one afternoon, all in the
+`mcp.mjs` text checks, and the third of those is the one worth studying:
+
+- A `preview_frame` at frame 0, where a clip an *earlier check* had placed sat instead of the
+  text item under test. Empty `textFits` read as "nothing consumes `item.text`".
+- The same check again with the frame fixed, still failing, because a full-frame video on a
+  higher track drew over the text — a colour change that reaches the pixels and is then
+  painted over is indistinguishable from one that never happened.
+- And finally: the check set `color: '#FF0055'` — which an **earlier check had already set**.
+  The edit succeeded, the field was correct, the picture was correctly identical, and the
+  probe called the field dead.
+
+Each time the failure said "the code is broken" and each time the fixture was. What actually
+stops it is not more care: it is never writing a literal where a derived value will do.
+
+    // accuses working code the moment anything upstream sets the same value
+    await call('edit_item', { itemId, text: { color: '#FF0055' } })
+
+    // cannot
+    const current = (await call('inspect_item', { itemId })).value?.text?.color
+    const next = current === '#00FF88' ? '#FF0055' : '#00FF88'
+
+The literal encodes an assumption about history. The derived value encodes the thing the
+check actually means — *different from whatever it is now* — and survives any reordering,
+insertion, or deletion upstream of it.

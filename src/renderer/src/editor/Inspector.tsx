@@ -20,6 +20,7 @@ import {
 import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
+import { TextStyleSection } from './TextStyleSection'
 
 /**
  * One value across a multi-selection, or `mixed` when they disagree.
@@ -122,6 +123,7 @@ export function Inspector(): ReactNode {
 
   const first = selected[0]
   const asset = first ? findAsset(project, first.assetId) : undefined
+  const textItems = selected.filter((item) => findAsset(project, item.assetId)?.kind === 'text')
   const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
     common(selected, read)
 
@@ -285,6 +287,15 @@ export function Inspector(): ReactNode {
             </Field>
           </div>
         </Section>
+
+        {/* Type controls only for text items: an outline width on a video clip would be a
+            control that does nothing, which is the thing this codebase keeps finding. */}
+        {textItems.length > 0 && (
+          <TextStyleSection
+            items={textItems}
+            asset={findAsset(project, textItems[0]!.assetId)}
+          />
+        )}
 
         <Section title="Audio & speed">
           <Field label="Volume" hint={`${Math.round((volume.value ?? 1) * 100)}%`}>

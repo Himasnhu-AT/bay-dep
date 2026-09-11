@@ -23,7 +23,8 @@ import {
   type Project,
   type Timeline
 } from '@shared/project'
-import { Compositor, elementSlots } from './compositor'
+import { Compositor, elementSlots, itemsToDraw, type DrawStats } from './compositor'
+import type { TextFit } from './text'
 import { MediaPool } from './mediaPool'
 import { sourceSecondsAt } from './sync'
 
@@ -69,6 +70,13 @@ export interface RenderedFrame {
   placeholders: number
   /** Names of the assets behind `pending` and `placeholders`, for an honest message. */
   unresolved: string[]
+  /**
+   * How each text item came out. Non-default `scale`, `clipped`, or `fontAvailable: false`
+   * each mean the picture is not what was asked for in a way nothing in it reveals.
+   */
+  textFits: TextFit[]
+  /** The transition at this frame, including why it is shorter than asked for. */
+  transition?: DrawStats['transition']
 }
 
 /** Resolves on the first of `events`, or after `timeoutMs`. Never rejects. */
@@ -109,10 +117,11 @@ export async function awaitSources(
   timeoutMs = DEFAULT_SOURCE_TIMEOUT_MS
 ): Promise<void> {
   const fps = Number.isFinite(timeline.fps) && timeline.fps > 0 ? timeline.fps : 30
-  const items = itemsAtFrame(timeline, frame, 'video')
-  // The same assignment the compositor will use when it draws, so the element this waits on
-  // is the element that frame reads from. Deriving it twice by different rules would wait on
-  // one element and draw from another.
+  // The same list *and* the same assignment the compositor will use, from the same function.
+  // Deriving either one separately is not a hypothetical: when the compositor began adding a
+  // transition's second clip and this still called `itemsAtFrame`, the lists differed at the
+  // cut and every frame from there on rendered black.
+  const { items } = itemsToDraw(project, timeline, frame)
   const slots = elementSlots(items)
   const waits: Promise<void>[] = []
 
@@ -244,7 +253,7 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       0
     )
 
-    let stats = { drawn: 0, pending: 0, placeholders: 0 }
+    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await awaitSources(pool, project, timeline, frame, timeoutMs)
       stats = compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })

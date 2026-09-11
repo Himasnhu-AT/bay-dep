@@ -138,6 +138,19 @@ can rather than concluding from the one that cannot.
 This shape — a correct-looking construct that nothing can reach — has now appeared five times in
 two days, across four subsystems and three authors. Expect it rather than being surprised by it.
 
+**Never write a literal where a derived value will do.** The actionable form of the rule below,
+and the one that actually stops it. A check that sets `color: '#FF0055'` accuses working code the
+moment anything upstream has already set the same value: the edit succeeds, the field is correct,
+the picture is correctly identical, and the probe reports the field dead. Derive instead —
+
+    const current = (await call('inspect_item', { itemId })).value?.text?.color
+    const next = current === '#00FF88' ? '#FF0055' : '#00FF88'
+
+The literal encodes an assumption about history. The derived value encodes what the check actually
+means — *different from whatever it is now* — and survives any reordering upstream. Seven of this
+project's wrong answers came from a fixture assumption, and three of those were one afternoon's
+checks against a shared timeline that earlier checks had already moved.
+
 **A property measured in one state is not a property.** Ask of every measurement: *which starting
 state was I in when I measured that?* This has been the single most repeated error here — three
 separate instances in one day, by three people, in three subsystems:

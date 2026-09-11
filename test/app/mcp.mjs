@@ -271,6 +271,129 @@ if (preview.ok) {
   console.log(`TOOL NOT READY  preview_frame  ${preview.error.slice(0, 90)}`)
 }
 
+// -- text styling, each refusal beside its legal twin -------------------------
+console.log('\n-- text styling --')
+const textAssetId = await c_addText()
+async function c_addText() {
+  return evaluate(`(() => {
+    const s = window.bayEngine.store.getState()
+    s.addAssets([{ id: 'ast_probe_text', kind: 'text', name: 'Title', path: null, durationUs: 0,
+      width: null, height: null, fps: null, hasAudio: false, hasVideo: false, posterPath: null,
+      waveformPath: null, text: 'Chapter One', createdAt: Date.now() }])
+    return 'ast_probe_text' })()`)
+}
+const textPlaced = await call('place_asset', { assetId: textAssetId })
+check('setup: a text item placed', textPlaced.ok === true, textPlaced.ok ? '' : textPlaced.error)
+const textId = textPlaced.ok ? textPlaced.value.itemId : null
+
+const styled = await call('edit_item', { itemId: textId, text: { color: '#FF0055', fontSize: 120 } })
+check('edit_item applies a text style', styled.ok === true && styled.value.text?.color === '#FF0055',
+  styled.ok ? `size ${styled.value.text.fontSize}` : styled.error)
+const mergedStyle = await call('edit_item', { itemId: textId, text: { fontWeight: 800 } })
+check('a partial style merges rather than replacing',
+  mergedStyle.ok === true && mergedStyle.value.text.color === '#FF0055' &&
+    mergedStyle.value.text.fontSize === 120 && mergedStyle.value.text.fontWeight === 800,
+  mergedStyle.ok ? 'colour and size survived a weight-only edit' : mergedStyle.error)
+
+const strokeOn = await call('edit_item', { itemId: textId, text: { stroke: { color: '#000000', width: 6 } } })
+check('an effect group sets wholesale', strokeOn.ok === true && strokeOn.value.text.stroke?.width === 6)
+const strokeOff = await call('edit_item', { itemId: textId, text: { stroke: null } })
+check('  twin: null switches the group off', strokeOff.ok === true && strokeOff.value.text.stroke === null)
+
+const badWeight = await call('edit_item', { itemId: textId, text: { fontWeight: 550 } })
+check('a bad weight is refused, naming the rule',
+  badWeight.ok === false && /multiple of 100/.test(badWeight.error),
+  badWeight.ok ? 'ACCEPTED' : badWeight.error.slice(0, 70))
+const goodWeight = await call('edit_item', { itemId: textId, text: { fontWeight: 500 } })
+check('  twin: a legal weight is accepted', goodWeight.ok === true)
+
+const badColour = await call('edit_item', { itemId: textId, text: { color: 'hotpink' } })
+check('a non-hex colour is refused, showing the form wanted',
+  badColour.ok === false && /#FFFFFF/.test(badColour.error),
+  badColour.ok ? 'ACCEPTED' : badColour.error.slice(0, 70))
+
+const typo = await call('edit_item', { itemId: textId, text: { fontSizes: 12 } })
+check('a mistyped style field is refused, listing the real ones',
+  typo.ok === false && /fontFamily/.test(typo.error), typo.ok ? 'ACCEPTED' : typo.error.slice(0, 60))
+
+// The check neither side's probe covers on its own: that a style written through the tools
+// actually reaches the pixels. Both halves can pass in isolation while nothing consumes the
+// field — which is exactly the state this surface was in an hour before it shipped.
+// Whole-image hashes: two PNGs of one size share a byte-identical header, so comparing a
+// prefix would report "unchanged" for a completely different picture.
+// Rendered at a frame the text item actually covers, taken from its own placement result.
+// An earlier version asked for frame 0 — where a video clip placed by an earlier check sits
+// instead — and read the empty `textFits` as "nothing consumes item.text". Fifth time a
+// fixture assumption has accused working code in this file; see the README.
+const textFrame = textPlaced.ok ? textPlaced.value.from + 1 : 0
+const shotHash = async () => {
+  const f = await call('preview_frame', { frame: textFrame })
+  if (!f.ok) return null
+  let h = 0
+  for (let i = 0; i < f.value.image.length; i++) h = (Math.imul(31, h) + f.value.image.charCodeAt(i)) | 0
+  return { hash: h, fits: f.value.textFits ?? [], warnings: f.value.textWarnings ?? [] }
+}
+// Every other video track hidden for the comparison. The text item shares the canvas with
+// clips earlier checks placed, and a full-frame video drawing over it makes a colour change
+// invisible in the composite — which reads exactly like a style nothing consumes. Hiding is
+// fixture control, not the thing under test, so it goes through the store.
+const restoreTracks = await evaluate(`(() => {
+  const s = window.bayEngine.store.getState()
+  const tl = s.project.timelines.find((t) => t.id === s.project.activeTimelineId)
+  const holder = tl.tracks.find((t) => t.items.some((i) => i.id === ${JSON.stringify(textId)}))
+  const hidden = []
+  for (const track of tl.tracks) {
+    if (track.kind !== 'video' || track.id === holder?.id || track.hidden) continue
+    hidden.push(track.id)
+    window.bayEngine.store.getState().patchTrack(track.id, { hidden: true })
+  }
+  return JSON.stringify(hidden)
+})()`)
+const beforeStyle = await shotHash()
+// A colour derived from the current one rather than a literal. An earlier check already set
+// #FF0055, so a hard-coded "change" to the same value correctly changed nothing and the
+// probe read that as a dead field — the seventh time a fixture assumption in this file has
+// accused working code.
+const currentColour = (await call('inspect_item', { itemId: textId })).value?.text?.color
+const differentColour = currentColour === '#00FF88' ? '#FF0055' : '#00FF88'
+const colourEdit = await call('edit_item', { itemId: textId, text: { color: differentColour } })
+const afterStyle = await shotHash()
+if (process.env.DEBUG_PIXELS === '1') {
+  console.log('    DEBUG textFrame', textFrame, 'editOk', colourEdit.ok,
+    'colourNow', colourEdit.ok ? colourEdit.value.text?.color : colourEdit.error.slice(0, 60))
+  console.log('    DEBUG drawn/fits', JSON.stringify(beforeStyle?.fits), '->', JSON.stringify(afterStyle?.fits))
+  console.log('    DEBUG hashes', beforeStyle?.hash, afterStyle?.hash)
+}
+check('a style change through the tools reaches the pixels',
+  !!beforeStyle && !!afterStyle && beforeStyle.hash !== afterStyle.hash,
+  beforeStyle && afterStyle ? (beforeStyle.hash !== afterStyle.hash ? 'picture changed' : 'IDENTICAL — nothing consumes item.text') : 'no frame')
+
+await call('edit_item', { itemId: textId, text: { fontFamily: 'Definitely Not A Real Face' } })
+const absent = await shotHash()
+check('an uninstalled font is reported, since the picture cannot show it',
+  !!absent && absent.fits[0]?.fontAvailable === false && /not installed/.test(absent.warnings[0] ?? ''),
+  absent ? `fontAvailable ${absent.fits[0]?.fontAvailable}` : 'no frame')
+await call('edit_item', { itemId: textId, text: { fontFamily: 'Georgia, serif' } })
+const restored = await shotHash()
+check('  twin: an installed font reports available',
+  !!restored && restored.fits[0]?.fontAvailable === true)
+
+await call('edit_item', { itemId: textId, width: 220, height: 90, text: { fontSize: 160 } })
+const shrunk = await shotHash()
+check('auto-shrink is reported rather than applied silently',
+  !!shrunk && shrunk.fits[0]?.scale < 1 && /shrunk to/.test(shrunk.warnings[0] ?? ''),
+  shrunk ? `scale ${shrunk.fits[0]?.scale}, ${shrunk.fits[0]?.fontSize}px` : 'no frame')
+
+// Tracks put back, so later checks see the timeline they expect.
+await evaluate(`(() => {
+  for (const id of ${restoreTracks}) window.bayEngine.store.getState().patchTrack(id, { hidden: false })
+  return true })()`)
+
+const onVideo = await call('edit_item', { itemId, text: { color: '#FFFFFF' } })
+check('styling a non-text item is refused, not silently stored',
+  onVideo.ok === false && /no type to style/.test(onVideo.error),
+  onVideo.ok ? 'ACCEPTED — would read back and draw nothing' : onVideo.error.slice(0, 80))
+
 const failed = checks.filter((c) => !c.passed)
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`)
 close()

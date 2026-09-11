@@ -131,6 +131,9 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     },
     layout: { ...item.layout },
     canvas: { width: tl.width, height: tl.height },
+    // Only on text items, and only once something has been set: absent means the item draws
+    // the default look, which is a different statement from "styled, with these defaults".
+    ...(item.text ? { text: item.text } : {}),
     audio: { volume: item.volume, fadeInFrames: item.fadeInFrames, fadeOutFrames: item.fadeOutFrames },
     asset: asset
       ? {

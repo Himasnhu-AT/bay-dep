@@ -17,6 +17,7 @@
 
 import {
   allItems,
+  findAsset,
   itemEnd,
   timelineDuration,
   type Item,
@@ -38,6 +39,7 @@ import {
   usToFramesAtTimeline
 } from './helpers'
 import { frameOrPlayhead, itemsCrossing } from './read'
+import { mergeTextStyle } from './textStyle'
 
 export async function importMedia(args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const paths = args.paths as string[]
@@ -175,6 +177,21 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   if (args.fadeInFrames !== undefined) patch.fadeInFrames = Math.round(Number(args.fadeInFrames))
   if (args.fadeOutFrames !== undefined) patch.fadeOutFrames = Math.round(Number(args.fadeOutFrames))
 
+  if (args.text !== undefined) {
+    // Refused rather than stored on a clip that cannot draw it. A `text` field on a video
+    // item would read back exactly as it was written and change nothing on the canvas,
+    // which is the shape of a control that does not do what it says.
+    const asset = findAsset(project(), item.assetId)
+    if (asset?.kind !== 'text') {
+      fail(
+        `Item ${item.id} draws ${asset ? `a ${asset.kind} asset` : 'a missing asset'}, so it has ` +
+          `no type to style. Text styling applies only to items whose asset is kind "text" — ` +
+          `create one with a text asset and place that.`
+      )
+    }
+    patch.text = mergeTextStyle(item.text, args.text)
+  }
+
   const fadeIn = patch.fadeInFrames ?? item.fadeInFrames
   const fadeOut = patch.fadeOutFrames ?? item.fadeOutFrames
   if (fadeIn + fadeOut > durationInFrames) {
@@ -203,7 +220,8 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     volume: after.item.volume,
     speed: after.item.speed,
     fadeInFrames: after.item.fadeInFrames,
-    fadeOutFrames: after.item.fadeOutFrames
+    fadeOutFrames: after.item.fadeOutFrames,
+    ...(after.item.text ? { text: after.item.text } : {})
   }
 }
 

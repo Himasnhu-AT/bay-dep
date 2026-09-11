@@ -13,15 +13,27 @@
  */
 
 import {
+  defaultTextStyle,
   fadeGainAt,
   findAsset,
   itemsAtFrame,
+  transitionAtFrame,
   type Asset,
+  type TransitionKind,
   type Item,
   type Project,
   type Timeline
 } from '@shared/project'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
+import { planTransition } from './transitions'
+import {
+  anchorFor,
+  fontIsAvailable,
+  layoutText,
+  MIN_FONT_SIZE,
+  type TextFit,
+  type TextBox
+} from './text'
 import {
   DRIFT_TOLERANCE_SECONDS,
   STALE_SEEK_MS,
@@ -52,6 +64,30 @@ export interface DrawStats {
   pending: number
   /** Items drawn as a placeholder because their asset is missing or unreadable. */
   placeholders: number
+  /**
+   * How each text item actually came out.
+   *
+   * Reported for the same reason `pending` is: the output looks plausible while being wrong.
+   * A title auto-shrunk to 40% reads as a design choice rather than a failure, and a
+   * substituted font has no visual cue at all — neither a model looking at `preview_frame`
+   * nor a user glancing at the canvas can tell. Empty for a frame with no text.
+   */
+  textFits: TextFit[]
+  /**
+   * The transition playing at this frame, if any — and crucially why it is shorter than asked.
+   *
+   * `clampedBecause` must reach the caller. A 30-frame dissolve silently playing as 8 because
+   * the outgoing clip has no footage past its end is the same class of failure as a title
+   * silently drawn at 40%: the picture looks deliberate and nothing in it says otherwise.
+   */
+  transition?: {
+    kind: TransitionKind
+    /** 0 means the outgoing clip alone, 1 the incoming. */
+    progress: number
+    durationInFrames: number
+    requestedFrames: number
+    clampedBecause: string | null
+  }
 }
 
 interface SeekState {
@@ -148,7 +184,7 @@ export class Compositor {
   ): DrawStats {
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
-    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0 }
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
 
     this.#pool.beginGeneration()
 
@@ -162,49 +198,62 @@ export class Compositor {
     ctx.fillStyle = timeline.background || '#000000'
     ctx.fillRect(0, 0, width, height)
 
-    // itemsAtFrame already returns lowest track first, so painting in order is the stack.
-    const drawing = itemsAtFrame(timeline, frame, 'video')
+    // The one definition of what this frame draws, shared with `awaitSources` so the element
+    // waited on is the element drawn. See `itemsToDraw`.
+    const { items: drawing, active } = itemsToDraw(project, timeline, frame)
+    const pair = active ? [active.resolved.from, active.resolved.to] : []
+    const others = drawing.filter((item) => !pair.some((p) => p.id === item.id))
     // Decided before any of them is drawn: one element cannot be at two source times, so an
     // asset drawn twice in one frame gets two elements. See `elementSlots`.
     const slots = elementSlots(drawing)
 
-    for (const item of drawing) {
-      const asset = findAsset(project, item.assetId)
-      if (!asset || asset.error) {
-        this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
-        stats.placeholders += 1
-        continue
+    for (const item of others) {
+      this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {})
+    }
+
+    if (active) {
+      const { resolved, progress } = active
+      stats.transition = {
+        kind: resolved.transition.kind,
+        progress,
+        durationInFrames: resolved.durationInFrames,
+        requestedFrames: resolved.transition.durationInFrames,
+        clampedBecause: resolved.clampedBecause
       }
-
-      const entry = this.#pool.acquire(asset, slots.get(item.id) ?? 0)
-
-      if (entry.status === 'error') {
-        this.#drawPlaceholder(ctx, item, asset.name)
-        stats.placeholders += 1
-        continue
+      const byWhich = { from: resolved.from, to: resolved.to }
+      for (const step of planTransition(
+        resolved.transition.kind,
+        resolved.transition.direction,
+        progress,
+        { width, height }
+      )) {
+        if (step.kind === 'fill') {
+          if (step.alpha <= 0) continue
+          ctx.save()
+          ctx.globalAlpha = clamp01(step.alpha)
+          ctx.fillStyle = step.color
+          ctx.fillRect(0, 0, width, height)
+          ctx.restore()
+          continue
+        }
+        const item = byWhich[step.which]
+        ctx.save()
+        if (step.clipRect) {
+          ctx.beginPath()
+          ctx.rect(step.clipRect.left, step.clipRect.top, step.clipRect.width, step.clipRect.height)
+          ctx.clip()
+        }
+        if (step.clipCircle) {
+          ctx.beginPath()
+          ctx.arc(step.clipCircle.centreX, step.clipCircle.centreY, step.clipCircle.radius, 0, Math.PI * 2)
+          ctx.clip()
+        }
+        ctx.translate(step.offsetX, step.offsetY)
+        this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {
+          alphaMul: step.alpha
+        })
+        ctx.restore()
       }
-
-      if (asset.kind === 'text') {
-        this.#drawText(ctx, item, asset, frame)
-        stats.drawn += 1
-        continue
-      }
-
-      // Every item now has an element of its own, so every item moves its own — which is
-      // what lets two source times coexist in one frame. The bookkeeping that made this
-      // safe is in `elementSlots`: one writer per element, still.
-      this.#syncElement(entry, item, asset, frame, fps, mode, now())
-
-      if (!isDrawable(entry)) {
-        // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the
-        // one or two frames a load takes, which reads as a glitch in the edit rather than
-        // as a load; the background showing through for that long does not.
-        stats.pending += 1
-        continue
-      }
-
-      this.#drawSource(ctx, entry.element, item, frame)
-      stats.drawn += 1
     }
 
     ctx.restore()
@@ -241,11 +290,12 @@ export class Compositor {
     ctx: RenderTarget,
     element: HTMLVideoElement | HTMLImageElement,
     item: Item,
-    frame: number
+    frame: number,
+    alphaMul = 1
   ): void {
     const box = layoutBox(item)
     if (!box) return
-    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame))
+    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
     if (alpha <= 0) return
 
     ctx.save()
@@ -261,33 +311,188 @@ export class Compositor {
   }
 
   /**
-   * Text has no styling in the project model yet — only the string. Rather than invent a
-   * style system here, this draws the honest minimum: the string fitted to the item's box.
-   * When `Asset` grows font/colour/alignment, this reads them instead of guessing.
+   * Paints one item, whatever kind it is, and records the outcome in `stats`.
+   *
+   * Extracted so a transition step can reuse it: the same item has to be drawable at an
+   * offset, under a clip, at a reduced alpha, and at a frame outside its own range. Having
+   * the transition path re-implement any of that is how the two paths drift.
    */
-  #drawText(ctx: RenderTarget, item: Item, asset: Asset, frame: number): void {
+  #paintItem(
+    ctx: RenderTarget,
+    project: Project,
+    item: Item,
+    frame: number,
+    fps: number,
+    mode: 'playback' | 'scrub',
+    now: number,
+    slot: number,
+    stats: DrawStats,
+    opts: { alphaMul?: number }
+  ): void {
+    const asset = findAsset(project, item.assetId)
+    if (!asset || asset.error) {
+      this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
+      stats.placeholders += 1
+      return
+    }
+
+    const entry = this.#pool.acquire(asset, slot)
+    if (entry.status === 'error') {
+      this.#drawPlaceholder(ctx, item, asset.name)
+      stats.placeholders += 1
+      return
+    }
+
+    if (asset.kind === 'text') {
+      const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
+      if (fit) stats.textFits.push(fit)
+      stats.drawn += 1
+      return
+    }
+
+    // Every item has an element of its own, so every item moves its own — which is what lets
+    // two source times coexist in one frame. One writer per element, still: `elementSlots`.
+    // No special handling for a frame outside the item's own range, and that is deliberate:
+    // `sourceSecondsAt` clamps to the **asset**, not the item, so asking for a time past a
+    // clip's end or before its start already reads its handles — which is exactly what a
+    // transition needs. A flag saying "unclamped" was written here first and did nothing;
+    // nothing could have distinguished its presence from its absence.
+    this.#syncElement(entry, item, asset, frame, fps, mode, now)
+
+    if (!isDrawable(entry)) {
+      // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the one
+      // or two frames a load takes, which reads as a glitch in the edit rather than as a
+      // load; the background showing through for that long does not.
+      stats.pending += 1
+      return
+    }
+
+    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul)
+    stats.drawn += 1
+  }
+
+  /**
+   * Draws a text item and reports how it came out.
+   *
+   * The arithmetic — wrapping, the shrink search, the anchor — lives in `text.ts` and is unit
+   * tested against an injected measure. What is here is the part that genuinely needs a
+   * canvas: assembling the font string, asking for widths, and painting in the right order.
+   *
+   * **Order is load-bearing**: background plate, then shadow+stroke, then fill. Painting the
+   * plate after the glyphs hides them; painting the shadow with the fill leaves the stroke
+   * casting its own shadow over the letterform it is meant to outline.
+   */
+  #drawText(ctx: RenderTarget, item: Item, asset: Asset, frame: number, alphaMul = 1): TextFit | null {
     const box = layoutBox(item)
-    if (!box) return
+    if (!box) return null
     const text = asset.text ?? asset.name
-    if (!text) return
-    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame))
-    if (alpha <= 0) return
+    if (!text) return null
+    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
+
+    // `undefined` means exactly the look that shipped before TextStyle existed: a size derived
+    // from the box rather than chosen. Keeping that as the default is what makes the field
+    // optional in the model without changing any project already on disk.
+    const style = item.text ?? {
+      ...defaultTextStyle(Math.max(MIN_FONT_SIZE, Math.round(box.height * 0.4))),
+      lineHeight: 1.2
+    }
+
+    const fontString = (size: number, family: string): string =>
+      `${style.italic ? 'italic ' : ''}${style.fontWeight} ${size}px ${family}`
 
     ctx.save()
-    ctx.globalAlpha = alpha
-    applyRotation(ctx, item, box)
-    const size = Math.max(8, Math.round(box.height * 0.4))
-    ctx.font = `600 ${size}px system-ui, -apple-system, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#ffffff'
-    const measured = ctx.measureText(text).width
-    if (measured > box.width && measured > 0) {
-      const shrink = box.width / measured
-      ctx.font = `600 ${Math.max(8, Math.round(size * shrink))}px system-ui, -apple-system, sans-serif`
+    try {
+      // Set before any measurement: `measureText` reports widths for whatever font is current,
+      // and letter spacing counts toward them.
+      const spacing = finite(style.letterSpacing, 0)
+      if (spacing !== 0 && 'letterSpacing' in ctx) {
+        ;(ctx as CanvasRenderingContext2D).letterSpacing = `${spacing}px`
+      }
+
+      const measure = (candidate: string, fontSize: number): number => {
+        ctx.font = fontString(fontSize, style.fontFamily)
+        return ctx.measureText(candidate).width
+      }
+      const laid = layoutText(text, style, box as TextBox, measure)
+      const fontAvailable = fontIsAvailable(style.fontFamily, (family) => {
+        ctx.font = fontString(laid.fontSize, family)
+        return ctx.measureText('MWQjgq@10 iIl').width
+      })
+
+      const fit: TextFit = {
+        itemId: item.id,
+        scale: laid.scale,
+        fontSize: laid.fontSize,
+        lines: laid.lines.length,
+        clipped: laid.clipped,
+        fontAvailable
+      }
+
+      // Report even when nothing is painted. A fully faded title that does not fit is still a
+      // layout problem the next frame will show, and reporting only visible text would make
+      // the warning blink.
+      if (alpha <= 0) return fit
+
+      ctx.globalAlpha = alpha
+      applyRotation(ctx, item, box)
+      ctx.font = fontString(laid.fontSize, style.fontFamily)
+
+      const anchor = anchorFor(box as TextBox, laid, style.align, style.verticalAlign)
+      ctx.textAlign = anchor.textAlign
+      ctx.textBaseline = 'alphabetic'
+
+      if (style.background) {
+        const pad = Math.max(0, finite(style.background.padding, 0))
+        const plateWidth = laid.maxLineWidth + pad * 2
+        const left =
+          anchor.textAlign === 'left'
+            ? anchor.x - pad
+            : anchor.textAlign === 'right'
+              ? anchor.x - plateWidth + pad
+              : anchor.x - plateWidth / 2
+        const top = anchor.firstBaseline - laid.lineHeight - pad
+        const height = laid.blockHeight + pad * 2
+        ctx.fillStyle = style.background.color
+        const radius = Math.max(0, Math.min(finite(style.background.radius, 0), Math.min(plateWidth, height) / 2))
+        ctx.beginPath()
+        // `roundRect` is in Chromium; the fallback keeps this drawable if it ever is not.
+        if (typeof (ctx as CanvasRenderingContext2D).roundRect === 'function') {
+          ;(ctx as CanvasRenderingContext2D).roundRect(left, top, plateWidth, height, radius)
+        } else {
+          ctx.rect(left, top, plateWidth, height)
+        }
+        ctx.fill()
+      }
+
+      for (let i = 0; i < laid.lines.length; i += 1) {
+        const line = laid.lines[i] ?? ''
+        const y = anchor.firstBaseline + i * laid.lineHeight
+
+        if (style.shadow) {
+          ctx.shadowColor = style.shadow.color
+          ctx.shadowBlur = Math.max(0, finite(style.shadow.blur, 0))
+          ctx.shadowOffsetX = finite(style.shadow.offsetX, 0)
+          ctx.shadowOffsetY = finite(style.shadow.offsetY, 0)
+        }
+        if (style.stroke && style.stroke.width > 0) {
+          ctx.lineWidth = style.stroke.width
+          ctx.strokeStyle = style.stroke.color
+          ctx.lineJoin = 'round'
+          ctx.strokeText(line, anchor.x, y)
+        }
+        // The fill must not cast a second shadow over the stroke it sits inside.
+        ctx.shadowColor = 'transparent'
+        ctx.shadowBlur = 0
+        ctx.shadowOffsetX = 0
+        ctx.shadowOffsetY = 0
+        ctx.fillStyle = style.color
+        ctx.fillText(line, anchor.x, y)
+      }
+
+      return fit
+    } finally {
+      ctx.restore()
     }
-    ctx.fillText(text, box.left + box.width / 2, box.top + box.height / 2)
-    ctx.restore()
   }
 
   #drawPlaceholder(ctx: RenderTarget, item: Item, name: string): void {
@@ -400,6 +605,39 @@ export class Compositor {
  * Slot 0 is the overwhelmingly common answer, and it keys the pool on the bare asset id, so
  * nothing changes for a timeline without overlaps.
  */
+/**
+ * Everything this frame draws, in paint order, plus the transition playing across it.
+ *
+ * **Exported because two consumers need the identical answer and deriving it twice is a bug
+ * I shipped.** The compositor draws it; `awaitSources` waits for it. When the compositor
+ * started adding the transition pair and `awaitSources` still used `itemsAtFrame`, the two
+ * lists differed at exactly the frames that matter — at the cut `itemsAtFrame` returns only
+ * the incoming clip, so it took slot 0 while the compositor drew it from slot 1. The wait
+ * prepared one element and the draw read another, and every frame from the cut onward came
+ * back black. The comment warning against this was already in `awaitSources` at the time.
+ *
+ * A transition needs **both** clips in every frame of its window, and `itemsAtFrame` returns
+ * only one: the window straddles the cut, so frames before it are inside the outgoing clip
+ * and frames from it on are inside the incoming one. The other half is added here, and read
+ * with a source time outside its own range — which is what the handles are for.
+ *
+ * Order is `from` then `to`, always. That is what makes `elementSlots` stable across the
+ * window: a split clip transitioning into itself is one asset and two items, and an
+ * assignment that flipped mid-window would swap what the two elements hold.
+ */
+export function itemsToDraw(
+  project: Project,
+  timeline: Timeline,
+  frame: number
+): { items: Item[]; active: ReturnType<typeof transitionAtFrame> } {
+  const active = transitionAtFrame(project, timeline, frame)
+  const present = itemsAtFrame(timeline, frame, 'video')
+  if (!active) return { items: present, active }
+  const pair = [active.resolved.from, active.resolved.to]
+  const others = present.filter((item) => !pair.some((p) => p.id === item.id))
+  return { items: [...others, ...pair], active }
+}
+
 export function elementSlots(items: Item[]): Map<string, number> {
   const slots = new Map<string, number>()
   const used = new Map<string, number>()

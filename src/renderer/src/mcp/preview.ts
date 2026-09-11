@@ -13,7 +13,7 @@
  * like a frame of a nearly-empty timeline, and a model cannot tell those apart by looking.
  */
 
-import { renderFrame } from '@/engine'
+import { MIN_FONT_SIZE, renderFrame } from '@/engine'
 import { fail, project, timeline } from './helpers'
 import { frameOrPlayhead } from './read'
 
@@ -36,6 +36,22 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
   }
 
   const incomplete = still.pending > 0 || still.placeholders > 0
+
+  // Three ways a text item can look deliberate and be wrong, none of them visible in the
+  // picture. `fontAvailable: false` is the worst of the three: a substituted family has no
+  // visual cue at all, so an agent judging the frame has nothing to notice.
+  const troubled = (still.textFits ?? []).filter(
+    (fit) => fit.clipped || fit.scale < 1 || !fit.fontAvailable
+  )
+  const textWarnings = troubled.map((fit) => {
+    if (fit.clipped) {
+      return `${fit.itemId}: does not fit its box even at the ${MIN_FONT_SIZE}px minimum, so it is cut off. Give it a bigger box, or fewer words.`
+    }
+    if (!fit.fontAvailable) {
+      return `${fit.itemId}: the requested font is not installed, so the platform substituted another. The picture looks deliberate and is not the typeface asked for.`
+    }
+    return `${fit.itemId}: shrunk to ${Math.round(fit.scale * 100)}% (${fit.fontSize}px) to fit its box across ${fit.lines} line${fit.lines === 1 ? '' : 's'}.`
+  })
   return {
     frame,
     width: still.width,
@@ -45,6 +61,8 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
     canvas: { width: tl.width, height: tl.height },
     itemsDrawn: still.drawn,
     image: still.dataUrl,
+    ...(still.textFits && still.textFits.length > 0 ? { textFits: still.textFits } : {}),
+    ...(textWarnings.length > 0 ? { textWarnings } : {}),
     ...(incomplete
       ? {
           incomplete: true,

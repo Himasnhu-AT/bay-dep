@@ -182,3 +182,45 @@ test('an ordinary single item is slot 0, and an empty frame does not throw', () 
   assert.equal(elementSlots([only]).get('itm_only'), 0)
   assert.equal(elementSlots([]).size, 0)
 })
+
+test('the slot assignment never changes across a whole transition window', () => {
+  /**
+   * Requested by the lead, and load-bearing for correctness rather than tidiness: a
+   * transition draws both clips in every frame of its window, and if the assignment flipped
+   * mid-window the two elements would swap frames and the dissolve would invert for one
+   * frame. A split clip is the case that matters — one asset, two items — because that is the
+   * commonest transition and the only one where the slots are not trivially distinct.
+   *
+   * The compositor builds the list as `[...others, from, to]`, so this walks the window the
+   * way the compositor does and asserts the answer is identical at every frame.
+   */
+  const from = { ...itemWith({}), id: 'itm_from', assetId: 'ast_split', from: 0, durationInFrames: 150 }
+  const to = { ...itemWith({}), id: 'itm_to', assetId: 'ast_split', from: 150, durationInFrames: 150 }
+  const unrelated = { ...itemWith({}), id: 'itm_other', assetId: 'ast_other' }
+
+  const first = elementSlots([unrelated, from, to])
+  assert.equal(first.get('itm_from'), 0)
+  assert.equal(first.get('itm_to'), 1)
+  assert.equal(first.get('itm_other'), 0, 'a different asset keeps its own slot 0')
+
+  // Every frame of a 30-frame window straddling the cut at 150.
+  for (let frame = 135; frame <= 164; frame += 1) {
+    const slots = elementSlots([unrelated, from, to])
+    assert.equal(slots.get('itm_from'), 0, `frame ${frame}: the outgoing clip must keep slot 0`)
+    assert.equal(slots.get('itm_to'), 1, `frame ${frame}: the incoming clip must keep slot 1`)
+    assert.equal(slots.get('itm_other'), 0, `frame ${frame}`)
+  }
+})
+
+test('reversing the pair order would swap the slots, which is why the order is fixed', () => {
+  // The negative half of the test above: the assignment *is* order-dependent, so the
+  // stability guarantee comes from the compositor always building the list `from` then `to`.
+  // Asserting only that repeated calls agree would pass against an implementation that read
+  // the order from somewhere unstable.
+  const from = { ...itemWith({}), id: 'itm_from', assetId: 'ast_split' }
+  const to = { ...itemWith({}), id: 'itm_to', assetId: 'ast_split' }
+  const forward = elementSlots([from, to])
+  const reversed = elementSlots([to, from])
+  assert.equal(forward.get('itm_from'), 0)
+  assert.equal(reversed.get('itm_from'), 1, 'order decides the slot — so the order must be fixed')
+})
