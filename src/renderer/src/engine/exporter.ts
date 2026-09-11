@@ -19,16 +19,13 @@
  */
 
 import {
-  findAsset,
   findTimeline,
-  itemsAtFrame,
   timelineDuration,
-  type Project,
-  type Timeline
+  type Project
 } from '@shared/project'
 import { Compositor } from './compositor'
 import { MediaPool } from './mediaPool'
-import { sourceSecondsAt } from './sync'
+import { awaitSources } from './render'
 
 export interface ExportProgressReport {
   /** The frame just handed to the encoder. */
@@ -77,6 +74,7 @@ export class FrameExporter {
   readonly #ownsPool: boolean
   readonly #compositor: Compositor
   #cancelled = false
+  readonly #seekTimeout: number
 
   constructor(options: ExporterOptions) {
     this.#options = options
@@ -85,6 +83,7 @@ export class FrameExporter {
     // holding a scrub responsive, which an export does not care about.
     this.#pool = options.pool ?? new MediaPool({ maxVideoElements: 8 })
     this.#compositor = new Compositor(this.#pool)
+    this.#seekTimeout = options.seekTimeoutMs ?? DEFAULT_SEEK_TIMEOUT_MS
   }
 
   cancel(): void {
@@ -127,7 +126,7 @@ export class FrameExporter {
         // *during* the awaited prepare, and without it that frame would still be pushed.
         if (this.#cancelled) break
 
-        await this.#prepare(timeline, frame)
+        await awaitSources(this.#pool, project, timeline, frame, this.#seekTimeout)
         if (this.#cancelled) break
 
         this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
@@ -178,46 +177,6 @@ export class FrameExporter {
     }
   }
 
-  /**
-   * Positions every source this frame needs and waits for it. Unlike the preview, an
-   * export cannot draw "whatever the element holds" — that is how a cut comes back with
-   * the frame before it.
-   */
-  async #prepare(timeline: Timeline, frame: number): Promise<void> {
-    const { project } = this.#options
-    const timeout = this.#options.seekTimeoutMs ?? DEFAULT_SEEK_TIMEOUT_MS
-    const fps = Number.isFinite(timeline.fps) && timeline.fps > 0 ? timeline.fps : 30
-    const waits: Promise<void>[] = []
-
-    for (const item of itemsAtFrame(timeline, frame, 'video')) {
-      const asset = findAsset(project, item.assetId)
-      if (!asset || asset.error || asset.kind === 'text') continue
-      const entry = this.#pool.acquire(asset)
-      const element = entry.element
-      if (!element) continue
-
-      if (element instanceof HTMLImageElement) {
-        if (!element.complete) waits.push(settle(element, ['load', 'error'], timeout))
-        continue
-      }
-      if (!(element instanceof HTMLVideoElement)) continue
-
-      if (element.readyState < HTMLMediaElement.HAVE_METADATA) {
-        await settle(element, ['loadedmetadata', 'error'], timeout)
-      }
-      if (!element.paused) element.pause()
-
-      const target = sourceSecondsAt(item, asset, frame, fps)
-      // A source whose frame rate differs from the timeline's lands on the same decoded
-      // frame for several timeline frames; re-seeking to a time inside the frame already
-      // shown costs a decode and changes nothing.
-      if (Math.abs(element.currentTime - target) <= 0.5 / fps && !element.seeking) continue
-      element.currentTime = target
-      waits.push(settle(element, ['seeked', 'error'], timeout))
-    }
-
-    if (waits.length > 0) await Promise.all(waits)
-  }
 }
 
 interface Target {
@@ -246,18 +205,3 @@ function makeTarget(width: number, height: number): Target {
   }
 }
 
-/** Resolves on the first of `events`, or after `timeoutMs`. Never rejects. */
-function settle(target: EventTarget, events: string[], timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let done = false
-    const finish = (): void => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      for (const event of events) target.removeEventListener(event, finish)
-      resolve()
-    }
-    const timer = setTimeout(finish, timeoutMs)
-    for (const event of events) target.addEventListener(event, finish)
-  })
-}

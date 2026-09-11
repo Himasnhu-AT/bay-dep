@@ -125,9 +125,25 @@ await runProbe(async () => {
   const drewAll = results.every((r) => r.drew)
   const settledAll = results.every((r) => r.settled)
   const shared = results.every((r) => r.shared && r.items === 2)
+  const drewCount = results.filter((r) => r.drew).length
+  const settledCount = results.filter((r) => r.settled).length
   console.log()
-  console.log(`drew        ${results.filter((r) => r.drew).length}/${TRIALS}`)
-  console.log(`settled     ${results.filter((r) => r.settled).length}/${TRIALS}  (element on the topmost item's source time)`)
+  console.log(`drew        ${drewCount}/${TRIALS}   pixels that reached the canvas`)
+  console.log(`settled     ${settledCount}/${TRIALS}   element state when sampled, AFTER the draw`)
+
+  /**
+   * The two numbers measure different things at different moments, and in the broken state
+   * they disagree — measured pre-fix at drew 0/10 with settled 4/10, which reads as a
+   * contradiction and is not one. Saying so here costs one line and saves the next reader
+   * deciding which number to trust.
+   */
+  if (drewCount < TRIALS && settledCount > drewCount) {
+    console.log()
+    console.log(`      Note: the element settles *between* draws. "settled" is sampled after the`)
+    console.log(`      draw has already happened, so a trial can show a settled element and a blank`)
+    console.log(`      canvas: the draw that mattered caught it mid-seek, reported pending, drew`)
+    console.log(`      nothing, and nothing scheduled another. Not a contradiction.`)
+  }
 
   if (process.env.VERIFY_PROBE === '1') {
     const caught = !drewAll
@@ -145,7 +161,8 @@ await runProbe(async () => {
   }
   console.log(drewAll && settledAll
     ? '\nPASS  two items sharing one asset both draw, and the element settles on the topmost target'
-    : '\nFAIL  seek thrash: the shared element never settles, so every item reports pending')
+    : '\nFAIL  seek thrash: the two items fight over the shared element, so the draw that'
+      + '\n      mattered found it mid-seek and every item reported pending')
   close()
   return drewAll && settledAll
 })

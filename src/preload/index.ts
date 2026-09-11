@@ -23,6 +23,7 @@ import type {
   ThumbnailRequest
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
+import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 
 const api: BayApi = {
@@ -108,6 +109,29 @@ const api: BayApi = {
       ipcRenderer.on(IPC.exportProgress, wrapped)
       return () => {
         ipcRenderer.removeListener(IPC.exportProgress, wrapped)
+      }
+    }
+  },
+
+  mcp: {
+    onToolCall: (handler: (call: McpToolCall) => Promise<McpToolResult>) => {
+      // Preload owns the correlation, so the renderer's handler never sees an id: it takes a
+      // call and returns a result, and the id is copied back onto the reply here. A handler
+      // that throws still answers — an unanswered call would sit until main's timeout, which
+      // costs the agent 30 seconds to learn something the exception already knew.
+      const wrapped = (_event: unknown, call: McpToolCall): void => {
+        handler(call)
+          .then((result) => ipcRenderer.send(IPC.mcpToolResult, { ...result, id: call.id }))
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error)
+            ipcRenderer.send(IPC.mcpToolResult, { id: call.id, ok: false, error: message })
+          })
+      }
+      // At most one executor, per the contract: a second registration replaces the first.
+      ipcRenderer.removeAllListeners(IPC.mcpToolCall)
+      ipcRenderer.on(IPC.mcpToolCall, wrapped)
+      return () => {
+        ipcRenderer.removeListener(IPC.mcpToolCall, wrapped)
       }
     }
   },

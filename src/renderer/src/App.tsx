@@ -3,6 +3,7 @@ import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
 import { useDrag } from '@/lib/useDrag'
 import { useKeyboard } from '@/lib/useKeyboard'
+import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
 import { Inspector } from '@/editor/Inspector'
@@ -129,6 +130,13 @@ export function App(): ReactNode {
       }
     })
   }, [onSave, onSaveAs, onImport, setProject])
+
+  /**
+   * The agent surface. Registered here because the executor reaches the store directly and
+   * needs nothing from this component — App is simply the one place that mounts once and
+   * outlives every panel.
+   */
+  useEffect(() => registerMcpExecutor(), [])
 
   useKeyboard({
     onSave: () => void onSave(),

@@ -462,3 +462,57 @@ The sabotage has to break the **draw**: making the two source times agree would 
 condition and pass, proving nothing. Note what that self-check does and does not establish —
 it shows the probe reports FAIL when nothing is drawn. That the probe catches *this* bug rests
 on the 1-in-10 vs 10-in-10 measurement across the fix, not on the no-op.
+
+
+### Two numbers that measure different moments must say so
+
+`shared-asset.mjs` reports `drew` and `settled`, and pre-fix they disagreed: **drew 0/10,
+settled 4/10**. That reads as a contradiction and is not one. `drew` is what reached the
+canvas; `settled` is the element's state *sampled after* the draw. The element settles
+between draws — the draw that mattered caught it mid-seek, reported `pending`, drew nothing,
+and nothing scheduled another.
+
+The probe now prints that explanation whenever the two disagree, instead of leaving the
+reader to decide which number to trust. It is the "name what you measured" rule applied to
+output rather than to a claim: two quantities sampled at different instants, shown side by
+side, will be read as one quantity unless the difference is stated.
+
+Verified against a real pre-fix build by `engine-fix`, which closes the gap `VERIFY_PROBE`
+cannot:
+
+    PRE-FIX  1337f2c   drew  0/10   settled  4/10   exit 1   FAIL
+    POST-FIX 3807e37   drew 10/10   settled 10/10   exit 0   PASS
+    VERIFY_PROBE=1 on both builds                   exit 0   SELF-CHECK PASSED
+
+So the probe fails on the code that had the bug, passes on the code that fixed it, and
+detects a broken draw independently of either. Those are three different claims and each
+needed its own evidence.
+
+
+## `preview-frame.mjs`, and a prefix that cannot see a difference
+
+`preview_frame` is the tool the agent trusts to check every other tool, so the failure to
+guard is not "it errors" but **"it always returns something plausible"** — a stale, constant
+or wrong-frame image that the model then acts on confidently, unfixing work that was correct.
+
+An absolute assertion cannot catch that. Rendering one frame and finding pixels in it would
+pass against a hard-coded picture. So the probe is differential: it renders the frame, moves
+the clip entirely off-canvas, renders again, and puts it back — and requires the image to
+follow the edit in the direction the edit predicts.
+
+    clip in frame     78720 lit    640x360
+    clip off-canvas       0 lit
+    clip restored     78720 lit
+    image changed     yes
+    PASS
+
+`VERIFY_PROBE=1` replaces `toDataURL` with a constant — precisely the always-plausible tool —
+and the probe must fail against it. It does.
+
+**The trap, found by this probe failing against a working tool.** The first version compared
+`dataUrl.slice(0, 48)` to decide whether the image had changed. Two PNGs of the same
+dimensions share a byte-identical header, so the prefix matched for a full frame and an empty
+one alike: the probe reported FAIL while the numbers beside it — 78720 lit versus 0 — showed
+the tool working perfectly. Same class as trap 2 and trap 5, in a probe written the same day
+by someone who had just documented both. Hash the whole artefact, not a prefix of it; and
+when a verdict contradicts the evidence printed next to it, suspect the verdict.

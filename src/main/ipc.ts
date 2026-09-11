@@ -10,6 +10,7 @@
 import { BrowserWindow, ipcMain, shell, app } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { BayApi } from '@shared/ipc'
+import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
@@ -18,10 +19,11 @@ import { waveform } from './media/waveform'
 import { importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
+import { settleToolCall } from './mcp/server'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand'
-type InvokeChannel = Exclude<keyof typeof IPC, PushChannel>
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall'
+type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult'>
 
 interface ChannelApi {
   appVersion: BayApi['app']['version']
@@ -121,6 +123,12 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
 }
 
 export function registerIpcHandlers(): void {
+  // The renderer's answer to a tool call. A `send`, not an `invoke`, because the renderer is
+  // replying rather than asking — the correlation is by the id main put on the call.
+  ipcMain.on(IPC.mcpToolResult, (_event, result: McpToolResult) => {
+    settleToolCall(result)
+  })
+
   for (const key of Object.keys(handlers) as (keyof ChannelApi)[]) {
     const handler = handlers[key] as unknown as (
       event: IpcMainInvokeEvent,

@@ -15,6 +15,7 @@ import { AudioEngine, type TrackLevel } from './audio'
 import { Compositor } from './compositor'
 import { PlaybackClock, type ClockStats } from './clock'
 import { MediaPool } from './mediaPool'
+import { renderFrame } from './render'
 
 export { MediaPool, assetUrl, isDrawable, DEFAULT_MAX_VIDEO_ELEMENTS } from './mediaPool'
 export type { MediaEntry, MediaReadiness, MediaStatus } from './mediaPool'
@@ -25,6 +26,14 @@ export type { DrawOptions, DrawStats, RenderTarget } from './compositor'
 export { AudioEngine } from './audio'
 export type { AudioUpdate, TrackLevel } from './audio'
 export { FrameExporter, ExportCancelled } from './exporter'
+export {
+  renderFrame,
+  awaitSources,
+  previewSize,
+  DEFAULT_PREVIEW_MAX_EDGE,
+  DEFAULT_SOURCE_TIMEOUT_MS
+} from './render'
+export type { RenderFrameOptions, RenderedFrame } from './render'
 export type { ExporterOptions, ExportOutcome, ExportProgressReport } from './exporter'
 export {
   DRIFT_TOLERANCE_SECONDS,
@@ -64,7 +73,12 @@ function probeSurfaceEnabled(): boolean {
 }
 declare global {
   interface Window {
-    bayEngine?: { engine: EngineHandle; store: typeof useEditor }
+    bayEngine?: {
+      engine: EngineHandle
+      store: typeof useEditor
+      /** The `preview_frame` entry point, so a probe can measure the artefact the agent sees. */
+      renderFrame: typeof renderFrame
+    }
   }
 }
 
@@ -143,7 +157,7 @@ class Engine {
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle && probeSurfaceEnabled()) {
-      window.bayEngine = { engine: this.handle, store: useEditor }
+      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame }
     }
     return () => this.detach()
   }

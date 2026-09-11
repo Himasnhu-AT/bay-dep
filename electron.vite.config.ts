@@ -11,7 +11,14 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve('src/main/index.ts') }
+        // Two entries from one config: the app, and the MCP proxy an agent client spawns.
+        // The proxy is a separate bundle because it runs as plain Node — stdio JSON-RPC needs
+        // a byte-exact stdout and Chromium does not provide one.
+        input: {
+          index: resolve('src/main/index.ts'),
+          'mcp/index': resolve('src/main/mcp/entry.ts')
+        },
+        output: { entryFileNames: '[name].js' }
       }
     }
   },
