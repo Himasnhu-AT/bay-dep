@@ -7,7 +7,15 @@ import { useFilmstrip, useWaveform } from '@/lib/useMediaCache'
 /** Below this width a clip is a coloured sliver; fetching pictures for it is wasted work. */
 const THUMBS_MIN_WIDTH = 96
 const STRIP_FRAMES = 24
-const STRIP_HEIGHT = 36
+/**
+ * Filmstrip frames are requested at this many *device* pixels tall.
+ *
+ * It was 36, and that was measured to be wrong: a 1080x1920 source came back as 20x36 and
+ * got stretched across 203px-wide columns — a 10x upscale, which is why a zoomed-in clip
+ * looked like coloured mud. A video lane is 58px minus 8px of inset, so 100 device pixels
+ * covers it at 2x with nothing to spare and nothing wasted.
+ */
+const STRIP_HEIGHT = 100
 const WAVEFORM_BUCKETS = 600
 
 export interface ClipProps {
@@ -59,8 +67,12 @@ function Filmstrip({
 }): ReactNode {
   if (frames.length === 0 || asset.durationUs <= 0) return null
   const aspect = asset.width && asset.height ? asset.width / asset.height : 16 / 9
-  const columnWidth = Math.max(24, height * aspect)
-  const columns = Math.min(40, Math.max(1, Math.floor(width / columnWidth)))
+  // One column per frame-width of clip, so a picture is never stretched past its natural
+  // aspect at lane height. Capped, because a long clip zoomed in would otherwise want
+  // hundreds of nodes; past the cap the columns are wider than a frame and `auto 100%`
+  // below tiles rather than magnifies.
+  const naturalColumn = Math.max(16, height * aspect)
+  const columns = Math.min(48, Math.max(1, Math.round(width / naturalColumn)))
 
   return (
     <div aria-hidden="true" className="absolute inset-0 flex overflow-hidden opacity-55">
@@ -72,8 +84,17 @@ function Filmstrip({
         return (
           <div
             key={column}
-            className="h-full shrink-0 bg-cover bg-center"
-            style={{ width: `${100 / columns}%`, backgroundImage: url ? `url("${url}")` : undefined }}
+            className="h-full shrink-0"
+            style={{
+              width: `${100 / columns}%`,
+              backgroundImage: url ? `url("${url}")` : undefined,
+              // `auto 100%` pins the frame to the lane height at its own aspect instead of
+              // blowing it up to the column width; repeat-x fills what is left with more
+              // frames, which is what a filmstrip is, rather than one smeared picture.
+              backgroundSize: 'auto 100%',
+              backgroundRepeat: 'repeat-x',
+              backgroundPosition: 'left center'
+            }}
           />
         )
       })}

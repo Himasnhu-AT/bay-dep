@@ -1,15 +1,21 @@
 /**
- * The recents index and a two-column key/value table, in SQLite.
+ * The recents index and a two-column key/value table.
  *
- * Everything here is disposable. `better-sqlite3` is a native module, which means a tree that
- * was not rebuilt against this Electron's ABI throws on `require` — so the whole thing is
- * behind a failed-open: no database, no recents, an app that still edits video. Nothing in
- * bay may become unavailable because a convenience index would not load.
+ * On `node:sqlite`, deliberately, after `better-sqlite3` turned out to be unloadable in the
+ * shipped app. pnpm builds that native module against the local Node (module version 137);
+ * Electron 40 needs 143, so `require` threw every single time the real app started — while
+ * passing under `pnpm test`, which runs on plain Node. The tests were green over a subsystem
+ * that had never once worked. `node:sqlite` is the same module in both, so the tests now
+ * exercise what ships, and there is no ABI to keep in step, no rebuild step, and nothing to
+ * un-asar.
+ *
+ * Everything here is still disposable — if `app.db` is deleted, nothing is lost but the list.
+ * What is *not* acceptable is losing it silently, which is the other half of what went wrong:
+ * a bare `catch { return null }` turned a subsystem that could never load into a feature that
+ * merely looked empty. A failure is returned as a reason now, and the caller reports it.
  */
 
-import { createRequire } from 'node:module'
-import type DatabaseConstructor from 'better-sqlite3'
-import type { Database as SqliteDatabase } from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import type { RecentProject } from '@shared/ipc'
 
 export interface AppDatabase {
@@ -21,12 +27,40 @@ export interface AppDatabase {
   close(): void
 }
 
-interface RecentRow {
-  file_path: string
-  id: string
-  name: string
-  updated_at: number
-  poster: string | null
+/**
+ * `error` is non-null exactly when `db` is null. Returning the reason rather than swallowing
+ * it is the point: the caller has to decide what to say, and cannot accidentally say nothing.
+ */
+export interface OpenResult {
+  db: AppDatabase | null
+  error: string | null
+}
+
+export interface StorageReport {
+  ready: boolean
+  error: string | null
+  /** What to print, or null when there is nothing to say. Never an empty string. */
+  message: string | null
+}
+
+/**
+ * Turns an open result into what the user and the log should be told.
+ *
+ * Separate from `openDatabase` and from the reporting itself so the property the failure
+ * needs — that it *says something* — is assertable. The previous design had no such property
+ * to assert: a failure and an empty database were the same value, and the app spent every
+ * build it has ever had in that state without a line of output anywhere.
+ */
+export function describeStorage(result: OpenResult): StorageReport {
+  if (result.error === null) return { ready: true, error: null, message: null }
+  return {
+    ready: false,
+    error: result.error,
+    message:
+      `The project database could not be opened, so recent projects and reopening the last ` +
+      `project are unavailable for this session. Editing and saving are unaffected. ` +
+      `Reason: ${result.error}`
+  }
 }
 
 const SCHEMA = `
@@ -43,18 +77,25 @@ CREATE TABLE IF NOT EXISTS app_state (
 );
 `
 
-export function openDatabase(path: string): AppDatabase | null {
-  let handle: SqliteDatabase
+/** Rows arrive with a null prototype; this copies out only the columns, as plain values. */
+function text(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function integer(value: unknown): number {
+  return typeof value === 'number' ? value : Number(value ?? 0)
+}
+
+export function openDatabase(path: string): OpenResult {
+  let handle: DatabaseSync
   try {
-    const require_ = createRequire(import.meta.url)
-    const Database = require_('better-sqlite3') as typeof DatabaseConstructor
-    handle = new Database(path)
+    handle = new DatabaseSync(path)
     // WAL keeps a reader from blocking the autosave writer; the recents list is read on
     // every launch and written on every save.
-    handle.pragma('journal_mode = WAL')
+    handle.exec('PRAGMA journal_mode = WAL')
     handle.exec(SCHEMA)
-  } catch {
-    return null
+  } catch (error) {
+    return { db: null, error: error instanceof Error ? error.message : String(error) }
   }
 
   const insertRecent = handle.prepare(
@@ -76,7 +117,7 @@ export function openDatabase(path: string): AppDatabase | null {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   )
 
-  return {
+  const db: AppDatabase = {
     rememberRecent(entry) {
       insertRecent.run({
         file_path: entry.filePath,
@@ -90,18 +131,20 @@ export function openDatabase(path: string): AppDatabase | null {
       deleteRecent.run(filePath)
     },
     listRecent(limit) {
-      const rows = selectRecent.all(limit) as RecentRow[]
-      return rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        filePath: row.file_path,
-        updatedAt: row.updated_at,
-        ...(row.poster ? { poster: row.poster } : {})
-      }))
+      return selectRecent.all(limit).map((row) => {
+        const poster = text(row['poster'])
+        return {
+          id: text(row['id']) ?? '',
+          name: text(row['name']) ?? '',
+          filePath: text(row['file_path']) ?? '',
+          updatedAt: integer(row['updated_at']),
+          ...(poster ? { poster } : {})
+        }
+      })
     },
     getState(key) {
-      const row = selectState.get(key) as { value: string } | undefined
-      return row?.value ?? null
+      const row = selectState.get(key)
+      return row ? text(row['value']) : null
     },
     setState(key, value) {
       upsertState.run(key, value)
@@ -114,4 +157,6 @@ export function openDatabase(path: string): AppDatabase | null {
       }
     }
   }
+
+  return { db, error: null }
 }

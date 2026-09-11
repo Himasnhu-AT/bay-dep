@@ -1,189 +1,93 @@
 /**
- * Where projects live.
+ * The project store: dialogs, the recents index, and the allowlist side of opening a file.
  *
- * The project itself is a plain JSON file with a `.bay` extension, in a folder the user
- * picked. That is deliberate and not negotiable: a user must be able to see their own work,
- * copy it to a backup drive, diff it, and open it when bay is not installed. SQLite is used
- * for exactly one thing — the recents index and a little app state — because that is
- * bookkeeping *about* projects, not the projects themselves. If `app.db` is deleted, nothing
- * is lost but the list.
+ * Everything about the files themselves is in `persistence.ts`, which imports no Electron and
+ * is tested directly. What is left here is the part that genuinely needs an app.
  */
 
-import { randomUUID } from 'node:crypto'
-import { readFile, rename, writeFile, access, unlink } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
 import { BrowserWindow, dialog } from 'electron'
 import type { RecentProject } from '@shared/ipc'
-import type { Project, Timeline, Track, TrackKind } from '@shared/project'
-import { CANVAS_PRESETS, PROJECT_VERSION } from '@shared/project'
+import type { Project } from '@shared/project'
 import { appDbPath, autosaveDir } from '../paths'
 import { allowPaths } from '../protocol'
 import { adoptAssets } from '../media/import'
-import { openDatabase, type AppDatabase } from './db'
+import { describeStorage, openDatabase, type AppDatabase } from './db'
+import {
+  EXTENSION,
+  LAST_PROJECT_KEY,
+  autosavePathFor,
+  exists,
+  readProjectFile,
+  resolveInitialProject,
+  writeAtomic,
+  writeProjectFile
+} from './persistence'
 
-const EXTENSION = 'bay'
+export interface StorageStatus {
+  ready: boolean
+  /** Why the database is unavailable, or null when it is fine. Shown, never swallowed. */
+  error: string | null
+}
 
-let db: AppDatabase | null = null
+let handle: AppDatabase | null = null
+let status: StorageStatus | null = null
 
+/**
+ * Opens the database once, and says so once if it cannot.
+ *
+ * The reporting is the point. The previous version returned null on failure with no output
+ * anywhere, so a database that could never load presented as a recents list that happened to
+ * be empty and a "last project" that was never remembered — a dead subsystem wearing the
+ * appearance of a working one. It stays non-fatal: bay must open without it.
+ */
 function database(): AppDatabase | null {
-  if (db === null) db = openDatabase(appDbPath())
-  return db
+  if (status !== null) return handle
+  const result = openDatabase(appDbPath())
+  const report = describeStorage(result)
+  handle = result.db
+  status = { ready: report.ready, error: report.error }
+  // The one line that had to exist. A database that cannot open must say so; the previous
+  // version returned null in silence, which is what let a dead subsystem pass for an empty one.
+  if (report.message) console.error(`[bay] ${report.message}`)
+  return handle
+}
+
+/** For the UI's degraded-state indicator, beside the ffmpeg warning. */
+export function storageStatus(): StorageStatus {
+  database()
+  return status ?? { ready: false, error: 'The database was never opened.' }
 }
 
 export function closeStore(): void {
-  db?.close()
-  db = null
+  handle?.close()
+  handle = null
+  status = null
 }
 
 // ---------------------------------------------------------------------------
-// A fresh project
-// ---------------------------------------------------------------------------
-
-function makeTrack(kind: TrackKind, index: number): Track {
-  return {
-    id: `trk_${randomUUID()}`,
-    kind,
-    name: `${kind === 'video' ? 'V' : 'A'}${index}`,
-    locked: false,
-    muted: false,
-    hidden: false,
-    items: []
-  }
-}
-
-/**
- * The shape `emptyProject()` in the renderer store produces. It is duplicated rather than
- * imported because main must not depend on renderer code — but the two have to agree, and
- * the serde round-trip through `.bay` is what would catch it if they stopped.
- */
-function freshProject(): Project {
-  const preset = CANVAS_PRESETS[0]!
-  const timeline: Timeline = {
-    id: `tl_${randomUUID()}`,
-    name: 'Timeline 1',
-    fps: preset.fps,
-    width: preset.width,
-    height: preset.height,
-    background: '#000000',
-    tracks: [makeTrack('video', 1), makeTrack('audio', 1)]
-  }
-  const now = Date.now()
-  return {
-    id: `prj_${randomUUID()}`,
-    name: 'Untitled',
-    version: PROJECT_VERSION,
-    assets: [],
-    timelines: [timeline],
-    activeTimelineId: timeline.id,
-    createdAt: now,
-    updatedAt: now,
-    filePath: null
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Reading and writing the file
-// ---------------------------------------------------------------------------
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.R_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Write to a sibling temp file and rename over the target. `rename` within a directory is
- * atomic, so a crash leaves either the old project or the new one — never a truncated file
- * with the user's afternoon half-written into it.
- */
-async function writeAtomic(path: string, contents: string): Promise<void> {
-  const temp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`)
-  await writeFile(temp, contents, 'utf8')
-  try {
-    await rename(temp, path)
-  } catch (error) {
-    await unlink(temp).catch(() => undefined)
-    throw error
-  }
-}
-
-function migrate(raw: unknown, filePath: string): Project {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new Error(`${basename(filePath)} is not a bay project.`)
-  }
-  const project = raw as Partial<Project>
-  if (!Array.isArray(project.timelines) || !Array.isArray(project.assets)) {
-    throw new Error(`${basename(filePath)} is missing its timelines or assets.`)
-  }
-  const version = typeof project.version === 'number' ? project.version : 0
-  if (version > PROJECT_VERSION) {
-    throw new Error(
-      `${basename(filePath)} was saved by a newer version of bay (project format ${version}, this build reads ${PROJECT_VERSION}).`
-    )
-  }
-  // Nothing to migrate yet — version 0 files predate the field and are otherwise identical.
-  return { ...(project as Project), version: PROJECT_VERSION, filePath }
-}
-
-async function readProject(filePath: string): Promise<Project> {
-  const absolute = resolve(filePath)
-  let text: string
-  try {
-    text = await readFile(absolute, 'utf8')
-  } catch {
-    throw new Error(`Could not read ${absolute}.`)
-  }
-  let raw: unknown
-  try {
-    raw = JSON.parse(text)
-  } catch {
-    throw new Error(`${basename(absolute)} is not valid JSON — it may be a partial write.`)
-  }
-  const project = migrate(raw, absolute)
-  // Opening a project is the second door media comes through; without this its clips would
-  // probe fine and then fail to play, because `bay://` would refuse every one of them.
-  adoptAssets(project.assets)
-  allowPaths(project.assets.map((asset) => asset.path))
-  return project
-}
-
-async function writeProject(project: Project, filePath: string): Promise<Project> {
-  const stamped: Project = { ...project, filePath, updatedAt: Date.now() }
-  await writeAtomic(filePath, JSON.stringify(stamped, null, 2))
-  rememberRecent(stamped)
-  allowPaths(stamped.assets.map((asset) => asset.path))
-  return stamped
-}
-
-// ---------------------------------------------------------------------------
-// Recents and app state
+// Recents
 // ---------------------------------------------------------------------------
 
 function rememberRecent(project: Project): void {
-  const handle = database()
-  if (!handle || !project.filePath) return
-  handle.rememberRecent({
+  const db = database()
+  if (!db || !project.filePath) return
+  db.rememberRecent({
     filePath: project.filePath,
     id: project.id,
     name: project.name,
     updatedAt: project.updatedAt
   })
-  handle.setState('lastProjectPath', project.filePath)
+  db.setState(LAST_PROJECT_KEY, project.filePath)
 }
 
 export async function recent(): Promise<RecentProject[]> {
-  const handle = database()
-  if (!handle) return []
-  const rows = handle.listRecent(20)
+  const db = database()
+  if (!db) return []
   const out: RecentProject[] = []
-  for (const row of rows) {
+  for (const row of db.listRecent(20)) {
     // A recents list that offers files the user moved to the bin is worse than a short one.
     if (!(await exists(row.filePath))) {
-      handle.forgetRecent(row.filePath)
+      db.forgetRecent(row.filePath)
       continue
     }
     out.push(row)
@@ -192,21 +96,21 @@ export async function recent(): Promise<RecentProject[]> {
 }
 
 // ---------------------------------------------------------------------------
-// The API
+// Opening and saving
 // ---------------------------------------------------------------------------
 
+/**
+ * Opening a project is the second door media comes through; without this its clips would
+ * probe fine and then fail to play, because `bay://` would refuse every one of them.
+ */
+function admitAssets(project: Project): Project {
+  adoptAssets(project.assets)
+  allowPaths(project.assets.map((asset) => asset.path))
+  return project
+}
+
 export async function initial(): Promise<Project> {
-  const handle = database()
-  const last = handle?.getState('lastProjectPath') ?? null
-  if (last && (await exists(last))) {
-    try {
-      return await readProject(last)
-    } catch {
-      // A project that will not parse must not stop bay from opening. The user gets an empty
-      // document and the file is still on disk for them to look at.
-    }
-  }
-  return freshProject()
+  return admitAssets(await resolveInitialProject(database()))
 }
 
 function dialogOptions(project: Project): Electron.SaveDialogOptions {
@@ -230,6 +134,13 @@ async function chooseSavePath(
   return result.filePath
 }
 
+async function persist(project: Project, filePath: string): Promise<Project> {
+  const written = await writeProjectFile(project, filePath)
+  rememberRecent(written)
+  allowPaths(written.assets.map((asset) => asset.path))
+  return written
+}
+
 export async function save(
   project: Project,
   window: BrowserWindow | null
@@ -239,7 +150,7 @@ export async function save(
   // The renderer treats it as a no-op; inventing a path in userData would hide the user's
   // work somewhere they would never think to look.
   if (!target) throw new Error('Save cancelled.')
-  const written = await writeProject(project, target)
+  const written = await persist(project, target)
   return { filePath: written.filePath! }
 }
 
@@ -249,7 +160,7 @@ export async function saveAs(
 ): Promise<{ filePath: string } | null> {
   const target = await chooseSavePath(project, window)
   if (!target) return null
-  const written = await writeProject(project, target)
+  const written = await persist(project, target)
   return { filePath: written.filePath! }
 }
 
@@ -268,19 +179,17 @@ export async function open(window: BrowserWindow | null): Promise<Project | null
 }
 
 export async function openPath(filePath: string): Promise<Project> {
-  const project = await readProject(filePath)
+  const project = admitAssets(await readProjectFile(filePath))
   rememberRecent(project)
   return project
 }
 
 /**
- * Autosave writes a *sidecar*, never the project file. The whole point is that a crash
- * during an autosave cannot cost the user the last version they deliberately saved, and
- * writing over `project.bay` — atomically or not — gives up that guarantee for nothing.
+ * Autosave writes a *sidecar*, never the project file. The whole point is that a crash during
+ * an autosave cannot cost the user the last version they deliberately saved, and writing over
+ * `project.bay` — atomically or not — gives up that guarantee for nothing.
  */
 export async function autosave(project: Project): Promise<void> {
-  const target = project.filePath
-    ? `${project.filePath}.autosave`
-    : join(autosaveDir(), `${project.id}.${EXTENSION}.autosave`)
+  const target = autosavePathFor(project, autosaveDir())
   await writeAtomic(target, JSON.stringify({ ...project, updatedAt: Date.now() }, null, 2))
 }

@@ -10,7 +10,7 @@ import type { ProbeResult } from '@shared/ipc'
 import { US_PER_SECOND } from '@shared/project'
 import { ffprobeBin, run } from './ffmpeg'
 
-interface FfprobeStream {
+export interface FfprobeStream {
   codec_type?: string
   codec_name?: string
   width?: number
@@ -25,13 +25,13 @@ interface FfprobeStream {
   tags?: Record<string, string>
 }
 
-interface FfprobeFormat {
+export interface FfprobeFormat {
   format_name?: string
   duration?: string
   bit_rate?: string
 }
 
-interface FfprobeOutput {
+export interface FfprobeOutput {
   streams?: FfprobeStream[]
   format?: FfprobeFormat
 }
@@ -48,10 +48,13 @@ export function parseRational(value: string | undefined): number | null {
     const direct = Number(value)
     return Number.isFinite(direct) && direct > 0 ? direct : null
   }
-  const numerator = Number(value.slice(0, slash))
-  const denominator = Number(value.slice(slash + 1))
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null
-  const fps = numerator / denominator
+  // No guard on the denominator or on either side being numeric: the finite-and-positive
+  // check below already covers every one of those. `0/0` and `N/A` divide to NaN, `1/0` to
+  // Infinity, `0/1` and `-30/1` to values that are not positive. Established by mutation —
+  // removing the guards changed no result over the handwritten cases plus 20,000 generated
+  // ones — and they are gone rather than kept, because a branch no test can falsify is a
+  // branch nobody can safely change later.
+  const fps = Number(value.slice(0, slash)) / Number(value.slice(slash + 1))
   return Number.isFinite(fps) && fps > 0 ? fps : null
 }
 
@@ -92,6 +95,16 @@ export async function probe(path: string): Promise<ProbeResult> {
     throw new Error(`ffprobe returned output that is not JSON for ${path}`)
   }
 
+  return shapeProbe(parsed, path)
+}
+
+/**
+ * Turns ffprobe's JSON into bay's shape. Separated from the spawn so it can be tested against
+ * recorded output from real files — which is the only way to cover the cases that matter here,
+ * because they are all *shapes of real media* (an audio stream with no frame rate, a still with
+ * no duration, a file with no video at all) rather than behaviours of ffprobe.
+ */
+export function shapeProbe(parsed: FfprobeOutput, path: string): ProbeResult {
   const streams = parsed.streams ?? []
   const video = streams.find((s) => s.codec_type === 'video')
   const audio = streams.find((s) => s.codec_type === 'audio')

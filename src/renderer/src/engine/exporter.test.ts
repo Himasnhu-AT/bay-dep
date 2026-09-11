@@ -12,6 +12,15 @@
  *
  * Run with `pnpm test` — the shared resolver hook handles the `@shared/*` alias this file
  * and the exporter both need.
+ *
+ * Mutation-tested: seven deliberate regressions — a fire-and-forget `pushFrame`, no cancel
+ * on a rejected frame, frames pushed in reverse, the export range ignored, the delivery
+ * size dropped so frames composite at timeline size, cancellation ignored mid-walk, and a
+ * cancelled export still reporting `finish`. Six fail this suite. The seventh is an
+ * equivalent mutant, not a gap: the loop's first cancellation check is a cost guard whose
+ * removal is behaviourally invisible because the second check still stops the walk. That
+ * is stated at the guard itself rather than papered over with a test that would pass
+ * either way.
  */
 
 import { test } from 'node:test'

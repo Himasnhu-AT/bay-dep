@@ -3,6 +3,7 @@ import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
 import type { ExportFormat, ExportProgress } from '@shared/ipc'
 import { formatTimecode } from '@shared/project'
 import { Button, Field, Modal, Section, Select } from '@/components'
+import { FrameExporter } from '@/engine'
 import { bay, call } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
@@ -44,6 +45,7 @@ function resolve(scale: Scale, width: number, height: number): { width: number; 
 }
 
 const AUDIO_ONLY: ExportFormat[] = ['wav', 'mp3']
+const TERMINAL: ExportProgress['stage'][] = ['done', 'failed', 'cancelled']
 
 export interface ExportFormProps {
   /** The left rail is 212px wide; the modal is not. */
@@ -54,9 +56,12 @@ export interface ExportFormProps {
  * The export form, shared by the modal and the left rail's Export panel so there is one
  * set of defaults and one progress subscription shape rather than two that drift.
  *
- * Progress comes from the encoder in the main process. The loop that hands it composited
- * frames lives in the render engine, so until that is wired an export will report
- * `preparing` and sit there — a missing pipeline, not a stalled dialog.
+ * The dialog owns the *whole* export, not just its settings. `window.bay.export.start`
+ * only opens a job on the encoder; the frames are produced here, by driving the engine's
+ * `FrameExporter`, because nothing else is listening for that job. Without this the UI sat
+ * at `preparing` forever and ffmpeg waited on a stream that never arrived.
+ *
+ * `FrameExporter.run()` calls `finish`/`cancel` on the bridge itself, so this must not.
  */
 export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
   const timeline = useEditor(selectTimeline)
@@ -72,6 +77,7 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [starting, setStarting] = useState(false)
   const jobRef = useRef<string | null>(null)
+  const exporterRef = useRef<FrameExporter | null>(null)
 
   useEffect(() => {
     // Not routed through `call`: this registers a listener and hands back an unsubscribe,
@@ -92,11 +98,7 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
 
   const size = resolve(scale, timeline.width, timeline.height)
   const audioOnly = AUDIO_ONLY.includes(format)
-  const running =
-    progress !== null &&
-    progress.stage !== 'done' &&
-    progress.stage !== 'failed' &&
-    progress.stage !== 'cancelled'
+  const running = progress !== null && !TERMINAL.includes(progress.stage)
   const empty = duration === 0
 
   const choosePath = async (): Promise<void> => {
@@ -141,12 +143,57 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
       framesTotal: duration,
       stage: 'preparing'
     })
+
+    // A WAV or MP3 has no pictures to push; main muxes those from the project alone, and
+    // feeding RGBA frames to an audio encoder would be a stream it never reads.
+    if (audioOnly) return
+
+    const exporter = new FrameExporter({
+      project,
+      timelineId: timeline.id,
+      jobId: job.jobId,
+      width: size.width,
+      height: size.height,
+      onProgress: (report) =>
+        setProgress((previous) => {
+          // Main is the authority on the terminal stages — it owns the encoder — so a
+          // late frame callback must not reopen an export that already finished or failed.
+          if (previous && TERMINAL.includes(previous.stage)) return previous
+          return {
+            jobId: job.jobId,
+            stage: 'rendering',
+            framesDone: report.framesDone,
+            framesTotal: report.framesTotal,
+            progress: report.progress
+          }
+        })
+    })
+    exporterRef.current = exporter
+
+    try {
+      await exporter.run()
+    } catch (error) {
+      setProgress((previous) => ({
+        jobId: job.jobId,
+        stage: 'failed',
+        framesDone: previous?.framesDone ?? 0,
+        framesTotal: previous?.framesTotal ?? null,
+        progress: previous?.progress ?? null,
+        error: error instanceof Error ? error.message : 'Export failed.'
+      }))
+      notify(error instanceof Error ? error.message : 'Export failed.', 'error')
+    } finally {
+      exporterRef.current = null
+    }
   }
 
   const cancel = (): void => {
     const jobId = jobRef.current
     if (!jobId) return
-    void call('Cancelling the export', (api) => api.export.cancel(jobId))
+    // Cancelling the frame pump is what actually stops the work; `run()` then tells the
+    // encoder. Only reach for the bridge directly when there is no pump (audio-only).
+    if (exporterRef.current) exporterRef.current.cancel()
+    else void call('Cancelling the export', (api) => api.export.cancel(jobId))
   }
 
   const percent =

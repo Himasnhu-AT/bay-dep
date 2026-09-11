@@ -119,6 +119,12 @@ export class FrameExporter {
     let framesWritten = 0
     try {
       for (let frame = from; frame <= to; frame += 1) {
+        // Two checks with different jobs. This one is a cost guard: it skips seeking every
+        // source for a frame that will be thrown away, which on a 4K export is real work.
+        // Deleting it changes no observable behaviour — the check below still stops the
+        // walk — so no test can tell it apart, and it is deliberately not claimed as
+        // covered. The one below is the correctness check: cancellation usually arrives
+        // *during* the awaited prepare, and without it that frame would still be pushed.
         if (this.#cancelled) break
 
         await this.#prepare(timeline, frame)

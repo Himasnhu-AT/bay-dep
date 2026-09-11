@@ -14,6 +14,9 @@
  * died on the first frame was reported as every frame written successfully. The completion
  * signal is now the write callback.
  *
+ * Proven against four deliberate regressions, all caught: `writeFrame` resolving without
+ * waiting, and each of the three frame checks disabled in turn.
+ *
  * Run with `pnpm test`, or on its own:
  *   node --import ./src/test-hooks.mjs --test src/main/export/frame-pipe.test.ts
  */

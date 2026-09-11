@@ -39,9 +39,8 @@ function createWindow(): BrowserWindow {
       preload: join(here, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      // better-sqlite3 and the ffmpeg spawns need Node, and the preload script has to be
-      // able to reach the bridge. Node stays out of the renderer itself, which is where it
-      // would actually matter.
+      // The ffmpeg spawns need Node, and the preload script has to be able to reach the
+      // bridge. Node stays out of the renderer itself, which is where it would matter.
       sandbox: false,
       webSecurity: true,
       spellcheck: false

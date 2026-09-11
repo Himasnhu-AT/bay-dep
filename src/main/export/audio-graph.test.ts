@@ -12,6 +12,13 @@
  * a partial-range export has its envelope in the wrong place, which only shows when someone
  * exports a selection rather than the whole timeline.
  *
+ * Proven against six deliberate regressions, all caught: fades moved after the sub-range trim,
+ * the sub-range trim deleted, `normalize=0` flipped, the `asset.error` skip removed, the
+ * `track.muted` guard removed, and the `hasAudio` requirement dropped. Each mutation asserted
+ * that it had actually applied before the suite ran — the first pass of this exercise scored a
+ * false "not caught" from a mutation whose indentation did not match, which would have sent
+ * someone rewriting a test that was working.
+ *
  * Run with `pnpm test`, or on its own:
  *   node --import ./src/test-hooks.mjs --test src/main/export/audio-graph.test.ts
  */
