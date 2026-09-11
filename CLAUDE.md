@@ -187,6 +187,16 @@ written about code whose necessity the author could not demonstrate. When you ca
 writing it, that is the moment to check whether any input can distinguish the branch's presence
 from its absence. If none can, delete it rather than testing it.
 
+**But two guards can address one symptom from different layers, and a fix to one does not retire
+the other.** This rule is the thing most likely to cause that mistake, so check before deleting.
+Worked example: `edit()` now returns unchanged when a mutator declines to act, so a refused
+`moveItem` no longer leaves a dead undo step — which reads like it makes the MCP executor's
+pre-check redundant. It does not. `moveItem` returns `void` either way, so without the pre-check
+the executor still calls it, still sees nothing, and still returns `ok: true` to an agent whose
+clip did not move; the agent then builds its next three calls on a timeline it believes it
+changed. One guard fixes the history, the other produces the message. Ask what each guard's
+*observable* is: if two guards have different ones, they are different guards.
+
 **A probe is subject to the same discipline as a test: it must be shown capable of detecting what
 it reports on.** Instruments fail the same way tests do, and this project has already produced
 three confident wrong conclusions from probes that could not observe what they claimed was absent
