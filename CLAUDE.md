@@ -21,6 +21,18 @@ See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 [`todo.completed.md`](./todo.completed.md), [`todo.pending.md`](./todo.pending.md) and
 [`todo.testing.md`](./todo.testing.md) — and `docs/native/`.
 
+## Never `git add -A` in this tree
+
+Several agents work here at once, and their edits land between your `git status` and your commit.
+Doing this swept another author's work into four unrelated commits in a single day — a compositor
+fix under a commit about a documentation rule, a guard deletion under one about the media cache, a
+payload dedupe under one about export failures. Nothing was lost, but a bisect lands on a message
+that does not mention the change, which is the expensive kind of wrong.
+
+Stage explicit paths. `git add src/main/foo.ts src/main/foo.test.ts`, never `-A` and never `.`.
+If a commit does end up carrying someone else's work, name it in the message rather than leaving it
+to be discovered.
+
 ## Commands — the Electron product (repo root)
 
 ```bash
