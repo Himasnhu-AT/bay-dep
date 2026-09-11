@@ -224,7 +224,60 @@ export const TOOLS: ToolSpec[] = [
         volume: { type: 'number', minimum: 0, maximum: 2 },
         speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
         fadeInFrames: { type: 'integer', minimum: 0 },
-        fadeOutFrames: { type: 'integer', minimum: 0 }
+        fadeOutFrames: { type: 'integer', minimum: 0 },
+        text: {
+          type: 'object',
+          description:
+            'Type styling. Only for items whose asset is kind "text"; refused on anything ' +
+            'else. Top-level fields merge, so setting color leaves size alone. The three ' +
+            'effect groups — stroke, shadow and background — replace wholesale, or pass ' +
+            'null to switch one off.',
+          properties: {
+            fontFamily: {
+              type: 'string',
+              description: 'A stack installed on this machine. There are no webfonts.'
+            },
+            fontSize: {
+              type: 'number',
+              minimum: 1,
+              maximum: 2000,
+              description:
+                'Canvas pixels. What you ask for; bay shrinks it only when the words will ' +
+                'not fit even wrapped, and says so when it does.'
+            },
+            fontWeight: {
+              type: 'integer',
+              minimum: 100,
+              maximum: 900,
+              description: 'A multiple of 100.'
+            },
+            italic: { type: 'boolean' },
+            color: { type: 'string', description: 'Hex, such as "#FFFFFF".' },
+            align: { type: 'string', enum: ['left', 'center', 'right'] },
+            verticalAlign: { type: 'string', enum: ['top', 'middle', 'bottom'] },
+            lineHeight: {
+              type: 'number',
+              minimum: 0.5,
+              maximum: 4,
+              description: 'Multiple of fontSize.'
+            },
+            letterSpacing: { type: 'number', description: 'Canvas pixels.' },
+            // The three groups carry a description and deliberately no `type`. The
+            // dispatcher's validator understands only the keywords this catalog uses and does
+            // not recurse into objects, so the checking happens in the text-style validator
+            // instead — where it can say `"text.fontWeight" must be a multiple of 100 between
+            // 100 and 900, but got 550` rather than a schema violation on an object the agent
+            // cannot see inside. An error an agent cannot act on is the thing this surface
+            // exists to avoid.
+            stroke: { description: 'An outline: { color, width }. null to remove.' },
+            shadow: {
+              description: 'A drop shadow: { color, blur, offsetX, offsetY }. null to remove.'
+            },
+            background: {
+              description: 'A plate behind the words: { color, padding, radius }. null to remove.'
+            }
+          }
+        }
       },
       required: ['itemId']
     }
