@@ -101,11 +101,25 @@ export class Compositor {
    * of the seek fight is whichever draw happens to catch the element mid-seek, which is why
    * this looked unreproducible for an afternoon.
    *
-   * The ordering is what confused everyone, so state it: a probe reloads *first* (restoring
-   * the file's single item) and places its second item *after* that, so the frame it then
-   * measures holds two. The reload trap bites when you go to inspect **afterwards** — a
-   * second attach reloads again and the placed item is gone before anyone can see it. Read
-   * the timeline in the same evaluation as the pixels, or the evidence destroys itself.
+   * **The reload is not the trigger, and that was measured directly rather than inferred**,
+   * because the probes both reload *and* place and so cannot tell the two apart. Driven over
+   * a debugger with the handle already primed, so that nothing forced a page load: eight
+   * consecutive reloads with nothing placed drew all eight times, and then placing one extra
+   * item of the same asset — with no reload anywhere — blanked the canvas immediately. One
+   * variable at a time is the only way this question has an answer.
+   *
+   * The blank also *latches*, which is the part that makes it look like a dead engine rather
+   * than a race: the seek fight means every draw catches the element mid-seek and draws
+   * nothing, and once the fight settles there is no further `seeked` to fire, so nothing
+   * schedules the draw that would finally paint it. Measured sitting at `readyState` 4,
+   * `seeking` false, on the topmost item's target, with the canvas still empty four seconds
+   * later.
+   *
+   * One ordering trap for whoever measures this next: a probe reloads *first* (restoring the
+   * file's single item) and places its second item *after*, so the frame it measures holds
+   * two — and if you then attach again to inspect, that second reload restores the file and
+   * the placed item is gone before you can see it. Read the timeline in the same evaluation
+   * as the pixels, or the evidence destroys itself.
    */
   readonly #seeks = new Map<string, SeekState>()
 
