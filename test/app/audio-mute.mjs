@@ -55,14 +55,25 @@ const peak = () => evaluate(`(() => {
 })()`)
 const settle = () => evaluate(`new Promise((r) =>
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 500)))).then(() => true)`)
-const videoTrack = `(() => {
+/**
+ * Every video track that has an item, not just the first one.
+ *
+ * `tracks.find(t => t.kind === 'video')` picked V1 and assumed it was the only one. Against
+ * a fixture with three video tracks carrying the same clip, hiding V1 left the other two
+ * drawing and the probe reported "hide left the picture drawn" while hide was working
+ * perfectly — a probe failing on the shape of its fixture rather than on the code. Acting on
+ * all of them makes the assertion true of the picture as a whole, whatever the fixture holds.
+ */
+const videoTracks = `(() => {
   const st = window.bayEngine.store.getState()
   const tl = st.project.timelines.find((t) => t.id === st.project.activeTimelineId)
-  return tl.tracks.find((t) => t.kind === 'video')
+  return tl.tracks.filter((t) => t.kind === 'video' && t.items.length > 0)
 })()`
+const videoTrack = `(${videoTracks})[0]`
 const patch = (field, value) => evaluate(`(() => {
-  const t = ${videoTrack}
-  window.bayEngine.store.getState().patchTrack(t.id, { ${field}: ${value} })
+  for (const t of ${videoTracks}) {
+    window.bayEngine.store.getState().patchTrack(t.id, { ${field}: ${value} })
+  }
   return true
 })()`)
 const flags = () => evaluate(`(() => { const t = ${videoTrack}

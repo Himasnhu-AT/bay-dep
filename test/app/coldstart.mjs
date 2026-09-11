@@ -1,89 +1,104 @@
 /**
- * Does a project loaded from disk at launch actually draw, with nothing forcing it?
+ * Does a project reopened from disk draw itself, with nothing forcing a redraw?
  *
- * `latearrival.mjs` covers a project delivered to the store after mount, which is the shape
- * `project.initial()` produces — but it delivers it by calling `setProject` directly. This
- * probe uses the real path instead: it saves a project to disk, reloads, and lets
- * `project.initial()` bring it back, because "the store was handed a project" and "the app
- * reopened the last project" are different code and only one of them runs at launch.
+ * `latearrival.mjs` covers a project handed to the store after mount by calling `setProject`.
+ * This is the real launch path instead: main's persistence resolves `project.initial()` and
+ * the store receives it — different code, and only this one runs at startup.
  *
- * Nothing here calls `redraw()`. If the canvas is bare at the end, the app cannot show you
- * your own project until you touch something.
+ * **This probe is read-only and must stay that way.** An earlier version imported a clip,
+ * placed it and called `project.save()` to seed itself. On a profile whose project already
+ * has a `filePath`, `save()` writes without a dialog — so the probe silently *appended* a
+ * clip to the shared fixture on every run, taking it from 1 item to 3 and breaking a
+ * different probe that assumed one video track. A probe that mutates the fixture it measures
+ * is not a measurement. It now requires a seeded profile and never writes.
  *
- * **This probe needs a profile that already has a saved project, and cannot make one.**
- * `project.save` opens a system dialog, which a CDP-driven run cancels, and `project.autosave`
- * of a project whose `filePath` is null does not become the reopenable one — measured:
- * autosave resolves, `app.storageReady()` reports `{ready: true}`, and `project.recent()` is
- * still empty while `project.initial()` returns "Untitled" with zero items. So run it against
- * a `--user-data-dir` that has been seeded by saving a project by hand once:
- *
- *     node test/app/coldstart.mjs   # PORT=<port>, app launched with the seeded profile
- *
- * Against an unseeded profile it reports CANNOT MEASURE, which is correct and not a failure
- * of the app.
+ * Seed one by hand: launch with a `--user-data-dir`, import a clip, place it, save the
+ * project, quit. Then point this at a launch using that profile.
  */
 
-import { attach, CANVAS_PROFILE, CANVAS_READY, requirePrecondition, runProbe } from './cdp.mjs'
+import { attach, CANVAS_PROFILE, requirePrecondition, runProbe } from './cdp.mjs'
 
-const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
-const { send, evaluate, close } = await attach()
+const { evaluate, close } = await attach()
 
 await runProbe(async () => {
-  // 1. Build a project with a clip on it and put it on disk the way the app does.
-  const saved = await evaluate(`(async () => {
-    const { store } = window.bayEngine
-    const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
-    const asset = imported[0].asset
-    store.getState().addAssets([asset])
-    store.getState().placeAsset(asset.id, 0)
-    const project = store.getState().project
-    let filePath = null
-    try { filePath = (await window.bay.project.save(project)).filePath } catch (e) { filePath = 'save failed: ' + e.message }
-    try { await window.bay.project.autosave(store.getState().project) } catch {}
-    return { filePath, items: project.timelines.flatMap(t => t.tracks).flatMap(t => t.items).length }
-  })()`, 60_000)
-  console.log('saved          ', JSON.stringify(saved))
+  // `attach()` has already reloaded, so project.initial() has run for this page.
+  await requirePrecondition(
+    evaluate,
+    'the profile has a saved project with an item on the timeline (seed one by hand; this probe will not)',
+    `(() => { const st = window.bayEngine.store.getState()
+       const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
+       return !!tl && tl.tracks.some(t => t.items.length > 0) })()`
+  )
+  await requirePrecondition(
+    evaluate,
+    'the preview canvas has been sized by the engine',
+    `(() => { const c = document.querySelector('canvas')
+       return !!c && !(c.width === 300 && c.height === 150) && c.width > 0 })()`
+  )
 
-  // 2. Reload. The engine mounts against the placeholder, then project.initial() resolves.
-  await send('Page.reload', {})
-  await new Promise((r) => setTimeout(r, 3000))
-  await evaluate(`(async () => {
-    for (let i = 0; i < 120; i++) { if (window.bayEngine) return true; await new Promise(r => setTimeout(r, 250)) }
-    throw new Error('engine never remounted')
-  })()`, 45_000)
-
-  // 3. Wait for the preconditions, and force nothing.
-  for (const [label, expression] of Object.values(CANVAS_READY)) {
-    await requirePrecondition(evaluate, label, expression)
-  }
-
-  const reopened = await evaluate(`(() => {
+  const seen = await evaluate(`(() => {
     const { engine, store } = window.bayEngine
     const st = store.getState()
     const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
-    const items = tl ? tl.tracks.flatMap(t => t.items) : []
-    const asset = st.project.assets[0]
     return {
       projectName: st.project.name,
-      items: items.length,
+      items: tl.tracks.flatMap(t => t.items).length,
+      videoTracks: tl.tracks.filter(t => t.kind === 'video').length,
       clockDuration: engine.clock.duration,
-      samples: engine.stats().samples,
-      poolStatus: asset ? engine.pool.readiness(asset.id).status : 'no asset',
-      hasPicture: asset ? engine.pool.readiness(asset.id).hasPicture : false,
       profile: ${CANVAS_PROFILE}
     }
   })()`)
 
-  const lit = reopened.profile.lit
-  const bands = reopened.profile.bands.filter((b) => b.nonZero > 0).length
-  console.log('reopened       ', JSON.stringify({ ...reopened, profile: undefined }))
-  console.log('canvas         ', `lit ${lit}, bands with content ${bands}/20, rowExtent ${JSON.stringify(reopened.profile.rowExtent)}`)
+  console.log('reopened  ', JSON.stringify({ ...seen, profile: undefined }))
+  console.log('canvas    ', `lit ${seen.profile.lit}, rowExtent ${JSON.stringify(seen.profile.rowExtent)}`)
 
-  const drew = lit > 0
+  if (seen.profile.lit > 0) {
+    console.log('\nPASS  a project reopened from disk draws itself, with nothing forcing a redraw')
+    close()
+    return true
+  }
+
+  /**
+   * A bare canvas has several causes and they live in different subsystems, so the verdict
+   * has to say which. Guessing "nothing asked for a frame" once sent two people into the
+   * scheduling path for a fault where draws were running fine and had nothing drawable to
+   * draw. `drawFrame` already reports that distinction; ask it rather than infer.
+   *
+   * Deliberately not using `stats().samples` as a draw counter — it is the length of a
+   * rolling window capped at 240, so above that it stops counting and reads as "stalled".
+   */
+  const why = await evaluate(`(() => {
+    const { engine, store } = window.bayEngine
+    const st = store.getState()
+    const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
+    const c = document.querySelector('canvas')
+    const ctx = c.getContext('2d', { willReadFrequently: true })
+    // Synchronous: no scheduling in the path at all, so this isolates drawability.
+    const stats = engine.compositor.drawFrame(ctx, st.project, tl, store.getState().playhead, { mode: 'scrub' })
+    const d = ctx.getImageData(0, 0, c.width, c.height).data
+    let lit = 0
+    for (let i = 0; i < d.length; i += 4 * 97) if (d[i] > 0 || d[i+1] > 0 || d[i+2] > 0) lit++
+    const assets = st.project.assets.map(a => ({ id: a.id, ...engine.pool.readiness(a.id) }))
+    return { stats, litAfterForcedDraw: lit, assets }
+  })()`)
+
+  console.log('forced draw', JSON.stringify(why))
   console.log()
-  console.log(drew
-    ? 'PASS  a project reopened from disk draws itself, with nothing forcing a redraw'
-    : 'FAIL  the reopened project is on the timeline but the canvas is bare - nothing asked for a frame')
+  if (why.stats.pending > 0 && why.stats.drawn === 0) {
+    console.log('FAIL  draws are running and every item reports `pending` — the media is not')
+    console.log('      drawable (decode or seek), which is the pool/compositor, NOT the scheduler.')
+  } else if (why.stats.placeholders > 0 && why.stats.drawn === 0) {
+    console.log('FAIL  every item drew a placeholder — the assets are unreadable, which is the')
+    console.log('      bay:// path or the files themselves, NOT the render path.')
+  } else if (why.stats.drawn > 0 && why.litAfterForcedDraw === 0) {
+    console.log('FAIL  items drew and produced no lit pixels — geometry or the source content.')
+    console.log('      Check test/app/geometry.mjs before suspecting the scheduler.')
+  } else if (why.litAfterForcedDraw > 0) {
+    console.log('FAIL  a forced draw lights the canvas but nothing scheduled one — this IS the')
+    console.log('      scheduling path (index.ts / mediaPool onReady).')
+  } else {
+    console.log('FAIL  the canvas is bare and a forced draw did not mend it; see the stats above.')
+  }
   close()
-  return drew
+  return false
 })

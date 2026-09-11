@@ -359,3 +359,39 @@ the shell is the `npx` wrapper and "the first process named Electron" is usually
 fronts the app and waits before the first click: without that, the first menu click is swallowed
 establishing focus and whichever item is checked first reports dead, which looks exactly like the
 bug it is hunting.
+
+
+## A probe must not write to the fixture it measures
+
+`coldstart.mjs` used to seed itself: import a clip, place it, `project.save()`. On a profile
+whose project already has a `filePath`, **`save()` writes without a dialog** — so every run
+silently *appended* a clip to the shared seeded project, taking it from 1 item to 3.
+
+The damage was not local. `audio-mute.mjs` hid `tracks.find(t => t.kind === 'video')` — the
+first video track — so once the fixture had three, hiding V1 left the other two drawing and
+the probe reported "hide left the picture drawn" while hide worked correctly. A fixture
+mutated by one probe made a second probe accuse the code.
+
+Two rules follow, and both are cheap:
+
+- **Probes are read-only against shared state.** `coldstart.mjs` now requires a seeded profile
+  and refuses to create one. Seed by hand, once.
+- **Act on every element that matches, not the first.** `audio-mute.mjs` now hides and mutes
+  *all* video tracks carrying items, so the assertion is about the picture as a whole and
+  holds whatever the fixture contains.
+
+## Name the subsystem the evidence implicates, not the one you suspect
+
+`coldstart.mjs`'s failure message used to read "nothing asked for a frame". It fired on a run
+where draws were happening throughout and the real fault was a seek thrash between two items
+sharing one pooled element — so the verdict sent two people into the scheduling path, which
+was innocent.
+
+`drawFrame` already returns `{drawn, pending, placeholders}`. The probe now forces one
+synchronous draw and branches on it: everything `pending` means the media is not drawable
+(pool/compositor); all `placeholders` means the assets are unreadable (`bay://` or the files);
+`drawn` with no lit pixels means geometry or content; lit-after-forcing but bare before means
+it really is the scheduler.
+
+And do not use `stats().samples` as a draw counter — it is the length of a rolling window
+**capped at 240**, so past that it stops rising and reads as a stall.

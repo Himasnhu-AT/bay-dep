@@ -106,6 +106,21 @@ around it.
 This shape — a correct-looking construct that nothing can reach — has now appeared five times in
 two days, across four subsystems and three authors. Expect it rather than being surprised by it.
 
+**A property measured in one state is not a property.** Ask of every measurement: *which starting
+state was I in when I measured that?* This has been the single most repeated error here — three
+separate instances in one day, by three people, in three subsystems:
+
+- "`%nonZero` at 0.0% means nothing was drawn" — true only when the source is known to have
+  something there, which nobody checked. Cost the most.
+- "`VERIFY_PRECONDITION` fails as designed" — true only from an empty project; from a project
+  loaded off disk the precondition was already satisfied and the mode hung.
+- "`project.save()` opens a dialog, so a probe cannot seed itself" — true only on a profile with
+  no `filePath`; on a seeded one it writes silently, which is how a probe came to mutate a
+  fixture nobody knew it was writing to.
+
+Each was measured honestly, each was reported as a property of the system, and each sent someone
+into code that was working. Say "in state X, this does Y" until you have checked state not-X.
+
 **Write the assertion from the requirement, never from the implementation.** `sweepStaleCaches`
 skipped any directory without a `<family>-<scheme>` separator, so a bare `thumbs/` — the one stale
 cache every existing install actually has — fell through and was never reclaimed. The function
