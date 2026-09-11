@@ -215,6 +215,19 @@ export const TOOLS: ToolSpec[] = [
         itemId,
         from: frames('New start frame.'),
         durationInFrames: { type: 'integer', minimum: 1, description: 'New length in frames.' },
+        sourceStartSeconds: {
+          type: 'number',
+          minimum: 0,
+          description:
+            'Which part of the source this clip plays — seconds from the beginning of the ' +
+            'file, not a position on the timeline. This is how you use the middle of a clip: ' +
+            'set it to 10 and the clip starts ten seconds into the footage while staying ' +
+            'exactly where it is on the timeline.\n' +
+            'Seconds rather than the model\'s microseconds because six zeros are easy to get ' +
+            'wrong and the error is silent — a clip reading from the wrong place still plays.\n' +
+            'It is also what gives a clip the room a transition needs: a clip starting at 0 ' +
+            'has nothing before its start to dissolve from, and add_transition will say so.'
+        },
         trackId: { type: 'string' },
         left: { type: 'number', description: 'Canvas x in pixels. Negative is valid.' },
         top: { type: 'number', description: 'Canvas y in pixels. Negative is valid.' },
