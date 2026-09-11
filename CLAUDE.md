@@ -33,6 +33,17 @@ Stage explicit paths. `git add src/main/foo.ts src/main/foo.test.ts`, never `-A`
 If a commit does end up carrying someone else's work, name it in the message rather than leaving it
 to be discovered.
 
+**And an explicit path list has the opposite failure, so neither rule is enough on its own:** it
+cannot name a file you did not know had been created. `3031fb4` committed `compositor.ts`, which
+imports `./looks`, and left `looks.ts` untracked — that commit typechecks, passes all 310 tests,
+and does not build from a fresh checkout. Both gates read the *working tree*, where the file is
+present, so neither could see it.
+
+`src/shared/committed-imports.test.ts` is the gate: it walks every relative import in `HEAD` and
+checks the target is also in `HEAD`. It is proven against `3031fb4` itself rather than a synthetic
+mutant — one fault at that commit, zero at its repair — and it skips loudly if that commit is ever
+unreachable, because a proof that cannot run must not read as a pass.
+
 ## Commands — the Electron product (repo root)
 
 ```bash
