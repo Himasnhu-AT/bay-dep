@@ -238,6 +238,53 @@ export const TOOLS: ToolSpec[] = [
         speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
         fadeInFrames: { type: 'integer', minimum: 0 },
         fadeOutFrames: { type: 'integer', minimum: 0 },
+        adjustments: {
+          type: 'object',
+          description:
+            'Image adjustments — a look control, not a colour grade. Fields merge, so ' +
+            'setting saturate leaves brightness alone. Defaults are the identity values, so ' +
+            'an item with none looks exactly as it does today.',
+          properties: {
+            brightness: { type: 'number', minimum: 0, description: '1 is unchanged.' },
+            contrast: { type: 'number', minimum: 0, description: '1 is unchanged.' },
+            saturate: {
+              type: 'number',
+              minimum: 0,
+              description: '1 is unchanged. 0 is greyscale, above 1 is richer.'
+            },
+            hueRotate: { type: 'number', description: 'Degrees. 0 is unchanged.' },
+            blur: { type: 'number', minimum: 0, description: 'Canvas pixels. 0 is off.' },
+            grayscale: { type: 'number', minimum: 0, maximum: 1 },
+            sepia: { type: 'number', minimum: 0, maximum: 1 },
+            invert: { type: 'number', minimum: 0, maximum: 1 }
+          }
+        },
+        blendMode: {
+          type: 'string',
+          enum: [
+            'normal',
+            'multiply',
+            'screen',
+            'overlay',
+            'darken',
+            'lighten',
+            'color-dodge',
+            'color-burn',
+            'hard-light',
+            'soft-light',
+            'difference',
+            'exclusion',
+            'hue',
+            'saturation',
+            'color',
+            'luminosity'
+          ],
+          description:
+            'How this clip combines with what is under it. Only meaningful on a clip that ' +
+            'has something beneath it — on the lowest video track there is nothing to blend ' +
+            'with and every mode looks the same. multiply darkens, screen lightens, overlay ' +
+            'does both from the underlying tones.'
+        },
         text: {
           type: 'object',
           description:
