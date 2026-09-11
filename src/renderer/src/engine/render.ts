@@ -23,7 +23,7 @@ import {
   type Project,
   type Timeline
 } from '@shared/project'
-import { Compositor, seekOwners } from './compositor'
+import { Compositor, elementSlots } from './compositor'
 import { MediaPool } from './mediaPool'
 import { sourceSecondsAt } from './sync'
 
@@ -95,10 +95,11 @@ export function settle(target: EventTarget, events: string[], timeoutMs: number)
  * triggers a redraw. Nothing redraws here — there is one frame and one answer — so the wait
  * has to happen before the draw.
  *
- * **Only the seek owner moves each element.** Two items sharing an asset in one frame share
- * its single element; if both issue their target the element restarts its seek forever,
- * `readyState` sits at 1, and every item reports `pending` — measured, and permanent. The
- * compositor already decides who owns the seek, so this asks it rather than deciding again.
+ * **Each item waits on its own element.** Two items on one asset in one frame get two
+ * elements (see `elementSlots`), which is what lets a transition show both source times. The
+ * assignment comes from the compositor so that the element awaited here is the element that
+ * frame will draw from — deriving it twice by different rules would wait on one and draw from
+ * another, which looks exactly like a source that never became ready.
  */
 export async function awaitSources(
   pool: MediaPool,
@@ -109,13 +110,16 @@ export async function awaitSources(
 ): Promise<void> {
   const fps = Number.isFinite(timeline.fps) && timeline.fps > 0 ? timeline.fps : 30
   const items = itemsAtFrame(timeline, frame, 'video')
-  const owners = seekOwners(items)
+  // The same assignment the compositor will use when it draws, so the element this waits on
+  // is the element that frame reads from. Deriving it twice by different rules would wait on
+  // one element and draw from another.
+  const slots = elementSlots(items)
   const waits: Promise<void>[] = []
 
   for (const item of items) {
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error || asset.kind === 'text') continue
-    const element = pool.acquire(asset).element
+    const element = pool.acquire(asset, slots.get(item.id) ?? 0).element
     if (!element) continue
 
     if (element instanceof HTMLImageElement) {
@@ -128,9 +132,6 @@ export async function awaitSources(
       await settle(element, ['loadedmetadata', 'error'], timeoutMs)
     }
     if (!element.paused) element.pause()
-
-    // Not this item's element to move; the owner's seek is the one that decides the frame.
-    if (owners.get(asset.id) !== item.id) continue
 
     const target = sourceSecondsAt(item, asset, frame, fps)
     // A source whose frame rate differs from the timeline's lands on the same decoded frame

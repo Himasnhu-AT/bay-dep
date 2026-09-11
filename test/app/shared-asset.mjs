@@ -1,12 +1,18 @@
 /**
- * Two items, one asset, two source times — the seek thrash.
+ * Two items, one asset, two source times — the seek thrash, and what replaced its fix.
  *
- * When two items under the playhead share an asset, they share the *one* pooled media
- * element, and each wants it at a different `currentTime`. Before `seekOwners()`, both
- * issued their target every frame: the element never finished a seek, `readyState` sat at 1
- * with `seeking` true, every item reported `pending`, and the canvas stayed blank
- * permanently — a forced `redraw()` did not mend it, because the next draw restarted the
- * fight.
+ * When two items under the playhead shared an asset they shared its *one* pooled element,
+ * each wanting a different `currentTime`. Both issued their target every frame: the element
+ * never finished a seek, `readyState` sat at 1 with `seeking` true, every item reported
+ * `pending`, and the canvas stayed blank permanently — a forced `redraw()` did not mend it,
+ * because the next draw restarted the fight.
+ *
+ * `seekOwners()` fixed the blankness by letting one item move the element while the rest
+ * painted what it held. That is no longer what happens, and this probe no longer asserts it:
+ * the pool holds an element **per item drawing the asset**, so both are on their own source
+ * time. The old contract was the best available while one element had to serve two items;
+ * it is wrong as behaviour, because the item not owning the seek shows the other's frame —
+ * which is a dissolve dissolving into itself.
  *
  * Three things about how this is asserted, each of which was a wrong turn first:
  *
@@ -75,12 +81,20 @@ await runProbe(async () => {
     const st = store.getState()
     const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
     const items = tl.tracks.flatMap(t => t.items)
-    const el = (engine.pool.peek(${JSON.stringify(asset.id)}) || {}).element
+    // Every element the pool holds for this one asset. There is more than one now: an asset
+    // drawn twice in a frame gets an element per item, which is what lets a transition show
+    // two source times at once.
+    const elements = []
+    for (let slot = 0; slot < 4; slot++) {
+      const e = engine.pool.peek(${JSON.stringify(asset.id)}, slot)
+      if (e && e.element) elements.push({ slot, readyState: e.element.readyState,
+        seeking: e.element.seeking, currentTime: +e.element.currentTime.toFixed(3) })
+    }
     return {
       items: items.length,
       distinctAssets: new Set(items.map(i => i.assetId)).size,
       sourceTimes: items.map(i => i.sourceStartUs),
-      element: el ? { readyState: el.readyState, seeking: el.seeking, currentTime: +el.currentTime.toFixed(3) } : null,
+      elements,
       profile: ${CANVAS_PROFILE}
     }
   })()`
@@ -106,13 +120,22 @@ await runProbe(async () => {
     }
     const seen = await evaluate(observe)
 
-    // The element must settle on the TOPMOST item's target — the one on screen. That is
-    // the fix's actual contract; `lit > 0` is the symptom, this is the mechanism.
+    // **Each item's element settles on that item's own target.** This used to assert that
+    // the one shared element settled on the TOPMOST item's time, which was the contract when
+    // a single writer owned the element and everything else painted what it held. The pool
+    // now holds an element per item drawing the asset, so the stronger and correct contract
+    // is that both are ready and on *different* times: slot 0 for the lower item (20s), slot
+    // 1 for the upper (0s). One element settled on either time is now a failure — it means
+    // one of the two items is showing the other's frame.
+    const bySlot = new Map(seen.elements.map((e) => [e.slot, e]))
+    const lower = bySlot.get(0)
+    const upper = bySlot.get(1)
+    const ready = (e) => e !== undefined && !e.seeking && e.readyState >= 2
     const settled =
-      seen.element !== null && !seen.element.seeking && seen.element.readyState >= 2 &&
-      Math.abs(seen.element.currentTime - 0) < 0.5
+      seen.elements.length === 2 && ready(lower) && ready(upper) &&
+      Math.abs(lower.currentTime - 20) < 0.5 && Math.abs(upper.currentTime - 0) < 0.5
     const drew = seen.profile.lit > 0
-    results.push({ trial, drew, settled, lit: seen.profile.lit, el: seen.element,
+    results.push({ trial, drew, settled, lit: seen.profile.lit, el: seen.elements,
                    cols: seen.profile.colExtent, items: seen.items, shared: seen.distinctAssets === 1 })
   }
 
@@ -129,7 +152,7 @@ await runProbe(async () => {
   const settledCount = results.filter((r) => r.settled).length
   console.log()
   console.log(`drew        ${drewCount}/${TRIALS}   pixels that reached the canvas`)
-  console.log(`settled     ${settledCount}/${TRIALS}   element state when sampled, AFTER the draw`)
+  console.log(`settled     ${settledCount}/${TRIALS}   both elements ready, each on its own source time`)
 
   /**
    * The two numbers measure different things at different moments, and in the broken state
@@ -160,7 +183,7 @@ await runProbe(async () => {
     return false
   }
   console.log(drewAll && settledAll
-    ? '\nPASS  two items sharing one asset both draw, and the element settles on the topmost target'
+    ? '\nPASS  two items sharing one asset both draw, each from its own element and source time'
     : '\nFAIL  seek thrash: the two items fight over the shared element, so the draw that'
       + '\n      mattered found it mid-seek and every item reported pending')
   close()

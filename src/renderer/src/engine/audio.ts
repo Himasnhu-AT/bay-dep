@@ -378,6 +378,11 @@ export class AudioEngine {
   }
 
   #forget(entry: MediaEntry): void {
+    // Only slot 0 carries this graph's source node. The pool holds extra elements for an
+    // asset drawn twice in one frame, and evicting one of those must not disconnect the node
+    // bound to the element this engine is actually playing — the sound would stop for a
+    // reason nothing in the audio path could explain.
+    if (entry.slot !== 0) return
     const source = this.#sources.get(entry.assetId)
     if (!source) return
     source.gain.disconnect()

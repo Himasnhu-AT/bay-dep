@@ -18,7 +18,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { coverLayout, containLayout, type Item, type Layout } from '@shared/project'
-import { layoutBox, seekOwners } from './compositor'
+import { layoutBox, elementSlots } from './compositor'
 
 function itemWith(layout: Partial<Layout>): Item {
   return {
@@ -126,47 +126,59 @@ test('an ordinary layout passes through untouched', () => {
  * is a pure question about ordering: exactly one item per asset per frame moves the element,
  * and it is the topmost, because that is the one on screen.
  */
-test('one item per asset owns the element, and it is the topmost', () => {
+test('two items sharing an asset in one frame get an element each', () => {
+  // The case the one-writer rule could only degrade: both are meant to be visible, at
+  // different source times, so each needs its own element. This is every transition between
+  // two halves of a split clip - the commonest transition there is.
   const lower = { ...itemWith({}), id: 'itm_lower', assetId: 'ast_shared' }
   const upper = { ...itemWith({}), id: 'itm_upper', assetId: 'ast_shared' }
-  // itemsAtFrame returns lowest track first, so the last entry is the topmost.
-  const owners = seekOwners([lower, upper])
-  assert.equal(owners.size, 1, 'one asset, one owner - not one per item')
-  assert.equal(
-    owners.get('ast_shared'),
-    'itm_upper',
-    'the topmost item owns the source time, because it is the one being looked at'
-  )
+  const slots = elementSlots([lower, upper])
+  assert.equal(slots.get('itm_lower'), 0)
+  assert.equal(slots.get('itm_upper'), 1, 'not surrendered to the topmost - given its own')
+  assert.notEqual(slots.get('itm_lower'), slots.get('itm_upper'))
 })
 
-test('items on different assets each own their own element', () => {
+test('the assignment is stable in draw order, so elements do not swap between frames', () => {
+  // Stability is the safety property. itemsAtFrame returns lowest track first and items
+  // within a track by `from`, so the outgoing clip keeps slot 0 for the whole transition
+  // while the incoming holds slot 1. An assignment that flipped would swap what each element
+  // holds every frame and reintroduce the thrash by another route.
+  const a = { ...itemWith({}), id: 'itm_a', assetId: 'ast_shared' }
+  const b = { ...itemWith({}), id: 'itm_b', assetId: 'ast_shared' }
+  for (let frame = 0; frame < 5; frame += 1) {
+    const slots = elementSlots([a, b])
+    assert.equal(slots.get('itm_a'), 0, `frame ${frame}`)
+    assert.equal(slots.get('itm_b'), 1, `frame ${frame}`)
+  }
+})
+
+test('items on different assets all take slot 0', () => {
+  // The ordinary frame: no asset is drawn twice, so nothing needs a second decoder and the
+  // pool keys on the bare asset id exactly as it did before slots existed.
   const a = { ...itemWith({}), id: 'itm_a', assetId: 'ast_a' }
   const b = { ...itemWith({}), id: 'itm_b', assetId: 'ast_b' }
-  const owners = seekOwners([a, b])
-  assert.deepEqual(
-    [...owners.entries()],
-    [
-      ['ast_a', 'itm_a'],
-      ['ast_b', 'itm_b']
-    ],
-    'nothing is shared, so nothing is surrendered'
-  )
+  assert.deepEqual([...elementSlots([a, b]).entries()], [['itm_a', 0], ['itm_b', 0]])
 })
 
-test('a repeated asset below the top does not take ownership back', () => {
-  // The interleaved case: the shared asset appears at the bottom and again at the top, with
-  // an unrelated clip between. Ownership must land on the last occurrence, not the last
-  // *item*, or the visible copy loses its seek to one hidden behind another clip.
+test('an interleaved repeat counts per asset, not per position', () => {
+  // The shared asset appears at the bottom and again at the top with an unrelated clip
+  // between. The unrelated one must not consume a slot of the shared asset.
   const bottom = { ...itemWith({}), id: 'itm_bottom', assetId: 'ast_shared' }
   const middle = { ...itemWith({}), id: 'itm_middle', assetId: 'ast_other' }
   const top = { ...itemWith({}), id: 'itm_top', assetId: 'ast_shared' }
-  const owners = seekOwners([bottom, middle, top])
-  assert.equal(owners.get('ast_shared'), 'itm_top')
-  assert.equal(owners.get('ast_other'), 'itm_middle')
+  const slots = elementSlots([bottom, middle, top])
+  assert.equal(slots.get('itm_bottom'), 0)
+  assert.equal(slots.get('itm_middle'), 0, 'a different asset starts its own count')
+  assert.equal(slots.get('itm_top'), 1)
 })
 
-test('a single item owns its own asset, which is every ordinary frame', () => {
+test('three items on one asset get three elements', () => {
+  const items = ['a', 'b', 'c'].map((n) => ({ ...itemWith({}), id: 'itm_' + n, assetId: 'ast_one' }))
+  assert.deepEqual([...elementSlots(items).values()], [0, 1, 2])
+})
+
+test('an ordinary single item is slot 0, and an empty frame does not throw', () => {
   const only = { ...itemWith({}), id: 'itm_only', assetId: 'ast_only' }
-  assert.equal(seekOwners([only]).get('ast_only'), 'itm_only')
-  assert.equal(seekOwners([]).size, 0, 'an empty frame owns nothing and must not throw')
+  assert.equal(elementSlots([only]).get('itm_only'), 0)
+  assert.equal(elementSlots([]).size, 0)
 })

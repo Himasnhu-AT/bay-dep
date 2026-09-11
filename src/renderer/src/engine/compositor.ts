@@ -78,13 +78,17 @@ export class Compositor {
    * used to claim: a blank canvas that no `redraw()` could repair. Make the targets agree
    * and the picture returns; make them differ and it vanishes again.
    *
-   * So the rule is now enforced where it is decided, by {@link seekOwners}: within one
-   * frame exactly one item per asset — the one drawn last, which is the topmost and so the
-   * one actually visible — moves the element. Everything else drawing that asset paints
-   * whatever the element currently holds. Two *simultaneous* source times from one asset
-   * still needs two elements; that is a pool change, and nothing in the product asks for it
-   * yet. What this guarantees is that asking for it degrades to a stale frame rather than
-   * to an empty preview.
+   * The first fix for that was one writer per asset: the topmost item moved the element and
+   * everything else painted what it held. That stopped the blank canvas and left a lie in
+   * its place — the outgoing clip showing the incoming clip's frame — which is invisible
+   * until two items on one asset are both *meant* to be seen. A dissolve between two halves
+   * of a split clip is exactly that, and it is the commonest transition there is.
+   *
+   * So the pool now holds an element **per (asset, slot)** and {@link elementSlots} gives
+   * each item in a frame its own. Every item moves its own element; there is still exactly
+   * one writer per element, which is what the thrash needed. This map is keyed by element
+   * rather than by asset for the same reason — two independent seeks must not overwrite each
+   * other's outstanding target.
    *
    * **The hazard is a property of the frame, not of the project, and that distinction cost
    * most of the time spent finding this.** A project holding *one* clip is not safe: placing
@@ -160,9 +164,9 @@ export class Compositor {
 
     // itemsAtFrame already returns lowest track first, so painting in order is the stack.
     const drawing = itemsAtFrame(timeline, frame, 'video')
-    // Decided before any of them is drawn: one element cannot be at two source times, so
-    // one item per asset moves it and the rest take what is there. See `#seeks`.
-    const owners = seekOwners(drawing)
+    // Decided before any of them is drawn: one element cannot be at two source times, so an
+    // asset drawn twice in one frame gets two elements. See `elementSlots`.
+    const slots = elementSlots(drawing)
 
     for (const item of drawing) {
       const asset = findAsset(project, item.assetId)
@@ -172,7 +176,7 @@ export class Compositor {
         continue
       }
 
-      const entry = this.#pool.acquire(asset)
+      const entry = this.#pool.acquire(asset, slots.get(item.id) ?? 0)
 
       if (entry.status === 'error') {
         this.#drawPlaceholder(ctx, item, asset.name)
@@ -186,11 +190,10 @@ export class Compositor {
         continue
       }
 
-      // Only the owner moves the element. A non-owner that seeked here would undo the
-      // owner's seek before it landed, and neither would ever produce a picture.
-      if (owners.get(asset.id) === item.id) {
-        this.#syncElement(entry, item, asset, frame, fps, mode, now())
-      }
+      // Every item now has an element of its own, so every item moves its own — which is
+      // what lets two source times coexist in one frame. The bookkeeping that made this
+      // safe is in `elementSlots`: one writer per element, still.
+      this.#syncElement(entry, item, asset, frame, fps, mode, now())
 
       if (!isDrawable(entry)) {
         // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the
@@ -334,6 +337,11 @@ export class Compositor {
     const element = entry.element
     if (!(element instanceof HTMLVideoElement)) return
 
+    // Keyed by element, not by asset. With two elements for one asset the two seeks are
+    // independent, and a shared key would have each overwrite the other's outstanding
+    // target — re-issuing both every frame, which is the thrash this bookkeeping prevents.
+    const seekKey = `${entry.assetId}#${entry.slot}`
+
     const target = sourceSecondsAt(item, asset, frame, fps)
     // Half a frame while scrubbing: closer than that is the same picture, and a seek that
     // lands on the same picture costs a decode for nothing.
@@ -352,18 +360,18 @@ export class Compositor {
 
     const drift = Math.abs(element.currentTime - target)
     if (drift <= tolerance) {
-      this.#seeks.delete(asset.id)
+      this.#seeks.delete(seekKey)
       return
     }
 
-    const pending = this.#seeks.get(asset.id)
+    const pending = this.#seeks.get(seekKey)
     const sameTarget = pending !== undefined && Math.abs(pending.targetSeconds - target) <= tolerance
     const stale = pending !== undefined && now - pending.issuedAt > STALE_SEEK_MS
     if (sameTarget && !stale) return
 
     try {
       element.currentTime = target
-      this.#seeks.set(asset.id, { targetSeconds: target, issuedAt: now })
+      this.#seeks.set(seekKey, { targetSeconds: target, issuedAt: now })
     } catch {
       // Seeking before metadata arrives throws; the next frame retries with metadata.
     }
@@ -371,22 +379,36 @@ export class Compositor {
 
 }
 
+
 /**
- * Which item owns each asset's element for one frame: asset id -> item id.
+ * Which of an asset's elements each item draws from, for the items in one frame.
  *
- * `items` must be in draw order (lowest track first, as `itemsAtFrame` returns it), so the
- * last entry for an asset is the topmost item drawing it — the one the viewer is actually
- * looking at, and therefore the one whose source time the shared element should hold.
+ * This replaces the one-owner-per-asset rule rather than refining it. That rule stopped the
+ * seek thrash by letting a single item move the element and having the rest draw whatever it
+ * held — correct as a way of not being permanently blank, and *wrong* as behaviour the moment
+ * two items on one asset are both meant to be visible. A transition between two halves of a
+ * split clip is exactly that, and it is the commonest transition there is: under the old rule
+ * the outgoing half shows the incoming half's frame, so a dissolve dissolves into itself.
  *
- * Exported, and pure, for the same reason `layoutBox` is: it is the whole of the rule, and
- * the rule is otherwise only observable through a real `<video>` mid-seek. A DOM is needed
- * to watch an element thrash; none is needed to pin which item is allowed to move it.
+ * So each item gets its own element instead. The nth item drawing a given asset in a frame
+ * takes slot n, in draw order — which makes the assignment **stable**: `itemsAtFrame` returns
+ * lowest track first and items within a track sorted by `from`, so the outgoing clip keeps
+ * slot 0 across the whole transition while the incoming one holds slot 1. An assignment that
+ * flipped between frames would swap what each element holds and reintroduce the thrash by a
+ * different route.
+ *
+ * Slot 0 is the overwhelmingly common answer, and it keys the pool on the bare asset id, so
+ * nothing changes for a timeline without overlaps.
  */
-export function seekOwners(items: Item[]): Map<string, string> {
-  const owners = new Map<string, string>()
-  // Last write wins, which is the topmost item: later entries paint over earlier ones.
-  for (const item of items) owners.set(item.assetId, item.id)
-  return owners
+export function elementSlots(items: Item[]): Map<string, number> {
+  const slots = new Map<string, number>()
+  const used = new Map<string, number>()
+  for (const item of items) {
+    const next = used.get(item.assetId) ?? 0
+    slots.set(item.id, next)
+    used.set(item.assetId, next + 1)
+  }
+  return slots
 }
 
 export interface Box {

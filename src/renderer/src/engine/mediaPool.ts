@@ -38,6 +38,15 @@ export type PoolElement = HTMLVideoElement | HTMLAudioElement | HTMLImageElement
 
 export interface MediaEntry {
   assetId: string
+  /**
+   * Which of this asset's elements this is.
+   *
+   * Almost always 0: one decoder per asset, reused across time, which is the whole point of
+   * a pool. It is non-zero only when one asset must be shown at **two source times in the
+   * same frame** — a transition between two halves of a split clip, which is the commonest
+   * transition there is. One element cannot be at two times at once, so that case needs two.
+   */
+  slot: number
   kind: AssetKind
   /** Null for `kind: 'text'` and for assets that failed to probe. */
   element: PoolElement | null
@@ -53,6 +62,8 @@ export interface MediaReadiness {
 }
 
 interface PoolSlot extends MediaEntry {
+  /** `assetId` for slot 0, `assetId#n` beyond it. The map key, kept for eviction. */
+  key: string
   /** Monotonic counter; the eviction order. */
   lastUsed: number
   /** Which draw generation last touched this, so the frame in flight is never evicted. */
@@ -87,6 +98,14 @@ function base64url(value: string): string {
   // directly, so the UTF-8 bytes go through one at a time.
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/**
+ * The pool's map key. Slot 0 keys on the bare asset id so that every existing caller — and
+ * every probe reading `peek(assetId)` — is unaffected by slots existing at all.
+ */
+function elementKey(assetId: string, slot: number): string {
+  return slot === 0 ? assetId : `${assetId}#${slot}`
 }
 
 function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
@@ -130,31 +149,41 @@ export class MediaPool {
     return this.#generation
   }
 
-  acquire(asset: Asset): MediaEntry {
-    const existing = this.#slots.get(asset.id)
+  /**
+   * The element for `asset`, creating one on first use.
+   *
+   * `slot` selects *which* of the asset's elements. Callers that only ever need the asset at
+   * one time per frame — the audio graph, a single clip — leave it at 0 and behave exactly as
+   * before. A caller drawing the same asset twice in one frame at different source times must
+   * pass distinct slots, or the two writers fight over one `currentTime` and neither seek ever
+   * lands: measured as a permanently blank frame, not a degraded one.
+   */
+  acquire(asset: Asset, slot = 0): MediaEntry {
+    const key = elementKey(asset.id, slot)
+    const existing = this.#slots.get(key)
     if (existing) {
       existing.lastUsed = ++this.#clock
       existing.generation = this.#generation
       return existing
     }
-    const slot = this.#create(asset)
-    this.#slots.set(asset.id, slot)
+    const created = this.#create(asset, slot, key)
+    this.#slots.set(key, created)
     this.#evictIfOverCap()
-    return slot
+    return created
   }
 
   /** The entry for an asset if one exists, without creating or touching its LRU position. */
-  peek(assetId: string): MediaEntry | undefined {
-    return this.#slots.get(assetId)
+  peek(assetId: string, slot = 0): MediaEntry | undefined {
+    return this.#slots.get(elementKey(assetId, slot))
   }
 
-  readiness(assetId: string): MediaReadiness {
-    const slot = this.#slots.get(assetId)
-    if (!slot) return { status: 'loading', hasPicture: false }
+  readiness(assetId: string, slot = 0): MediaReadiness {
+    const entry = this.#slots.get(elementKey(assetId, slot))
+    if (!entry) return { status: 'loading', hasPicture: false }
     return {
-      status: slot.status,
-      hasPicture: hasPicture(slot.element),
-      ...(slot.error === undefined ? {} : { error: slot.error })
+      status: entry.status,
+      hasPicture: hasPicture(entry.element),
+      ...(entry.error === undefined ? {} : { error: entry.error })
     }
   }
 
@@ -166,9 +195,16 @@ export class MediaPool {
     for (const asset of assets) this.acquire(asset)
   }
 
-  release(assetId: string): void {
-    const slot = this.#slots.get(assetId)
-    if (slot) this.#evict(slot)
+  /** Drops one element. Without `slot`, every element of the asset goes. */
+  release(assetId: string, slot?: number): void {
+    if (slot !== undefined) {
+      const one = this.#slots.get(elementKey(assetId, slot))
+      if (one) this.#evict(one)
+      return
+    }
+    for (const entry of [...this.#slots.values()]) {
+      if (entry.assetId === assetId) this.#evict(entry)
+    }
   }
 
   /**
@@ -227,12 +263,14 @@ export class MediaPool {
 
   // -- internals ------------------------------------------------------------
 
-  #create(asset: Asset): PoolSlot {
+  #create(asset: Asset, slotIndex: number, key: string): PoolSlot {
     const kind = elementKindFor(asset)
     const url = assetUrl(asset)
 
     const base = {
       assetId: asset.id,
+      slot: slotIndex,
+      key,
       kind: asset.kind,
       lastUsed: ++this.#clock,
       generation: this.#generation,
@@ -348,7 +386,7 @@ export class MediaPool {
   }
 
   #evict(slot: PoolSlot): void {
-    this.#slots.delete(slot.assetId)
+    this.#slots.delete(slot.key)
     // Listeners first: the audio graph has to let go of the element before it dies.
     for (const listener of this.#evictListeners) listener(slot)
     slot.detach()
