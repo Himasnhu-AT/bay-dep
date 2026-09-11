@@ -136,7 +136,22 @@ export async function awaitSources(
     // A source whose frame rate differs from the timeline's lands on the same decoded frame
     // for several timeline frames; re-seeking inside the frame already shown costs a decode
     // and changes nothing.
-    if (Math.abs(element.currentTime - target) <= 0.5 / fps && !element.seeking) continue
+    const atTarget = Math.abs(element.currentTime - target) <= 0.5 / fps && !element.seeking
+
+    if (atTarget) {
+      // **Being at the right time is not the same as holding a frame.** A freshly created
+      // element reports `currentTime` 0 before it has decoded anything, so a clip whose
+      // source time is 0 satisfies "already there" while holding nothing at all — and this
+      // shortcut then returned without issuing a seek and without waiting for one. The
+      // export drew background for that frame and moved on: exactly one black frame, at the
+      // first frame of every clip that starts at the beginning of its source. Measured in a
+      // delivered MP4 at every cut, and reproduced here in isolation at `readyState` 1.
+      if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) continue
+      // Seeking to where we already are may never fire `seeked`, so wait for the data.
+      waits.push(settle(element, ['loadeddata', 'canplay', 'error'], timeoutMs))
+      continue
+    }
+
     element.currentTime = target
     waits.push(settle(element, ['seeked', 'error'], timeoutMs))
   }

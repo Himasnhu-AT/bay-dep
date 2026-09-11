@@ -15,7 +15,8 @@ import { AudioEngine, type TrackLevel } from './audio'
 import { Compositor } from './compositor'
 import { PlaybackClock, type ClockStats } from './clock'
 import { MediaPool } from './mediaPool'
-import { renderFrame } from './render'
+import { renderFrame, awaitSources } from './render'
+import { FrameExporter } from './exporter'
 
 export { MediaPool, assetUrl, isDrawable, DEFAULT_MAX_VIDEO_ELEMENTS } from './mediaPool'
 export type { MediaEntry, MediaReadiness, MediaStatus } from './mediaPool'
@@ -78,6 +79,11 @@ declare global {
       store: typeof useEditor
       /** The `preview_frame` entry point, so a probe can measure the artefact the agent sees. */
       renderFrame: typeof renderFrame
+      /** So a probe can drive a real export and inspect the frames it produces. */
+      FrameExporter: typeof FrameExporter
+      /** A fresh pool plus the awaited-seek step: the export path's first frame, in isolation. */
+      MediaPool: typeof MediaPool
+      awaitSources: typeof awaitSources
     }
   }
 }
@@ -157,7 +163,7 @@ class Engine {
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle && probeSurfaceEnabled()) {
-      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame }
+      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources }
     }
     return () => this.detach()
   }

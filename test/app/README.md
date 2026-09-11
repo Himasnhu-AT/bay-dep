@@ -548,3 +548,52 @@ write reach the store", `add_track` is unconditional and `set_playhead` is clamp
 timeline's duration — so the first tests the transport and the second tests the transport
 *and* whatever the fixture happened to leave behind. When a check fails, ask what the state
 was at that moment before asking what the code did.
+
+
+## `preview_frame` as an oracle: `export-vs-preview.mjs`
+
+The strongest check on an export is not a property of the frames — it is a comparison
+against a consumer that gets the same answer by a different route. `preview_frame` renders
+any frame with its own pool, its own loop and its own awaited seeks, so it is independent of
+the export path and can be treated as the correct answer.
+
+    frame    preview mean/nonZero      export mean/nonZero     verdict
+       10      58.6 /  61.1%            58.6 /  61.1%          match
+      148      32.9 /  34.4%            32.9 /  35.1%          match
+      149      32.9 /  34.4%            32.9 /  35.1%          match
+      150      40.3 /  34.4%            40.3 /  34.7%          match
+      151      40.3 /  34.4%            40.3 /  34.7%          match
+      160      40.1 /  34.4%            40.1 /  34.7%          match
+
+This runs a **real** export to a real MP4 and profiles the encoded file with ffmpeg, so it
+measures the delivered artefact rather than anything in memory.
+
+Three things it gets right that the first two attempts did not:
+
+- **It catches a *wrong* frame, not only a missing one.** "No exported frame is uniformly
+  background" was the earlier idea; an incoming clip decoded at the outgoing clip's source
+  time is perfectly bright and completely wrong, and only a comparison against a known-good
+  answer sees it.
+- **It compares statistics with a tolerance, not pixels.** The export is h264 and the oracle
+  is PNG; demanding equality would produce a check nobody can keep green. A black frame is
+  unmistakable at any tolerance — 0.0 against 40.3.
+- **It refuses to judge when the oracle is not trustworthy.** If `preview_frame` reports
+  `pending` or `placeholders` on any sampled frame, the probe says CANNOT TRUST rather than
+  comparing one broken consumer against another.
+
+`VERIFY_PROBE=1` hands the **export** a timeline whose cut is 10 frames early while the
+oracle keeps describing the real edit; frames 148 and 149 then mismatch. The break is on the
+export side on purpose — sabotaging the oracle would move the probe's own expectation, which
+only shows that two identical things are identical.
+
+## Intercepting `window.bay` is not possible
+
+Two attempts, both dead ends, before settling on "run the real export and read the file":
+
+    window.bay.export = stub                    silently does nothing (frozen contextBridge,
+                                                and CDP evaluates in sloppy mode)
+    Object.defineProperty(window, 'bay', …)     TypeError: Cannot redefine property: bay
+
+The first is the dangerous one: the frames went to the real encoder, the probe's array stayed
+empty, and "no black frames among zero frames" reported **PASS**. Any probe that collects
+results into an array must assert it collected something — `if (frames.length === 0) throw`.
