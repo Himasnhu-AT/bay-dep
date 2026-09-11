@@ -1,0 +1,68 @@
+appId: com.freeholt.bay
+productName: bay
+copyright: Freeholt
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+
+# The ffmpeg binaries cannot live inside the asar archive: the OS cannot spawn a file that is
+# not on disk. This works in development and fails only in a packaged build, which is the worst
+# kind of packaging bug to find late.
+#
+# The database used to need the same treatment and no longer does — it is `node:sqlite`, built
+# into the runtime, so there is no native module here to unpack, rebuild, or keep in step with
+# Electron's ABI.
+asarUnpack:
+  - node_modules/ffmpeg-ffprobe-static/**
+
+# bay is offline software. No update feed is configured, and none should be: an editor that
+# phones a server on launch is exactly what this is not.
+publish: null
+
+mac:
+  icon: build/icon.icns
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  darkModeSupport: true
+  # Signing is deliberately off: it needs the user's Developer ID certificate and an Apple ID
+  # for notarisation, neither of which is ours to set up or to guess at. `identity: null` makes
+  # that explicit — without it electron-builder hunts the keychain and silently picks whatever
+  # it finds, so a build's signature would depend on which machine ran it.
+  #
+  # To turn it on later: set `identity` to the Developer ID Application name, drop this line,
+  # keep `hardenedRuntime: true`, and add notarisation with an Apple ID and app-specific
+  # password. The entitlements file is already written for a signed hardened-runtime build.
+  identity: null
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: bay does not use the camera.
+    NSMicrophoneUsageDescription: bay does not use the microphone.
+  # Every document bay opens is one of its own; it claims nothing else.
+  fileAssociations:
+    - ext: bay
+      name: bay project
+      role: Editor
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+linux:
+  target:
+    - AppImage
+  category: AudioVideo

@@ -12,11 +12,12 @@
 # checked this way; the plain path cannot show it.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$ROOT/.." && pwd)"
 
 if [ "${BUNDLE:-0}" = "1" ]; then
   echo "Building bay.app (this is the artifact users get)…"
-  "$ROOT/script/bundle-mac" --arch "$(uname -m)"
-  APP="$ROOT/dist/macos/bay.app"
+  "$REPO/script/bundle-mac" --arch "$(uname -m)"
+  APP="$REPO/dist/macos/bay.app"
   [ -d "$APP" ] || { echo "bundle-mac did not produce $APP" >&2; exit 1; }
   echo "Launching $APP"
   exec open -W "$APP" --args "$@"

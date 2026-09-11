@@ -1,0 +1,127 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Redo2, Undo2, Upload } from 'lucide-react'
+import { Button, IconButton } from '@/components'
+import { cn } from '@/lib/cn'
+import { useEditor } from '@/store/editor'
+
+export interface TopBarProps {
+  onExport(): void
+  onSave(): void
+  saving: boolean
+}
+
+/**
+ * The window's title bar. It is the drag region, so every interactive child has to opt
+ * out with `.no-drag` — a button inside a drag region is not a button, it is a handle.
+ *
+ * The 80px of left padding is the macOS traffic lights. They are drawn by the system at a
+ * fixed offset and nothing may sit under them.
+ */
+export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
+  const name = useEditor((state) => state.project.name)
+  const dirty = useEditor((state) => state.dirty)
+  const canUndo = useEditor((state) => state.past.length > 0)
+  const canRedo = useEditor((state) => state.future.length > 0)
+  const renameProject = useEditor((state) => state.renameProject)
+  const undo = useEditor((state) => state.undo)
+  const redo = useEditor((state) => state.redo)
+
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!editing) return
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [editing])
+
+  const commit = (): void => {
+    const trimmed = draft.trim()
+    // An empty project name would leave the title bar blank and the export dialog with no
+    // default filename, so a blank commit reverts rather than being accepted.
+    if (trimmed && trimmed !== name) renameProject(trimmed)
+    else setDraft(name)
+    setEditing(false)
+  }
+
+  return (
+    <header className="drag-region flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface-1 pr-3 pl-[80px]">
+      <span className="shrink-0 text-[13px] font-semibold tracking-tight text-ink-0 select-none">
+        bay
+      </span>
+      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-line-strong" />
+
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          aria-label="Project name"
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commit()
+            if (event.key === 'Escape') {
+              setDraft(name)
+              setEditing(false)
+            }
+          }}
+          className="no-drag h-7 w-56 rounded-sm border border-accent/70 bg-surface-2 px-2 text-[12px] text-ink-0 outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(name)
+            setEditing(true)
+          }}
+          title="Rename project"
+          className="no-drag t-fast max-w-[40ch] truncate rounded-sm px-1.5 py-1 text-[12px] text-ink-1 hover:bg-surface-3 hover:text-ink-0"
+        >
+          {name}
+        </button>
+      )}
+
+      <div className="no-drag flex items-center gap-0.5">
+        <IconButton
+          label="Undo"
+          shortcut="⌘Z"
+          icon={<Undo2 className="size-4" />}
+          disabled={!canUndo}
+          onClick={undo}
+        />
+        <IconButton
+          label="Redo"
+          shortcut="⇧⌘Z"
+          icon={<Redo2 className="size-4" />}
+          disabled={!canRedo}
+          onClick={redo}
+        />
+      </div>
+
+      <div className="flex-1" />
+
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={saving}
+        className={cn(
+          'no-drag t-fast rounded-sm px-2 py-1 text-[11px] tabular-nums',
+          dirty ? 'text-ink-1 hover:bg-surface-3 hover:text-ink-0' : 'text-ink-2 hover:bg-surface-3'
+        )}
+      >
+        {saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}
+      </button>
+
+      <Button
+        variant="primary"
+        size="sm"
+        icon={<Upload className="size-3.5" />}
+        onClick={onExport}
+        className="no-drag"
+      >
+        Export
+      </Button>
+    </header>
+  )
+}

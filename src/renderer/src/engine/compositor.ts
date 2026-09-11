@@ -1,0 +1,739 @@
+/**
+ * Draws one timeline frame.
+ *
+ * The compositor is synchronous and total: given a frame it always returns, always leaves
+ * the context's state as it found it, and never throws for anything the project model can
+ * contain. A NaN in a layout, a 1x1 canvas, an asset whose file was deleted under us and a
+ * clip whose decoder has not produced a picture yet are all normal inputs here.
+ *
+ * It owns the transport of `<video>` elements, because the picture is what they exist for:
+ * during playback it lets them run and only corrects gross drift, while scrubbing it pins
+ * each one to the exact source time. `<audio>` elements belong to the audio engine for the
+ * same reason — split by element type so there is never a question of who moved something.
+ */
+
+import {
+  defaultTextStyle,
+  fadeGainAt,
+  findAsset,
+  itemsAtFrame,
+  transitionAtFrame,
+  type Asset,
+  type TransitionKind,
+  type Item,
+  type Project,
+  type Timeline
+} from '@shared/project'
+import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
+import { planTransition } from './transitions'
+import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
+import {
+  anchorFor,
+  fontIsAvailable,
+  layoutText,
+  MIN_FONT_SIZE,
+  type TextFit,
+  type TextBox
+} from './text'
+import {
+  DRIFT_TOLERANCE_SECONDS,
+  STALE_SEEK_MS,
+  clamp,
+  clamp01,
+  finite,
+  playbackRateFor,
+  sourceSecondsAt
+} from './sync'
+
+export type RenderTarget = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+
+export interface DrawOptions {
+  /**
+   * 'playback' lets video elements run and tolerates {@link DRIFT_TOLERANCE_SECONDS} of
+   * slip; 'scrub' pauses them and pins each to the frame, which is what a paused playhead
+   * and an export both need.
+   */
+  mode?: 'playback' | 'scrub'
+  /** Injectable for tests. */
+  now?: () => number
+}
+
+export interface DrawStats {
+  /** Items that put pixels on the canvas. */
+  drawn: number
+  /** Items whose media has not decoded anything yet — the frame is incomplete, not empty. */
+  pending: number
+  /** Items drawn as a placeholder because their asset is missing or unreadable. */
+  placeholders: number
+  /**
+   * How each text item actually came out.
+   *
+   * Reported for the same reason `pending` is: the output looks plausible while being wrong.
+   * A title auto-shrunk to 40% reads as a design choice rather than a failure, and a
+   * substituted font has no visual cue at all — neither a model looking at `preview_frame`
+   * nor a user glancing at the canvas can tell. Empty for a frame with no text.
+   */
+  textFits: TextFit[]
+  /**
+   * The transition playing at this frame, if any — and crucially why it is shorter than asked.
+   *
+   * `clampedBecause` must reach the caller. A 30-frame dissolve silently playing as 8 because
+   * the outgoing clip has no footage past its end is the same class of failure as a title
+   * silently drawn at 40%: the picture looks deliberate and nothing in it says otherwise.
+   */
+  transition?: {
+    kind: TransitionKind
+    /** 0 means the outgoing clip alone, 1 the incoming. */
+    progress: number
+    durationInFrames: number
+    requestedFrames: number
+    clampedBecause: string | null
+  }
+}
+
+interface SeekState {
+  targetSeconds: number
+  issuedAt: number
+}
+
+const PLACEHOLDER_FILL = '#232329'
+const PLACEHOLDER_EDGE = '#3a3a44'
+const PLACEHOLDER_INK = '#8b8b96'
+
+export class Compositor {
+  readonly #pool: MediaPool
+  /**
+   * Outstanding seeks, keyed by asset rather than by item. One element cannot be at two
+   * source times at once, so two items sharing an asset in the same frame would otherwise
+   * issue competing seeks every frame and neither would ever land.
+   *
+   * Keying alone did **not** achieve that, and the gap was measured rather than argued: two
+   * items on one asset wanting 20s and 0s put the element into a permanent seek thrash —
+   * each frame re-issued the other's target, `readyState` sat at HAVE_METADATA with
+   * `seeking` true, every item reported `pending`, and **the compositor drew nothing at
+   * all, for ever**. Not "the lower one shows a stale frame", which is what this comment
+   * used to claim: a blank canvas that no `redraw()` could repair. Make the targets agree
+   * and the picture returns; make them differ and it vanishes again.
+   *
+   * The first fix for that was one writer per asset: the topmost item moved the element and
+   * everything else painted what it held. That stopped the blank canvas and left a lie in
+   * its place — the outgoing clip showing the incoming clip's frame — which is invisible
+   * until two items on one asset are both *meant* to be seen. A dissolve between two halves
+   * of a split clip is exactly that, and it is the commonest transition there is.
+   *
+   * So the pool now holds an element **per (asset, slot)** and {@link elementSlots} gives
+   * each item in a frame its own. Every item moves its own element; there is still exactly
+   * one writer per element, which is what the thrash needed. This map is keyed by element
+   * rather than by asset for the same reason — two independent seeks must not overwrite each
+   * other's outstanding target.
+   *
+   * **The hazard is a property of the frame, not of the project, and that distinction cost
+   * most of the time spent finding this.** A project holding *one* clip is not safe: placing
+   * that same clip a second time is an ordinary edit, and the moment both items sit under
+   * the playhead there are two targets for one element. The repro everyone chased looked
+   * like a single-item timeline because the *fixture on disk* held one item — measured at
+   * the instant the canvas went blank, the timeline held two, both on the same asset, at
+   * 20s and 0s. Nothing about a one-item file prevents this; only a one-item *frame* does.
+   *
+   * A one-item *frame* really is safe, and that is measured rather than assumed: on the
+   * pre-fix build, against a one-item fixture, a probe that places nothing drew every time
+   * (8/8), while a probe that places the same clip again failed intermittently — 3 of 8 in
+   * one run of trials and 9 of 10 in another. Intermittent because it is a race: the loser
+   * of the seek fight is whichever draw happens to catch the element mid-seek, which is why
+   * this looked unreproducible for an afternoon.
+   *
+   * **The reload is not the trigger, and that was measured directly rather than inferred**,
+   * because the probes both reload *and* place and so cannot tell the two apart. Driven over
+   * a debugger with the handle already primed, so that nothing forced a page load: eight
+   * consecutive reloads with nothing placed drew all eight times, and then placing one extra
+   * item of the same asset — with no reload anywhere — blanked the canvas immediately. One
+   * variable at a time is the only way this question has an answer.
+   *
+   * The blank also *latches*, which is the part that makes it look like a dead engine rather
+   * than a race: the seek fight means every draw catches the element mid-seek and draws
+   * nothing, and once the fight settles there is no further `seeked` to fire, so nothing
+   * schedules the draw that would finally paint it. Measured sitting at `readyState` 4,
+   * `seeking` false, on the topmost item's target, with the canvas still empty four seconds
+   * later.
+   *
+   * One ordering trap for whoever measures this next: a probe reloads *first* (restoring the
+   * file's single item) and places its second item *after*, so the frame it measures holds
+   * two — and if you then attach again to inspect, that second reload restores the file and
+   * the placed item is gone before you can see it. Read the timeline in the same evaluation
+   * as the pixels, or the evidence destroys itself.
+   */
+  readonly #seeks = new Map<string, SeekState>()
+
+  constructor(pool: MediaPool) {
+    this.#pool = pool
+  }
+
+  get pool(): MediaPool {
+    return this.#pool
+  }
+
+  /**
+   * Draws `frame` of `timeline` into `ctx`, in timeline coordinates. The caller owns the
+   * transform: the preview leaves it alone, the exporter scales it to the delivery size.
+   */
+  drawFrame(
+    ctx: RenderTarget,
+    project: Project,
+    timeline: Timeline,
+    frame: number,
+    options: DrawOptions = {}
+  ): DrawStats {
+    const mode = options.mode ?? 'scrub'
+    const now = options.now ?? (() => performance.now())
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
+
+    this.#pool.beginGeneration()
+
+    const width = Math.max(1, finite(timeline.width, 1))
+    const height = Math.max(1, finite(timeline.height, 1))
+    const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
+
+    ctx.save()
+    ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.fillStyle = timeline.background || '#000000'
+    ctx.fillRect(0, 0, width, height)
+
+    // The one definition of what this frame draws, shared with `awaitSources` so the element
+    // waited on is the element drawn. See `itemsToDraw`.
+    const { items: drawing, active } = itemsToDraw(project, timeline, frame)
+    const pair = active ? [active.resolved.from, active.resolved.to] : []
+    const others = drawing.filter((item) => !pair.some((p) => p.id === item.id))
+    // Decided before any of them is drawn: one element cannot be at two source times, so an
+    // asset drawn twice in one frame gets two elements. See `elementSlots`.
+    const slots = elementSlots(drawing)
+
+    for (const item of others) {
+      this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {})
+    }
+
+    if (active) {
+      const { resolved, progress } = active
+      stats.transition = {
+        kind: resolved.transition.kind,
+        progress,
+        durationInFrames: resolved.durationInFrames,
+        requestedFrames: resolved.transition.durationInFrames,
+        clampedBecause: resolved.clampedBecause
+      }
+      const byWhich = { from: resolved.from, to: resolved.to }
+      for (const step of planTransition(
+        resolved.transition.kind,
+        resolved.transition.direction,
+        progress,
+        { width, height }
+      )) {
+        if (step.kind === 'fill') {
+          if (step.alpha <= 0) continue
+          ctx.save()
+          ctx.globalAlpha = clamp01(step.alpha)
+          ctx.fillStyle = step.color
+          ctx.fillRect(0, 0, width, height)
+          ctx.restore()
+          continue
+        }
+        const item = byWhich[step.which]
+        ctx.save()
+        if (step.clipRect) {
+          ctx.beginPath()
+          ctx.rect(step.clipRect.left, step.clipRect.top, step.clipRect.width, step.clipRect.height)
+          ctx.clip()
+        }
+        if (step.clipCircle) {
+          ctx.beginPath()
+          ctx.arc(step.clipCircle.centreX, step.clipCircle.centreY, step.clipCircle.radius, 0, Math.PI * 2)
+          ctx.clip()
+        }
+        ctx.translate(step.offsetX, step.offsetY)
+        this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {
+          alphaMul: step.alpha
+        })
+        ctx.restore()
+      }
+    }
+
+    ctx.restore()
+    // No retire sweep here. Pausing what the *picture* did not use would silence a hidden
+    // track, and `hidden` governs picture only. `MediaPool.retireIdle()` does it once both
+    // consumers have voted — see the engine.
+    return stats
+  }
+
+  /**
+   * Pauses every video element immediately, without waiting for a draw.
+   *
+   * The generation sweep normally handles this while frames are arriving. It is not
+   * enough when they stop: an occluded window stops
+   * `requestAnimationFrame`, so the next draw never comes, and a "stop playing" that is
+   * only carried out by the next draw leaves the element running — measured at 4.5 seconds
+   * of sound continuing past a frozen picture.
+   */
+  pauseAll(): void {
+    this.#pool.forEach((entry) => {
+      const element = entry.element
+      if (element instanceof HTMLVideoElement && !element.paused) element.pause()
+    })
+  }
+
+  /** Drops seek bookkeeping for assets no longer on screen. */
+  reset(): void {
+    this.#seeks.clear()
+  }
+
+  // -- internals ------------------------------------------------------------
+
+  #drawSource(
+    ctx: RenderTarget,
+    element: HTMLVideoElement | HTMLImageElement,
+    item: Item,
+    frame: number,
+    alphaMul = 1
+  ): void {
+    const box = layoutBox(item)
+    if (!box) return
+    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
+    if (alpha <= 0) return
+
+    ctx.save()
+    ctx.globalAlpha = alpha
+    // Both are set inside this item's save/restore, so they cannot leak onto the next item or
+    // onto the background fill — a blend mode left set would change how everything above it
+    // combines, which looks like a bug in the wrong clip.
+    applyLook(ctx, item)
+    applyRotation(ctx, item, box)
+    try {
+      ctx.drawImage(element, box.left, box.top, box.width, box.height)
+    } catch {
+      // A frame can be pulled out from under us mid-draw (the element reloaded, the source
+      // went away). One missing item must not abandon the rest of the frame.
+    }
+    ctx.restore()
+  }
+
+  /**
+   * Paints one item, whatever kind it is, and records the outcome in `stats`.
+   *
+   * Extracted so a transition step can reuse it: the same item has to be drawable at an
+   * offset, under a clip, at a reduced alpha, and at a frame outside its own range. Having
+   * the transition path re-implement any of that is how the two paths drift.
+   */
+  #paintItem(
+    ctx: RenderTarget,
+    project: Project,
+    item: Item,
+    frame: number,
+    fps: number,
+    mode: 'playback' | 'scrub',
+    now: number,
+    slot: number,
+    stats: DrawStats,
+    opts: { alphaMul?: number }
+  ): void {
+    const asset = findAsset(project, item.assetId)
+    if (!asset || asset.error) {
+      this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
+      stats.placeholders += 1
+      return
+    }
+
+    const entry = this.#pool.acquire(asset, slot)
+    if (entry.status === 'error') {
+      this.#drawPlaceholder(ctx, item, asset.name)
+      stats.placeholders += 1
+      return
+    }
+
+    if (asset.kind === 'text') {
+      const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
+      if (fit) stats.textFits.push(fit)
+      stats.drawn += 1
+      return
+    }
+
+    // Every item has an element of its own, so every item moves its own — which is what lets
+    // two source times coexist in one frame. One writer per element, still: `elementSlots`.
+    // No special handling for a frame outside the item's own range, and that is deliberate:
+    // `sourceSecondsAt` clamps to the **asset**, not the item, so asking for a time past a
+    // clip's end or before its start already reads its handles — which is exactly what a
+    // transition needs. A flag saying "unclamped" was written here first and did nothing;
+    // nothing could have distinguished its presence from its absence.
+    this.#syncElement(entry, item, asset, frame, fps, mode, now)
+
+    if (!isDrawable(entry)) {
+      // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the one
+      // or two frames a load takes, which reads as a glitch in the edit rather than as a
+      // load; the background showing through for that long does not.
+      stats.pending += 1
+      return
+    }
+
+    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul)
+    stats.drawn += 1
+  }
+
+  /**
+   * Draws a text item and reports how it came out.
+   *
+   * The arithmetic — wrapping, the shrink search, the anchor — lives in `text.ts` and is unit
+   * tested against an injected measure. What is here is the part that genuinely needs a
+   * canvas: assembling the font string, asking for widths, and painting in the right order.
+   *
+   * **Order is load-bearing**: background plate, then shadow+stroke, then fill. Painting the
+   * plate after the glyphs hides them; painting the shadow with the fill leaves the stroke
+   * casting its own shadow over the letterform it is meant to outline.
+   */
+  #drawText(ctx: RenderTarget, item: Item, asset: Asset, frame: number, alphaMul = 1): TextFit | null {
+    const box = layoutBox(item)
+    if (!box) return null
+    const text = asset.text ?? asset.name
+    if (!text) return null
+    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
+
+    // `undefined` means exactly the look that shipped before TextStyle existed: a size derived
+    // from the box rather than chosen. Keeping that as the default is what makes the field
+    // optional in the model without changing any project already on disk.
+    const style = item.text ?? {
+      ...defaultTextStyle(Math.max(MIN_FONT_SIZE, Math.round(box.height * 0.4))),
+      lineHeight: 1.2
+    }
+
+    const fontString = (size: number, family: string): string =>
+      `${style.italic ? 'italic ' : ''}${style.fontWeight} ${size}px ${family}`
+
+    ctx.save()
+    try {
+      // Set before any measurement: `measureText` reports widths for whatever font is current,
+      // and letter spacing counts toward them.
+      const spacing = finite(style.letterSpacing, 0)
+      if (spacing !== 0 && 'letterSpacing' in ctx) {
+        ;(ctx as CanvasRenderingContext2D).letterSpacing = `${spacing}px`
+      }
+
+      const measure = (candidate: string, fontSize: number): number => {
+        ctx.font = fontString(fontSize, style.fontFamily)
+        return ctx.measureText(candidate).width
+      }
+      const laid = layoutText(text, style, box as TextBox, measure)
+      const fontAvailable = fontIsAvailable(style.fontFamily, (family) => {
+        ctx.font = fontString(laid.fontSize, family)
+        return ctx.measureText('MWQjgq@10 iIl').width
+      })
+
+      const fit: TextFit = {
+        itemId: item.id,
+        scale: laid.scale,
+        fontSize: laid.fontSize,
+        lines: laid.lines.length,
+        clipped: laid.clipped,
+        fontAvailable
+      }
+
+      // Report even when nothing is painted. A fully faded title that does not fit is still a
+      // layout problem the next frame will show, and reporting only visible text would make
+      // the warning blink.
+      if (alpha <= 0) return fit
+
+      ctx.globalAlpha = alpha
+      applyLook(ctx, item)
+      applyRotation(ctx, item, box)
+      ctx.font = fontString(laid.fontSize, style.fontFamily)
+
+      const anchor = anchorFor(box as TextBox, laid, style.align, style.verticalAlign)
+      ctx.textAlign = anchor.textAlign
+      ctx.textBaseline = 'alphabetic'
+
+      if (style.background) {
+        const pad = Math.max(0, finite(style.background.padding, 0))
+        const plateWidth = laid.maxLineWidth + pad * 2
+        const left =
+          anchor.textAlign === 'left'
+            ? anchor.x - pad
+            : anchor.textAlign === 'right'
+              ? anchor.x - plateWidth + pad
+              : anchor.x - plateWidth / 2
+        const top = anchor.firstBaseline - laid.lineHeight - pad
+        const height = laid.blockHeight + pad * 2
+        ctx.fillStyle = style.background.color
+        const radius = Math.max(0, Math.min(finite(style.background.radius, 0), Math.min(plateWidth, height) / 2))
+        ctx.beginPath()
+        // `roundRect` is in Chromium; the fallback keeps this drawable if it ever is not.
+        if (typeof (ctx as CanvasRenderingContext2D).roundRect === 'function') {
+          ;(ctx as CanvasRenderingContext2D).roundRect(left, top, plateWidth, height, radius)
+        } else {
+          ctx.rect(left, top, plateWidth, height)
+        }
+        ctx.fill()
+      }
+
+      for (let i = 0; i < laid.lines.length; i += 1) {
+        const line = laid.lines[i] ?? ''
+        const y = anchor.firstBaseline + i * laid.lineHeight
+
+        if (style.shadow) {
+          ctx.shadowColor = style.shadow.color
+          ctx.shadowBlur = Math.max(0, finite(style.shadow.blur, 0))
+          ctx.shadowOffsetX = finite(style.shadow.offsetX, 0)
+          ctx.shadowOffsetY = finite(style.shadow.offsetY, 0)
+        }
+        if (style.stroke && style.stroke.width > 0) {
+          ctx.lineWidth = style.stroke.width
+          ctx.strokeStyle = style.stroke.color
+          ctx.lineJoin = 'round'
+          ctx.strokeText(line, anchor.x, y)
+        }
+        // The fill must not cast a second shadow over the stroke it sits inside.
+        ctx.shadowColor = 'transparent'
+        ctx.shadowBlur = 0
+        ctx.shadowOffsetX = 0
+        ctx.shadowOffsetY = 0
+        ctx.fillStyle = style.color
+        ctx.fillText(line, anchor.x, y)
+      }
+
+      return fit
+    } finally {
+      ctx.restore()
+    }
+  }
+
+  #drawPlaceholder(ctx: RenderTarget, item: Item, name: string): void {
+    const box = layoutBox(item)
+    if (!box) return
+    ctx.save()
+    ctx.globalAlpha = clamp01(finite(item.layout.opacity, 1))
+    applyRotation(ctx, item, box)
+    ctx.fillStyle = PLACEHOLDER_FILL
+    ctx.fillRect(box.left, box.top, box.width, box.height)
+    ctx.strokeStyle = PLACEHOLDER_EDGE
+    ctx.lineWidth = 2
+    ctx.strokeRect(box.left + 1, box.top + 1, Math.max(0, box.width - 2), Math.max(0, box.height - 2))
+    // A 12px label in a 16px box is unreadable noise; below that the box alone says enough.
+    if (box.width > 64 && box.height > 32) {
+      ctx.fillStyle = PLACEHOLDER_INK
+      ctx.font = `500 ${Math.max(11, Math.min(28, Math.round(box.height * 0.12)))}px system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(box.left, box.top, box.width, box.height)
+      ctx.clip()
+      ctx.fillText(name, box.left + box.width / 2, box.top + box.height / 2)
+      ctx.restore()
+    }
+    ctx.restore()
+  }
+
+  /**
+   * Puts the element at the source time this item wants, without ever waiting for it.
+   *
+   * A seek is asynchronous and may take longer than a frame. Issuing one every frame for
+   * the same target means the element restarts the seek before finishing it and never
+   * arrives, so the outstanding target is remembered and only re-issued when the target
+   * moves or the seek goes stale.
+   */
+  #syncElement(
+    entry: MediaEntry,
+    item: Item,
+    asset: Asset,
+    frame: number,
+    fps: number,
+    mode: 'playback' | 'scrub',
+    now: number
+  ): void {
+    const element = entry.element
+    if (!(element instanceof HTMLVideoElement)) return
+
+    // Keyed by element, not by asset. With two elements for one asset the two seeks are
+    // independent, and a shared key would have each overwrite the other's outstanding
+    // target — re-issuing both every frame, which is the thrash this bookkeeping prevents.
+    const seekKey = `${entry.assetId}#${entry.slot}`
+
+    const target = sourceSecondsAt(item, asset, frame, fps)
+    // Half a frame while scrubbing: closer than that is the same picture, and a seek that
+    // lands on the same picture costs a decode for nothing.
+    const tolerance = mode === 'playback' ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
+
+    if (mode === 'playback') {
+      element.playbackRate = playbackRateFor(item.speed)
+      if (element.paused) {
+        // Rejected autoplay is not fatal — the picture still advances by seeking, and the
+        // audio engine resumes the context on the next user gesture.
+        void element.play().catch(() => {})
+      }
+    } else if (!element.paused) {
+      element.pause()
+    }
+
+    const drift = Math.abs(element.currentTime - target)
+    if (drift <= tolerance) {
+      this.#seeks.delete(seekKey)
+      return
+    }
+
+    const pending = this.#seeks.get(seekKey)
+    const sameTarget = pending !== undefined && Math.abs(pending.targetSeconds - target) <= tolerance
+    const stale = pending !== undefined && now - pending.issuedAt > STALE_SEEK_MS
+    if (sameTarget && !stale) return
+
+    try {
+      element.currentTime = target
+      this.#seeks.set(seekKey, { targetSeconds: target, issuedAt: now })
+    } catch {
+      // Seeking before metadata arrives throws; the next frame retries with metadata.
+    }
+  }
+
+}
+
+
+/**
+ * Which of an asset's elements each item draws from, for the items in one frame.
+ *
+ * This replaces the one-owner-per-asset rule rather than refining it. That rule stopped the
+ * seek thrash by letting a single item move the element and having the rest draw whatever it
+ * held — correct as a way of not being permanently blank, and *wrong* as behaviour the moment
+ * two items on one asset are both meant to be visible. A transition between two halves of a
+ * split clip is exactly that, and it is the commonest transition there is: under the old rule
+ * the outgoing half shows the incoming half's frame, so a dissolve dissolves into itself.
+ *
+ * So each item gets its own element instead. The nth item drawing a given asset in a frame
+ * takes slot n, in draw order — which makes the assignment **stable**: `itemsAtFrame` returns
+ * lowest track first and items within a track sorted by `from`, so the outgoing clip keeps
+ * slot 0 across the whole transition while the incoming one holds slot 1. An assignment that
+ * flipped between frames would swap what each element holds and reintroduce the thrash by a
+ * different route.
+ *
+ * Slot 0 is the overwhelmingly common answer, and it keys the pool on the bare asset id, so
+ * nothing changes for a timeline without overlaps.
+ *
+ * **Counted within the frame, and the alternative was tried and measured worse.** Indexing over
+ * the whole timeline instead would make a slot a property of the item rather than of the frame,
+ * which fixes a real edge case: the incoming clip of a transition holds slot 1 while both clips
+ * are drawn and becomes slot 0 the moment the window ends, so it switches element at the edge
+ * and re-seeks — three blank frames immediately after a dissolve.
+ *
+ * Timeline-stable slots cost far more than they save, because they also stop two *adjacent*
+ * clips of one asset sharing a single continuously-playing element. Measured over 2.6s of
+ * playback across a cut:
+ *
+ *                            blank frames     composite p50
+ *     frame-local (this)          1              9.3 ms
+ *     timeline-stable            23              0.2 ms      <- p50 that low means most
+ *                                                               composites drew nothing
+ *
+ * The two goals conflict directly: sharing means one element for both clips, and a transition
+ * needs two. Sharing by default and allocating a second element only when a frame genuinely
+ * needs one is the better trade, so the edge re-seek after a dissolve is a known cost rather
+ * than a bug to be fixed by making ordinary playback worse. Hysteresis — holding the pair's
+ * slots for a few frames past the window — would get both, at the price of state that would
+ * need its own correctness argument.
+ */
+/**
+ * Everything this frame draws, in paint order, plus the transition playing across it.
+ *
+ * **Exported because two consumers need the identical answer and deriving it twice is a bug
+ * I shipped.** The compositor draws it; `awaitSources` waits for it. When the compositor
+ * started adding the transition pair and `awaitSources` still used `itemsAtFrame`, the two
+ * lists differed at exactly the frames that matter — at the cut `itemsAtFrame` returns only
+ * the incoming clip, so it took slot 0 while the compositor drew it from slot 1. The wait
+ * prepared one element and the draw read another, and every frame from the cut onward came
+ * back black. The comment warning against this was already in `awaitSources` at the time.
+ *
+ * A transition needs **both** clips in every frame of its window, and `itemsAtFrame` returns
+ * only one: the window straddles the cut, so frames before it are inside the outgoing clip
+ * and frames from it on are inside the incoming one. The other half is added here, and read
+ * with a source time outside its own range — which is what the handles are for.
+ *
+ * Order is `from` then `to`, always. That is what makes `elementSlots` stable across the
+ * window: a split clip transitioning into itself is one asset and two items, and an
+ * assignment that flipped mid-window would swap what the two elements hold.
+ */
+export function itemsToDraw(
+  project: Project,
+  timeline: Timeline,
+  frame: number
+): { items: Item[]; active: ReturnType<typeof transitionAtFrame> } {
+  const active = transitionAtFrame(project, timeline, frame)
+  const present = itemsAtFrame(timeline, frame, 'video')
+  if (!active) return { items: present, active }
+  const pair = [active.resolved.from, active.resolved.to]
+  const others = present.filter((item) => !pair.some((p) => p.id === item.id))
+  return { items: [...others, ...pair], active }
+}
+
+export function elementSlots(drawing: Item[]): Map<string, number> {
+  const slots = new Map<string, number>()
+  const used = new Map<string, number>()
+  for (const item of drawing) {
+    const next = used.get(item.assetId) ?? 0
+    slots.set(item.id, next)
+    used.set(item.assetId, next + 1)
+  }
+  return slots
+}
+
+export interface Box {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * The destination rectangle `drawImage` is given, in timeline coordinates, or null when the
+ * layout cannot produce one.
+ *
+ * Exported because it is the whole of the compositor's placement arithmetic and it is worth
+ * pinning. A `coverLayout` for a portrait clip in a landscape project legitimately produces a
+ * negative `top` and a `height` three times the canvas — the image is meant to overflow on
+ * both sides — and that shape looks wrong enough that three people have now read it as a bug.
+ * The rect goes to `drawImage` unclamped, on purpose: clamping it into the canvas is what
+ * would actually break cover framing.
+ */
+export function layoutBox(item: Item): Box | null {
+  const layout = item.layout
+  const width = finite(layout.width, 0)
+  const height = finite(layout.height, 0)
+  // Zero is a no-op in the spec but negative sizes are a mirror in some engines and an
+  // exception in others; neither is what a broken layout means, so neither is drawn.
+  if (width <= 0 || height <= 0) return null
+  return {
+    left: finite(layout.left, 0),
+    top: finite(layout.top, 0),
+    width,
+    height
+  }
+}
+
+/**
+ * Applies an item's adjustments and blend mode to the context.
+ *
+ * Skipped entirely when both are the default, because asking for `filter: 'brightness(1)'` puts
+ * the draw on the filtered path — measured at roughly twice the cost at 4K — and every clip in
+ * every project would pay for a feature it is not using.
+ */
+function applyLook(ctx: RenderTarget, item: Item): void {
+  const filter = adjustmentFilter(item.adjustments)
+  const operation = blendOperation(item.blendMode)
+  if (isPlainLook(filter, operation)) return
+  if (filter !== NO_FILTER) ctx.filter = filter
+  ctx.globalCompositeOperation = operation
+}
+
+function applyRotation(ctx: RenderTarget, item: Item, box: Box): void {
+  const degrees = finite(item.layout.rotation, 0) % 360
+  if (degrees === 0) return
+  const centreX = box.left + box.width / 2
+  const centreY = box.top + box.height / 2
+  ctx.translate(centreX, centreY)
+  ctx.rotate((degrees * Math.PI) / 180)
+  ctx.translate(-centreX, -centreY)
+}
+
+/** Exported for the exporter, which needs the same clamping the compositor applies. */
+export { clamp, sourceSecondsAt }

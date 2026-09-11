@@ -4,32 +4,376 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**bay** — a native macOS video editor. A Rust workspace under `rust/`: a GPUI desktop shell
-(`bay-ui`, reached by a 5-line `rust/desktop/src/main.rs`) over a platform-agnostic engine (wgpu
-compositor, effects, masks, audio, text, project model, tick math), plus `bay-mcp`, which exposes
-the same engine as an MCP server.
+**bay** — a video editor. There are **two trees**, and which one you are in decides everything:
 
-**`rust/` is the product.** The JS/web stack this was forked from used to live in `dep/` as a
-parity reference; it has been deleted.
+- **`/` (repo root) — the product that ships.** An Electron app: React 19 + Vite 7 + Tailwind 4 +
+  TypeScript. Main process owns the filesystem, ffmpeg and persistence; the renderer owns the
+  interface and the compositing engine; `src/shared/` holds the contracts both are checked against.
+- **`dep/rust/` — the native engine, still live.** The Rust workspace (GPUI shell over a wgpu
+  compositor, effects, masks, audio, text, project model, tick math, plus `bay-mcp`). It was moved
+  here, not retired: work on it continues in parallel and it is expected to come back.
+
+**Read the section that matches the tree you are editing.** The Electron conventions are directly
+below; everything from "Architecture" onward describes `dep/rust/` and its paths are relative to
+that directory unless stated otherwise.
 
 See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
 [`todo.completed.md`](./todo.completed.md), [`todo.pending.md`](./todo.pending.md) and
 [`todo.testing.md`](./todo.testing.md) — and `docs/native/`.
 
-## Commands
+## Never `git add -A` in this tree
+
+Several agents work here at once, and their edits land between your `git status` and your commit.
+Doing this swept another author's work into four unrelated commits in a single day — a compositor
+fix under a commit about a documentation rule, a guard deletion under one about the media cache, a
+payload dedupe under one about export failures. Nothing was lost, but a bisect lands on a message
+that does not mention the change, which is the expensive kind of wrong.
+
+Stage explicit paths. `git add src/main/foo.ts src/main/foo.test.ts`, never `-A` and never `.`.
+If a commit does end up carrying someone else's work, name it in the message rather than leaving it
+to be discovered.
+
+**And an explicit path list has the opposite failure, so neither rule is enough on its own:** it
+cannot name a file you did not know had been created. `3031fb4` committed `compositor.ts`, which
+imports `./looks`, and left `looks.ts` untracked — that commit typechecks, passes all 310 tests,
+and does not build from a fresh checkout. Both gates read the *working tree*, where the file is
+present, so neither could see it.
+
+`src/shared/committed-imports.test.ts` is the gate: it walks every relative import in `HEAD` and
+checks the target is also in `HEAD`. It is proven against `3031fb4` itself rather than a synthetic
+mutant — one fault at that commit, zero at its repair — and it skips loudly if that commit is ever
+unreachable, because a proof that cannot run must not read as a pass.
+
+## Commands — the Electron product (repo root)
 
 ```bash
-./run.sh              # debug build + launch — fastest loop
-BAY_UI_FRAMETIME=1 RELEASE=1 ./run.sh   # frame pacing: ticks/s, pictures/s, playback counters
-RELEASE=1 ./run.sh    # release build — much smoother playback
-./build.sh            # release build of the desktop app
-./test.sh             # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
-SLOW=1 ./test.sh      # also run the 40 tests that drive the Kokoro sidecar or load SigLIP
-STRICT=1 ./test.sh    # turn GPU/ffmpeg skips into hard failures for capability verification
-BAY_ONLINE=1 ./test.sh   # let cargo reach the network — only needed after changing a dependency
-
-cd rust && env -u CARGO_TARGET_DIR cargo test --workspace
+pnpm install          # pnpm, not npm — the workspace standard for TS projects
+pnpm dev              # electron-vite dev server + app, with HMR in the renderer
+pnpm build            # typecheck, then build main/preload/renderer into out/
+pnpm typecheck        # tsc over both projects; the renderer and node halves are separate
+pnpm test             # the whole suite, on node:test — no test framework in the tree
+pnpm bundle           # unpacked app bundle, for checking real app identity
+pnpm release          # packaged artifact via electron-builder (unsigned; see below)
 ```
+
+**The bundle script is not called `pack`, and must not be.** `pnpm pack` is a pnpm **built-in** —
+the npm-style tarball command — and it shadows any script of that name without a word. Running it
+tarballed the entire repo, `website/` and `workspace/` included, and dropped a `.tgz` in the root.
+`pnpm run pack` would have reached the script, but a name that does the wrong thing when typed the
+obvious way is a trap, so the script is `bundle`. Same reasoning retired `dist`, which collides with
+the gitignored `dist/` directory the Rust tree writes into.
+
+**"Tests green" and "tree green" are different claims here, and the difference is structural.**
+`pnpm test` runs under plain Node, so it cannot load any module that imports `electron` — `store.ts`,
+`ipc.ts`, `index.ts` and the rest of the main process proper are unreachable from the suite at all.
+For those files `pnpm typecheck` is the *only* gate. This is not a coverage gap a test could close;
+it is why the suite once sat at 86/86 green over a type error that made the app unbuildable. Read a
+passing test count as evidence about the pure modules — `serve.ts`, `frame-pipe.ts`, `probe.ts`'s
+`shapeProbe`, `db.ts`, `persistence.ts`, the engine — and about nothing else. The habit that follows:
+when a module matters, find the seam that lets its logic live outside Electron, the way `serve.ts`
+was split from `protocol.ts`. Every such split so far has been a better shape independently of the
+test that motivated it.
+
+`pnpm test` uses Node's built-in runner against Node 26's native type stripping, so no test
+framework enters the dependency tree. The `--import ./src/test-hooks.mjs` is a small resolver
+hook: Node's resolver wants `./serve.ts`, while the project is on `moduleResolution: bundler`
+where extensionless imports are correct and every other module is written that way. The hook
+keeps that oddity in one place rather than setting `allowImportingTsExtensions` across the whole
+build to suit a handful of files. It sits at `src/` because both halves test through it — main
+and the renderer's engine — and a shared tool filed under one consumer reads as that consumer's
+private detail.
+
+**The glob is `src/**` and must stay that way.** It was `src/main/**` for one commit, during which
+the renderer's frame-pacing tests existed, passed, and were never run — `pnpm test` reported 18/18
+and would have stayed green no matter what happened in the other 13, because from Node's point of
+view those files did not exist. Nothing reports a skip for a file a glob never matched. If you add
+tests somewhere new, check the count moves.
+
+**A test must be proven to fail against the bug it guards.** The `bay://` suite was mutation-tested
+before it was trusted — six deliberate regressions, five caught. The sixth passed: the traversal
+test built its specimen with `path.join(dir, '..', 'secret.txt')`, and `join` normalises its own
+result, so the test handed the code an already-clean path and asserted on it. Deleting the path
+normalisation it existed to protect changed nothing. A green test over the exact bug it guards is
+worse than no test, because it is also a claim that the bug cannot happen. The rewrite builds the
+path by concatenation and asserts up front that the specimen defeats a naive prefix check, so it
+cannot quietly stop testing anything again. Write that assertion into any test guarding a check.
+
+**And the proof must itself be proven to have done something.** A mutation run scored a guard as
+NOT CAUGHT and sent someone to rewrite a test that was working perfectly: the mutation string had
+six spaces of indentation where the source had four, so `str.replace` silently did nothing and the
+suite ran against unmodified code. A mutation that did not apply and a test that does not test
+produce identical output. Assert the replacement landed — `assert old in source` — before running
+anything. It is the same one-line shape as the specimen assertion above, displaced by one level.
+
+**A surviving mutant is not automatically a missing test.** It is one of three things, and they
+want three different responses:
+
+1. **A missing test** — write it.
+2. **Dead code** — delete it. Tell this from the first differentially, by running both versions
+   over a large input set, not by reading the code and forming an opinion. `parseRational`'s
+   finite-number guards survived mutation; original against simplified over 33 handwritten inputs
+   and 20,000 generated pairs were identical on every one, so the guards went. They read as
+   defensive and were unfalsifiable: nothing could tell their presence from their absence, so
+   nobody could safely change them later and nobody could tell if they had rotted.
+3. **An optimisation with no observable behaviour** — label it, or delete it. Deleting the
+   `if (bytesBefore <= budgetBytes) return` early exit from the cache sweep changed no test,
+   because the loop below breaks on its first check and produces an identical result. That is not
+   dead code and not a test gap: it is a fast path, correct by construction, and *no test can
+   ever cover it* because it has no effect a test can see. Delete it unless someone has measured
+   a reason to keep it, and if it stays, say at the code that it is an optimisation — otherwise
+   the next person to run mutations rediscovers it as a mystery.
+
+Treating every survivor as a test gap is exactly how unfalsifiable code accumulates a suite
+around it.
+
+**But a differential verdict is itself a measurement in a state, and this is the dangerous
+direction.** The other errors in this file send someone to read working code; this one deletes a
+live guard. `NumberField.commit`'s `if (!Number.isFinite(rounded)) return` looked transitively
+unreachable — every typed route in is already gated by a `Number.isFinite` at its call site — and
+a differential over seven adversarial strings (`abc`, `1e999`, `-`, `Infinity`, `NaN`, empty,
+arrow-on-garbage) gave **identical results with and without it**. On that evidence the guard
+should have gone. The uncovered input class was a non-finite value arriving *from the store*:
+seed `layout.left = NaN`, drag the label, and NaN survives the arithmetic into `commit`.
+
+So before accepting "no input distinguishes them", ask **which inputs you did not try**, and
+specifically whether every *source* of the value is represented — not just every syntax the user
+can type. An input set drawn from one entry path proves something about that path and nothing
+about the others.
+
+That case also needed its own observable, which is the general lesson: the value is NaN before
+*and* after, so reading it back cannot tell "wrote NaN" from "returned early". The undo stack can,
+because a commit goes through `edit()` and pushes history — `past 3 → 4` without the guard,
+`3 → 3` with it. When the obvious observable cannot distinguish the two outcomes, find one that
+can rather than concluding from the one that cannot.
+
+This shape — a correct-looking construct that nothing can reach — has now appeared five times in
+two days, across four subsystems and three authors. Expect it rather than being surprised by it.
+
+**Never write a literal where a derived value will do.** The actionable form of the rule below,
+and the one that actually stops it. A check that sets `color: '#FF0055'` accuses working code the
+moment anything upstream has already set the same value: the edit succeeds, the field is correct,
+the picture is correctly identical, and the probe reports the field dead. Derive instead —
+
+    const current = (await call('inspect_item', { itemId })).value?.text?.color
+    const next = current === '#00FF88' ? '#FF0055' : '#00FF88'
+
+The literal encodes an assumption about history. The derived value encodes what the check actually
+means — *different from whatever it is now* — and survives any reordering upstream. Seven of this
+project's wrong answers came from a fixture assumption, and three of those were one afternoon's
+checks against a shared timeline that earlier checks had already moved.
+
+**A property measured in one state is not a property.** Ask of every measurement: *which starting
+state was I in when I measured that?* This has been the single most repeated error here — three
+separate instances in one day, by three people, in three subsystems:
+
+- "`%nonZero` at 0.0% means nothing was drawn" — true only when the source is known to have
+  something there, which nobody checked. Cost the most.
+- "`VERIFY_PRECONDITION` fails as designed" — true only from an empty project; from a project
+  loaded off disk the precondition was already satisfied and the mode hung.
+- "`project.save()` opens a dialog, so a probe cannot seed itself" — true only on a profile with
+  no `filePath`; on a seeded one it writes silently, which is how a probe came to mutate a
+  fixture nobody knew it was writing to.
+
+Each was measured honestly, each was reported as a property of the system, and each sent someone
+into code that was working. Say "in state X, this does Y" until you have checked state not-X.
+
+**Write the assertion from the requirement, never from the implementation.** `sweepStaleCaches`
+skipped any directory without a `<family>-<scheme>` separator, so a bare `thumbs/` — the one stale
+cache every existing install actually has — fell through and was never reclaimed. The function
+written to reclaim old caches ignored the only old cache in existence. It was invisible because
+its test seeded `thumbs` alongside `thumbs-v0` and asserted `thumbs` **survived**: the author read
+the skip out of the code and wrote it down as intended behaviour without asking whether it should
+be. A test built that way cannot fail, because it is a description. Ask what the code is *for*,
+then assert that.
+
+**A test cannot hold still anything it defines jointly with the code.** Ask of every test: *if I
+renamed this, would the test rename with it?* If yes, it asserts a tautology. Four separate
+failures this week were that one structure — the key constant read by both sides, the
+writer/reader round trip, the mutation harness and the code it mutates, the harness and its own
+reporter. It is recognisable before it bites.
+
+The sharpest case is **persisted data, because its reader is one you cannot update**. Renaming
+`LAST_PROJECT_KEY` survived mutation: every test read and wrote through the constant, so the
+rename moved both sides together while on a real machine the new key finds nothing and every
+existing user silently loses their last project on upgrade. The same held for `.bay` documents —
+a round-trip test that writes with `writeProjectFile` and reads with `readProjectFile` passes
+through any field rename, while every project already on disk stops loading. The fix in both
+cases is a **literal**: a version-1 `.bay` file spelled out key by key in the test, plus the
+reverse check that today's writer still emits every key the fixture has.
+
+Scope it deliberately, though — not everything durable is a compatibility surface:
+
+- **Yes:** `.bay` field names, database keys, anything read back from disk by a build that is not
+  the build that wrote it.
+- **No:** IPC channel strings — preload and main ship in the same binary and move together by
+  construction, so there is no older reader to break.
+- **No:** cache filenames (`cacheKey`). A changed hash *orphans* entries rather than losing data;
+  the cost is re-deriving posters and peaks once. Pinning it would freeze an implementation detail
+  in exchange for no promise.
+
+The test is whether a reader you cannot change will see the old bytes. If not, pinning buys
+nothing and costs you the freedom to refactor. And note the two remedies are opposites: pin the
+strings that must never move; **version-and-sweep** the ones that exist in order to move, as the
+cache scheme does by living in the directory name (`thumbs-v1`) with a startup sweep of other
+schemes. Pinning the second kind would fight the design.
+
+**"Belt and braces", "just in case" and "defensive" are the tell for unfalsifiable code.** Every
+instance found so far was labelled that way by the person who wrote it — the phrase is what gets
+written about code whose necessity the author could not demonstrate. When you catch yourself
+writing it, that is the moment to check whether any input can distinguish the branch's presence
+from its absence. If none can, delete it rather than testing it.
+
+**But two guards can address one symptom from different layers, and a fix to one does not retire
+the other.** This rule is the thing most likely to cause that mistake, so check before deleting.
+Worked example: `edit()` now returns unchanged when a mutator declines to act, so a refused
+`moveItem` no longer leaves a dead undo step — which reads like it makes the MCP executor's
+pre-check redundant. It does not. `moveItem` returns `void` either way, so without the pre-check
+the executor still calls it, still sees nothing, and still returns `ok: true` to an agent whose
+clip did not move; the agent then builds its next three calls on a timeline it believes it
+changed. One guard fixes the history, the other produces the message. Ask what each guard's
+*observable* is: if two guards have different ones, they are different guards.
+
+**A probe is subject to the same discipline as a test: it must be shown capable of detecting what
+it reports on.** Instruments fail the same way tests do, and this project has already produced
+three confident wrong conclusions from probes that could not observe what they claimed was absent
+— `querySelectorAll('video')` against a pool that deliberately keeps elements detached, a canvas
+sampled synchronously after a redraw that schedules through rAF, and a background colour read
+underneath an opaque full-frame clip. The measurement traps are collected in
+[`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
+purpose to confirm the probe notices.
+
+**A build-time fault belongs in a build-time gate, not a runtime check.** The MCP catalog and the
+executor disagreeing is decided when the bundle is built and is identical on every machine that
+runs it — so reporting it at mount aims the diagnostic at the one person who can do nothing about
+it, and an early version threw there, taking the whole editor down over two tools. Contrast
+`storageReady`, `mediaToolsReady` and `mcpReady`, which are genuine runtime conditions: the disk
+really might be unwritable here and not there, and the app cannot know until it asks. Those belong
+at runtime. A disagreement between two source files does not.
+
+The fix is a gate that fires before a build exists to ship — `test/app/mcp.mjs` asserts every
+catalog tool answers — plus a *non-fatal* runtime notice, because the two halves are edited by
+different people at a seam neither sees whole, which makes the mismatch the likely condition
+rather than the impossible one. "It cannot happen in a shipped build" was the tempting argument
+and it is false in the direction that matters.
+
+**When reporting several faults at once, order them by how well each one hides.** A text layout
+that both substituted a font and clipped the words reported only the clipping, because the checks
+ran in `else if` order. Clipping you can see on the canvas; a substituted face has no visual cue
+at all — so the invisible fault must come first, and a list beats one chosen string.
+
+**Write the sentence before the type.** Before designing a status, result or error type, write the
+line a person reads for each state it can be in. If two states produce the same sentence, or one
+produces a sentence you cannot write, the type is missing a field. `{ ready, error }` was complete
+on its own terms and could not answer *"the socket is fine and nothing has connected"* — which is
+exactly the state that let a database nobody knew had never loaded pass for one nobody had used.
+Adding `connectionsSeen` was obvious the moment the sentence had to exist, and invisible while only
+the type did. This is the inverse of the usual order and it is worth doing deliberately.
+
+**"The other component happens to handle it" is not "this component reports it."** The distance
+between those two is where most of this file's entries live. The export destination check first
+deleted a failed job from the map — which made a failed job indistinguishable from a cancelled
+one, and `pushFrame` and `finish` both return *silently* for a job they cannot find. A renderer
+that ignored the `failed` event would have composited an entire timeline into nothing, received no
+error from hundreds of `pushFrame` calls, and reported success: the exact failure the check exists
+to prevent, reappearing inside the fix for it. It was nearly left that way because the engine's
+export loop does await each push and does watch progress, so in practice it would have caught it.
+Design each side as though the other is wrong, because one day a refactor will make it so.
+
+**A hang is not a failure until something makes it one, and `cancelled` is a third outcome.** A
+promise that never settles produces no answer rather than a wrong one, and Node's summary reports
+it as `pass 7 / fail 0 / cancelled 1` — so anything reading those lines for `fail 0` calls it
+green. The **exit code is 1**, so `pnpm test` and CI are safe; the hole is in reading the summary,
+which is what a mutation harness and a human skimming output both do. Read the exit code, or match
+`cancelled` and `skipped` as well as `fail`. And give tests that can hang an explicit
+`{ timeout }`, so a stuck promise is named rather than stalling the suite for two minutes.
+
+This is the third failure in the layer *between* "the bug exists" and "the report says so", after
+a mutation that never applied and a harness that could not parse its own output. Expect that layer
+to be the broken one.
+
+**A test that exercises a build artifact is only as true as the last build, and the artifact's
+freshness belongs in the assertion.** Staleness here is a false *pass*, not a false fail: edit the
+transport, skip `pnpm build`, and the suite cheerfully proves the previous build still works. It
+bit twice in one mutation run — two mutants failed `noUnusedLocals`, so `pnpm build` never
+produced a new bundle, and both would have been scored against the previous artifact. The
+`src/main/mcp` suite now asserts the bundle is at least as new as every non-test source beside it
+and names `pnpm build` when it is not, because "the transport is broken" and "you did not rebuild"
+are otherwise the same red. Same shape as the rest: the link between "the bug exists" and "the
+report says so" was itself untested.
+
+**`pnpm typecheck` covers `src/main/**`, `src/preload/**` and `src/shared/**` — and nothing else.**
+A new top-level directory under `src/` compiles into the bundle and is invisible to the only gate
+main-process code has. `src/mcp/` was nearly that; it is `src/main/mcp/` for this reason, with the
+rollup input key still emitting `out/main/mcp/index.js` so the documented command is unchanged. If
+you add a top-level source directory, add it to the tsconfig in the same edit.
+
+**Every negative control needs its own positive control.** "The call that should have been refused
+was refused" passes trivially against a surface that refuses *everything* — a tool that is simply
+broken and a tool that is correctly strict produce identical output. So pair each refusal with the
+nearest **legal** call that must still succeed: an unresolvable id beside a resolvable one, a
+locked track beside an unlocked one, occupied time beside free time. Without the pair the suite is
+a description of current behaviour rather than a test of intended behaviour, which is the
+`sweepStaleCaches` shape one level along.
+
+**Assert on an error's content, not its existence.** This codebase holds that an error is a
+recovery instruction rather than a diagnosis, and that is only a real standard if something checks
+it. A refusal naming the candidate ids lets the next call succeed; one saying "not found" ends the
+agent's run — both are correct refusals and only one is usable. So the assertion is that the
+message carries what the caller needs in order to retry: the candidates, the conflicting item, the
+occupied range. An error that is merely correct should fail the test.
+
+`pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
+`tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
+point: it is the only code that crosses the process boundary.
+
+`out/` is gitignored, as is `node_modules/`. `strict` and `noUncheckedIndexedAccess` are on in both
+projects — indexing an array yields `T | undefined` and you must handle it.
+
+## Conventions — the Electron product
+
+- **`src/shared/` is the contract, and it is written before the implementation.** `project.ts` is
+  the model, `ipc.ts` is every call the renderer may make into main. If the preload bridge, a main
+  handler and a React component disagree, it is because someone added a channel without adding it
+  here. Don't.
+- **Timeline time is frames at the timeline's fps, never seconds.** Source offsets into media are
+  microseconds, because the source has a frame rate we do not control. The conversions live in
+  `project.ts` and are the only place the two are allowed to meet.
+- **Assets are the "what", items the "where and when".** One asset backs many items. Moving a clip
+  must never touch the asset.
+- **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
+  `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
+  not land on the undo stack.
+- **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
+  serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
+  without them, and that is the most common way this goes wrong.
+- **Nothing reaches the network.** No telemetry, no analytics, no remote fonts or images. The CSP in
+  `src/renderer/index.html` permits no remote origin; loosening it is a product decision, not a fix.
+- **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
+  component re-renders at the frame rate during playback.
+- **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at
+  the *project's* fps rather than the display's. Counting callbacks makes playback correct at 60Hz
+  and double speed at 120Hz; compositing per refresh makes a 120Hz screen pay four times over to show
+  30fps of footage. A frame-rate probe must therefore count **pictures**, not ticks — a tick that
+  redraws the same image is indistinguishable from a new frame, so "p99 2ms" is entirely compatible
+  with a picture updating four times a second.
+
+## Commands — the Rust engine (`dep/`)
+
+```bash
+dep/run.sh            # debug build + launch — fastest loop
+BAY_UI_FRAMETIME=1 RELEASE=1 dep/run.sh   # frame pacing: ticks/s, pictures/s, playback counters
+RELEASE=1 dep/run.sh  # release build — much smoother playback
+dep/build.sh          # release build of the desktop app
+dep/test.sh           # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
+SLOW=1 dep/test.sh    # also run the 40 tests that drive the Kokoro sidecar or load SigLIP
+STRICT=1 dep/test.sh  # turn GPU/ffmpeg skips into hard failures for capability verification
+BAY_ONLINE=1 dep/test.sh   # let cargo reach the network — only needed after changing a dependency
+
+cd dep/rust && env -u CARGO_TARGET_DIR cargo test --workspace
+```
+
+These scripts resolve `$ROOT/rust` relative to themselves, so they kept working after the move;
+`$REPO` was introduced for the few paths that point at the repo root (`script/`, `dist/`).
 
 **Forty tests are `#[ignore]`d and run only under `SLOW=1`** — `bay-speech/tests/{kokoro,lifecycle}.rs`,
 `bay-mcp/tests/captions.rs`, `bay-vision/tests/encode.rs`, and `bay-mcp`'s `narration_tests`. They
@@ -79,7 +423,11 @@ When several agents share this tree, scope commands to the crates you own (`carg
 and **never** run `cargo fmt --all` — it rewrites other people's in-flight files. The full gate is
 the lead's job, on a quiet tree.
 
-## Architecture
+## Architecture — the Rust engine
+
+Everything from here to the end of the file describes `dep/rust/`. Paths are written relative to
+`dep/`, so `rust/crates/bay-ui` on disk is `dep/rust/crates/bay-ui`. None of it applies to the
+Electron product at the repo root.
 
 ```
 rust/

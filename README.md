@@ -1,21 +1,52 @@
 # bay
 
-A native macOS video editor, and the same engine as an MCP server so an agent can build and
-render video without a GUI.
+A video editor, and the same project model exposed to agents so one can build and render video
+without a GUI.
 
 ```bash
-./build.sh        # desktop app + MCP server + speech sidecar
-./run.sh          # launch the editor
-./test.sh         # fmt + clippy + tests
+pnpm install      # once
+pnpm dev          # the editor, with HMR
+pnpm build        # typecheck + build into out/
 ```
 
 ---
 
-## What it is
+## Two trees
 
-A Rust workspace under `rust/`: a GPUI desktop shell over a platform-agnostic engine — a wgpu
+**`/` — the product that ships.** An Electron app: React 19, Vite 7, Tailwind 4, TypeScript.
+
+```
+src/
+├── shared/       the contracts both processes are checked against
+│   ├── project.ts    the model — frame-native timeline time, microsecond source offsets
+│   └── ipc.ts        every call the renderer may make into main
+├── main/         filesystem, ffmpeg, persistence, export, the bay:// protocol
+├── preload/      the contextBridge surface, and nothing else
+└── renderer/
+    ├── store/    zustand — one edit() that snapshots for undo
+    ├── engine/   playback clock, compositor, audio, exporter — framework-free
+    ├── editor/   the panels: timeline, preview, inspector, media pool
+    └── components/  the primitives they are built from
+```
+
+**`dep/rust/` — the native engine, still live.** Not retired, not frozen: a GPUI desktop shell
+over a wgpu compositor, effects, masks, audio, text, the project model and tick math, plus
+`bay-mcp`, which exposes that engine as [Model Context Protocol](https://modelcontextprotocol.io)
+tools. Work continues there in parallel, and its measured numbers still stand — the compositor
+runs a 1080p decode-and-composite in 0.46 ms p50.
+
+```bash
+dep/run.sh        # launch the Rust editor
+dep/test.sh       # fmt + clippy + tests
+```
+
+The rest of this file documents that tree.
+
+## What the Rust engine is
+
+A Rust workspace under `dep/rust/`: a GPUI desktop shell over a platform-agnostic engine — a wgpu
 compositor, effects, masks, audio, text, the project model and tick math — plus `bay-mcp`,
-which exposes that engine as [Model Context Protocol](https://modelcontextprotocol.io) tools.
+which exposes that engine as Model Context Protocol tools.
 
 The governing split: **`rust/` owns all non-UI logic; a UI shell owns rendering, interaction
 and platform concerns but never owns logic.** That is why one engine drives the desktop app,
