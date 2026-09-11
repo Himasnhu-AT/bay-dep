@@ -94,10 +94,18 @@ export class Compositor {
    * the instant the canvas went blank, the timeline held two, both on the same asset, at
    * 20s and 0s. Nothing about a one-item file prevents this; only a one-item *frame* does.
    *
-   * That state is also easy to measure away by accident: attaching a debugger through
-   * `cdp.mjs` reloads the page, `project.initial()` restores the file's one item, and the
-   * second item is gone before anyone can see it. Inspect without reloading, or the
-   * evidence destroys itself.
+   * A one-item *frame* really is safe, and that is measured rather than assumed: on the
+   * pre-fix build, against a one-item fixture, a probe that places nothing drew every time
+   * (8/8), while a probe that places the same clip again failed intermittently — 3 of 8 in
+   * one run of trials and 9 of 10 in another. Intermittent because it is a race: the loser
+   * of the seek fight is whichever draw happens to catch the element mid-seek, which is why
+   * this looked unreproducible for an afternoon.
+   *
+   * The ordering is what confused everyone, so state it: a probe reloads *first* (restoring
+   * the file's single item) and places its second item *after* that, so the frame it then
+   * measures holds two. The reload trap bites when you go to inspect **afterwards** — a
+   * second attach reloads again and the placed item is gone before anyone can see it. Read
+   * the timeline in the same evaluation as the pixels, or the evidence destroys itself.
    */
   readonly #seeks = new Map<string, SeekState>()
 

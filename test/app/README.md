@@ -395,3 +395,70 @@ it really is the scheduler.
 
 And do not use `stats().samples` as a draw counter — it is the length of a rolling window
 **capped at 240**, so past that it stops rising and reads as a stall.
+
+
+## The exit-code hole: failures that escape `runProbe`
+
+Every probe here calls `attach()` at module top level, **outside** `runProbe`. So a connection
+failure was not a verdict at all — it escaped as an unhandled rejection and exited **1**, which
+this file defines as "measured, and it is wrong: a finding about the code". Two real runs hit it:
+
+    Error: CDP Page.bringToFront did not answer within 30000ms
+    Error: no renderer target on port 9355 - is the app built and running?
+
+Both were an Electron someone else had killed. **An app that is gone was reading as a bug in the
+compositor** — the false-accusation class again, one level below where it was fixed before.
+
+Rather than restructure ten probes, `cdp.mjs` now installs `uncaughtException` and
+`unhandledRejection` handlers at import, and the connection failures throw `PreconditionError`:
+`findRenderer` when no target appears, `send` when a call is not answered, and the socket's close
+and error events. Anything escaping any probe is classified and exits 2 — including probes written
+later by someone who never read this file, which is the point of putting it at import.
+
+Verified in all four directions, exit codes read **without a pipe**:
+
+    no app on the port          -> exit 2   CANNOT MEASURE: no renderer target on port 9999
+    a call that cannot answer   -> exit 2   CANNOT MEASURE: CDP Runtime.evaluate did not answer within 1ms
+    a probe returning false     -> exit 1   (a real finding is still reportable)
+    a normal run                -> exit 0
+
+The third line matters as much as the first two: a global "exit 2 on anything" would have made
+every genuine finding unreportable, which is the failure this fix could easily have introduced.
+
+
+## `shared-asset.mjs` — the seek thrash, and why it is asserted the way it is
+
+Two items under the playhead sharing one asset share the single pooled element, and each
+wants it at a different `currentTime`. Before `seekOwners()` both issued their target every
+frame: the element never finished a seek (`readyState` 1, `seeking` true), every item reported
+`pending`, and the canvas stayed blank permanently — a forced `redraw()` did not mend it,
+because the next draw restarted the fight.
+
+Measured, fixed, 10 trials:
+
+    lit 79650   cols [0,1796]   element {readyState 4, seeking false, currentTime 0}   10/10
+
+`currentTime 0` is the real assertion. The element settles on the **topmost** item's source
+time — the one actually on screen — not the lower item's 20s. `lit > 0` is the symptom;
+this is the mechanism, and a probe that only checked pixels would pass a fix that settled on
+the wrong frame.
+
+Three decisions in it, each of which was a wrong turn first:
+
+- **It builds its own scenario** rather than trusting a fixture. Against a one-item profile
+  the condition cannot occur at all — which is precisely why this probe passed for one person
+  and failed for another on identical code.
+- **It asserts the positive, over N trials.** Unfixed this failed 9 runs in 10, not 10 in 10;
+  decode timing moves it. "The picture is there and the element settled" is deterministic with
+  the fix and fails often without it. Asserting *blankness* would be pinning a race. One trial
+  would call the fix unnecessary about one time in ten — run `TRIALS=10`.
+- **It never reloads between building and measuring.** `attach()` reloads, and
+  `project.initial()` then restores the profile's own project, so the second item disappears
+  before it can be seen. That is why the failing state looked like a one-item timeline to three
+  people. Timeline state is read in the *same* evaluate as the pixels.
+
+Self-check (`VERIFY_PROBE=1`) replaces `drawImage` with a no-op and asserts FAIL — 0/3 drew.
+The sabotage has to break the **draw**: making the two source times agree would remove the
+condition and pass, proving nothing. Note what that self-check does and does not establish —
+it shows the probe reports FAIL when nothing is drawn. That the probe catches *this* bug rests
+on the 1-in-10 vs 10-in-10 measurement across the fix, not on the no-op.

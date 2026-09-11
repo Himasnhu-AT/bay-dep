@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { FilmIcon, ImageIcon, Music2, Plus, Trash2, Type as TypeIcon } from 'lucide-react'
 import type { Asset } from '@shared/project'
 import { Button, EmptyState, IconButton, Panel, ScrollArea } from '@/components'
-import { call, formatSourceDuration } from '@/lib/bay'
+import { call, formatSourceDuration, importMessage } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { usePoster } from '@/lib/useMediaCache'
 import { useEditor } from '@/store/editor'
@@ -123,14 +123,8 @@ export function MediaPanel(): ReactNode {
     // dismissing the picker, which needs no comment at all.
     if (!imported || imported.length === 0) return
     addAssets(imported.map((entry) => entry.asset))
-    const fresh = imported.filter((entry) => !entry.reused).length
-    // Re-importing a file the project already has is a no-op, and silently doing nothing
-    // looks like a failed import. Say which it was.
-    notify(
-      fresh === imported.length
-        ? `Imported ${fresh} file${fresh === 1 ? '' : 's'}.`
-        : `Imported ${fresh}, reused ${imported.length - fresh} already in the project.`
-    )
+    const message = importMessage(imported)
+    notify(message.text, message.kind)
   }
 
   return (

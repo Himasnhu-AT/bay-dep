@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
-import { bay, call } from '@/lib/bay'
+import { bay, call, importMessage } from '@/lib/bay'
 import { useDrag } from '@/lib/useDrag'
 import { useKeyboard } from '@/lib/useKeyboard'
 import { useEditor } from '@/store/editor'
@@ -82,12 +82,8 @@ export function App(): ReactNode {
     const imported = await call('Import', (api) => api.media.importDialog())
     if (!imported || imported.length === 0) return
     addAssets(imported.map((entry) => entry.asset))
-    const fresh = imported.filter((entry) => !entry.reused).length
-    notify(
-      fresh === imported.length
-        ? `Imported ${fresh} file${fresh === 1 ? '' : 's'}.`
-        : `Imported ${fresh}, reused ${imported.length - fresh} already in the project.`
-    )
+    const message = importMessage(imported)
+    notify(message.text, message.kind)
   }, [addAssets, notify])
 
   /**
@@ -150,12 +146,8 @@ export function App(): ReactNode {
       const imported = await call('Import', (api) => api.media.importPaths(paths))
       if (!imported) return
       addAssets(imported.map((entry) => entry.asset))
-      const fresh = imported.filter((entry) => !entry.reused).length
-      notify(
-        fresh === imported.length
-          ? `Imported ${fresh} file${fresh === 1 ? '' : 's'}.`
-          : `Imported ${fresh}, reused ${imported.length - fresh} already in the project.`
-      )
+      const message = importMessage(imported)
+      notify(message.text, message.kind)
     },
     [addAssets, notify]
   )
