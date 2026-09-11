@@ -76,7 +76,7 @@ await runProbe(async () => {
         // are different claims: a fix that decoded *some* frame would pass the first and
         // fail the second. Two different source times must not produce the same image.
         let hash = 5381
-        for (let i = 0; i < d.length; i += 4) hash = ((hash * 33) ^ d[i]) >>> 0
+        for (let i = 0; i < d.length; i += 4) hash = ((hash * 33) ^ d[i] ^ (d[i+1] << 1) ^ (d[i+2] << 2) ^ (d[i+3] << 3)) >>> 0
         const el = (pool.peek(${JSON.stringify(asset.id)}) || {}).element
         return { ...stats, hash, nonZero: +((nz / n) * 100).toFixed(1),
                  readyState: el ? el.readyState : null,

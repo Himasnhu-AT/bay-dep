@@ -74,7 +74,7 @@ await runProbe(async () => {
           let sum = 0, n = 0, hash = 5381
           for (let i = 0; i < d.length; i += 4) {
             sum += (d[i] * 299 + d[i+1] * 587 + d[i+2] * 114) / 1000; n++
-            hash = ((hash * 33) ^ d[i]) >>> 0
+            hash = ((hash * 33) ^ d[i] ^ (d[i+1] << 1) ^ (d[i+2] << 2) ^ (d[i+3] << 3)) >>> 0
           }
           frames.push({ frame, mean: +(sum / n).toFixed(1), hash,
                         progress: stats.transition ? +stats.transition.progress.toFixed(2) : null,

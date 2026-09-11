@@ -73,7 +73,7 @@ await runProbe(async () => {
             const i = (y * W + px) * 4
             const v = (d[i] * 299 + d[i+1] * 587 + d[i+2] * 114) / 1000
             sum += v; n++; if (v > 0) nz++
-            hash = ((hash * 33) ^ d[i]) >>> 0
+            hash = ((hash * 33) ^ d[i] ^ (d[i+1] << 1) ^ (d[i+2] << 2) ^ (d[i+3] << 3)) >>> 0
           }
           return { mean: +(sum / n).toFixed(1), nonZero: +((nz / n) * 100).toFixed(1), hash }
         }
