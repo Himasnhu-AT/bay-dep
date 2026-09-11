@@ -29,6 +29,7 @@ import {
   undo
 } from './write'
 import { previewFrame } from './preview'
+import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from './validate'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
@@ -44,6 +45,8 @@ const HANDLERS: Record<string, Handler> = {
   split_at: (args) => splitAt(args),
   delete_items: (args) => deleteItems(args),
   add_track: (args) => addTrack(args),
+  add_transition: (args) => addTransition(args),
+  remove_transition: (args) => removeTransition(args),
   set_playhead: (args) => setPlayhead(args),
   undo: () => undo(),
   export_timeline: (args) => exportTimeline(args),
@@ -51,17 +54,24 @@ const HANDLERS: Record<string, Handler> = {
 }
 
 /**
- * Every tool in the catalog has a handler and every handler is in the catalog.
+ * Every tool in the catalog has a handler, and every handler is in the catalog.
  *
- * Checked at module load rather than left to a runtime miss, because the failure it catches
- * is precisely the one the catalog's first rule is about: a tool an agent can see, plan
- * around, and only discover is missing after it has told the user the work is done.
+ * This is a real guard and it has already earned its place — it caught `add_transition` and
+ * `remove_transition` reaching the catalog with nothing behind them. But it used to `throw`
+ * at module scope, and that was the wrong severity by a wide margin: the throw took the
+ * whole renderer down, so a catalog mismatch cost a user who has never touched MCP their
+ * entire editor. The blast radius was larger than the bug.
+ *
+ * So it reports loudly and lets the app live. The mismatch still cannot ship quietly:
+ * `test/app/mcp.mjs` asserts every catalog tool answers, and the dispatcher below refuses an
+ * unimplemented one with a message that names it as a build fault rather than a bad call, so
+ * an agent stops rewriting arguments against something that was never going to work.
  */
 const missing = TOOLS.filter((tool) => !HANDLERS[tool.name]).map((t) => t.name)
 const extra = Object.keys(HANDLERS).filter((name) => !findTool(name))
 if (missing.length > 0 || extra.length > 0) {
-  throw new Error(
-    `The MCP catalog and the executor disagree.` +
+  console.error(
+    '[bay] The MCP catalog and the executor disagree.' +
       (missing.length > 0 ? ` Listed but not implemented: ${missing.join(', ')}.` : '') +
       (extra.length > 0 ? ` Implemented but not listed: ${extra.join(', ')}.` : '')
   )
@@ -79,12 +89,24 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
     }
   }
 
+  const handler = HANDLERS[tool.name]
+  if (!handler) {
+    return {
+      id: call.id,
+      ok: false,
+      error:
+        `${call.tool} is listed in this build's catalog but has no implementation behind it. ` +
+        `That is a fault in bay, not in the call — no arguments will make it work. Do not ` +
+        `retry it, and do not plan the rest of the edit around it.`
+    }
+  }
+
   const args = call.args ?? {}
   const invalid = validateArgs(tool, args)
   if (invalid) return { id: call.id, ok: false, error: invalid }
 
   try {
-    const value = await HANDLERS[tool.name]!(args)
+    const value = await handler(args)
     return { id: call.id, ok: true, value }
   } catch (error) {
     if (error instanceof ToolError) return { id: call.id, ok: false, error: error.message }

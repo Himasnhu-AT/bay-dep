@@ -72,6 +72,11 @@ await runProbe(async () => {
   const clipped = await draw('cannot fit at all', { text: 'Extraordinarily', style: style({ fontSize: 200 }), boxW: 20, boxH: 30 })
   const realFont = await draw('a font that exists', { text: 'Hello', style: style({ fontFamily: 'Helvetica' }), boxW: 1200, boxH: 400 })
   const fakeFont = await draw('a font that cannot exist', { text: 'Hello', style: style({ fontFamily: 'NoSuchFamily12345' }), boxW: 1200, boxH: 400 })
+  // A field case, not a synthetic one: SF Mono ships with macOS and is **not reachable from
+  // the web layer**. `interface` found it mid-stack in a font list they were about to ship,
+  // where it would never have fired and never announced itself. A detector that only catches
+  // obviously-invented names would miss exactly the families someone actually reaches for.
+  const unreachableFont = await draw('a real font the web layer cannot see', { text: 'Hello', style: style({ fontFamily: 'SF Mono' }), boxW: 1200, boxH: 400 })
   const decorated = await draw('stroke + shadow + plate', {
     text: 'Hello',
     style: style({ stroke: { color: '#FF0000', width: 6 }, shadow: { color: '#00FF00', blur: 12, offsetX: 6, offsetY: 6 }, background: { color: '#0000FF', padding: 24, radius: 12 } }),
@@ -89,6 +94,7 @@ await runProbe(async () => {
     ['a real font reports available', realFont.fit?.fontAvailable === true],
     ['a fake font reports unavailable', fakeFont.fit?.fontAvailable === false],
     ['the fake font still draws something', fakeFont.lit > 500],
+    ['a real-but-unreachable font reports unavailable', unreachableFont.fit?.fontAvailable === false],
     ['decoration adds pixels rather than replacing them', decorated.lit > plain.lit]
   ]
 

@@ -51,6 +51,24 @@ const check = (label, passed, detail) => {
   console.log(`${passed ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`)
 }
 
+// -- every tool in the catalog answers ---------------------------------------
+// The check that replaces a module-scope throw. A tool listed with nothing behind it used to
+// take the entire renderer down at load; now it degrades, which means something else has to
+// refuse to ship it. This is that something.
+const catalog = await evaluate(`JSON.stringify(window.bayMcp.tools.map((t) => t.name))`)
+const unimplemented = []
+for (const name of JSON.parse(catalog)) {
+  // Called with no arguments on purpose: a tool with a handler fails validation or execution
+  // and says so; one with no handler is the only thing that reports a missing implementation.
+  const result = await call(name, {})
+  if (!result.ok && /no implementation behind it/.test(result.error)) unimplemented.push(name)
+}
+check('every tool in the catalog has an implementation',
+  unimplemented.length === 0,
+  unimplemented.length === 0
+    ? `${JSON.parse(catalog).length} tools`
+    : `LISTED BUT NOT IMPLEMENTED: ${unimplemented.join(', ')}`)
+
 // -- read_project, before anything exists ------------------------------------
 const empty = await call('read_project')
 check('read_project succeeds on an empty project', empty.ok === true,
