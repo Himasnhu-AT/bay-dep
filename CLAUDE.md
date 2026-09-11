@@ -206,6 +206,22 @@ underneath an opaque full-frame clip. The measurement traps are collected in
 [`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
 purpose to confirm the probe notices.
 
+**A test that exercises a build artifact is only as true as the last build, and the artifact's
+freshness belongs in the assertion.** Staleness here is a false *pass*, not a false fail: edit the
+transport, skip `pnpm build`, and the suite cheerfully proves the previous build still works. It
+bit twice in one mutation run — two mutants failed `noUnusedLocals`, so `pnpm build` never
+produced a new bundle, and both would have been scored against the previous artifact. The
+`src/main/mcp` suite now asserts the bundle is at least as new as every non-test source beside it
+and names `pnpm build` when it is not, because "the transport is broken" and "you did not rebuild"
+are otherwise the same red. Same shape as the rest: the link between "the bug exists" and "the
+report says so" was itself untested.
+
+**`pnpm typecheck` covers `src/main/**`, `src/preload/**` and `src/shared/**` — and nothing else.**
+A new top-level directory under `src/` compiles into the bundle and is invisible to the only gate
+main-process code has. `src/mcp/` was nearly that; it is `src/main/mcp/` for this reason, with the
+rollup input key still emitting `out/main/mcp/index.js` so the documented command is unchanged. If
+you add a top-level source directory, add it to the tsconfig in the same edit.
+
 **Every negative control needs its own positive control.** "The call that should have been refused
 was refused" passes trivially against a surface that refuses *everything* — a tool that is simply
 broken and a tool that is correctly strict produce identical output. So pair each refusal with the
