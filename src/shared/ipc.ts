@@ -130,6 +130,18 @@ export interface BayApi {
     importDialog(): Promise<ImportedAsset[]>
     /** Import specific paths — used by drag-and-drop onto the window. */
     importPaths(paths: string[]): Promise<ImportedAsset[]>
+    /**
+     * The absolute path behind a dropped `File`.
+     *
+     * The odd one out in this interface: synchronous, and not backed by a channel in `IPC`.
+     * Electron 32 removed `File.path`, so a file from a `DataTransfer` no longer names itself
+     * and `webUtils.getPathForFile` is the supported replacement — but it needs the real `File`
+     * object, which cannot be serialised across IPC. So it resolves inside preload and returns
+     * directly. It belongs here anyway: `window.bay` is declared globally from this file, and
+     * TypeScript requires every declaration of a property to be identical, so preload cannot
+     * widen it from its own side.
+     */
+    pathForFile(file: File): string
     probe(path: string): Promise<ProbeResult>
     /** Returns a `bay://` URL for a cached poster image. */
     thumbnail(request: ThumbnailRequest): Promise<string | null>
