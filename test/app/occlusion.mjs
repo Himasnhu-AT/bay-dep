@@ -26,7 +26,12 @@ import { PreconditionError, runProbe } from './cdp.mjs'
 const PORT = Number(process.env.PORT ?? 9222)
 const HOLD_MS = Number(process.env.HOLD_MS ?? 6000)
 
-const osa = (s) => { try { return execFileSync('osascript', ['-e', s], { encoding: 'utf8' }).trim() } catch { return 'ERR' } }
+// stderr is swallowed: the Dock lookup is tried under two titles and the miss is expected,
+// so letting it print would make a working probe look broken.
+const osa = (s) => {
+  try { return execFileSync('osascript', ['-e', s], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() }
+  catch { return 'ERR' }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const list = await (await fetch(`http://localhost:${PORT}/json/list`)).json()

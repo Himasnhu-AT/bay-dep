@@ -300,3 +300,62 @@ itself**, which is worth knowing before you try:
 So seed a `--user-data-dir` by saving a project by hand once, then point the probe at a launch
 using that profile. Against an unseeded profile it reports CANNOT MEASURE, which is the correct
 answer and not a failure of the app.
+
+
+## The bridge cannot be faked from the renderer
+
+Before reaching for it: **you cannot stub `window.bay` to force an unhappy path.** `contextBridge`
+freezes the object it exposes, so an assignment to one of its methods silently does nothing —
+no throw, no warning, and the real implementation still answers.
+
+This was measured rather than assumed, because the obvious conclusion from a failed attempt is
+"my injection ran too late". `Page.addScriptToEvaluateOnNewDocument` with a polling patch was
+confirmed to run at **12.9ms**, well before React mounted, and to reach `window.bay.app`:
+
+    window.__injected        -> 'ran'
+    window.__patchedAt       -> 12.9      (ms, so the patch was applied)
+    bay.app.mediaToolsReady() -> the real result, unchanged
+
+So an error state has to be produced for real — a broken profile, a missing binary — or left
+unverified and said to be unverified. It is a good security property and worth knowing before
+spending an hour on the trick.
+
+The corollary is that **the ffmpeg-missing warning in the status bar is still unverified**. Both a
+bundled copy (`node_modules/.../ffmpeg-ffprobe-static`) and a Homebrew copy resolve, and
+`onPath` hardcodes `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, so clearing `PATH` does not
+defeat it. Breaking either copy means mutating machine state shared by everyone working here,
+which is a worse trade than one unverified JSX branch that is structurally identical to the
+storage one — and that one *is* verified, by `storage-warning.mjs`.
+
+## The probes
+
+| probe | what it settles | needs |
+|---|---|---|
+| `geometry.mjs` | the compositor puts a clip where the layout says | flags on |
+| `ticks.mjs`, `transport.mjs` | the clock advances and pictures reach the screen | flags on |
+| `latearrival.mjs`, `coldstart.mjs` | a project arriving after mount still draws | flags on |
+| `audio-mute.mjs` | mute silences, hide does not, and they are independent | flags on |
+| `menu.mjs` | no item in the File menu is dead | flags on, Accessibility permission |
+| `storage-warning.mjs` | the status bar speaks when the database is down | a deliberately broken profile |
+| `occlusion.mjs` | whether a hidden window drops or defers an rAF callback | **flags OFF** |
+
+Two of these need setting up rather than just running:
+
+```bash
+# storage-warning: app.db as a directory is what node:sqlite cannot open
+mkdir -p /tmp/bay-broken/app.db
+./node_modules/.bin/electron . --remote-debugging-port=9222 --user-data-dir=/tmp/bay-broken &
+PORT=9222 node test/app/storage-warning.mjs              # expects the warning
+PORT=9223 EXPECT=healthy node test/app/storage-warning.mjs   # control: must stay quiet
+
+# occlusion: launch WITHOUT the throttling flags, or there is nothing to measure
+./node_modules/.bin/electron . --remote-debugging-port=9222 --user-data-dir=/tmp/bay-occ &
+PORT=9222 HOLD_MS=5000 node test/app/occlusion.mjs
+```
+
+`menu.mjs` drives the real macOS menu bar, so it needs this terminal to hold Accessibility
+permission, and it finds the app by asking **which Electron process owns a menu bar** — `$!` from
+the shell is the `npx` wrapper and "the first process named Electron" is usually a helper. It also
+fronts the app and waits before the first click: without that, the first menu click is swallowed
+establishing focus and whichever item is checked first reports dead, which looks exactly like the
+bug it is hunting.
