@@ -82,18 +82,38 @@ suite ran against unmodified code. A mutation that did not apply and a test that
 produce identical output. Assert the replacement landed — `assert old in source` — before running
 anything. It is the same one-line shape as the specimen assertion above, displaced by one level.
 
-**A surviving mutant is not automatically a missing test.** It is either a missing test *or* dead
-code, and the two are told apart by asking whether any input could distinguish the branch —
-differentially, by running both versions over a large input set, not by reading the code and
-forming an opinion. `parseRational`'s finite-number guards survived mutation; original against
-simplified over 33 handwritten inputs and 20,000 generated pairs were identical on every one, so
-the guards were deleted rather than given a test. They read as defensive and were unfalsifiable:
-nothing could tell their presence from their absence, so nobody could safely change them later and
-nobody could tell if they had rotted. Treating every survivor as a test gap is exactly how
-unfalsifiable code accumulates a suite around it.
+**A surviving mutant is not automatically a missing test.** It is one of three things, and they
+want three different responses:
 
-This shape — a correct-looking construct that nothing can reach — has now appeared four times in
-two days, across three subsystems and two authors. Expect it rather than being surprised by it.
+1. **A missing test** — write it.
+2. **Dead code** — delete it. Tell this from the first differentially, by running both versions
+   over a large input set, not by reading the code and forming an opinion. `parseRational`'s
+   finite-number guards survived mutation; original against simplified over 33 handwritten inputs
+   and 20,000 generated pairs were identical on every one, so the guards went. They read as
+   defensive and were unfalsifiable: nothing could tell their presence from their absence, so
+   nobody could safely change them later and nobody could tell if they had rotted.
+3. **An optimisation with no observable behaviour** — label it, or delete it. Deleting the
+   `if (bytesBefore <= budgetBytes) return` early exit from the cache sweep changed no test,
+   because the loop below breaks on its first check and produces an identical result. That is not
+   dead code and not a test gap: it is a fast path, correct by construction, and *no test can
+   ever cover it* because it has no effect a test can see. Delete it unless someone has measured
+   a reason to keep it, and if it stays, say at the code that it is an optimisation — otherwise
+   the next person to run mutations rediscovers it as a mystery.
+
+Treating every survivor as a test gap is exactly how unfalsifiable code accumulates a suite
+around it.
+
+This shape — a correct-looking construct that nothing can reach — has now appeared five times in
+two days, across four subsystems and three authors. Expect it rather than being surprised by it.
+
+**Write the assertion from the requirement, never from the implementation.** `sweepStaleCaches`
+skipped any directory without a `<family>-<scheme>` separator, so a bare `thumbs/` — the one stale
+cache every existing install actually has — fell through and was never reclaimed. The function
+written to reclaim old caches ignored the only old cache in existence. It was invisible because
+its test seeded `thumbs` alongside `thumbs-v0` and asserted `thumbs` **survived**: the author read
+the skip out of the code and wrote it down as intended behaviour without asking whether it should
+be. A test built that way cannot fail, because it is a description. Ask what the code is *for*,
+then assert that.
 
 **A test cannot hold still anything it defines jointly with the code.** Ask of every test: *if I
 renamed this, would the test rename with it?* If yes, it asserts a tautology. Four separate

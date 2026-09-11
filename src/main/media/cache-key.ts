@@ -80,9 +80,12 @@ export async function sweepStaleCaches(
   const removed: string[] = []
   for (const entry of entries) {
     const separator = entry.lastIndexOf('-')
-    if (separator <= 0) continue
-    const family = entry.slice(0, separator)
-    const scheme = entry.slice(separator + 1)
+    // A bare `thumbs` or `peaks` with no scheme suffix is the pre-versioning layout, and it
+    // is the one stale cache *every* existing install has. Skipping it — which an earlier
+    // version of this function did, by requiring a separator — meant the sweep ignored the
+    // only directory it was certain to find.
+    const family = separator <= 0 ? entry : entry.slice(0, separator)
+    const scheme = separator <= 0 ? '' : entry.slice(separator + 1)
     if (!families.includes(family)) continue
     if (scheme === CACHE_SCHEME) continue
     try {

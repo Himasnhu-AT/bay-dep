@@ -14,6 +14,7 @@ import { ffmpegBin, runBinary } from './ffmpeg'
 import { cacheKey, stampOf } from './cache-key'
 import { once, withSlot } from './queue'
 import { probe } from './probe'
+import { noteCacheHit, scheduleCacheUpkeep } from './cache-upkeep'
 
 const SAMPLE_RATE = 8000
 
@@ -52,7 +53,10 @@ export async function waveform(
     try {
       const text = await readFile(cached, 'utf8')
       const parsed = JSON.parse(text) as unknown
-      if (Array.isArray(parsed) && parsed.length === count) return parsed as number[]
+      if (Array.isArray(parsed) && parsed.length === count) {
+        noteCacheHit(key, cached)
+        return parsed as number[]
+      }
     } catch {
       // No cache, or a truncated one from a crash mid-write. Either way, regenerate.
     }
@@ -89,6 +93,8 @@ export async function waveform(
     const temp = `${cached}.${process.pid}.tmp`
     await writeFile(temp, JSON.stringify(peaks))
     await rename(temp, cached)
+    noteCacheHit(key, cached)
+    scheduleCacheUpkeep()
     return peaks
   })
 }

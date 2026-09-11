@@ -68,13 +68,6 @@ declare global {
   }
 }
 
-/**
- * How long an unanswered frame request may stand before `redraw` assumes it was dropped
- * and asks again. Longer than any real frame interval (8ms at 120Hz, 16.7ms at 60Hz) and
- * short enough that a recovered window redraws before the user notices.
- */
-const STALE_FRAME_MS = 250
-
 export interface EngineHandle {
   clock: PlaybackClock
   pool: MediaPool
@@ -105,8 +98,6 @@ class Engine {
   #getCanvas: () => HTMLCanvasElement | null = () => null
   #offs: Array<() => void> = []
   #pendingDraw: number | null = null
-  /** When the outstanding frame was requested, so a dropped one can be noticed. */
-  #pendingSince = 0
   /** The canvas currently under the resize observer, and the CSS size it last reported. */
   #observed: HTMLCanvasElement | null = null
   #resizeObserver: ResizeObserver | null = null
@@ -138,14 +129,13 @@ class Engine {
     // response for an editor: the alternative is playing something nobody can see.
     // Whether playback should instead continue in the background is a product decision,
     // and this is the one place it is made.
+    // Only the hidden half is real. Redrawing on the way back looked prudent and is not:
+    // a frame requested while hidden is deferred, not dropped, so it draws itself on
+    // restore — and `#drawTimed` reads the store fresh, so it draws the current state
+    // rather than the state at the time it was queued.
     const onVisibilityChange = (): void => {
-      if (document.visibilityState === 'hidden') {
-        if (this.clock.running) useEditor.getState().setPlaying(false)
-        return
-      }
-      // Coming back. Any frame requested while hidden may have been dropped, and whatever
-      // is on the canvas was drawn before the edits that happened in between.
-      this.redraw()
+      if (document.visibilityState !== 'hidden') return
+      if (this.clock.running) useEditor.getState().setPlaying(false)
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     this.#offs.push(() => document.removeEventListener('visibilitychange', onVisibilityChange))
@@ -179,24 +169,20 @@ class Engine {
   /**
    * Asks for a frame, coalescing repeated calls into one.
    *
-   * The staleness check is the load-bearing part. A plain "already pending, do nothing"
-   * latch is permanent if the callback never arrives, and it does not always arrive:
-   * an occluded, minimised or backgrounded window stops `requestAnimationFrame`, and a
-   * callback queued at that moment can simply never run. The flag then stays set forever
-   * and **every subsequent redraw is a silent no-op** — the preview freezes on whatever it
-   * last drew and never recovers, no matter what the user edits. That was measured: a
-   * canvas still showing the layout from before a Fit was applied, and still showing it
-   * eight samples later.
+   * This once carried a staleness re-arm — cancel and re-request a frame outstanding longer
+   * than 250ms — on the theory that a callback queued while the window is hidden can be
+   * *dropped*, latching the flag forever and silently killing every later redraw. **It was
+   * measured and the theory is wrong.** Across occlusions held 4s, 6s and 15s, a callback
+   * armed while `visibilityState === 'hidden'` never fired during occlusion and always
+   * fired once the page was verifiably visible again. The queue survives occlusion and
+   * drains on restore, so the latch cannot be permanent and nothing could distinguish the
+   * guard's presence from its absence. It was deleted rather than kept and tested.
+   *
+   * The other stranding path is closed here by construction: the flag is cleared *before*
+   * `#drawTimed` runs, so a throw inside the draw cannot leave it set.
    */
   redraw(): void {
-    const now = performance.now()
-    if (this.#pendingDraw !== null) {
-      if (now - this.#pendingSince < STALE_FRAME_MS) return
-      // The frame we asked for is not coming. Drop it and ask again.
-      cancelAnimationFrame(this.#pendingDraw)
-      this.#pendingDraw = null
-    }
-    this.#pendingSince = now
+    if (this.#pendingDraw !== null) return
     this.#pendingDraw = requestAnimationFrame(() => {
       this.#pendingDraw = null
       this.#drawTimed(this.clock.frame)

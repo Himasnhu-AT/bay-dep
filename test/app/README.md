@@ -143,24 +143,54 @@ sets the flag and reloads before waiting for the engine; any new probe should us
 rather than connecting by hand, or it will find no handle and report a dead engine.
 
 
-## An open question this harness cannot answer
+## Answered: a queued rAF is deferred across occlusion, not dropped
 
-`redraw()` in `engine/index.ts` re-arms a frame request that has been outstanding longer than
-250ms, on the theory that a callback queued while hidden can be **dropped** rather than merely
-deferred — which would otherwise latch the flag forever and silently kill every future redraw.
+`redraw()` once carried a staleness re-arm on the theory that a callback queued while the
+window is hidden could be **dropped**, latching the coalescing flag forever and silently
+killing every later redraw. `interface` settled it. Across occlusions held 4s, 6s and 15s:
 
-That premise is unproven. Two attempts to falsify it here both failed for the same reason: **the
-page could never be brought back to `visible`.** `window.bay.window.minimise()` hides it, but
-`Page.bringToFront` does not un-minimise; `Page.setWebLifecycleState` freezes it, but restoring to
-`active` left `visibilityState` at `hidden` while the terminal was in front. A callback that has
-not fired while the page is still hidden is indistinguishable from one that is simply waiting.
+    r1 armed while visible   -> fired
+    r2 armed while hidden    -> false during occlusion (page verifiably still 'hidden')
+    r2 after restore         -> true   (visibility checked as 'visible' before the read)
 
-So the guard is currently unfalsifiable from this harness, which by this project's own standard is
-a reason to suspect it rather than trust it. Settling it needs an environment where occlusion can
-be applied *and removed* on demand. If you can produce one, the experiment is: arm a plain
-`requestAnimationFrame` while hidden, return the page to visible, and check whether it ever fires.
-If it always fires, delete the staleness re-arm.
+**The queue survives occlusion and drains on restore.** The latch cannot be permanent, nothing
+could distinguish the guard's presence from its absence, and it was deleted rather than kept and
+tested — per the standing rule about unfalsifiable code.
 
+The negative control is what makes that conclusion load-bearing rather than four repetitions of
+one method: the same run arms a third callback while hidden and **cancels** it, and after restore
+that reads `false` in the same turn that `r2` reads `true`. The probe can distinguish a callback
+that never runs from one that was merely waiting. Without that control, four identical runs would
+have been trap 8 all over again.
+
+### Restoring a window to genuinely visible: only the Dock works
+
+This is what blocked the experiment for a long time. Once macOS has occluded the window, these
+all leave the page `hidden`:
+
+    System Events "set frontmost"   -> hidden
+    AXRaise                         -> error (no window for that pid)
+    CDP Page.bringToFront           -> hidden
+    Dock icon click                 -> VISIBLE   <- the only one
+
+```bash
+osascript -e 'tell application "System Events" to tell process "Dock" \
+  to click UI element 1 of list 1 whose title contains "Electron"'
+```
+
+The Dock entry is titled **"Electron"** for an unpackaged run and **"bay"** once the app names
+itself, so try both and re-check `visibilityState` after each. It also needs a retry loop; it
+fails intermittently just after launch. Occluding is the easy half — `tell application "Terminal"
+to activate` with a fullscreen terminal, then confirm `hidden`.
+
+Full recipe for anything that measures behaviour across occlusion:
+
+    1. launch WITHOUT the throttling flags (they suppress the thing under test)
+    2. Dock-click to visible, verify
+    3. Terminal activate to occlude, verify 'hidden'
+    4. arm what you are measuring
+    5. Dock-click back, verify 'visible' BEFORE reading
+    6. read
 
 ## "I could not measure" is a third result, and it needs its own exit code
 
@@ -249,3 +279,24 @@ PORT=<p> SEED_ITEM=1 VERIFY_PRECONDITION=1 node test/app/geometry.mjs   # item p
 Run each mode against a **fresh app instance**. Several probes in one instance contaminate each
 other — one run's clip persists into the next, and a run that kills the app makes the following
 one report "no renderer target", which reads like a probe fault.
+
+
+## The one draw path still untested: a project reopened from disk
+
+`latearrival.mjs` covers a project delivered to the store *after* the engine mounts, which is
+the shape `project.initial()` produces — but it delivers it by calling `setProject` directly.
+The real launch path goes through main's persistence, and that is different code.
+
+`coldstart.mjs` is that probe. It needs a profile with a saved project and **cannot create one
+itself**, which is worth knowing before you try:
+
+    project.save(project)      -> opens a system dialog; a CDP run cancels it
+    project.autosave(project)  -> resolves fine, but with project.filePath === null it does
+                                  not become the reopenable project
+    app.storageReady()         -> {ready: true, error: null}   (so this is not a DB failure)
+    project.recent()           -> []
+    project.initial()          -> "Untitled", 0 items
+
+So seed a `--user-data-dir` by saving a project by hand once, then point the probe at a launch
+using that profile. Against an unseeded profile it reports CANNOT MEASURE, which is the correct
+answer and not a failure of the app.

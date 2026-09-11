@@ -16,6 +16,7 @@ import { mediaUrl } from '../protocol'
 import { ffmpegBin, run } from './ffmpeg'
 import { cacheKey, stampOf } from './cache-key'
 import { once, withSlot } from './queue'
+import { noteCacheHit, scheduleCacheUpkeep } from './cache-upkeep'
 import { probe } from './probe'
 
 async function exists(path: string): Promise<boolean> {
@@ -45,7 +46,10 @@ export async function thumbnail(request: ThumbnailRequest): Promise<string | nul
   const out = join(thumbsDir(), `${key}.jpg`)
 
   return once(key, async () => {
-    if (await exists(out)) return mediaUrl(out)
+    if (await exists(out)) {
+      noteCacheHit(key, out)
+      return mediaUrl(out)
+    }
     await withSlot(() =>
       run(ffmpegBin(), [
         '-nostdin',
@@ -69,7 +73,10 @@ export async function thumbnail(request: ThumbnailRequest): Promise<string | nul
       ])
     )
     // ffmpeg exits 0 having written nothing when the seek lands past the end of the source.
-    return (await exists(out)) ? mediaUrl(out) : null
+    if (!(await exists(out))) return null
+    noteCacheHit(key, out)
+    scheduleCacheUpkeep()
+    return mediaUrl(out)
   })
 }
 
@@ -84,7 +91,10 @@ export async function filmstrip(request: FilmstripRequest): Promise<string[]> {
       join(thumbsDir(), `${key}_${String(i + 1).padStart(3, '0')}.jpg`)
     )
     const present = await Promise.all(paths.map(exists))
-    if (present.every(Boolean)) return paths.map(mediaUrl)
+    if (present.every(Boolean)) {
+      noteCacheHit(key, paths[0]!)
+      return paths.map(mediaUrl)
+    }
 
     const info = await probe(stamp.path)
     const durationSeconds = info.durationUs / US_PER_SECOND
@@ -125,6 +135,11 @@ export async function filmstrip(request: FilmstripRequest): Promise<string[]> {
     // than asked for. Returning the short strip is honest; padding it with a repeat would
     // draw a clip body that lies about its own content.
     const written = await Promise.all(paths.map(exists))
-    return paths.filter((_, i) => written[i] === true).map(mediaUrl)
+    const made = paths.filter((_, i) => written[i] === true)
+    if (made.length > 0) {
+      noteCacheHit(key, made[0]!)
+      scheduleCacheUpkeep()
+    }
+    return made.map(mediaUrl)
   })
 }

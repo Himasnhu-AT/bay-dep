@@ -787,7 +787,7 @@ the *rest* of the compositor cannot move the result at all.
 The entries above are all the Rust tree. This section is the same register for the Electron
 app, which has its own tree under `src/` and its own gate (`pnpm typecheck` + `pnpm test`).
 
-### E1. Nothing ever evicts the media cache
+### E1. Nothing ever evicts the media cache — FIXED 2026-09-11
 
 `thumbnailsDir()` and `peaksDir()` accumulate posters, filmstrip frames and peak files and
 nothing in `src/main/media` ever removes one. There is no unlink, no byte budget, no LRU. The
@@ -819,9 +819,25 @@ each asset has exactly one strip key at a time. Bucketing would defend against a
 does not exist while making the returned frame count no longer mean what the caller asked for.
 The fix this wants is eviction.
 
-Not fixed because a byte-budgeted LRU is real work with its own failure modes — deciding the
-budget, not evicting an entry mid-read, and staying correct when two windows share the
-directory — and none of it stands between this build and an app that runs.
+**FIXED 2026-09-11.** `media/cache-budget.ts` holds a 512 MB byte budget over the whole cache,
+enforced across all assets rather than per asset — a per-entry budget gives N assets N budgets,
+which is not a bound at all, and is how the Rust tree's 384 MB cap once committed 1.5 GB.
+Entries are grouped by cache key, so a filmstrip is evicted whole; evicting individual frames
+would leave a partial strip that still answers as a cache hit.
+
+Two decisions with their reasons, because both have a plausible wrong answer. **The budget is a
+constant**, not a fraction of free disk: a fraction moves the limit underneath the cache, so the
+same entries are legal one day and evicted the next, and it shrinks exactly when the disk is
+filling — scheduling the heaviest eviction for the worst moment. **The budget is a target, not a
+cap**: eviction never touches an entry used this session and stops when it cannot get under
+budget without touching one, leaving the cache over budget and saying so. A cap would evict the
+working set, the app would re-derive it immediately, and the next pass would evict it again —
+a loop that burns CPU forever and ends at the size it started. A startup pass, when nothing is
+in use yet, is what reclaims a session that ended over budget.
+
+Verified by `media/cache-budget.test.ts`: fills a real directory past the budget and asserts the
+bytes *on disk*, re-measured, come back under it — not the plan's arithmetic. Seven mutations,
+all caught.
 
 Partly mitigated: cache directories carry the scheme version in their name (`thumbs-v1`,
 `peaks-v1`) and `sweepStaleCaches` reclaims other schemes at startup, so at least a change to

@@ -118,15 +118,30 @@ test('the current scheme is never swept', async () => {
 test('directories bay did not write are left alone', async () => {
   // The sweep runs over a directory inside userData. Deleting something bay does not own,
   // because it happened to sit there, is far worse than leaving stale megabytes behind.
+  // `export` matters especially: it is a live cache directory, just not a keyed one.
   const dir = scratch()
-  seedCache(dir, ['thumbs-v0', 'export', 'something-else', 'notes-v0', 'thumbs'])
+  seedCache(dir, ['thumbs-v0', 'export', 'something-else', 'notes-v0'])
   writeFileSync(join(dir, 'loose-file.txt'), 'x')
 
   const removed = await sweepStaleCaches(dir)
   assert.deepEqual(removed, ['thumbs-v0'])
-  for (const kept of ['export', 'something-else', 'notes-v0', 'thumbs', 'loose-file.txt']) {
+  for (const kept of ['export', 'something-else', 'notes-v0', 'loose-file.txt']) {
     assert.equal(existsSync(join(dir, kept)), true, `${kept} must survive the sweep`)
   }
+})
+
+test('the pre-versioning cache directories are reclaimed too', async () => {
+  // `thumbs` and `peaks` with no scheme suffix are what every install made before the scheme
+  // moved into the directory name — so they are the one stale cache certain to exist in the
+  // field. An earlier version of the sweep required a `-` and skipped exactly these, which
+  // made it useless on every machine that had ever run bay. Found on a real userData
+  // directory, not by reading the code.
+  const dir = scratch()
+  seedCache(dir, ['thumbs', 'peaks', `thumbs-${CACHE_SCHEME}`])
+
+  const removed = await sweepStaleCaches(dir)
+  assert.deepEqual(removed.sort(), ['peaks', 'thumbs'])
+  assert.equal(existsSync(join(dir, `thumbs-${CACHE_SCHEME}`, 'deep', 'entry.jpg')), true)
 })
 
 test('the sweep removes a populated directory, not just an empty one', async () => {

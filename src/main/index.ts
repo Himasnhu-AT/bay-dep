@@ -16,6 +16,7 @@ import { registerIpcHandlers } from './ipc'
 import { closeStore, readWindowBounds, takePendingOpen, rememberOpenPath, writeWindowBounds } from './project/store'
 import { cacheDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
+import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
@@ -177,6 +178,11 @@ void app.whenReady().then(() => {
     }
   })
 
+  // One pass at startup, before anything is in use. This is the only moment the whole cache
+  // is evictable, so it is where a session that ended over budget gets reclaimed — and why
+  // being over budget at quit is survivable rather than permanent.
+  void runCacheUpkeep()
+
   createWindow()
 
   app.on('activate', () => {
@@ -190,6 +196,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  cancelCacheUpkeep()
   // Anything queued and never claimed — a document double-clicked at launch that the renderer
   // never asked for — is dropped here rather than surviving into the next launch as a
   // surprise project.
