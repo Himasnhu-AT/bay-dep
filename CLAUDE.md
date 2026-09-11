@@ -114,7 +114,25 @@ Scope it deliberately, though — not everything durable is a compatibility surf
   in exchange for no promise.
 
 The test is whether a reader you cannot change will see the old bytes. If not, pinning buys
-nothing and costs you the freedom to refactor.
+nothing and costs you the freedom to refactor. And note the two remedies are opposites: pin the
+strings that must never move; **version-and-sweep** the ones that exist in order to move, as the
+cache scheme does by living in the directory name (`thumbs-v1`) with a startup sweep of other
+schemes. Pinning the second kind would fight the design.
+
+**"Belt and braces", "just in case" and "defensive" are the tell for unfalsifiable code.** Every
+instance found so far was labelled that way by the person who wrote it — the phrase is what gets
+written about code whose necessity the author could not demonstrate. When you catch yourself
+writing it, that is the moment to check whether any input can distinguish the branch's presence
+from its absence. If none can, delete it rather than testing it.
+
+**A probe is subject to the same discipline as a test: it must be shown capable of detecting what
+it reports on.** Instruments fail the same way tests do, and this project has already produced
+three confident wrong conclusions from probes that could not observe what they claimed was absent
+— `querySelectorAll('video')` against a pool that deliberately keeps elements detached, a canvas
+sampled synchronously after a redraw that schedules through rAF, and a background colour read
+underneath an opaque full-frame clip. The measurement traps are collected in
+[`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
+purpose to confirm the probe notices.
 
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the

@@ -55,6 +55,13 @@ declare global {
   }
 }
 
+/**
+ * How long an unanswered frame request may stand before `redraw` assumes it was dropped
+ * and asks again. Longer than any real frame interval (8ms at 120Hz, 16.7ms at 60Hz) and
+ * short enough that a recovered window redraws before the user notices.
+ */
+const STALE_FRAME_MS = 250
+
 export interface EngineHandle {
   clock: PlaybackClock
   pool: MediaPool
@@ -85,6 +92,8 @@ class Engine {
   #getCanvas: () => HTMLCanvasElement | null = () => null
   #offs: Array<() => void> = []
   #pendingDraw: number | null = null
+  /** When the outstanding frame was requested, so a dropped one can be noticed. */
+  #pendingSince = 0
   /** The canvas currently under the resize observer, and the CSS size it last reported. */
   #observed: HTMLCanvasElement | null = null
   #resizeObserver: ResizeObserver | null = null
@@ -117,9 +126,13 @@ class Engine {
     // Whether playback should instead continue in the background is a product decision,
     // and this is the one place it is made.
     const onVisibilityChange = (): void => {
-      if (document.visibilityState !== 'hidden') return
-      if (!this.clock.running) return
-      useEditor.getState().setPlaying(false)
+      if (document.visibilityState === 'hidden') {
+        if (this.clock.running) useEditor.getState().setPlaying(false)
+        return
+      }
+      // Coming back. Any frame requested while hidden may have been dropped, and whatever
+      // is on the canvas was drawn before the edits that happened in between.
+      this.redraw()
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     this.#offs.push(() => document.removeEventListener('visibilitychange', onVisibilityChange))
@@ -148,8 +161,27 @@ class Engine {
     this.#getCanvas = () => null
   }
 
+  /**
+   * Asks for a frame, coalescing repeated calls into one.
+   *
+   * The staleness check is the load-bearing part. A plain "already pending, do nothing"
+   * latch is permanent if the callback never arrives, and it does not always arrive:
+   * an occluded, minimised or backgrounded window stops `requestAnimationFrame`, and a
+   * callback queued at that moment can simply never run. The flag then stays set forever
+   * and **every subsequent redraw is a silent no-op** — the preview freezes on whatever it
+   * last drew and never recovers, no matter what the user edits. That was measured: a
+   * canvas still showing the layout from before a Fit was applied, and still showing it
+   * eight samples later.
+   */
   redraw(): void {
-    if (this.#pendingDraw !== null) return
+    const now = performance.now()
+    if (this.#pendingDraw !== null) {
+      if (now - this.#pendingSince < STALE_FRAME_MS) return
+      // The frame we asked for is not coming. Drop it and ask again.
+      cancelAnimationFrame(this.#pendingDraw)
+      this.#pendingDraw = null
+    }
+    this.#pendingSince = now
     this.#pendingDraw = requestAnimationFrame(() => {
       this.#pendingDraw = null
       this.#drawTimed(this.clock.frame)
