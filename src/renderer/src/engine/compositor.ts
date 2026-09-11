@@ -68,10 +68,23 @@ export class Compositor {
   /**
    * Outstanding seeks, keyed by asset rather than by item. One element cannot be at two
    * source times at once, so two items sharing an asset in the same frame would otherwise
-   * issue competing seeks every frame and neither would ever land. Keyed this way, the
-   * item drawn last (the topmost) owns the element's time and the other draws whatever it
-   * holds. Two simultaneous items from one asset needs two elements; that is a pool change,
-   * and nothing in the product asks for it yet.
+   * issue competing seeks every frame and neither would ever land.
+   *
+   * Keying alone did **not** achieve that, and the gap was measured rather than argued: two
+   * items on one asset wanting 20s and 0s put the element into a permanent seek thrash —
+   * each frame re-issued the other's target, `readyState` sat at HAVE_METADATA with
+   * `seeking` true, every item reported `pending`, and **the compositor drew nothing at
+   * all, for ever**. Not "the lower one shows a stale frame", which is what this comment
+   * used to claim: a blank canvas that no `redraw()` could repair. Make the targets agree
+   * and the picture returns; make them differ and it vanishes again.
+   *
+   * So the rule is now enforced where it is decided, by {@link seekOwners}: within one
+   * frame exactly one item per asset — the one drawn last, which is the topmost and so the
+   * one actually visible — moves the element. Everything else drawing that asset paints
+   * whatever the element currently holds. Two *simultaneous* source times from one asset
+   * still needs two elements; that is a pool change, and nothing in the product asks for it
+   * yet. What this guarantees is that asking for it degrades to a stale frame rather than
+   * to an empty preview.
    */
   readonly #seeks = new Map<string, SeekState>()
 
@@ -111,7 +124,12 @@ export class Compositor {
     ctx.fillRect(0, 0, width, height)
 
     // itemsAtFrame already returns lowest track first, so painting in order is the stack.
-    for (const item of itemsAtFrame(timeline, frame, 'video')) {
+    const drawing = itemsAtFrame(timeline, frame, 'video')
+    // Decided before any of them is drawn: one element cannot be at two source times, so
+    // one item per asset moves it and the rest take what is there. See `#seeks`.
+    const owners = seekOwners(drawing)
+
+    for (const item of drawing) {
       const asset = findAsset(project, item.assetId)
       if (!asset || asset.error) {
         this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
@@ -133,7 +151,11 @@ export class Compositor {
         continue
       }
 
-      this.#syncElement(entry, item, asset, frame, fps, mode, now())
+      // Only the owner moves the element. A non-owner that seeked here would undo the
+      // owner's seek before it landed, and neither would ever produce a picture.
+      if (owners.get(asset.id) === item.id) {
+        this.#syncElement(entry, item, asset, frame, fps, mode, now())
+      }
 
       if (!isDrawable(entry)) {
         // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the
@@ -312,6 +334,24 @@ export class Compositor {
     }
   }
 
+}
+
+/**
+ * Which item owns each asset's element for one frame: asset id -> item id.
+ *
+ * `items` must be in draw order (lowest track first, as `itemsAtFrame` returns it), so the
+ * last entry for an asset is the topmost item drawing it — the one the viewer is actually
+ * looking at, and therefore the one whose source time the shared element should hold.
+ *
+ * Exported, and pure, for the same reason `layoutBox` is: it is the whole of the rule, and
+ * the rule is otherwise only observable through a real `<video>` mid-seek. A DOM is needed
+ * to watch an element thrash; none is needed to pin which item is allowed to move it.
+ */
+export function seekOwners(items: Item[]): Map<string, string> {
+  const owners = new Map<string, string>()
+  // Last write wins, which is the topmost item: later entries paint over earlier ones.
+  for (const item of items) owners.set(item.assetId, item.id)
+  return owners
 }
 
 export interface Box {

@@ -18,7 +18,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { coverLayout, containLayout, type Item, type Layout } from '@shared/project'
-import { layoutBox } from './compositor'
+import { layoutBox, seekOwners } from './compositor'
 
 function itemWith(layout: Partial<Layout>): Item {
   return {
@@ -109,4 +109,64 @@ test('an ordinary layout passes through untouched', () => {
     width: 640,
     height: 360
   })
+})
+
+/**
+ * Which item is allowed to move a shared element.
+ *
+ * These exist because of a measured failure, not a hypothetical one. Two items on one asset
+ * wanting different source times (20s and 0s) left the single pooled `<video>` seeking for
+ * ever: `readyState` 1, `seeking` true, every item `pending`, and the canvas blank — 0 lit
+ * pixels where the same project with one item drew 79,575, and no `redraw()` could mend it.
+ * The compositor's own comment claimed the lower item would show a stale frame. It did not;
+ * nothing was drawn at all.
+ *
+ * A unit test cannot watch an element thrash — that needs a decoder and a window, and it is
+ * `test/app/` that measured the pixels. What it can pin is the rule that prevents it, which
+ * is a pure question about ordering: exactly one item per asset per frame moves the element,
+ * and it is the topmost, because that is the one on screen.
+ */
+test('one item per asset owns the element, and it is the topmost', () => {
+  const lower = { ...itemWith({}), id: 'itm_lower', assetId: 'ast_shared' }
+  const upper = { ...itemWith({}), id: 'itm_upper', assetId: 'ast_shared' }
+  // itemsAtFrame returns lowest track first, so the last entry is the topmost.
+  const owners = seekOwners([lower, upper])
+  assert.equal(owners.size, 1, 'one asset, one owner - not one per item')
+  assert.equal(
+    owners.get('ast_shared'),
+    'itm_upper',
+    'the topmost item owns the source time, because it is the one being looked at'
+  )
+})
+
+test('items on different assets each own their own element', () => {
+  const a = { ...itemWith({}), id: 'itm_a', assetId: 'ast_a' }
+  const b = { ...itemWith({}), id: 'itm_b', assetId: 'ast_b' }
+  const owners = seekOwners([a, b])
+  assert.deepEqual(
+    [...owners.entries()],
+    [
+      ['ast_a', 'itm_a'],
+      ['ast_b', 'itm_b']
+    ],
+    'nothing is shared, so nothing is surrendered'
+  )
+})
+
+test('a repeated asset below the top does not take ownership back', () => {
+  // The interleaved case: the shared asset appears at the bottom and again at the top, with
+  // an unrelated clip between. Ownership must land on the last occurrence, not the last
+  // *item*, or the visible copy loses its seek to one hidden behind another clip.
+  const bottom = { ...itemWith({}), id: 'itm_bottom', assetId: 'ast_shared' }
+  const middle = { ...itemWith({}), id: 'itm_middle', assetId: 'ast_other' }
+  const top = { ...itemWith({}), id: 'itm_top', assetId: 'ast_shared' }
+  const owners = seekOwners([bottom, middle, top])
+  assert.equal(owners.get('ast_shared'), 'itm_top')
+  assert.equal(owners.get('ast_other'), 'itm_middle')
+})
+
+test('a single item owns its own asset, which is every ordinary frame', () => {
+  const only = { ...itemWith({}), id: 'itm_only', assetId: 'ast_only' }
+  assert.equal(seekOwners([only]).get('ast_only'), 'itm_only')
+  assert.equal(seekOwners([]).size, 0, 'an empty frame owns nothing and must not throw')
 })
