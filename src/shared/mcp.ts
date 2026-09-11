@@ -104,7 +104,10 @@ export const TOOLS: ToolSpec[] = [
       'The project as it stands: name, canvas size and frame rate, every track, and every ' +
       'item with its id, position and duration in frames. Start here. Everything else takes ' +
       'ids that come from this output, and the frame rate here is what every other time in ' +
-      'this surface is measured in.',
+      'this surface is measured in. ' +
+      'Call it to **orient**, not to confirm — the write tools return the item they changed, ' +
+      'and that answer is authoritative. Measured on a 200-clip timeline, a turn that re-reads ' +
+      'after every edit spends 99% of its bytes re-reading a project it changed by 263 of them.',
     category: 'read',
     readOnly: true,
     alwaysLoad: true,
@@ -175,9 +178,10 @@ export const TOOLS: ToolSpec[] = [
     name: 'place_asset',
     description:
       'Put an asset on the timeline. Chooses a track with room unless you name one, and picks ' +
-      'video or audio by what the asset carries. Returns the new item id. The clip takes its ' +
-      'full source duration; trim it afterwards with edit_item rather than trying to place a ' +
-      'portion.',
+      'video or audio by what the asset carries. The clip takes its full source duration; trim ' +
+      'it afterwards with edit_item rather than trying to place a portion. ' +
+      'Returns the new item complete — id, track, timing and layout. **That returned state is ' +
+      'authoritative: you do not need to call read_project to confirm it.**',
     category: 'write',
     readOnly: false,
     alwaysLoad: true,
@@ -197,7 +201,11 @@ export const TOOLS: ToolSpec[] = [
       'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
       'it sits on the canvas, its opacity, volume, fades or speed. Only the fields you pass ' +
       'change. Moving an item onto occupied time on the same track is refused rather than ' +
-      'silently overlapping — move the other item first, or use a different track.',
+      'silently overlapping — move the other item first, or use a different track. ' +
+      'Returns the item complete after the edit. **That returned state is authoritative: you ' +
+      'do not need to call read_project to confirm it.** Re-reading the whole project to check ' +
+      'one change is the most expensive thing you can do here — on a 200-clip timeline it is ' +
+      '36KB to verify an edit that cost 263 bytes.',
     category: 'write',
     readOnly: false,
     alwaysLoad: true,
