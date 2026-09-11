@@ -9,6 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
+import type { McpToolCall, McpToolResult } from './mcp'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -220,6 +221,22 @@ export interface BayApi {
     onProgress(listener: (progress: ExportProgress) => void): () => void
   }
 
+  mcp: {
+    /**
+     * Register the tool executor. Returns an unsubscribe function.
+     *
+     * The one place in this interface where the renderer *answers* rather than asks, and it
+     * has to be: the store owns the project, so only the renderer can apply a tool call. The
+     * handler is a plain async function — preload does the correlation, so neither side deals
+     * in request ids.
+     *
+     * At most one executor. A second registration replaces the first rather than fanning
+     * out: two handlers answering one call means the agent gets whichever result arrives
+     * first, which is a coin toss dressed as a reply.
+     */
+    onToolCall(handler: (call: McpToolCall) => Promise<McpToolResult>): () => void
+  }
+
   window: {
     minimise(): Promise<void>
     toggleMaximise(): Promise<void>
@@ -240,6 +257,11 @@ export const IPC = {
   appMediaToolsReady: 'app:media-tools-ready',
   appStorageReady: 'app:storage-ready',
   appMenuCommand: 'app:menu-command',
+
+  /** main -> renderer: one tool call, carrying its own id. */
+  mcpToolCall: 'mcp:tool-call',
+  /** renderer -> main: the answer, carrying the same id. */
+  mcpToolResult: 'mcp:tool-result',
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',

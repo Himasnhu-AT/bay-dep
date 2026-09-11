@@ -108,6 +108,22 @@ export interface EditorActions {
   undo(): void
   redo(): void
   markSaved(): void
+  /**
+   * Run several mutations as one undoable step.
+   *
+   * Exists because "one edit is one undo step" is a promise the agent surface makes, and
+   * some operations need more than one store call to keep it — moving an item to another
+   * track is `patchItem` plus `moveItem`, and a ripple delete is a delete plus one move per
+   * item after it. Without grouping, `undo` gives back a fraction of what was done, which is
+   * worse than not undoing at all: the project is left in a state neither the user nor the
+   * agent asked for.
+   *
+   * Nested calls join the outer transaction rather than closing it. A transaction that
+   * changes nothing pushes no entry — an empty undo step is a control that does nothing.
+   * If `work` throws, whatever it managed to change is still committed as one entry, so the
+   * user can take back a half-finished edit.
+   */
+  transact(work: () => void): void
 }
 
 export type EditorStore = EditorState & EditorActions
@@ -201,14 +217,44 @@ export const useEditor = create<EditorStore>((set, get) => {
    * undo, stamps `updatedAt`, clears the redo stack and marks the document dirty — so no
    * caller has to remember to do any of that, and none of them can forget.
    */
+  /**
+   * Open transaction, if any: the project as it stood before it began, plus whether anything
+   * inside it has actually asked for a history entry. Depth rather than a boolean so a
+   * `transact` inside a `transact` joins the outer one instead of closing it early.
+   */
+  let txDepth = 0
+  let txBefore: Project | null = null
+  let txRecorded = false
+
   function edit(mutator: (project: Project) => void, options?: { silent?: boolean }): void {
     set((state) => {
       const before = state.project
       const next = clone(before)
       mutator(next)
+
+      // A mutator that declined to do anything must leave no trace. Several of them refuse
+      // by design — `moveItem` onto occupied time, `patchTrack` on a missing track, a split
+      // exactly on an item edge — and without this each refusal stamped `updatedAt`, marked
+      // the document dirty and pushed a history entry that undoes nothing. An undo step that
+      // restores the state you are already in is a control that does nothing, and a row of
+      // them makes Cmd+Z feel broken.
+      //
+      // Compared before `updatedAt` is stamped, so the clone is byte-identical when nothing
+      // changed. The stringify is affordable because edits happen at human scale — a drag
+      // commits on drop, not per mousemove — and the alternative, asking every mutator to
+      // report whether it did anything, is a thing thirty call sites can forget.
+      if (JSON.stringify(before) === JSON.stringify(next)) return state
+
       next.updatedAt = Date.now()
       if (options?.silent) {
         return { project: next }
+      }
+      if (txDepth > 0) {
+        // Inside a transaction the mutation lands but the history entry does not: the whole
+        // group gets one, pushed on close. Without this, a tool that needs two store calls
+        // makes two undo steps and `undo` reverses half of what it did.
+        txRecorded = true
+        return { project: next, dirty: true }
       }
       const past = [...state.past, before]
       if (past.length > HISTORY_LIMIT) past.shift()
@@ -658,6 +704,36 @@ export const useEditor = create<EditorStore>((set, get) => {
 
     markSaved() {
       set({ dirty: false })
+    },
+
+    transact(work) {
+      if (txDepth > 0) {
+        // Already inside one: join it. Closing here would end the outer group early and
+        // split one logical edit across two undo steps, which is the bug this prevents.
+        work()
+        return
+      }
+      txBefore = get().project
+      txRecorded = false
+      txDepth += 1
+      try {
+        work()
+      } finally {
+        txDepth -= 1
+        const before = txBefore
+        txBefore = null
+        const recorded = txRecorded
+        txRecorded = false
+        set((state) => {
+          // No history entry for a transaction that recorded nothing, and none if the
+          // project came back to the object it started from — an undo step that restores
+          // the state you are already in is a control that does nothing.
+          if (!recorded || !before || before === state.project) return state
+          const past = [...state.past, before]
+          if (past.length > HISTORY_LIMIT) past.shift()
+          return { past, future: [], dirty: true }
+        })
+      }
     }
   }
 })
