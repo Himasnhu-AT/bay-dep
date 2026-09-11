@@ -338,6 +338,37 @@ storage one — and that one *is* verified, by `storage-warning.mjs`.
 | `menu.mjs` | no item in the File menu is dead | flags on, Accessibility permission |
 | `storage-warning.mjs` | the status bar speaks when the database is down | a deliberately broken profile |
 | `occlusion.mjs` | whether a hidden window drops or defers an rAF callback | **flags OFF** |
+| `mcp.mjs` | every tool in the catalog answers, and the errors say what to do next | flags on |
+| `text-style.mjs` | text draws as styled, and the engine reports what it could not honour | flags on |
+| `filter-support.mjs` | `ctx.filter` and blend modes apply on the **export** context, and what they cost | flags on |
+| `transitions-ui.mjs` | a cut can be given a transition, and says so when it cannot | flags on |
+
+### `transitions-ui.mjs`, and two ways it accused working code
+
+Worth reading before writing any probe that clicks, because both mistakes are cheap to repeat.
+
+**It read the DOM in the tick a mutation resolved.** A store write lands before React renders
+it, so the first version reported "no marker on the cut at frame 200" against a build where
+the marker was correct and present. Every DOM read in that file now polls. An instrument that
+races the thing it measures is worse than no instrument, because it accuses the code.
+
+**Then it drove a `NumberField` by typing, and failed one run in three.** `NumberField` commits
+on blur, reading a `draft` that `onChange` set — two React state updates in two events. Over
+CDP the blur handler could close over a `draft` still holding `null` and commit nothing, so the
+probe reported a missing clamp warning from a dialog that was working fine. Two fixes, and the
+second is the general lesson:
+
+- the fixture was reshaped so the interesting case needs **one keystroke, not a typed number** —
+  the incoming clip gets a deliberately short handle, so the cut's capacity is a handful of
+  frames and a single Shift+ArrowUp exceeds it. Arrow keys call `commit` directly inside the
+  keydown handler and depend on no flushed state.
+- the assertion that matters most — a transition asked for long and played short — is set up
+  **through MCP instead of through the field**, so it tests the reported number without driving
+  a control at all.
+
+A probe that fails one run in three teaches people to re-run until green, which is how a real
+failure gets ignored. Four consecutive clean runs is the bar for calling one stable, and the
+two earlier flakes are why the number is four and not one.
 
 Two of these need setting up rather than just running:
 

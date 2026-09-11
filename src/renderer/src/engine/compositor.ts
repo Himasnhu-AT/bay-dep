@@ -26,6 +26,7 @@ import {
 } from '@shared/project'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import { planTransition } from './transitions'
+import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
 import {
   anchorFor,
   fontIsAvailable,
@@ -300,6 +301,10 @@ export class Compositor {
 
     ctx.save()
     ctx.globalAlpha = alpha
+    // Both are set inside this item's save/restore, so they cannot leak onto the next item or
+    // onto the background fill — a blend mode left set would change how everything above it
+    // combines, which looks like a bug in the wrong clip.
+    applyLook(ctx, item)
     applyRotation(ctx, item, box)
     try {
       ctx.drawImage(element, box.left, box.top, box.width, box.height)
@@ -434,6 +439,7 @@ export class Compositor {
       if (alpha <= 0) return fit
 
       ctx.globalAlpha = alpha
+      applyLook(ctx, item)
       applyRotation(ctx, item, box)
       ctx.font = fontString(laid.fontSize, style.fontFamily)
 
@@ -604,6 +610,28 @@ export class Compositor {
  *
  * Slot 0 is the overwhelmingly common answer, and it keys the pool on the bare asset id, so
  * nothing changes for a timeline without overlaps.
+ *
+ * **Counted within the frame, and the alternative was tried and measured worse.** Indexing over
+ * the whole timeline instead would make a slot a property of the item rather than of the frame,
+ * which fixes a real edge case: the incoming clip of a transition holds slot 1 while both clips
+ * are drawn and becomes slot 0 the moment the window ends, so it switches element at the edge
+ * and re-seeks — three blank frames immediately after a dissolve.
+ *
+ * Timeline-stable slots cost far more than they save, because they also stop two *adjacent*
+ * clips of one asset sharing a single continuously-playing element. Measured over 2.6s of
+ * playback across a cut:
+ *
+ *                            blank frames     composite p50
+ *     frame-local (this)          1              9.3 ms
+ *     timeline-stable            23              0.2 ms      <- p50 that low means most
+ *                                                               composites drew nothing
+ *
+ * The two goals conflict directly: sharing means one element for both clips, and a transition
+ * needs two. Sharing by default and allocating a second element only when a frame genuinely
+ * needs one is the better trade, so the edge re-seek after a dissolve is a known cost rather
+ * than a bug to be fixed by making ordinary playback worse. Hysteresis — holding the pair's
+ * slots for a few frames past the window — would get both, at the price of state that would
+ * need its own correctness argument.
  */
 /**
  * Everything this frame draws, in paint order, plus the transition playing across it.
@@ -638,10 +666,10 @@ export function itemsToDraw(
   return { items: [...others, ...pair], active }
 }
 
-export function elementSlots(items: Item[]): Map<string, number> {
+export function elementSlots(drawing: Item[]): Map<string, number> {
   const slots = new Map<string, number>()
   const used = new Map<string, number>()
-  for (const item of items) {
+  for (const item of drawing) {
     const next = used.get(item.assetId) ?? 0
     slots.set(item.id, next)
     used.set(item.assetId, next + 1)
@@ -680,6 +708,21 @@ export function layoutBox(item: Item): Box | null {
     width,
     height
   }
+}
+
+/**
+ * Applies an item's adjustments and blend mode to the context.
+ *
+ * Skipped entirely when both are the default, because asking for `filter: 'brightness(1)'` puts
+ * the draw on the filtered path — measured at roughly twice the cost at 4K — and every clip in
+ * every project would pay for a feature it is not using.
+ */
+function applyLook(ctx: RenderTarget, item: Item): void {
+  const filter = adjustmentFilter(item.adjustments)
+  const operation = blendOperation(item.blendMode)
+  if (isPlainLook(filter, operation)) return
+  if (filter !== NO_FILTER) ctx.filter = filter
+  ctx.globalCompositeOperation = operation
 }
 
 function applyRotation(ctx: RenderTarget, item: Item, box: Box): void {

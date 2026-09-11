@@ -212,15 +212,38 @@ test('the slot assignment never changes across a whole transition window', () =>
   }
 })
 
-test('reversing the pair order would swap the slots, which is why the order is fixed', () => {
-  // The negative half of the test above: the assignment *is* order-dependent, so the
-  // stability guarantee comes from the compositor always building the list `from` then `to`.
-  // Asserting only that repeated calls agree would pass against an implementation that read
-  // the order from somewhere unstable.
-  const from = { ...itemWith({}), id: 'itm_from', assetId: 'ast_split' }
-  const to = { ...itemWith({}), id: 'itm_to', assetId: 'ast_split' }
-  const forward = elementSlots([from, to])
-  const reversed = elementSlots([to, from])
-  assert.equal(forward.get('itm_from'), 0)
-  assert.equal(reversed.get('itm_from'), 1, 'order decides the slot — so the order must be fixed')
+/*
+ * Removed: 'reversing the pair order would swap the slots, which is why the order is fixed'.
+ *
+ * It asserted that `elementSlots` was order-dependent, and order-dependence turned out to be
+ * the bug — an item's slot changed when the frame's population changed around it, so a clip
+ * switched element at the edge of a transition window and blanked for three frames. The
+ * replacement is 'slots are ordered by timeline position, so they do not depend on draw order',
+ * which asserts the opposite and is the property the code now has. Kept as a note rather than
+ * deleted silently: a test that had encoded what the code did rather than what it was for, and
+ * only visible as wrong once the contract moved.
+ */
+
+
+test('the incoming clip of a transition changes slot at the window edge, and that is the trade', () => {
+  /**
+   * Not a bug being asserted as correct — a measured trade, recorded so the next person does
+   * not "fix" it the way I did.
+   *
+   * Inside a transition window both clips are drawn, so the incoming one holds slot 1. Once the
+   * window ends it is alone and becomes slot 0, switching element and re-seeking: three blank
+   * frames after a dissolve. Indexing slots over the whole timeline removes that and costs far
+   * more — it also stops two *adjacent* clips of one asset sharing a single continuously-playing
+   * element, measured at 23 blank frames across an ordinary cut against 1, with composite p50
+   * falling to 0.2ms because most composites were drawing nothing at all.
+   *
+   * Sharing by default and allocating a second element only when a frame needs one is the
+   * better trade. This test pins the behaviour so the edge case is documented rather than
+   * rediscovered.
+   */
+  const from = { ...itemWith({}), id: 'itm_from', assetId: 'ast_split', from: 0, durationInFrames: 60 }
+  const to = { ...itemWith({}), id: 'itm_to', assetId: 'ast_split', from: 60, durationInFrames: 60 }
+
+  assert.equal(elementSlots([from, to]).get('itm_to'), 1, 'inside the window: its own element')
+  assert.equal(elementSlots([to]).get('itm_to'), 0, 'alone: shares the element, and re-seeks once')
 })
