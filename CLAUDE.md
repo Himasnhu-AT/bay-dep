@@ -57,6 +57,26 @@ worse than no test, because it is also a claim that the bug cannot happen. The r
 path by concatenation and asserts up front that the specimen defeats a naive prefix check, so it
 cannot quietly stop testing anything again. Write that assertion into any test guarding a check.
 
+**And the proof must itself be proven to have done something.** A mutation run scored a guard as
+NOT CAUGHT and sent someone to rewrite a test that was working perfectly: the mutation string had
+six spaces of indentation where the source had four, so `str.replace` silently did nothing and the
+suite ran against unmodified code. A mutation that did not apply and a test that does not test
+produce identical output. Assert the replacement landed — `assert old in source` — before running
+anything. It is the same one-line shape as the specimen assertion above, displaced by one level.
+
+**A surviving mutant is not automatically a missing test.** It is either a missing test *or* dead
+code, and the two are told apart by asking whether any input could distinguish the branch —
+differentially, by running both versions over a large input set, not by reading the code and
+forming an opinion. `parseRational`'s finite-number guards survived mutation; original against
+simplified over 33 handwritten inputs and 20,000 generated pairs were identical on every one, so
+the guards were deleted rather than given a test. They read as defensive and were unfalsifiable:
+nothing could tell their presence from their absence, so nobody could safely change them later and
+nobody could tell if they had rotted. Treating every survivor as a test gap is exactly how
+unfalsifiable code accumulates a suite around it.
+
+This shape — a correct-looking construct that nothing can reach — has now appeared four times in
+two days, across three subsystems and two authors. Expect it rather than being surprised by it.
+
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
 point: it is the only code that crosses the process boundary.
