@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LineBuffer, encode, parseLine } from './jsonrpc'
 import { handleRequest, type RunTool } from './protocol'
-import { PROXY_FLAG, SOCKET_NAME } from './socket-path'
+import { SOCKET_NAME } from './socket-path'
 
 const PROXY_BUNDLE = join(process.cwd(), 'out', 'main', 'mcp', 'index.js')
 
@@ -257,12 +257,11 @@ test('a call with bay not running reports it rather than hanging', async () => {
 // The configuration surface
 // ---------------------------------------------------------------------------
 
-test('the socket name and proxy flag are pinned', () => {
-  // Both go into an MCP client's config on the user's machine and stay there across upgrades.
-  // Changing either breaks every configured client, and the symptom is a tool that silently
-  // never appears rather than an error anyone sees.
+test('the socket name is pinned', () => {
+  // It goes into an MCP client's config on the user's machine and stays there across upgrades.
+  // Changing it breaks every configured client, and the symptom is a tool that silently never
+  // appears rather than an error anyone sees.
   assert.equal(SOCKET_NAME, 'bay-mcp.sock')
-  assert.equal(PROXY_FLAG, '--mcp')
 })
 
 test('the bundle lives where a client config would point at it', () => {

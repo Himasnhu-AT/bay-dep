@@ -516,3 +516,35 @@ one alike: the probe reported FAIL while the numbers beside it — 78720 lit ver
 the tool working perfectly. Same class as trap 2 and trap 5, in a probe written the same day
 by someone who had just documented both. Hash the whole artefact, not a prefix of it; and
 when a verdict contradicts the evidence printed next to it, suspect the verdict.
+
+## A probe that mutates state must not assume the state it started in
+
+Four times in one session a probe reported FAIL while the code was right, and all four had
+the same root: an assertion built on a fixture assumption that earlier checks had already
+invalidated. Three of them nearly became "fixes" to working code, which is why this is worth
+its own rule — a red line that is the test's fault feels exactly like a red line that is the
+code's, and the instinct it produces is to change the code.
+
+The four, because the shape is more convincing than the summary:
+
+- A "free" slot at frame 500 — inside a clip that was 2035 frames long. The refusal naming
+  the occupied range was correct and read as a broken executor.
+- A duration read from an item that earlier checks had trimmed and split, then used to place
+  three clips that could not fit.
+- An assertion that only allowed the error wording used when *no* export jobs exist; by then
+  one did, and the message correctly named it instead.
+- `set_playhead` to frame 7 on an empty timeline, which correctly clamps to 0 and *says so*
+  in `clampedTo`. The probe read the clamp as a dead socket.
+
+Two habits prevent all four:
+
+**Derive fixture values from the call that produced them, not from a shared earlier read.**
+Chain positions from each placement's own returned `endFrame` rather than computing them
+from a duration fetched once at the top. The first is true when it is used; the second is
+true when it was written.
+
+**Choose an observable that does not depend on state you did not control.** For "did this
+write reach the store", `add_track` is unconditional and `set_playhead` is clamped by the
+timeline's duration — so the first tests the transport and the second tests the transport
+*and* whatever the fixture happened to leave behind. When a check fails, ask what the state
+was at that moment before asking what the code did.

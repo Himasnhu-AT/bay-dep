@@ -206,6 +206,18 @@ underneath an opaque full-frame clip. The measurement traps are collected in
 [`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
 purpose to confirm the probe notices.
 
+**A hang is not a failure until something makes it one, and `cancelled` is a third outcome.** A
+promise that never settles produces no answer rather than a wrong one, and Node's summary reports
+it as `pass 7 / fail 0 / cancelled 1` — so anything reading those lines for `fail 0` calls it
+green. The **exit code is 1**, so `pnpm test` and CI are safe; the hole is in reading the summary,
+which is what a mutation harness and a human skimming output both do. Read the exit code, or match
+`cancelled` and `skipped` as well as `fail`. And give tests that can hang an explicit
+`{ timeout }`, so a stuck promise is named rather than stalling the suite for two minutes.
+
+This is the third failure in the layer *between* "the bug exists" and "the report says so", after
+a mutation that never applied and a harness that could not parse its own output. Expect that layer
+to be the broken one.
+
 **A test that exercises a build artifact is only as true as the last build, and the artifact's
 freshness belongs in the assertion.** Staleness here is a false *pass*, not a false fail: edit the
 transport, skip `pnpm build`, and the suite cheerfully proves the previous build still works. It
