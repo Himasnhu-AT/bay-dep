@@ -69,7 +69,19 @@ const HANDLERS: Record<string, Handler> = {
  */
 const missing = TOOLS.filter((tool) => !HANDLERS[tool.name]).map((t) => t.name)
 const extra = Object.keys(HANDLERS).filter((name) => !findTool(name))
-if (missing.length > 0 || extra.length > 0) {
+
+/**
+ * The mismatch as a value, so the status bar can say it out loud — `null` when the two agree.
+ *
+ * A `console.error` is only loud to whoever has devtools open, and the person who most needs
+ * to know is the one driving bay from an agent and wondering why a tool keeps refusing. This
+ * is the same treatment `storageReady` and `mediaToolsReady` get, for the same reason: a
+ * subsystem that is broken and one that is merely idle look identical from outside.
+ */
+export const catalogMismatch: { missing: string[]; extra: string[] } | null =
+  missing.length > 0 || extra.length > 0 ? { missing, extra } : null
+
+if (catalogMismatch) {
   console.error(
     '[bay] The MCP catalog and the executor disagree.' +
       (missing.length > 0 ? ` Listed but not implemented: ${missing.join(', ')}.` : '') +

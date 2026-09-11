@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 import { formatTimecode } from '@shared/project'
 import { Toast, Tooltip } from '@/components'
 import { bay } from '@/lib/bay'
+import { catalogMismatch } from '@/mcp'
 import { selectDuration, selectFps, selectTimeline, useEditor } from '@/store/editor'
 
 function Stat({ label, value }: { label: string; value: ReactNode }): ReactNode {
@@ -83,6 +84,23 @@ export function StatusBar(): ReactNode {
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Storage unavailable
+          </span>
+        </Tooltip>
+      )}
+
+      {catalogMismatch && (
+        <Tooltip
+          side="top"
+          label={
+            catalogMismatch.missing.length > 0
+              ? `Listed but not implemented: ${catalogMismatch.missing.join(', ')}`
+              : `Implemented but not listed: ${catalogMismatch.extra.join(', ')}`
+          }
+          shortcut="an agent will be refused these tools by name"
+        >
+          <span className="flex items-center gap-1 text-danger">
+            <AlertTriangle aria-hidden="true" className="size-3" />
+            Agent tools incomplete
           </span>
         </Tooltip>
       )}

@@ -205,11 +205,18 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         </div>
         {/* The three ways text goes wrong are all invisible in the picture, so the panel
             where the size was typed is where they have to be said. */}
-        {fit?.warning ? (
-          <p className="mt-2 flex items-start gap-1.5 rounded-sm border border-danger/40 bg-danger/10 p-1.5 text-[10px] leading-relaxed text-danger">
-            <AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0" />
-            <span>{fit.warning}</span>
-          </p>
+        {fit && fit.warnings.length > 0 ? (
+          <ul className="mt-2 space-y-1 rounded-sm border border-danger/40 bg-danger/10 p-1.5">
+            {fit.warnings.map((warning) => (
+              <li
+                key={warning}
+                className="flex items-start gap-1.5 text-[10px] leading-relaxed text-danger"
+              >
+                <AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0" />
+                <span>{warning}</span>
+              </li>
+            ))}
+          </ul>
         ) : (
           <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
             {fit

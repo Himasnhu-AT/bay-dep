@@ -5,8 +5,15 @@ import { defaultTextStyle, type Asset, type Item } from '@shared/project'
 export interface TextFitReport {
   laid: LaidOutText
   fontAvailable: boolean
-  /** Non-null when the user should be told something. Null when the text came out as asked. */
-  warning: string | null
+  /**
+   * Everything the user should be told, worst-hidden first. Empty when the text came out
+   * as asked.
+   *
+   * A list rather than one string because two of these can be true at once and they are
+   * independent faults: a substituted font is often *why* the words no longer fit, and
+   * reporting only the clipping would hand someone the symptom while hiding the cause.
+   */
+  warnings: string[]
 }
 
 /**
@@ -59,16 +66,29 @@ export function useTextFit(
       return ctx.measureText('MWQjgq@10 iIl').width
     })
 
-    let warning: string | null = null
+    // Ordered by how well each fault hides, not by severity. A missing font is the one with
+    // no cue whatsoever — it draws, it looks deliberate, and a family that ships with macOS
+    // but is unreachable from this layer (SF Mono) substitutes as silently as a misspelling
+    // does. Clipping and shrinking are at least visible on the canvas once you look.
+    const warnings: string[] = []
+    if (!available) {
+      warnings.push(
+        `${style.fontFamily} is not available here, so the system substituted another face. ` +
+          `What you see is not the typeface chosen, and it will not be in the export either.`
+      )
+    }
     if (laid.clipped) {
-      warning = `Does not fit even at ${MIN_FONT_SIZE}px — the text is cut off. Give it a bigger box or fewer words.`
-    } else if (!available) {
-      warning = 'This font is not installed, so the system substituted another. What you see is not the typeface chosen.'
+      // Deliberately no percentage. Clipping is reported at the floor, where the scale is
+      // ~4%, and "shrunk to 4%" tells a reader nothing they can act on.
+      warnings.push(
+        `Does not fit its box even at the minimum ${MIN_FONT_SIZE}px — the text is cut off. ` +
+          `Give it a bigger box or fewer words.`
+      )
     } else if (laid.scale < 1) {
-      warning = `Shrunk to ${Math.round(laid.scale * 100)}% (${laid.fontSize}px) to fit the box.`
+      warnings.push(`Shrunk to ${Math.round(laid.scale * 100)}% (${laid.fontSize}px) to fit the box.`)
     }
 
-    setReport({ laid, fontAvailable: available, warning })
+    setReport({ laid, fontAvailable: available, warnings })
     // `key` is the real dependency; the objects it summarises are rebuilt every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])

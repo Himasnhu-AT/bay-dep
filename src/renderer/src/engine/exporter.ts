@@ -184,16 +184,46 @@ interface Target {
   release: () => void
 }
 
+/**
+ * The export target, and why it does **not** ask for `willReadFrequently`.
+ *
+ * The flag looks obviously right here: the export loop reads back every frame, which is
+ * literally the case it exists for. It asks Chromium for a software-backed store so a
+ * `getImageData` does not pay a GPU-to-CPU transfer.
+ *
+ * Measured, it is a large net loss on the hardware bay ships for. Full per-frame cycle —
+ * `drawImage` from a real decoded `<video>` plus a whole-frame `getImageData`, median of
+ * three interleaved runs:
+ *
+ *                          flag on     flag off
+ *     1080p, no filter      8.66 ms      3.38 ms     2.56x
+ *     1080p, blur(8px)     16.23 ms      4.03 ms     4.03x
+ *     4K,    no filter      29.2 ms     13.13 ms     2.22x
+ *     4K,    blur(8px)      61.0 ms     13.42 ms     4.55x
+ *
+ * The readback is inside those numbers, so this is not cost moved from the draw to the read.
+ * The reason the flag loses is the thing it cannot help with: a decoded video frame is a GPU
+ * texture, and drawing one *into* a software-backed canvas forces a readback of the **source**
+ * — a cost that does not exist when the source is already CPU-side. `interface` first measured
+ * this with a synthetic source canvas and saw a smaller penalty; with real frames it roughly
+ * doubles, which is that extra transfer.
+ *
+ * It stays off rather than being made configurable because the flag's premise — that
+ * GPU-to-CPU transfer is expensive — does not hold on the machines this product targets.
+ * On hardware where it does, the tradeoff could invert; `test/app/export-readback-cost.mjs`
+ * reports the numbers rather than asserting a threshold, so it can be re-measured rather than
+ * re-argued.
+ */
 function makeTarget(width: number, height: number): Target {
   if (typeof OffscreenCanvas === 'function') {
     const canvas = new OffscreenCanvas(width, height)
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const ctx = canvas.getContext('2d')
     if (ctx) return { ctx, release: () => {} }
   }
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('This renderer has no 2D canvas to export with.')
   return {
     ctx,

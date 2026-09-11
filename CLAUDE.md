@@ -231,6 +231,25 @@ underneath an opaque full-frame clip. The measurement traps are collected in
 [`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
 purpose to confirm the probe notices.
 
+**A build-time fault belongs in a build-time gate, not a runtime check.** The MCP catalog and the
+executor disagreeing is decided when the bundle is built and is identical on every machine that
+runs it — so reporting it at mount aims the diagnostic at the one person who can do nothing about
+it, and an early version threw there, taking the whole editor down over two tools. Contrast
+`storageReady`, `mediaToolsReady` and `mcpReady`, which are genuine runtime conditions: the disk
+really might be unwritable here and not there, and the app cannot know until it asks. Those belong
+at runtime. A disagreement between two source files does not.
+
+The fix is a gate that fires before a build exists to ship — `test/app/mcp.mjs` asserts every
+catalog tool answers — plus a *non-fatal* runtime notice, because the two halves are edited by
+different people at a seam neither sees whole, which makes the mismatch the likely condition
+rather than the impossible one. "It cannot happen in a shipped build" was the tempting argument
+and it is false in the direction that matters.
+
+**When reporting several faults at once, order them by how well each one hides.** A text layout
+that both substituted a font and clipped the words reported only the clipping, because the checks
+ran in `else if` order. Clipping you can see on the canvas; a substituted face has no visual cue
+at all — so the invisible fault must come first, and a list beats one chosen string.
+
 **Write the sentence before the type.** Before designing a status, result or error type, write the
 line a person reads for each state it can be in. If two states produce the same sentence, or one
 produces a sentence you cannot write, the type is missing a field. `{ ready, error }` was complete
