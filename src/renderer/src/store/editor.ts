@@ -36,7 +36,10 @@ import {
   type Project,
   type Timeline,
   type Track,
-  type TrackKind
+  type TrackKind,
+  type Transition,
+  type TransitionDirection,
+  type TransitionKind
 } from '@shared/project'
 
 const HISTORY_LIMIT = 100
@@ -89,6 +92,29 @@ export interface EditorActions {
   addTrack(kind: TrackKind): string
   removeTrack(trackId: string): void
   patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name'>>): void
+
+  // transitions ---------------------------------------------------------------
+  /**
+   * Add a transition across the cut between two adjacent items. Returns its id, or a reason
+   * it was refused — the caller needs to be able to say *why*, not just that nothing happened.
+   *
+   * Refuses a pair that is not adjacent rather than storing one that `resolveTransition` will
+   * silently drop later. A transition that exists in the project and never draws is the
+   * failure this codebase keeps finding; catching it at the write is the only place the
+   * caller still has the context to fix it.
+   */
+  addTransition(spec: {
+    fromItemId: string
+    toItemId: string
+    kind: TransitionKind
+    durationInFrames: Frames
+    direction?: TransitionDirection
+  }): { id: string } | { error: string }
+  removeTransition(transitionId: string): void
+  patchTransition(
+    transitionId: string,
+    patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
+  ): void
 
   // selection / view ---------------------------------------------------------
   select(itemIds: string[], additive?: boolean): void
@@ -608,6 +634,74 @@ export const useEditor = create<EditorStore>((set, get) => {
       editTimeline((timeline) => {
         const track = findTrack(timeline, trackId)
         if (track) Object.assign(track, patch)
+      })
+    },
+
+    // -- transitions --------------------------------------------------------
+    addTransition(spec) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'No timeline is open.' }
+
+      const from = findItem(timeline, spec.fromItemId)
+      const to = findItem(timeline, spec.toItemId)
+      if (!from) return { error: `No item ${spec.fromItemId} on this timeline.` }
+      if (!to) return { error: `No item ${spec.toItemId} on this timeline.` }
+      if (from.track.id !== to.track.id) {
+        return {
+          error:
+            `Those items are on different tracks (${from.track.name} and ${to.track.name}). ` +
+            `A transition crosses a cut, which only exists between two clips on one track.`
+        }
+      }
+      if (itemEnd(from.item) !== to.item.from) {
+        return {
+          error:
+            `Those items do not meet: ${spec.fromItemId} ends at frame ${itemEnd(from.item)} ` +
+            `and ${spec.toItemId} starts at ${to.item.from}. A transition needs them abutting — ` +
+            `move one so the gap is closed, then add it.`
+        }
+      }
+      if (spec.durationInFrames < 2) {
+        return { error: 'A transition needs at least 2 frames, one on each side of the cut.' }
+      }
+
+      // One transition per junction. A second would draw over the first and neither would be
+      // the answer to "what is at this cut".
+      const existing = (timeline.transitions ?? []).find(
+        (t) => t.fromItemId === spec.fromItemId && t.toItemId === spec.toItemId
+      )
+
+      const id = existing?.id ?? newId('trn')
+      editTimeline((tl) => {
+        const list = tl.transitions ?? (tl.transitions = [])
+        const next: Transition = {
+          id,
+          kind: spec.kind,
+          fromItemId: spec.fromItemId,
+          toItemId: spec.toItemId,
+          durationInFrames: Math.max(2, Math.floor(spec.durationInFrames)),
+          ...(spec.direction ? { direction: spec.direction } : {})
+        }
+        const at = list.findIndex((t) => t.id === id)
+        if (at >= 0) list[at] = next
+        else list.push(next)
+      })
+      return { id }
+    },
+
+    removeTransition(transitionId) {
+      editTimeline((timeline) => {
+        if (!timeline.transitions) return
+        timeline.transitions = timeline.transitions.filter((t) => t.id !== transitionId)
+      })
+    },
+
+    patchTransition(transitionId, patch) {
+      editTimeline((timeline) => {
+        const transition = timeline.transitions?.find((t) => t.id === transitionId)
+        if (!transition) return
+        Object.assign(transition, patch)
+        if (transition.durationInFrames < 2) transition.durationInFrames = 2
       })
     },
 

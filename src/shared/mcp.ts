@@ -333,6 +333,72 @@ export const TOOLS: ToolSpec[] = [
     }
   },
   {
+    name: 'add_transition',
+    description:
+      'Put a transition across the cut between two clips that meet on one track. The two ' +
+      'must abut — the first ending exactly where the second begins — because a transition ' +
+      'is a property of a cut and there is no cut across a gap.\n' +
+      'It straddles the cut without moving anything: the outgoing clip plays on for half the ' +
+      'duration and the incoming starts the same amount early, both using footage outside ' +
+      'the range they occupy. A clip with none to spare gets a shorter transition than you ' +
+      'asked for, and the result says so — read `clampedBecause` rather than assuming you got ' +
+      'the length you requested.\n' +
+      'Adding a second transition to a junction that already has one replaces it.',
+    category: 'write',
+    readOnly: false,
+    alwaysLoad: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromItemId: { type: 'string', description: 'The clip being left.' },
+        toItemId: { type: 'string', description: 'The clip being entered.' },
+        kind: {
+          type: 'string',
+          enum: [
+            'cross-dissolve',
+            'dip-to-black',
+            'dip-to-white',
+            'wipe',
+            'push',
+            'slide',
+            'iris'
+          ],
+          description:
+            'cross-dissolve for ordinary continuity; dip-to-black for a scene break; wipe, ' +
+            'push and slide for movement; iris for emphasis. When unsure, cross-dissolve is ' +
+            'what an editor reaches for by default.'
+        },
+        durationInFrames: {
+          type: 'integer',
+          minimum: 2,
+          description:
+            'Total across the cut, half each side. Around a second reads as a dissolve; ' +
+            'much longer reads as a statement.'
+        },
+        direction: {
+          type: 'string',
+          enum: ['left', 'right', 'up', 'down'],
+          description: 'For wipe, push and slide. Ignored by the others.'
+        }
+      },
+      required: ['fromItemId', 'toItemId', 'kind', 'durationInFrames']
+    }
+  },
+  {
+    name: 'remove_transition',
+    description:
+      'Take a transition off a cut, leaving the clips and their timing untouched — the cut ' +
+      'becomes a straight one again.',
+    category: 'write',
+    readOnly: false,
+    alwaysLoad: false,
+    inputSchema: {
+      type: 'object',
+      properties: { transitionId: { type: 'string' } },
+      required: ['transitionId']
+    }
+  },
+  {
     name: 'set_playhead',
     description:
       'Move the playhead, which is what the user is looking at and what frame-defaulting tools ' +
