@@ -58,3 +58,39 @@ A probe is subject to the same discipline as a test: **it must be shown capable 
 thing it reports on.** Three of the wrong conclusions above came from instruments that could not
 observe what they claimed was absent. Before trusting a probe, break the thing on purpose and
 check the probe notices.
+
+## Two more traps, and the gate
+
+**6. A clip's own black regions defeat lit-pixel extent as a test of geometry.** This was the
+most expensive one: three observers independently measured a vertical clip covering only the
+bottom third of the canvas, with a hard 0.0%-to-100% edge at row 666, and all three concluded
+the compositor was misplacing it. It was not. Decoding the source directly settles it —
+
+    ffmpeg -v error -ss 20 -i <clip> -frames:v 1 -f rawvideo -pix_fmt gray -s 1080x1920 -
+
+and profiling that raw luma shows **eight consecutive bands at exactly 0.0% non-zero**, rows
+288-1056, then 100.0% at mean 95.7. The hard edge is in the footage. Mapping it through the
+layout predicts a canvas boundary at row **666.7**; the measured boundary was **666**.
+
+The lesson generalises: `%nonZero` distinguishes "dark here" from "nothing drawn here" *only*
+when the source is known to have something there. To test a **layout**, measure the extent of
+the drawn rectangle along an axis where the clip is not black — `colExtent` for this clip — and
+compare it against `left * scale` and `(left + width) * scale`. `geometry.mjs` does exactly that
+and prints the band profile beside it, so the vertical story reads as footage rather than as a
+mystery.
+
+**7. A probe must be proven able to see what it reports on — and the break must be on the side
+the probe does not derive its expectation from.** `geometry.mjs` computes `expectedCols` from the
+layout, so breaking the *layout* would move both sides together and pass no matter what the code
+did. `VERIFY_PROBE=1` instead patches `CanvasRenderingContext2D.prototype.drawImage` to halve the
+destination width — a broken compositor without touching the compositor — and asserts the probe
+reports FAIL. Run it after changing a probe:
+
+```bash
+PORT=<port> VERIFY_PROBE=1 node test/app/geometry.mjs   # exits 0 only if the probe caught it
+```
+
+**The probe surface is opt-in.** `window.bayEngine` only exists when `localStorage['bay.debug']`
+is `'1'`, so it is absent from a release build unless someone deliberately sets it. `cdp.mjs`
+sets the flag and reloads before waiting for the engine; any new probe should use `attach()`
+rather than connecting by hand, or it will find no handle and report a dead engine.

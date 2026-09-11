@@ -29,6 +29,27 @@ const placed = await evaluate(`(async () => {
 })()`)
 await new Promise((r) => setTimeout(r, 2500))
 
+/**
+ * Self-check: break the draw and confirm the probe notices.
+ *
+ * This narrows `drawImage`'s destination rect at runtime, which is a broken compositor
+ * without touching the compositor. It has to break the *draw* and not the *layout* —
+ * `expectedCols` is derived from the layout, so moving both together would pass whatever
+ * the code did, which is the tautology this check exists to avoid.
+ */
+if (process.env.VERIFY_PROBE === '1') {
+  await evaluate(`(() => {
+    const proto = CanvasRenderingContext2D.prototype
+    if (!proto.__bayOriginalDrawImage) proto.__bayOriginalDrawImage = proto.drawImage
+    proto.drawImage = function (image, x, y, w, h) {
+      return proto.__bayOriginalDrawImage.call(this, image, x, y, w / 2, h)
+    }
+    window.bayEngine.engine.redraw()
+    return true
+  })()`)
+  await new Promise((r) => setTimeout(r, 1200))
+}
+
 const result = await evaluate(`(() => {
   const { store } = window.bayEngine
   const st = store.getState()
@@ -63,4 +84,10 @@ for (const b of result.profile.bands) {
 }
 console.log(ok ? '\nPASS: the drawn rect matches the layout' : '\nFAIL: drawn rect does not match the layout')
 close()
+if (process.env.VERIFY_PROBE === '1') {
+  // Inverted: under a deliberately broken draw, a passing probe is the failure.
+  console.log(ok ? 'SELF-CHECK FAILED: the probe cannot see a halved destination rect'
+                 : 'SELF-CHECK PASSED: the probe detects a broken draw')
+  process.exit(ok ? 1 : 0)
+}
 process.exit(ok ? 0 : 1)
