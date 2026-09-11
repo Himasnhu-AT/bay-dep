@@ -85,6 +85,19 @@ export class Compositor {
    * still needs two elements; that is a pool change, and nothing in the product asks for it
    * yet. What this guarantees is that asking for it degrades to a stale frame rather than
    * to an empty preview.
+   *
+   * **The hazard is a property of the frame, not of the project, and that distinction cost
+   * most of the time spent finding this.** A project holding *one* clip is not safe: placing
+   * that same clip a second time is an ordinary edit, and the moment both items sit under
+   * the playhead there are two targets for one element. The repro everyone chased looked
+   * like a single-item timeline because the *fixture on disk* held one item — measured at
+   * the instant the canvas went blank, the timeline held two, both on the same asset, at
+   * 20s and 0s. Nothing about a one-item file prevents this; only a one-item *frame* does.
+   *
+   * That state is also easy to measure away by accident: attaching a debugger through
+   * `cdp.mjs` reloads the page, `project.initial()` restores the file's one item, and the
+   * second item is gone before anyone can see it. Inspect without reloading, or the
+   * evidence destroys itself.
    */
   readonly #seeks = new Map<string, SeekState>()
 
