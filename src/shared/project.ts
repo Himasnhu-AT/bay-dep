@@ -69,6 +69,59 @@ export interface Layout {
   rotation: number
 }
 
+/**
+ * How a text item is drawn.
+ *
+ * **On the item rather than the asset, and the reason is not aesthetic.** No tool in the MCP
+ * catalog writes to an `Asset` — so style on the asset would mean an agent can place a title
+ * and never colour it, which is exactly the gap this exists to close. It would need a
+ * fifteenth tool to reach, and a half-reachable feature is worse than an absent one.
+ *
+ * The model's own rule says the same thing from the other direction: the source lives on the
+ * asset, the appearance on the item. A text asset has no file — `path` is null and the string
+ * *is* the source — so font, colour and alignment are not the source, they are how this
+ * appearance is drawn. `layout` is already on the item, and font size interacts directly with
+ * that box; splitting the look across both types would leave half on each.
+ *
+ * **Optional, so it costs nothing to add.** A required field would touch fifteen construction
+ * sites across fourteen files and need a migration; `undefined` means exactly the look that
+ * shipped before this existed.
+ *
+ * **Nested nullable sub-objects rather than sixteen flat fields**, so "off" is one `null` and
+ * a partial update merges the way `layout` already does — an agent sets `{ color: '#fff' }`
+ * without restating the rest.
+ *
+ * Known and deliberately unsolved: a caption track is two hundred items wanting one style,
+ * and per-item style means two hundred identical copies. Fine for now — an agent loops, the
+ * UI multi-selects — but if captions are built on this, a shared style reference is the thing
+ * that will be missing. Better to know that now than two hundred items later.
+ */
+export interface TextStyle {
+  /** A stack. Must be installed on the machine; there are no webfonts here. */
+  fontFamily: string
+  /**
+   * Canvas pixels, explicit rather than derived.
+   *
+   * Auto-shrink remains the last resort *after* wrapping, and when it fires it must be
+   * reported: a title silently rendered at 40% of the size asked for is a lie the agent
+   * cannot see, and the same shape as a playhead that clamps without saying so.
+   */
+  fontSize: number
+  /** 100..900. */
+  fontWeight: number
+  italic: boolean
+  color: string
+  align: 'left' | 'center' | 'right'
+  verticalAlign: 'top' | 'middle' | 'bottom'
+  /** Multiple of `fontSize`. */
+  lineHeight: number
+  /** Canvas pixels. */
+  letterSpacing: number
+  stroke: { color: string; width: number } | null
+  shadow: { color: string; blur: number; offsetX: number; offsetY: number } | null
+  background: { color: string; padding: number; radius: number } | null
+}
+
 export interface Item {
   id: string
   assetId: string
@@ -86,6 +139,33 @@ export interface Item {
   fadeOutFrames: Frames
   /** Playback rate multiplier. 1 is source speed. */
   speed: number
+  /**
+   * Text styling. Only meaningful when the item's asset is `kind: 'text'`; absent elsewhere,
+   * and absent on text items written before this field existed.
+   */
+  text?: TextStyle
+}
+
+/**
+ * The defaults a text item takes when nothing has been chosen — and, exactly, the look that
+ * shipped before `TextStyle` existed. Pinned as a function rather than a shared constant so
+ * one item's edits can never reach another's.
+ */
+export function defaultTextStyle(fontSize = 96): TextStyle {
+  return {
+    fontFamily: 'system-ui, -apple-system, Helvetica, Arial, sans-serif',
+    fontSize,
+    fontWeight: 600,
+    italic: false,
+    color: '#FFFFFF',
+    align: 'center',
+    verticalAlign: 'middle',
+    lineHeight: 1.2,
+    letterSpacing: 0,
+    stroke: null,
+    shadow: null,
+    background: null
+  }
 }
 
 export interface Track {
