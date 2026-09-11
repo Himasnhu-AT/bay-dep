@@ -182,11 +182,24 @@ export async function requirePrecondition(evaluate, label, expression, { timeout
  *   1  measured, and it is wrong        <- a real finding about the code
  *   2  could not measure                <- a finding about the harness
  */
-export async function runProbe(body) {
+export async function runProbe(body, { timeoutMs = 120_000 } = {}) {
+  // The watchdog is not belt and braces; it is the difference between a verdict and exit 13.
+  // A body whose promise never settles lets the event loop empty, and Node then reports
+  // "unsettled top-level await" with a status no caller interprets and a message naming the
+  // harness rather than the check. A timeout that rejects is still a verdict.
+  let timer
+  const watchdog = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new PreconditionError('the probe did not finish', `no verdict after ${timeoutMs}ms`)),
+      timeoutMs
+    )
+  })
   try {
-    const ok = await body()
+    const ok = await Promise.race([body(), watchdog])
+    clearTimeout(timer)
     process.exit(ok ? 0 : 1)
   } catch (error) {
+    clearTimeout(timer)
     if (error instanceof PreconditionError) {
       console.error(`\nCANNOT MEASURE: ${error.message}`)
       console.error('This is a setup failure, not a fault in the code under test.')

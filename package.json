@@ -14,8 +14,8 @@
     "build": "pnpm typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --import ./src/test-hooks.mjs --test --test-timeout=30000 \"src/**/*.test.ts\"",
-    "pack": "pnpm build && electron-builder --dir",
-    "dist": "pnpm build && electron-builder"
+    "bundle": "pnpm build && electron-builder --dir",
+    "release": "pnpm build && electron-builder"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

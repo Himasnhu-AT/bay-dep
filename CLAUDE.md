@@ -29,9 +29,16 @@ pnpm dev              # electron-vite dev server + app, with HMR in the renderer
 pnpm build            # typecheck, then build main/preload/renderer into out/
 pnpm typecheck        # tsc over both projects; the renderer and node halves are separate
 pnpm test             # the whole suite, on node:test — no test framework in the tree
-pnpm pack             # unpacked app bundle, for checking real app identity
-pnpm dist             # signed/packaged artifact via electron-builder
+pnpm bundle           # unpacked app bundle, for checking real app identity
+pnpm release          # packaged artifact via electron-builder (unsigned; see below)
 ```
+
+**The bundle script is not called `pack`, and must not be.** `pnpm pack` is a pnpm **built-in** —
+the npm-style tarball command — and it shadows any script of that name without a word. Running it
+tarballed the entire repo, `website/` and `workspace/` included, and dropped a `.tgz` in the root.
+`pnpm run pack` would have reached the script, but a name that does the wrong thing when typed the
+obvious way is a trap, so the script is `bundle`. Same reasoning retired `dist`, which collides with
+the gitignored `dist/` directory the Rust tree writes into.
 
 **"Tests green" and "tree green" are different claims here, and the difference is structural.**
 `pnpm test` runs under plain Node, so it cannot load any module that imports `electron` — `store.ts`,

@@ -87,7 +87,18 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
           icon={track.locked ? <Lock className="size-3" /> : <LockOpen className="size-3" />}
           onClick={() => patchTrack(track.id, { locked: !track.locked })}
         />
-        {video ? (
+        {/*
+          `hidden` governs picture, `muted` governs sound, and they are independent — so a
+          video track carrying audio gets both. Hiding a layer to see what is under it must
+          not silently change the mix you are judging.
+
+          Audio tracks get no eye because they have no picture: `itemsAtFrame` only honours
+          `hidden` for `kind === 'video'`, so an eye there would be a dead control. Mute is
+          the mirror image and is *not* dead on a video track — the audio engine walks
+          tracks directly rather than through `itemsAtFrame` and applies `!track.muted` to
+          every kind.
+        */}
+        {video && (
           <IconButton
             size="xs"
             tooltipSide="right"
@@ -96,16 +107,15 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
             icon={track.hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
             onClick={() => patchTrack(track.id, { hidden: !track.hidden })}
           />
-        ) : (
-          <IconButton
-            size="xs"
-            tooltipSide="right"
-            label={track.muted ? `Unmute ${track.name}` : `Mute ${track.name}`}
-            active={track.muted}
-            icon={track.muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
-            onClick={() => patchTrack(track.id, { muted: !track.muted })}
-          />
         )}
+        <IconButton
+          size="xs"
+          tooltipSide="right"
+          label={track.muted ? `Unmute ${track.name}` : `Mute ${track.name}`}
+          active={track.muted}
+          icon={track.muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+          onClick={() => patchTrack(track.id, { muted: !track.muted })}
+        />
         <IconButton
           size="xs"
           variant="danger"

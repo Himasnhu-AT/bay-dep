@@ -22,6 +22,35 @@ await runProbe(async () => {
 
 const skipPlacement = process.env.VERIFY_PRECONDITION === '1'
 
+// Only for testing the self-check itself: puts an item on the timeline first, so
+// VERIFY_PRECONDITION can be exercised from the state a seeded project produces.
+if (process.env.SEED_ITEM === '1') {
+  await evaluate(`(async () => {
+    const { store } = window.bayEngine
+    const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+    store.getState().addAssets([imported[0].asset])
+    store.getState().placeAsset(imported[0].asset.id, 0)
+    return true
+  })()`)
+  await new Promise((r) => setTimeout(r, 1500))
+}
+
+// The self-check must fail from *any* starting state, not just from an empty project.
+// Placing nothing is not enough: against a seeded project that already has an item under the
+// playhead the precondition is satisfied before the probe does anything, and the mode proves
+// nothing while looking like it passed. So it empties the timeline explicitly.
+if (skipPlacement) {
+  await evaluate(`(() => {
+    const { store } = window.bayEngine
+    const st = store.getState()
+    store.getState().setProject({
+      ...st.project,
+      timelines: st.project.timelines.map(t => ({ ...t, tracks: t.tracks.map(k => ({ ...k, items: [] })) }))
+    })
+    return true
+  })()`)
+}
+
 const placed = skipPlacement
   ? { assetId: null, source: ['-', '-'] }
   : await evaluate(`(async () => {
