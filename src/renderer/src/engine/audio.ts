@@ -41,6 +41,48 @@ export interface TrackLevel {
   rms: number
 }
 
+/** One item's sound at a frame, and how the track's flags route it. */
+export interface AudioRouting {
+  item: Item
+  track: Track
+  asset: Asset
+  /**
+   * True when this item reaches its track's analyser — i.e. the meter shows it. Mute does
+   * not switch this off: the meter must keep showing what is on a muted track, or it is
+   * lying about the material.
+   */
+  metered: boolean
+  /** True when the track's sound reaches the master. This is what `muted` governs. */
+  audible: boolean
+}
+
+/**
+ * Every item contributing sound at `frame`, with its routing.
+ *
+ * The model this encodes, and it is the whole reason this is a function rather than a loop
+ * buried in `update`: **`hidden` governs picture only, `muted` governs sound only, and both
+ * apply to tracks of either kind.** Two independent properties, two independent outputs.
+ * Hiding a layer to see what is under it must not change the mix you are judging, and
+ * silencing a video track that carries speech must not require blanking its picture.
+ *
+ * So this deliberately does *not* consult `hidden`, and deliberately does not go through
+ * `itemsAtFrame`, which filters by both flags for the compositor's benefit.
+ */
+export function audioRoutingAt(project: Project, timeline: Timeline, frame: number): AudioRouting[] {
+  const out: AudioRouting[] = []
+  for (const track of timeline.tracks) {
+    for (const item of track.items) {
+      if (frame < item.from || frame >= itemEnd(item)) continue
+      const asset = findAsset(project, item.assetId)
+      // An asset that failed to probe has no decodable audio; ffmpeg refuses to open it,
+      // and on the export side one bad input fails the whole mix.
+      if (!asset || asset.error || !asset.hasAudio) continue
+      out.push({ item, track, asset, metered: true, audible: !track.muted })
+    }
+  }
+  return out
+}
+
 export interface AudioUpdate {
   project: Project
   timeline: Timeline
@@ -124,18 +166,18 @@ export class AudioEngine {
     const active = new Set<string>()
     const liveTracks = new Set<string>()
 
+    // Node setup and mute first, for every track — including tracks with no items, whose
+    // meters must still exist and read zero rather than vanish.
     for (const track of timeline.tracks) {
       liveTracks.add(track.id)
-      // Walked directly rather than through `itemsAtFrame`, which drops muted tracks. A
-      // muted track still has to reach its analyser, or the meter goes dark and the user
-      // cannot see what they muted.
       const nodes = this.#trackNodes(context, track)
       this.#setAudible(nodes, !track.muted)
+    }
 
-      for (const item of track.items) {
-        if (frame < item.from || frame >= itemEnd(item)) continue
-        const asset = findAsset(project, item.assetId)
-        if (!asset || asset.error || !asset.hasAudio) continue
+    {
+      for (const { item, track, asset } of audioRoutingAt(project, timeline, frame)) {
+        const nodes = this.#tracks.get(track.id)
+        if (!nodes) continue
 
         const entry = this.#pool.acquire(asset)
         const element = entry.element

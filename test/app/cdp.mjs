@@ -53,11 +53,26 @@ function socket(url) {
   })
   return {
     ready,
-    send(method, params) {
+    /**
+     * Every call is bounded. The close handler above covers a socket that died; it does not
+     * cover a socket that is still open while the page behind it has stopped answering —
+     * which is what a reload, a crashed renderer or a frozen compositor look like from here.
+     * An unbounded call leaves its promise pending, the event loop empties, and Node exits
+     * 13 with "unsettled top-level await": a status no caller interprets, and a message
+     * naming the harness rather than the check. A rejection is a verdict; a hang is not.
+     */
+    send(method, params, timeoutMs = 30_000) {
       id += 1
       const mine = id
       return new Promise((resolve, reject) => {
-        pending.set(mine, { resolve, reject })
+        const timer = setTimeout(() => {
+          pending.delete(mine)
+          reject(new Error(`CDP ${method} did not answer within ${timeoutMs}ms`))
+        }, timeoutMs)
+        pending.set(mine, {
+          resolve: (value) => { clearTimeout(timer); resolve(value) },
+          reject: (error) => { clearTimeout(timer); reject(error) }
+        })
         ws.send(JSON.stringify({ id: mine, method, params }))
       })
     },
@@ -75,13 +90,16 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
   await cdp.send('Runtime.enable', {})
   await cdp.send('Page.enable', {})
 
-  const evaluate = async (expression, timeout = 60_000) => {
+  const evaluate = async (expression, timeout = 30_000) => {
+    // Two bounds, deliberately: `timeout` is Chromium's cap on running the expression, and
+    // the third argument is our cap on ever hearing back at all. The first cannot fire if
+    // the page has stopped processing CDP messages, which is exactly the case that hangs.
     const result = await cdp.send('Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
       timeout
-    })
+    }, timeout + 15_000)
     if (result.exceptionDetails) {
       throw new Error(
         result.result?.description ??
@@ -103,7 +121,7 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
       await new Promise((r) => setTimeout(r, 250))
     }
     throw new Error('window.bayEngine never appeared - is ${PROBE_FLAG} set and the build current?')
-  })()`)
+  })()`, 45_000)
 
   return { send: cdp.send, evaluate, close: cdp.close }
 }

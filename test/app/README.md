@@ -204,3 +204,48 @@ exits 2; the second still detects a halved destination rect and exits 0.
 **And read the probe's real exit code.** `node probe.mjs | head` reports `head`'s status, not the
 probe's — the same pipe trap the Rust tree records for `./test.sh | tail`. It has already caused
 one probe to be reported as a broken gate when it was working correctly.
+
+
+## Bound every CDP call, or a probe exits 13 instead of reporting
+
+A probe reported `exit 13` with no verdict and one line of output:
+
+    Warning: Detected unsettled top-level await at geometry.mjs:19
+    const { evaluate, close } = await attach()
+
+**Exit 13 is Node's code for an unsettled top-level await.** The hang was not in the check or
+in `runProbe` — it was in the transport. `cdp.mjs` rejected every pending call when the socket
+*closed*, which covers a dead renderer; it did not cover a socket that is still open while the
+page behind it has stopped answering, which is what a reload, a crashed renderer or a frozen
+compositor look like from here. The call's promise stayed pending, the event loop emptied, and
+Node exited with a status no caller interprets and a message naming the harness rather than the
+check. That is strictly worse than the wrong verdict it replaced: a wrong verdict at least says
+something about the system.
+
+Every `cdp.send` now takes a timeout and rejects when it expires, `Runtime.evaluate` carries
+both Chromium's own execution cap *and* an outer cap on ever hearing back, and `runProbe` has a
+watchdog so the body always settles. **A rejection is a verdict; a hang is not.**
+
+Note that Chromium's `Runtime.evaluate` `timeout` parameter cannot save you here — it bounds
+running the expression, and it cannot fire if the page has stopped processing CDP messages at
+all. Two different bounds for two different failures.
+
+## A self-check needs to work from every starting state
+
+`VERIFY_PRECONDITION=1` originally worked by *placing nothing* and waiting for "an item under
+the playhead" to fail. Against an empty project that is a real test. Against a **seeded** project
+— one loaded from disk with a clip already on the timeline — the precondition is satisfied before
+the probe does anything, the mode proves nothing, and it looks like it passed.
+
+A self-check that only works from one starting state has a precondition of its own, undeclared.
+The mode now **empties the timeline explicitly**, so it fails deterministically from any state,
+and it is verified from both:
+
+```bash
+PORT=<p> VERIFY_PRECONDITION=1 node test/app/geometry.mjs               # empty start  -> exit 2
+PORT=<p> SEED_ITEM=1 VERIFY_PRECONDITION=1 node test/app/geometry.mjs   # item present -> exit 2
+```
+
+Run each mode against a **fresh app instance**. Several probes in one instance contaminate each
+other — one run's clip persists into the next, and a run that kills the app makes the following
+one report "no renderer target", which reads like a probe fault.
