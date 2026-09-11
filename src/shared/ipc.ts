@@ -162,6 +162,21 @@ export interface BayApi {
      */
     storageReady(): Promise<{ ready: boolean; error: string | null }>
     /**
+     * Whether bay can be driven over MCP, and whether anything has.
+     *
+     * `connectionsSeen` is the reason this is not a boolean. "The socket never opened" and
+     * "the socket is fine and no agent has ever connected" are indistinguishable from the UI —
+     * nothing is happening either way — and that is precisely the shape that let a database
+     * which had never loaded pass for one nobody had used. `socketPath` is here because it is
+     * what a user pastes into an MCP client's config, so a status line can offer it.
+     */
+    mcpReady(): Promise<{
+      ready: boolean
+      error: string | null
+      socketPath: string | null
+      connectionsSeen: number
+    }>
+    /**
      * Menu and document-open commands. Returns an unsubscribe function.
      *
      * Deliberately the same push-and-unsubscribe shape as `export.onProgress` — one listener
@@ -256,6 +271,7 @@ export const IPC = {
   appPlatform: 'app:platform',
   appMediaToolsReady: 'app:media-tools-ready',
   appStorageReady: 'app:storage-ready',
+  appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
 
   /** main -> renderer: one tool call, carrying its own id. */

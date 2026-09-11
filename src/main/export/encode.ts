@@ -57,6 +57,16 @@ interface Job {
   sender: WebContents
   cancelled: boolean
   failed: boolean
+  /**
+   * Why the job failed, kept so `pushFrame` and `finish` can refuse with a reason.
+   *
+   * A failed job stays in the map rather than being deleted. Deleting it makes it
+   * indistinguishable from a cancelled one, and both then return *silently* — so a renderer
+   * that did not act on the `failed` event would composite an entire timeline into nothing and
+   * report success. That is the failure this whole destination check exists to prevent,
+   * reappearing one layer down.
+   */
+  failureReason: string | null
   /** Resolves when the encoder process has exited, whatever the reason. */
   exited: Promise<void> | null
   /** When this job last sent progress. Per job, so two exports do not throttle each other. */
@@ -244,6 +254,7 @@ export async function start(request: ExportRequest, sender: WebContents): Promis
     sender,
     cancelled: false,
     failed: false,
+    failureReason: null,
     exited: null,
     lastEmitMs: 0
   }
@@ -268,7 +279,7 @@ export async function start(request: ExportRequest, sender: WebContents): Promis
   const problem = await checkExportDestination(destination)
   if (problem) {
     job.failed = true
-    jobs.delete(job.id)
+    job.failureReason = problem.message
     emit(job, {
       progress: null,
       framesDone: 0,
@@ -338,7 +349,10 @@ const PROGRESS_INTERVAL_MS = 120
 
 export async function pushFrame(frame: ExportFrame): Promise<void> {
   const job = jobs.get(frame.jobId)
-  if (!job || job.cancelled || job.failed) return
+  if (!job || job.cancelled) return
+  // A failed job refuses loudly. Cancellation stays silent above it, because cancelling is
+  // something the user asked for and the renderer's loop is expected to notice on its own.
+  if (job.failed) throw new Error(job.failureReason ?? 'This export has already failed.')
   if (AUDIO_ONLY.has(job.request.format)) return
   if (!job.child) throw new Error('That export job has no encoder running.')
 
@@ -464,6 +478,10 @@ async function moveInto(source: string, target: string): Promise<void> {
 export async function finish(jobId: string): Promise<void> {
   const job = jobs.get(jobId)
   if (!job || job.cancelled) return
+  if (job.failed) {
+    jobs.delete(jobId)
+    throw new Error(job.failureReason ?? 'This export has already failed.')
+  }
 
   try {
     if (job.child) {

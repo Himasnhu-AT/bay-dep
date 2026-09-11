@@ -206,6 +206,16 @@ underneath an opaque full-frame clip. The measurement traps are collected in
 [`test/app/README.md`](test/app/README.md); read it before writing a probe, and break the thing on
 purpose to confirm the probe notices.
 
+**"The other component happens to handle it" is not "this component reports it."** The distance
+between those two is where most of this file's entries live. The export destination check first
+deleted a failed job from the map — which made a failed job indistinguishable from a cancelled
+one, and `pushFrame` and `finish` both return *silently* for a job they cannot find. A renderer
+that ignored the `failed` event would have composited an entire timeline into nothing, received no
+error from hundreds of `pushFrame` calls, and reported success: the exact failure the check exists
+to prevent, reappearing inside the fix for it. It was nearly left that way because the engine's
+export loop does await each push and does watch progress, so in practice it would have caught it.
+Design each side as though the other is wrong, because one day a refactor will make it so.
+
 **A hang is not a failure until something makes it one, and `cancelled` is a third outcome.** A
 promise that never settles produces no answer rather than a wrong one, and Node's summary reports
 it as `pass 7 / fail 0 / cancelled 1` — so anything reading those lines for `fail 0` calls it

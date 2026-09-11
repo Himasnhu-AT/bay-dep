@@ -3,27 +3,53 @@
  *
  * `read_project` is the one everything else depends on: every id the write tools accept
  * comes from here, so its job is to make a second orienting call unnecessary. That shapes
- * two decisions. Item ends are included even though they are `from + durationInFrames`,
- * because an agent planning an insert needs them and arithmetic is somewhere it can go
- * wrong silently. And asset durations are reported **in frames at this timeline's rate**
- * alongside seconds, because everything else in the surface is frames and converting is the
- * single most likely place for an agent to guess.
+ * three decisions, each measured on a 200-clip timeline.
+ *
+ * **Item ends are included** even though they are `from + durationInFrames`. It costs 9% of
+ * the payload; an agent planning an insert needs them, and arithmetic is somewhere it goes
+ * wrong silently. Cutting a correctness aid to save 9% would be optimising the number that
+ * is easy to see rather than the one that matters.
+ *
+ * **Asset durations are in frames at this timeline's rate**, alongside seconds, because
+ * everything else in the surface is frames and converting is where an agent guesses.
+ *
+ * **Assets are listed once and items carry an id.** The nested `{ id, name, kind }` block
+ * used to repeat identically on every item — the same 36-character uuid two hundred times,
+ * 31% of a 200-clip payload (36,286 bytes down to 25,189). It is the rare change where the
+ * cheap win and the readable one are the same edit: the repetition was noise between the
+ * fields that matter.
  */
 
 import { allItems, findAsset, itemEnd, timelineDuration, type Item } from '@shared/project'
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline } from './helpers'
 
 function describeItem(item: Item): Record<string, unknown> {
-  const asset = findAsset(project(), item.assetId)
   return {
     id: item.id,
     from: item.from,
     durationInFrames: item.durationInFrames,
     endFrame: itemEnd(item),
-    asset: asset
-      ? { id: asset.id, name: asset.name, kind: asset.kind }
-      : { id: item.assetId, name: null, kind: null, missing: true }
+    assetId: item.assetId,
+    // The one thing that stays on the item rather than moving to the lookup. A missing
+    // asset is rare, so it costs nothing here, and it is a correctness signal an agent
+    // scanning items must not have to resolve an id to notice.
+    ...(findAsset(project(), item.assetId) ? {} : { assetMissing: true })
   }
+}
+
+/** The assets the timeline actually uses, once each, for `assetId` to be resolved against. */
+function assetsInUse(tl: ReturnType<typeof timeline>): Record<string, unknown> {
+  const used: Record<string, unknown> = {}
+  for (const track of tl.tracks) {
+    for (const item of track.items) {
+      if (used[item.assetId]) continue
+      const asset = findAsset(project(), item.assetId)
+      used[item.assetId] = asset
+        ? { name: asset.name, kind: asset.kind, ...(asset.error ? { error: asset.error } : {}) }
+        : { name: null, kind: null, missing: true }
+    }
+  }
+  return used
 }
 
 export function readProject(): Record<string, unknown> {
@@ -44,6 +70,9 @@ export function readProject(): Record<string, unknown> {
       durationInFrames: timelineDuration(tl)
     },
     playhead: state.playhead,
+    // Keyed by the `assetId` each item carries. Only what the timeline uses — the full pool,
+    // including anything imported but not placed, is `browse_assets`.
+    assets: assetsInUse(tl),
     tracks: tl.tracks.map((track) => ({
       id: track.id,
       kind: track.kind,

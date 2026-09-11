@@ -19,7 +19,7 @@ import { waveform } from './media/waveform'
 import { importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
-import { settleToolCall } from './mcp/server'
+import { mcpStatus, settleToolCall } from './mcp/server'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
 type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall'
@@ -30,6 +30,7 @@ interface ChannelApi {
   appPlatform: BayApi['app']['platform']
   appMediaToolsReady: BayApi['app']['mediaToolsReady']
   appStorageReady: BayApi['app']['storageReady']
+  appMcpReady: BayApi['app']['mcpReady']
 
   mediaImportDialog: BayApi['media']['importDialog']
   mediaImportPaths: BayApi['media']['importPaths']
@@ -76,6 +77,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     const tools = mediaToolsReady()
     return { ready: tools.ready, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe }
   },
+  appMcpReady: async () => mcpStatus(),
   appStorageReady: async () => {
     // Opens the database on first ask if it is not open yet, so the status is the real one
     // rather than a guess made before anything tried.

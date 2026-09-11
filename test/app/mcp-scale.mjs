@@ -133,29 +133,23 @@ console.log(`                                     ${String(total - rereads + pay
 console.log('\nshape   where the 200-clip payload goes')
 const full = (await call('read_project')).value
 const variants = {
-  'as returned today': full,
-  'items keep assetId + name, no nested object': {
+  'as returned today (assets listed once)': full,
+  're-nested: the asset block on every item': {
     ...full,
+    assets: undefined,
     tracks: full.tracks.map((t) => ({
       ...t,
-      items: t.items.map(({ asset, ...rest }) => ({ ...rest, assetId: asset.id, assetName: asset.name }))
+      items: t.items.map(({ assetId, ...rest }) => ({
+        ...rest,
+        asset: { id: assetId, ...(full.assets[assetId] ?? {}) }
+      }))
     }))
   },
-  'items keep assetId only; assets listed once at top level': {
-    ...full,
-    assets: Object.fromEntries(
-      full.tracks.flatMap((t) => t.items).map((i) => [i.asset.id, { name: i.asset.name, kind: i.asset.kind }])
-    ),
-    tracks: full.tracks.map((t) => ({
-      ...t,
-      items: t.items.map(({ asset, ...rest }) => ({ ...rest, assetId: asset.id }))
-    }))
-  },
-  'the same, without endFrame (derivable)': {
+  'without endFrame (derivable, kept on purpose)': {
     ...full,
     tracks: full.tracks.map((t) => ({
       ...t,
-      items: t.items.map(({ asset, endFrame, ...rest }) => ({ ...rest, assetId: asset.id }))
+      items: t.items.map(({ endFrame, ...rest }) => rest)
     }))
   }
 }

@@ -78,6 +78,21 @@ const read = await call('read_project')
 const idFromRead = read.ok ? read.value.tracks.flatMap((t) => t.items).map((i) => i.id)[0] : null
 check('read_project returns the id place_asset created', idFromRead === itemId, `${idFromRead}`)
 
+// Assets are listed once and items carry an id; the join has to actually work, or the
+// dedupe traded 31% of the payload for a name the agent cannot resolve.
+const itemsInRead = read.ok ? read.value.tracks.flatMap((t) => t.items) : []
+const firstItem = itemsInRead[0]
+check('items carry assetId rather than a repeated asset block',
+  !!firstItem && typeof firstItem.assetId === 'string' && firstItem.asset === undefined,
+  firstItem ? `assetId ${String(firstItem.assetId).slice(0, 12)}` : 'no items')
+check('every assetId resolves against the top-level assets map',
+  itemsInRead.length > 0 && itemsInRead.every((i) => !!read.value.assets?.[i.assetId]?.name),
+  read.ok ? `${Object.keys(read.value.assets ?? {}).length} assets listed for ${itemsInRead.length} items` : '')
+const browsedName = (await call('browse_assets')).value?.assets?.find((a) => a.id === assetId)?.name
+check('the resolved name matches browse_assets',
+  !!firstItem && read.value.assets[firstItem.assetId].name === browsedName,
+  `${browsedName}`)
+
 // -- prefix ids --------------------------------------------------------------
 const byPrefix = await call('inspect_item', { itemId: String(itemId).slice(0, 10) })
 check('a 10-character id prefix resolves', byPrefix.ok === true,

@@ -11,8 +11,16 @@
  * "invalid path" ends the attempt. Both are correct refusals and only one is usable.
  *
  * Mutation-tested: the directory check pointed at the file instead of its parent, the
- * writability check dropped, the isDirectory check dropped, and every message replaced with a
- * generic one. All fail here.
+ * writability check dropped, the isDirectory check dropped, the empty-path guard removed, and
+ * every message replaced with a generic one. All fail here.
+ *
+ * The check runs in `start()` before anything is spawned or composited, which is the whole
+ * point — validating downstream would still charge the user for the render, and the fix would
+ * *look* like it worked because the error message improved. `encode.ts` also keeps a failed
+ * job in its map rather than deleting it, so `pushFrame` and `finish` refuse with the reason:
+ * a deleted job is indistinguishable from a cancelled one, both return silently, and a
+ * renderer that ignored the failed event would composite a whole timeline into nothing and
+ * report success — the same failure one layer down.
  *
  * Run with `pnpm test`, or on its own:
  *   node --import ./src/test-hooks.mjs --test src/main/export/destination.test.ts
