@@ -20,15 +20,47 @@ canvas. A database that could not load in Electron while passing every test unde
 The unit suite cannot reach any of that, and the honest response is a second gate rather than a
 fake DOM whose fidelity is itself the thing under test.
 
+## Launch the app with the throttling flags
+
+Trap 1 stops being a trap. Found by `interface`: under a fullscreen terminal macOS marks the
+Electron window occluded, Chromium freezes `requestAnimationFrame`, and `Page.bringToFront` is
+**not** enough to undo it — the window reports `visibilityState: 'hidden'` and `rafOk: false`
+with front-ing already called. Every probe then measures a dead clock.
+
+```bash
+pnpm build
+./node_modules/.bin/electron . \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/bay-probe \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding \
+  --disable-background-timer-throttling &
+node test/app/<probe>.mjs
+```
+
+With those flags `visibilityState` is `visible`, `hasFocus()` is true and rAF runs regardless of
+what is in front, and `ticks.mjs` reports the same numbers with and without `bringToFront`.
+
+Use your own port and `--user-data-dir`, and kill the pid you started — several agents drive this
+app at once, and a shared port or profile makes two runs fight over one database lock.
+
+**Leave the flags off when you are deliberately testing occlusion behaviour.** They are the thing
+that suppresses it.
+
+
 ## The traps, so nobody re-derives them
 
 Each of these produced a confident, wrong conclusion before it was understood. They are listed in
 the order they cost the most time.
 
 1. **An occluded window stops `requestAnimationFrame`.** A backgrounded app has a frozen clock,
-   zero ticks, and a preview that never updates — indistinguishable from a dead engine. Call
-   `Page.bringToFront` and wait before measuring anything about playback. A `<video>` element is
-   *not* throttled the same way, so audio runs on over a frozen picture.
+   zero ticks, and a preview that never updates — indistinguishable from a dead engine. A
+   `<video>` element is *not* throttled the same way, so audio runs on over a frozen picture.
+   `Page.bringToFront` is **not** sufficient: under a fullscreen terminal the window stays
+   occluded and reports `visibilityState: 'hidden'` with fronting already called. Launch with the
+   flags above. This one cost three people a combined afternoon and produced two wrong bug
+   reports — a "clock that never ticks" and a "playback that never advances", both of which were
+   a covered window.
 
 2. **`document.querySelectorAll('video')` cannot see the decoders.** The media pool keeps its
    elements detached from the document on purpose — they are decoders, not markup. An empty
@@ -42,7 +74,9 @@ the order they cost the most time.
    mean is nearly as bad — the mean of a correct frame and of a frame drawn into one third of the
    canvas both come out low. **Per-band `%nonZero` is the honest measure**: real footage has
    scattered non-zero pixels everywhere, so a band at exactly 0.0% is an absence of drawing, and
-   a hard edge between 0.0% and 100% bands is a geometry fault rather than dark content.
+   a hard edge between 0.0% and 100% bands looks like a geometry fault rather than dark
+   content. **Read trap 7 before acting on that** — it is true only when the source is known to
+   have something there, and assuming it produced the single most expensive error in this file.
 
 5. **A timeline background colour is unobservable under a full-frame clip.** The compositor fills
    the background and paints the item over every pixel of it, so setting the background and
@@ -52,16 +86,7 @@ the order they cost the most time.
    probes were lost to it in one session. Launch with your own `--user-data-dir` and
    `--remote-debugging-port`, and kill the pid you started.
 
-## The standing rule
-
-A probe is subject to the same discipline as a test: **it must be shown capable of detecting the
-thing it reports on.** Three of the wrong conclusions above came from instruments that could not
-observe what they claimed was absent. Before trusting a probe, break the thing on purpose and
-check the probe notices.
-
-## Two more traps, and the gate
-
-**6. A clip's own black regions defeat lit-pixel extent as a test of geometry.** This was the
+**7. A clip's own black regions defeat lit-pixel extent as a test of geometry.** This was the
 most expensive one: three observers independently measured a vertical clip covering only the
 bottom third of the canvas, with a hard 0.0%-to-100% edge at row 666, and all three concluded
 the compositor was misplacing it. It was not. Decoding the source directly settles it —
@@ -79,7 +104,7 @@ compare it against `left * scale` and `(left + width) * scale`. `geometry.mjs` d
 and prints the band profile beside it, so the vertical story reads as footage rather than as a
 mystery.
 
-**7. A probe must be proven able to see what it reports on — and the break must be on the side
+**8. A probe must be proven able to see what it reports on — and the break must be on the side
 the probe does not derive its expectation from.** `geometry.mjs` computes `expectedCols` from the
 layout, so breaking the *layout* would move both sides together and pass no matter what the code
 did. `VERIFY_PROBE=1` instead patches `CanvasRenderingContext2D.prototype.drawImage` to halve the
@@ -90,7 +115,7 @@ reports FAIL. Run it after changing a probe:
 PORT=<port> VERIFY_PROBE=1 node test/app/geometry.mjs   # exits 0 only if the probe caught it
 ```
 
-**8. Agreement between instruments is not evidence when they share a premise.** Trap 6 was
+**9. Agreement between instruments is not evidence when they share a premise.** Trap 7 was
 believed because three people measured the same boundary independently and got the same answer.
 They were not three observers; they were one method applied three times, and what agreed was the
 assumption underneath it — that a 0.0% band meant nothing had been drawn there. Corroboration only
@@ -103,7 +128,35 @@ The same error has a mirror image, and both bit this project within an hour: a *
 measurement standing beside an unverified premise, lending it authority it had not earned. One
 number checked and one assumed reads exactly like two things checked.
 
+
+## The standing rule
+
+A probe is subject to the same discipline as a test: **it must be shown capable of detecting the
+thing it reports on.** Three of the wrong conclusions above came from instruments that could not
+observe what they claimed was absent. Before trusting a probe, break the thing on purpose and
+check the probe notices.
+
+
 **The probe surface is opt-in.** `window.bayEngine` only exists when `localStorage['bay.debug']`
 is `'1'`, so it is absent from a release build unless someone deliberately sets it. `cdp.mjs`
 sets the flag and reloads before waiting for the engine; any new probe should use `attach()`
 rather than connecting by hand, or it will find no handle and report a dead engine.
+
+
+## An open question this harness cannot answer
+
+`redraw()` in `engine/index.ts` re-arms a frame request that has been outstanding longer than
+250ms, on the theory that a callback queued while hidden can be **dropped** rather than merely
+deferred — which would otherwise latch the flag forever and silently kill every future redraw.
+
+That premise is unproven. Two attempts to falsify it here both failed for the same reason: **the
+page could never be brought back to `visible`.** `window.bay.window.minimise()` hides it, but
+`Page.bringToFront` does not un-minimise; `Page.setWebLifecycleState` freezes it, but restoring to
+`active` left `visibilityState` at `hidden` while the terminal was in front. A callback that has
+not fired while the page is still hidden is indistinguishable from one that is simply waiting.
+
+So the guard is currently unfalsifiable from this harness, which by this project's own standard is
+a reason to suspect it rather than trust it. Settling it needs an environment where occlusion can
+be applied *and removed* on demand. If you can produce one, the experiment is: arm a plain
+`requestAnimationFrame` while hidden, return the page to visible, and check whether it ever fires.
+If it always fires, delete the staleness re-arm.

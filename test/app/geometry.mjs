@@ -13,10 +13,12 @@
  * visible rather than mysterious.
  */
 
-import { attach, CANVAS_PROFILE } from './cdp.mjs'
+import { attach, CANVAS_PROFILE, CANVAS_READY, requirePrecondition, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
 const { evaluate, close } = await attach()
+
+await runProbe(async () => {
 
 const placed = await evaluate(`(async () => {
   const { store } = window.bayEngine
@@ -27,7 +29,24 @@ const placed = await evaluate(`(async () => {
   const itemId = store.getState().placeAsset(asset.id, 0)
   return { assetId: asset.id, itemId, source: [asset.width, asset.height] }
 })()`)
-await new Promise((r) => setTimeout(r, 2500))
+
+// Wait on the preconditions, not on a timer. A fixed sleep is a guess about how long a cold
+// start takes, and when the guess is wrong this probe used to report an unsized 300x150
+// canvas as "the drawn rect does not match the layout" — accusing the compositor of a fault
+// when the compositor had never run.
+if (process.env.VERIFY_PRECONDITION !== '1') {
+  for (const [label, expression] of Object.values(CANVAS_READY)) {
+    await requirePrecondition(evaluate, label, expression)
+  }
+  await requirePrecondition(
+    evaluate,
+    'the clip has decoded a picture to draw',
+    `window.bayEngine.engine.pool.readiness(${JSON.stringify('PLACED_ASSET')}).hasPicture`.replace(
+      JSON.stringify('PLACED_ASSET'),
+      JSON.stringify(placed.assetId)
+    )
+  )
+}
 
 /**
  * Self-check: break the draw and confirm the probe notices.
@@ -88,6 +107,8 @@ if (process.env.VERIFY_PROBE === '1') {
   // Inverted: under a deliberately broken draw, a passing probe is the failure.
   console.log(ok ? 'SELF-CHECK FAILED: the probe cannot see a halved destination rect'
                  : 'SELF-CHECK PASSED: the probe detects a broken draw')
-  process.exit(ok ? 1 : 0)
+  return !ok
 }
-process.exit(ok ? 0 : 1)
+return ok
+
+})
