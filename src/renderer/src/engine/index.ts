@@ -104,6 +104,20 @@ class Engine {
     )
     this.#offs.push(useEditor.subscribe(this.#onStoreChange))
 
+    // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
+    // producing frames while the media elements play on, so the sound runs away from a
+    // frozen picture — measured at 4.5 seconds of drift in six. Pausing is the honest
+    // response for an editor: the alternative is playing something nobody can see.
+    // Whether playback should instead continue in the background is a product decision,
+    // and this is the one place it is made.
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState !== 'hidden') return
+      if (!this.clock.running) return
+      useEditor.getState().setPlaying(false)
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    this.#offs.push(() => document.removeEventListener('visibilitychange', onVisibilityChange))
+
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle) window.bayEngine = { engine: this.handle, store: useEditor }
@@ -162,8 +176,11 @@ class Engine {
       } else {
         this.clock.stop()
         this.audio.stop()
-        // Repaint in scrub mode so the video elements are paused and pinned rather than
-        // left running past the point the user stopped at.
+        // Pause the elements here rather than letting the next draw do it. The next draw
+        // is a `requestAnimationFrame`, and the case that matters most is the one where
+        // rAF has stopped.
+        this.compositor.pauseAll()
+        // Repaint in scrub mode so the picture is pinned to where the user stopped.
         this.redraw()
       }
     }

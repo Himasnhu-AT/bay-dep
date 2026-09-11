@@ -33,6 +33,17 @@ pnpm pack             # unpacked app bundle, for checking real app identity
 pnpm dist             # signed/packaged artifact via electron-builder
 ```
 
+**"Tests green" and "tree green" are different claims here, and the difference is structural.**
+`pnpm test` runs under plain Node, so it cannot load any module that imports `electron` — `store.ts`,
+`ipc.ts`, `index.ts` and the rest of the main process proper are unreachable from the suite at all.
+For those files `pnpm typecheck` is the *only* gate. This is not a coverage gap a test could close;
+it is why the suite once sat at 86/86 green over a type error that made the app unbuildable. Read a
+passing test count as evidence about the pure modules — `serve.ts`, `frame-pipe.ts`, `probe.ts`'s
+`shapeProbe`, `db.ts`, `persistence.ts`, the engine — and about nothing else. The habit that follows:
+when a module matters, find the seam that lets its logic live outside Electron, the way `serve.ts`
+was split from `protocol.ts`. Every such split so far has been a better shape independently of the
+test that motivated it.
+
 `pnpm test` uses Node's built-in runner against Node 26's native type stripping, so no test
 framework enters the dependency tree. The `--import ./src/test-hooks.mjs` is a small resolver
 hook: Node's resolver wants `./serve.ts`, while the project is on `moduleResolution: bundler`
@@ -76,6 +87,16 @@ unfalsifiable code accumulates a suite around it.
 
 This shape — a correct-looking construct that nothing can reach — has now appeared four times in
 two days, across three subsystems and two authors. Expect it rather than being surprised by it.
+
+**Anything persisted outside the process is a compatibility surface, and a test that reads it
+through the same constant cannot hold it still.** Renaming `LAST_PROJECT_KEY` survived mutation
+because every test read and wrote through the constant, so the rename moved both sides together
+and nothing noticed — while on a real machine the new key finds nothing and every existing user
+silently loses their last project on upgrade. Database keys, the `.bay` field names, cache
+filenames and IPC channel strings all outlive the code that writes them. Pin them as **literals**
+in the test, never as a reference to the thing under test. This is the same discipline the Rust
+tree applies to the project wire format, and the reason is identical: the value is a promise made
+to data already on disk.
 
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the

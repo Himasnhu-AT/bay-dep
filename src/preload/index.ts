@@ -33,6 +33,11 @@ const api: BayApi = {
         ready: boolean
         ffmpeg: string | null
         ffprobe: string | null
+      }>,
+    storageReady: () =>
+      ipcRenderer.invoke(IPC.appStorageReady) as Promise<{
+        ready: boolean
+        error: string | null
       }>
   },
 

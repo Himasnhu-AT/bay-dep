@@ -155,6 +155,22 @@ export class Compositor {
     return stats
   }
 
+  /**
+   * Pauses every video element immediately, without waiting for a draw.
+   *
+   * `#retireUntouched` normally does this as part of compositing, which is fine while
+   * frames are arriving. It is not fine when they stop: an occluded window stops
+   * `requestAnimationFrame`, so the next draw never comes, and a "stop playing" that is
+   * only carried out by the next draw leaves the element running — measured at 4.5 seconds
+   * of sound continuing past a frozen picture.
+   */
+  pauseAll(): void {
+    this.#pool.forEach((entry) => {
+      const element = entry.element
+      if (element instanceof HTMLVideoElement && !element.paused) element.pause()
+    })
+  }
+
   /** Drops seek bookkeeping for assets no longer on screen. */
   reset(): void {
     this.#seeks.clear()

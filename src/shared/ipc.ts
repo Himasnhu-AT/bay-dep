@@ -123,6 +123,15 @@ export interface BayApi {
     platform(): Promise<NodeJS.Platform>
     /** Whether a usable ffmpeg/ffprobe pair was found. Everything media degrades without it. */
     mediaToolsReady(): Promise<{ ready: boolean; ffmpeg: string | null; ffprobe: string | null }>
+    /**
+     * Whether the project database opened. Recents and reopen-last-project degrade without it.
+     *
+     * This exists because the degradation is otherwise undetectable from the outside: the
+     * database failed to open in every build before this one, and the app presented a working
+     * recents list that was permanently empty. A subsystem that has never worked and one that
+     * simply has nothing in it look identical unless something says which.
+     */
+    storageReady(): Promise<{ ready: boolean; error: string | null }>
   }
 
   media: {
@@ -194,6 +203,7 @@ export const IPC = {
   appVersion: 'app:version',
   appPlatform: 'app:platform',
   appMediaToolsReady: 'app:media-tools-ready',
+  appStorageReady: 'app:storage-ready',
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',

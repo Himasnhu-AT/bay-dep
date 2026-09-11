@@ -26,6 +26,7 @@ interface ChannelApi {
   appVersion: BayApi['app']['version']
   appPlatform: BayApi['app']['platform']
   appMediaToolsReady: BayApi['app']['mediaToolsReady']
+  appStorageReady: BayApi['app']['storageReady']
 
   mediaImportDialog: BayApi['media']['importDialog']
   mediaImportPaths: BayApi['media']['importPaths']
@@ -71,6 +72,12 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   appMediaToolsReady: async () => {
     const tools = mediaToolsReady()
     return { ready: tools.ready, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe }
+  },
+  appStorageReady: async () => {
+    // Opens the database on first ask if it is not open yet, so the status is the real one
+    // rather than a guess made before anything tried.
+    const { ready, error } = store.storageStatus()
+    return { ready, error }
   },
 
   mediaImportDialog: (event) => importDialog(windowOf(event)),
