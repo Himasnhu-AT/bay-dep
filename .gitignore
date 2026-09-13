@@ -47,3 +47,6 @@ downloaded-assets/
 
 # --- Electron product build artifacts ---
 *.tsbuildinfo
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
