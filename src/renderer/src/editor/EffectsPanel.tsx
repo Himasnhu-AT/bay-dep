@@ -22,6 +22,14 @@ import { selectTimeline, useEditor } from '@/store/editor'
  * list while the engine had no way to draw one; it draws seven kinds now, so leaving the row
  * greyed out would be the same lie pointing the other way — a working feature advertised as
  * absent, which nobody thinks to check.
+ *
+ * **Blur graduated the same way and the row outlived it by a day.** It sat here reading "nothing
+ * reads a blur off an item yet" after `Adjustments.blur` had landed, `adjustmentFilter` was
+ * emitting `blur(Npx)`, and the Adjustments section had shipped a 0-40px slider for it. Nobody
+ * caught it because a greyed-out row is the one thing on a panel people trust without checking —
+ * which is exactly what makes this direction the more expensive of the two. So: when a field
+ * lands, grep this list in the same change. `Colour wheels` and `Crop` are the honest remainder,
+ * and they are honest because the model has nowhere to put either.
  */
 export function EffectsPanel(): ReactNode {
   const selected = useSelectedItems()
@@ -144,7 +152,7 @@ export function EffectsPanel(): ReactNode {
 
         <Section title="Not yet in the engine">
           <div className="grid grid-cols-2 gap-1.5">
-            {['Blur', 'Colour grade', 'Crop'].map((name) => (
+            {['Colour wheels', 'Crop'].map((name) => (
               <Button key={name} variant="subtle" disabled>
                 {name}
               </Button>
@@ -154,9 +162,9 @@ export function EffectsPanel(): ReactNode {
             <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
             <p className="text-[10px] leading-relaxed">
               These are drawn disabled rather than hidden because the project format has no
-              field for them. They will light up when it does. The canvas can blur — that much
-              is measured — but nothing reads a blur off an item yet, and a tile that sets a
-              field no renderer consults is the dead control this panel exists to avoid.
+              field for them — there is nowhere on an item to store a crop rectangle or a
+              lift/gamma/gain wheel, so a tile here would set nothing. They light up when the
+              model does.
             </p>
           </div>
         </Section>
