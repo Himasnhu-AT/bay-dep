@@ -56,6 +56,45 @@ pnpm bundle           # unpacked app bundle, for checking real app identity
 pnpm release          # packaged artifact via electron-builder (unsigned; see below)
 ```
 
+## graft — read the graph before you grep
+
+This repo is indexed by [graft](https://github.com/graft-dev/graft): a prebuilt graph of every
+symbol, its `file:line` span, and who calls what. One query usually replaces several file reads,
+which matters here because the two trees together are 432 files and no context window wants them.
+
+```bash
+graft build           # rebuild the graph — ~3s, free, no API key, parses both trees
+graft check           # exits non-zero when the graph is stale relative to the code (CI-shaped)
+graft skeleton <file> # a file's whole API surface for ~5% of the tokens of reading it
+graft ask "<query>"   # ranked nodes with exact file:line
+graft viz             # interactive view of the graph
+```
+
+The MCP server (`graft mcp`) exposes the same thing as tools — `graft_find_code`,
+`graft_find_all`, `graft_trace_calls`, `graft_file_api`, `graft_repo_map`. Prefer those when they
+are available; the CLI is the fallback and answers identically.
+
+**One graph covers both trees.** 7,982 nodes and 14,693 edges across `src/` TypeScript,
+`dep/rust/` Rust, the website, and the Python build scripts. That is deliberate — a question
+about "the compositor" finds the TypeScript one *and* the wgpu one, and seeing both is how you
+notice which tree you are actually in. It is also the trap: a hit in `dep/rust/` is not an answer
+about the shipping product.
+
+**Two ignore files, doing opposite jobs.** `/graft/` is in `.gitignore` because the graph is a
+derived cache — committing it puts a merge conflict in every branch that touches code. `.ignore`
+contains `!graft/`, because ripgrep reads `.ignore` *before* `.gitignore` and would otherwise
+refuse to search the cards. Both are committed; a clone without them gets a graph git wants to
+commit and rg will not read.
+
+**`graft ask` tokenises, and a two-word English phrase is not a query.** Asking for "ripple
+delete" matched `delete` and returned project-library functions from the Rust tree. Use a
+distinctive symbol name, or `graft skeleton` on the file you suspect.
+
+**The deep layer is not built.** `graft build --deep` adds an LLM concept map and per-symbol
+summaries, and costs an API key and real tokens. `check` names the wiring graph as the source of
+truth and `ask`/`skeleton` route through it, so the free build is sufficient. `check` reporting
+"meaning tier 0% complete" is that choice, not a fault.
+
 **The bundle script is not called `pack`, and must not be.** `pnpm pack` is a pnpm **built-in** —
 the npm-style tarball command — and it shadows any script of that name without a word. Running it
 tarballed the entire repo, `website/` and `workspace/` included, and dropped a `.tgz` in the root.
@@ -301,6 +340,31 @@ and names `pnpm build` when it is not, because "the transport is broken" and "yo
 are otherwise the same red. Same shape as the rest: the link between "the bug exists" and "the
 report says so" was itself untested.
 
+When that assertion fires it is **not a broken test** — it is the gate saying you have not built.
+`socket-server.ts` newer than the proxy bundle fails the `src/main/mcp` suite by design, on an
+otherwise clean tree, and the fix is `pnpm build`. Read the message before diagnosing.
+
+**And the same staleness reaches every probe, because `electron .` compiles nothing.**
+`package.json` points `main` at `./out/main/index.js` and the probes launch the binary, so any
+`test/app/*.mjs` result describes **the last `pnpm build`**, not the working tree — on a tree
+several people share, that means whenever one of *them* last built. It bit in the direction that
+does not announce itself: someone fixed a bug, ran the probe, got 29 green *including* the
+assertion aimed at the fix, and the change under test was not in the binary. `out/` happened to
+contain their new files but not their newest edit. Had that one assertion not existed they would
+have reported a verified fix that was never running. **Build before you probe**, and when a probe
+result contradicts the source in front of you, compare mtimes before believing either.
+
+**A probe run immediately after a failed build is worth nothing, and the passes scroll below the
+failure.** Three probes reported 61/61, 29/29 and 29/29 against the previous bundle because the
+build above them had errored and the output had scrolled. Read the build's exit status first; a
+green probe cannot tell you it measured the wrong binary.
+
+**Typecheck green over a tree the bundler refuses is possible in this direction too.**
+`import { adjustmentFilter } from '@/engine'` type-resolved fine and rollup said *"not exported by
+engine/index.ts"* — the barrel does not re-export `looks`. So `pnpm typecheck` is not a proxy for
+"it builds", the way `pnpm test` is not a proxy for "it typechecks". Three gates, three different
+claims. Use the deep module path rather than a barrel that may not re-export.
+
 **`pnpm typecheck` covers `src/main/**`, `src/preload/**` and `src/shared/**` — and nothing else.**
 A new top-level directory under `src/` compiles into the bundle and is invisible to the only gate
 main-process code has. `src/mcp/` was nearly that; it is `src/main/mcp/` for this reason, with the
@@ -322,6 +386,36 @@ agent's run — both are correct refusals and only one is usable. So the asserti
 message carries what the caller needs in order to retry: the candidates, the conflicting item, the
 occupied range. An error that is merely correct should fail the test.
 
+**This shell lies about whether your command ran, in three distinct ways, and all three
+produce a confident wrong answer rather than an error.** They cost most of a session between them.
+
+1. **`cp` and `rm` are aliased to interactive mode.** A mutation harness copied a pristine file
+   back between runs; every restore stopped at an `overwrite? (y/n)` prompt that scrolled past in
+   the output, so the mutations *accumulated* and each row of the results table measured itself
+   plus all its predecessors. The whole table was garbage and looked fine. Use `/bin/cp -f`,
+   `/bin/rm -f`, or `command cp`, and **re-run the baseline afterwards** — a restore you did not
+   verify is not a restore.
+2. **zsh has `$pipestatus`, not bash's `$PIPESTATUS`.** `echo "exit: ${PIPESTATUS[0]}"` prints an
+   empty string here, so the guard written specifically to avoid reading an exit code through a
+   pipe read nothing at all. Redirect to a file and check `$?`, which is unambiguous.
+3. **zsh globs an unquoted `--include=*.ts` before `grep` sees it**, and with no match in the cwd
+   it fails the whole command with `no matches found`. A loop checking ten identifiers printed
+   "absent" ten times because grep never ran once. Quote it: `--include='*.ts'`. Any absence
+   established by a command that errored is not an absence.
+
+The shape shared by all three: **the instrument failed silently and its output was indistinguishable
+from a real measurement.** That is the same class as a mutation that never applied and a probe that
+could not see what it claimed was missing — this file's most repeated theme, one level lower down.
+
+**And a feature absent under the name you guessed is not an absent feature.** A survey of this
+tree's editing vocabulary grepped for `rippleDelete`, `rollEdit`, `slipItem` and friends, found
+nothing, and concluded the whole ripple family was missing — while `delete_items` had carried a
+`ripple` flag for weeks. The verb was a parameter, not a function name. Two habits fix it: grep the
+*catalog* and the store's action list rather than a vocabulary you brought with you, and check the
+counts move when you think you have added something new. A `git grep` for a name you invented tests
+your naming, not the codebase. (This is also what `graft` is for — `graft skeleton` on the store or
+`src/shared/mcp.ts` lists what is actually there, with no guessing at spelling.)
+
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
 point: it is the only code that crosses the process boundary.
@@ -340,6 +434,53 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   `project.ts` and are the only place the two are allowed to meet.
 - **Assets are the "what", items the "where and when".** One asset backs many items. Moving a clip
   must never touch the asset.
+- **Removing *clips* and removing *time* are two operations, and only one of them keeps sync.**
+  `delete_items` removes a list of items — with `ripple: true` it closes the gap on the tracks it
+  removed from and desynchronises every other track, which it documents and reports. `remove_range`
+  removes a span of timeline across every unlocked track at once, splitting whatever straddles the
+  bounds, so sync is preserved by construction. Only the second can cut the middle out of one long
+  take, which is what a transcript-driven cut mostly is. `Shift+Delete` is the ripple in the UI;
+  plain `Delete` lifts and leaves the gap. A locked track cannot be shifted, so `remove_range`
+  **names** the tracks it left behind and how many frames adrift they are — never silently drifts.
+  Bounds are half-open: `toFrame` is the first frame *kept*, so two calls sharing a bound remove
+  exactly the union.
+- **One mapping, one implementation — and a *duplicated* mapping is worse than either version of
+  it.** `Adjustments` → CSS filter existed twice, in `@shared/project` and `engine/looks.ts`, and
+  they disagreed about where `blur` goes in the chain. `contrast(0.5) blur(4px) grayscale(1)` and
+  `contrast(0.5) grayscale(1) blur(4px)` are *different pictures*, so this was not a formatting
+  difference; and `edit_item` reported one while the canvas drew the other, which made a tool result
+  a confident lie about a picture the agent cannot see. The survivor is `adjustmentFilter` in
+  `engine/looks.ts`, because the thing that composites is the only honest source for "the filter the
+  compositor will use". It kept the shared version's `1e-6` identity epsilon: a strict comparison
+  puts `brightness: 1.0000001` on the filtered draw path, which costs roughly twice as much at 4K
+  for an image nobody can tell apart. **A default must emit `'none'`, not `brightness(1)`**, for the
+  same reason.
+- **One `NaN` anywhere in a filter string makes Chromium drop the entire chain.** So a single bad
+  field silently removes every *other* adjustment on that item, with no error — which presents as
+  "adjustments are flaky". Non-finite values fall back to the identity per field; that guard is
+  load-bearing, not defensive.
+- **A transition belongs to the junction, not to either clip.** It lives on `Timeline.transitions`,
+  and nothing on an `Item` says one is attached — so any code walking items needs to consult
+  `resolveTransition` explicitly, which is exactly how export audio came to play a hard cut under a
+  cross-dissolving picture. `resolveTransition` is the authority on the window, never the stored
+  duration: `transition.durationInFrames` is what was *asked for* and `resolved.durationInFrames` is
+  what the handles allow. Using the stored value trims past footage that does not exist. The window
+  is **centred on the cut**, so the incoming clip must sound before its own `from` and the outgoing
+  past its end — both reading handle footage.
+- **Preview and export must share the gain curve, not merely agree about it.**
+  `transitionAudioGains` is the one implementation; export samples it per frame into a `volume`
+  expression rather than choosing the nearest-named `afade` curve, because an `afade` name that
+  merely *resembles* the curve diverges precisely in the middle of the window where the cross-fade
+  lives, and both sides sound fine in isolation. That also means the curve is free to be bespoke —
+  do not constrain it to what ffmpeg can name. Dip-to-black and dip-to-white are **not**
+  cross-fades: both sides are silent at the midpoint, where the picture is fully the dip colour, so
+  `acrossfade` would get them wrong.
+- **Where a transition and an item's own fade meet, the transition wins and the fade at that end is
+  ignored.** They express the same intent at the same place; multiplied, a 12-frame fade-out against
+  a dissolve's ramp dips to near-silence mid-window — a hole neither side asked for. `item.volume`
+  is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
+  resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
+  independently.
 - **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
   `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
   not land on the undo stack.
