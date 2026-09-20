@@ -13,6 +13,7 @@ import { timelineDuration } from '@shared/project'
 import { selectTimeline, useEditor, type EditorStore } from '@/store/editor'
 import { AudioEngine, type TrackLevel } from './audio'
 import { Compositor } from './compositor'
+import { CompositionPool } from './compositionPool'
 import { PlaybackClock, type ClockStats } from './clock'
 import { MediaPool } from './mediaPool'
 import { renderFrame, awaitSources } from './render'
@@ -116,7 +117,8 @@ export interface EngineHandle {
  */
 class Engine {
   readonly pool = new MediaPool()
-  readonly compositor = new Compositor(this.pool)
+  readonly compositions = new CompositionPool()
+  readonly compositor = new Compositor(this.pool, this.compositions)
   readonly audio = new AudioEngine(this.pool)
   readonly clock = new PlaybackClock()
 
@@ -191,6 +193,7 @@ class Engine {
     this.audio.dispose()
     this.compositor.reset()
     this.pool.dispose()
+    this.compositions.dispose()
     this.#getCanvas = () => null
   }
 

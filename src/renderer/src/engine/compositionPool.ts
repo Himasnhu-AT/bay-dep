@@ -1,0 +1,206 @@
+/**
+ * Frames of an HTML composition, cached, for a compositor that cannot wait.
+ *
+ * `drawFrame` is synchronous — it has to be, because it runs inside a rAF and the export loop
+ * calls it in a tight sequence. A composition frame is not: it comes from main, which seeks an
+ * offscreen page and reads its pixels back, measured at 40-80ms. So this pool answers from
+ * cache **immediately or not at all**, and fills the gap behind the caller's back. That is
+ * exactly the contract `MediaPool` already has for a `<video>` that has not decoded yet, and
+ * the compositor already knows how to draw nothing for a frame and try again.
+ *
+ * **The cache key is the exact source microsecond, not a rounded one.** A frame index times a
+ * rate produces the same microsecond every time for a given timeline, so scrubbing back over
+ * ground already covered hits the cache exactly; quantising to some canonical grid instead
+ * would resample 24fps onto 60ths and put 2.5-frame jitter into the picture. The key carries
+ * the requested pixel size too, because a preview asking for 960x540 and an export asking for
+ * 1920x1080 are different pictures and one must not be served for the other.
+ */
+
+import type { Asset, Item } from '@shared/project'
+import { sourceTimeAt } from '@shared/project'
+import { bay } from '@/lib/bay'
+
+/**
+ * How much decoded composition imagery to keep.
+ *
+ * Counted in bytes rather than frames because the frames are not one size: 120 preview frames
+ * at 960x540 and 30 export frames at 4K are both about this, and a count would let the second
+ * case use eight times the memory the first was budgeted for.
+ */
+const DEFAULT_BUDGET_BYTES = 256 * 1024 * 1024
+
+interface CacheEntry {
+  bitmap: ImageBitmap
+  bytes: number
+  usedAt: number
+}
+
+type ReadyListener = () => void
+
+export class CompositionPool {
+  readonly #cache = new Map<string, CacheEntry>()
+  /** Keys currently being fetched, so a miss re-asked every frame asks main once. */
+  readonly #inFlight = new Set<string>()
+  readonly #listeners = new Set<ReadyListener>()
+  readonly #budgetBytes: number
+  #bytes = 0
+  #hits = 0
+  #misses = 0
+  /** Assets this pool has ever opened, so `dispose` can close their windows in main. */
+  readonly #opened = new Set<string>()
+
+  constructor(options: { budgetBytes?: number } = {}) {
+    this.#budgetBytes = options.budgetBytes ?? DEFAULT_BUDGET_BYTES
+  }
+
+  /**
+   * The picture for this item at this frame, if it is already decoded.
+   *
+   * Returns null on a miss and starts fetching. Callers must treat null as "not yet", never as
+   * "nothing here" — drawing a placeholder for it would flash a card for the 40-80ms a fetch
+   * takes, which reads as a glitch in the edit rather than as a load.
+   */
+  frameFor(
+    asset: Asset,
+    item: Item,
+    frame: number,
+    fps: number,
+    size: { width: number; height: number }
+  ): ImageBitmap | null {
+    if (asset.kind !== 'html' || !asset.path || !asset.compositionId) return null
+
+    const width = Math.max(1, Math.round(size.width))
+    const height = Math.max(1, Math.round(size.height))
+    const atUs = clampToAsset(sourceTimeAt(item, frame, fps), asset)
+    const key = cacheKey(asset.id, width, height, atUs)
+
+    const hit = this.#cache.get(key)
+    if (hit) {
+      hit.usedAt = performance.now()
+      this.#hits += 1
+      return hit.bitmap
+    }
+
+    this.#misses += 1
+    this.#request(key, asset, atUs, width, height)
+    return null
+  }
+
+  /** Fires when a requested frame has decoded, so the preview can redraw and show it. */
+  onReady(listener: ReadyListener): () => void {
+    this.#listeners.add(listener)
+    return () => this.#listeners.delete(listener)
+  }
+
+  get stats(): { entries: number; bytes: number; hits: number; misses: number; inFlight: number } {
+    return {
+      entries: this.#cache.size,
+      bytes: this.#bytes,
+      hits: this.#hits,
+      misses: this.#misses,
+      inFlight: this.#inFlight.size
+    }
+  }
+
+  /** Drops this asset's frames and closes its window in main. */
+  release(assetId: string): void {
+    for (const [key, entry] of [...this.#cache]) {
+      if (!key.startsWith(`${assetId}:`)) continue
+      entry.bitmap.close()
+      this.#bytes -= entry.bytes
+      this.#cache.delete(key)
+    }
+    if (this.#opened.delete(assetId)) void bay()?.composition.release(assetId)
+  }
+
+  dispose(): void {
+    for (const entry of this.#cache.values()) entry.bitmap.close()
+    this.#cache.clear()
+    this.#bytes = 0
+    this.#listeners.clear()
+    // Every window this pool opened is a renderer process in main. Leaving them behind on a
+    // project close is the difference between an editor and a leak with a timeline attached.
+    for (const assetId of this.#opened) void bay()?.composition.release(assetId)
+    this.#opened.clear()
+  }
+
+  #request(key: string, asset: Asset, atUs: number, width: number, height: number): void {
+    if (this.#inFlight.has(key)) return
+    this.#inFlight.add(key)
+    this.#opened.add(asset.id)
+
+    void (async () => {
+      try {
+        // The bridge is absent before preload lands, and in a browser-only harness. A missing
+        // bridge is "not yet", exactly like a frame that has not decoded.
+        const api = bay()
+        if (!api) return
+        const frame = await api.composition.frameAt({
+          assetId: asset.id,
+          path: asset.path!,
+          compositionId: asset.compositionId!,
+          atUs,
+          width,
+          height
+        })
+        if (!frame) return
+        const data = new Uint8ClampedArray(frame.data)
+        if (data.length !== frame.width * frame.height * 4) return
+        const bitmap = await createImageBitmap(new ImageData(data, frame.width, frame.height))
+        this.#store(key, bitmap, data.length)
+        for (const listener of this.#listeners) listener()
+      } catch {
+        // A frame that cannot be produced is a frame the compositor draws nothing for. It will
+        // ask again on the next redraw; failing loudly here would turn a transient miss into a
+        // permanent one.
+      } finally {
+        this.#inFlight.delete(key)
+      }
+    })()
+  }
+
+  #store(key: string, bitmap: ImageBitmap, bytes: number): void {
+    const existing = this.#cache.get(key)
+    if (existing) {
+      existing.bitmap.close()
+      this.#bytes -= existing.bytes
+    }
+    this.#cache.set(key, { bitmap, bytes, usedAt: performance.now() })
+    this.#bytes += bytes
+    this.#evictToBudget()
+  }
+
+  /**
+   * Evict least-recently-used until the cache is inside its budget.
+   *
+   * Sorted by `usedAt`, which is stamped on every hit rather than only on insert. Evicting by
+   * insertion order instead would throw away the frame the playhead is parked on the moment a
+   * scrub filled the cache past the budget — the one frame guaranteed to be asked for again.
+   */
+  #evictToBudget(): void {
+    if (this.#bytes <= this.#budgetBytes) return
+    const byAge = [...this.#cache.entries()].sort((a, b) => a[1].usedAt - b[1].usedAt)
+    for (const [key, entry] of byAge) {
+      if (this.#bytes <= this.#budgetBytes) break
+      entry.bitmap.close()
+      this.#bytes -= entry.bytes
+      this.#cache.delete(key)
+    }
+  }
+}
+
+export function cacheKey(assetId: string, width: number, height: number, atUs: number): string {
+  return `${assetId}:${width}x${height}:${atUs}`
+}
+
+/**
+ * A source time inside the composition.
+ *
+ * `sourceTimeAt` clamps to the asset for media, but a composition's timeline holds its last
+ * frame past its end rather than erroring, so an unclamped value would open a distinct cache
+ * entry for every frame past the end — all of them the same picture.
+ */
+export function clampToAsset(atUs: number, asset: Asset): number {
+  if (!Number.isFinite(atUs) || atUs < 0) return 0
+  return asset.durationUs > 0 ? Math.min(atUs, asset.durationUs) : 0
+}

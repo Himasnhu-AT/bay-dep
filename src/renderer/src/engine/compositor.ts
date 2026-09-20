@@ -25,6 +25,7 @@ import {
   type Timeline
 } from '@shared/project'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
+import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
 import {
@@ -164,7 +165,10 @@ export class Compositor {
    */
   readonly #seeks = new Map<string, SeekState>()
 
-  constructor(pool: MediaPool) {
+  readonly #compositions: CompositionPool | null
+
+  constructor(pool: MediaPool, compositions?: CompositionPool) {
+    this.#compositions = compositions ?? null
     this.#pool = pool
   }
 
@@ -289,7 +293,10 @@ export class Compositor {
 
   #drawSource(
     ctx: RenderTarget,
-    element: HTMLVideoElement | HTMLImageElement,
+    // An ImageBitmap joins the two element types here because a composition frame arrives as
+    // pixels rather than as a loaded element. Everything below is geometry, alpha, look and
+    // rotation, none of which cares which of the three it was handed.
+    element: HTMLVideoElement | HTMLImageElement | ImageBitmap,
     item: Item,
     frame: number,
     alphaMul = 1
@@ -351,6 +358,24 @@ export class Compositor {
     if (asset.kind === 'text') {
       const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
       if (fit) stats.textFits.push(fit)
+      stats.drawn += 1
+      return
+    }
+
+    if (asset.kind === 'html') {
+      // A composition has no media element to sync — it is a page seeked in main and read
+      // back as pixels. The pool answers from cache or not at all, so a miss is counted as
+      // pending exactly like a video that has not decoded: the background shows through for
+      // the frame or two it takes, which reads as a load rather than as a glitch.
+      const box = layoutBox(item)
+      const bitmap = box
+        ? (this.#compositions?.frameFor(asset, item, frame, fps, box) ?? null)
+        : null
+      if (!bitmap) {
+        stats.pending += 1
+        return
+      }
+      this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul)
       stats.drawn += 1
       return
     }

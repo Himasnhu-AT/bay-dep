@@ -24,6 +24,7 @@ import {
   type Timeline
 } from '@shared/project'
 import { Compositor, elementSlots, itemsToDraw, type DrawStats } from './compositor'
+import { CompositionPool } from './compositionPool'
 import type { TextFit } from './text'
 import { MediaPool } from './mediaPool'
 import { sourceSecondsAt } from './sync'
@@ -227,7 +228,8 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
   const timeoutMs = options.timeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS
   const ownsPool = options.pool === undefined
   const pool = options.pool ?? new MediaPool({ maxVideoElements: 8 })
-  const compositor = new Compositor(pool)
+  const compositions = new CompositionPool()
+  const compositor = new Compositor(pool, compositions)
 
   const { width, height } = previewSize(
     timeline.width,
@@ -287,5 +289,8 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
     canvas.height = 0
     compositor.reset()
     if (ownsPool) pool.dispose()
+    // Unconditional: the composition pool is always this call's own, and every asset it
+    // touched left an offscreen window open in main.
+    compositions.dispose()
   }
 }

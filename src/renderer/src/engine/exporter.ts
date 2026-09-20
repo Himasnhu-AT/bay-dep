@@ -24,6 +24,7 @@ import {
   type Project
 } from '@shared/project'
 import { Compositor } from './compositor'
+import { CompositionPool } from './compositionPool'
 import { MediaPool } from './mediaPool'
 import { awaitSources } from './render'
 
@@ -73,6 +74,7 @@ export class FrameExporter {
   readonly #pool: MediaPool
   readonly #ownsPool: boolean
   readonly #compositor: Compositor
+  readonly #compositions: CompositionPool
   #cancelled = false
   readonly #seekTimeout: number
 
@@ -82,7 +84,11 @@ export class FrameExporter {
     // One decoder per simultaneous clip is the working set; the preview's cap is about
     // holding a scrub responsive, which an export does not care about.
     this.#pool = options.pool ?? new MediaPool({ maxVideoElements: 8 })
-    this.#compositor = new Compositor(this.#pool)
+    // Its own composition cache, never the preview's. The key carries the requested pixel
+    // size so the two could coexist safely, but an export holds full-size frames and sharing
+    // would evict the preview's entire working set on every render.
+    this.#compositions = new CompositionPool()
+    this.#compositor = new Compositor(this.#pool, this.#compositions)
     this.#seekTimeout = options.seekTimeoutMs ?? DEFAULT_SEEK_TIMEOUT_MS
   }
 
@@ -173,6 +179,10 @@ export class FrameExporter {
     } finally {
       release()
       if (this.#ownsPool) this.#pool.dispose()
+      // Not gated on #ownsPool: the composition pool is always constructed here, never
+      // handed in, so an export that skipped this would leave one offscreen window per
+      // composition alive for the life of the app.
+      this.#compositions.dispose()
       this.#compositor.reset()
     }
   }
