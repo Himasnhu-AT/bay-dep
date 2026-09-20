@@ -9,6 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
+import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,48 @@ export interface FilmstripRequest {
   /** How many evenly spaced frames across the whole source. */
   count: number
   height: number
+}
+
+// ---------------------------------------------------------------------------
+// HTML compositions
+// ---------------------------------------------------------------------------
+
+/**
+ * One frame of a composition, asked for by time.
+ *
+ * `atUs` rather than a frame index because a composition has no frame rate of its own — it is
+ * a continuous timeline that can be sampled anywhere, and the timeline asking for it decides
+ * the rate. Sampling is what makes it legal to place one composition on a 24fps and a 60fps
+ * timeline at once.
+ *
+ * `width`/`height` are the size to rasterise at, not the composition's authored size. An
+ * offscreen 1920x1080 page costs the same to seek whether the preview needs 480px or the
+ * export needs the full frame, but it does not cost the same to read back — so the caller
+ * asks for what it will actually draw.
+ */
+export interface CompositionFrameRequest {
+  assetId: string
+  path: string
+  compositionId: string
+  atUs: number
+  width: number
+  height: number
+}
+
+export interface CompositionFrame {
+  /** Raw RGBA, `width * height * 4` bytes. The renderer turns it into an ImageBitmap. */
+  data: ArrayBuffer
+  width: number
+  height: number
+  /**
+   * True when the page did not repaint for this seek, so these are the previous frame's
+   * pixels — and correctly so, because the composition is holding.
+   *
+   * Worth reporting rather than hiding: a caller filling a cache can store one entry for the
+   * run instead of N copies, and a probe measuring "does this composition animate" needs to
+   * tell a held frame from a fresh one. Identical pixels alone cannot say which it was.
+   */
+  held: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +256,39 @@ export interface BayApi {
     revealInFolder(path: string): Promise<void>
   }
 
+  /**
+   * HTML compositions — HyperFrames pages, rendered as a source of pictures.
+   *
+   * Lives in main rather than the renderer even though the renderer is itself a browser, for
+   * the reason every other filesystem-touching thing does: a composition is a path, and the
+   * renderer does not open paths. Main owns an offscreen window per composition, seeks its
+   * paused timeline, and hands back pixels.
+   */
+  composition: {
+    /**
+     * Read a composition's declared shape, and everything wrong with it.
+     *
+     * Returns faults even on success, because the ones that are not fatal are the ones that
+     * matter most: a blocked CDN renders as a still frame with nothing in any log.
+     */
+    inspect(path: string): Promise<{
+      info: CompositionInfo | null
+      faults: CompositionFault[]
+    }>
+    /** Import a composition as an asset, probing it the way media is probed. */
+    import(paths: string[]): Promise<ImportedAsset[]>
+    /** One frame, at a time. Resolves null when the composition could not be opened. */
+    frameAt(request: CompositionFrameRequest): Promise<CompositionFrame | null>
+    /**
+     * Drop the offscreen window for this asset.
+     *
+     * Explicit rather than timed out, because a composition window is a whole renderer
+     * process: leaving one per asset alive after the user removed the clip is the difference
+     * between an editor and a memory leak with a timeline attached.
+     */
+    release(assetId: string): Promise<void>
+  }
+
   project: {
     /** The project to show at launch: the last one opened, or a fresh empty one. */
     initial(): Promise<Project>
@@ -286,6 +362,11 @@ export const IPC = {
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
   mediaReveal: 'media:reveal',
+
+  compositionInspect: 'composition:inspect',
+  compositionImport: 'composition:import',
+  compositionFrameAt: 'composition:frame-at',
+  compositionRelease: 'composition:release',
 
   projectInitial: 'project:initial',
   projectSave: 'project:save',

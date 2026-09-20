@@ -85,6 +85,13 @@ const api: BayApi = {
     }
   },
 
+  composition: {
+    inspect: (path) => ipcRenderer.invoke(IPC.compositionInspect, path),
+    import: (paths) => ipcRenderer.invoke(IPC.compositionImport, paths),
+    frameAt: (request) => ipcRenderer.invoke(IPC.compositionFrameAt, request),
+    release: (assetId) => ipcRenderer.invoke(IPC.compositionRelease, assetId)
+  },
+
   project: {
     initial: () => ipcRenderer.invoke(IPC.projectInitial) as Promise<Project>,
     save: (project: Project) =>

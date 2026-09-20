@@ -12,6 +12,12 @@ import type { IpcMainInvokeEvent } from 'electron'
 import type { BayApi } from '@shared/ipc'
 import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
+import {
+  compositionFrameAt,
+  importCompositions,
+  inspectComposition,
+  release as releaseComposition
+} from './html/compositions'
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
@@ -48,6 +54,11 @@ interface ChannelApi {
   projectRecent: BayApi['project']['recent']
   projectAutosave: BayApi['project']['autosave']
 
+  compositionInspect: BayApi['composition']['inspect']
+  compositionImport: BayApi['composition']['import']
+  compositionFrameAt: BayApi['composition']['frameAt']
+  compositionRelease: BayApi['composition']['release']
+
   exportStart: BayApi['export']['start']
   exportPushFrame: BayApi['export']['pushFrame']
   exportFinish: BayApi['export']['finish']
@@ -71,6 +82,11 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 }
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
+  compositionInspect: async (_event, path) => inspectComposition(path),
+  compositionImport: async (_event, paths) => importCompositions(paths),
+  compositionFrameAt: async (_event, request) => compositionFrameAt(request),
+  compositionRelease: async (_event, assetId) => releaseComposition(assetId),
+
   appVersion: async () => app.getVersion(),
   appPlatform: async () => process.platform,
   appMediaToolsReady: async () => {
