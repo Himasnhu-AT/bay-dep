@@ -1,0 +1,21 @@
+# NOTICE
+
+bay includes documentation carried from third-party projects.
+
+## HyperFrames
+
+`src/main/mcp/docs/compositions/` contains documents from the HyperFrames project:
+
+  https://github.com/heygen-com/hyperframes
+
+Copyright the HyperFrames authors, licensed under the Apache License, Version 2.0. A copy of
+that licence is available at http://www.apache.org/licenses/LICENSE-2.0.
+
+The documents are carried unmodified apart from a provenance header added to each. They are
+served to agents over bay's MCP interface as reference material, because bay renders HyperFrames
+compositions and an agent authoring one has to satisfy the same contract bay's renderer enforces.
+Paraphrasing them into bay's own words would have produced a second copy that drifts from the
+renderer on the first edit to either.
+
+bay implements the composition contract itself and does not depend on any HyperFrames package at
+build or run time.

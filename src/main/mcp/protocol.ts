@@ -14,6 +14,7 @@
  */
 
 import { TOOLS, findTool, type ToolSpec } from '@shared/mcp'
+import { findResource, RESOURCES } from '@shared/resources'
 import {
   RPC_INVALID_PARAMS,
   RPC_METHOD_NOT_FOUND,
@@ -65,9 +66,20 @@ function textContent(value: unknown): { type: 'text'; text: string }[] {
  * and the model should read the message and choose differently. Collapsing them is how an
  * agent ends up retrying a call that will never work.
  */
+/**
+ * Reads one document's body, or null when this build does not carry it.
+ *
+ * Injected for the same reason `runTool` is: the bodies are inlined by Vite's `?raw`, which
+ * only Vite resolves, so importing them here would make this module unloadable under plain
+ * Node — and it took the 28 tests in this directory with it when tried. The protocol has no
+ * business knowing where a document is stored anyway.
+ */
+export type ReadResource = (uri: string) => string | null
+
 export async function handleRequest(
   request: JsonRpcRequest,
-  runTool: RunTool
+  runTool: RunTool,
+  readResource: ReadResource = () => null
 ): Promise<JsonRpcResponse | null> {
   const id = request.id ?? null
   if (request.id === undefined) return null
@@ -76,7 +88,12 @@ export async function handleRequest(
     case 'initialize':
       return success(id, {
         protocolVersion: PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
+        // Resources are advertised here or they may as well not exist: a client that is not
+        // told about the capability never calls resources/list, and the guides stay unread.
+        capabilities: {
+          tools: { listChanged: false },
+          resources: { subscribe: false, listChanged: false }
+        },
         serverInfo: SERVER_INFO
       })
 
@@ -108,6 +125,41 @@ export async function handleRequest(
 
       const outcome = await runTool(params.name, args)
       return success(id, { content: textContent(outcome.value), isError: !outcome.ok })
+    }
+
+    case 'resources/list':
+      return success(id, {
+        resources: RESOURCES.map((resource) => ({
+          uri: resource.uri,
+          name: resource.name,
+          description: resource.description,
+          mimeType: resource.mimeType
+        }))
+      })
+
+    case 'resources/read': {
+      const params = (request.params ?? {}) as { uri?: unknown }
+      if (typeof params.uri !== 'string') {
+        return failure(id, RPC_INVALID_PARAMS, 'resources/read requires a string `uri`.')
+      }
+      const spec = findResource(params.uri)
+      const body = spec ? readResource(params.uri) : null
+      if (!spec || body === null) {
+        // Same reasoning as an unknown tool: the method exists, the document does not, and
+        // naming the real ones is the difference between recovering and guessing again. A
+        // listed uri with no body is a build fault, and says so rather than reading as empty.
+        return failure(
+          id,
+          RPC_INVALID_PARAMS,
+          spec
+            ? `"${params.uri}" is listed but carries no content in this build. This is a fault ` +
+                `in bay, not in your request.`
+            : `No resource at "${params.uri}". bay serves: ${RESOURCES.map((r) => r.uri).join(', ')}.`
+        )
+      }
+      return success(id, {
+        contents: [{ uri: spec.uri, mimeType: spec.mimeType, text: body }]
+      })
     }
 
     default:

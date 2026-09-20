@@ -20,12 +20,14 @@
  */
 
 import { test } from 'node:test'
+import { RESOURCES } from '@shared/resources'
 import assert from 'node:assert/strict'
 import { TOOLS } from '@shared/mcp'
 import {
   LineBuffer,
   RPC_INVALID_REQUEST,
   RPC_METHOD_NOT_FOUND,
+  RPC_INVALID_PARAMS,
   RPC_PARSE_ERROR,
   encode,
   isNotification,
@@ -119,7 +121,13 @@ test('initialize reports the pinned protocol version and bay as the server', asy
   const result = (answer as { result: Record<string, unknown> }).result
   assert.equal(result['protocolVersion'], PROTOCOL_VERSION)
   assert.deepEqual(result['serverInfo'], { name: 'bay', version: '0.1.0' })
-  assert.deepEqual(result['capabilities'], { tools: { listChanged: false } })
+  // Pinned whole rather than by key: capabilities are what a client reads to decide which
+  // methods it may call at all, so an accidental removal has to fail here rather than show up
+  // as a guide nobody ever fetched.
+  assert.deepEqual(result['capabilities'], {
+    tools: { listChanged: false },
+    resources: { subscribe: false, listChanged: false }
+  })
 })
 
 test('the protocol version is pinned as a literal', () => {
@@ -159,10 +167,75 @@ test('ping answers empty', async () => {
 })
 
 test('an unknown method is a JSON-RPC error naming the method', async () => {
-  const answer = await handleRequest(request('resources/list'), neverCalled)
+  // Was `resources/list` until bay grew resources, at which point this test correctly failed
+  // rather than quietly asserting that a supported method was unsupported. `prompts/list` is
+  // the next thing MCP defines that bay does not implement.
+  const answer = await handleRequest(request('prompts/list'), neverCalled)
   const error = (answer as { error: { code: number; message: string } }).error
   assert.equal(error.code, RPC_METHOD_NOT_FOUND)
-  assert.match(error.message, /resources\/list/)
+  assert.match(error.message, /prompts\/list/)
+})
+
+test('resources/list returns every document in the catalog, in MCP shape', async () => {
+  const answer = await handleRequest(request('resources/list'), neverCalled)
+  const resources = (answer as { result: { resources: Record<string, unknown>[] } }).result
+    .resources
+
+  assert.equal(resources.length, RESOURCES.length)
+  assert.deepEqual(
+    resources.map((r) => r['uri']),
+    RESOURCES.map((r) => r.uri)
+  )
+  for (const resource of resources) {
+    assert.equal(typeof resource['name'], 'string')
+    assert.equal(typeof resource['description'], 'string')
+    assert.equal(resource['mimeType'], 'text/markdown')
+  }
+})
+
+test('resources/read returns the body the reader supplies', async () => {
+  const uri = RESOURCES[0]!.uri
+  const answer = await handleRequest(request('resources/read', { uri }), neverCalled, (asked) =>
+    asked === uri ? '# a body' : null
+  )
+  const contents = (answer as { result: { contents: Record<string, unknown>[] } }).result.contents
+
+  assert.equal(contents.length, 1)
+  assert.equal(contents[0]!['uri'], uri)
+  assert.equal(contents[0]!['text'], '# a body')
+  assert.equal(contents[0]!['mimeType'], 'text/markdown')
+})
+
+test('an unknown uri is refused with the real ones named', async () => {
+  const answer = await handleRequest(
+    request('resources/read', { uri: 'bay://guide/nope' }),
+    neverCalled,
+    () => null
+  )
+  const error = (answer as { error: { message: string } }).error
+
+  // An error is a recovery instruction: listing the real uris is what lets the next call work.
+  assert.match(error.message, /bay:\/\/guide\/nope/)
+  assert.match(error.message, new RegExp(RESOURCES[0]!.uri.replace(/\//g, '\\/')))
+})
+
+test('a listed uri with no body says it is bay at fault, not the caller', async () => {
+  // The two failures are different and must read differently: a bad uri is the agent's to fix,
+  // a missing body is a build fault and no amount of rewriting the request will help.
+  const answer = await handleRequest(
+    request('resources/read', { uri: RESOURCES[0]!.uri }),
+    neverCalled,
+    () => null
+  )
+  const error = (answer as { error: { message: string } }).error
+
+  assert.match(error.message, /fault in bay/i)
+})
+
+test('resources/read without a uri is an invalid-params error', async () => {
+  const answer = await handleRequest(request('resources/read', {}), neverCalled, () => 'x')
+  const error = (answer as { error: { code: number } }).error
+  assert.equal(error.code, RPC_INVALID_PARAMS)
 })
 
 // ---------------------------------------------------------------------------

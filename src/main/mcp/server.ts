@@ -16,6 +16,7 @@ import { IPC } from '@shared/ipc'
 import { MCP_CALL_TIMEOUT_MS, type McpToolCall, type McpToolResult } from '@shared/mcp'
 import { type ToolOutcome } from './protocol'
 import { startSocketServer, type RunningSocket, type SocketStatus } from './socket-server'
+import { resourceBody } from './resources'
 import { substituteFileArgs } from './file-args'
 import { socketPathIn } from './socket-path'
 import { readFile } from 'node:fs/promises'
@@ -124,7 +125,11 @@ let running: RunningSocket | null = null
  */
 export async function startMcpServer(): Promise<SocketStatus> {
   if (running) return running.status
-  const started = await startSocketServer(() => socketPathIn(app.getPath('userData')), runTool)
+  const started = await startSocketServer(
+    () => socketPathIn(app.getPath('userData')),
+    runTool,
+    resourceBody
+  )
   running = started
   return started.status
 }
