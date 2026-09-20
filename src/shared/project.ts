@@ -13,7 +13,7 @@
  *    require touching the asset.
  */
 
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text'
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -48,6 +48,17 @@ export interface Asset {
   waveformPath: string | null
   /** For `kind: 'text'` — the string to draw. */
   text?: string
+  /**
+   * For `kind: 'html'` — the composition's own id, which is the key its paused timeline
+   * registers under as `window.__timelines[compositionId]`.
+   *
+   * The only thing a composition declares that has nowhere else to live: its duration is
+   * `durationUs`, its authored size is `width`/`height`, and its file is `path`. Without the
+   * id there is no handle to seek, so an html asset missing it cannot be drawn — which is why
+   * `readComposition` treats an absent or empty `data-composition-id` as fatal rather than
+   * guessing at the first root in the file.
+   */
+  compositionId?: string
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string

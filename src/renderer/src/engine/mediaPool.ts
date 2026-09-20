@@ -112,6 +112,11 @@ function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
   switch (asset.kind) {
     case 'text':
       return null
+    case 'html':
+      // A composition has no media element. It is a page that gets seeked and captured, and
+      // its frames arrive as bitmaps from the composition pool — giving it a <video> or an
+      // <img> here would hold a decoder slot that nothing could ever feed.
+      return null
     case 'image':
     case 'gif':
       return 'image'
