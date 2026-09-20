@@ -41,6 +41,36 @@ node test/app/<probe>.mjs
 With those flags `visibilityState` is `visible`, `hasFocus()` is true and rAF runs regardless of
 what is in front, and `ticks.mjs` reports the same numbers with and without `bringToFront`.
 
+**If that launch exits 133 and prints nothing, you are not in a GUI session.** Execing the
+binary directly needs a window server, which an agent shell or a remote session does not have;
+Electron starts, `app.whenReady()` never resolves, and you get a SIGTRAP with an empty log —
+indistinguishable from a crash on startup. Go through `open`, which routes via launchd into the
+logged-in session:
+
+```bash
+open -na "node_modules/.pnpm/electron@*/node_modules/electron/dist/Electron.app" \
+  --args "$PWD" --remote-debugging-port=9222 --user-data-dir=/tmp/bay-probe \
+  --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
+  --disable-background-timer-throttling
+```
+
+`agent-browser connect 9222` then drives it, and `agent-browser eval "<expression>"` reaches
+`window.bay` directly, which is the cheapest way to exercise a bridge call end to end without
+writing a probe for it.
+
+**A composition window is itself a CDP target, and it is the one you will attach to.** An HTML
+composition renders in an offscreen `BrowserWindow`, which appears in `/json` alongside the
+editor — so the moment a composition has been opened, "the first page target" is `demo.html`
+rather than bay. It has no `window.bay`, so every bridge call comes back
+`Cannot read properties of undefined`, which reads exactly like the app having crashed. It has
+not. List targets and pin the one whose url ends `out/renderer/index.html` before measuring
+anything:
+
+```bash
+agent-browser tab          # -> [t1] bay ... [t2] demo.html ...
+agent-browser tab t1       # ids, not indices; `tab 1` is rejected
+```
+
 Use your own port and `--user-data-dir`, and kill the pid you started — several agents drive this
 app at once, and a shared port or profile makes two runs fight over one database lock.
 
