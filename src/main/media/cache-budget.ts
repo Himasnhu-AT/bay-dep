@@ -1,7 +1,9 @@
 /**
  * A byte budget over the whole derived-media cache.
  *
- * Recorded as E1 in `fixes.md`: nothing evicted, ever. Growth is not driven by browsing —
+ * The defect this fixes: nothing evicted, ever. (It was E1 in the Rust tree's `fixes.md`, which
+ * is deleted — `git show rust-engine-final:fixes.md` if you want the original entry.) Growth is
+ * not driven by browsing —
  * the renderer asks with fixed constants, so each asset has exactly one filmstrip key, one
  * poster key and one peaks key at a time, about 50 KB measured. What is unbounded is
  * *re-encoding*: keys include the source's mtime and size, so a user who re-exports over the

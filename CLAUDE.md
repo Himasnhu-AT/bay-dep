@@ -4,22 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**bay** — a video editor. There are **two trees**, and which one you are in decides everything:
+**bay** — a video editor, and the same project model exposed to agents so one can build and render
+video without a GUI. An Electron app: React 19 + Vite 7 + Tailwind 4 + TypeScript. The main process
+owns the filesystem, ffmpeg and persistence; the renderer owns the interface and the compositing
+engine; `src/shared/` holds the contracts both are checked against.
 
-- **`/` (repo root) — the product that ships.** An Electron app: React 19 + Vite 7 + Tailwind 4 +
-  TypeScript. Main process owns the filesystem, ffmpeg and persistence; the renderer owns the
-  interface and the compositing engine; `src/shared/` holds the contracts both are checked against.
-- **`dep/rust/` — the native engine, still live.** The Rust workspace (GPUI shell over a wgpu
-  compositor, effects, masks, audio, text, project model, tick math, plus `bay-mcp`). It was moved
-  here, not retired: work on it continues in parallel and it is expected to come back.
+**There used to be a second tree.** `dep/rust/` held a Rust workspace — a GPUI desktop shell over a
+wgpu compositor, with effects, masks, audio, text, the project model, tick math and `bay-mcp` — kept
+alongside this one on the understanding that work would continue on both. It did not, and a tree
+nobody builds rots while still claiming to be current: its `CLAUDE.md` half, its roadmap and its
+defect register all read as live instruction to anyone who opened them.
 
-**Read the section that matches the tree you are editing.** The Electron conventions are directly
-below; everything from "Architecture" onward describes `dep/rust/` and its paths are relative to
-that directory unless stated otherwise.
+It is deleted, not archived in place, and it is recoverable by name rather than by digging:
 
-See [`README.md`](./README.md), [`todo.md`](./todo.md) — which indexes
-[`todo.completed.md`](./todo.completed.md), [`todo.pending.md`](./todo.pending.md) and
-[`todo.testing.md`](./todo.testing.md) — and `docs/native/`.
+```bash
+git checkout rust-engine-final -- dep/    # restore the whole engine
+git show rust-engine-final:fixes.md       # read one file without restoring anything
+git show rust-engine-final --stat         # what the tag holds
+```
+
+The tag `rust-engine-final` also carries everything that documented it — `docs/native/`, the
+`todo.*` roadmap, `fixes.md`, `PROJECT.md`, `AGENTS.md`, `optimizations.md`, `MARKETING.md` — plus
+the Rust CI workflows, `install.sh`, the `setup-rust`/`bundle-mac`/Kokoro scripts and the `bay`
+agent skill whose tool reference was generated from `bay-mcp`. Nothing was rewritten out of
+history; `git log` still reaches all of it. **Do not re-add any of it to the working tree** without
+deciding first that the Rust engine is coming back — a half-restored second tree is how this
+started.
+
+Everything below describes the one tree that exists. See [`README.md`](./README.md).
 
 ## Never `git add -A` in this tree
 
@@ -44,7 +56,7 @@ checks the target is also in `HEAD`. It is proven against `3031fb4` itself rathe
 mutant — one fault at that commit, zero at its repair — and it skips loudly if that commit is ever
 unreachable, because a proof that cannot run must not read as a pass.
 
-## Commands — the Electron product (repo root)
+## Commands
 
 ```bash
 pnpm install          # pnpm, not npm — the workspace standard for TS projects
@@ -56,12 +68,49 @@ pnpm bundle           # unpacked app bundle, for checking real app identity
 pnpm release          # packaged artifact via electron-builder (unsigned; see below)
 ```
 
+## graft — read the graph before you grep
+
+This repo is indexed by [graft](https://github.com/graft-dev/graft): a prebuilt graph of every
+symbol, its `file:line` span, and who calls what. One query usually replaces several file reads.
+
+```bash
+graft build           # rebuild the graph — ~3s, free, no API key
+graft check           # exits non-zero when the graph is stale relative to the code (CI-shaped)
+graft skeleton <file> # a file's whole API surface for ~5% of the tokens of reading it
+graft ask "<query>"   # ranked nodes with exact file:line
+graft viz             # interactive view of the graph
+```
+
+The MCP server (`graft mcp`) exposes the same thing as tools — `graft_find_code`,
+`graft_find_all`, `graft_trace_calls`, `graft_file_api`, `graft_repo_map`. Prefer those when they
+are available; the CLI is the fallback and answers identically.
+
+**Rebuild it after any structural change**, and certainly after a deletion — the graph indexed
+both trees while they both existed, so a stale one still answers questions about `dep/rust/` and
+hands you `file:line` for files that are gone. `graft check` catches that; `graft build` takes
+about three seconds.
+
+**Two ignore files, doing opposite jobs.** `/graft/` is in `.gitignore` because the graph is a
+derived cache — committing it puts a merge conflict in every branch that touches code. `.ignore`
+contains `!graft/`, because ripgrep reads `.ignore` *before* `.gitignore` and would otherwise
+refuse to search the cards. Both are committed; a clone without them gets a graph git wants to
+commit and rg will not read.
+
+**`graft ask` tokenises, and a two-word English phrase is not a query.** Asking for "ripple
+delete" matched `delete` and returned project-library functions from the Rust tree. Use a
+distinctive symbol name, or `graft skeleton` on the file you suspect.
+
+**The deep layer is not built.** `graft build --deep` adds an LLM concept map and per-symbol
+summaries, and costs an API key and real tokens. `check` names the wiring graph as the source of
+truth and `ask`/`skeleton` route through it, so the free build is sufficient. `check` reporting
+"meaning tier 0% complete" is that choice, not a fault.
+
 **The bundle script is not called `pack`, and must not be.** `pnpm pack` is a pnpm **built-in** —
 the npm-style tarball command — and it shadows any script of that name without a word. Running it
 tarballed the entire repo, `website/` and `workspace/` included, and dropped a `.tgz` in the root.
 `pnpm run pack` would have reached the script, but a name that does the wrong thing when typed the
-obvious way is a trap, so the script is `bundle`. Same reasoning retired `dist`, which collides with
-the gitignored `dist/` directory the Rust tree writes into.
+obvious way is a trap, so the script is `bundle`. Same reasoning retired `dist`, which every
+JS toolchain treats as a build-output directory — the script would read as "write to dist/".
 
 **"Tests green" and "tree green" are different claims here, and the difference is structural.**
 `pnpm test` runs under plain Node, so it cannot load any module that imports `electron` — `store.ts`,
@@ -301,6 +350,31 @@ and names `pnpm build` when it is not, because "the transport is broken" and "yo
 are otherwise the same red. Same shape as the rest: the link between "the bug exists" and "the
 report says so" was itself untested.
 
+When that assertion fires it is **not a broken test** — it is the gate saying you have not built.
+`socket-server.ts` newer than the proxy bundle fails the `src/main/mcp` suite by design, on an
+otherwise clean tree, and the fix is `pnpm build`. Read the message before diagnosing.
+
+**And the same staleness reaches every probe, because `electron .` compiles nothing.**
+`package.json` points `main` at `./out/main/index.js` and the probes launch the binary, so any
+`test/app/*.mjs` result describes **the last `pnpm build`**, not the working tree — on a tree
+several people share, that means whenever one of *them* last built. It bit in the direction that
+does not announce itself: someone fixed a bug, ran the probe, got 29 green *including* the
+assertion aimed at the fix, and the change under test was not in the binary. `out/` happened to
+contain their new files but not their newest edit. Had that one assertion not existed they would
+have reported a verified fix that was never running. **Build before you probe**, and when a probe
+result contradicts the source in front of you, compare mtimes before believing either.
+
+**A probe run immediately after a failed build is worth nothing, and the passes scroll below the
+failure.** Three probes reported 61/61, 29/29 and 29/29 against the previous bundle because the
+build above them had errored and the output had scrolled. Read the build's exit status first; a
+green probe cannot tell you it measured the wrong binary.
+
+**Typecheck green over a tree the bundler refuses is possible in this direction too.**
+`import { adjustmentFilter } from '@/engine'` type-resolved fine and rollup said *"not exported by
+engine/index.ts"* — the barrel does not re-export `looks`. So `pnpm typecheck` is not a proxy for
+"it builds", the way `pnpm test` is not a proxy for "it typechecks". Three gates, three different
+claims. Use the deep module path rather than a barrel that may not re-export.
+
 **`pnpm typecheck` covers `src/main/**`, `src/preload/**` and `src/shared/**` — and nothing else.**
 A new top-level directory under `src/` compiles into the bundle and is invisible to the only gate
 main-process code has. `src/mcp/` was nearly that; it is `src/main/mcp/` for this reason, with the
@@ -322,6 +396,36 @@ agent's run — both are correct refusals and only one is usable. So the asserti
 message carries what the caller needs in order to retry: the candidates, the conflicting item, the
 occupied range. An error that is merely correct should fail the test.
 
+**This shell lies about whether your command ran, in three distinct ways, and all three
+produce a confident wrong answer rather than an error.** They cost most of a session between them.
+
+1. **`cp` and `rm` are aliased to interactive mode.** A mutation harness copied a pristine file
+   back between runs; every restore stopped at an `overwrite? (y/n)` prompt that scrolled past in
+   the output, so the mutations *accumulated* and each row of the results table measured itself
+   plus all its predecessors. The whole table was garbage and looked fine. Use `/bin/cp -f`,
+   `/bin/rm -f`, or `command cp`, and **re-run the baseline afterwards** — a restore you did not
+   verify is not a restore.
+2. **zsh has `$pipestatus`, not bash's `$PIPESTATUS`.** `echo "exit: ${PIPESTATUS[0]}"` prints an
+   empty string here, so the guard written specifically to avoid reading an exit code through a
+   pipe read nothing at all. Redirect to a file and check `$?`, which is unambiguous.
+3. **zsh globs an unquoted `--include=*.ts` before `grep` sees it**, and with no match in the cwd
+   it fails the whole command with `no matches found`. A loop checking ten identifiers printed
+   "absent" ten times because grep never ran once. Quote it: `--include='*.ts'`. Any absence
+   established by a command that errored is not an absence.
+
+The shape shared by all three: **the instrument failed silently and its output was indistinguishable
+from a real measurement.** That is the same class as a mutation that never applied and a probe that
+could not see what it claimed was missing — this file's most repeated theme, one level lower down.
+
+**And a feature absent under the name you guessed is not an absent feature.** A survey of this
+tree's editing vocabulary grepped for `rippleDelete`, `rollEdit`, `slipItem` and friends, found
+nothing, and concluded the whole ripple family was missing — while `delete_items` had carried a
+`ripple` flag for weeks. The verb was a parameter, not a function name. Two habits fix it: grep the
+*catalog* and the store's action list rather than a vocabulary you brought with you, and check the
+counts move when you think you have added something new. A `git grep` for a name you invented tests
+your naming, not the codebase. (This is also what `graft` is for — `graft skeleton` on the store or
+`src/shared/mcp.ts` lists what is actually there, with no guessing at spelling.)
+
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
 point: it is the only code that crosses the process boundary.
@@ -329,7 +433,7 @@ point: it is the only code that crosses the process boundary.
 `out/` is gitignored, as is `node_modules/`. `strict` and `noUncheckedIndexedAccess` are on in both
 projects — indexing an array yields `T | undefined` and you must handle it.
 
-## Conventions — the Electron product
+## Conventions
 
 - **`src/shared/` is the contract, and it is written before the implementation.** `project.ts` is
   the model, `ipc.ts` is every call the renderer may make into main. If the preload bridge, a main
@@ -340,6 +444,53 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   `project.ts` and are the only place the two are allowed to meet.
 - **Assets are the "what", items the "where and when".** One asset backs many items. Moving a clip
   must never touch the asset.
+- **Removing *clips* and removing *time* are two operations, and only one of them keeps sync.**
+  `delete_items` removes a list of items — with `ripple: true` it closes the gap on the tracks it
+  removed from and desynchronises every other track, which it documents and reports. `remove_range`
+  removes a span of timeline across every unlocked track at once, splitting whatever straddles the
+  bounds, so sync is preserved by construction. Only the second can cut the middle out of one long
+  take, which is what a transcript-driven cut mostly is. `Shift+Delete` is the ripple in the UI;
+  plain `Delete` lifts and leaves the gap. A locked track cannot be shifted, so `remove_range`
+  **names** the tracks it left behind and how many frames adrift they are — never silently drifts.
+  Bounds are half-open: `toFrame` is the first frame *kept*, so two calls sharing a bound remove
+  exactly the union.
+- **One mapping, one implementation — and a *duplicated* mapping is worse than either version of
+  it.** `Adjustments` → CSS filter existed twice, in `@shared/project` and `engine/looks.ts`, and
+  they disagreed about where `blur` goes in the chain. `contrast(0.5) blur(4px) grayscale(1)` and
+  `contrast(0.5) grayscale(1) blur(4px)` are *different pictures*, so this was not a formatting
+  difference; and `edit_item` reported one while the canvas drew the other, which made a tool result
+  a confident lie about a picture the agent cannot see. The survivor is `adjustmentFilter` in
+  `engine/looks.ts`, because the thing that composites is the only honest source for "the filter the
+  compositor will use". It kept the shared version's `1e-6` identity epsilon: a strict comparison
+  puts `brightness: 1.0000001` on the filtered draw path, which costs roughly twice as much at 4K
+  for an image nobody can tell apart. **A default must emit `'none'`, not `brightness(1)`**, for the
+  same reason.
+- **One `NaN` anywhere in a filter string makes Chromium drop the entire chain.** So a single bad
+  field silently removes every *other* adjustment on that item, with no error — which presents as
+  "adjustments are flaky". Non-finite values fall back to the identity per field; that guard is
+  load-bearing, not defensive.
+- **A transition belongs to the junction, not to either clip.** It lives on `Timeline.transitions`,
+  and nothing on an `Item` says one is attached — so any code walking items needs to consult
+  `resolveTransition` explicitly, which is exactly how export audio came to play a hard cut under a
+  cross-dissolving picture. `resolveTransition` is the authority on the window, never the stored
+  duration: `transition.durationInFrames` is what was *asked for* and `resolved.durationInFrames` is
+  what the handles allow. Using the stored value trims past footage that does not exist. The window
+  is **centred on the cut**, so the incoming clip must sound before its own `from` and the outgoing
+  past its end — both reading handle footage.
+- **Preview and export must share the gain curve, not merely agree about it.**
+  `transitionAudioGains` is the one implementation; export samples it per frame into a `volume`
+  expression rather than choosing the nearest-named `afade` curve, because an `afade` name that
+  merely *resembles* the curve diverges precisely in the middle of the window where the cross-fade
+  lives, and both sides sound fine in isolation. That also means the curve is free to be bespoke —
+  do not constrain it to what ffmpeg can name. Dip-to-black and dip-to-white are **not**
+  cross-fades: both sides are silent at the midpoint, where the picture is fully the dip colour, so
+  `acrossfade` would get them wrong.
+- **Where a transition and an item's own fade meet, the transition wins and the fade at that end is
+  ignored.** They express the same intent at the same place; multiplied, a 12-frame fade-out against
+  a dissolve's ramp dips to near-silence mid-window — a hole neither side asked for. `item.volume`
+  is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
+  resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
+  independently.
 - **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
   `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
   not land on the undo stack.
@@ -356,227 +507,3 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   30fps of footage. A frame-rate probe must therefore count **pictures**, not ticks — a tick that
   redraws the same image is indistinguishable from a new frame, so "p99 2ms" is entirely compatible
   with a picture updating four times a second.
-
-## Commands — the Rust engine (`dep/`)
-
-```bash
-dep/run.sh            # debug build + launch — fastest loop
-BAY_UI_FRAMETIME=1 RELEASE=1 dep/run.sh   # frame pacing: ticks/s, pictures/s, playback counters
-RELEASE=1 dep/run.sh  # release build — much smoother playback
-dep/build.sh          # release build of the desktop app
-dep/test.sh           # fmt --check + clippy --workspace --all-targets -D warnings + cargo test
-SLOW=1 dep/test.sh    # also run the 40 tests that drive the Kokoro sidecar or load SigLIP
-STRICT=1 dep/test.sh  # turn GPU/ffmpeg skips into hard failures for capability verification
-BAY_ONLINE=1 dep/test.sh   # let cargo reach the network — only needed after changing a dependency
-
-cd dep/rust && env -u CARGO_TARGET_DIR cargo test --workspace
-```
-
-These scripts resolve `$ROOT/rust` relative to themselves, so they kept working after the move;
-`$REPO` was introduced for the few paths that point at the repo root (`script/`, `dist/`).
-
-**Forty tests are `#[ignore]`d and run only under `SLOW=1`** — `bay-speech/tests/{kokoro,lifecycle}.rs`,
-`bay-mcp/tests/captions.rs`, `bay-vision/tests/encode.rs`, and `bay-mcp`'s `narration_tests`. They
-drive the Kokoro TTS sidecar or load the SigLIP model. The reason is **flakiness, not speed**:
-`fixes.md` entry 13 records that the narration tests hardcode ports 7451/7452 and fail whenever a
-`bay --mcp` is already running, and a test that fails for reasons outside the repository teaches
-people to re-run until green. `cargo test` prints them in its own `ignored` count, so this never
-reads as a pass. **Run `SLOW=1 ./test.sh` before anything ships, and after touching `bay-speech`,
-`bay-vision` or the MCP server.**
-
-The saving is smaller than it looks and the numbers are worth knowing before optimising further:
-the whole suite spends only **111 s executing** (94 binaries; the two heaviest are
-`bay-speech/tests/kokoro.rs` at 30 s and `bay-preview/tests/render.rs` at 21 s). A gate run is
-dominated by **compilation**, not by tests, so deferring the sidecar set is worth about 7% of wall
-clock. `render.rs` deliberately stays in every run — 70 tests at 0.3 s each, and it is what
-verifies the render path.
-
-**`cargo nextest` is not a speedup here — it is 3.5× slower.** Measured on `bay-ui`:
-`cargo test` 34.9 s wall / 3.3 s sys, `cargo nextest run` 122.6 s wall / 330.8 s sys. It forks a
-process per test, so each of bay-ui's 311 GPUI tests pays a full app startup that `cargo test`
-amortises across the binary. The 100× system time is that cost. Do not reach for it again without
-re-measuring.
-
-`test.sh` runs **`--offline`** and **`CARGO_INCREMENTAL=0`** by default, and both defaults exist
-for a reason. Cargo's `.package-cache` lock lives in `$CARGO_HOME` and is shared by *every*
-workspace this user builds, so two checkouts compiling at once take turns rather than running in
-parallel and each stalls whenever the other holds it — but that lock is only taken for registry
-access, so `--offline` sidesteps it entirely. `Cargo.lock` is committed and the registry is warm,
-so nothing needs fetching. Incremental compilation buys nothing for a one-shot gate run and its
-cache reached 20 GB here, which is how a disk filled up mid-session.
-
-Always remove `CARGO_TARGET_DIR` from direct Cargo invocations. The agent shell points it at a
-sandbox cache, bypassing the 89 GB warm `rust/target`; rebuilding `whisper-rs-sys` there fails
-because the cached `whisper.cpp` source is incomplete. Use
-`env -u CARGO_TARGET_DIR cargo ...`, never a second custom target directory. The repository
-scripts already do this.
-
-ffmpeg is required for decode, probing, waveforms, and MP4 export. bay installs its own when
-asked (`bay-provision`) and otherwise uses whatever is on the machine; without either, text and
-images still work and the rest must degrade with a message — never fail silently.
-
-Before claiming anything passes, run `./test.sh`. Clippy is `-D warnings`; a warning is a failure.
-Read its **real** exit code — piping it to `tail` and reading the pipe's status hides failures,
-and a `./test.sh` run from the wrong directory exits 127 while looking like it did nothing wrong.
-
-When several agents share this tree, scope commands to the crates you own (`cargo clippy -p …`)
-and **never** run `cargo fmt --all` — it rewrites other people's in-flight files. The full gate is
-the lead's job, on a quiet tree.
-
-## Architecture — the Rust engine
-
-Everything from here to the end of the file describes `dep/rust/`. Paths are written relative to
-`dep/`, so `rust/crates/bay-ui` on disk is `dep/rust/crates/bay-ui`. None of it applies to the
-Electron product at the repo root.
-
-```
-rust/
-├── desktop/          the binary — thin; calls bay_ui::run()
-├── crates/
-│   ├── bay-ui        GPUI application shell — mid-migration to six pages, see below
-│   │                  page.rs — the six pages and the bar's responsive ladder, GPUI-free
-│   │                  draw.rs — the only place bay draws something that is not a box
-│   │                  controls.rs, drag.rs — slider/drag-number/popover, one drag abstraction
-│   │                  editor/ — the editor carved into regions; one file per page
-│   ├── bay-core      editor model + orchestration
-│   ├── bay-project   project format, serialization, web↔native interop
-│   ├── bay-settings  account/session, providers, model routing, MCP access, compute — the
-│   │                  settings screen's state, headless because the MCP server enforces it
-│   ├── bay-preview   preview rendering, decode planning, caching
-│   │                  scopes.rs — waveform/parade/vectorscope/histogram, CPU over the readback
-│   │                  waveform.rs — peak extraction off the interactive render path
-│   ├── compositor, gpu, effects, masks    the wgpu render path
-│   ├── bay-audio     mixing, loudness, beats, silence — and stream.rs, the callback
-│   │                  block mixer a fader and a meter need to be real
-│   ├── bay-text, bay-speech
-│   ├── bay-vision   SigLIP image↔text embeddings (Candle, in-process, CPU)
-│   ├── bay-stock    searching the open image archives; the one crate that talks to a
-│   │                  third party, and only when a tool call asks it to
-│   ├── bay-provision installs bay's own runtimes (ffmpeg, Python, Kokoro) from a
-│   │                  pinned, SHA-256-verified manifest — the user installs nothing
-│   ├── time              MediaTime tick math
-│   ├── bay-mcp       the engine as an MCP server (`bay --mcp`; JSON-RPC over std::net)
-│   └── native-preview, bridge, test-support
-└── wasm/             bindings consumed by the legacy web app
-```
-
-The governing split (from `AGENTS.md`): **`rust/` owns all non-UI logic; a UI shell owns rendering,
-interaction, and platform concerns but never owns logic.** The UI framework for any given front end
-is a replaceable detail — which is why the same engine drives the GPUI app, the wasm/web build, and
-the MCP server. Logic is never duplicated between front ends.
-
-## Conventions and judgment calls
-
-- **Never put logic in the UI crate that a headless client would need.** If the MCP server or a test
-  can't reach it, it's in the wrong crate. The settings screen is the standing temptation: "which
-  MCP tools may an agent call" looks like a checkbox but is enforced by `bay --mcp` with no window
-  open, so it lives in `bay-settings` and the view only draws it.
-- **A control must do what it says.** The panel palettes come from `bay-core::blocks`, which only
-  names effects the compositor compiles — a tile adding an effect nothing renders is a dead
-  control discovered after an export comes back unchanged. Same rule for accounts and cloud
-  compute: neither exists in this build, so both refuse with the reason rather than appearing to
-  work. `bay-mcp`'s `tool_vocabulary` test enforces the settings pane and the server agreeing on
-  what a tool is called, in both directions.
-- **Decode never runs on the *interactive* render path.** A long clip must not freeze `render()`;
-  preview decodes are planned on a worker and awaited explicitly. **Export is the exception, by
-  design:** it streams each clip at source resolution through `ClipStream` and decodes inside its
-  own frame loop. It does *not* call `await_decodes` — that would start preview-intent decodes of
-  clips the export will never read. Export is not interactive, and a 4K clip cannot be
-  pre-decoded into a memory budget at all.
-- **Preview and export plan decode differently, on purpose** (`DecodeIntent`). Preview is a
-  ≤480px, budget-bounded cache so scrubbing is instant; export is source resolution at the
-  delivered frame rate, streamed. Collapsing them is how a 4K export came to be a 480px cache
-  upscaled 8×.
-- **Cache budgets are global, not per clip.** An LRU byte budget across all clips — regressing this
-  means N clips get N budgets. The budget applies to the *preview* cache; export holds one frame
-  per on-screen clip and nothing more.
-- **The render path cannot panic on bad input.** NaN/±inf transforms and tiny canvases (1×1, 8×4) are
-  tested; keep them tested.
-- **Project wire format is kebab-case** and pinned by serde round-trip tests — it is the web↔native
-  interop contract. Don't change a field name without updating both sides.
-- **Missing GPU or ffmpeg skips gracefully by default** (`BAY_REQUIRE_GPU` / `BAY_REQUIRE_FFMPEG`
-  turn skips into failures). Don't remove the graceful path, and don't let a skip masquerade as a pass
-  when reporting results. Provisioning follows the same rule under `BAY_PROVISION_LIVE`.
-- **Nothing downloads unless the user asks.** `bay-provision` detects and offers; it never fetches
-  on its own initiative, and every artifact is verified against a pinned SHA-256 before install.
-  A new artifact needs an immutable URL and a redistributable licence — both are enforced by tests.
-- **Never run a toolchain build that was not tested.** A copy of ffmpeg bay did not install must
-  clear the manifest's `minimumVersion`, and one that will not report a version does not clear it.
-  Raising that floor makes bay download onto machines that were working — do it for a real
-  incompatibility, and say which one in the manifest.
-- **A test must never depend on a shared machine resource.** The registry tests took the real
-  agent port and failed whenever a `bay --mcp` was running; a test that fails for reasons outside
-  the repository teaches people to re-run until green, which is how a real failure gets ignored.
-- Every substantive fix in the parity effort is recorded with what it was and what verifies it —
-  follow that pattern in [`docs/native/parity-status.md`](docs/native/parity-status.md).
-- **The UI is mid-migration to six pages behind one bar** — Media · Cut · Motion · Color · Audio ·
-  Deliver. **It is under development and no page has had a visual check.** The contract, and a
-  table of what is actually built versus what is not, is [`docs/native/pages.md`](docs/native/pages.md);
-  the work queue is [`todo.pages.md`](todo.pages.md). Do not describe a page as working on the
-  strength of its unit tests — that error has already been made here once, in an audio engine whose
-  tests all passed and which nothing called. The rules bind regardless: a page is a *method* on
-  `EditorView`, never its own GPUI view (the moment it is, the `PreviewRenderer` and its atlas
-  bookkeeping, audio, waveforms and undo history all have to be hoisted); the global playhead
-  survives a page switch; and a control the engine cannot back is drawn **disabled**, not hidden —
-  the disabled controls are the map of the remaining engine work.
-- **Never ask for a frame with `cx.notify()` from inside `render`.** GPUI's
-  `WindowInvalidator::invalidate_view` sets the dirty flag *only* when
-  `draw_phase == DrawPhase::None`, and `render` is the draw phase — so a `notify` issued there
-  records the view in `dirty_views` and never marks the window dirty, while the display-link
-  callback draws only `if invalidator.is_dirty()`. The frame is silently not requested. This is
-  not theoretical: it made the transport a slideshow while dragging the playhead over the same
-  clip stayed perfectly smooth, and the frame-time probe reported a healthy p99 the whole time
-  because it counted *ticks*, not pictures. Use `EditorView::request_frame`, which is
-  `window.request_animation_frame()` without the `current_view()` unwrap that panics under
-  `VisualTestContext::draw`.
-- **The preview draws at the project's frame rate, not the display's refresh rate.** The composite
-  signature hashes `preview_playhead()` — the playhead quantised by
-  `geometry::quantize_to_frame` — and `submit_composite` is handed the same value. Hashing raw
-  `MediaTime` ticks (120,000 a second) makes every display refresh a new signature, so a 120 Hz
-  screen paid for a full composite, readback, `RenderImage` and atlas tile 120 times a second to
-  show 30 fps of footage: measured at `pictures 120.0/s` against `30.0 new frames/s`, three
-  composites in four identical to the one before. Two playhead positions inside one frame *are*
-  one picture. Worse when the playhead is past the last clip — nothing bounds a project's duration
-  to its video, so one long audio clip had playback compositing an empty frame 120 times a second
-  for 51 minutes.
-- **A frame-rate probe must count pictures, not ticks.** A render tick that redraws the same
-  image is indistinguishable from one that shows a new frame, so "p99 2.05 ms over 120 frames" is
-  entirely compatible with a picture updating four times a second. `BAY_UI_FRAMETIME=1` now
-  reports `pictures/s` beside `ticks/s`, and `bay-bench`'s wall-clock playback case exists for
-  the same reason — the fixed-step case answers "how expensive is one frame" and cannot see how
-  many reach the screen.
-- **The playback window is bounded ahead as well as behind, and ahead is the memory bound.**
-  Draining a `sync_channel` until empty does not inherit its backpressure — emptying it frees the
-  worker to refill it, so the real limit becomes ffmpeg's speed. The decoder runs ~500 fps against
-  a playhead at 24, which grew the window by ~475 frames/s at half a megabyte each: 1.5 GB in six
-  seconds, measured. `Worker::drain` stops at the window edge and leaves the rest in the channel.
-- **Vector geometry is a path; a density plot is a raster; nothing else uses an image.** Decided
-  and measured in [`docs/native/drawing.md`](docs/native/drawing.md) — 80 µs for a 1,000-point
-  polyline. Five surfaces depend on it (curve editor, scopes, wheels, tall waveforms, EQ). Do not
-  re-open it, and if you take the image route anywhere, you inherit the `retired_images` /
-  `window.drop_image` obligation.
-- **8-bit intermediates stay**, deferred with a named trigger in
-  [`docs/native/intermediate-format.md`](docs/native/intermediate-format.md). Every source uploads
-  as RGBA8, so a wider buffer has nothing extra to carry, and the unorm target's hardware clamp is
-  currently load-bearing — `brightness.wgsl` returns unclamped and relies on it. Collapsing
-  consecutive scalar passes bought more precision than widening would have: 64 → 256 distinct
-  levels through a squeeze-and-stretch.
-- **Adding a field to a widely-constructed type stops the whole workspace.** Rust struct literals
-  are exhaustive, so one new field on `Keyframe` broke every literal in four crates at once. Give
-  such types a constructor (`Keyframe::new`), run `cargo check --workspace` after *each* field, and
-  make sure the default samples identically to its absence — a default that quietly alters
-  interpolation changes the motion of every project ever saved.
-- **A test must not depend on a shared machine resource**, and the resource is rarely the obvious
-  one. The registry tests' scratch *directory* was keyed by test name with no pid, so two test
-  binaries wiped each other's state (11 of 12 concurrent runs failed; 0 of 16 after). The port
-  beside it already had the fix and the directory never got it.
-- **Read the errno, not the message.** Two narration tests fail with
-  `Resource temporarily unavailable`, which reads like a disk problem and is not: ENOSPC is 28,
-  EAGAIN is 35, and this is a 300 s `SO_RCVTIMEO` read timeout waiting on the Kokoro sidecar.
-  Recorded in `fixes.md`; it blocks nothing.
-- **Never leave a detached script running.** One agent backgrounded a build script that outlived
-  it, held the cargo lock for hours and respawned `cargo` after the session that owned it had died.
-- [`fixes.md`](fixes.md) is the register of controls that do not do what they say — a tile naming
-  an effect nothing renders, a validator accepting a channel nothing reads, a schema hiding an
-  effect the engine has. Add to it rather than fixing quietly, and record what would verify each.
-

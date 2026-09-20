@@ -1,5 +1,0 @@
-[package]
-name = "bay-paths"
-version = "0.1.0"
-edition = "2024"
-description = "Where bay keeps per-user data, resolved per platform."
