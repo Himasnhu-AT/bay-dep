@@ -86,6 +86,25 @@ test('resolves the import shapes this tree actually uses', () => {
   assert.deepEqual(unresolvedImports(files, (p) => sources[p] ?? ''), [])
 })
 
+test('a bundler query suffix names how to load a file, not a different file', () => {
+  // Vite's `?raw` inlines the file as a string. Resolving the specifier verbatim looks for a
+  // file called `guide.md?raw`, finds nothing, and reports a working import as broken — which
+  // it did, against eleven real documents, the first time this gate met one.
+  const files = ['src/a.ts', 'src/docs/guide.md']
+  const source = `import guide from './docs/guide.md?raw'`
+
+  assert.deepEqual(unresolvedImports(files, () => source), [])
+})
+
+test('a query suffix does not excuse a genuinely missing file', () => {
+  // The positive control: stripping the suffix must not turn the check off. A `?raw` import of
+  // something that is not committed is exactly the fault this gate exists for.
+  const faults = unresolvedImports(['src/a.ts'], () => `import x from './docs/gone.md?raw'`)
+
+  assert.equal(faults.length, 1)
+  assert.equal(faults[0]?.specifier, './docs/gone.md?raw')
+})
+
 test('a multi-line import is not a blind spot', () => {
   const files = ['src/a.ts']
   const source = `import {\n  one,\n  two\n} from './missing'\n`

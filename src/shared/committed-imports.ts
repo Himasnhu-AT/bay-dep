@@ -73,15 +73,23 @@ export function unresolvedImports(
     if (!/\.tsx?$/.test(file)) continue
     const dir = file.split('/').slice(0, -1).join('/')
 
-    for (const specifier of specifiersIn(read(file))) {
+    for (const rawSpecifier of specifiersIn(read(file))) {
+      // A bundler query suffix names how to load the file, not a different file. Vite's
+      // `./x.md?raw` inlines x.md as a string; resolving the specifier verbatim looks for a
+      // file called `x.md?raw`, finds nothing, and reports a healthy import as broken. The
+      // gate exists to catch a missing file, and this is the opposite error.
+      const specifier = rawSpecifier.split('?')[0] ?? rawSpecifier
+      if (specifier.length === 0) continue
       const base = normalise(`${dir}/${specifier}`)
       // An explicit extension is tried as written; `./looks` is tried five ways.
-      const tried = /\.(tsx?|json|css|svg|png)$/.test(specifier)
+      const tried = /\.(tsx?|json|css|svg|png|md|txt|wasm|woff2?)$/.test(specifier)
         ? [base]
         : [base, ...CANDIDATE_SUFFIXES.map((suffix) => `${base}${suffix}`)]
 
       if (!tried.some((candidate) => present.has(candidate))) {
-        faults.push({ from: file, specifier, triedPaths: tried })
+        // Reported as written, suffix included: the reader has to find this line in the file,
+        // and a stripped specifier does not match what is on it.
+        faults.push({ from: file, specifier: rawSpecifier, triedPaths: tried })
       }
     }
   }
