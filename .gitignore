@@ -3,11 +3,7 @@
 # asdf version management
 .tool-versions
 
-# --- Rust (workspace lives in rust/) ---
-target/
-.cargo-tools/
-
-# --- JS / web stack (lives in dep/) ---
+# --- Node ---
 node_modules
 .turbo
 .content-collections
@@ -22,7 +18,6 @@ bun.lockb
 .env*
 !*.env.example
 
-rust-migration-notes.md
 dist/
 
 # --- rendered video output (reproducible from the project JSON + assets/) ---
