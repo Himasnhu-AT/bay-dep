@@ -5,7 +5,11 @@ import {
   coverKeeps,
   coverLayout,
   defaultLayout,
-  placementLayout
+  placementLayout,
+  positionFromOrigin,
+  positionToOrigin,
+  LAYOUT_ORIGINS,
+  LAYOUT_ORIGIN_LABEL
 } from './project'
 
 /**
@@ -84,4 +88,72 @@ test('a source with no dimensions falls back rather than dividing by zero', () =
 
   assert.deepEqual(placementLayout(timeline, 0, 0), defaultLayout(timeline))
   assert.equal(coverKeeps(timeline, 0, 1080), 1)
+})
+
+// --- which corner X and Y are measured from ------------------------------------------------
+
+const FRAME = { width: 1920, height: 1080 }
+const box = (left: number, top: number, width = 400, height = 200) => ({ left, top, width, height })
+
+test('top-left is unchanged, because it is what left and top already mean', () => {
+  assert.deepEqual(positionFromOrigin(box(120, 80), FRAME, 'top-left'), { x: 120, y: 80 })
+})
+
+test('top-right measures the gap from the right edge, not where the left edge is', () => {
+  // "80px from the right" is the number someone means, and the one that stays put when the
+  // clip is resized. A clip 400 wide at left 1440 touches the right edge.
+  assert.deepEqual(positionFromOrigin(box(1440, 80), FRAME, 'top-right'), { x: 80, y: 80 })
+  assert.deepEqual(positionFromOrigin(box(1520, 80), FRAME, 'top-right'), { x: 0, y: 80 })
+})
+
+test('bottom origins measure up from the bottom edge', () => {
+  assert.deepEqual(positionFromOrigin(box(120, 780), FRAME, 'bottom-left'), { x: 120, y: 100 })
+  assert.deepEqual(positionFromOrigin(box(1440, 780), FRAME, 'bottom-right'), { x: 80, y: 100 })
+})
+
+test('centre is the offset between the two centres, so 0,0 means centred', () => {
+  const centred = box((1920 - 400) / 2, (1080 - 200) / 2)
+  assert.deepEqual(positionFromOrigin(centred, FRAME, 'center'), { x: 0, y: 0 })
+})
+
+test('every origin round-trips exactly, which is what stops the field fighting the user', () => {
+  // Typing a number in and reading it back must give the same number. Anything else and the
+  // value creeps every time the inspector re-renders.
+  const size = { width: 400, height: 200 }
+  for (const origin of LAYOUT_ORIGINS) {
+    for (const [x, y] of [[0, 0], [80, 100], [-40, 25], [1520, 880]]) {
+      const absolute = positionToOrigin({ x: x!, y: y! }, size, FRAME, origin)
+      const back = positionFromOrigin({ ...absolute, ...size }, FRAME, origin)
+      assert.deepEqual(back, { x, y }, `${origin} at ${x},${y}`)
+    }
+  }
+})
+
+test('resizing a top-right clip keeps its distance from the right edge', () => {
+  // The reason to anchor at all: a clip pinned 80px from the right should still be 80px from
+  // the right after it grows, which a left/top pair cannot express.
+  const before = box(1440, 80, 400, 200)
+  const distance = positionFromOrigin(before, FRAME, 'top-right')
+
+  const wider = positionToOrigin(distance, { width: 600, height: 200 }, FRAME, 'top-right')
+
+  assert.equal(wider.left, 1920 - 600 - 80)
+  assert.deepEqual(
+    positionFromOrigin({ ...wider, width: 600, height: 200 }, FRAME, 'top-right'),
+    distance
+  )
+})
+
+test('a clip larger than the frame gives a negative distance rather than clamping', () => {
+  // Overscan is legitimate — a background plate is often larger than the frame — and silently
+  // clamping it here would move the clip the moment anyone opened the inspector.
+  const oversized = box(-100, -50, 2120, 1180)
+  assert.deepEqual(positionFromOrigin(oversized, FRAME, 'top-right'), { x: -100, y: -50 })
+})
+
+test('every origin has a label, so the selector can never show a raw value', () => {
+  for (const origin of LAYOUT_ORIGINS) {
+    assert.equal(typeof LAYOUT_ORIGIN_LABEL[origin], 'string')
+    assert.ok(LAYOUT_ORIGIN_LABEL[origin].length > 0, origin)
+  }
 })

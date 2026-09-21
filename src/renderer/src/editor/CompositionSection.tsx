@@ -6,7 +6,7 @@ import {
   type CompositionVariable,
   type CompositionVariableValue
 } from '@shared/composition'
-import { ColorField, IconButton, NumberField, Section, Select, Slider } from '@/components'
+import { ColorField, Field, IconButton, NumberField, Section, Select, Slider } from '@/components'
 import { useEditor } from '@/store/editor'
 import { cn } from '@/lib/cn'
 
@@ -163,13 +163,16 @@ function Control({
 
     case 'enum':
       return (
-        <Select
-          label={variable.label}
-          value={String(value)}
-          onChange={(next) => onChange(next)}
-          options={(variable.options ?? []).map((o) => ({ value: o.value, label: o.label }))}
-          className="flex-1"
-        />
+        // Same reason as the origin selector: `Select` is aria-labelled only, and a bare
+        // dropdown among named fields does not say what it sets.
+        <Field label={variable.label} className="flex-1">
+          <Select
+            label={variable.label}
+            value={String(value)}
+            onChange={(next) => onChange(next)}
+            options={(variable.options ?? []).map((o) => ({ value: o.value, label: o.label }))}
+          />
+        </Field>
       )
 
     case 'number':

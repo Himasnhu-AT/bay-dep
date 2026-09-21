@@ -5,7 +5,13 @@ import {
   findAsset,
   formatTimecode,
   itemEnd,
-  type Item
+  type Item,
+  positionFromOrigin,
+  positionToOrigin,
+  LAYOUT_ORIGINS,
+  LAYOUT_ORIGIN_LABEL,
+  DEFAULT_LAYOUT_ORIGIN,
+  type LayoutOrigin
 } from '@shared/project'
 import {
   Field,
@@ -106,6 +112,7 @@ export function Inspector(): ReactNode {
   const timeline = useEditor(selectTimeline)
   const project = useEditor((state) => state.project)
   const patchLayout = useEditor((state) => state.patchLayout)
+  const transact = useEditor((state) => state.transact)
   const patchItem = useEditor((state) => state.patchItem)
   const moveItem = useEditor((state) => state.moveItem)
   const trimItem = useEditor((state) => state.trimItem)
@@ -137,8 +144,40 @@ export function Inspector(): ReactNode {
     for (const item of selected) patchItem(item.id, patch)
   }
 
-  const left = layout((item) => item.layout.left)
-  const top = layout((item) => item.layout.top)
+  // X and Y are shown from whichever corner the clip is anchored to. `left` and `top` stay
+  // absolute in the model — the conversion happens here, at the one place a person types a
+  // number, so nothing that draws or exports has to know an origin exists.
+  const frame = { width: timeline?.width ?? 0, height: timeline?.height ?? 0 }
+  const origin = (selected[0]?.layout.origin ?? DEFAULT_LAYOUT_ORIGIN) as LayoutOrigin
+  const positionOf = (item: Item): { x: number; y: number } =>
+    positionFromOrigin(item.layout, frame, origin)
+
+  const left = layout((item) => positionOf(item).x)
+  const top = layout((item) => positionOf(item).y)
+
+  /** Writes one axis back, keeping the other where the clip already is. */
+  const setPosition = (axis: 'x' | 'y', next: number): void => {
+    for (const item of selected) {
+      const current = positionFromOrigin(item.layout, frame, origin)
+      patchLayout(
+        item.id,
+        positionToOrigin({ ...current, [axis]: next }, item.layout, frame, origin)
+      )
+    }
+  }
+
+  /**
+   * Re-anchor without moving the clip.
+   *
+   * The position is re-expressed from the new corner rather than reapplied, so choosing a
+   * different origin never shifts anything — it changes the numbers, not the picture. An
+   * origin that moved the clip would make the control feel like a transform.
+   */
+  const setOrigin = (next: LayoutOrigin): void => {
+    transact(() => {
+      for (const item of selected) patchLayout(item.id, { origin: next })
+    })
+  }
   const width = layout((item) => item.layout.width)
   const height = layout((item) => item.layout.height)
   const rotation = layout((item) => item.layout.rotation)
@@ -239,19 +278,36 @@ export function Inspector(): ReactNode {
         </Section>
 
         <Section title="Transform">
+          {/* Wrapped in a Field for a visible caption: `Select` carries only an aria-label,
+              which is enough when a Section title names it and not enough here, where it sits
+              among X, Y, W and H and would otherwise be an unexplained dropdown. */}
+          {/* "Origin" rather than "X and Y from": the Field label column truncates, and a
+              caption that reads "X and Y fr..." names nothing. Origin is what design tools
+              call this, and the aria-label carries the longer phrasing for a screen reader. */}
+          <Field label="Origin" className="mb-1.5">
+            <Select
+              label="Measure X and Y from"
+              value={origin}
+              onChange={setOrigin}
+              options={LAYOUT_ORIGINS.map((value) => ({
+                value,
+                label: LAYOUT_ORIGIN_LABEL[value]
+              }))}
+            />
+          </Field>
           <div className="grid grid-cols-2 gap-1.5">
             <NumberField
               label="X"
               value={left.value}
               mixed={left.mixed}
-              onCommit={(next) => applyLayout({ left: next })}
+              onCommit={(next) => setPosition('x', next)}
               suffix="px"
             />
             <NumberField
               label="Y"
               value={top.value}
               mixed={top.mixed}
-              onCommit={(next) => applyLayout({ top: next })}
+              onCommit={(next) => setPosition('y', next)}
               suffix="px"
             />
             <NumberField

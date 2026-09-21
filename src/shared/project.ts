@@ -81,6 +81,36 @@ export interface Asset {
 // ---------------------------------------------------------------------------
 
 /** Where an item sits on the canvas. Origin is top-left of the canvas, in canvas pixels. */
+/**
+ * Which corner of the frame a clip's X and Y are measured from.
+ *
+ * Presentation only: `Layout.left` and `Layout.top` stay absolute from the top-left, because
+ * they are what the compositor draws with and what every export, probe and tool already reads.
+ * Storing coordinates in five different frames of reference would mean every one of those had
+ * to know which one an item was using — a conversion nobody would remember to do, silently
+ * placing clips wrong.
+ *
+ * So this changes what the inspector shows and accepts, and nothing else. It is stored per item
+ * rather than kept as a global preference so that "this lower third is 80px from the right" is
+ * a property of that clip and survives reopening the project.
+ */
+export type LayoutOrigin =
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'center'
+
+export const LAYOUT_ORIGINS: readonly LayoutOrigin[] = [
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+  'center'
+] as const
+
+export const DEFAULT_LAYOUT_ORIGIN: LayoutOrigin = 'top-left'
+
 export interface Layout {
   left: number
   top: number
@@ -90,6 +120,13 @@ export interface Layout {
   opacity: number
   /** Degrees, clockwise, about the item's centre. */
   rotation: number
+  /**
+   * The corner `left` and `top` are shown relative to in the inspector. Absent means top-left.
+   *
+   * Never consulted when drawing: `left` and `top` are always absolute from the top-left of the
+   * frame, whatever this says.
+   */
+  origin?: LayoutOrigin
 }
 
 /**
@@ -818,3 +855,79 @@ export const CANVAS_PRESETS: CanvasPreset[] = [
   { id: 'square-1080', label: '1080 × 1080 · 1:1', width: 1080, height: 1080, fps: 30 },
   { id: 'landscape-4k', label: '3840 × 2160 · 4K', width: 3840, height: 2160, fps: 30 }
 ]
+
+/**
+ * A layout's position expressed from its chosen corner.
+ *
+ * The distance is always to the *nearest* edges for that corner — a clip anchored top-right
+ * reports how far its right edge sits from the frame's right edge, not where its left edge is.
+ * That is the number someone means by "80px from the right", and it is the one that stays put
+ * when the clip is resized.
+ *
+ * `center` reports the offset of the clip's centre from the frame's centre, which is the only
+ * reading of "centre" that makes 0,0 mean centred.
+ */
+export function positionFromOrigin(
+  layout: Pick<Layout, 'left' | 'top' | 'width' | 'height'>,
+  frame: Pick<Timeline, 'width' | 'height'>,
+  origin: LayoutOrigin
+): { x: number; y: number } {
+  const right = frame.width - (layout.left + layout.width)
+  const bottom = frame.height - (layout.top + layout.height)
+  switch (origin) {
+    case 'top-right':
+      return { x: right, y: layout.top }
+    case 'bottom-left':
+      return { x: layout.left, y: bottom }
+    case 'bottom-right':
+      return { x: right, y: bottom }
+    case 'center':
+      return {
+        x: Math.round(layout.left + layout.width / 2 - frame.width / 2),
+        y: Math.round(layout.top + layout.height / 2 - frame.height / 2)
+      }
+    default:
+      return { x: layout.left, y: layout.top }
+  }
+}
+
+/**
+ * The absolute `left`/`top` for a position given from a corner. The inverse of the above.
+ *
+ * Round-trips exactly, which is the property that matters: typing a number into the inspector
+ * and reading it back must give the same number, or the field fights the user.
+ */
+export function positionToOrigin(
+  position: { x: number; y: number },
+  size: Pick<Layout, 'width' | 'height'>,
+  frame: Pick<Timeline, 'width' | 'height'>,
+  origin: LayoutOrigin
+): { left: number; top: number } {
+  switch (origin) {
+    case 'top-right':
+      return { left: frame.width - size.width - position.x, top: position.y }
+    case 'bottom-left':
+      return { left: position.x, top: frame.height - size.height - position.y }
+    case 'bottom-right':
+      return {
+        left: frame.width - size.width - position.x,
+        top: frame.height - size.height - position.y
+      }
+    case 'center':
+      return {
+        left: Math.round(frame.width / 2 - size.width / 2 + position.x),
+        top: Math.round(frame.height / 2 - size.height / 2 + position.y)
+      }
+    default:
+      return { left: position.x, top: position.y }
+  }
+}
+
+/** How each origin is named in the interface. */
+export const LAYOUT_ORIGIN_LABEL: Record<LayoutOrigin, string> = {
+  'top-left': 'Top left',
+  'top-right': 'Top right',
+  'bottom-left': 'Bottom left',
+  'bottom-right': 'Bottom right',
+  center: 'Centre'
+}
