@@ -303,6 +303,15 @@ export const TOOLS: ToolSpec[] = [
         speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
         fadeInFrames: { type: 'integer', minimum: 0 },
         fadeOutFrames: { type: 'integer', minimum: 0 },
+        variables: {
+          type: 'object',
+          description:
+            'For an html item: values for the variables its composition declares, as ' +
+            '{ id: value }. Only declared ids are honoured. read_composition lists what a ' +
+            'composition declares, and inspect_item reports the values a clip is using. ' +
+            'Values live on the clip, so one template placed several times can say something ' +
+            'different each time.'
+        },
         adjustments: {
           type: 'object',
           description:

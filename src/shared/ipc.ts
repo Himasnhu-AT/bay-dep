@@ -76,6 +76,14 @@ export interface CompositionFrameRequest {
   atUs: number
   width: number
   height: number
+  /**
+   * The values this clip renders with — already resolved against the composition's declared
+   * defaults, so main applies them without needing to know what was declared.
+   *
+   * Part of the request rather than set once per window because two clips of one composition
+   * can carry different values, and they share a window.
+   */
+  variables?: Record<string, string | number | boolean>
 }
 
 export interface CompositionFrame {

@@ -86,6 +86,7 @@ export async function writeComposition(
     assetId: asset.id,
     compositionId: info?.compositionId,
     durationSeconds: info?.durationSeconds,
+    variables: info?.variables ?? [],
     width: asset.width,
     height: asset.height,
     // Reported even when nothing is fatal, because the non-fatal ones are the ones that hide:
@@ -121,7 +122,11 @@ export async function readComposition(
           compositionId: info.compositionId,
           durationSeconds: info.durationSeconds,
           width: info.width,
-          height: info.height
+          height: info.height,
+          // What this composition can be configured with. Reported even when empty, because
+          // "declares nothing" and "I did not look" are different answers and an agent
+          // deciding whether to edit the HTML or set a variable needs to tell them apart.
+          variables: info.variables
         }
       : {}),
     problems: faults.map(describe),

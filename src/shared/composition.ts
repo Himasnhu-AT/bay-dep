@@ -43,10 +43,50 @@ export function isCompositionPath(path: string): boolean {
 /** How long a composition is allowed to be. A typo in `data-duration` should not allocate. */
 export const MAX_COMPOSITION_SECONDS = 60 * 30
 
+/**
+ * A knob a composition declares for its own contents.
+ *
+ * Declared by the author on `<html data-composition-variables='[...]'>`, which is what makes
+ * this tractable at all: bay does not guess at which parts of arbitrary HTML are editable, it
+ * renders the controls the composition says it has. A composition with no declarations is
+ * simply not configurable, which is honest — the alternative is an inspector full of fields
+ * that change nothing.
+ *
+ * The types are the HyperFrames set, because the compositions bay renders are written against
+ * that contract and a second vocabulary would mean two things to satisfy.
+ */
+export type CompositionVariableType = 'string' | 'number' | 'color' | 'boolean' | 'enum'
+
+export type CompositionVariableValue = string | number | boolean
+
+export interface CompositionVariable {
+  id: string
+  type: CompositionVariableType
+  label: string
+  default: CompositionVariableValue
+  /** `string` only. */
+  placeholder?: string
+  maxLength?: number
+  /** `number` only. */
+  min?: number
+  max?: number
+  step?: number
+  unit?: string
+  /** `enum` only, and required there — an enum with no options is a control with no choices. */
+  options?: { value: string; label: string }[]
+}
+
 /** What bay reads out of a composition file before it can be placed on a timeline. */
 export interface CompositionInfo {
   /** `data-composition-id` on the root. The key its timeline registers under. */
   compositionId: string
+  /**
+   * The knobs this composition declares, in the order it declared them.
+   *
+   * Order is the author's and is preserved: it is the order the controls appear in, and an
+   * inspector that sorted them alphabetically would scatter a deliberate grouping.
+   */
+  variables: CompositionVariable[]
   /** `data-duration`, in seconds as authored. */
   durationSeconds: number
   /** The root's declared pixel size. A composition is authored at a fixed size. */
@@ -76,6 +116,7 @@ export type CompositionFaultCode =
   | 'no-size'
   | 'remote-resource'
   | 'wrapped-in-template'
+  | 'bad-variables'
 
 /**
  * Read a composition's declared shape out of its HTML.
@@ -193,14 +234,172 @@ export function readComposition(html: string): {
     })
   }
 
+  const { variables, variableFaults } = readVariables(html, lineOf)
+  faults.push(...variableFaults)
+
   const usable = compositionId.length > 0 && size !== null && Number.isFinite(durationSeconds)
   return {
     info:
       usable && durationSeconds > 0 && durationSeconds <= MAX_COMPOSITION_SECONDS
-        ? { compositionId, durationSeconds, width: size.width, height: size.height }
+        ? { compositionId, durationSeconds, width: size.width, height: size.height, variables }
         : null,
     faults
   }
+}
+
+/**
+ * The variables a composition declares, and anything wrong with the declaration.
+ *
+ * A malformed declaration is never fatal. The composition still renders — it just renders at
+ * its defaults with no controls — and refusing to place a clip because a JSON attribute has a
+ * trailing comma would be wildly out of proportion to the harm.
+ */
+function readVariables(
+  html: string,
+  lineOf: (index: number) => number
+): { variables: CompositionVariable[]; variableFaults: CompositionFault[] } {
+  const match = /<html[^>]*\bdata-composition-variables\s*=\s*(['"])([\s\S]*?)\1/i.exec(html)
+  if (!match) return { variables: [], variableFaults: [] }
+
+  const line = lineOf(match.index)
+  const reject = (message: string): { variables: CompositionVariable[]; variableFaults: CompositionFault[] } => ({
+    variables: [],
+    variableFaults: [{ code: 'bad-variables', message, line, fatal: false }]
+  })
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(decodeEntities(match[2] ?? ''))
+  } catch (error) {
+    return reject(
+      `data-composition-variables is not valid JSON (${(error as Error).message}), so this ` +
+        `composition offers no controls. It still renders at its defaults.`
+    )
+  }
+  if (!Array.isArray(parsed)) {
+    return reject('data-composition-variables must be a JSON array of declarations.')
+  }
+
+  const variables: CompositionVariable[] = []
+  const variableFaults: CompositionFault[] = []
+  const seen = new Set<string>()
+
+  for (const [index, raw] of parsed.entries()) {
+    const at = `declaration ${index + 1}`
+    if (typeof raw !== 'object' || raw === null) {
+      variableFaults.push({ code: 'bad-variables', message: `${at} is not an object.`, line, fatal: false })
+      continue
+    }
+    const entry = raw as Record<string, unknown>
+    const id = typeof entry['id'] === 'string' ? entry['id'].trim() : ''
+    if (id.length === 0) {
+      variableFaults.push({ code: 'bad-variables', message: `${at} has no id.`, line, fatal: false })
+      continue
+    }
+    if (seen.has(id)) {
+      // Two controls writing one name is a control that silently loses.
+      variableFaults.push({
+        code: 'bad-variables',
+        message: `${at} repeats the id "${id}"; only the first is used.`,
+        line,
+        fatal: false
+      })
+      continue
+    }
+    const type = entry['type']
+    if (!isVariableType(type)) {
+      variableFaults.push({
+        code: 'bad-variables',
+        message: `"${id}" has type ${JSON.stringify(type)}, which is not one of string, number, color, boolean, enum.`,
+        line,
+        fatal: false
+      })
+      continue
+    }
+    if (type === 'enum' && !Array.isArray(entry['options'])) {
+      variableFaults.push({
+        code: 'bad-variables',
+        message: `"${id}" is an enum with no options, which is a control with no choices in it.`,
+        line,
+        fatal: false
+      })
+      continue
+    }
+
+    seen.add(id)
+    const declared: CompositionVariable = {
+      id,
+      type,
+      label: typeof entry['label'] === 'string' && entry['label'].length > 0 ? entry['label'] : id,
+      default: coerce(entry['default'], type) ?? fallbackFor(type)
+    }
+    if (typeof entry['placeholder'] === 'string') declared.placeholder = entry['placeholder']
+    if (typeof entry['maxLength'] === 'number') declared.maxLength = entry['maxLength']
+    if (typeof entry['min'] === 'number') declared.min = entry['min']
+    if (typeof entry['max'] === 'number') declared.max = entry['max']
+    if (typeof entry['step'] === 'number') declared.step = entry['step']
+    if (typeof entry['unit'] === 'string') declared.unit = entry['unit']
+    if (type === 'enum') {
+      declared.options = (entry['options'] as unknown[])
+        .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
+        .map((o) => ({
+          value: String(o['value'] ?? ''),
+          label: String(o['label'] ?? o['value'] ?? '')
+        }))
+    }
+    variables.push(declared)
+  }
+
+  return { variables, variableFaults }
+}
+
+function isVariableType(value: unknown): value is CompositionVariableType {
+  return (
+    value === 'string' || value === 'number' || value === 'color' ||
+    value === 'boolean' || value === 'enum'
+  )
+}
+
+function fallbackFor(type: CompositionVariableType): CompositionVariableValue {
+  if (type === 'number') return 0
+  if (type === 'boolean') return false
+  if (type === 'color') return '#ffffff'
+  return ''
+}
+
+/**
+ * A value as its declared type, or null when it cannot be one.
+ *
+ * Coerced rather than rejected because these come out of a hand-written HTML attribute, where
+ * `"default": "12"` for a number is a typo and not a different intention.
+ */
+export function coerce(
+  value: unknown,
+  type: CompositionVariableType
+): CompositionVariableValue | null {
+  if (value === undefined || value === null) return null
+  if (type === 'number') {
+    const n = typeof value === 'number' ? value : Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  if (type === 'boolean') {
+    if (typeof value === 'boolean') return value
+    if (value === 'true') return true
+    if (value === 'false') return false
+    return null
+  }
+  return typeof value === 'object' ? null : String(value)
+}
+
+/** `&quot;` and friends, because the declaration lives inside an HTML attribute. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
 }
 
 /** Width and height off the root's inline style, or its width/height attributes. */
@@ -247,4 +446,45 @@ export function seekSecondsFor(info: CompositionInfo, sourceUs: Micros): number 
   const seconds = sourceUs / 1_000_000
   if (!Number.isFinite(seconds) || seconds < 0) return 0
   return Math.min(seconds, info.durationSeconds)
+}
+
+/**
+ * The values a composition should render with: its declared defaults, with this clip's
+ * overrides on top.
+ *
+ * Per **item**, not per asset, and that is the point of the feature. One lower-third
+ * composition placed four times should be able to name four different people; storing the
+ * values on the asset would make every instance say the same thing and turn a template into a
+ * single-use graphic.
+ *
+ * Undeclared keys are dropped rather than passed through. An override for a variable the
+ * composition no longer declares is a leftover from an earlier version of the file, and
+ * forwarding it would set a CSS custom property nothing reads — invisible, permanent, and
+ * impossible to clear from the inspector because no control would be drawn for it.
+ */
+export function resolveVariables(
+  info: Pick<CompositionInfo, 'variables'>,
+  overrides: Record<string, CompositionVariableValue> | undefined
+): Record<string, CompositionVariableValue> {
+  const out: Record<string, CompositionVariableValue> = {}
+  for (const variable of info.variables) {
+    const override = overrides?.[variable.id]
+    const coerced = override === undefined ? null : coerce(override, variable.type)
+    out[variable.id] = coerced ?? variable.default
+  }
+  return out
+}
+
+/**
+ * A stable string for a set of values, for cache keys.
+ *
+ * Sorted by id so two items with the same values in a different insertion order share a cached
+ * frame rather than rendering it twice. Without this in the key, two lower thirds naming
+ * different people would show whichever one rendered first — the cache would hand the second
+ * clip the first clip's picture, and nothing would look broken.
+ */
+export function variablesKey(values: Record<string, CompositionVariableValue>): string {
+  const ids = Object.keys(values).sort()
+  if (ids.length === 0) return ''
+  return ids.map((id) => `${id}=${String(values[id])}`).join('\u0001')
 }

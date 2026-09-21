@@ -21,6 +21,7 @@ import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { AdjustmentsSection } from './AdjustmentsSection'
+import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
 
 /**
@@ -125,6 +126,7 @@ export function Inspector(): ReactNode {
   const first = selected[0]
   const asset = first ? findAsset(project, first.assetId) : undefined
   const textItems = selected.filter((item) => findAsset(project, item.assetId)?.kind === 'text')
+  const htmlItems = selected.filter((item) => findAsset(project, item.assetId)?.kind === 'html')
   const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
     common(selected, read)
 
@@ -295,6 +297,15 @@ export function Inspector(): ReactNode {
           <TextStyleSection
             items={textItems}
             asset={findAsset(project, textItems[0]!.assetId)}
+          />
+        )}
+
+        {/* A composition's own controls, drawn from what it declares. Only for html items:
+            every other kind declares nothing, and an empty section is worse than none. */}
+        {htmlItems.length > 0 && (
+          <CompositionSection
+            items={htmlItems}
+            asset={findAsset(project, htmlItems[0]!.assetId)}
           />
         )}
 

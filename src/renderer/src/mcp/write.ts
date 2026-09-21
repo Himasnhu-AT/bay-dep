@@ -28,6 +28,7 @@ import {
 } from '@shared/project'
 import { findTool, resolveId } from '@shared/mcp'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
+import { coerce } from '@shared/composition'
 import { bay } from '@/lib/bay'
 import {
   assertNoCollision,
@@ -230,6 +231,53 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     }
   }
 
+  if (args.variables !== undefined) {
+    const asset = project().assets.find((a) => a.id === item.assetId)
+    if (asset?.kind !== 'html') {
+      fail(
+        `Item ${item.id} draws ${asset ? `a ${asset.kind} asset` : 'no asset'}, so it has no ` +
+          `composition variables. Only html items declare them.`
+      )
+    }
+    const declared = asset.compositionVariables ?? []
+    if (declared.length === 0) {
+      fail(
+        `${asset.name} declares no variables, so there is nothing to set. Add them to the file ` +
+          `with data-composition-variables on its <html> element, then re-import it.`
+      )
+    }
+    const given = args.variables
+    if (typeof given !== 'object' || given === null || Array.isArray(given)) {
+      fail('`variables` must be an object of { id: value }.')
+    }
+    const next: Record<string, string | number | boolean> = { ...(item.variables ?? {}) }
+    for (const [id, value] of Object.entries(given as Record<string, unknown>)) {
+      const spec = declared.find((v) => v.id === id)
+      if (!spec) {
+        // Naming the real ones is what lets the next call work; "unknown variable" ends the run.
+        fail(
+          `${asset.name} declares no variable "${id}". It declares: ` +
+            `${declared.map((v) => `${v.id} (${v.type})`).join(', ')}.`
+        )
+      }
+      const coerced = coerce(value, spec.type)
+      if (coerced === null) {
+        fail(`"${id}" is a ${spec.type}, and ${JSON.stringify(value)} is not one.`)
+      }
+      if (spec.type === 'enum' && !(spec.options ?? []).some((o) => o.value === coerced)) {
+        fail(
+          `"${id}" is an enum and ${JSON.stringify(coerced)} is not one of its options: ` +
+            `${(spec.options ?? []).map((o) => o.value).join(', ')}.`
+        )
+      }
+      // Matching the default is stored as absence, the same as the inspector does, so a
+      // project does not accumulate a record of every knob touched and touched back.
+      if (coerced === spec.default) delete next[id]
+      else next[id] = coerced
+    }
+    patch.variables = Object.keys(next).length > 0 ? next : undefined
+  }
+
   if (args.adjustments !== undefined) {
     patch.adjustments = mergeAdjustments(item.adjustments, args.adjustments)
   }
@@ -293,6 +341,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     // that accepts seconds is a trap with a plausible-looking value in it.
     sourceStartSeconds: after.item.sourceStartUs / 1_000_000,
     ...(after.item.text ? { text: after.item.text } : {}),
+    ...(after.item.variables ? { variables: after.item.variables } : {}),
     ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),

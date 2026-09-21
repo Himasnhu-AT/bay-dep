@@ -18,6 +18,7 @@
 
 import type { Asset, Item } from '@shared/project'
 import { sourceTimeAt } from '@shared/project'
+import { resolveVariables, variablesKey } from '@shared/composition'
 import { bay } from '@/lib/bay'
 
 /**
@@ -102,7 +103,11 @@ export class CompositionPool {
     const width = Math.max(1, Math.round(size.width))
     const height = Math.max(1, Math.round(size.height))
     const atUs = clampToAsset(sourceTimeAt(item, frame, fps), asset)
-    const key = cacheKey(asset.id, width, height, atUs)
+    // The values are part of the identity of the picture. Two lower thirds naming two people
+    // are two different frames at the same instant, and a key without them would hand the
+    // second clip whatever the first rendered — with nothing looking broken.
+    const values = resolveVariables({ variables: asset.compositionVariables ?? [] }, item.variables)
+    const key = cacheKey(asset.id, width, height, atUs, variablesKey(values))
 
     const hit = this.#cache.get(key)
     if (hit) {
@@ -112,7 +117,7 @@ export class CompositionPool {
     }
 
     this.#misses += 1
-    this.#request(key, asset, atUs, width, height)
+    this.#request(key, asset, atUs, width, height, values)
     return null
   }
 
@@ -186,7 +191,14 @@ export class CompositionPool {
     this.#opened.clear()
   }
 
-  #request(key: string, asset: Asset, atUs: number, width: number, height: number): void {
+  #request(
+    key: string,
+    asset: Asset,
+    atUs: number,
+    width: number,
+    height: number,
+    variables: Record<string, string | number | boolean>
+  ): void {
     if (this.#inFlight.has(key)) return
 
     // A frame that just failed is not asked for again immediately. The retry is what makes a
@@ -214,7 +226,8 @@ export class CompositionPool {
           compositionId: asset.compositionId!,
           atUs,
           width,
-          height
+          height,
+          variables
         })
         if (!frame) {
           this.#failedAt.set(key, performance.now())
@@ -276,8 +289,14 @@ export class CompositionPool {
   }
 }
 
-export function cacheKey(assetId: string, width: number, height: number, atUs: number): string {
-  return `${assetId}:${width}x${height}:${atUs}`
+export function cacheKey(
+  assetId: string,
+  width: number,
+  height: number,
+  atUs: number,
+  variables = ''
+): string {
+  return `${assetId}:${width}x${height}:${atUs}:${variables}`
 }
 
 /**

@@ -8,7 +8,9 @@ import {
   fatalFaults,
   readComposition,
   seekSecondsFor,
-  MAX_COMPOSITION_SECONDS
+  MAX_COMPOSITION_SECONDS,
+  resolveVariables,
+  variablesKey
 } from './composition'
 
 const ROOT = (attrs: string, inner = ''): string =>
@@ -26,7 +28,10 @@ test('reads what bay needs off a well-formed composition', () => {
     compositionId: 'hero',
     durationSeconds: 5,
     width: 1920,
-    height: 1080
+    height: 1080,
+    // Pinned whole rather than field by field: an inspector reads this to decide what controls
+    // to draw, so a field quietly disappearing has to fail here.
+    variables: []
   })
 })
 
@@ -224,4 +229,126 @@ test('an extension-shaped substring elsewhere in the path is not an extension', 
   assert.equal(isCompositionPath('/projects/html/clip.mp4'), false)
   assert.equal(isCompositionPath('/projects/my.html.backup/clip.mp4'), false)
   assert.equal(isCompositionPath('/no-extension-at-all'), false)
+})
+
+// --- the controls a composition declares for itself ---------------------------------------
+
+const WITH_VARS = (declaration: string): string =>
+  `<!doctype html><html data-composition-variables='${declaration}'><body>` +
+  `<div data-composition-id="lower" data-duration="5" style="width:1920px;height:1080px">` +
+  `</div></body></html>`
+
+test('declared variables are read, in the order the author wrote them', () => {
+  const { info, faults } = readComposition(
+    WITH_VARS(
+      '[{"id":"name","type":"string","label":"Name","default":"Jane"},' +
+        '{"id":"accent","type":"color","label":"Accent","default":"#ffb020"}]'
+    )
+  )
+
+  assert.deepEqual(faults, [])
+  // Order is the author's grouping; sorting them would scatter it.
+  assert.deepEqual(info!.variables.map((v) => v.id), ['name', 'accent'])
+  assert.equal(info!.variables[0]!.type, 'string')
+  assert.equal(info!.variables[1]!.default, '#ffb020')
+})
+
+test('a composition with no declaration simply has no controls', () => {
+  const { info, faults } = readComposition(
+    '<!doctype html><html><body><div data-composition-id="x" data-duration="2" ' +
+      'style="width:10px;height:10px"></div></body></html>'
+  )
+
+  assert.deepEqual(info!.variables, [])
+  assert.deepEqual(faults, [])
+})
+
+test('a malformed declaration is reported but never fatal', () => {
+  // The composition still renders at its defaults. Refusing to place a clip over a trailing
+  // comma in an attribute would be wildly out of proportion.
+  const { info, faults } = readComposition(WITH_VARS('[{"id":"a",]'))
+
+  assert.ok(info, 'the composition is still usable')
+  assert.deepEqual(info!.variables, [])
+  const fault = faults.find((f) => f.code === 'bad-variables')
+  assert.ok(fault)
+  assert.equal(fault!.fatal, false)
+})
+
+test('an enum with no options is refused, because it is a control with no choices', () => {
+  const { info, faults } = readComposition(
+    WITH_VARS('[{"id":"mode","type":"enum","label":"Mode","default":"a"}]')
+  )
+
+  assert.deepEqual(info!.variables, [])
+  assert.match(faults.find((f) => f.code === 'bad-variables')!.message, /no options/)
+})
+
+test('a duplicate id keeps the first and says so', () => {
+  const { info, faults } = readComposition(
+    WITH_VARS(
+      '[{"id":"n","type":"string","label":"First","default":"a"},' +
+        '{"id":"n","type":"string","label":"Second","default":"b"}]'
+    )
+  )
+
+  assert.equal(info!.variables.length, 1)
+  assert.equal(info!.variables[0]!.label, 'First')
+  assert.match(faults.find((f) => f.code === 'bad-variables')!.message, /repeats the id/)
+})
+
+test('entities in the attribute are decoded, since it lives inside HTML', () => {
+  const { info } = readComposition(
+    '<!doctype html><html data-composition-variables="[{&quot;id&quot;:&quot;n&quot;,' +
+      '&quot;type&quot;:&quot;string&quot;,&quot;label&quot;:&quot;N&quot;,' +
+      '&quot;default&quot;:&quot;hi&quot;}]"><body>' +
+      '<div data-composition-id="x" data-duration="2" style="width:10px;height:10px"></div>' +
+      '</body></html>'
+  )
+
+  assert.equal(info!.variables[0]?.id, 'n')
+  assert.equal(info!.variables[0]?.default, 'hi')
+})
+
+test('resolving starts from the declared defaults', () => {
+  const { info } = readComposition(
+    WITH_VARS('[{"id":"name","type":"string","label":"Name","default":"Jane"}]')
+  )
+
+  assert.deepEqual(resolveVariables(info!, undefined), { name: 'Jane' })
+})
+
+test('an override wins, and is coerced to the declared type', () => {
+  const { info } = readComposition(
+    WITH_VARS('[{"id":"size","type":"number","label":"Size","default":40}]')
+  )
+
+  // "64" out of a text input is a typo in form, not a different intention.
+  assert.deepEqual(resolveVariables(info!, { size: '64' }), { size: 64 })
+})
+
+test('an override for something no longer declared is dropped', () => {
+  // A leftover from an earlier version of the file. Forwarding it would set a CSS custom
+  // property nothing reads — invisible, and with no control drawn to clear it.
+  const { info } = readComposition(
+    WITH_VARS('[{"id":"name","type":"string","label":"Name","default":"Jane"}]')
+  )
+
+  assert.deepEqual(resolveVariables(info!, { name: 'Ada', gone: 'x' }), { name: 'Ada' })
+})
+
+test('an override of the wrong type falls back to the default rather than rendering nonsense', () => {
+  const { info } = readComposition(
+    WITH_VARS('[{"id":"size","type":"number","label":"Size","default":40}]')
+  )
+
+  assert.deepEqual(resolveVariables(info!, { size: 'huge' }), { size: 40 })
+})
+
+test('the values key is stable across insertion order, and distinguishes different values', () => {
+  // Without values in the cache key, two lower thirds naming different people would show
+  // whichever rendered first — and nothing would look broken.
+  assert.equal(variablesKey({ a: '1', b: '2' }), variablesKey({ b: '2', a: '1' }))
+  assert.notEqual(variablesKey({ name: 'Jane' }), variablesKey({ name: 'Ada' }))
+  assert.equal(variablesKey({}), '')
 })

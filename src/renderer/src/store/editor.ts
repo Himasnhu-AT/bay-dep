@@ -97,6 +97,14 @@ export interface EditorActions {
   rippleDelete(fromFrame?: Frames, toFrame?: Frames): RippleDeleteResult | null
   duplicateSelected(): void
   patchItem(itemId: string, patch: Partial<Omit<Item, 'id' | 'trackId'>>): void
+  /**
+   * Set one of a composition clip's declared variables, on that clip alone.
+   *
+   * A value equal to the composition's default is **removed** rather than stored. Otherwise a
+   * project records every knob the user ever touched and then touched back, and the stored
+   * value silently stops tracking the composition when its default changes.
+   */
+  setCompositionVariable(itemId: string, id: string, value: string | number | boolean): void
   patchLayout(itemId: string, patch: Partial<Layout>): void
 
   // tracks -------------------------------------------------------------------
@@ -621,6 +629,25 @@ export const useEditor = create<EditorStore>((set, get) => {
         )
       }
       return removed
+    },
+
+    setCompositionVariable(itemId, id, value) {
+      editTimeline((tl, project) => {
+        const found = findItem(tl, itemId)
+        if (!found) return
+        const asset = findAsset(project, found.item.assetId)
+        const declared = asset?.compositionVariables?.find((v) => v.id === id)
+        // A value for something the composition does not declare would set a CSS property
+        // nothing reads: invisible, and with no control drawn to clear it again.
+        if (!declared) return
+
+        const next = { ...(found.item.variables ?? {}) }
+        if (value === declared.default) delete next[id]
+        else next[id] = value
+
+        if (Object.keys(next).length === 0) delete found.item.variables
+        else found.item.variables = next
+      })
     },
 
     duplicateSelected() {

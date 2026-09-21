@@ -13,6 +13,8 @@
  *    require touching the asset.
  */
 
+import type { CompositionVariable } from './composition'
+
 export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html'
 export type TrackKind = 'video' | 'audio'
 
@@ -59,6 +61,16 @@ export interface Asset {
    * guessing at the first root in the file.
    */
   compositionId?: string
+  /**
+   * For `kind: 'html'` — the knobs the composition declares, read when it was imported.
+   *
+   * On the asset because it is a property of the file, while the chosen *values* live on each
+   * item. That split is the whole design: the file says what is configurable, each placement
+   * says what it is configured to.
+   *
+   * A type-only import, so the cycle with `composition.ts` is erased at build time.
+   */
+  compositionVariables?: CompositionVariable[]
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
@@ -252,6 +264,15 @@ export interface Item {
   adjustments?: Adjustments
   /** How this clip combines with what is beneath it. Absent means `normal`. */
   blendMode?: BlendMode
+  /**
+   * For `kind: 'html'` — this clip's overrides for the variables its composition declares.
+   *
+   * On the **item**, so one template placed four times can say four different things. Only ids
+   * the composition still declares are honoured; anything else is a leftover from an earlier
+   * version of the file and is dropped on read rather than stored forever with no control to
+   * clear it.
+   */
+  variables?: Record<string, string | number | boolean>
 }
 
 /**

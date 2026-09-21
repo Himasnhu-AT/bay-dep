@@ -72,6 +72,8 @@ interface Entry {
   ready: Promise<void>
   /** The previous frame's bytes, to tell a held picture from a fresh one. */
   last: Buffer | null
+  /** The variable values currently applied to this page, as JSON, or null if none yet. */
+  variables: string | null
   usedAt: number
 }
 
@@ -133,7 +135,9 @@ export async function compositionAsset(path: string): Promise<Asset> {
     posterPath: null,
     waveformPath: null,
     createdAt: Date.now(),
-    ...(info ? { compositionId: info.compositionId } : {}),
+    ...(info
+      ? { compositionId: info.compositionId, compositionVariables: info.variables }
+      : {}),
     // Every fatal fault, not the first: a composition with three problems has three, and the
     // one that hides best must not queue behind a louder one.
     ...(fatal.length > 0 ? { error: fatal.map((f) => f.message).join(' ') } : {})
@@ -147,6 +151,46 @@ export async function importCompositions(paths: string[]): Promise<ImportedAsset
     imported.push({ asset: await compositionAsset(path), reused: false })
   }
   return imported
+}
+
+/**
+ * Apply this clip's variable values to the page.
+ *
+ * Three bindings, matching the composition contract: every scalar becomes a `--{id}` custom
+ * property on the root, `data-var-text` substitutes an element's own text, and `data-var-src`
+ * substitutes a `src`. Text substitution deliberately writes only the element's **own** text
+ * node, so a heading containing an animated `<span>` keeps its children.
+ *
+ * Applied before the seek and re-applied whenever the values differ from the last set, because
+ * two clips of one composition share a window: rendering clip B after clip A without reapplying
+ * would give B whichever text A had left behind.
+ */
+function variablesScript(values: Record<string, string | number | boolean>): string {
+  return `(() => {
+    const values = ${JSON.stringify(values)}
+    const root = document.querySelector('[data-composition-id]')
+    if (!root) return false
+    for (const [id, value] of Object.entries(values)) {
+      root.style.setProperty('--' + id, String(value))
+    }
+    for (const el of document.querySelectorAll('[data-var-text]')) {
+      const id = el.getAttribute('data-var-text')
+      if (!(id in values)) continue
+      let wrote = false
+      for (const node of el.childNodes) {
+        if (node.nodeType === 3) {
+          if (wrote) node.textContent = ''
+          else { node.textContent = String(values[id]); wrote = true }
+        }
+      }
+      if (!wrote) el.prepend(document.createTextNode(String(values[id])))
+    }
+    for (const el of document.querySelectorAll('[data-var-src]')) {
+      const id = el.getAttribute('data-var-src')
+      if (id in values && values[id]) el.setAttribute('src', String(values[id]))
+    }
+    return true
+  })()`
 }
 
 /** The script that seeks the composition and waits for the paint that results. */
@@ -230,7 +274,9 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
     })()`)
   })()
 
-  const entry: Entry = { window, path: request.path, info, ready, last: null, usedAt: Date.now() }
+  const entry: Entry = {
+    window, path: request.path, info, ready, last: null, variables: null, usedAt: Date.now()
+  }
   entries.set(request.assetId, entry)
   return entry
 }
@@ -260,6 +306,16 @@ export async function compositionFrameAt(
 
   try {
     await withTimeout(entry.ready, LOAD_TIMEOUT_MS, `${request.path} did not finish loading`)
+
+    // Re-applied only when the values actually changed: it is a full DOM pass, and an export
+    // runs it once per frame otherwise for no benefit.
+    const wanted = JSON.stringify(request.variables ?? {})
+    if (wanted !== entry.variables) {
+      await entry.window.webContents.executeJavaScript(
+        variablesScript(request.variables ?? {})
+      )
+      entry.variables = wanted
+    }
 
     const seek = (await entry.window.webContents.executeJavaScript(
       seekScript(request.compositionId, seekSecondsFor(entry.info, request.atUs))
