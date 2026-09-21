@@ -226,6 +226,23 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
   return entry
 }
 
+/**
+ * Is this one of the hidden windows a composition renders in?
+ *
+ * Exported because a composition window is a real `BrowserWindow`, so anything in main that
+ * reaches for "the app window" via `BrowserWindow.getAllWindows()` will find one of these
+ * instead the moment a composition is on the timeline. That is not hypothetical: it is how
+ * every MCP tool call came to be delivered to a composition page with no listener, where it
+ * sat until main's thirty second timeout while main, the renderer and the socket were all
+ * healthy and nothing logged a thing.
+ */
+export function isCompositionWindow(window: BrowserWindow): boolean {
+  for (const entry of entries.values()) {
+    if (entry.window === window) return true
+  }
+  return false
+}
+
 export async function compositionFrameAt(
   request: CompositionFrameRequest
 ): Promise<CompositionFrame | null> {
@@ -241,12 +258,16 @@ export async function compositionFrameAt(
     if (!seek?.ok) return null
 
     const image = await entry.window.webContents.capturePage()
-    const resized =
-      request.width === entry.info.width && request.height === entry.info.height
-        ? image
-        : image.resize({ width: request.width, height: request.height, quality: 'better' })
-
-    const raw = resized.toBitmap()
+    // ALWAYS resize, even when the request matches the composition's authored size.
+    // `capturePage` returns **backing-store** pixels, so on a Retina display a 1920x1080 window
+    // comes back 3840x2160. Skipping the resize because "the sizes already match" therefore
+    // produced a buffer four times the expected length, the size check rejected it, and every
+    // frame at exactly 1080p came back null — while 640x360 worked, because that request did
+    // not match and so did get resized. The preview went black at the one size compositions
+    // are actually authored at.
+    const raw = image
+      .resize({ width: request.width, height: request.height, quality: 'better' })
+      .toBitmap()
     const mismatch = describeSizeMismatch(raw.length, request.width, request.height)
     if (mismatch) return null
 

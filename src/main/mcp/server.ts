@@ -16,6 +16,8 @@ import { IPC } from '@shared/ipc'
 import { MCP_CALL_TIMEOUT_MS, type McpToolCall, type McpToolResult } from '@shared/mcp'
 import { type ToolOutcome } from './protocol'
 import { startSocketServer, type RunningSocket, type SocketStatus } from './socket-server'
+import { isCompositionWindow } from '../html/compositions'
+import { pickExecutorWindow } from './executor-target'
 import { resourceBody } from './resources'
 import { substituteFileArgs } from './file-args'
 import { socketPathIn } from './socket-path'
@@ -41,9 +43,28 @@ export function settleToolCall(result: McpToolResult): void {
   waiting.resolve(result)
 }
 
+/**
+ * The window holding the editor — never a composition's.
+ *
+ * "The first window that is not destroyed" was wrong as soon as compositions existed. A
+ * composition renders in a hidden `BrowserWindow`, so it is in `getAllWindows()` too, and
+ * whichever one comes back first gets the tool call. A composition page has no MCP listener,
+ * so the call is simply never answered: main waits out its thirty seconds and reports a
+ * timeout, while main, the renderer, the socket and the tool were all working perfectly. The
+ * symptom is that every tool stops the instant a composition lands on the timeline.
+ */
 function executorWebContents(): WebContents | null {
-  const window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
-  return window ? window.webContents : null
+  // The choice itself lives in `./executor-target`, pure and tested. Nothing in this file is
+  // reachable from `pnpm test` — it imports `electron` — which is precisely why the rule was
+  // wrong here for as long as it was.
+  const picked = pickExecutorWindow(
+    BrowserWindow.getAllWindows().map((window) => ({
+      window,
+      destroyed: window.isDestroyed(),
+      composition: isCompositionWindow(window)
+    }))
+  )
+  return picked ? picked.window.webContents : null
 }
 
 /**
