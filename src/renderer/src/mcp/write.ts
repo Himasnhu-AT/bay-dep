@@ -29,6 +29,7 @@ import {
 import { findTool, resolveId } from '@shared/mcp'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { coerce } from '@shared/composition'
+import { isCropped, normaliseCrop } from '@shared/project'
 import { bay } from '@/lib/bay'
 import {
   assertNoCollision,
@@ -231,6 +232,33 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     }
   }
 
+  if (args.crop !== undefined) {
+    const given = args.crop
+    if (typeof given !== 'object' || given === null || Array.isArray(given)) {
+      fail('`crop` must be an object of { left, top, right, bottom } fractions from 0 to 1.')
+    }
+    const edges = ['left', 'top', 'right', 'bottom'] as const
+    const unknown = Object.keys(given as object).filter(
+      (k) => !(edges as readonly string[]).includes(k)
+    )
+    if (unknown.length > 0) {
+      fail(`crop has no edge "${unknown[0]}". The edges are ${edges.join(', ')}.`)
+    }
+    const next = { ...normaliseCrop(item.crop) }
+    for (const edge of edges) {
+      const value = (given as Record<string, unknown>)[edge]
+      if (value === undefined) continue
+      const n = Number(value)
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        // Refused rather than clamped: a clamp reads back as the number having been accepted.
+        fail(`crop.${edge} is ${JSON.stringify(value)}; it must be a fraction from 0 to 1.`)
+      }
+      next[edge] = n
+    }
+    const normalised = normaliseCrop(next)
+    patch.crop = isCropped(normalised) ? normalised : undefined
+  }
+
   if (args.variables !== undefined) {
     const asset = project().assets.find((a) => a.id === item.assetId)
     if (asset?.kind !== 'html') {
@@ -341,6 +369,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     // that accepts seconds is a trap with a plausible-looking value in it.
     sourceStartSeconds: after.item.sourceStartUs / 1_000_000,
     ...(after.item.text ? { text: after.item.text } : {}),
+    ...(after.item.crop ? { crop: after.item.crop } : {}),
     ...(after.item.variables ? { variables: after.item.variables } : {}),
     ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),

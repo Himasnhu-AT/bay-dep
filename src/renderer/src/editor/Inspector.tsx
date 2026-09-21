@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { FolderOpen, MousePointerClick } from 'lucide-react'
+import { FolderOpen, MousePointerClick, RotateCcw } from 'lucide-react'
 import {
   CANVAS_PRESETS,
   findAsset,
@@ -11,7 +11,10 @@ import {
   LAYOUT_ORIGINS,
   LAYOUT_ORIGIN_LABEL,
   DEFAULT_LAYOUT_ORIGIN,
-  type LayoutOrigin
+  type LayoutOrigin,
+  normaliseCrop,
+  isCropped,
+  type Crop
 } from '@shared/project'
 import {
   Field,
@@ -107,12 +110,21 @@ function TimelineInspector(): ReactNode {
   )
 }
 
+/** Named in reading order, not object-key order: top and bottom belong beside each other. */
+const CROP_EDGES: { edge: keyof Crop; label: string }[] = [
+  { edge: 'top', label: 'Top' },
+  { edge: 'bottom', label: 'Bottom' },
+  { edge: 'left', label: 'Left' },
+  { edge: 'right', label: 'Right' }
+]
+
 export function Inspector(): ReactNode {
   const selected = useSelectedItems()
   const timeline = useEditor(selectTimeline)
   const project = useEditor((state) => state.project)
   const patchLayout = useEditor((state) => state.patchLayout)
   const transact = useEditor((state) => state.transact)
+  const setCrop = useEditor((state) => state.setCrop)
   const patchItem = useEditor((state) => state.patchItem)
   const moveItem = useEditor((state) => state.moveItem)
   const trimItem = useEditor((state) => state.trimItem)
@@ -164,6 +176,22 @@ export function Inspector(): ReactNode {
         positionToOrigin({ ...current, [axis]: next }, item.layout, frame, origin)
       )
     }
+  }
+
+  const cropOf = (edge: keyof Crop): number =>
+    normaliseCrop(selected[0]?.crop)[edge]
+  const cropped = selected.some((item) => isCropped(item.crop))
+  const applyCrop = (edge: keyof Crop, fraction: number): void => {
+    transact(() => {
+      for (const item of selected) setCrop(item.id, edge, fraction)
+    })
+  }
+  const resetCrop = (): void => {
+    transact(() => {
+      for (const item of selected) {
+        for (const { edge } of CROP_EDGES) setCrop(item.id, edge, 0)
+      }
+    })
   }
 
   /**
@@ -354,6 +382,42 @@ export function Inspector(): ReactNode {
             items={textItems}
             asset={findAsset(project, textItems[0]!.assetId)}
           />
+        )}
+
+        {/* Crop applies to anything with a picture. Audio has no edges to trim. */}
+        {selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false) && (
+          <Section
+            title="Crop"
+            actions={
+              cropped ? (
+                <IconButton
+                  label="Remove the crop"
+                  icon={<RotateCcw aria-hidden="true" className="size-3" />}
+                  onClick={resetCrop}
+                  size="sm"
+                  variant="subtle"
+                />
+              ) : undefined
+            }
+          >
+            <div className="grid grid-cols-2 gap-1.5">
+              {CROP_EDGES.map(({ edge, label }) => (
+                <NumberField
+                  key={edge}
+                  label={label}
+                  // Shown as a percentage because that is what a person means by "take ten off
+                  // the top"; stored as a fraction so it survives a change of source resolution.
+                  value={Math.round(cropOf(edge) * 1000) / 10}
+                  min={0}
+                  max={98}
+                  step={1}
+                  precision={1}
+                  suffix="%"
+                  onCommit={(next) => applyCrop(edge, next / 100)}
+                />
+              ))}
+            </div>
+          </Section>
         )}
 
         {/* A composition's own controls, drawn from what it declares. Only for html items:

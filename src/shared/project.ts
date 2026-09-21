@@ -111,6 +111,29 @@ export const LAYOUT_ORIGINS: readonly LayoutOrigin[] = [
 
 export const DEFAULT_LAYOUT_ORIGIN: LayoutOrigin = 'top-left'
 
+/**
+ * How much of each edge of a clip's source is cut away, as a fraction of the source.
+ *
+ * Fractions rather than pixels, so a crop survives the source being replaced at a different
+ * resolution and means the same thing on a 4K master and its 1080p proxy. The inspector still
+ * shows percentages, which is what a person types.
+ *
+ * Insets rather than a rectangle because that is what cropping *is* — "take 10% off the top" —
+ * and because it makes the uncropped case four zeroes rather than a rectangle someone has to
+ * keep in step with the source size.
+ */
+export interface Crop {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+export const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
+
+/** The least of each axis a crop must leave behind. */
+const MIN_VISIBLE_FRACTION = 0.02
+
 export interface Layout {
   left: number
   top: number
@@ -301,6 +324,16 @@ export interface Item {
   adjustments?: Adjustments
   /** How this clip combines with what is beneath it. Absent means `normal`. */
   blendMode?: BlendMode
+  /**
+   * Edges cut off this clip's source. Absent means none, which is the fast path.
+   *
+   * Cropping cuts the source down; it does not rescale what is left. The remaining region is
+   * drawn into the matching part of the item's box, so the visible content stays exactly where
+   * and how big it was and simply has less of it. That is what every editor's Crop does, and
+   * the alternative — rescaling the remainder to fill the box — is a zoom, which is a different
+   * operation someone would reach for deliberately.
+   */
+  crop?: Crop
   /**
    * For `kind: 'html'` — this clip's overrides for the variables its composition declares.
    *
@@ -930,4 +963,64 @@ export const LAYOUT_ORIGIN_LABEL: Record<LayoutOrigin, string> = {
   'bottom-left': 'Bottom left',
   'bottom-right': 'Bottom right',
   center: 'Centre'
+}
+
+/** A crop with every value finite, in range, and not overlapping its opposite edge. */
+export function normaliseCrop(crop: Crop | undefined): Crop {
+  if (!crop) return NO_CROP
+  const edge = (value: number): number =>
+    Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0
+  const left = edge(crop.left)
+  const top = edge(crop.top)
+  // Opposite edges cannot together take the whole source. A clip cropped to nothing looks
+  // exactly like a clip that failed to load, and there is no way back from it by eye: nothing
+  // is visible to judge while dragging the slider off again.
+  const right = Math.min(edge(crop.right), 1 - left - MIN_VISIBLE_FRACTION)
+  const bottom = Math.min(edge(crop.bottom), 1 - top - MIN_VISIBLE_FRACTION)
+  return { left, top, right: Math.max(0, right), bottom: Math.max(0, bottom) }
+}
+
+export function isCropped(crop: Crop | undefined): boolean {
+  const c = normaliseCrop(crop)
+  return c.left > 0 || c.top > 0 || c.right > 0 || c.bottom > 0
+}
+
+/**
+ * The source rectangle to read, in source pixels.
+ *
+ * Null when there is nothing to take — a zero-sized source, which `drawImage` throws on rather
+ * than quietly ignoring.
+ */
+export function cropSourceRect(
+  crop: Crop | undefined,
+  sourceWidth: number,
+  sourceHeight: number
+): { sx: number; sy: number; sw: number; sh: number } | null {
+  if (!(sourceWidth > 0) || !(sourceHeight > 0)) return null
+  const c = normaliseCrop(crop)
+  const sw = sourceWidth * (1 - c.left - c.right)
+  const sh = sourceHeight * (1 - c.top - c.bottom)
+  if (!(sw > 0) || !(sh > 0)) return null
+  return { sx: sourceWidth * c.left, sy: sourceHeight * c.top, sw, sh }
+}
+
+/**
+ * Where the kept region lands on screen.
+ *
+ * The same fractions applied to the destination box, and that is what keeps the picture still:
+ * taking 10% off the left removes the left tenth and leaves everything else exactly where it
+ * was, rather than sliding the remainder across to fill the gap. Filling the gap would be a
+ * zoom, which is a different operation and one people reach for deliberately.
+ */
+export function cropDestRect(
+  crop: Crop | undefined,
+  box: { left: number; top: number; width: number; height: number }
+): { dx: number; dy: number; dw: number; dh: number } {
+  const c = normaliseCrop(crop)
+  return {
+    dx: box.left + box.width * c.left,
+    dy: box.top + box.height * c.top,
+    dw: box.width * (1 - c.left - c.right),
+    dh: box.height * (1 - c.top - c.bottom)
+  }
 }

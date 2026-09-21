@@ -19,6 +19,10 @@ import {
   activeTimeline,
   allItems,
   placementLayout,
+  normaliseCrop,
+  isCropped,
+  NO_CROP,
+  type Crop,
   defaultLayout,
   findAsset,
   findItem,
@@ -105,6 +109,8 @@ export interface EditorActions {
    * value silently stops tracking the composition when its default changes.
    */
   setCompositionVariable(itemId: string, id: string, value: string | number | boolean): void
+  /** Set one edge of a clip's crop, as a fraction of the source. */
+  setCrop(itemId: string, edge: keyof Crop, fraction: number): void
   patchLayout(itemId: string, patch: Partial<Layout>): void
 
   // tracks -------------------------------------------------------------------
@@ -629,6 +635,18 @@ export const useEditor = create<EditorStore>((set, get) => {
         )
       }
       return removed
+    },
+
+    setCrop(itemId, edge, fraction) {
+      editTimeline((tl) => {
+        const found = findItem(tl, itemId)
+        if (!found) return
+        const next = normaliseCrop({ ...(found.item.crop ?? NO_CROP), [edge]: fraction })
+        // Four zeroes is stored as absence, so an uncropped clip carries no crop at all and
+        // the compositor's fast path stays the common one.
+        if (!isCropped(next)) delete found.item.crop
+        else found.item.crop = next
+      })
     },
 
     setCompositionVariable(itemId, id, value) {

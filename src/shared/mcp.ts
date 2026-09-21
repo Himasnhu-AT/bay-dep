@@ -303,6 +303,15 @@ export const TOOLS: ToolSpec[] = [
         speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
         fadeInFrames: { type: 'integer', minimum: 0 },
         fadeOutFrames: { type: 'integer', minimum: 0 },
+        crop: {
+          type: 'object',
+          description:
+            'Cut edges off this clip\'s source, as fractions from 0 to 1: ' +
+            '{ left, top, right, bottom }. 0.1 removes a tenth. Cropping does NOT rescale what ' +
+            'is left — the remainder stays exactly where and how big it was on screen, with ' +
+            'less of it. Omitted edges keep their current value; pass 0 to restore one. ' +
+            'Opposite edges cannot together take the whole source.'
+        },
         variables: {
           type: 'object',
           description:

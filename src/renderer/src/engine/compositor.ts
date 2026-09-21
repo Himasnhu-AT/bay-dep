@@ -22,7 +22,10 @@ import {
   type TransitionKind,
   type Item,
   type Project,
-  type Timeline
+  type Timeline,
+  isCropped,
+  cropSourceRect,
+  cropDestRect
 } from '@shared/project'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
@@ -314,7 +317,23 @@ export class Compositor {
     applyLook(ctx, item)
     applyRotation(ctx, item, box)
     try {
-      ctx.drawImage(element, box.left, box.top, box.width, box.height)
+      if (isCropped(item.crop)) {
+        // The source's own pixel size, which each of the three element kinds spells
+        // differently — and `videoWidth`/`naturalWidth` are 0 until the first frame decodes,
+        // which is why this falls back to drawing uncropped rather than skipping: a clip that
+        // vanished for two frames while loading would read as a bug in the crop.
+        const sourceWidth = intrinsicWidth(element)
+        const sourceHeight = intrinsicHeight(element)
+        const source = cropSourceRect(item.crop, sourceWidth, sourceHeight)
+        if (source) {
+          const { dx, dy, dw, dh } = cropDestRect(item.crop, box)
+          ctx.drawImage(element, source.sx, source.sy, source.sw, source.sh, dx, dy, dw, dh)
+        } else {
+          ctx.drawImage(element, box.left, box.top, box.width, box.height)
+        }
+      } else {
+        ctx.drawImage(element, box.left, box.top, box.width, box.height)
+      }
     } catch {
       // A frame can be pulled out from under us mid-draw (the element reloaded, the source
       // went away). One missing item must not abandon the rest of the frame.
@@ -773,3 +792,25 @@ function applyRotation(ctx: RenderTarget, item: Item, box: Box): void {
 
 /** Exported for the exporter, which needs the same clamping the compositor applies. */
 export { clamp, sourceSecondsAt }
+
+/**
+ * A source's own pixel width, whichever of the three kinds it is.
+ *
+ * Zero while a video or image is still loading, which callers must treat as "not yet known"
+ * rather than as an empty source.
+ */
+function intrinsicWidth(
+  element: HTMLVideoElement | HTMLImageElement | ImageBitmap
+): number {
+  if (element instanceof HTMLVideoElement) return element.videoWidth
+  if (element instanceof HTMLImageElement) return element.naturalWidth
+  return element.width
+}
+
+function intrinsicHeight(
+  element: HTMLVideoElement | HTMLImageElement | ImageBitmap
+): number {
+  if (element instanceof HTMLVideoElement) return element.videoHeight
+  if (element instanceof HTMLImageElement) return element.naturalHeight
+  return element.height
+}

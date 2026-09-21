@@ -9,7 +9,12 @@ import {
   positionFromOrigin,
   positionToOrigin,
   LAYOUT_ORIGINS,
-  LAYOUT_ORIGIN_LABEL
+  LAYOUT_ORIGIN_LABEL,
+  cropSourceRect,
+  cropDestRect,
+  normaliseCrop,
+  isCropped,
+  NO_CROP
 } from './project'
 
 /**
@@ -156,4 +161,83 @@ test('every origin has a label, so the selector can never show a raw value', () 
     assert.equal(typeof LAYOUT_ORIGIN_LABEL[origin], 'string')
     assert.ok(LAYOUT_ORIGIN_LABEL[origin].length > 0, origin)
   }
+})
+
+// --- cropping ------------------------------------------------------------------------------
+
+test('no crop reads the whole source into the whole box', () => {
+  const box = { left: 100, top: 50, width: 800, height: 400 }
+
+  assert.deepEqual(cropSourceRect(undefined, 1920, 1080), { sx: 0, sy: 0, sw: 1920, sh: 1080 })
+  assert.deepEqual(cropDestRect(undefined, box), { dx: 100, dy: 50, dw: 800, dh: 400 })
+  assert.equal(isCropped(undefined), false)
+})
+
+test('taking a tenth off the left reads from a tenth in', () => {
+  const rect = cropSourceRect({ ...NO_CROP, left: 0.1 }, 1920, 1080)
+
+  assert.equal(rect!.sx, 192)
+  assert.equal(rect!.sw, 1920 * 0.9)
+  assert.equal(rect!.sy, 0)
+  assert.equal(rect!.sh, 1080)
+})
+
+test('the kept region stays exactly where it was on screen', () => {
+  // The property that makes crop feel like crop rather than like a zoom: the remainder does
+  // not slide across to fill the gap. A pixel at 60% across the source is at 60% across the
+  // box before and after.
+  const box = { left: 0, top: 0, width: 1000, height: 500 }
+  const crop = { ...NO_CROP, left: 0.2 }
+
+  const dest = cropDestRect(crop, box)
+
+  assert.equal(dest.dx, 200, 'the left fifth is gone, not redistributed')
+  assert.equal(dest.dw, 800)
+  assert.equal(dest.dy, 0)
+  assert.equal(dest.dh, 500)
+})
+
+test('source and destination keep the same proportions, so nothing is squashed', () => {
+  // The ratio of kept source to kept destination must match the uncropped ratio, or the picture
+  // stretches — which looks like a bad export rather than a crop.
+  const box = { left: 0, top: 0, width: 1920, height: 1080 }
+  const crop = { left: 0.1, top: 0.25, right: 0.15, bottom: 0.05 }
+
+  const src = cropSourceRect(crop, 1920, 1080)!
+  const dest = cropDestRect(crop, box)
+
+  assert.ok(Math.abs(src.sw / dest.dw - 1920 / box.width) < 1e-9)
+  assert.ok(Math.abs(src.sh / dest.dh - 1080 / box.height) < 1e-9)
+})
+
+test('opposite edges cannot consume the whole source', () => {
+  // A clip cropped to nothing is indistinguishable from one that failed to load, and there is
+  // no way back by eye — nothing is visible to judge while dragging the slider off again.
+  const crushed = normaliseCrop({ left: 0.9, top: 0, right: 0.9, bottom: 0 })
+
+  assert.ok(crushed.left + crushed.right < 1, JSON.stringify(crushed))
+  const rect = cropSourceRect(crushed, 1920, 1080)
+  assert.ok(rect !== null && rect.sw > 0)
+})
+
+test('out-of-range and non-finite values are brought back rather than trusted', () => {
+  assert.deepEqual(normaliseCrop({ left: -1, top: 2, right: NaN, bottom: Infinity }), {
+    left: 0,
+    top: 1,
+    right: 0,
+    // top is already 1, so bottom has nothing left to take
+    bottom: 0
+  })
+})
+
+test('a zero-sized source yields no rectangle rather than a division by zero', () => {
+  // `drawImage` throws on a zero-width source rather than ignoring it, which would abandon the
+  // rest of the frame.
+  assert.equal(cropSourceRect({ ...NO_CROP, left: 0.1 }, 0, 1080), null)
+  assert.equal(cropSourceRect({ ...NO_CROP, left: 0.1 }, 1920, 0), null)
+})
+
+test('isCropped is false for four zeroes, so the uncropped path stays the fast one', () => {
+  assert.equal(isCropped(NO_CROP), false)
+  assert.equal(isCropped({ ...NO_CROP, bottom: 0.01 }), true)
 })
