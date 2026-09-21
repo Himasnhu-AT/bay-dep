@@ -29,6 +29,24 @@ import { bay } from '@/lib/bay'
  */
 const DEFAULT_BUDGET_BYTES = 256 * 1024 * 1024
 
+/**
+ * How long to leave a frame alone after it failed to render.
+ *
+ * Long enough that a composition which cannot render costs a request every two seconds rather
+ * than thirty a second; short enough that fixing the composition and scrubbing back shows the
+ * repair without restarting anything.
+ */
+const RETRY_AFTER_MS = 2_000
+
+/**
+ * How many frames may be in flight at once.
+ *
+ * Each is a seek plus a full pixel read-back in main, answered one at a time per composition.
+ * Letting a scrub queue fifty of them does not make any of them arrive sooner — it just puts
+ * every other IPC message behind them, including the tool calls an agent is waiting on.
+ */
+const MAX_CONCURRENT_REQUESTS = 2
+
 interface CacheEntry {
   bitmap: ImageBitmap
   bytes: number
@@ -41,6 +59,18 @@ export class CompositionPool {
   readonly #cache = new Map<string, CacheEntry>()
   /** Keys currently being fetched, so a miss re-asked every frame asks main once. */
   readonly #inFlight = new Set<string>()
+  /**
+   * Keys that failed, and when — so a frame that cannot be produced is not re-requested on
+   * every redraw.
+   *
+   * Without this the pool is a denial-of-service attack on its own main process. `#inFlight`
+   * only dedupes a request that is still running; the moment one fails it clears, the next
+   * redraw asks again, and at 30fps that is thirty IPC round trips a second, forever. Measured
+   * consequence: putting the playhead over a composition whose frame could not be produced
+   * wedged every MCP call within 1.5 seconds and never recovered, while the renderer itself
+   * stayed responsive — so it read as a hung executor rather than as a flood.
+   */
+  readonly #failedAt = new Map<string, number>()
   readonly #listeners = new Set<ReadyListener>()
   readonly #budgetBytes: number
   #bytes = 0
@@ -92,13 +122,21 @@ export class CompositionPool {
     return () => this.#listeners.delete(listener)
   }
 
-  get stats(): { entries: number; bytes: number; hits: number; misses: number; inFlight: number } {
+  get stats(): {
+    entries: number
+    bytes: number
+    hits: number
+    misses: number
+    inFlight: number
+    failed: number
+  } {
     return {
       entries: this.#cache.size,
       bytes: this.#bytes,
       hits: this.#hits,
       misses: this.#misses,
-      inFlight: this.#inFlight.size
+      inFlight: this.#inFlight.size,
+      failed: this.#failedAt.size
     }
   }
 
@@ -116,6 +154,7 @@ export class CompositionPool {
   dispose(): void {
     for (const entry of this.#cache.values()) entry.bitmap.close()
     this.#cache.clear()
+    this.#failedAt.clear()
     this.#bytes = 0
     this.#listeners.clear()
     // Every window this pool opened is a renderer process in main. Leaving them behind on a
@@ -126,6 +165,17 @@ export class CompositionPool {
 
   #request(key: string, asset: Asset, atUs: number, width: number, height: number): void {
     if (this.#inFlight.has(key)) return
+
+    // A frame that just failed is not asked for again immediately. The retry is what makes a
+    // broken composition expensive rather than merely blank.
+    const failed = this.#failedAt.get(key)
+    if (failed !== undefined && performance.now() - failed < RETRY_AFTER_MS) return
+
+    // And never more than a couple at once. Each one is a seek and a pixel read-back in main;
+    // a scrub across a composition can otherwise ask for fifty frames before the first
+    // arrives, and main answers them one at a time while every other IPC message waits.
+    if (this.#inFlight.size >= MAX_CONCURRENT_REQUESTS) return
+
     this.#inFlight.add(key)
     this.#opened.add(asset.id)
 
@@ -143,16 +193,23 @@ export class CompositionPool {
           width,
           height
         })
-        if (!frame) return
+        if (!frame) {
+          this.#failedAt.set(key, performance.now())
+          return
+        }
         const data = new Uint8ClampedArray(frame.data)
-        if (data.length !== frame.width * frame.height * 4) return
+        if (data.length !== frame.width * frame.height * 4) {
+          this.#failedAt.set(key, performance.now())
+          return
+        }
         const bitmap = await createImageBitmap(new ImageData(data, frame.width, frame.height))
+        this.#failedAt.delete(key)
         this.#store(key, bitmap, data.length)
         for (const listener of this.#listeners) listener()
       } catch {
-        // A frame that cannot be produced is a frame the compositor draws nothing for. It will
-        // ask again on the next redraw; failing loudly here would turn a transient miss into a
-        // permanent one.
+        // A frame that cannot be produced is a frame the compositor draws nothing for. It is
+        // retried, but only after a pause — see `#failedAt`.
+        this.#failedAt.set(key, performance.now())
       } finally {
         this.#inFlight.delete(key)
       }

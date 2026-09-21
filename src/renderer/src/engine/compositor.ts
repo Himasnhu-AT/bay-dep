@@ -368,8 +368,19 @@ export class Compositor {
       // pending exactly like a video that has not decoded: the background shows through for
       // the frame or two it takes, which reads as a load rather than as a glitch.
       const box = layoutBox(item)
+      // Ask for the frame at the size it will actually be drawn, not at the size it occupies
+      // in timeline coordinates. A 640x360 preview of a 1920x1080 composition needs a 640x360
+      // picture; requesting the full frame allocates an 8MB ImageBitmap per cache entry to
+      // throw seven eighths of it away, and doing that continuously took the renderer down.
+      // The transform already carries the preview scale that `drawFrame` applied, so this is
+      // the exact factor between timeline units and device pixels — no second derivation to
+      // disagree with the first.
+      const scale = Math.min(1, Math.abs(ctx.getTransform().a) || 1)
       const bitmap = box
-        ? (this.#compositions?.frameFor(asset, item, frame, fps, box) ?? null)
+        ? (this.#compositions?.frameFor(asset, item, frame, fps, {
+            width: Math.max(1, Math.round(box.width * scale)),
+            height: Math.max(1, Math.round(box.height * scale))
+          }) ?? null)
         : null
       if (!bitmap) {
         stats.pending += 1

@@ -184,7 +184,10 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
     width: info.width,
     height: info.height,
     webPreferences: {
-      offscreen: true,
+      // Offscreen rendering crashes the browser process outright at 1920x1080 — measured, and
+      // it takes the whole app with it, which is not a size anyone can avoid: 1080p is the
+      // default composition size. A plain hidden window paints and captures just as well.
+      offscreen: false,
       // A composition is local HTML an agent may have written, so it gets no node integration
       // and a session of its own — it cannot reach Node, and nothing it stores touches the
       // app's.
