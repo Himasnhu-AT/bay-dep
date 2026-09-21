@@ -69,12 +69,29 @@ export class ExportCancelled extends Error {
 
 const DEFAULT_SEEK_TIMEOUT_MS = 5000
 
+/**
+ * How many times one export frame may be redrawn while something is still arriving.
+ *
+ * Bounded because an export must finish. A composition that never renders should cost a frame
+ * that is missing it and a count in the result, not a render that never returns — the one
+ * outcome worse than a wrong picture is no answer at all.
+ */
+const MAX_PENDING_REDRAWS = 4
+
 export class FrameExporter {
   readonly #options: ExporterOptions
   readonly #pool: MediaPool
   readonly #ownsPool: boolean
   readonly #compositor: Compositor
   readonly #compositions: CompositionPool
+  /**
+   * Frames written with something still missing.
+   *
+   * Counted rather than thrown on: one composition that will not render must not abandon an
+   * export that is otherwise correct. Reported at the end so the result can say the file is
+   * incomplete instead of the user discovering it on playback.
+   */
+  #pendingFrames = 0
   #cancelled = false
   readonly #seekTimeout: number
 
@@ -135,7 +152,21 @@ export class FrameExporter {
         await awaitSources(this.#pool, project, timeline, frame, this.#seekTimeout)
         if (this.#cancelled) break
 
-        this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
+        // Draw, then wait for anything that was not ready and draw again. A composition frame
+        // is not fetched until a draw asks for it — the first draw is what issues the request
+        // — so an export that drew once and moved on wrote the frame without it. Every
+        // composition came out missing: black where a title should be, absent where a lower
+        // third should be, and the picture in the preview was right the whole time. This is
+        // the export-versus-preview divergence this codebase is least able to notice, because
+        // both halves look correct in isolation.
+        let stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
+        for (let attempt = 0; stats.pending > 0 && attempt < MAX_PENDING_REDRAWS; attempt += 1) {
+          if (this.#cancelled) break
+          await this.#compositions.settle(this.#seekTimeout)
+          stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
+        }
+        if (stats.pending > 0) this.#pendingFrames += 1
+        if (this.#cancelled) break
         // Export has no audio consumer, so the picture is the only vote there is.
         this.#pool.retireIdle()
 

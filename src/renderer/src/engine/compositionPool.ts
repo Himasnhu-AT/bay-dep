@@ -116,6 +116,29 @@ export class CompositionPool {
     return null
   }
 
+  /**
+   * Resolves when every outstanding request has finished, or after `timeoutMs`.
+   *
+   * For a caller that cannot simply redraw later — an export writes each frame once and moves
+   * on, so "try again next frame" is not available to it. The timeout is not optional: a
+   * composition that never produces a frame must cost a missing picture, not a render that
+   * never returns.
+   */
+  settle(timeoutMs: number): Promise<void> {
+    if (this.#inFlight.size === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer)
+        off()
+        resolve()
+      }
+      const timer = setTimeout(done, timeoutMs)
+      const off = this.onReady(() => {
+        if (this.#inFlight.size === 0) done()
+      })
+    })
+  }
+
   /** Fires when a requested frame has decoded, so the preview can redraw and show it. */
   onReady(listener: ReadyListener): () => void {
     this.#listeners.add(listener)
@@ -205,13 +228,20 @@ export class CompositionPool {
         const bitmap = await createImageBitmap(new ImageData(data, frame.width, frame.height))
         this.#failedAt.delete(key)
         this.#store(key, bitmap, data.length)
-        for (const listener of this.#listeners) listener()
       } catch {
         // A frame that cannot be produced is a frame the compositor draws nothing for. It is
         // retried, but only after a pause — see `#failedAt`.
         this.#failedAt.set(key, performance.now())
       } finally {
+        // Cleared BEFORE anyone is told, and that order is the whole point. `settle` waits for
+        // the in-flight set to empty and is woken by this notification; notifying first means
+        // its listener always sees the request still outstanding, so it never resolves early
+        // and waits out its full timeout instead. On an export that is five seconds a frame —
+        // an export that never finishes rather than one that is merely slow.
         this.#inFlight.delete(key)
+        // Told on failure too, for the same reason: a waiter blocked on a frame that will
+        // never arrive should learn that as soon as it is known, not on a timeout.
+        for (const listener of this.#listeners) listener()
       }
     })()
   }
