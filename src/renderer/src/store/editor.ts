@@ -18,7 +18,7 @@ import {
   PROJECT_VERSION,
   activeTimeline,
   allItems,
-  coverLayout,
+  placementLayout,
   defaultLayout,
   findAsset,
   findItem,
@@ -426,9 +426,12 @@ export const useEditor = create<EditorStore>((set, get) => {
           track.name = nextTrackName(tl, kind)
           tl.tracks.push(track)
         }
+        // Cover or contain, decided by how much of the source cover would crop. A phone video
+        // on a landscape timeline keeps under a third of its picture under cover, and arriving
+        // as a band out of the middle reads as bay having mangled the clip.
         const layout =
           asset.width && asset.height
-            ? coverLayout(tl, asset.width, asset.height)
+            ? placementLayout(tl, asset.width, asset.height)
             : defaultLayout(tl)
         const item: Item = {
           id: itemId,

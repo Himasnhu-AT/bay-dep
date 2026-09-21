@@ -714,6 +714,56 @@ export function coverLayout(
 }
 
 /** The layout that *fits* an asset inside the canvas, letterboxing rather than clipping. */
+/**
+ * How much of a source must survive a crop before covering the frame is the better default.
+ *
+ * Cover fills the frame and crops whatever does not fit; contain shows everything and pads.
+ * For a small mismatch cover is plainly right — nobody wants black slivers down the side of a
+ * 16:9 clip on a 16:10 canvas. For a large one it is destructive: a phone video on a landscape
+ * timeline keeps 31% of the picture and silently discards the rest, which reads as bay having
+ * mangled the clip rather than as a framing choice.
+ *
+ * 0.9 puts the line at a tenth of the picture. 16:9 into 16:10 keeps 90% and covers; 4:3 either
+ * way keeps 75% and is padded, which is the convention every viewer already understands.
+ */
+const MIN_COVER_VISIBLE = 0.9
+
+/**
+ * The layout a clip gets when it is first placed.
+ *
+ * Cover or contain, chosen by how much of the source cover would discard. Both are still one
+ * click away in the inspector — this only decides which one a clip starts with, and the aim is
+ * that the first thing you see is the whole shot rather than a band out of the middle of it.
+ */
+export function placementLayout(
+  timeline: Pick<Timeline, 'width' | 'height'>,
+  sourceWidth: number,
+  sourceHeight: number
+): Layout {
+  if (sourceWidth <= 0 || sourceHeight <= 0) return defaultLayout(timeline)
+  return coverKeeps(timeline, sourceWidth, sourceHeight) >= MIN_COVER_VISIBLE
+    ? coverLayout(timeline, sourceWidth, sourceHeight)
+    : containLayout(timeline, sourceWidth, sourceHeight)
+}
+
+/**
+ * The fraction of the source that survives `coverLayout`, from 0 to 1.
+ *
+ * Exactly the ratio of the two aspect ratios: covering scales until the narrower dimension
+ * fills, so what is lost is entirely the difference in shape. 1 means the shapes match and
+ * cover crops nothing.
+ */
+export function coverKeeps(
+  timeline: Pick<Timeline, 'width' | 'height'>,
+  sourceWidth: number,
+  sourceHeight: number
+): number {
+  if (sourceWidth <= 0 || sourceHeight <= 0 || timeline.width <= 0 || timeline.height <= 0) return 1
+  const source = sourceWidth / sourceHeight
+  const frame = timeline.width / timeline.height
+  return Math.min(source, frame) / Math.max(source, frame)
+}
+
 export function containLayout(
   timeline: Pick<Timeline, 'width' | 'height'>,
   sourceWidth: number,
