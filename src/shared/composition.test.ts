@@ -10,7 +10,8 @@ import {
   seekSecondsFor,
   MAX_COMPOSITION_SECONDS,
   resolveVariables,
-  variablesKey
+  variablesKey,
+  cssVariables
 } from './composition'
 
 const ROOT = (attrs: string, inner = ''): string =>
@@ -351,4 +352,39 @@ test('the values key is stable across insertion order, and distinguishes differe
   assert.equal(variablesKey({ a: '1', b: '2' }), variablesKey({ b: '2', a: '1' }))
   assert.notEqual(variablesKey({ name: 'Jane' }), variablesKey({ name: 'Ada' }))
   assert.equal(variablesKey({}), '')
+})
+
+test('a number with a unit becomes CSS-usable, while its text stays bare', () => {
+  // `--inset: 96` makes `left: var(--inset)` invalid CSS, so the declaration is dropped and the
+  // element sits at the frame edge with nothing reported anywhere. `--inset: 96px` is what the
+  // author meant. But a caption bound to the same variable must read "96", not "96px".
+  const { info } = readComposition(
+    WITH_VARS('[{"id":"inset","type":"number","label":"Inset","default":96,"unit":"px"}]')
+  )
+  const values = resolveVariables(info!, undefined)
+
+  assert.deepEqual(values, { inset: 96 })
+  assert.deepEqual(cssVariables(info!, values), { inset: '96px' })
+})
+
+test('a number with no unit is left alone, so calc() authors are not broken', () => {
+  const { info } = readComposition(
+    WITH_VARS('[{"id":"scale","type":"number","label":"Scale","default":2}]')
+  )
+
+  assert.deepEqual(cssVariables(info!, resolveVariables(info!, undefined)), { scale: '2' })
+})
+
+test('strings and colours pass through unchanged', () => {
+  const { info } = readComposition(
+    WITH_VARS(
+      '[{"id":"name","type":"string","label":"Name","default":"Ada"},' +
+        '{"id":"accent","type":"color","label":"Accent","default":"#66d9ef"}]'
+    )
+  )
+
+  assert.deepEqual(cssVariables(info!, resolveVariables(info!, undefined)), {
+    name: 'Ada',
+    accent: '#66d9ef'
+  })
 })

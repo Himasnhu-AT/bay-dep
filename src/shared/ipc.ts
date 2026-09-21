@@ -84,6 +84,14 @@ export interface CompositionFrameRequest {
    * can carry different values, and they share a window.
    */
   variables?: Record<string, string | number | boolean>
+  /**
+   * The same values written as CSS custom properties, with declared units attached.
+   *
+   * Sent alongside rather than derived in main, because main has no access to the declarations
+   * and so cannot know that `inset` is a number measured in px. A number is one string in CSS
+   * and a different one in text, and only the renderer knows which is which.
+   */
+  cssVariables?: Record<string, string>
 }
 
 export interface CompositionFrame {

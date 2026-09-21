@@ -165,13 +165,18 @@ export async function importCompositions(paths: string[]): Promise<ImportedAsset
  * two clips of one composition share a window: rendering clip B after clip A without reapplying
  * would give B whichever text A had left behind.
  */
-function variablesScript(values: Record<string, string | number | boolean>): string {
+function variablesScript(
+  values: Record<string, string | number | boolean>,
+  css: Record<string, string>
+): string {
   return `(() => {
     const values = ${JSON.stringify(values)}
+    const css = ${JSON.stringify(css)}
     const root = document.querySelector('[data-composition-id]')
     if (!root) return false
-    for (const [id, value] of Object.entries(values)) {
-      root.style.setProperty('--' + id, String(value))
+    // The CSS form, with units: --inset: 96px, not 96.
+    for (const [id, value] of Object.entries(css)) {
+      root.style.setProperty('--' + id, value)
     }
     for (const el of document.querySelectorAll('[data-var-text]')) {
       const id = el.getAttribute('data-var-text')
@@ -309,10 +314,10 @@ export async function compositionFrameAt(
 
     // Re-applied only when the values actually changed: it is a full DOM pass, and an export
     // runs it once per frame otherwise for no benefit.
-    const wanted = JSON.stringify(request.variables ?? {})
+    const wanted = JSON.stringify([request.variables ?? {}, request.cssVariables ?? {}])
     if (wanted !== entry.variables) {
       await entry.window.webContents.executeJavaScript(
-        variablesScript(request.variables ?? {})
+        variablesScript(request.variables ?? {}, request.cssVariables ?? {})
       )
       entry.variables = wanted
     }

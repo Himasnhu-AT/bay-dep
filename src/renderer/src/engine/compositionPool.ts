@@ -18,7 +18,12 @@
 
 import type { Asset, Item } from '@shared/project'
 import { sourceTimeAt } from '@shared/project'
-import { resolveVariables, variablesKey } from '@shared/composition'
+import {
+  cssVariables,
+  resolveVariables,
+  variablesKey,
+  type CompositionVariable
+} from '@shared/composition'
 import { bay } from '@/lib/bay'
 
 /**
@@ -117,7 +122,9 @@ export class CompositionPool {
     }
 
     this.#misses += 1
-    this.#request(key, asset, atUs, width, height, values)
+    this.#request(key, asset, atUs, width, height, values, {
+      variables: asset.compositionVariables ?? []
+    })
     return null
   }
 
@@ -197,7 +204,9 @@ export class CompositionPool {
     atUs: number,
     width: number,
     height: number,
-    variables: Record<string, string | number | boolean>
+    variables: Record<string, string | number | boolean>,
+    /** The declarations, needed only to know which numbers carry a unit. */
+    info: { variables: CompositionVariable[] }
   ): void {
     if (this.#inFlight.has(key)) return
 
@@ -227,7 +236,8 @@ export class CompositionPool {
           atUs,
           width,
           height,
-          variables
+          variables,
+          cssVariables: cssVariables(info, variables)
         })
         if (!frame) {
           this.#failedAt.set(key, performance.now())

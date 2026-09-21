@@ -488,3 +488,28 @@ export function variablesKey(values: Record<string, CompositionVariableValue>): 
   if (ids.length === 0) return ''
   return ids.map((id) => `${id}=${String(values[id])}`).join('\u0001')
 }
+
+/**
+ * The values as CSS custom properties — the same values, with their declared units attached.
+ *
+ * A number is two different strings depending on where it lands. `--inset: 96` makes
+ * `left: var(--inset)` invalid CSS, so the declaration is dropped and the element falls back to
+ * its unpositioned default; the author sees their box pinned to the frame edge and no error
+ * anywhere. `--inset: 96px` is what they meant. But `data-var-text="inset"` wants `96`, because
+ * a caption reading "96px" is not what anyone declared a number for.
+ *
+ * So both forms are produced, and which one is used depends on where the value is going.
+ */
+export function cssVariables(
+  info: Pick<CompositionInfo, 'variables'>,
+  values: Record<string, CompositionVariableValue>
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const variable of info.variables) {
+    const value = values[variable.id]
+    if (value === undefined) continue
+    out[variable.id] =
+      variable.type === 'number' && variable.unit ? `${value}${variable.unit}` : String(value)
+  }
+  return out
+}
