@@ -153,6 +153,16 @@ class Engine {
     // last one anybody schedules.
     this.#offs.push(this.pool.onReady(() => this.redraw()))
 
+    // And a composition frame arriving is the fifth. It is the same omission one subsystem
+    // along, and it fails harder: a video that is still decoding draws on the next clock tick
+    // anyway, but a composition is only fetched *because* a draw asked for it, and the pool
+    // answers from cache or not at all. With nothing listening here, the first draw requested
+    // the frame, the frame arrived and cached, and no redraw was ever scheduled to show it —
+    // so the preview stayed black for as long as the playhead did not move, while
+    // `preview_frame` and export both rendered it correctly. They go through `render.ts`,
+    // which waits for the pool; the live engine had no equivalent.
+    this.#offs.push(this.compositions.onReady(() => this.redraw()))
+
     // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
     // producing frames while the media elements play on, so the sound runs away from a
     // frozen picture — measured at 4.5 seconds of drift in six. Pausing is the honest
