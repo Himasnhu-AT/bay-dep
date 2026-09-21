@@ -125,6 +125,21 @@ await runProbe(async () => {
   for (const s of sizes) {
     writeFileSync(`${DIR}/${s.id}.html`, composition(s.id, s.w, s.h, 4))
   }
+  // An overlay: no background of its own, one opaque bar. This is what a lower third, a
+  // caption or a logo looks like, and it is the shape that was completely broken.
+  writeFileSync(
+    `${DIR}/overlay.html`,
+    `<!doctype html><html><head><script src="gsap.min.js"></script>` +
+      `<style>body{margin:0}</style></head><body>` +
+      `<div data-composition-id="overlay" data-duration="3" ` +
+      `style="width:1280px;height:720px;position:relative;background:transparent">` +
+      `<div id="b" style="position:absolute;left:40px;bottom:60px;width:300px;height:80px;` +
+      `background:#ffb020"></div></div>` +
+      `<script>var tl = gsap.timeline({ paused: true });` +
+      `tl.fromTo('#b', { opacity: 0 }, { opacity: 1, duration: 1 });` +
+      `window.__timelines['overlay'] = tl;<\/script></body></html>`
+  )
+
   writeFileSync(
     `${DIR}/broken.html`,
     '<!doctype html><html><body><div data-composition-id="broken"></div></body></html>'
@@ -168,6 +183,35 @@ await runProbe(async () => {
     return Math.round(sum / (px.length / 4))
   })()`)
   check('seeking to two times gives two different pictures', early !== null && late !== null, true)
+
+  // --- an overlay must capture with its transparency intact --------------------------------
+  // `capturePage` composites onto opaque white unless the window is transparent, so an overlay
+  // came back as a solid white rectangle — every pixel alpha 255 — and covered the footage it
+  // was meant to sit on. The clip beneath appeared to vanish, which reads as a compositor bug
+  // rather than an overlay one.
+  const alpha = await evaluate(`(async () => {
+    const f = await window.bay.composition.frameAt({ assetId:'probe-overlay',
+      path:'${DIR}/overlay.html', compositionId:'overlay', atUs: 2000000,
+      width: 320, height: 180 })
+    if (!f) return null
+    const px = new Uint8Array(f.data)
+    let clear = 0, opaque = 0
+    for (let k = 3; k < px.length; k += 4) { if (px[k] < 5) clear++; else if (px[k] > 250) opaque++ }
+    // A corner the bar does not reach.
+    const i = (8 * 320 + 300) * 4
+    return { clear, opaque, total: px.length / 4, corner: [px[i], px[i+1], px[i+2], px[i+3]] }
+  })()`)
+  check('an overlay keeps its transparency', alpha !== null && alpha.corner[3] === 0, true)
+  check(
+    'and most of it is transparent, not just the corner',
+    alpha !== null && alpha.clear > alpha.total * 0.8,
+    true
+  )
+  check(
+    'while the part that is drawn stays opaque',
+    alpha !== null && alpha.opaque > 0,
+    true
+  )
 
   // --- a composition that cannot be placed says why ----------------------------------------
   const broken = await evaluate(`(async () => {

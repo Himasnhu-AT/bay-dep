@@ -183,6 +183,15 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
     show: false,
     width: info.width,
     height: info.height,
+    // A composition that does not paint its own background must capture as TRANSPARENT, not
+    // as white. Without these two, `capturePage` composites the page onto opaque white and
+    // every pixel comes back with alpha 255 — measured: 57,600 of 57,600. An overlay built
+    // that way is a white rectangle over the footage, so lower thirds, captions, logos and
+    // titles-over-video are all impossible, and the failure looks like the clip beneath having
+    // vanished rather than like the overlay being wrong.
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
     webPreferences: {
       // Offscreen rendering crashes the browser process outright at 1920x1080 — measured, and
       // it takes the whole app with it, which is not a size anyone can avoid: 1080p is the
