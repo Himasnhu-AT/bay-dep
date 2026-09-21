@@ -29,7 +29,15 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve('src/preload/index.ts') }
+        // Two preloads: the app's contextBridge, and a two-line shim for composition windows
+        // that creates `window.__timelines` before a composition's own scripts run. The second
+        // is a separate entry because it loads into a different kind of window — untrusted
+        // local HTML with no bridge — and must never carry the app's surface with it.
+        input: {
+          index: resolve('src/preload/index.ts'),
+          composition: resolve('src/preload/composition.ts')
+        },
+        output: { entryFileNames: '[name].js' }
       }
     }
   },

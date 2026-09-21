@@ -271,10 +271,25 @@ export interface BayApi {
      * Returns faults even on success, because the ones that are not fatal are the ones that
      * matter most: a blocked CDN renders as a still frame with nothing in any log.
      */
-    inspect(path: string): Promise<{
+    inspect(
+      path: string,
+      includeHtml?: boolean
+    ): Promise<{
       info: CompositionInfo | null
       faults: CompositionFault[]
+      /** The document text, when asked for. Absent otherwise — it can be large. */
+      html?: string
     }>
+    /**
+     * Write a composition to disk.
+     *
+     * Here rather than in the renderer because the renderer does not touch the filesystem, and
+     * here rather than in `media` because it is the only write bay performs on behalf of an
+     * agent — everything else an agent does lands in the project document, which is undoable
+     * and visible. A file on disk is neither, so this one refuses anything that is not a
+     * composition path rather than becoming a general-purpose file writer.
+     */
+    write(path: string, html: string): Promise<{ ok: true } | { ok: false; error: string }>
     /** Import a composition as an asset, probing it the way media is probed. */
     import(paths: string[]): Promise<ImportedAsset[]>
     /** One frame, at a time. Resolves null when the composition could not be opened. */
@@ -364,6 +379,7 @@ export const IPC = {
   mediaReveal: 'media:reveal',
 
   compositionInspect: 'composition:inspect',
+  compositionWrite: 'composition:write',
   compositionImport: 'composition:import',
   compositionFrameAt: 'composition:frame-at',
   compositionRelease: 'composition:release',

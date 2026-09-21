@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import {
+  COMPOSITION_EXTENSIONS,
+  isCompositionPath,
   compositionDurationUs,
   fatalFaults,
   readComposition,
@@ -195,4 +197,31 @@ test('reads the real HyperFrames composition the spike rendered', (t) => {
   assert.equal(info?.width, 1920)
   assert.equal(info?.height, 1080)
   assert.deepEqual(fatalFaults(faults), [], 'the real composition must not be refused')
+})
+
+
+test('every offered extension is one the importer routes as a composition', () => {
+  // The two must agree or the picker offers a file the importer hands to ffprobe, which
+  // rejects it — producing a "could not be read" asset for a file the user was invited to
+  // choose. Derived from the list rather than written out, so adding one cannot miss this.
+  for (const extension of COMPOSITION_EXTENSIONS) {
+    assert.ok(isCompositionPath(`/tmp/thing.${extension}`), extension)
+    assert.ok(isCompositionPath(`/tmp/thing.${extension.toUpperCase()}`), `${extension} upper`)
+  }
+})
+
+test('media files are not routed as compositions', () => {
+  // The positive control for the check above: a predicate that returned true for everything
+  // would pass it and send every import down the composition path.
+  for (const path of ['/a/clip.mp4', '/a/song.wav', '/a/still.png', '/a/x.gif', '/a/n.mov']) {
+    assert.equal(isCompositionPath(path), false, path)
+  }
+})
+
+test('an extension-shaped substring elsewhere in the path is not an extension', () => {
+  // `/html/clip.mp4` is a video in a directory called html, and a naive `includes` says
+  // otherwise.
+  assert.equal(isCompositionPath('/projects/html/clip.mp4'), false)
+  assert.equal(isCompositionPath('/projects/my.html.backup/clip.mp4'), false)
+  assert.equal(isCompositionPath('/no-extension-at-all'), false)
 })

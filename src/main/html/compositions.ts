@@ -19,8 +19,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { BrowserWindow } from 'electron'
 import type {
   CompositionFrame,
@@ -29,6 +30,8 @@ import type {
 } from '@shared/ipc'
 import type { Asset } from '@shared/project'
 import {
+  COMPOSITION_EXTENSIONS,
+  isCompositionPath,
   compositionDurationUs,
   fatalFaults,
   readComposition,
@@ -48,8 +51,19 @@ import { bgraToRgba, describeSizeMismatch } from './bitmap'
  */
 const MAX_WINDOWS = 8
 
+/** Resolved the same way main resolves its own preload: this bundle is ESM, so no __dirname. */
+const here = fileURLToPath(new URL('.', import.meta.url))
+
+/**
+ * A session of its own, so a composition's storage, cookies and cache never touch the app's.
+ * Named rather than incognito because the windows are reused across a session and a cold HTTP
+ * cache per frame would show up as latency nobody could explain.
+ */
+const COMPOSITION_PARTITION = 'persist:bay-compositions'
+
 /** How long to wait for a page to load and register its timeline before giving up. */
 const LOAD_TIMEOUT_MS = 10_000
+
 
 interface Entry {
   window: BrowserWindow
@@ -64,10 +78,12 @@ interface Entry {
 const entries = new Map<string, Entry>()
 
 export async function inspectComposition(
-  path: string
-): Promise<{ info: CompositionInfo | null; faults: CompositionFault[] }> {
+  path: string,
+  includeHtml = false
+): Promise<{ info: CompositionInfo | null; faults: CompositionFault[]; html?: string }> {
   try {
-    return readComposition(await readFile(path, 'utf8'))
+    const html = await readFile(path, 'utf8')
+    return { ...readComposition(html), ...(includeHtml ? { html } : {}) }
   } catch (error) {
     return {
       info: null,
@@ -84,42 +100,51 @@ export async function inspectComposition(
 }
 
 /**
- * Import compositions as assets.
+ * Build the asset for one composition.
  *
- * A composition is not probed with ffprobe — ffprobe would reject the file, and everything
- * ffprobe would have told us the composition declares itself. An unreadable one still becomes
- * an asset carrying `error`, the same as unreadable media does, so it lists and explains
- * rather than vanishing.
+ * A composition is never probed with ffprobe — ffprobe rejects the file, and everything it
+ * would have reported the composition declares about itself. An unreadable one still becomes an
+ * asset carrying `error`, the same as unreadable media does, so it lists in the media pool and
+ * explains rather than vanishing.
+ *
+ * Exported as a single-asset builder rather than a batch importer so `media/import.ts` can own
+ * deduplication and path registration for every kind alike. Two import paths, each with their
+ * own idea of whether a file had already been imported, is how the same file ends up in the
+ * pool twice with different ids.
  */
+export async function compositionAsset(path: string): Promise<Asset> {
+  const { info, faults } = await inspectComposition(path)
+  const fatal = fatalFaults(faults)
+
+  return {
+    id: randomUUID(),
+    kind: 'html',
+    name: basename(path),
+    path,
+    durationUs: info ? compositionDurationUs(info) : 0,
+    width: info?.width ?? null,
+    height: info?.height ?? null,
+    fps: null,
+    // A composition can hold <audio>, but bay does not yet mix a composition's own sound —
+    // saying it has audio would put a silent waveform in the inspector and an empty track in
+    // an export. Claimed when it is true, not before.
+    hasAudio: false,
+    hasVideo: info !== null,
+    posterPath: null,
+    waveformPath: null,
+    createdAt: Date.now(),
+    ...(info ? { compositionId: info.compositionId } : {}),
+    // Every fatal fault, not the first: a composition with three problems has three, and the
+    // one that hides best must not queue behind a louder one.
+    ...(fatal.length > 0 ? { error: fatal.map((f) => f.message).join(' ') } : {})
+  }
+}
+
 export async function importCompositions(paths: string[]): Promise<ImportedAsset[]> {
   const imported: ImportedAsset[] = []
   for (const path of paths) {
-    const { info, faults } = await inspectComposition(path)
-    const fatal = fatalFaults(faults)
     allowPath(path)
-
-    const asset: Asset = {
-      id: randomUUID(),
-      kind: 'html',
-      name: basename(path),
-      path,
-      durationUs: info ? compositionDurationUs(info) : 0,
-      width: info?.width ?? null,
-      height: info?.height ?? null,
-      fps: null,
-      hasAudio: false,
-      hasVideo: info !== null,
-      posterPath: null,
-      waveformPath: null,
-      createdAt: Date.now(),
-      ...(info ? { compositionId: info.compositionId } : {}),
-      // Every fault, not the first: a composition with three problems has three, and the one
-      // that hides best (a blocked remote resource) must not queue behind a louder one.
-      ...(fatal.length > 0
-        ? { error: fatal.map((f) => f.message).join(' ') }
-        : {})
-    }
-    imported.push({ asset, reused: false })
+    imported.push({ asset: await compositionAsset(path), reused: false })
   }
   return imported
 }
@@ -160,12 +185,20 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
     height: info.height,
     webPreferences: {
       offscreen: true,
-      // A composition is local HTML that must not reach the network, matching the renderer's
-      // own CSP. It also gets no preload and no node integration: it is untrusted content
-      // that an agent may have written.
+      // A composition is local HTML an agent may have written, so it gets no node integration
+      // and a session of its own — it cannot reach Node, and nothing it stores touches the
+      // app's.
       nodeIntegration: false,
-      contextIsolation: true,
-      backgroundThrottling: false
+      partition: COMPOSITION_PARTITION,
+      backgroundThrottling: false,
+      // `contextIsolation: false` so the preload lands in the page's own world, which is the
+      // only place `window.__timelines` is any use. It is the whole reason this preload exists:
+      // the published composition contract says a composition may assign into that registry
+      // without creating it, and bay loads no runtime that would. The preload exposes nothing
+      // else, and with node integration off there is no Node surface for it to leak.
+      contextIsolation: false,
+      sandbox: false,
+      preload: join(here, '../preload/composition.mjs')
     }
   })
 
@@ -242,7 +275,16 @@ export function release(assetId: string): void {
   const entry = entries.get(assetId)
   if (!entry) return
   entries.delete(assetId)
-  if (!entry.window.isDestroyed()) entry.window.destroy()
+  if (!entry.window.isDestroyed()) {
+    // Detach before destroying: an attached debugger on a destroyed window logs a warning on
+    // every release, which is noise in a log people are meant to read.
+    try {
+      if (entry.window.webContents.debugger.isAttached()) entry.window.webContents.debugger.detach()
+    } catch {
+      // Already gone.
+    }
+    entry.window.destroy()
+  }
 }
 
 export function releaseAll(): void {
@@ -254,4 +296,47 @@ function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<
     work,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms))
   ])
+}
+
+
+/**
+ * Write a composition to disk.
+ *
+ * The only file bay writes on an agent's behalf. Everything else an agent does lands in the
+ * project document, which is undoable and which the user is watching; a file on disk is
+ * neither. So this refuses anything that is not a composition path rather than quietly
+ * becoming a general-purpose file writer with a video editor attached — the extension check is
+ * the whole security boundary and is meant to be read as one.
+ *
+ * Existing files are overwritten, because editing a composition is the normal case and a
+ * refusal would force every edit through a delete. Directories are created, because a
+ * composition usually wants a folder of its own for its vendored fonts and libraries.
+ */
+export async function writeComposition(
+  path: string,
+  html: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isCompositionPath(path)) {
+    return {
+      ok: false,
+      error:
+        `${path} is not a composition path. bay writes compositions and nothing else, so the ` +
+        `path must end ${COMPOSITION_EXTENSIONS.map((e) => `.${e}`).join(', ')}.`
+    }
+  }
+  if (!path.startsWith('/')) {
+    return { ok: false, error: `${path} is not absolute. Give a full path from the root.` }
+  }
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, html, 'utf8')
+    allowPath(path)
+    // A composition loads its fonts and libraries as siblings, so the directory has to be
+    // reachable too — otherwise the file renders without the things it references and looks
+    // merely wrong.
+    allowPath(dirname(path))
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: `${path} could not be written: ${(error as Error).message}` }
+  }
 }

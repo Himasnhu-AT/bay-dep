@@ -14,9 +14,12 @@ import type { ImportedAsset, ProbeResult } from '@shared/ipc'
 import type { Asset, AssetKind } from '@shared/project'
 import { allowPath } from '../protocol'
 import { probe } from './probe'
+import { compositionAsset } from '../html/compositions'
+import { COMPOSITION_EXTENSIONS, isCompositionPath } from '@shared/composition'
 import { thumbnail } from './thumbnails'
 
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', 'mpg', 'mpeg', 'wmv', 'flv']
+
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'aiff', 'aif']
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'heic']
 
@@ -120,7 +123,14 @@ export async function importPaths(paths: readonly string[]): Promise<ImportedAss
     allowPath(path)
     let asset: Asset
     try {
-      asset = assetFrom(path, await probe(path))
+      // An HTML composition declares its own duration and size, and ffprobe rejects the file
+      // outright — so it takes a different route to the same Asset shape. Branching here rather
+      // than in a second importer keeps deduplication and path registration in one place: two
+      // import paths with separate ideas of "already imported" is how one file lands in the
+      // pool twice under different ids.
+      asset = isCompositionPath(path)
+        ? await compositionAsset(path)
+        : assetFrom(path, await probe(path))
     } catch (error) {
       asset = failedAsset(path, messageOf(error))
     }
@@ -139,11 +149,18 @@ export async function importDialog(window: BrowserWindow | null): Promise<Import
     filters: [
       {
         name: 'Media',
-        extensions: [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS, ...IMAGE_EXTENSIONS, 'gif']
+        extensions: [
+          ...VIDEO_EXTENSIONS,
+          ...AUDIO_EXTENSIONS,
+          ...IMAGE_EXTENSIONS,
+          'gif',
+          ...COMPOSITION_EXTENSIONS
+        ]
       },
       { name: 'Video', extensions: VIDEO_EXTENSIONS },
       { name: 'Audio', extensions: AUDIO_EXTENSIONS },
       { name: 'Images', extensions: [...IMAGE_EXTENSIONS, 'gif'] },
+      { name: 'Compositions', extensions: [...COMPOSITION_EXTENSIONS] },
       { name: 'All files', extensions: ['*'] }
     ]
   }

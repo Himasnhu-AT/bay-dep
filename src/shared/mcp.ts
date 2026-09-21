@@ -153,6 +153,71 @@ export const TOOLS: ToolSpec[] = [
 
   // -- write -----------------------------------------------------------------
   {
+    name: 'write_composition',
+    description:
+      'Create or replace an HTML composition on disk and import it as an asset, ready to place. ' +
+      'This is how you build motion graphics, titles, lower thirds, animated charts and ' +
+      'anything else the timeline has no primitive for: you write the HTML, bay renders it as a ' +
+      'clip. Read bay://guide/composition/contract first — the rules are short and the ones ' +
+      'that matter produce a WRONG PICTURE rather than an error, so nothing will tell you. In ' +
+      'brief: the root element needs data-composition-id, data-duration in SECONDS, and an ' +
+      'explicit pixel width and height; it must register exactly one paused GSAP timeline at ' +
+      'window.__timelines[<that id>]; and nothing may load over the network, because bay blocks ' +
+      'remote origins silently and a CDN script tag renders as a still frame. Vendor libraries ' +
+      'and fonts beside the file and reference them by relative path. The result reports every ' +
+      'problem found, with the line, before you place anything.',
+    category: 'write',
+    readOnly: false,
+    alwaysLoad: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description:
+            'Absolute path to write to, ending .html. Its directory is created if missing, and ' +
+            'an existing file at this path is overwritten.'
+        },
+        html: {
+          type: 'string',
+          description:
+            'The complete document. Accepts @./file.html to read it from a file, which is the ' +
+            'better route for anything long.'
+        },
+        import: {
+          type: 'boolean',
+          description:
+            'Import as an asset after writing. Default true. Pass false to write a ' +
+            'sub-composition or a vendored file that is not itself a clip.'
+        }
+      },
+      required: ['path', 'html']
+    }
+  },
+  {
+    name: 'read_composition',
+    description:
+      'Read a composition back: its declared id, duration and size, every fault with the line ' +
+      'it is on, and optionally the HTML itself. Use it to check what you wrote before placing ' +
+      'it, and to inspect one you did not write before editing it. Faults are reported even ' +
+      'when the composition is usable — the non-fatal ones are the ones that matter most, ' +
+      'because a blocked network request renders as a still frame with nothing in any log.',
+    category: 'read',
+    readOnly: true,
+    alwaysLoad: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the .html file.' },
+        includeHtml: {
+          type: 'boolean',
+          description: 'Return the document text as well as its declared shape. Default false.'
+        }
+      },
+      required: ['path']
+    }
+  },
+  {
     name: 'import_media',
     description:
       'Import files from absolute paths into the media pool. Returns one asset per path, ' +

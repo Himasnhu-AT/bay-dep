@@ -22,6 +22,24 @@
 
 import type { Micros } from './project'
 
+/**
+ * File extensions bay treats as a composition rather than as media.
+ *
+ * Here rather than beside the importer because two consumers must agree: the import dialog
+ * offers these, and the importer routes on them. A picker offering an extension the importer
+ * hands to ffprobe produces a "could not be read" asset for a file the user was invited to
+ * choose — and the two lists living in different files is how they drift.
+ */
+export const COMPOSITION_EXTENSIONS = ['html', 'htm', 'xhtml'] as const
+
+/** Is this a file bay should treat as a composition rather than hand to ffprobe? */
+export function isCompositionPath(path: string): boolean {
+  const dot = path.lastIndexOf('.')
+  if (dot < 0) return false
+  const extension = path.slice(dot + 1).toLowerCase()
+  return (COMPOSITION_EXTENSIONS as readonly string[]).includes(extension)
+}
+
 /** How long a composition is allowed to be. A typo in `data-duration` should not allocate. */
 export const MAX_COMPOSITION_SECONDS = 60 * 30
 

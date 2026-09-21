@@ -16,7 +16,8 @@ import {
   compositionFrameAt,
   importCompositions,
   inspectComposition,
-  release as releaseComposition
+  release as releaseComposition,
+  writeComposition
 } from './html/compositions'
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
@@ -55,6 +56,7 @@ interface ChannelApi {
   projectAutosave: BayApi['project']['autosave']
 
   compositionInspect: BayApi['composition']['inspect']
+  compositionWrite: BayApi['composition']['write']
   compositionImport: BayApi['composition']['import']
   compositionFrameAt: BayApi['composition']['frameAt']
   compositionRelease: BayApi['composition']['release']
@@ -82,7 +84,8 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 }
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
-  compositionInspect: async (_event, path) => inspectComposition(path),
+  compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
+  compositionWrite: async (_event, path, html) => writeComposition(path, html),
   compositionImport: async (_event, paths) => importCompositions(paths),
   compositionFrameAt: async (_event, request) => compositionFrameAt(request),
   compositionRelease: async (_event, assetId) => releaseComposition(assetId),

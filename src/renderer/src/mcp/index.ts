@@ -30,6 +30,7 @@ import {
   undo
 } from './write'
 import { previewFrame } from './preview'
+import { readComposition, writeComposition } from './compositions'
 import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from './validate'
 
@@ -41,6 +42,8 @@ const HANDLERS: Record<string, Handler> = {
   inspect_item: (args) => inspectItem(args),
   preview_frame: (args) => previewFrame(args),
   import_media: (args) => importMedia(args),
+  write_composition: (args) => writeComposition(args),
+  read_composition: (args) => readComposition(args),
   place_asset: (args) => placeAsset(args),
   edit_item: (args) => editItem(args),
   split_at: (args) => splitAt(args),

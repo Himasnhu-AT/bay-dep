@@ -1,6 +1,14 @@
 import { memo, type ReactNode } from 'react'
-import { AlertTriangle, ImageIcon, Music2, Type as TypeIcon, Video } from 'lucide-react'
-import { US_PER_SECOND, type Asset, type Item } from '@shared/project'
+import {
+  AlertTriangle,
+  Code2,
+  ImageIcon,
+  Music2,
+  Type as TypeIcon,
+  Video,
+  type LucideIcon
+} from 'lucide-react'
+import { US_PER_SECOND, type Asset, type AssetKind, type Item } from '@shared/project'
 import { cn } from '@/lib/cn'
 import { useFilmstrip, useWaveform } from '@/lib/useMediaCache'
 
@@ -36,12 +44,21 @@ export interface ClipProps {
   onPointerDownTrim(event: React.PointerEvent, item: Item, edge: 'start' | 'end'): void
 }
 
-const KIND_ICON = {
+/**
+ * Typed `Record<AssetKind, ...>` on purpose: an untyped literal lets a new asset kind index to
+ * `undefined`, React renders `<undefined />`, and the whole tree unmounts to a blank window
+ * with nothing in the console. That is not hypothetical — adding `html` did exactly that, and
+ * both typecheck and the test suite stayed green because neither can see a missing key in an
+ * object literal nobody declared exhaustive. The annotation turns the next one into a build
+ * error.
+ */
+const KIND_ICON: Record<AssetKind, LucideIcon> = {
   video: Video,
   audio: Music2,
   image: ImageIcon,
   gif: ImageIcon,
-  text: TypeIcon
+  text: TypeIcon,
+  html: Code2
 }
 
 /**

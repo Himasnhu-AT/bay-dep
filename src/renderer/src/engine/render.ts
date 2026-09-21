@@ -262,15 +262,19 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       if (stats.pending === 0) break
       // Something was still decoding. `onReady` fires on `loadeddata` and `seeked`, so this
       // waits for the next actual change rather than sleeping a guessed interval.
+      //
+      // Both pools, because a composition is pending for a different reason than a video: its
+      // first frame is not requested until the first draw asks for it, so a render that only
+      // waited on media returned a picture with the composition missing — correctly warned
+      // about, and still the wrong picture. Whichever settles first wakes the retry.
       await new Promise<void>((resolve) => {
-        const off = pool.onReady(() => {
-          off()
+        const offs = [pool.onReady(finish), compositions.onReady(finish)]
+        const timer = setTimeout(finish, timeoutMs)
+        function finish(): void {
+          clearTimeout(timer)
+          for (const off of offs) off()
           resolve()
-        })
-        setTimeout(() => {
-          off()
-          resolve()
-        }, timeoutMs)
+        }
       })
     }
 

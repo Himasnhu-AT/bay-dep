@@ -1,6 +1,15 @@
 import { useState, type ReactNode } from 'react'
-import { FilmIcon, ImageIcon, Music2, Plus, Trash2, Type as TypeIcon } from 'lucide-react'
-import type { Asset } from '@shared/project'
+import {
+  Code2,
+  FilmIcon,
+  ImageIcon,
+  Music2,
+  Plus,
+  Trash2,
+  Type as TypeIcon,
+  type LucideIcon
+} from 'lucide-react'
+import type { Asset, AssetKind } from '@shared/project'
 import { Button, EmptyState, IconButton, Panel, ScrollArea } from '@/components'
 import { call, formatSourceDuration, importMessage } from '@/lib/bay'
 import { cn } from '@/lib/cn'
@@ -10,12 +19,21 @@ import { useEditor } from '@/store/editor'
 /** The drag payload a media card writes and a timeline lane reads. */
 export const ASSET_DRAG_TYPE = 'application/x-bay-asset'
 
-const KIND_ICON = {
+/**
+ * Typed `Record<AssetKind, ...>` on purpose: an untyped literal lets a new asset kind index to
+ * `undefined`, React renders `<undefined />`, and the whole tree unmounts to a blank window
+ * with nothing in the console. That is not hypothetical — adding `html` did exactly that, and
+ * both typecheck and the test suite stayed green because neither can see a missing key in an
+ * object literal nobody declared exhaustive. The annotation turns the next one into a build
+ * error.
+ */
+const KIND_ICON: Record<AssetKind, LucideIcon> = {
   video: FilmIcon,
   audio: Music2,
   image: ImageIcon,
   gif: ImageIcon,
-  text: TypeIcon
+  text: TypeIcon,
+  html: Code2
 }
 
 function AssetCard({ asset }: { asset: Asset }): ReactNode {
