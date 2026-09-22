@@ -46,6 +46,7 @@ import {
   type TransitionKind,
   retimeTimeline
 } from '@shared/project'
+import type { AgentGate, Proposal } from '@shared/agent'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 
 const HISTORY_LIMIT = 100
@@ -66,6 +67,16 @@ export interface EditorState {
   scrubbing: boolean
   /** Non-blocking messages surfaced in the status bar. */
   toast: { id: number; kind: 'info' | 'error'; text: string } | null
+  /**
+   * Whether an in-app agent session is driving, and what it has been approved to do.
+   *
+   * `null` means no session — and therefore no gate, which is the state bay is in when Claude
+   * Code drives it over the socket. Session state rather than project state: it must not be
+   * saved, must not land on the undo stack, and must not survive a reload, because an approval
+   * belongs to the conversation in front of you and one that outlived it would be a standing
+   * permission nobody granted.
+   */
+  agentGate: AgentGate | null
   dirty: boolean
   past: Project[]
   future: Project[]
@@ -76,6 +87,25 @@ export interface EditorActions {
   setProject(project: Project, options?: { resetHistory?: boolean }): void
   renameProject(name: string): void
   setCanvasPreset(presetId: string): void
+  // agent ---------------------------------------------------------------------
+  /** Begin an in-app agent session: from here writes are gated until something is approved. */
+  startAgentSession(): void
+  /** End it. Writes stop being gated, because nothing in-app is driving any more. */
+  endAgentSession(): void
+  /**
+   * Record that the user approved one option of a proposal. Replaces any previous approval:
+   * approving a new plan is not an extension of the old one, and leaving both live would let
+   * an agent mix operations from two plans the user considered separately.
+   */
+  approveProposal(proposal: Proposal, optionId: string): void
+  /** Withdraw approval, leaving the session gated with nothing permitted. */
+  revokeApproval(): void
+  /**
+   * Mark one approved operation as carried out. Called by the executor *after* the tool
+   * succeeded, never before: a call that threw changed nothing, and spending the approval on
+   * it would block the retry the error message is asking for.
+   */
+  consumeApproval(index: number): void
   /**
    * Change the timeline's frame rate, moving every clip so it stays at the same wall-clock
    * time. Returns how many clips had to be nudged a frame to keep the order legal, so the UI
@@ -343,6 +373,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     panel: 'media',
     scrubbing: false,
     toast: null,
+    agentGate: null,
     dirty: false,
     past: [],
     future: [],
@@ -364,6 +395,42 @@ export const useEditor = create<EditorStore>((set, get) => {
       edit((project) => {
         project.name = name
       })
+    },
+
+    startAgentSession() {
+      set({ agentGate: { approved: null } })
+    },
+
+    endAgentSession() {
+      set({ agentGate: null })
+    },
+
+    approveProposal(proposal, optionId) {
+      const option = proposal.options.find((o) => o.id === optionId)
+      if (!option) return
+      set({
+        agentGate: {
+          approved: {
+            approvalId: newId('apr'),
+            proposalId: proposal.id,
+            option,
+            consumed: []
+          }
+        }
+      })
+    },
+
+    revokeApproval() {
+      // Back to a gated session with nothing permitted, not to no session at all: the agent is
+      // still driving, it just may no longer write.
+      if (get().agentGate) set({ agentGate: { approved: null } })
+    },
+
+    consumeApproval(index) {
+      const gate = get().agentGate
+      const current = gate?.approved
+      if (!current || current.consumed.includes(index)) return
+      set({ agentGate: { approved: { ...current, consumed: [...current.consumed, index] } } })
     },
 
     setCanvasPreset(presetId) {

@@ -99,6 +99,28 @@ export interface Proposal {
   options: readonly ProposalOption[]
 }
 
+/**
+ * Whether an approval regime is in force, and what it permits.
+ *
+ * Three states, one field, so they cannot disagree — each has its own sentence:
+ *
+ * - `null` — **nothing is gated.** No in-app agent is driving. This is bay answering Claude
+ *   Code over the socket, where the person is in a terminal watching every call go past and
+ *   there is no panel to approve anything in. Gating that would not make it safer, it would
+ *   make it impossible.
+ * - `{ approved: null }` — an in-app agent session is running and has had nothing approved
+ *   yet. Writes are refused, and the refusal says to propose first.
+ * - `{ approved: … }` — the user approved a plan. Exactly that plan may run, once each.
+ *
+ * The gate therefore prevents an agent from **deviating from what was approved**; it is not a
+ * requirement that every edit be approved. That is the distinction that took a broken probe
+ * run to see: the first version refused when nothing was approved regardless of who was
+ * asking, which locked out the surface bay already ships.
+ */
+export interface AgentGate {
+  approved: ApprovedProposal | null
+}
+
 export interface ApprovedProposal {
   approvalId: string
   proposalId: string
@@ -169,10 +191,13 @@ export interface ApprovalVerdict {
 export function checkApproval(
   toolName: string,
   args: Record<string, unknown>,
-  approved: ApprovedProposal | null
+  gate: AgentGate | null
 ): ApprovalVerdict {
+  // No agent session is driving: this is the socket, and the person is watching it.
+  if (!gate) return { allowed: true }
   if (!requiresApproval(toolName)) return { allowed: true }
 
+  const approved = gate.approved
   if (!approved) {
     return {
       allowed: false,

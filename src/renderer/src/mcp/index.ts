@@ -15,7 +15,8 @@
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import { findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
-import { ToolError } from './helpers'
+import { checkApproval } from '@shared/agent'
+import { store, ToolError } from './helpers'
 import { browseAssets, inspectItem, readProject } from './read'
 import { exportTimeline, trackExport } from './exports'
 import {
@@ -122,8 +123,24 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
   const invalid = validateArgs(tool, args)
   if (invalid) return { id: call.id, ok: false, error: invalid }
 
+  // The approval gate, and it sits here rather than in each write tool for the same reason the
+  // catalog does: thirty handlers is thirty places to forget, and the one that forgot would be
+  // the one nobody noticed. `null` means no in-app agent session is driving — bay answering
+  // the socket, where the person is in a terminal watching every call — and then nothing is
+  // gated at all.
+  //
+  // Checked *before* the handler and consumed *after* it succeeds. A call that threw changed
+  // nothing, so spending the approval on it would block the retry its own error message asks
+  // for; `edit()` returning unchanged when a mutator declines is what makes that safe to
+  // assume rather than hope.
+  const verdict = checkApproval(tool.name, args, store().agentGate)
+  if (!verdict.allowed) {
+    return { id: call.id, ok: false, error: verdict.refusal ?? 'That edit is not approved.' }
+  }
+
   try {
     const value = await handler(args)
+    if (verdict.index !== undefined) store().consumeApproval(verdict.index)
     return { id: call.id, ok: true, value }
   } catch (error) {
     if (error instanceof ToolError) return { id: call.id, ok: false, error: error.message }

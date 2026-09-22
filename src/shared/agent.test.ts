@@ -14,7 +14,7 @@ import {
   argsMatch,
   checkApproval,
   requiresApproval,
-  type ApprovedProposal,
+  type AgentGate,
   type ProposalOperation
 } from './agent'
 import { TOOLS } from './mcp'
@@ -25,12 +25,18 @@ const op = (index: number, tool: string, args: Record<string, unknown>): Proposa
   args
 })
 
-const approval = (operations: ProposalOperation[], consumed: number[] = []): ApprovedProposal => ({
-  approvalId: 'apr_1',
-  proposalId: 'prp_1',
-  option: { id: 'o1', label: 'Tighten the opening', summary: 'x', operations },
-  consumed
+/** A gated session with this plan approved. */
+const approval = (operations: ProposalOperation[], consumed: number[] = []): AgentGate => ({
+  approved: {
+    approvalId: 'apr_1',
+    proposalId: 'prp_1',
+    option: { id: 'o1', label: 'Tighten the opening', summary: 'x', operations },
+    consumed
+  }
 })
+
+/** A gated session with nothing approved yet. */
+const gatedButUnapproved: AgentGate = { approved: null }
 
 // --- what needs approval at all -----------------------------------------------------------
 
@@ -55,16 +61,28 @@ test('an unknown tool is gated rather than waved through', () => {
   assert.equal(requiresApproval('some_tool_that_does_not_exist'), true)
 })
 
-test('reads run with no approval at all', () => {
-  const verdict = checkApproval('read_project', {}, null)
+test('reads run inside a gated session with nothing approved', () => {
+  const verdict = checkApproval('read_project', {}, gatedButUnapproved)
   assert.equal(verdict.allowed, true)
   assert.equal(verdict.refusal, undefined)
 })
 
+test('with no session at all, nothing is gated — not even writes', () => {
+  // This is bay answering Claude Code over the socket: the person is in a terminal watching
+  // every call go past, and there is no panel to approve anything in. The first version of
+  // this file refused here regardless of who was asking, which locked out the surface bay
+  // already ships — a broken probe run is what surfaced it. The gate exists to stop an agent
+  // *deviating from an approved plan*, not to require a plan for every edit.
+  for (const tool of ['remove_range', 'edit_item', 'delete_items', 'export_timeline']) {
+    const verdict = checkApproval(tool, { anything: true }, null)
+    assert.equal(verdict.allowed, true, `${tool} must not be gated without a session`)
+  }
+})
+
 // --- the gate ------------------------------------------------------------------------------
 
-test('a write with nothing approved is refused, and told how to get approval', () => {
-  const verdict = checkApproval('remove_range', { fromFrame: 0, toFrame: 10 }, null)
+test('inside a session, a write with nothing approved is refused and told how to proceed', () => {
+  const verdict = checkApproval('remove_range', { fromFrame: 0, toFrame: 10 }, gatedButUnapproved)
   assert.equal(verdict.allowed, false)
   assert.match(verdict.refusal ?? '', /nothing has been approved/)
   // The refusal must leave a next move. Naming the readable tools is what makes "plan first"
@@ -134,7 +152,7 @@ test('extra arguments are not covered by an approval', () => {
 test('a refusal always leaves a way forward rather than only saying no', () => {
   const approved = approval([op(0, 'edit_item', { itemId: 'itm_1', volume: 0.5 })])
   for (const verdict of [
-    checkApproval('remove_range', { fromFrame: 1, toFrame: 2 }, null),
+    checkApproval('remove_range', { fromFrame: 1, toFrame: 2 }, gatedButUnapproved),
     checkApproval('remove_range', { fromFrame: 1, toFrame: 2 }, approved),
     checkApproval('edit_item', { itemId: 'itm_1', volume: 0.9 }, approved)
   ]) {
