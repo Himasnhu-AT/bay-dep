@@ -249,5 +249,9 @@ await runProbe(async () => {
   check('the editor window is still the editor window', windows.hasCanvas === true, true)
 
   console.log(`\n${checks}/${checks} checks passed`)
-  await close()
+  close()
+  // Without this the probe printed "13/13 checks passed" and exited 1, because `runProbe`
+  // takes its exit code from this value. `await close()` here never resolved either: the
+  // body is raced against a watchdog and `runProbe` exits the process itself.
+  return true
 })
