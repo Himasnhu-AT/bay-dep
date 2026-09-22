@@ -149,11 +149,22 @@ export function Inspector(): ReactNode {
   const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
     common(selected, read)
 
+  /**
+   * Every field on this panel writes to the whole selection, one store call per item, and
+   * each of those is its own `edit()` — so without a transaction a field committed over
+   * four clips is four undo entries, and Cmd+Z once leaves three of them changed and one
+   * not. `transact` makes one commit one undo step, which is the promise the MCP tools
+   * already keep. Crop and origin were written this way; these four were older and were not.
+   */
   const applyLayout = (patch: Parameters<typeof patchLayout>[1]): void => {
-    for (const item of selected) patchLayout(item.id, patch)
+    transact(() => {
+      for (const item of selected) patchLayout(item.id, patch)
+    })
   }
   const applyItem = (patch: Parameters<typeof patchItem>[1]): void => {
-    for (const item of selected) patchItem(item.id, patch)
+    transact(() => {
+      for (const item of selected) patchItem(item.id, patch)
+    })
   }
 
   // X and Y are shown from whichever corner the clip is anchored to. `left` and `top` stay
@@ -169,13 +180,15 @@ export function Inspector(): ReactNode {
 
   /** Writes one axis back, keeping the other where the clip already is. */
   const setPosition = (axis: 'x' | 'y', next: number): void => {
-    for (const item of selected) {
-      const current = positionFromOrigin(item.layout, frame, origin)
-      patchLayout(
-        item.id,
-        positionToOrigin({ ...current, [axis]: next }, item.layout, frame, origin)
-      )
-    }
+    transact(() => {
+      for (const item of selected) {
+        const current = positionFromOrigin(item.layout, frame, origin)
+        patchLayout(
+          item.id,
+          positionToOrigin({ ...current, [axis]: next }, item.layout, frame, origin)
+        )
+      }
+    })
   }
 
   const cropOf = (edge: keyof Crop): number =>
@@ -277,7 +290,9 @@ export function Inspector(): ReactNode {
               // for collisions, and a typed-in start that overlaps a neighbour must be
               // refused the same way a dragged one is.
               onCommit={(next) => {
-                for (const item of selected) moveItem(item.id, next)
+                transact(() => {
+                  for (const item of selected) moveItem(item.id, next)
+                })
               }}
               min={0}
               suffix="f"
@@ -287,7 +302,9 @@ export function Inspector(): ReactNode {
               value={durationInFrames.value}
               mixed={durationInFrames.mixed}
               onCommit={(next) => {
-                for (const item of selected) trimItem(item.id, 'end', item.from + next)
+                transact(() => {
+                  for (const item of selected) trimItem(item.id, 'end', item.from + next)
+                })
               }}
               min={1}
               suffix="f"

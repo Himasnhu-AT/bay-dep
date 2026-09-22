@@ -44,13 +44,24 @@ export function EffectsPanel(): ReactNode {
   const project = useEditor((state) => state.project)
   const patchLayout = useEditor((state) => state.patchLayout)
   const patchItem = useEditor((state) => state.patchItem)
+  const transact = useEditor((state) => state.transact)
 
+  /**
+   * Every button on this panel acts on the whole selection, so each one is a loop of
+   * single-item store calls — and each of those is its own `edit()`, hence its own undo
+   * entry. Four clips selected, one click on `0.5s`, four presses of Cmd+Z to take it back,
+   * with the middle two leaving a selection that is half faded. So all three loops below go
+   * through `transact`: one click is one undo step, which is the same promise the MCP tools
+   * make. The inspector already worked this way; this panel did not.
+   */
   const applyLayout = (make: (item: Item) => Layout | null): void => {
     if (!timeline) return
-    for (const item of selected) {
-      const layout = make(item)
-      if (layout) patchLayout(item.id, layout)
-    }
+    transact(() => {
+      for (const item of selected) {
+        const layout = make(item)
+        if (layout) patchLayout(item.id, layout)
+      }
+    })
   }
 
   const fit = (mode: 'cover' | 'contain' | 'reset'): void =>
@@ -75,14 +86,18 @@ export function EffectsPanel(): ReactNode {
     })
 
   const fade = (frames: number): void => {
-    for (const item of selected) {
-      const capped = Math.min(frames, Math.floor(item.durationInFrames / 2))
-      patchItem(item.id, { fadeInFrames: capped, fadeOutFrames: capped })
-    }
+    transact(() => {
+      for (const item of selected) {
+        const capped = Math.min(frames, Math.floor(item.durationInFrames / 2))
+        patchItem(item.id, { fadeInFrames: capped, fadeOutFrames: capped })
+      }
+    })
   }
 
   const setSpeed = (speed: number): void => {
-    for (const item of selected) patchItem(item.id, { speed })
+    transact(() => {
+      for (const item of selected) patchItem(item.id, { speed })
+    })
   }
 
   if (selected.length === 0) {

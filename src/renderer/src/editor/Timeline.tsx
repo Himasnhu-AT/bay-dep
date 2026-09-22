@@ -253,13 +253,19 @@ export function Timeline(): ReactNode {
       // Moving right, the rightmost clip must vacate its space first — otherwise the one
       // behind it collides with a clip that is itself about to move out of the way.
       moving.sort((a, b) => (current.deltaFrames > 0 ? b.from - a.from : a.from - b.from))
-      for (const item of moving) {
-        store.moveItem(
-          item.id,
-          item.from + current.deltaFrames,
-          item.id === current.itemIds[0] ? current.targetTrackId : undefined
-        )
-      }
+      // One drag is one undo step. Without the transaction a four-clip drag pushes four
+      // entries and a single Cmd+Z moves one clip back, leaving the selection spread across
+      // two positions — a state nobody dragged to. The ordering above makes the intermediate
+      // states legal, which is why the group can be built from single moves at all.
+      store.transact(() => {
+        for (const item of moving) {
+          store.moveItem(
+            item.id,
+            item.from + current.deltaFrames,
+            item.id === current.itemIds[0] ? current.targetTrackId : undefined
+          )
+        }
+      })
     },
     onClick: () => setMove(null)
   })

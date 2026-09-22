@@ -87,6 +87,9 @@ export function AdjustmentsSection({
   timeline: Timeline
 }): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
+  // One slider commit is one undo step across the whole selection — see the note in
+  // `Inspector.tsx`. A per-item `patchItem` loop without this is one entry per clip.
+  const transact = useEditor((state) => state.transact)
   const first = items[0]
   if (!first) return null
 
@@ -100,15 +103,19 @@ export function AdjustmentsSection({
   // one clip is already blurred must not have the others inherit its blur because they happened
   // to be edited together.
   const set = (key: keyof Adjustments, value: number): void => {
-    for (const item of items) {
-      patchItem(item.id, {
-        adjustments: { ...defaultAdjustments(), ...item.adjustments, [key]: value }
-      })
-    }
+    transact(() => {
+      for (const item of items) {
+        patchItem(item.id, {
+          adjustments: { ...defaultAdjustments(), ...item.adjustments, [key]: value }
+        })
+      }
+    })
   }
 
   const reset = (): void => {
-    for (const item of items) patchItem(item.id, { adjustments: defaultAdjustments() })
+    transact(() => {
+      for (const item of items) patchItem(item.id, { adjustments: defaultAdjustments() })
+    })
   }
 
   const built = adjustmentFilter(first.adjustments)
@@ -168,7 +175,9 @@ export function AdjustmentsSection({
           value={blendValue}
           options={BLEND_MODES}
           onChange={(mode) => {
-            for (const item of items) patchItem(item.id, { blendMode: mode })
+            transact(() => {
+              for (const item of items) patchItem(item.id, { blendMode: mode })
+            })
           }}
           disabled={onBottom}
         />
