@@ -221,6 +221,17 @@ export async function runProbe(body, { timeoutMs = 120_000 } = {}) {
   try {
     const ok = await Promise.race([body(), watchdog])
     clearTimeout(timer)
+    // `undefined` is not `false`. Several probes return `false` on purpose, so the exit code
+    // genuinely has to come from this value — but a body that simply forgot the final
+    // `return true` then prints "N/N checks passed" and exits 1, and a caller reading either
+    // one alone gets the opposite answer. That contradiction is the same class as a mutation
+    // that never applied: the fault is in the layer between the result and the report of it.
+    // So an absent verdict is a setup failure, named, rather than a silent red.
+    if (ok === undefined) {
+      console.error('\nCANNOT MEASURE: the probe body returned undefined, so it has no verdict.')
+      console.error('A probe must end with `return true`; `false` is reserved for a real failure.')
+      process.exit(2)
+    }
     process.exit(ok ? 0 : 1)
   } catch (error) {
     clearTimeout(timer)

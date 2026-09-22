@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import { formatTimecode } from '@shared/project'
+import { formatFps, formatTimecode } from '@shared/project'
 import { summariseAgentSurface, type AgentSurfaceStatus } from '@shared/mcp'
 import { Toast, Tooltip } from '@/components'
 import { bay } from '@/lib/bay'
@@ -71,7 +71,9 @@ export function StatusBar(): ReactNode {
 
   return (
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-surface-1 px-3 text-[11px]">
-      <Stat label="fps" value={fps} />
+      {/* `formatFps`, not `fps`: the stored rate is a quotient, so this read
+          `fps 29.97002997002997` the moment a project could be NTSC. */}
+      <Stat label="fps" value={formatFps(fps)} />
       <Stat label="duration" value={formatTimecode(duration, fps, true)} />
       <Stat
         label="canvas"
