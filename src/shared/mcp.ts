@@ -638,6 +638,44 @@ export const TOOLS: ToolSpec[] = [
 
 export const ALWAYS_LOADED = TOOLS.filter((t) => t.alwaysLoad).map((t) => t.name)
 
+/**
+ * Whether bay can be driven over MCP, in the shape the bridge hands the renderer.
+ *
+ * Structurally identical to main's `SocketStatus` plus the live connection count, except that
+ * the path is `socketPath` on this side. Declared here rather than imported from either end
+ * because both ends need it and neither may import the other.
+ */
+export interface AgentSurfaceStatus {
+  ready: boolean
+  error: string | null
+  socketPath: string | null
+  connectionsSeen: number
+}
+
+/**
+ * The three states the UI has to tell apart, as one line.
+ *
+ * `waiting` and `failed` look identical from outside — nothing is happening either way — and
+ * conflating them is how a subsystem that never worked survives as one nobody used. So the
+ * wording is deliberately different in kind: a failure names a reason, waiting names the
+ * socket path, because the path is what a user needs in order to configure a client.
+ *
+ * It lives in `shared/` for a reason worth keeping: the first version sat in
+ * `main/mcp/socket-server.ts`, where the renderer — the only process with a status bar to put
+ * it in — could not import it. It had no callers for as long as it existed, so the distinction
+ * this function was written to draw was never once drawn on screen, in the subsystem whose
+ * whole point is that a silent failure is indistinguishable from an idle success. The type was
+ * designed carefully, the IPC was plumbed, and the sentence was written on the wrong side of
+ * the process boundary.
+ */
+export function summariseAgentSurface(status: AgentSurfaceStatus): string {
+  if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
+  if (status.connectionsSeen === 0)
+    return `Agent control ready — no agent has connected yet (${status.socketPath ?? 'no socket path'})`
+  const n = status.connectionsSeen
+  return `Agent control ready — ${n} connection${n === 1 ? '' : 's'} this session`
+}
+
 export function findTool(name: string): ToolSpec | undefined {
   return TOOLS.find((t) => t.name === name)
 }

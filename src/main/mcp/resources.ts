@@ -59,13 +59,3 @@ if (missingBodies.length > 0 || orphanBodies.length > 0) {
 export function resourceBody(uri: string): string | null {
   return BODIES[uri] ?? null
 }
-
-/** What `resources/list` returns. Shape fixed by the MCP specification. */
-export function resourceManifest(): Record<string, unknown>[] {
-  return RESOURCES.map((resource) => ({
-    uri: resource.uri,
-    name: resource.name,
-    description: resource.description,
-    mimeType: resource.mimeType
-  }))
-}

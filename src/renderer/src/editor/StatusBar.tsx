@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { formatTimecode } from '@shared/project'
+import { summariseAgentSurface, type AgentSurfaceStatus } from '@shared/mcp'
 import { Toast, Tooltip } from '@/components'
 import { bay } from '@/lib/bay'
 import { catalogMismatch } from '@/mcp'
@@ -23,6 +24,7 @@ export function StatusBar(): ReactNode {
   const assetCount = useEditor((state) => state.project.assets.length)
   const [tools, setTools] = useState<{ ready: boolean } | null>(null)
   const [storage, setStorage] = useState<{ ready: boolean; error: string | null } | null>(null)
+  const [agent, setAgent] = useState<AgentSurfaceStatus | null>(null)
 
   useEffect(() => {
     const api = bay()
@@ -46,8 +48,24 @@ export function StatusBar(): ReactNode {
         if (live) setStorage(result)
       })
       .catch(() => undefined)
+    // Asked once at mount and then again, because `connectionsSeen` is the half that changes:
+    // a client usually connects seconds after launch, and a bar that only ever said "no agent
+    // has connected yet" would be the idle-looks-like-broken failure this status exists to
+    // prevent, one level along. Ten seconds is slow enough to cost nothing and fast enough
+    // that the line is right by the time anyone reads it.
+    const askAgent = (): void => {
+      void api.app
+        .mcpReady()
+        .then((result) => {
+          if (live) setAgent(result)
+        })
+        .catch(() => undefined)
+    }
+    askAgent()
+    const poll = setInterval(askAgent, 10_000)
     return () => {
       live = false
+      clearInterval(poll)
     }
   }, [])
 
@@ -84,6 +102,33 @@ export function StatusBar(): ReactNode {
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Storage unavailable
+          </span>
+        </Tooltip>
+      )}
+
+      {/* Not a `Stat`: the failing case is an accusation and the healthy case is a count, and
+          a row that reads "agent 0" would say nothing about which of the two it is. The
+          sentence comes from `@shared/mcp` so main and the bar cannot word it differently. */}
+      {agent && !agent.ready && (
+        <Tooltip
+          side="top"
+          label={summariseAgentSurface(agent)}
+          shortcut="editing, playback and export are unaffected"
+        >
+          <span className="flex items-center gap-1 text-danger">
+            <AlertTriangle aria-hidden="true" className="size-3" />
+            Agent control unavailable
+          </span>
+        </Tooltip>
+      )}
+
+      {agent?.ready && (
+        <Tooltip side="top" label={summariseAgentSurface(agent)} shortcut="MCP over a unix socket">
+          <span className="text-ink-2">
+            agent{' '}
+            <span className="text-ink-1 tabular-nums">
+              {agent.connectionsSeen === 0 ? 'idle' : agent.connectionsSeen}
+            </span>
           </span>
         </Tooltip>
       )}

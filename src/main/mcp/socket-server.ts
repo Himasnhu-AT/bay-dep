@@ -159,16 +159,10 @@ export function describeSocket(status: SocketStatus): string | null {
   )
 }
 
-/**
- * The three states the UI has to tell apart, as one line.
- *
- * `waiting` and `failed` look identical from outside — nothing is happening either way — and
- * conflating them is how a subsystem that never worked survives as one nobody used. So the
- * wording is deliberately different in kind: a failure names a reason, waiting names the
- * socket path, because the path is what a user needs in order to configure a client.
+/*
+ * The sentence for those three states used to live here, and that is why nobody ever read it:
+ * the only process that can render it is the renderer, which may not import from `src/main`.
+ * It is `summariseAgentSurface` in `@shared/mcp` now, beside the tool catalog, and
+ * `StatusBar.tsx` calls it. `SocketStatus.path` is `socketPath` across the bridge, which is
+ * the other half of why the two ends never met.
  */
-export function summariseAgentSurface(status: SocketStatus, connections: number): string {
-  if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
-  if (connections === 0) return `Agent control ready — no agent has connected yet (${status.path})`
-  return `Agent control ready — ${connections} connection${connections === 1 ? '' : 's'} this session`
-}
