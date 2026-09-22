@@ -184,6 +184,71 @@ await runProbe(async () => {
   })()`)
   check('seeking to two times gives two different pictures', early !== null && late !== null, true)
 
+  // --- a composition that is NOT driven by GSAP -------------------------------------------
+  // Every other fixture here registers a real `gsap.timeline()`, and that is precisely why a
+  // whole class of fault lived undetected: `seekScript` ended with `at: tl.time()`, GSAP's
+  // getter, and GSAP does not mind. The contract does not promise GSAP — it asks for an object
+  // with `time(seconds)` and `duration()`, and bay's own generated compositions are hand-rolled
+  // ones. For those, a bare `time()` is the setter receiving `undefined`, which reset the page
+  // microseconds after it had been seeked and painted. Whether the capture beat the wipe was a
+  // race: the first seek into a fresh window came back right and every later one came back
+  // blank with `held: true`.
+  //
+  // So this fixture is deliberately library-free, and it BLANKS ITSELF when called with a
+  // non-finite time — exactly what a real hand-rolled timeline does when it computes a
+  // position from `undefined`. Without that, the fixture could not fail against the bug.
+  writeFileSync(
+    `${DIR}/plain.html`,
+    '<!doctype html><html><head><style>body{margin:0}</style></head><body>' +
+      '<div data-composition-id="plain" data-duration="4" ' +
+      'style="width:1280px;height:720px;position:relative;background:#101014;overflow:hidden">' +
+      '<div id="p" style="position:absolute;left:0;top:44%;width:300px;height:12%;' +
+      'background:#ffb020"></div></div>' +
+      '<script>(function(){' +
+      'var el = document.getElementById("p");' +
+      'function at(t){' +
+      '  if (!isFinite(t)) { el.style.opacity = 0; return 0 }' +
+      '  el.style.opacity = 1;' +
+      '  el.style.transform = "translateX(" + (t / 4 * 980) + "px)";' +
+      '  return t / 4 }' +
+      'at(0);' +
+      'window.__timelines["plain"] = { time: at, duration: function(){ return 4 } };' +
+      '})();<\/script></body></html>'
+  )
+
+  const plainShots = []
+  for (const seconds of [0.5, 1.5, 2.5, 3.5]) {
+    const f = await evaluate(`(async () => {
+      const f = await window.bay.composition.frameAt({
+        assetId: 'probe-plain', path: '${DIR}/plain.html',
+        compositionId: 'plain', atUs: ${Math.round(seconds * 1e6)}, width: 640, height: 360 })
+      if (!f) return { ok: false }
+      const px = new Uint8Array(f.data)
+      // Where is the bar? Its column is the whole point: a blanked frame has none, and a
+      // frame stuck on a previous seek has the wrong one.
+      let first = -1, lit = 0
+      const row = 180 * 640 * 4
+      for (let x = 0; x < 640; x++) {
+        const i = row + x * 4
+        if (px[i] > 120 && px[i + 1] > 80 && px[i + 2] < 90) { lit++; if (first < 0) first = x }
+      }
+      return { ok: true, held: f.held, lit, first }
+    })()`)
+    plainShots.push({ seconds, ...f })
+  }
+
+  check(
+    'a composition with no GSAP renders at every seek, not just the first',
+    plainShots.every((s) => s.ok && s.lit > 0),
+    true
+  )
+  check(
+    'and each seek moves the bar, so no frame is a stale repeat',
+    new Set(plainShots.map((s) => s.first)).size,
+    plainShots.length
+  )
+  console.log(`      bar column by second: ${plainShots.map((s) => `${s.seconds}s=${s.first}`).join(' ')}`)
+
   // --- an overlay must capture with its transparency intact --------------------------------
   // `capturePage` composites onto opaque white unless the window is transparent, so an overlay
   // came back as a solid white rectangle — every pixel alpha 255 — and covered the footage it
