@@ -46,12 +46,12 @@ import {
   type TransitionKind,
   retimeTimeline
 } from '@shared/project'
-import type { AgentGate, Proposal } from '@shared/agent'
+import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 
 const HISTORY_LIMIT = 100
 
-export type PanelId = 'media' | 'text' | 'effects' | 'export'
+export type PanelId = 'agent' | 'media' | 'text' | 'effects' | 'export'
 
 export interface EditorState {
   project: Project
@@ -77,6 +77,19 @@ export interface EditorState {
    * permission nobody granted.
    */
   agentGate: AgentGate | null
+  /**
+   * The conversation, oldest first.
+   *
+   * A flat list rather than a tree of turns: a tool call and the text around it interleave, and
+   * grouping them into turns would put the renderer in charge of deciding where a turn ended —
+   * a judgement the stream already makes and one the panel would get wrong on a run that errors
+   * halfway.
+   */
+  agentLog: AgentEntry[]
+  /** True between `started` and `done`. What the stop button reads. */
+  agentRunning: boolean
+  /** The proposal waiting on the user, if any. */
+  agentProposal: Proposal | null
   dirty: boolean
   past: Project[]
   future: Project[]
@@ -90,6 +103,12 @@ export interface EditorActions {
   // agent ---------------------------------------------------------------------
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
+  /** Append what the user typed, so it reads in order beside the replies. */
+  logUserMessage(text: string): void
+  /** Fold one runtime event into the conversation. */
+  applyAgentEvent(event: AgentEvent): void
+  /** Throw the conversation away. The gate and the session are untouched. */
+  clearAgentLog(): void
   /** End it. Writes stop being gated, because nothing in-app is driving any more. */
   endAgentSession(): void
   /**
@@ -374,6 +393,9 @@ export const useEditor = create<EditorStore>((set, get) => {
     scrubbing: false,
     toast: null,
     agentGate: null,
+    agentLog: [],
+    agentRunning: false,
+    agentProposal: null,
     dirty: false,
     past: [],
     future: [],
@@ -401,11 +423,93 @@ export const useEditor = create<EditorStore>((set, get) => {
       set({ agentGate: { approved: null } })
     },
 
+    logUserMessage(text) {
+      set((state) => ({
+        agentLog: [...state.agentLog, { kind: 'user', id: newId('msg'), text }]
+      }))
+    },
+
+    applyAgentEvent(event) {
+      set((state) => {
+        const log = state.agentLog
+        switch (event.type) {
+          case 'started':
+            return { agentRunning: true }
+
+          case 'text':
+          case 'thinking': {
+            // Appended to the open block of the same kind rather than pushed as its own entry:
+            // a delta is a fragment of a sentence, and one entry per fragment would render as
+            // one paragraph per token.
+            const last = log[log.length - 1]
+            const kind = event.type === 'text' ? 'assistant' : 'thought'
+            if (last && last.kind === kind) {
+              const merged = { ...last, text: last.text + event.delta }
+              return { agentLog: [...log.slice(0, -1), merged] }
+            }
+            return { agentLog: [...log, { kind, id: newId('msg'), text: event.delta }] }
+          }
+
+          case 'tool':
+            return {
+              agentLog: [
+                ...log,
+                {
+                  kind: 'tool',
+                  id: event.callId,
+                  tool: event.tool,
+                  args: event.args,
+                  state: 'running'
+                }
+              ]
+            }
+
+          case 'tool-result': {
+            // Patched in place, so a call becomes its own result rather than spawning a second
+            // card the reader has to pair up by eye.
+            const index = log.findIndex((e) => e.kind === 'tool' && e.id === event.callId)
+            if (index < 0) return {}
+            const entry = log[index] as Extract<AgentEntry, { kind: 'tool' }>
+            const updated: AgentEntry = {
+              ...entry,
+              state: event.ok ? 'done' : 'failed',
+              result: event.summary
+            }
+            return { agentLog: [...log.slice(0, index), updated, ...log.slice(index + 1)] }
+          }
+
+          case 'proposal':
+            return {
+              agentProposal: event.proposal,
+              agentLog: [...log, { kind: 'proposal', id: event.proposal.id, proposal: event.proposal }]
+            }
+
+          case 'done':
+            return {
+              agentRunning: false,
+              ...(event.reason === 'complete'
+                ? {}
+                : {
+                    agentLog: [
+                      ...log,
+                      { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }
+                    ]
+                  })
+            }
+        }
+      })
+    },
+
+    clearAgentLog() {
+      set({ agentLog: [], agentProposal: null })
+    },
+
     endAgentSession() {
       set({ agentGate: null })
     },
 
     approveProposal(proposal, optionId) {
+      set({ agentProposal: null })
       const option = proposal.options.find((o) => o.id === optionId)
       if (!option) return
       set({

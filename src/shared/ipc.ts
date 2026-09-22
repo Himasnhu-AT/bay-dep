@@ -9,6 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
+import type { AgentEvent } from './agent'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 
@@ -280,6 +281,25 @@ export interface BayApi {
    * renderer does not open paths. Main owns an offscreen window per composition, seeks its
    * paused timeline, and hands back pixels.
    */
+  /**
+   * The in-app agent.
+   *
+   * `start` is separate from `send` because starting is where a failure is legible — no binary,
+   * no socket — and a first message that silently did nothing would look like a model that
+   * ignored you. Events arrive through `onEvent` rather than as a return value: a turn produces
+   * many, over minutes, and the panel renders them as they land.
+   */
+  agent: {
+    /** Returns the runtime id, or a reason it could not start. */
+    start(): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    send(text: string): Promise<{ ok: boolean; error?: string }>
+    /** Abandon the running turn. Safe when nothing is running. */
+    stop(): Promise<void>
+    dispose(): Promise<void>
+    /** Every event from every turn, in order. Returns an unsubscribe function. */
+    onEvent(listener: (event: AgentEvent) => void): () => void
+  }
+
   composition: {
     /**
      * Read a composition's declared shape, and everything wrong with it.
@@ -380,6 +400,14 @@ export const IPC = {
   appStorageReady: 'app:storage-ready',
   appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
+
+  /** renderer -> main: start, drive and stop the in-app agent. */
+  agentStart: 'agent:start',
+  agentSend: 'agent:send',
+  agentStop: 'agent:stop',
+  agentDispose: 'agent:dispose',
+  /** main -> renderer: one `AgentEvent`, pushed as it happens. */
+  agentEvent: 'agent:event',
 
   /** main -> renderer: one tool call, carrying its own id. */
   mcpToolCall: 'mcp:tool-call',

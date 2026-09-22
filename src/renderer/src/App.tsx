@@ -138,6 +138,21 @@ export function App(): ReactNode {
    */
   useEffect(() => registerMcpExecutor(), [])
 
+  /**
+   * The agent's events, subscribed here for the same reason.
+   *
+   * This lived in `AgentPanel` first, and that was wrong in a way only running it showed: the
+   * panel unmounts whenever the user looks at Media or Effects, taking the only listener with
+   * it, so a turn running in the background lost every event until they switched back. The
+   * conversation is store state and outlives the view of it; the subscription has to outlive
+   * the view too.
+   */
+  useEffect(() => {
+    const api = bay()
+    if (!api) return
+    return api.agent.onEvent((event) => useEditor.getState().applyAgentEvent(event))
+  }, [])
+
   useKeyboard({
     onSave: () => void onSave(),
     onExport: () => setExportOpen(true),

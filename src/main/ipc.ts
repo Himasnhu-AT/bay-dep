@@ -20,6 +20,7 @@ import {
   releasePath,
   writeComposition
 } from './html/compositions'
+import { disposeAgent, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
@@ -30,7 +31,7 @@ import * as encode from './export/encode'
 import { mcpStatus, settleToolCall } from './mcp/server'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult'>
 
 interface ChannelApi {
@@ -62,6 +63,11 @@ interface ChannelApi {
   compositionFrameAt: BayApi['composition']['frameAt']
   compositionRelease: BayApi['composition']['release']
 
+  agentStart: BayApi['agent']['start']
+  agentSend: BayApi['agent']['send']
+  agentStop: BayApi['agent']['stop']
+  agentDispose: BayApi['agent']['dispose']
+
   exportStart: BayApi['export']['start']
   exportPushFrame: BayApi['export']['pushFrame']
   exportFinish: BayApi['export']['finish']
@@ -92,6 +98,11 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 }
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
+  agentStart: async () => startAgent(),
+  agentSend: async (_event, text) => sendToAgent(text),
+  agentStop: async () => stopAgent(),
+  agentDispose: async () => disposeAgent(),
+
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {
     const result = await writeComposition(path, html)

@@ -73,6 +73,29 @@ export interface AgentRuntime {
   dispose(): void
 }
 
+/**
+ * One thing in the conversation as the panel shows it.
+ *
+ * Not the same as an `AgentEvent`: events are what happened, entries are what is on screen.
+ * Twenty text deltas are one entry; a tool call and its result are one entry that changes
+ * state rather than two that must be paired up by eye.
+ */
+export type AgentEntry =
+  | { kind: 'user'; id: string; text: string }
+  | { kind: 'assistant'; id: string; text: string }
+  | { kind: 'thought'; id: string; text: string }
+  | {
+      kind: 'tool'
+      /** The call id, so the result can find its own card. */
+      id: string
+      tool: string
+      args: Record<string, unknown>
+      state: 'running' | 'done' | 'failed'
+      result?: string
+    }
+  | { kind: 'proposal'; id: string; proposal: Proposal }
+  | { kind: 'error'; id: string; text: string }
+
 // ---------------------------------------------------------------------------
 // Proposals
 // ---------------------------------------------------------------------------
