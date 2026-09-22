@@ -17,13 +17,14 @@ import {
   importCompositions,
   inspectComposition,
   release as releaseComposition,
+  releasePath,
   writeComposition
 } from './html/compositions'
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
 import { waveform } from './media/waveform'
-import { importDialog, importPaths } from './media/import'
+import { forgetPath, importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, settleToolCall } from './mcp/server'
@@ -92,7 +93,23 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
-  compositionWrite: async (_event, path, html) => writeComposition(path, html),
+  compositionWrite: async (_event, path, html) => {
+    const result = await writeComposition(path, html)
+    // Both caches are keyed on the assumption that a file does not change under them, and this
+    // is the one call that changes one. `forgetPath` makes the next import build a fresh asset
+    // — new duration, new declared variables — instead of returning the one built from the
+    // previous version; `releasePath` drops the offscreen window still holding the old
+    // document, which `open` would otherwise reuse because the asset id and path both match.
+    //
+    // Invalidated here rather than inside `writeComposition` because `media/import.ts` already
+    // imports from `html/compositions.ts`, and reaching back the other way would make a cycle.
+    // The seam that owns both is this one.
+    if (result.ok) {
+      forgetPath(path)
+      releasePath(path)
+    }
+    return result
+  },
   compositionImport: async (_event, paths) => importCompositions(paths),
   compositionFrameAt: async (_event, request) => compositionFrameAt(request),
   compositionRelease: async (_event, assetId) => releaseComposition(assetId),

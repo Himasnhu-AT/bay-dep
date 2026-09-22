@@ -69,6 +69,20 @@ check('every tool in the catalog has an implementation',
     ? `${JSON.parse(catalog).length} tools`
     : `LISTED BUT NOT IMPLEMENTED: ${unimplemented.join(', ')}`)
 
+// -- an empty timeline, said out loud ----------------------------------------
+// Every count below is absolute — "one item after placing one" — so this probe only means
+// anything from an empty timeline. It used to get one by luck: the app reopens the last saved
+// project, and for as long as that was an untitled blank the assumption held. The moment a
+// real project was the last one saved, six checks failed on a tree with nothing wrong with it.
+// A property measured in one state is not a property; this makes the state.
+const stale = await state('items.map((i) => i.id)')
+if (stale.length > 0) {
+  const cleared = await call('delete_items', { itemIds: stale })
+  if (!cleared.ok) throw new PreconditionError('could not clear the reopened project', cleared.error)
+  console.log(`      cleared ${stale.length} item(s) the reopened project brought with it`)
+}
+check('the timeline starts empty, so the counts below mean something', await state('items.length') === 0)
+
 // -- read_project, before anything exists ------------------------------------
 const empty = await call('read_project')
 check('read_project succeeds on an empty project', empty.ok === true,

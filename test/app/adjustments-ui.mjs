@@ -65,6 +65,20 @@ const sectionText = (title) =>
     return head ? (head.closest('section') ?? head.parentElement)?.textContent ?? null : null
   })()`)
 
+// This probe places its first clip and then expects it to be on the LOWEST video track — which
+// is only true of a timeline that started empty. The app reopens the last saved project, so for
+// as long as that was blank the assumption held silently; against a real project the clip lands
+// on a higher track, blend mode is enabled there, and the check reports a fault in working code.
+const stale = await evaluate(`(() => {
+  const s = window.bayEngine.store.getState()
+  const t = s.project.timelines.find((x) => x.id === s.project.activeTimelineId)
+  return t.tracks.flatMap((k) => k.items).map((i) => i.id)
+})()`)
+if (stale.length > 0) {
+  await mcp('delete_items', { itemIds: stale })
+  console.log(`   cleared ${stale.length} item(s) the reopened project brought with it`)
+}
+
 const imported = await mcp('import_media', { paths: [CLIP] })
 const assetId = imported.assets[0].id
 const one = await mcp('place_asset', { assetId, atFrame: 0 })

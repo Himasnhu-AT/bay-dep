@@ -323,6 +323,20 @@ export function release(assetId: string): void {
   }
 }
 
+/**
+ * Release every window rendering `path`, whatever asset id it was opened under.
+ *
+ * Keyed by path rather than asset because the caller that needs this has just *written* a file
+ * and knows nothing about which assets point at it — and after a re-import there can be more
+ * than one. `release` alone was not enough: `open` reuses an entry whenever the asset id and
+ * path both match, which is exactly the case a rewrite produces.
+ */
+export function releasePath(path: string): void {
+  for (const [assetId, entry] of [...entries]) {
+    if (entry.path === path) release(assetId)
+  }
+}
+
 export function releaseAll(): void {
   for (const id of [...entries.keys()]) release(id)
 }

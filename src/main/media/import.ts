@@ -111,6 +111,20 @@ function warmPoster(asset: Asset): void {
   })
 }
 
+/**
+ * Forget a path, so the next import probes it again instead of returning the cached asset.
+ *
+ * Deduplication assumes a file's contents do not change under it, which is true of imported
+ * media and false of a composition — bay writes those itself, and revising one is the whole
+ * point of `write_composition`. Without this, a rewritten composition came back as the asset
+ * built from the *previous* version: same id, same duration, same declared variables, and the
+ * frame pool then handed back the window still holding the old document. The edit landed on
+ * disk and changed nothing on screen, with nothing reporting a fault.
+ */
+export function forgetPath(path: string): void {
+  byPath.delete(resolve(path))
+}
+
 export async function importPaths(paths: readonly string[]): Promise<ImportedAsset[]> {
   const out: ImportedAsset[] = []
   for (const raw of paths) {

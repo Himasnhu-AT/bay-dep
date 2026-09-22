@@ -21,7 +21,7 @@
  */
 
 import { attach, runProbe, PreconditionError } from './cdp.mjs'
-import { writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs'
+import { writeFileSync, mkdirSync, copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
 
 /**
@@ -183,6 +183,59 @@ await runProbe(async () => {
     return Math.round(sum / (px.length / 4))
   })()`)
   check('seeking to two times gives two different pictures', early !== null && late !== null, true)
+
+  // --- rewriting a composition must change what renders ------------------------------------
+  // The workflow the whole feature exists for: an agent writes a composition, looks at it, and
+  // writes a corrected one to the same path. Two caches assumed a file does not change under
+  // them — `byPath` in the importer, which returned the asset built from the *previous*
+  // version, and the window pool, which `open` reuses whenever asset id and path both match.
+  // Together they meant a corrected document landed on disk and changed nothing on screen,
+  // with no fault reported anywhere. It presented as one template in a batch rendering blank.
+  const revisePath = `${DIR}/revise.html`
+  const revision = (colour) =>
+    '<!doctype html><html><head><style>body{margin:0}</style></head><body>' +
+    '<div data-composition-id="revise" data-duration="2" ' +
+    'style="width:640px;height:360px;position:relative;background:#101014">' +
+    '<div style="position:absolute;left:0;top:0;width:640px;height:360px;background:' + colour + '">' +
+    '</div></div><script>window.__timelines["revise"]=' +
+    '{time:function(){return 0},duration:function(){return 2}};<\/script></body></html>'
+
+  const writeAndImport = async (colour) => {
+    const html = revision(colour)
+    writeFileSync(revisePath, html)
+    return evaluate(`(async () => {
+      await window.bay.composition.write(${JSON.stringify(revisePath)}, ${JSON.stringify(html)})
+      const r = await window.bay.media.importPaths([${JSON.stringify(revisePath)}])
+      return r[0].asset.id
+    })()`)
+  }
+
+  const paint = (assetId) =>
+    evaluate(`(async () => {
+      const f = await window.bay.composition.frameAt({
+        assetId: ${JSON.stringify(assetId)}, path: ${JSON.stringify(revisePath)},
+        compositionId: 'revise', atUs: 1000000, width: 64, height: 36 })
+      if (!f) return null
+      const px = new Uint8Array(f.data)
+      return { r: px[0], g: px[1], b: px[2] }
+    })()`)
+
+  const firstAsset = await writeAndImport('#FF0000')
+  const before = await paint(firstAsset)
+  // Dominant channel, not an absolute value: `capturePage` is colour managed, so #FF0000 comes
+  // back as (234, 51, 35) and #00FF00 as (117, 251, 76). A threshold like `r > 200 && g < 60`
+  // passes on the first by luck and fails on the second while the picture is exactly right.
+  check('the first version renders red', before.r > before.g && before.r > before.b, true)
+
+  // Same path, different colour. This is `write_composition` with a correction.
+  const secondAsset = await writeAndImport('#00FF00')
+  const after = await paint(secondAsset)
+  check(
+    'a rewritten composition renders the NEW document, not the cached one',
+    after.g > after.r && after.g > after.b,
+    true
+  )
+  check('and the rewrite produced a fresh asset rather than the stale one', secondAsset !== firstAsset, true)
 
   // --- a composition that is NOT driven by GSAP -------------------------------------------
   // Every other fixture here registers a real `gsap.timeline()`, and that is precisely why a
