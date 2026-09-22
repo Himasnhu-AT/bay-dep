@@ -143,16 +143,30 @@ export function buildAudioGraph(
   })
 
   const mixLabel = 'aout'
+  const mixed = 'amixed'
   if (labels.length === 1) {
     const only = labels[0]!
-    chains.push(`[${only}]anull[${mixLabel}]`)
+    chains.push(`[${only}]anull[${mixed}]`)
   } else {
     // `normalize=0` matters: amix's default divides by the input count, so a timeline with
     // eight clips would export at an eighth of the volume the user monitored.
     chains.push(
-      `${labels.map((l) => `[${l}]`).join('')}amix=inputs=${labels.length}:normalize=0:duration=longest:dropout_transition=0[${mixLabel}]`
+      `${labels.map((l) => `[${l}]`).join('')}amix=inputs=${labels.length}:normalize=0:duration=longest:dropout_transition=0[${mixed}]`
     )
   }
+
+  // **`apad` is why an export gets the frame count it asked for.** Both callers cut this graph
+  // with `-t framesTotal/fps`, and `-t` is a maximum, not a minimum: when the last clip's audio
+  // runs out before the last video frame — which it does whenever a source's audio stream is
+  // fractionally shorter than its container, i.e. constantly — the track came out short. The
+  // mux then ran `-shortest` and trimmed the *video* to match, so a 1438-frame export produced
+  // a 1437-frame file. It cost exactly one frame and only ever the last one, which is why it
+  // read as a rounding curiosity rather than as audio deciding how long the picture is.
+  //
+  // Padding with silence makes the graph at least as long as asked; `-t` then makes it exactly
+  // that. The two streams agree by construction instead of by luck, and `-shortest` has nothing
+  // left to trim.
+  chains.push(`[${mixed}]apad[${mixLabel}]`)
 
   return { inputs, filter: chains.join(';'), outputLabel: mixLabel }
 }

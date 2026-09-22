@@ -317,3 +317,31 @@ test('every chain is normalised to one format before the mix', () => {
   const { project, timeline } = single()
   assert.match(buildAudioGraph(project, timeline, 0, 90)?.filter ?? '', /aformat=sample_fmts=/)
 })
+
+test('the graph is padded with silence, so `-t` sets the length rather than the sources', () => {
+  // The bug this pins: both callers cut the graph with `-t framesTotal/fps`, and `-t` is a
+  // maximum. When the last clip's audio ran out a fraction before the last video frame — which
+  // happens whenever a source's audio stream is slightly shorter than its container — the WAV
+  // came out short, the mux's `-shortest` trimmed the *video* to match, and a 1438-frame export
+  // produced a 1437-frame file. Exactly one frame, always the last, so it read as a rounding
+  // curiosity rather than as audio deciding how long the picture is.
+  const { project, timeline } = single()
+  const graph = buildAudioGraph(project, timeline, 0, 90)
+
+  assert.match(graph?.filter ?? '', /apad\[aout\]$/, 'the last stage before the output must pad')
+  assert.equal(graph?.outputLabel, 'aout')
+})
+
+test('padding is the last stage, after the mix, not per input', () => {
+  // Padding an input before `amix` would pad every source to infinity and `duration=longest`
+  // would then never end. It has to come after.
+  const a = item({ id: 'i1', assetId: 'a1', trackId: 't1', from: 0, durationInFrames: 90 })
+  const b = item({ id: 'i2', assetId: 'a2', trackId: 't1', from: 30, durationInFrames: 90 })
+  const { project, timeline } = projectWith(
+    [track('t1', 'audio', [a, b])],
+    [asset('a1', '/a.wav'), asset('a2', '/b.wav')]
+  )
+  const filter = buildAudioGraph(project, timeline, 0, 200)?.filter ?? ''
+  assert.equal((filter.match(/apad/g) ?? []).length, 1, 'exactly one pad, on the mixed result')
+  assert.ok(filter.indexOf('amix') < filter.indexOf('apad'), 'the pad must follow the mix')
+})
