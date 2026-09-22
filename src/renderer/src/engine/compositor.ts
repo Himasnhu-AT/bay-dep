@@ -34,6 +34,7 @@ import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './look
 import {
   anchorFor,
   fontIsAvailable,
+  FONT_PROBE_STRING,
   layoutText,
   MIN_FONT_SIZE,
   type TextFit,
@@ -476,7 +477,7 @@ export class Compositor {
       const laid = layoutText(text, style, box as TextBox, measure)
       const fontAvailable = fontIsAvailable(style.fontFamily, (family) => {
         ctx.font = fontString(laid.fontSize, family)
-        return ctx.measureText('MWQjgq@10 iIl').width
+        return ctx.measureText(FONT_PROBE_STRING).width
       })
 
       const fit: TextFit = {

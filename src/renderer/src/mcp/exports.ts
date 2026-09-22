@@ -198,12 +198,3 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
 }
 
 /** Test seam: forget everything this session knows about exports. */
-export function resetExportJobs(): void {
-  for (const job of jobs.values()) job.exporter?.cancel()
-  jobs.clear()
-}
-
-/** Exposed so a probe can assert a job exists without reaching into the map. */
-export function exportJobCount(): number {
-  return jobs.size
-}

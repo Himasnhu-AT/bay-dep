@@ -623,8 +623,3 @@ export function undo(): Record<string, unknown> {
   }
 }
 
-/** Exposed for the dispatcher's benefit so it can report what a project currently holds. */
-export function projectSummary(): string {
-  const tl = timeline()
-  return `${project().name}: ${allItems(tl).length} items across ${tl.tracks.length} tracks`
-}

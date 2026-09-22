@@ -72,7 +72,14 @@ interface ChannelApi {
   windowClose: BayApi['window']['close']
 }
 
-/** Fails to compile if a channel in `IPC` has no entry in `ChannelApi`. */
+/**
+ * Fails to compile if a channel in `IPC` has no entry in `ChannelApi`.
+ *
+ * `export`ed with no importer on purpose, and it must stay that way: `noUnusedLocals` deletes
+ * an unused local, so a non-exported assertion would be a compile error rather than a check.
+ * It will show up in any sweep for exported symbols with no callers — it is the one entry in
+ * that list that is correct as it stands.
+ */
 export const CHANNELS_COVERED: InvokeChannel extends keyof ChannelApi ? true : never = true
 
 type Handler<F> = F extends (...args: infer A) => infer R

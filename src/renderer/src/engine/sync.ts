@@ -6,7 +6,7 @@
  * place to fix it.
  */
 
-import { itemEnd, sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/project'
+import { sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/project'
 
 /**
  * How far a media element may run from where the timeline says it should be before we
@@ -51,10 +51,6 @@ export function sourceSecondsAt(item: Item, asset: Asset, frame: number, fps: nu
   return clamp(raw, 0, last)
 }
 
-/** True when `frame` falls inside `item`. Local so a muted track can still be inspected. */
-export function itemCoversFrame(item: Item, frame: number): boolean {
-  return frame >= item.from && frame < itemEnd(item)
-}
 
 /**
  * The playback rates a media element will actually honour. Outside this it silently mutes.

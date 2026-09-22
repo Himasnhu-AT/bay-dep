@@ -41,6 +41,7 @@ export {
   wrapLines,
   anchorFor,
   fontIsAvailable,
+  FONT_PROBE_STRING,
   MIN_FONT_SIZE
 } from './text'
 export type { TextFit, LaidOutText, TextBox } from './text'

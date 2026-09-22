@@ -535,13 +535,6 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
   return { nudged }
 }
 
-export function framesToSeconds(frames: Frames, fps: number): number {
-  return frames / fps
-}
-
-export function secondsToFrames(seconds: number, fps: number): Frames {
-  return Math.round(seconds * fps)
-}
 
 /** `1:04:09` / `4:09` / `0:09`, plus frames when `withFrames`. */
 /**
@@ -798,19 +791,6 @@ export function transitionAtFrame(
   return null
 }
 
-/**
- * Where in the source an item is reading at `frame`, **allowing frames outside its own
- * range** so a transition can play its handles.
- *
- * `sourceTimeAt` requires the caller to have checked the frame is inside the item, which is
- * right for ordinary drawing and wrong here: during a transition the outgoing clip is asked
- * for time past its end and the incoming for time before its start. Same arithmetic, without
- * the precondition, and named differently so nobody removes the check from the other one.
- */
-export function sourceTimeAtUnclamped(item: Item, frame: Frames, fps: number): Micros {
-  const elapsed = framesToUs(frame - item.from, fps)
-  return Math.max(0, item.sourceStartUs + Math.round(elapsed * item.speed))
-}
 
 /** The item's own fade envelope at `frame`, 0..1. Multiplies layout opacity / volume. */
 export function fadeGainAt(item: Item, frame: Frames): number {
