@@ -15,14 +15,7 @@
  * assets were still loading instead of returning a picture of nothing.
  */
 
-import {
-  findAsset,
-  findTimeline,
-  itemsAtFrame,
-  type Asset,
-  type Project,
-  type Timeline
-} from '@shared/project'
+import { findAsset, findTimeline, type Project, type Timeline } from '@shared/project'
 import { Compositor, elementSlots, itemsToDraw, type DrawStats } from './compositor'
 import { CompositionPool } from './compositionPool'
 import type { TextFit } from './text'
@@ -189,23 +182,6 @@ export function previewSize(
   return { width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) }
 }
 
-function unresolvedNames(project: Project, timeline: Timeline, frame: number, pool: MediaPool): string[] {
-  const names: string[] = []
-  for (const item of itemsAtFrame(timeline, frame, 'video')) {
-    const asset: Asset | undefined = findAsset(project, item.assetId)
-    if (!asset) {
-      names.push('a missing asset')
-      continue
-    }
-    if (asset.kind === 'text') continue
-    if (asset.error) {
-      names.push(`${asset.name} (${asset.error})`)
-      continue
-    }
-    if (!pool.readiness(asset.id).hasPicture) names.push(asset.name)
-  }
-  return [...new Set(names)]
-}
 
 /**
  * Renders one frame and returns it as a PNG data URL.
@@ -255,11 +231,24 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       0
     )
 
-    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
+    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [] }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await awaitSources(pool, project, timeline, frame, timeoutMs)
       stats = compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
       if (stats.pending === 0) break
+
+      // A pending *composition* is not a decode in progress — it is a render this draw has
+      // just asked for, and it arrives whether or not anything else happens. `settle` is the
+      // wait built for exactly that, and the exporter has always called it; the preview never
+      // did, which made `preview_frame` unable to converge on any frame carrying two
+      // compositions. The cache is constructed per call and disposed below, so nothing carries
+      // over between calls either: asking again could not accumulate what the last call had
+      // fetched, and `MAX_CONCURRENT_REQUESTS` silently drops the third request of a draw. The
+      // symptom was a frame that alternated which composition it reported missing, forever.
+      //
+      // Bounded by the same timeout as the media wait, so a composition that never renders
+      // still costs a reported-incomplete frame rather than a call that does not return.
+      await compositions.settle(timeoutMs)
       // Something was still decoding. `onReady` fires on `loadeddata` and `seeked`, so this
       // waits for the next actual change rather than sleeping a guessed interval.
       //
@@ -283,9 +272,9 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       width,
       height,
       ...stats,
-      unresolved: stats.pending > 0 || stats.placeholders > 0
-        ? unresolvedNames(project, timeline, frame, pool)
-        : []
+      // Straight from the compositor. This used to be reconstructed here by re-deriving which
+      // assets looked unready, and it was wrong both times it was written.
+      unresolved: [...new Set(stats.unresolvedNames)]
     }
   } finally {
     // A 4K-project canvas is 33MB that GC is in no hurry about.

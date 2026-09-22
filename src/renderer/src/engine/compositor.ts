@@ -71,6 +71,18 @@ export interface DrawStats {
   /** Items drawn as a placeholder because their asset is missing or unreadable. */
   placeholders: number
   /**
+   * The names behind `pending` and `placeholders`.
+   *
+   * Reported by the compositor because **the code that tried to draw is the only thing that
+   * knows what it could not draw.** The caller used to reconstruct this list by asking the
+   * `MediaPool` whether each asset had a picture — which is false for every composition, since
+   * those come from the `CompositionPool`. So a frame with one pending item named two innocent
+   * composition files and never named the real one. Rebuilding the answer from a different
+   * source than the question is what made it wrong; a second attempt keyed by the timeline
+   * size instead of the scaled render size got it wrong again, differently.
+   */
+  unresolvedNames: string[]
+  /**
    * How each text item actually came out.
    *
    * Reported for the same reason `pending` is: the output looks plausible while being wrong.
@@ -193,7 +205,7 @@ export class Compositor {
   ): DrawStats {
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
-    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [] }
 
     this.#pool.beginGeneration()
 
@@ -365,6 +377,9 @@ export class Compositor {
     if (!asset || asset.error) {
       this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
       stats.placeholders += 1
+      stats.unresolvedNames.push(
+        asset ? `${asset.name} (${asset.error ?? 'unreadable'})` : 'a missing asset'
+      )
       return
     }
 
@@ -372,6 +387,7 @@ export class Compositor {
     if (entry.status === 'error') {
       this.#drawPlaceholder(ctx, item, asset.name)
       stats.placeholders += 1
+      stats.unresolvedNames.push(`${asset.name} (could not be decoded)`)
       return
     }
 
@@ -404,6 +420,7 @@ export class Compositor {
         : null
       if (!bitmap) {
         stats.pending += 1
+        stats.unresolvedNames.push(asset.name)
         return
       }
       this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul)
@@ -425,6 +442,7 @@ export class Compositor {
       // or two frames a load takes, which reads as a glitch in the edit rather than as a
       // load; the background showing through for that long does not.
       stats.pending += 1
+      stats.unresolvedNames.push(asset.name)
       return
     }
 

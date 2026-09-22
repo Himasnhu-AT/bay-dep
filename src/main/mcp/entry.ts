@@ -8,11 +8,18 @@
  * Configured in an MCP client as:
  *
  *     command: /Applications/bay.app/Contents/MacOS/bay
- *     args:    ["<resources>/app.asar/out/mcp/index.js"]
+ *     args:    ["<resources>/app.asar/out/main/mcp/index.js"]
  *     env:     { ELECTRON_RUN_AS_NODE: "1" }
  *
- * or, in a checkout, `node out/mcp/index.js`. The app binary doubles as the Node runtime, so
- * nothing extra is installed and there is no npm package to publish.
+ * or, in a checkout, `node out/main/mcp/index.js` — which is what this repo's `.mcp.json` does.
+ * The app binary doubles as the Node runtime, so nothing extra is installed and there is no npm
+ * package to publish.
+ *
+ * The path is `out/main/mcp/index.js`, not `out/mcp/index.js`: the bundle lives under `main/`
+ * because `src/mcp/` would have been outside every tsconfig and so outside the only gate main
+ * -process code has. This comment said the shorter path for a while, which is worth more than
+ * a typo — a configuration doc is copied verbatim into a file on a user's machine, and the
+ * failure is a client that silently lists no tools.
  *
  * `BAY_MCP_SOCKET` overrides the socket path, which is what the end-to-end test uses to point
  * a real proxy at a real server without an app.

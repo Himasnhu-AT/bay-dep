@@ -1,0 +1,13 @@
+#!/bin/sh
+# Start bay from this checkout.
+#
+# `BAY_APP` for the MCP proxy. The proxy launches the app by spawning that binary with **no
+# arguments** (`launchBay` in src/main/mcp/proxy.ts), and a checkout has no such binary — the
+# app is `electron .` from the repo root, which is two arguments. This script is the one-line
+# adapter, so `.mcp.json` can point at something that behaves like the packaged binary.
+#
+# Not needed for a packaged build: there `process.execPath` is bay itself and launching it with
+# no arguments is exactly right.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$here/node_modules/.bin/electron" "$here" "$@"

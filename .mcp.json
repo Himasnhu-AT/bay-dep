@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bay": {
+      "command": "node",
+      "args": ["out/main/mcp/index.js"],
+      "env": {
+        "BAY_APP": "script/bay"
+      }
+    }
+  }
+}

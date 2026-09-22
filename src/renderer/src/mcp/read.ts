@@ -20,7 +20,14 @@
  * fields that matter.
  */
 
-import { allItems, findAsset, itemEnd, timelineDuration, type Item } from '@shared/project'
+import {
+  allItems,
+  findAsset,
+  isCropped,
+  itemEnd,
+  timelineDuration,
+  type Item
+} from '@shared/project'
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline } from './helpers'
 
 function describeItem(item: Item): Record<string, unknown> {
@@ -148,6 +155,15 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // their identity values" — the second is a caller having set something that does nothing.
     ...(item.adjustments ? { adjustments: item.adjustments } : {}),
     ...(item.blendMode ? { blendMode: item.blendMode } : {}),
+    // `edit_item` accepts `crop` and `variables`, and this reported neither — so an agent could
+    // set them and had no way to read them back. That breaks three things at once: it cannot
+    // verify its own edit, it cannot make a relative change ("crop a little more"), and it
+    // cannot see what the *user* changed — which is what this tool's own description tells it
+    // to do before editing anything it did not just create. Same absent-means-unset convention
+    // as `adjustments` above: an all-zero crop is reported as no crop, because "cropped by
+    // nothing" is a statement about a caller having set something that does nothing.
+    ...(item.crop && isCropped(item.crop) ? { crop: item.crop } : {}),
+    ...(item.variables ? { variables: item.variables } : {}),
     audio: { volume: item.volume, fadeInFrames: item.fadeInFrames, fadeOutFrames: item.fadeOutFrames },
     asset: asset
       ? {
@@ -159,6 +175,12 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
           width: asset.width,
           height: asset.height,
           hasAudio: asset.hasAudio,
+          // What an html asset's composition *declares* it can be given. Without it an agent
+          // holding a composition item knows `variables` is an accepted argument and cannot
+          // know a single id to put in it, so the field is unusable without reading the file.
+          ...(asset.compositionVariables?.length
+            ? { compositionVariables: asset.compositionVariables }
+            : {}),
           ...(asset.error ? { error: asset.error } : {})
         }
       : { id: item.assetId, missing: true }

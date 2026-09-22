@@ -28,6 +28,7 @@ import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { LineBuffer, encode, failure, parseLine, RPC_INTERNAL_ERROR } from './jsonrpc'
 import { handleRequest, type ToolOutcome } from './protocol'
+import { resourceBody } from './resources'
 
 /** How long to wait for a launched bay to open its socket before giving up. */
 const LAUNCH_TIMEOUT_MS = 30_000
@@ -181,7 +182,17 @@ export async function runProxy(options: ProxyOptions): Promise<void> {
         process.stdout.write(encode(parsed.error))
         continue
       }
-      void handleRequest(parsed.request!, runTool)
+      // `resourceBody` is passed, and leaving it out is not a small omission: `handleRequest`
+      // defaults `readResource` to `() => null`, so every guide answered "listed but carries no
+      // content in this build" through the **only path a client actually takes**, while the raw
+      // socket — which nobody configures — served them perfectly. Eleven documents written to
+      // teach a model how to edit video, unreadable from the client, with the transport
+      // reporting the fault accurately to a reader who was not there.
+      //
+      // Served from here rather than forwarded to the app on purpose. The bodies are static and
+      // inlined at build time, so reading the contract costs nothing and — like `tools/list` —
+      // does not boot a video editor to answer a question about documentation.
+      void handleRequest(parsed.request!, runTool, resourceBody)
         .then((answer) => {
           if (answer) process.stdout.write(encode(answer))
         })
