@@ -14,7 +14,7 @@
  */
 
 import { TOOLS, findTool, type ToolSpec } from '@shared/mcp'
-import { findResource, RESOURCES } from '@shared/resources'
+import { ALL_RESOURCES, findResource } from '@shared/resources'
 import {
   RPC_INVALID_PARAMS,
   RPC_METHOD_NOT_FOUND,
@@ -129,7 +129,7 @@ export async function handleRequest(
 
     case 'resources/list':
       return success(id, {
-        resources: RESOURCES.map((resource) => ({
+        resources: ALL_RESOURCES.map((resource) => ({
           uri: resource.uri,
           name: resource.name,
           description: resource.description,
@@ -154,7 +154,7 @@ export async function handleRequest(
           spec
             ? `"${params.uri}" is listed but carries no content in this build. This is a fault ` +
                 `in bay, not in your request.`
-            : `No resource at "${params.uri}". bay serves: ${RESOURCES.map((r) => r.uri).join(', ')}.`
+            : `No resource at "${params.uri}". bay serves: ${ALL_RESOURCES.map((r) => r.uri).join(', ')}.`
         )
       }
       return success(id, {

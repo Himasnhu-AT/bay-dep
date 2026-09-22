@@ -1,0 +1,78 @@
+<!doctype html>
+<html data-composition-variables='[
+  {
+    "id": "name",
+    "type": "string",
+    "label": "Name",
+    "default": "Himanshu"
+  },
+  {
+    "id": "role",
+    "type": "string",
+    "label": "Role",
+    "default": "building bay"
+  },
+  {
+    "id": "accent",
+    "type": "color",
+    "label": "Accent",
+    "default": "#11D1A0"
+  },
+  {
+    "id": "bottom",
+    "type": "number",
+    "label": "Distance from bottom",
+    "default": 420,
+    "min": 0,
+    "max": 1600,
+    "unit": "px"
+  }
+]'>
+<head><meta charset="utf-8"><title>lower-third</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent}
+  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+</style></head>
+<body>
+<div class="root" data-composition-id="lower-third" data-duration="4" style="width:1080px;height:1920px">
+  <div id="wrap" style="position:absolute;left:70px;bottom:var(--bottom,420px);opacity:0">
+    <div style="display:flex;align-items:stretch">
+      <div id="bar" style="width:10px;background:var(--accent,#11D1A0);border-radius:5px;
+           transform-origin:bottom center"></div>
+      <div style="padding-left:22px">
+        <div id="nm" data-var-text="name" style="color:#fff;font-size:68px;font-weight:900;
+             letter-spacing:-0.02em;text-shadow:0 6px 26px rgba(0,0,0,.75)">Himanshu</div>
+        <div id="rl" data-var-text="role" style="color:var(--accent,#11D1A0);font-size:38px;
+             font-weight:700;margin-top:4px;text-shadow:0 4px 18px rgba(0,0,0,.8)">building bay</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var DUR = 4;
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v }
+  function ease(t) { return 1 - Math.pow(1 - clamp(t, 0, 1), 3) }
+  /* In for `hold`, steady, then out over the same time. A single number every template
+     shares, so they enter and leave alike when several are cut together. */
+  function envelope(time, hold) {
+    var up = ease(time / hold)
+    var down = time > DUR - hold ? 1 - clamp((time - (DUR - hold)) / hold, 0, 1) : 1
+    return up * down
+  }
+  var wrap = document.getElementById('wrap'), bar = document.getElementById('bar'),
+      nm = document.getElementById('nm'), rl = document.getElementById('rl');
+  function at(time) {
+    var v = envelope(time, 0.3)
+    wrap.style.opacity = v
+    bar.style.transform = 'scaleY(' + ease(time / 0.4).toFixed(4) + ')'
+    nm.style.transform = 'translateX(' + ((1 - ease(time / 0.42)) * -26).toFixed(2) + 'px)'
+    rl.style.transform = 'translateX(' + ((1 - ease((time - 0.09) / 0.42)) * -26).toFixed(2) + 'px)'
+    return time / DUR
+  }
+  at(0);
+  window.__timelines['lower-third'] = { time: at, duration: function () { return DUR } };
+})();
+</script>
+</body>
+</html>

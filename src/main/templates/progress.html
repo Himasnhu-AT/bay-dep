@@ -1,0 +1,65 @@
+<!doctype html>
+<html data-composition-variables='[
+  {
+    "id": "accent",
+    "type": "color",
+    "label": "Fill",
+    "default": "#11D1A0"
+  },
+  {
+    "id": "thickness",
+    "type": "number",
+    "label": "Thickness",
+    "default": 10,
+    "min": 2,
+    "max": 40,
+    "unit": "px"
+  },
+  {
+    "id": "top",
+    "type": "number",
+    "label": "Y from top",
+    "default": 0,
+    "min": 0,
+    "max": 1900,
+    "unit": "px"
+  }
+]'>
+<head><meta charset="utf-8"><title>progress</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent}
+  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+</style></head>
+<body>
+<div class="root" data-composition-id="progress" data-duration="10" style="width:1080px;height:1920px">
+  <div style="position:absolute;left:0;right:0;top:var(--top,0px);height:var(--thickness,10px);
+       background:rgba(255,255,255,.18)">
+    <div id="fill" style="height:100%;width:100%;background:var(--accent,#11D1A0);
+         transform:scaleX(0);transform-origin:left center"></div>
+  </div>
+</div>
+<script>
+(function () {
+  var DUR = 10;
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v }
+  function ease(t) { return 1 - Math.pow(1 - clamp(t, 0, 1), 3) }
+  /* In for `hold`, steady, then out over the same time. A single number every template
+     shares, so they enter and leave alike when several are cut together. */
+  function envelope(time, hold) {
+    var up = ease(time / hold)
+    var down = time > DUR - hold ? 1 - clamp((time - (DUR - hold)) / hold, 0, 1) : 1
+    return up * down
+  }
+  var fill = document.getElementById('fill');
+  function at(time) {
+    // Linear on purpose: this reports position in the clip, and an eased progress bar lies
+    // about where you are.
+    fill.style.transform = 'scaleX(' + clamp(time / DUR, 0, 1).toFixed(5) + ')'
+    return time / DUR
+  }
+  at(0);
+  window.__timelines['progress'] = { time: at, duration: function () { return DUR } };
+})();
+</script>
+</body>
+</html>

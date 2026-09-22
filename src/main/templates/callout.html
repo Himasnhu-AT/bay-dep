@@ -1,0 +1,75 @@
+<!doctype html>
+<html data-composition-variables='[
+  {
+    "id": "text",
+    "type": "string",
+    "label": "Label",
+    "default": "one edit is one undo step"
+  },
+  {
+    "id": "accent",
+    "type": "color",
+    "label": "Border",
+    "default": "#7DD3FC"
+  },
+  {
+    "id": "x",
+    "type": "number",
+    "label": "X from left",
+    "default": 70,
+    "min": 0,
+    "max": 1000,
+    "unit": "px"
+  },
+  {
+    "id": "y",
+    "type": "number",
+    "label": "Y from top",
+    "default": 260,
+    "min": 0,
+    "max": 1800,
+    "unit": "px"
+  }
+]'>
+<head><meta charset="utf-8"><title>callout</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent}
+  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+</style></head>
+<body>
+<div class="root" data-composition-id="callout" data-duration="2.5" style="width:1080px;height:1920px">
+  <div id="chip" style="position:absolute;left:var(--x,70px);top:var(--y,260px);opacity:0;
+       background:rgba(10,10,12,.82);border:2px solid var(--accent,#7DD3FC);color:#fff;
+       font-size:44px;font-weight:700;padding:14px 26px;border-radius:16px;
+       box-shadow:0 12px 44px rgba(0,0,0,.5)">
+    <span data-var-text="text">one edit is one undo step</span>
+  </div>
+</div>
+<script>
+(function () {
+  var DUR = 2.5;
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v }
+  function ease(t) { return 1 - Math.pow(1 - clamp(t, 0, 1), 3) }
+  /* In for `hold`, steady, then out over the same time. A single number every template
+     shares, so they enter and leave alike when several are cut together. */
+  function envelope(time, hold) {
+    var up = ease(time / hold)
+    var down = time > DUR - hold ? 1 - clamp((time - (DUR - hold)) / hold, 0, 1) : 1
+    return up * down
+  }
+  var chip = document.getElementById('chip');
+  function at(time) {
+    var v = envelope(time, 0.2)
+    // A small overshoot on entry, settling by 0.34s. Deterministic: a function of time only.
+    var p = ease(time / 0.34)
+    var scale = 0.86 + 0.14 * p + 0.04 * Math.sin(clamp(time / 0.34, 0, 1) * Math.PI)
+    chip.style.opacity = v
+    chip.style.transform = 'scale(' + scale.toFixed(4) + ')'
+    return time / DUR
+  }
+  at(0);
+  window.__timelines['callout'] = { time: at, duration: function () { return DUR } };
+})();
+</script>
+</body>
+</html>

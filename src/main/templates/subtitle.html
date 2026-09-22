@@ -1,0 +1,83 @@
+<!doctype html>
+<html data-composition-variables='[
+  {
+    "id": "text",
+    "type": "string",
+    "label": "Subtitle",
+    "default": "Everything you do lands in the same document."
+  },
+  {
+    "id": "size",
+    "type": "number",
+    "label": "Text size",
+    "default": 64,
+    "min": 24,
+    "max": 120,
+    "unit": "px"
+  },
+  {
+    "id": "bottom",
+    "type": "number",
+    "label": "Distance from bottom",
+    "default": 250,
+    "min": 0,
+    "max": 1600,
+    "unit": "px"
+  },
+  {
+    "id": "ink",
+    "type": "color",
+    "label": "Text",
+    "default": "#FFFFFF"
+  },
+  {
+    "id": "pill",
+    "type": "boolean",
+    "label": "Dark pill behind",
+    "default": true
+  }
+]'>
+<head><meta charset="utf-8"><title>subtitle</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent}
+  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+</style></head>
+<body>
+<div class="root" data-composition-id="subtitle" data-duration="3" style="width:1080px;height:1920px">
+  <div id="wrap" style="position:absolute;left:60px;right:60px;bottom:var(--bottom,250px);text-align:center">
+    <span id="t" data-var-text="text"
+      style="display:inline-block;color:var(--ink,#fff);font-size:var(--size,64px);font-weight:800;
+             letter-spacing:-0.015em;line-height:1.18;padding:14px 26px;border-radius:16px;
+             text-shadow:0 6px 28px rgba(0,0,0,.7)">Everything you do lands in the same document.</span>
+  </div>
+</div>
+<script>
+(function () {
+  var DUR = 3;
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v }
+  function ease(t) { return 1 - Math.pow(1 - clamp(t, 0, 1), 3) }
+  /* In for `hold`, steady, then out over the same time. A single number every template
+     shares, so they enter and leave alike when several are cut together. */
+  function envelope(time, hold) {
+    var up = ease(time / hold)
+    var down = time > DUR - hold ? 1 - clamp((time - (DUR - hold)) / hold, 0, 1) : 1
+    return up * down
+  }
+  var wrap = document.getElementById('wrap'), t = document.getElementById('t');
+  function at(time) {
+    // The pill is a declared boolean, so it arrives as the CSS custom property `--pill`
+    // holding the string "true" or "false" — read once per seek rather than cached, because
+    // a seek may follow a variable change.
+    var pill = (getComputedStyle(t.parentNode.parentNode).getPropertyValue('--pill') || '').trim()
+    t.style.background = pill === 'false' ? 'transparent' : 'rgba(10,10,12,.62)'
+    var v = envelope(time, 0.22)
+    wrap.style.opacity = v
+    wrap.style.transform = 'translateY(' + ((1 - v) * 22).toFixed(2) + 'px)'
+    return time / DUR
+  }
+  at(0);
+  window.__timelines['subtitle'] = { time: at, duration: function () { return DUR } };
+})();
+</script>
+</body>
+</html>

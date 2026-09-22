@@ -18,6 +18,8 @@
  * rather than a read that fails on a user's machine.
  */
 
+import { TEMPLATES, templateUri } from './templates'
+
 export interface ResourceSpec {
   /** Stable across versions. An agent may cache against it. */
   uri: string
@@ -109,6 +111,29 @@ export const RESOURCES: readonly ResourceSpec[] = [
   }
 ] as const
 
+/**
+ * The shipped templates, as resources.
+ *
+ * Derived from `TEMPLATES` rather than written out again: two hand-maintained lists of the same
+ * seven things is a drift waiting to happen, and the failure would be a template an agent can
+ * see in one listing and cannot fetch from the other. The uri is the one `templateUri` builds,
+ * so the id in the catalog and the id in the address cannot disagree.
+ *
+ * `text/html` rather than markdown, because the body *is* the composition: an agent fetches it,
+ * edits the text or the variables, and hands it to `write_composition` unchanged in shape.
+ */
+const TEMPLATE_RESOURCES: readonly ResourceSpec[] = TEMPLATES.map((template) => ({
+  uri: templateUri(template.id),
+  name: `Template: ${template.name}`,
+  description:
+    `${template.description} ${template.durationSeconds}s, authored ${template.width}x${template.height}. ` +
+    `Variables: ${template.variables.map((v) => `${v.id} (${v.type})`).join(', ')}.`,
+  mimeType: 'text/html'
+}))
+
+/** Everything servable over `resources/list`: the guides, then the templates. */
+export const ALL_RESOURCES: readonly ResourceSpec[] = [...RESOURCES, ...TEMPLATE_RESOURCES]
+
 export function findResource(uri: string): ResourceSpec | undefined {
-  return RESOURCES.find((resource) => resource.uri === uri)
+  return ALL_RESOURCES.find((resource) => resource.uri === uri)
 }

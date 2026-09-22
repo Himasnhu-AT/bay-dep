@@ -20,7 +20,7 @@
  */
 
 import { test } from 'node:test'
-import { RESOURCES } from '@shared/resources'
+import { ALL_RESOURCES, RESOURCES } from '@shared/resources'
 import assert from 'node:assert/strict'
 import { TOOLS } from '@shared/mcp'
 import {
@@ -181,16 +181,26 @@ test('resources/list returns every document in the catalog, in MCP shape', async
   const resources = (answer as { result: { resources: Record<string, unknown>[] } }).result
     .resources
 
-  assert.equal(resources.length, RESOURCES.length)
+  // `ALL_RESOURCES`, not `RESOURCES`: the guides are only half of what is served. Templates
+  // joined the catalog and this assertion is the thing that noticed, which is what it is for.
+  assert.equal(resources.length, ALL_RESOURCES.length)
   assert.deepEqual(
     resources.map((r) => r['uri']),
-    RESOURCES.map((r) => r.uri)
+    ALL_RESOURCES.map((r) => r.uri)
   )
   for (const resource of resources) {
     assert.equal(typeof resource['name'], 'string')
     assert.equal(typeof resource['description'], 'string')
-    assert.equal(resource['mimeType'], 'text/markdown')
   }
+  // The two kinds carry different types, and an agent routes on that: a guide is prose to
+  // read, a template is a document to write back. Collapsing them to one mimeType would make
+  // the listing unusable for deciding which is which.
+  const kinds = new Set(resources.map((r) => r['mimeType']))
+  assert.deepEqual([...kinds].sort(), ['text/html', 'text/markdown'])
+  assert.ok(
+    resources.filter((r) => r['mimeType'] === 'text/markdown').length >= RESOURCES.length,
+    'every guide is still listed'
+  )
 })
 
 test('resources/read returns the body the reader supplies', async () => {
