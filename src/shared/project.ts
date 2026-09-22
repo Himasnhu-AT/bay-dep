@@ -484,6 +484,57 @@ export function usToFrames(us: Micros, fps: number): Frames {
   return Math.round((us / US_PER_SECOND) * fps)
 }
 
+/**
+ * Re-express every position on a timeline at a new frame rate, keeping wall-clock time.
+ *
+ * Mutates, because the only caller is the store's `edit()` mutator, which is already working on
+ * a clone. Returns what it could not keep exact, so the caller can say so rather than leaving
+ * the user to find it — the same contract `remove_range` has about tracks it left behind.
+ *
+ * **Edges are scaled, not durations, and that is the whole trick.** Scaling `from` and
+ * `durationInFrames` separately rounds twice, so `round(from·k) + round(dur·k)` can land one
+ * frame away from `round(end·k)` — which silently breaks abutment, and a transition whose two
+ * clips no longer touch stops resolving. Mapping each *edge* through the same rounding sends a
+ * shared edge to a single value by construction, so two clips that touched still touch.
+ *
+ * `sourceStartUs` is deliberately untouched: it is microseconds into the source, whose own rate
+ * has nothing to do with the timeline's. Changing it here would re-cut the footage.
+ */
+export function retimeTimeline(timeline: Timeline, fps: number): { nudged: number } {
+  const from = timeline.fps
+  if (!(fps > 0) || !(from > 0) || fps === from) return { nudged: 0 }
+  const k = fps / from
+  let nudged = 0
+
+  for (const track of timeline.tracks) {
+    // Sorted because the monotonic floor below is only a guard if the items arrive in order,
+    // and nothing in the model promises `items` is sorted.
+    const ordered = [...track.items].sort((a, b) => a.from - b.from)
+    let floor = 0
+    for (const item of ordered) {
+      const start = Math.max(floor, Math.round(item.from * k))
+      const end = Math.max(start + 1, Math.round(itemEnd(item) * k))
+      if (start !== Math.round(item.from * k)) nudged += 1
+      item.from = start
+      item.durationInFrames = end - start
+      const half = Math.floor(item.durationInFrames / 2)
+      item.fadeInFrames = Math.min(Math.round(item.fadeInFrames * k), half)
+      item.fadeOutFrames = Math.min(Math.round(item.fadeOutFrames * k), half)
+      floor = end
+    }
+  }
+
+  for (const transition of timeline.transitions ?? []) {
+    // The stored duration is what was *asked for*; `resolveTransition` is still the authority on
+    // what the handles allow. So this scales the ask and lets the draw path clamp, rather than
+    // baking a clamp into storage at a rate the user may change again.
+    transition.durationInFrames = Math.max(2, Math.round(transition.durationInFrames * k))
+  }
+
+  timeline.fps = fps
+  return { nudged }
+}
+
 export function framesToSeconds(frames: Frames, fps: number): number {
   return frames / fps
 }
@@ -493,8 +544,18 @@ export function secondsToFrames(seconds: number, fps: number): Frames {
 }
 
 /** `1:04:09` / `4:09` / `0:09`, plus frames when `withFrames`. */
+/**
+ * Frames as a clock.
+ *
+ * The divisor is the **nominal** rate, `Math.round(fps)`, not the real one. Two reasons, and
+ * the first is a bug this shape had: `total % 29.97002997` is fractional, so the frames field
+ * of a 29.97 timeline read `0:01:0.02997002997003051`. The second is that rounding is also
+ * correct rather than merely safe — non-drop timecode counts thirty frame slots per second at
+ * 29.97, which is why an hour of NTSC wall clock displays as `0:59:56:12`. Every NLE shows it
+ * this way, so matching the convention and fixing the fraction are the same edit.
+ */
 export function formatTimecode(frames: Frames, fps: number, withFrames = false): string {
-  const safeFps = fps > 0 ? fps : 30
+  const safeFps = fps > 0 ? Math.max(1, Math.round(fps)) : 30
   const total = Math.max(0, Math.floor(frames))
   const totalSeconds = Math.floor(total / safeFps)
   const hours = Math.floor(totalSeconds / 3600)
@@ -880,6 +941,52 @@ export interface CanvasPreset {
   width: number
   height: number
   fps: number
+}
+
+export interface FrameRateOption {
+  id: string
+  label: string
+  fps: number
+}
+
+/**
+ * The rates a project may run at.
+ *
+ * **The NTSC members are the exact quotient — `30000 / 1001`, never the decimal `29.97` — and
+ * that distinction survives all the way to the encoder.** Measured, not assumed: ffmpeg's
+ * `av_d2q` recovers `30000/1001` from the full-precision double and gives the file a `1/30000`
+ * timebase, while the rounded `29.97` becomes `2997/100` at `1/11988`, which nothing reads back
+ * as NTSC. So a rate must never be round-tripped through a display string, and `formatFps`
+ * exists to keep the rounding on the *outside* of the model.
+ *
+ * `probe.ts` parses `r_frame_rate` with `parseRational`, which divides the rational rather than
+ * reading a decimal, so an imported rate is exact by the same rule.
+ */
+export const FRAME_RATES: FrameRateOption[] = [
+  { id: 'ntsc-film', label: '23.976 · NTSC film', fps: 24000 / 1001 },
+  { id: 'film', label: '24 · film', fps: 24 },
+  { id: 'pal', label: '25 · PAL', fps: 25 },
+  { id: 'ntsc', label: '29.97 · NTSC', fps: 30000 / 1001 },
+  { id: 'thirty', label: '30', fps: 30 },
+  { id: 'pal-double', label: '50 · PAL double', fps: 50 },
+  { id: 'ntsc-double', label: '59.94 · NTSC double', fps: 60000 / 1001 },
+  { id: 'sixty', label: '60', fps: 60 }
+]
+
+/** Display form: `29.97`, `23.976`, `30`. Never store what this returns — see `FRAME_RATES`. */
+export function formatFps(fps: number): string {
+  return String(Math.round(fps * 1000) / 1000)
+}
+
+/**
+ * The catalogue entry a stored rate corresponds to, or undefined for a rate we did not offer.
+ *
+ * Compared with a tolerance because the stored value is a quotient: an exact `===` against
+ * `30000 / 1001` works today and stops working the moment a rate arrives from a file, a
+ * migration or a round trip through JSON at a different precision.
+ */
+export function matchFrameRate(fps: number): FrameRateOption | undefined {
+  return FRAME_RATES.find((rate) => Math.abs(rate.fps - fps) < 1e-6)
 }
 
 export const CANVAS_PRESETS: CanvasPreset[] = [

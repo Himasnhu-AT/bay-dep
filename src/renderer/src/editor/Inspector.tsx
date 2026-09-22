@@ -14,7 +14,10 @@ import {
   type LayoutOrigin,
   normaliseCrop,
   isCropped,
-  type Crop
+  type Crop,
+  FRAME_RATES,
+  formatFps,
+  matchFrameRate
 } from '@shared/project'
 import {
   Field,
@@ -71,11 +74,14 @@ function Readout({ label, value }: { label: string; value: ReactNode }): ReactNo
 function TimelineInspector(): ReactNode {
   const timeline = useEditor(selectTimeline)
   const setCanvasPreset = useEditor((state) => state.setCanvasPreset)
+  const setFps = useEditor((state) => state.setFps)
+  const notify = useEditor((state) => state.notify)
   if (!timeline) return null
 
   const matching = CANVAS_PRESETS.find(
     (preset) => preset.width === timeline.width && preset.height === timeline.height
   )
+  const matchingRate = matchFrameRate(timeline.fps)
 
   return (
     <>
@@ -91,9 +97,36 @@ function TimelineInspector(): ReactNode {
             onChange={setCanvasPreset}
           />
         </Field>
+        {/* A rate, not a readout, because every clip's position is *expressed in* this number —
+            so it is the one canvas property whose change has to move the timeline, and leaving
+            it read-only meant a project could only ever be 30fps. Changing it keeps wall-clock
+            time and reports any clip it had to nudge a frame, because a retime that moved
+            something silently is found three exports later. */}
+        <Field label="Frame rate">
+          <Select
+            label="Frame rate"
+            value={matchingRate?.id ?? 'custom'}
+            options={[
+              ...FRAME_RATES.map((rate) => ({ value: rate.id, label: rate.label })),
+              ...(matchingRate
+                ? []
+                : [{ value: 'custom', label: `${formatFps(timeline.fps)} · custom`, disabled: true }])
+            ]}
+            onChange={(id) => {
+              const rate = FRAME_RATES.find((candidate) => candidate.id === id)
+              if (!rate) return
+              const { nudged } = setFps(rate.fps)
+              if (nudged > 0) {
+                notify(
+                  `Retimed to ${formatFps(rate.fps)} fps. ${nudged} clip${nudged === 1 ? '' : 's'} ` +
+                    `moved a frame to stay in order.`
+                )
+              }
+            }}
+          />
+        </Field>
         <div className="mt-2">
           <Readout label="Resolution" value={`${timeline.width} × ${timeline.height}`} />
-          <Readout label="Frame rate" value={`${timeline.fps} fps`} />
           <Readout label="Tracks" value={timeline.tracks.length} />
         </div>
       </Section>

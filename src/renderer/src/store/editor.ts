@@ -43,7 +43,8 @@ import {
   type TrackKind,
   type Transition,
   type TransitionDirection,
-  type TransitionKind
+  type TransitionKind,
+  retimeTimeline
 } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 
@@ -75,6 +76,13 @@ export interface EditorActions {
   setProject(project: Project, options?: { resetHistory?: boolean }): void
   renameProject(name: string): void
   setCanvasPreset(presetId: string): void
+  /**
+   * Change the timeline's frame rate, moving every clip so it stays at the same wall-clock
+   * time. Returns how many clips had to be nudged a frame to keep the order legal, so the UI
+   * can say so — a retime that silently moved something is the kind of edit people discover
+   * three exports later.
+   */
+  setFps(fps: number): { nudged: number }
 
   // assets -------------------------------------------------------------------
   addAssets(assets: Asset[]): void
@@ -364,8 +372,22 @@ export const useEditor = create<EditorStore>((set, get) => {
       editTimeline((timeline) => {
         timeline.width = preset.width
         timeline.height = preset.height
-        timeline.fps = preset.fps
+        // Through `retimeTimeline` rather than a bare assignment: a preset carries a rate, and
+        // a preset change that moved every clip in time without moving its frame numbers would
+        // be a silent re-cut. It is a no-op while every preset is 30fps, which is exactly the
+        // kind of latency that makes this the wrong line to leave for later.
+        retimeTimeline(timeline, preset.fps)
       })
+    },
+
+    setFps(fps) {
+      const timeline = activeTimeline(get().project)
+      if (!timeline || !(fps > 0) || fps === timeline.fps) return { nudged: 0 }
+      let nudged = 0
+      editTimeline((draft) => {
+        nudged = retimeTimeline(draft, fps).nudged
+      })
+      return { nudged }
     },
 
     // -- assets -------------------------------------------------------------
