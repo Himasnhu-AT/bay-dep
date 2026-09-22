@@ -66,6 +66,13 @@ export class CompositionPool {
   /** Keys currently being fetched, so a miss re-asked every frame asks main once. */
   readonly #inFlight = new Set<string>()
   /**
+   * Captures asked for while the pool was at its concurrency cap, keyed like the cache so one
+   * picture is only ever queued once. Emptied by `#pump` as slots free up, and waited on by
+   * `settle` — a queued capture is outstanding work, and an export that stopped waiting at the
+   * in-flight set would write the frame before its compositions arrived.
+   */
+  readonly #queued = new Map<string, () => void>()
+  /**
    * Keys that failed, and when — so a frame that cannot be produced is not re-requested on
    * every redraw.
    *
@@ -137,7 +144,10 @@ export class CompositionPool {
    * never returns.
    */
   settle(timeoutMs: number): Promise<void> {
-    if (this.#inFlight.size === 0) return Promise.resolve()
+    // The queue counts. Waiting only on the in-flight set resolved the moment the last two
+    // captures finished while six more sat queued, and the caller — an export, which writes a
+    // frame once and moves on — took the picture without them.
+    if (this.#inFlight.size === 0 && this.#queued.size === 0) return Promise.resolve()
     return new Promise<void>((resolve) => {
       const done = (): void => {
         clearTimeout(timer)
@@ -146,7 +156,7 @@ export class CompositionPool {
       }
       const timer = setTimeout(done, timeoutMs)
       const off = this.onReady(() => {
-        if (this.#inFlight.size === 0) done()
+        if (this.#inFlight.size === 0 && this.#queued.size === 0) done()
       })
     })
   }
@@ -183,6 +193,10 @@ export class CompositionPool {
       this.#bytes -= entry.bytes
       this.#cache.delete(key)
     }
+    // A queued capture for a released asset would reopen the window this just closed.
+    for (const key of [...this.#queued.keys()]) {
+      if (key.startsWith(`${assetId}:`)) this.#queued.delete(key)
+    }
     if (this.#opened.delete(assetId)) void bay()?.composition.release(assetId)
   }
 
@@ -190,6 +204,7 @@ export class CompositionPool {
     for (const entry of this.#cache.values()) entry.bitmap.close()
     this.#cache.clear()
     this.#failedAt.clear()
+    this.#queued.clear()
     this.#bytes = 0
     this.#listeners.clear()
     // Every window this pool opened is a renderer process in main. Leaving them behind on a
@@ -218,8 +233,35 @@ export class CompositionPool {
     // And never more than a couple at once. Each one is a seek and a pixel read-back in main;
     // a scrub across a composition can otherwise ask for fifty frames before the first
     // arrives, and main answers them one at a time while every other IPC message waits.
-    if (this.#inFlight.size >= MAX_CONCURRENT_REQUESTS) return
+    //
+    // **Queued past that, never dropped.** Returning here is what capped a frame at four
+    // compositions however many it needed: `renderFrame` draws, requests what is missing and
+    // retries a bounded number of times, so at most `MAX_CONCURRENT_REQUESTS` new pictures
+    // could arrive per attempt and the rest were discarded without a trace. Three attempts,
+    // two requests each, one of them spent drawing — four. Measured on a timeline of eight
+    // identical compositions: four drew, four were reported missing, and asking again for
+    // ninety seconds never moved the number, because each attempt threw away the same six
+    // requests it had just made. The cap still protects main; the work now waits its turn.
+    if (this.#inFlight.size >= MAX_CONCURRENT_REQUESTS) {
+      if (!this.#queued.has(key)) {
+        this.#queued.set(key, () => this.#start(key, asset, atUs, width, height, variables, info))
+      }
+      return
+    }
 
+    this.#start(key, asset, atUs, width, height, variables, info)
+  }
+
+  /** Begin one capture. Only `#request` and `#pump` call this, and only under the cap. */
+  #start(
+    key: string,
+    asset: Asset,
+    atUs: number,
+    width: number,
+    height: number,
+    variables: Record<string, string | number | boolean>,
+    info: { variables: CompositionVariable[] }
+  ): void {
     this.#inFlight.add(key)
     this.#opened.add(asset.id)
 
@@ -262,11 +304,27 @@ export class CompositionPool {
         // and waits out its full timeout instead. On an export that is five seconds a frame —
         // an export that never finishes rather than one that is merely slow.
         this.#inFlight.delete(key)
+        // Start the next queued capture before telling anyone, so a waiter woken by this
+        // notification sees the work already moving rather than an idle pool with a backlog.
+        this.#pump()
         // Told on failure too, for the same reason: a waiter blocked on a frame that will
         // never arrive should learn that as soon as it is known, not on a timeout.
         for (const listener of this.#listeners) listener()
       }
     })()
+  }
+
+  /** Start queued captures up to the concurrency cap. */
+  #pump(): void {
+    while (this.#inFlight.size < MAX_CONCURRENT_REQUESTS && this.#queued.size > 0) {
+      const next = this.#queued.entries().next()
+      if (next.done) return
+      const [key, begin] = next.value
+      this.#queued.delete(key)
+      // A picture that arrived while this was waiting needs no capture at all.
+      if (this.#cache.has(key) || this.#inFlight.has(key)) continue
+      begin()
+    }
   }
 
   #store(key: string, bitmap: ImageBitmap, bytes: number): void {

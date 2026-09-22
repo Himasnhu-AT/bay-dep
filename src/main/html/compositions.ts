@@ -50,6 +50,21 @@ import { seekScript, variablesScript } from './scripts'
  * and small enough that a project which imported forty compositions does not open forty
  * processes; past it the least recently used window is closed and reopened on demand.
  */
+/**
+ * How many composition windows may exist at once. Each is a renderer process.
+ *
+ * **The invariant that matters is not the number, it is the relationship**: concurrent
+ * captures must stay below it. Eviction happens inside `open`, and `compositionFrameAt` awaits
+ * four more things after opening — load, variables, seek, capture — so if every window were
+ * busy, opening one more would destroy a window mid-capture and that frame would come back
+ * null. The renderer's pool caps itself at `MAX_CONCURRENT_REQUESTS` (2), so today the two
+ * numbers are far apart and the hazard is unreachable.
+ *
+ * A guard against it was written and then removed: with the cap at 2 and the pool at 8,
+ * nothing could tell its presence from its absence — eight compositions on one frame measured
+ * identically with and without it. It is recorded here instead, because the thing a future
+ * editor would change is one of these two constants, and this is where they would look.
+ */
 const MAX_WINDOWS = 8
 
 /** Resolved the same way main resolves its own preload: this bundle is ESM, so no __dirname. */
@@ -76,9 +91,42 @@ interface Entry {
   /** The variable values currently applied to this page, as JSON, or null if none yet. */
   variables: string | null
   usedAt: number
+  /**
+   * How many captures are part-way through on this window.
+   *
+   * Eviction refuses to take a window out from under work in progress. `compositionFrameAt`
+   * awaits four things after opening — load, variables, seek, capture — and destroying the
+   * window during any of them rejects the capture into a null frame; the pool then marks the
+   * key failed, waits, and asks again, which opens a window and evicts somebody else's.
+   *
+   * **This guard was removed once and the removal was wrong.** With the old policy — evict one
+   * window per open, decided before an await — nothing could tell its presence from its
+   * absence: twelve compositions measured identically either way, so it read as unfalsifiable
+   * and went. Tightening eviction into a loop then made it load-bearing immediately, and the
+   * pool went from thirteen live windows to **two hundred and four**, because every aggressive
+   * eviction killed a capture that was about to succeed. The lesson is not about this flag: a
+   * guard measured against one policy has been measured against that policy, not in general.
+   */
+  busy: number
 }
 
 const entries = new Map<string, Entry>()
+
+/**
+ * Opens in progress, by asset id.
+ *
+ * `open` is async — it awaits `inspectComposition` before creating anything — so two requests
+ * for the same composition at different times both looked the entry up, both found nothing,
+ * and both built a window. The second `entries.set` then overwrote the first, and that window
+ * was orphaned: no entry pointed at it, so nothing would ever evict or destroy it, and it sat
+ * there as a live renderer process for the life of the session. The pool reported a size of
+ * eight while the machine held twenty-two.
+ *
+ * The renderer's pool dedupes by *cache key* — asset, size, time, variables — which is exactly
+ * the shape that produces two concurrent opens of one asset, so this is the common case rather
+ * than a race that needs bad luck.
+ */
+const opening = new Map<string, Promise<Entry | null>>()
 
 export async function inspectComposition(
   path: string,
@@ -155,6 +203,26 @@ export async function importCompositions(paths: string[]): Promise<ImportedAsset
 }
 
 async function open(request: CompositionFrameRequest): Promise<Entry | null> {
+  const inProgress = opening.get(request.assetId)
+  if (inProgress) {
+    const entry = await inProgress
+    // The window that open produced may already be the wrong one — a different path for the
+    // same id — in which case fall through and build it properly.
+    if (entry && entry.path === request.path) {
+      entry.usedAt = Date.now()
+      return entry
+    }
+  }
+  const started = openUncontended(request)
+  opening.set(request.assetId, started)
+  try {
+    return await started
+  } finally {
+    if (opening.get(request.assetId) === started) opening.delete(request.assetId)
+  }
+}
+
+async function openUncontended(request: CompositionFrameRequest): Promise<Entry | null> {
   const existing = entries.get(request.assetId)
   if (existing && existing.path === request.path) {
     existing.usedAt = Date.now()
@@ -165,9 +233,22 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
   const { info } = await inspectComposition(request.path)
   if (!info) return null
 
-  if (entries.size >= MAX_WINDOWS) {
-    const oldest = [...entries.entries()].sort((a, b) => a[1].usedAt - b[1].usedAt)[0]
-    if (oldest) release(oldest[0])
+  // **Evicted after the await, and in a loop.** Both parts are the fix for the same bug. The
+  // check used to sit before `inspectComposition`, so every concurrent open decided against
+  // the same stale count, none of them saw the windows the others were about to add, and each
+  // freed at most one — so the pool drifted upward with no ceiling. Measured: a cap of eight
+  // holding thirteen live windows, every one a renderer process, after two runs of a probe
+  // that places twelve compositions. Deciding here means the count is current, and looping
+  // means a pool that has already overshot comes back down instead of staying there.
+  while (entries.size >= MAX_WINDOWS) {
+    const oldest = [...entries.entries()]
+      .filter(([, e]) => e.busy === 0)
+      .sort((a, b) => a[1].usedAt - b[1].usedAt)[0]
+    // Every window busy: go one over the cap rather than destroy a capture somebody is
+    // waiting on. A transient extra window costs memory for a moment; killing a live capture
+    // costs that frame and then the retry costs the next one.
+    if (!oldest) break
+    release(oldest[0])
   }
 
   const window = new BrowserWindow({
@@ -222,7 +303,8 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
   })()
 
   const entry: Entry = {
-    window, path: request.path, info, ready, last: null, variables: null, usedAt: Date.now()
+    window, path: request.path, info, ready, last: null, variables: null, usedAt: Date.now(),
+    busy: 0
   }
   entries.set(request.assetId, entry)
   return entry
@@ -251,6 +333,7 @@ export async function compositionFrameAt(
   const entry = await open(request)
   if (!entry) return null
 
+  entry.busy += 1
   try {
     await withTimeout(entry.ready, LOAD_TIMEOUT_MS, `${request.path} did not finish loading`)
 
@@ -304,6 +387,8 @@ export async function compositionFrameAt(
     // A composition that throws is a composition that draws nothing; the caller already has to
     // handle a source that is not ready, and a rejected frame would become a timeout instead.
     return null
+  } finally {
+    entry.busy -= 1
   }
 }
 
