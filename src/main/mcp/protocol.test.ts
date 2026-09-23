@@ -151,7 +151,10 @@ test('tools/list returns every tool in the contract, in MCP shape', async () => 
     assert.equal((tool['inputSchema'] as { type: string }).type, 'object')
     // bay's own catalog fields are not MCP's, and sending them is noise in every session.
     assert.equal('category' in tool, false)
-    assert.equal('alwaysLoad' in tool, false)
+    assert.equal('readOnly' in tool, false)
+    // …but the fact itself is, in MCP's own vocabulary, so a client can tell a look from a write.
+    const spec = TOOLS.find((t) => t.name === tool['name'])!
+    assert.deepEqual(tool['annotations'], { readOnlyHint: spec.readOnly })
   }
 })
 

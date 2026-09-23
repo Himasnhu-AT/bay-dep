@@ -69,12 +69,6 @@ export interface ToolSpec {
   category: ToolCategory
   /** Answers a question without changing anything. Safe to call speculatively. */
   readOnly: boolean
-  /**
-   * Loaded into every session rather than discovered on demand. Keep this small: the whole
-   * catalog in every context is the cost this flag exists to avoid. A tool earns it by being
-   * needed to *orient* — you cannot edit what you have not read.
-   */
-  alwaysLoad: boolean
   /** JSON Schema for the arguments. Plain data so no validator leaks into `shared/`. */
   inputSchema: {
     type: 'object'
@@ -110,7 +104,6 @@ export const TOOLS: ToolSpec[] = [
       'after every edit spends 99% of its bytes re-reading a project it changed by 263 of them.',
     category: 'read',
     readOnly: true,
-    alwaysLoad: true,
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -121,7 +114,6 @@ export const TOOLS: ToolSpec[] = [
       'and re-importing it will not help — say so rather than retrying.',
     category: 'read',
     readOnly: true,
-    alwaysLoad: true,
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -132,7 +124,6 @@ export const TOOLS: ToolSpec[] = [
       'you did not just create — the user may have moved it since.',
     category: 'read',
     readOnly: true,
-    alwaysLoad: false,
     inputSchema: { type: 'object', properties: { itemId }, required: ['itemId'] }
   },
   {
@@ -144,7 +135,6 @@ export const TOOLS: ToolSpec[] = [
       'Use it to check your own work before reporting it done.',
     category: 'read',
     readOnly: true,
-    alwaysLoad: true,
     inputSchema: {
       type: 'object',
       properties: { frame: frames('Timeline frame to render. Defaults to the playhead.') }
@@ -168,7 +158,6 @@ export const TOOLS: ToolSpec[] = [
       'problem found, with the line, before you place anything.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -204,7 +193,6 @@ export const TOOLS: ToolSpec[] = [
       'because a blocked network request renders as a still frame with nothing in any log.',
     category: 'read',
     readOnly: true,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -226,7 +214,6 @@ export const TOOLS: ToolSpec[] = [
       'duplicating it.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,7 +236,6 @@ export const TOOLS: ToolSpec[] = [
       'authoritative: you do not need to call read_project to confirm it.**',
     category: 'write',
     readOnly: false,
-    alwaysLoad: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -273,7 +259,6 @@ export const TOOLS: ToolSpec[] = [
       '36KB to verify an edit that cost 263 bytes.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -433,7 +418,6 @@ export const TOOLS: ToolSpec[] = [
       'than silently skipped.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -452,7 +436,6 @@ export const TOOLS: ToolSpec[] = [
       'in sync while doing it — use remove_range instead.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -477,7 +460,6 @@ export const TOOLS: ToolSpec[] = [
       'cut the result names it under desyncedTracks and that track is now adrift.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -495,7 +477,6 @@ export const TOOLS: ToolSpec[] = [
       'same one.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: { kind: { type: 'string', enum: ['video', 'audio'] } },
@@ -516,7 +497,6 @@ export const TOOLS: ToolSpec[] = [
       'Adding a second transition to a junction that already has one replaces it.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -565,7 +545,6 @@ export const TOOLS: ToolSpec[] = [
       'becomes a straight one again.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: { transitionId: { type: 'string' } },
@@ -579,7 +558,6 @@ export const TOOLS: ToolSpec[] = [
       'use. Cheap and safe; move it to where you are working so the user follows along.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: { frame: frames('Frame to move to.') },
@@ -593,7 +571,6 @@ export const TOOLS: ToolSpec[] = [
       'what you last did — not the whole turn.',
     category: 'write',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: { type: 'object', properties: {} }
   },
 
@@ -607,7 +584,6 @@ export const TOOLS: ToolSpec[] = [
       'empty over the range you asked for.',
     category: 'submit',
     readOnly: false,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: {
@@ -627,7 +603,6 @@ export const TOOLS: ToolSpec[] = [
       'as frames are encoded.',
     category: 'read',
     readOnly: true,
-    alwaysLoad: false,
     inputSchema: {
       type: 'object',
       properties: { jobId: { type: 'string' } },
@@ -635,8 +610,6 @@ export const TOOLS: ToolSpec[] = [
     }
   }
 ]
-
-export const ALWAYS_LOADED = TOOLS.filter((t) => t.alwaysLoad).map((t) => t.name)
 
 /**
  * Whether bay can be driven over MCP, in the shape the bridge hands the renderer.

@@ -45,7 +45,14 @@ export type RunTool = (name: string, args: Record<string, unknown>) => Promise<T
 
 /** What MCP puts on the wire for a tool, which is a subset of what `ToolSpec` carries. */
 function publicTool(spec: ToolSpec): Record<string, unknown> {
-  return { name: spec.name, description: spec.description, inputSchema: spec.inputSchema }
+  // `readOnlyHint` is MCP's name for the catalog's own `readOnly`. It lets a client that
+  // decides permissions per call wave reads through without asking.
+  return {
+    name: spec.name,
+    description: spec.description,
+    inputSchema: spec.inputSchema,
+    annotations: { readOnlyHint: spec.readOnly }
+  }
 }
 
 export function toolManifest(): Record<string, unknown>[] {
