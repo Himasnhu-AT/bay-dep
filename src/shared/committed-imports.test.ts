@@ -163,3 +163,20 @@ test('a multi-line import is not a blind spot', () => {
   assert.equal(faults.length, 1)
   assert.equal(faults[0]?.specifier, './missing')
 })
+
+test('code that builds import statements as strings is not itself an import', () => {
+  // `src/shared/tool-registry.ts` writes the tool indexes. The old pattern started at
+  // `export const BANNER`, ran across lines into a string reading "from './helpers'", and
+  // reported a missing file that nothing imports — HEAD failed on its first commit.
+  const source = [
+    `export const BANNER = '// generated'`,
+    `const lines = [`,
+    `  "import type { Handlers } from './helpers'",`,
+    '  `import { tool as ${id} } from \'./${file}\'`',
+    `]`
+  ].join('\n')
+  assert.deepEqual(unresolvedImports(['src/a.ts'], () => source), [])
+  // The positive control: a real import in the same file is still read.
+  const faults = unresolvedImports(['src/a.ts'], () => `${source}\nimport { gone } from './gone'`)
+  assert.deepEqual(faults.map((f) => f.specifier), ['./gone'])
+})

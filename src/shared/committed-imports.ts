@@ -37,8 +37,11 @@ function patterns(aliases: Aliases): RegExp[] {
   const ours = ['\\.', ...Object.keys(aliases).map(escape)].join('|')
   const spec = `((?:${ours})[^'"]*)`
   return [
-    // `import type ... from` matters, and so does `export * from`.
-    new RegExp(`(?:^|\\n)\\s*(?:import|export)[\\s\\S]*?from\\s*['"]${spec}['"]`, 'g'),
+    // `import type ... from` matters, and so does `export * from`. The span up to `from` may
+    // cross lines (multi-line braces) but never a quote: otherwise `export const x = ...` runs
+    // on into the next string that happens to read `from './y'` — which is exactly what code
+    // that generates import statements contains, and it read as a missing file.
+    new RegExp(`(?:^|\\n)\\s*(?:import|export)\\b[^'"]*?\\bfrom\\s*['"]${spec}['"]`, 'g'),
     // `import './side-effect'`.
     new RegExp(`(?:^|\\n)\\s*import\\s*['"]${spec}['"]`, 'g')
   ]
