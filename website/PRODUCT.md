@@ -82,7 +82,10 @@ download, and the site must not imply one exists.
   a studio catalogue.
 - The site must make no third-party requests at runtime: no analytics, no tag manager, no
   session recorder, no remotely fetched fonts, no embedded player. The site is an argument
-  that the software minds its own business, so it has to as well.
+  that the software minds its own business, so it has to as well. The one exception is
+  access: the app is by invitation, and the sign-in, waitlist and admin pages load
+  Firebase (Google) when the visitor presses a sign-in button, never on arrival. See
+  CLAUDE.md, "The one rule".
 - Voice rules are binding and live in VOICE.md: no em dashes, no rule of three, no
   promotional adjectives, second person, concrete over abstract.
 - **Honesty is load-bearing.** `/status` is the page the site exists to be able to write.
@@ -117,7 +120,8 @@ above, and it is captioned as one.
 1. **One engine, or the claim is dead.** Anything the site shows an agent doing must be
    something the timeline does the same way, through the same commands.
 2. **Local is not a feature line, it is the architecture.** Say what does not exist (no
-   server, no account, no upload) rather than praising privacy.
+   server holding projects, no upload) rather than praising privacy. There is an account
+   now, for access only: say what it is for and what it never carries.
 3. **The unbuilt parts are published.** An honest limit stated first is worth more than a
    capability claimed loosely, and it is the only reason to believe the rest.
 4. **Show the real thing or show nothing.** No placeholder screenshots, no stock renders,

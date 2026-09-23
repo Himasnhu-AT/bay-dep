@@ -145,12 +145,12 @@ export function ScrollSequence() {
               0,
             );
             return (
-              <li key={c.eyebrow}>
+              <li key={c.eyebrow} data-depth-root>
                 <div className={FIGURE}>
                   <div className="max-w-[74ch]">
                     <Note chapter={c} />
                   </div>
-                  <div className="mt-6 min-w-0">
+                  <div data-depth="enter" className="mt-6 min-w-0">
                     <AppPlate step={last} />
                     {i === 0 ? <Caption /> : null}
                   </div>
@@ -170,6 +170,7 @@ export function ScrollSequence() {
       ref={section}
       aria-label={`${product.name} building a reel, step by step`}
       className="relative h-[1000vh]"
+      data-depth-root
     >
       <div className="sticky top-0 flex min-h-screen flex-col justify-center py-2 sm:py-8">
         <div className={FIGURE}>
@@ -193,16 +194,22 @@ export function ScrollSequence() {
             ))}
           </div>
 
-          <AppPlate step={step} />
-          <Caption />
+          {/* Depth: the plate arrives a little behind the page and settles as
+              it pins, so it reads as a leaf set beneath the paper. The note
+              above it moves with the page. See DESIGN.md, "Depth". */}
+          <div data-depth="enter">
+            <AppPlate step={step} />
+            <Caption />
 
-          {/* A rule that keeps drawing as the sequence advances. The site draws
-              rules; this is the same gesture, held open across six beats. */}
-          <div aria-hidden className="mt-2.5 h-px w-full bg-line sm:mt-6">
-            <div
-              className="h-px bg-brass transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-              style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
-            />
+            {/* A rule that keeps drawing as the sequence advances. The site draws
+                rules; this is the same gesture, held open across six beats. It
+                is a transform, not a width, so advancing it lays nothing out. */}
+            <div aria-hidden className="mt-2.5 h-px w-full bg-line sm:mt-6">
+              <div
+                className="h-px w-full origin-left bg-brass transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ transform: `scaleX(${(step + 1) / STEPS.length})` }}
+              />
+            </div>
           </div>
         </div>
       </div>

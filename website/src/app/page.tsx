@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+import { DepthFallback } from "@/components/DepthFallback";
 import { Reveal } from "@/components/Reveal";
 import { ScrollSequence } from "@/components/app/ScrollSequence";
 import {
@@ -55,57 +57,71 @@ const features = [
   },
   {
     label: "IV",
-    title: "Nothing leaves the Mac",
-    body: "Media is read from your disk and rendered on your machine. The editor loads no remote fonts, images or scripts and sends no telemetry; the only thing that talks to a model is the agent you chose to start.",
+    title: "Your work stays on the Mac",
+    body: "Projects, media and renders stay on your disk. The editor loads no remote fonts, images or scripts and sends no telemetry or analytics. It does go online for a few things you can name: the agent you chose to start talks to its model, a speech model downloads when you ask for one, and the app checks with Google’s sign-in service that your access still stands. Offline it keeps working, and asks you to sign in again only after 14 days without a successful check.",
   },
 ];
+
+/** How far a hero line rises past the page over the first screen, and how faint it gets. */
+const peel = (depth: number, fade: number) =>
+  ({ "--depth": depth, "--fade": fade }) as CSSProperties;
 
 export default function Home() {
   return (
     <main className="flex-1">
       <header className="pt-20 pb-16 sm:pt-24">
         <Wrap>
-          <Reveal delay={0.05}>
-            <div className="mb-[30px]">
-              <Eyebrow>
-                {product.kind} · {product.status}
-              </Eyebrow>
-            </div>
-          </Reveal>
+          {/* Depth: each line of the hero peels away a little faster than the
+              one under it, so they separate as they leave. See DESIGN.md. */}
+          <div data-depth="peel" style={peel(0.16, 0.2)}>
+            <Reveal delay={0.05}>
+              <div className="mb-[30px]">
+                <Eyebrow>
+                  {product.kind} · {product.status}
+                </Eyebrow>
+              </div>
+            </Reveal>
+          </div>
 
-          <Reveal delay={0.14} variant="settle">
-            <h1 className="max-w-[17ch] font-serif text-display font-light">
-              A video editor you can{" "}
-              <em className="text-brass italic">talk to</em>.
-            </h1>
-          </Reveal>
+          <div data-depth="peel" style={peel(0.1, 0.35)}>
+            <Reveal delay={0.14} variant="settle">
+              <h1 className="max-w-[17ch] font-serif text-display font-light">
+                A video editor you can{" "}
+                <em className="text-brass italic">talk to</em>.
+              </h1>
+            </Reveal>
+          </div>
 
-          <Reveal delay={0.3}>
-            <p className="mt-[30px] max-w-[56ch] text-lead text-ink-soft">
-              {product.name} is a video editor for the Mac. You
-              cut on the timeline the way you always have. You can also describe
-              the change you want and let something else make it, on that same
-              timeline, on your own machine.
-            </p>
-          </Reveal>
+          <div data-depth="peel" style={peel(0.05, 0.6)}>
+            <Reveal delay={0.3}>
+              <p className="mt-[30px] max-w-[56ch] text-lead text-ink-soft">
+                {product.name} is a video editor for the Mac. You
+                cut on the timeline the way you always have. You can also describe
+                the change you want and let something else make it, on that same
+                timeline, on your own machine.
+              </p>
+            </Reveal>
 
-          {/* The rule is drawn last, the way you would rule a line under a title. */}
-          <Reveal delay={0.62} className="mt-10 w-16">
-            <span
-              aria-hidden
-              data-rule
-              className="block h-px w-full bg-brass"
-            />
-          </Reveal>
+            {/* The rule is drawn last, the way you would rule a line under a title. */}
+            <Reveal delay={0.62} className="mt-10 w-16">
+              <span
+                aria-hidden
+                data-rule
+                className="block h-px w-full bg-brass"
+              />
+            </Reveal>
+          </div>
 
-          <Reveal delay={0.76}>
-            <p className="mt-12 flex items-center gap-3 text-eyebrow font-medium text-muted uppercase">
-              Keep scrolling to watch it build one
-              <span aria-hidden data-nudge className="text-brass-deep">
-                ↓
-              </span>
-            </p>
-          </Reveal>
+          <div data-depth="peel" style={peel(0, 0)}>
+            <Reveal delay={0.76}>
+              <p className="mt-12 flex items-center gap-3 text-eyebrow font-medium text-muted uppercase">
+                Keep scrolling to watch it build one
+                <span aria-hidden data-nudge className="text-brass-deep">
+                  ↓
+                </span>
+              </p>
+            </Reveal>
+          </div>
         </Wrap>
       </header>
 
@@ -145,7 +161,10 @@ export default function Home() {
                 key={f.label}
                 delay={0.06 + Math.min(i, 3) * 0.06}
                 aside={
-                  <span className="font-serif text-[22px] font-light text-brass-deep italic">
+                  <span
+                    data-depth="drift"
+                    className="inline-block font-serif text-[22px] font-light text-brass-deep italic"
+                  >
                     {f.label}
                   </span>
                 }
@@ -159,7 +178,9 @@ export default function Home() {
           <Reveal delay={0.12} className="mt-20 max-w-[60ch]">
             <Eyebrow>What it will not do</Eyebrow>
             <p className="mt-6 text-base text-ink-soft">
-              There is no server that holds your project. No account to make, no
+              There is no server that holds your project. Access is by
+              invitation, and you sign in once with your email; that tells the
+              app who you are and nothing about what you edit. There is no
               upload step, no render farm, no library of your footage sitting on
               someone else&rsquo;s disk waiting to be trained on. The agent
               endpoint listens on your own machine and nowhere else, and when an
@@ -188,8 +209,8 @@ export default function Home() {
             </Reveal>
           ) : (
             <Reveal delay={0.2}>
-              <ActionLink href="/status" className="mt-16">
-                See what works today
+              <ActionLink href="/waitlist" className="mt-16">
+                Request access
               </ActionLink>
             </Reveal>
           )}
@@ -200,6 +221,7 @@ export default function Home() {
           </PullQuote>
         </Wrap>
       </section>
+      <DepthFallback />
     </main>
   );
 }
