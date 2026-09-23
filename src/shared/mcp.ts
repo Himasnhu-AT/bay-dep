@@ -173,6 +173,20 @@ export const TOOLS: ToolSpec[] = [
   },
 
   {
+    name: 'read_script',
+    description:
+      'The active timeline as an editable script: markdown, one line per clip in timeline ' +
+      'order, grouped by track — `- [id] in → out · source · src <seconds>s · "text"`, with ' +
+      'transitions as `~ [id]` lines under the clip they leave. Reach for it when an edit ' +
+      'touches many clips at once — tightening a cut, reordering shots, fixing every title — ' +
+      'and hand the edited text to apply_script instead of making one call per clip. The ' +
+      'header (timeline, rev, fps) must come back unchanged. Format: bay://guide/script.',
+    category: 'read',
+    readOnly: true,
+    inputSchema: { type: 'object', properties: {} }
+  },
+
+  {
     name: 'propose_edit',
     description:
       'Ask the user to approve an edit before you make it. Inside bay\'s own agent panel, every ' +
@@ -601,6 +615,35 @@ export const TOOLS: ToolSpec[] = [
         }
       },
       required: ['itemId', 'mode', 'deltaFrames']
+    }
+  },
+  {
+    name: 'apply_script',
+    description:
+      'Apply an edited read_script document as one undo step. bay diffs it against the timeline ' +
+      'and does exactly what changed: a deleted line removes the clip (`ripple: on` in the ' +
+      'header closes the gap on that track only); lines reordered within a track resequence it ' +
+      'end to end; changed in/out moves or trims (in alone is a head trim, the source advancing ' +
+      'with it); changed src slips; changed quoted text rewrites a title; a deleted `~` line ' +
+      'removes a transition. A transition whose cut the edit breaks is removed and reported. ' +
+      'Anything else — a line with no id, a clip moved between track sections, a changed source ' +
+      'name, an edited header — is refused with its line number, and nothing is applied. If ' +
+      'the timeline changed since the read, the script is refused; read it again. Returns what ' +
+      'changed and the new script. Pass a long script as `@./path.md` to save tokens.',
+    category: 'write',
+    readOnly: false,
+    dryRunnable: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        script: {
+          type: 'string',
+          description:
+            'The whole script as read_script returned it, with your edits — header included. ' +
+            'Every track section must be present; delete lines, not sections.'
+        }
+      },
+      required: ['script']
     }
   },
   {

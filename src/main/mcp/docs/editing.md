@@ -136,6 +136,13 @@ A marker belongs to the program, not to a clip, so moving or replacing clips lea
 It moves only when time itself does: `remove_range` slides markers after the cut up with the
 footage, and one inside the removed span lands on the cut rather than vanishing. `remove_marker`
 takes one away.
+## Many clips at once: the script
+
+When an edit touches many clips — tightening a whole cut, reordering shots, rewording every
+title — call `read_script`, edit the markdown it returns, and hand it back to `apply_script`. bay
+applies the difference as one undo step and returns what changed. Deleting, reordering, moving,
+trimming, slipping and retitling are supported; anything else is refused with its line number.
+The format and the exact rules are in `bay://guide/script`.
 
 ## Transitions belong to the cut, not the clip
 

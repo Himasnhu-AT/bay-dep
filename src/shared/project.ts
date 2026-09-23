@@ -346,6 +346,19 @@ export interface Item {
 }
 
 /**
+ * The name a text asset is given from its text: the first line, trimmed and shortened.
+ *
+ * Shared because two places mint or rewrite text assets — the Text panel, and the Script
+ * surface when an agent changes a title's words — and a text asset whose name was derived one
+ * way at creation and another way on edit would read as renamed by someone.
+ */
+export function textAssetName(text: string): string {
+  const firstLine = text.split('\n')[0]?.trim() ?? ''
+  if (!firstLine) return 'Text'
+  return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine
+}
+
+/**
  * The defaults a text item takes when nothing has been chosen — and, exactly, the look that
  * shipped before `TextStyle` existed. Pinned as a function rather than a shared constant so
  * one item's edits can never reach another's.

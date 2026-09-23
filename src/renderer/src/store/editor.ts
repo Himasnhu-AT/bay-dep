@@ -57,6 +57,7 @@ import {
   checkCues,
   type CaptionCue
 } from '@shared/captions'
+import { applyScriptOps, type ScriptOp } from '@shared/script'
 
 const HISTORY_LIMIT = 100
 
@@ -219,6 +220,11 @@ export interface EditorActions {
     direction?: TransitionDirection
   }): { id: string } | { error: string }
   removeTransition(transitionId: string): void
+  /**
+   * Apply a diffed script (see `@shared/script`) as one edit. The operations were validated by
+   * `diffScript` against this exact timeline; callers wrap this in `transact` like any tool.
+   */
+  applyScript(timelineId: string, operations: readonly ScriptOp[]): void
   patchTransition(
     transitionId: string,
     patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
@@ -1070,6 +1076,13 @@ export const useEditor = create<EditorStore>((set, get) => {
         if (!timeline.transitions) return
         timeline.transitions = timeline.transitions.filter((t) => t.id !== transitionId)
       })
+    },
+
+    applyScript(timelineId, operations) {
+      edit((project) => applyScriptOps(project, timelineId, operations, newId))
+      // A deleted clip must not stay selected: the inspector would edit an item that is gone.
+      const gone = new Set(operations.filter((op) => op.op === 'delete').map((op) => op.itemId))
+      if (gone.size > 0) set((state) => ({ selection: state.selection.filter((id) => !gone.has(id)) }))
     },
 
     patchTransition(transitionId, patch) {

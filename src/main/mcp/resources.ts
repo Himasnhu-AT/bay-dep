@@ -15,6 +15,7 @@ import { ALL_RESOURCES } from '@shared/resources'
 import { templateUri } from '@shared/templates'
 import { examplesGuide, toolReference } from '@shared/guides'
 import editing from './docs/editing.md?raw'
+import script from './docs/script.md?raw'
 import tplSubtitle from '../templates/subtitle.html?raw'
 import tplLowerThird from '../templates/lower-third.html?raw'
 import tplTitleCard from '../templates/title-card.html?raw'
@@ -38,6 +39,7 @@ const BODIES: Record<string, string> = {
   // Rendered from the catalog at import, not written: see `@shared/guides`.
   'bay://guide/tools': toolReference(),
   'bay://guide/examples': examplesGuide(),
+  'bay://guide/script': script,
   'bay://guide/composition/contract': contract,
   'bay://guide/composition/minimal': minimal,
   'bay://guide/composition/data-attributes': dataAttributes,

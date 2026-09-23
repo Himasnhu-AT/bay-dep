@@ -41,6 +41,7 @@ import { addMarker, removeMarker } from './markers'
 import { editAsset } from './assets'
 import { addCaptions } from './captions'
 import { AsyncDryRunError, dryRun } from '@/store/dry-run'
+import { applyScript, readScript } from './script'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -48,6 +49,7 @@ const HANDLERS: Record<string, Handler> = {
   read_project: () => readProject(),
   browse_assets: () => browseAssets(),
   inspect_item: (args) => inspectItem(args),
+  read_script: () => readScript(),
   preview_frame: (args) => previewFrame(args),
   propose_edit: (args) => proposeEdit(args),
   import_media: (args) => importMedia(args),
@@ -58,6 +60,7 @@ const HANDLERS: Record<string, Handler> = {
   edit_asset: (args) => editAsset(args),
   edit_item: (args) => editItem(args),
   trim_item: (args) => trimItem(args),
+  apply_script: (args) => applyScript(args),
   split_at: (args) => splitAt(args),
   delete_items: (args) => deleteItems(args),
   remove_range: (args) => removeRange(args),

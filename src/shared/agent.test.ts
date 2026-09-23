@@ -417,3 +417,64 @@ test('a dry run inside a proposal is refused, and told to make it directly', () 
   // Positive control: the same operation without the flag builds.
   assert.equal(build({ question: 'q', options: [trim] }).ok, true)
 })
+
+// --- the Script surface through the gate --------------------------------------------------
+
+test('apply_script is gated, and read_script is not', () => {
+  assert.equal(requiresApproval('apply_script'), true)
+  assert.equal(requiresApproval('read_script'), false)
+  assert.equal(checkApproval('read_script', {}, gatedButUnapproved).allowed, true)
+  assert.equal(checkApproval('apply_script', { script: 'x' }, gatedButUnapproved).allowed, false)
+})
+
+test('a proposal carrying a whole script builds, and admits exactly that script', () => {
+  // A script is long, multi-line and full of characters a paraphrase would normalise — the
+  // arrow, the middle dot, escaped quotes — which is the case where exact matching would break
+  // first if it were anything less than exact.
+  const script = [
+    '# Script · Interview',
+    '',
+    'timeline: tl_main',
+    'rev: 0123abcd',
+    'fps: 30',
+    'ripple: on',
+    '',
+    '## V1 · video · [trk_v1]',
+    '- [itm_1] 00:00:00:00 → 00:00:03:00 · goodall.mp4 · src 10.000s',
+    '## V2 · video · [trk_v2]',
+    '- [itm_2] 00:00:00:15 → 00:00:02:00 · text · "Jane \\"JG\\" Goodall"'
+  ].join('\n')
+  const built = build({
+    question: 'Drop the b-roll and retitle?',
+    options: [
+      {
+        label: 'Tighten',
+        summary: 'Removes the b-roll shot and closes the gap.',
+        operations: [{ tool: 'apply_script', args: { script } }]
+      }
+    ]
+  })
+  assert.ok(built.ok, built.ok ? '' : built.error)
+  const option = built.proposal.options[0]!
+  assert.deepEqual(option.operations, [{ index: 0, tool: 'apply_script', args: { script } }])
+
+  const gate: AgentGate = {
+    approved: { approvalId: 'a', proposalId: built.proposal.id, option, consumed: [] }
+  }
+  const verdict = checkApproval('apply_script', { script }, gate)
+  assert.equal(verdict.allowed, true)
+  assert.equal(verdict.index, 0)
+  // One character of drift is a different edit, and is refused with the approved script shown.
+  const drifted = checkApproval('apply_script', { script: script.replace('ripple: on', 'ripple: off') }, gate)
+  assert.equal(drifted.allowed, false)
+  assert.match(drifted.refusal ?? '', /ripple: on/)
+})
+
+test('a proposal whose apply_script has no script is refused when proposed', () => {
+  const built = build({
+    question: 'q',
+    options: [{ label: 'x', summary: 'y', operations: [{ tool: 'apply_script', args: {} }] }]
+  })
+  assert.equal(built.ok, false)
+  assert.match(built.ok ? '' : built.error, /apply_script.*script/)
+})

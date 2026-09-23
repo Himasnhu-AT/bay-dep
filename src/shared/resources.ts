@@ -59,6 +59,15 @@ export const RESOURCES: readonly ResourceSpec[] = [
     mimeType: 'text/markdown'
   },
   {
+    uri: 'bay://guide/script',
+    name: 'The Script surface',
+    description:
+      'The timeline as an editable markdown script: the line format read_script renders, the ' +
+      'edits apply_script accepts and exactly what each one does (delete, ripple, reorder, ' +
+      'move, trim, slip, retitle), what is refused, and what happens to transitions.',
+    mimeType: 'text/markdown'
+  },
+  {
     uri: 'bay://guide/composition/contract',
     name: 'HTML compositions: the contract',
     description:
