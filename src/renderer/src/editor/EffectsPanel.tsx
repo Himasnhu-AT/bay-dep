@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Info, Maximize2, Minimize2, Move, RotateCcw } from 'lucide-react'
+import { Maximize2, Minimize2, Move, RotateCcw } from 'lucide-react'
 import {
   containLayout,
   coverLayout,
@@ -35,8 +35,12 @@ import { selectTimeline, useEditor } from '@/store/editor'
  * called it absent and the paragraph below still said an item has nowhere to store a rectangle.
  * That is twice in two commits, which retires "remember to check" as a strategy: the list is now
  * one row long, and the rule is that a row here must name a field that does not exist in
- * `@shared/project`. `Colour wheels` is the honest remainder — there is no lift/gamma/gain
- * anywhere in the model for a tile to write to.
+ * `@shared/project`.
+ *
+ * **`Colour wheels` was the last row, and it outlived `Item.grade`** (lift/gamma/gain, LUTs,
+ * texture) just as the others did — still telling people the engine could not do what the
+ * inspector's Grade section did. The list is empty now, so it is gone rather than kept as an
+ * empty frame; a future unbacked control should be drawn disabled where it will live.
  */
 export function EffectsPanel(): ReactNode {
   const selected = useSelectedItems()
@@ -172,22 +176,15 @@ export function EffectsPanel(): ReactNode {
           </p>
         </Section>
 
-        <Section title="Not yet in the engine">
-          <div className="grid grid-cols-2 gap-1.5">
-            {['Colour wheels'].map((name) => (
-              <Button key={name} variant="subtle" disabled>
-                {name}
-              </Button>
-            ))}
-          </div>
-          <div className="mt-2 flex items-start gap-2 text-ink-2">
-            <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
-            <p className="text-[10px] leading-relaxed">
-              Drawn disabled rather than hidden because the project format has no field for it —
-              there is nowhere on an item to store a lift/gamma/gain wheel, so a tile here would
-              set nothing. It lights up when the model does.
-            </p>
-          </div>
+        {/* Colour wheels sat here as "Not yet in the engine" after `Item.grade` had landed with
+            lift/gamma/gain, LUTs, grain, halation and vignette — the third row to outlive its
+            field. Like crop, a grade is a set of numbers rather than a verb, so it is a pointer
+            to the inspector rather than a tile. */}
+        <Section title="Grade">
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            Set in the inspector: white balance, lift, gamma and gain, a .cube LUT, and halation,
+            vignette and grain. Graded identically in preview and export.
+          </p>
         </Section>
 
         {/* Crop was in the list above until `Item.crop` landed. It is not a tile here because a

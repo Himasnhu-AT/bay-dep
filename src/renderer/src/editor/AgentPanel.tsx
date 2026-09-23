@@ -304,7 +304,7 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
       return <Markdown className="text-[12px] leading-relaxed text-ink-1">{entry.text}</Markdown>
     case 'thought':
       return (
-        <p className="border-l-2 border-line pl-2 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-3">
+        <p className="border-l-2 border-line pl-2 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2">
           {entry.text}
         </p>
       )
@@ -327,7 +327,7 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
       return <ChangesCard entry={entry} />
     case 'thinking':
       return (
-        <p className="flex items-center gap-1.5 text-[11px] text-ink-3 tabular-nums">
+        <p className="flex items-center gap-1.5 text-[11px] text-ink-2 tabular-nums">
           <Brain aria-hidden="true" className="size-3 shrink-0" />
           Thought for {formatElapsed(entry.seconds)}
         </p>
@@ -511,7 +511,7 @@ function ProposalCard({
               type="button"
               aria-expanded={details === option.id}
               onClick={() => setDetails((value) => (value === option.id ? null : option.id))}
-              className="t-fast mt-1 flex items-center gap-0.5 text-[10.5px] text-ink-3 hover:text-ink-1"
+              className="t-fast mt-1 flex items-center gap-0.5 text-[10.5px] text-ink-2 hover:text-ink-1"
             >
               <ChevronRight
                 aria-hidden="true"
@@ -522,7 +522,7 @@ function ProposalCard({
             {details === option.id && (
               <ul className="mt-1 flex flex-col gap-0.5">
                 {option.operations.map((operation) => (
-                  <li key={operation.index} className="font-mono text-[10px] break-all whitespace-pre-wrap text-ink-3">
+                  <li key={operation.index} className="font-mono text-[10px] break-all whitespace-pre-wrap text-ink-2">
                     {operation.tool} {JSON.stringify(operation.args)}
                   </li>
                 ))}
@@ -535,7 +535,7 @@ function ProposalCard({
         <Button variant="subtle" disabled={running} onClick={decline}>
           None of these
         </Button>
-        {running && <span className="text-ink-3">Waiting for the agent to finish…</span>}
+        {running && <span className="text-ink-2">Waiting for the agent to finish…</span>}
       </div>
     </div>
   )
@@ -626,7 +626,7 @@ function ChangesCard({ entry }: { entry: Extract<AgentEntry, { kind: 'changes' }
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
-          className="t-fast px-2 pb-1.5 text-[10.5px] text-ink-3 hover:text-ink-1"
+          className="t-fast px-2 pb-1.5 text-[10.5px] text-ink-2 hover:text-ink-1"
         >
           {open ? 'Show less' : `Show all ${entry.lines.length}`}
         </button>

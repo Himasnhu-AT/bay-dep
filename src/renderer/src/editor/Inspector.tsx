@@ -27,7 +27,7 @@ import {
   ScrollArea,
   Section,
   Select,
-  Slider
+  SliderField
 } from '@/components'
 import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
@@ -186,6 +186,7 @@ export function Inspector(): ReactNode {
   })
   const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
     common(selected, read)
+  const hasPicture = selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false)
 
   /**
    * Every field on this panel writes to the whole selection, one store call per item, and
@@ -306,10 +307,12 @@ export function Inspector(): ReactNode {
             <>
               <Readout label="Name" value={asset?.name ?? 'Missing media'} />
               <Readout label="Kind" value={asset?.kind ?? '—'} />
-              <Readout
-                label="Size"
-                value={asset?.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}
-              />
+              {hasPicture && (
+                <Readout
+                  label="Size"
+                  value={asset?.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}
+                />
+              )}
               <Readout label="Source length" value={formatSourceDuration(asset?.durationUs ?? 0)} />
               {asset?.error && (
                 <p className="mt-1 text-[11px] text-danger">{asset.error}</p>
@@ -360,6 +363,10 @@ export function Inspector(): ReactNode {
           )}
         </Section>
 
+        {/* Transform, like Crop below, is for things with a picture. An audio clip has a layout
+            in the model (every item does), but X/Y/W/H/Rotate/Opacity on a music bed are six
+            controls that move nothing anyone can see. */}
+        {hasPicture && (
         <Section title="Transform">
           {/* Wrapped in a Field for a visible caption: `Select` carries only an aria-label,
               which is enough when a Section title names it and not enough here, where it sits
@@ -420,15 +427,16 @@ export function Inspector(): ReactNode {
             />
           </div>
           <div className="mt-2">
-            <Field label="Opacity" hint={`${Math.round((opacity.value ?? 1) * 100)}%`}>
-              <Slider
-                label="Opacity"
-                value={opacity.value ?? 1}
-                onCommit={(next) => applyLayout({ opacity: next })}
-              />
-            </Field>
+            <SliderField
+              label="Opacity"
+              value={opacity.value ?? 1}
+              mixed={opacity.mixed}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onCommit={(next) => applyLayout({ opacity: next })}
+            />
           </div>
         </Section>
+        )}
 
         {/* Type controls only for text items: an outline width on a video clip would be a
             control that does nothing, which is the thing this codebase keeps finding. */}
@@ -440,7 +448,7 @@ export function Inspector(): ReactNode {
         )}
 
         {/* Crop applies to anything with a picture. Audio has no edges to trim. */}
-        {selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false) && (
+        {hasPicture && (
           <Section
             title="Crop"
             actions={
@@ -502,16 +510,16 @@ export function Inspector(): ReactNode {
         )}
 
         <Section title="Audio & speed">
-          <Field label="Volume" hint={`${Math.round((volume.value ?? 1) * 100)}%`}>
-            <Slider
-              label="Volume"
-              min={0}
-              max={2}
-              step={0.01}
-              value={volume.value ?? 1}
-              onCommit={(next) => applyItem({ volume: next })}
-            />
-          </Field>
+          <SliderField
+            label="Volume"
+            min={0}
+            max={2}
+            step={0.01}
+            value={volume.value ?? 1}
+            mixed={volume.mixed}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onCommit={(next) => applyItem({ volume: next })}
+          />
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             <NumberField
               label="In"

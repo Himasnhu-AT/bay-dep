@@ -7,7 +7,7 @@ import {
   type Item,
   type Timeline
 } from '@shared/project'
-import { Button, Section, Select, Slider } from '@/components'
+import { Button, Section, Select, SliderField } from '@/components'
 import { adjustmentFilter, NO_FILTER } from '../engine/looks'
 import { useEditor } from '@/store/editor'
 
@@ -62,6 +62,16 @@ const BLEND_MODES: { value: BlendMode; label: string }[] = [
   { value: 'color', label: 'Colour' },
   { value: 'luminosity', label: 'Luminosity' }
 ]
+
+/**
+ * The readout beside a slider: the number the model stores, then the control's unit. Whole-unit
+ * steps show no decimals; multipliers show two, which is the precision the step can reach.
+ */
+function formatAdjustment(value: number, control: Control): string {
+  if (!Number.isFinite(value)) return '—'
+  const decimals = control.step >= 1 ? 0 : control.step >= 0.1 ? 1 : 2
+  return `${value.toFixed(decimals)}${control.unit ?? ''}`
+}
 
 /** NaN never equals itself, so a plain `===` reports one clip as "Mixed" against itself. */
 function same(a: number, b: number): boolean {
@@ -144,17 +154,19 @@ export function AdjustmentsSection({
           ) : undefined
         }
       >
-        <div className="space-y-2">
+        <div className="space-y-0.5">
           {CONTROLS.map((control) => {
             const { value, mixed } = read(control.key)
             return (
-              <Slider
+              <SliderField
                 key={control.key}
                 label={control.label}
                 value={mixed ? control.min : value}
+                mixed={mixed}
                 min={control.min}
                 max={control.max}
                 step={control.step}
+                format={(v) => formatAdjustment(v, control)}
                 onCommit={(next) => set(control.key, next)}
               />
             )

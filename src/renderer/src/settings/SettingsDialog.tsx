@@ -312,8 +312,11 @@ function ModelRow(props: ModelRowProps): ReactNode {
           </Button>
         ) : installed ? (
           <>
+            {/* Bordered like Download beside it: as a ghost button "Use" read as a label in a
+                list of outlined buttons, and nothing about it said it could be pressed. */}
             <Button
-              variant={chosen ? 'subtle' : 'ghost'}
+              variant="subtle"
+              className={chosen ? 'border-accent/60 text-accent' : undefined}
               icon={chosen ? <Check className="size-3.5" /> : undefined}
               onClick={props.onUse}
               title={chosen ? 'Stop choosing this one; let bay pick' : 'Use this model for transcription'}

@@ -13,6 +13,6 @@ export {
   type SegmentedOption
 } from './SegmentedControl'
 export { Select, type SelectOption, type SelectProps } from './Select'
-export { Slider, type SliderProps } from './Slider'
+export { Slider, SliderField, type SliderFieldProps, type SliderProps } from './Slider'
 export { Toast } from './Toast'
 export { Tooltip, type TooltipProps, type TooltipSide } from './Tooltip'

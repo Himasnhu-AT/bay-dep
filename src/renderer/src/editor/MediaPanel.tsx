@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { completeBrfImports } from '@/lib/brfImport'
 import {
+  AlertTriangle,
   Code2,
   FilmIcon,
   ImageIcon,
@@ -41,6 +42,21 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   lut: Palette
 }
 
+/**
+ * The card's second line when there are no pixel dimensions to show. It was an em dash for
+ * every text clip, which is a line of the card spent saying nothing.
+ */
+const KIND_NOTE: Record<AssetKind, string> = {
+  video: 'Video',
+  audio: 'Audio only',
+  image: 'Image',
+  gif: 'Animated image',
+  text: 'Text clip',
+  html: 'HTML composition',
+  brf: 'Motion graphic',
+  lut: 'Colour LUT'
+}
+
 function AssetCard({ asset }: { asset: Asset }): ReactNode {
   const placeAsset = useEditor((state) => state.placeAsset)
   const removeAsset = useEditor((state) => state.removeAsset)
@@ -65,11 +81,18 @@ function AssetCard({ asset }: { asset: Asset }): ReactNode {
         className={cn(
           't-fast block w-full overflow-hidden rounded-sm border border-line bg-surface-2 text-left',
           broken
-            ? 'cursor-not-allowed opacity-50'
+            ? 'cursor-not-allowed border-danger/40'
             : 'hover:border-line-strong hover:bg-surface-3 focus-visible:border-accent'
         )}
       >
-        <div className="relative aspect-video w-full overflow-hidden bg-surface-0">
+        {/* A broken asset dims its picture, not its explanation: the whole card at 50% put
+            "Could not be read" at ~2:1 in grey, where it read as a caption, not an error. */}
+        <div
+          className={cn(
+            'relative aspect-video w-full overflow-hidden bg-surface-0',
+            broken && 'opacity-50'
+          )}
+        >
           {poster ? (
             <img
               src={poster}
@@ -105,16 +128,23 @@ function AssetCard({ asset }: { asset: Asset }): ReactNode {
           )}
         </div>
         <div className="px-1.5 py-1">
-          <p className="truncate text-[11px] text-ink-0">{asset.name}</p>
-          <p className="truncate text-[10px] text-ink-2">
-            {broken
-              ? 'Could not be read'
-              : asset.width && asset.height
+          <p className={cn('truncate text-[11px]', broken ? 'text-ink-1' : 'text-ink-0')}>
+            {asset.name}
+          </p>
+          {broken ? (
+            <p className="flex items-center gap-1 truncate text-[10px] text-danger">
+              <AlertTriangle aria-hidden="true" className="size-3 shrink-0" />
+              Could not be read
+            </p>
+          ) : (
+            <p className="truncate text-[10px] text-ink-2">
+              {asset.width && asset.height
                 ? `${asset.width}×${asset.height}`
                 : asset.kind === 'audio'
                   ? 'Audio only'
-                  : '—'}
-          </p>
+                  : KIND_NOTE[asset.kind]}
+            </p>
+          )}
         </div>
       </button>
 
