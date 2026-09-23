@@ -8,6 +8,7 @@ import { ExportDialog } from '@/editor/ExportDialog'
 import { Inspector } from '@/editor/Inspector'
 import { LeftRail, SidePanel } from '@/editor/LeftRail'
 import { ProjectsHome } from '@/home/ProjectsHome'
+import { SettingsDialog } from '@/settings/SettingsDialog'
 import { Button, Modal } from '@/components'
 import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
 import type { RefObject } from 'react'
@@ -208,6 +209,9 @@ export function App(): ReactNode {
         case 'toggle-debug':
           useEditor.getState().toggleDebugMode()
           break
+        case 'open-settings':
+          useEditor.getState().setSettingsOpen(true)
+          break
         case 'open':
           void call('Open project', (client) => client.project.open()).then((project) => {
             // Null is either a failed call, already reported, or the user cancelling the
@@ -246,6 +250,16 @@ export function App(): ReactNode {
     const api = bay()
     if (!api) return
     return api.agent.onEvent((event) => useEditor.getState().applyAgentEvent(event))
+  }, [])
+
+  /**
+   * Whisper model downloads, for the same reason: one may start from a transcription while
+   * Settings is closed, and the status bar and Settings both show it.
+   */
+  useEffect(() => {
+    const api = bay()
+    if (!api) return
+    return api.whisper.onDownload((download) => useEditor.getState().setWhisperDownload(download))
   }, [])
 
   useKeyboard({
@@ -307,7 +321,14 @@ export function App(): ReactNode {
   }, [importPaths, notify])
 
   // After every hook, so switching screens never changes the order React sees them in.
-  if (screen === 'home') return <ProjectsHome />
+  if (screen === 'home') {
+    return (
+      <>
+        <ProjectsHome />
+        <SettingsDialog />
+      </>
+    )
+  }
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-surface-0 text-ink-0">
@@ -406,6 +427,7 @@ export function App(): ReactNode {
       <StatusBar />
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <SettingsDialog />
 
       <Modal
         open={confirmingHome}

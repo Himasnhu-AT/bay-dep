@@ -9,6 +9,7 @@ import {
   MoreVertical,
   Plus,
   Search,
+  Settings,
   X
 } from 'lucide-react'
 import type { Project } from '@shared/project'
@@ -190,6 +191,12 @@ export function ProjectsHome(): ReactNode {
                 setSort(next)
                 remember(SORT_KEY, next)
               }}
+            />
+            <IconButton
+              label="Settings"
+              shortcut="⌘,"
+              icon={<Settings className="size-3.5" />}
+              onClick={() => useEditor.getState().setSettingsOpen(true)}
             />
           </header>
 

@@ -24,7 +24,15 @@ import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } fr
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
-import { transcribeFile } from './media/whisper'
+import {
+  cancelWhisperDownload,
+  deleteWhisperModel,
+  downloadWhisperModel,
+  installWhisperEngine,
+  onWhisperDownload,
+  transcribeFile,
+  whisperStatus
+} from './media/whisper'
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { forgetPath, importDialog, importPaths } from './media/import'
@@ -34,7 +42,7 @@ import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
 import { writeTemplate } from './html/templates'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
@@ -49,6 +57,12 @@ interface ChannelApi {
   mediaProbe: BayApi['media']['probe']
   mediaThumbnail: BayApi['media']['thumbnail']
   mediaTranscribe: BayApi['media']['transcribe']
+
+  whisperStatus: BayApi['whisper']['status']
+  whisperDownload: BayApi['whisper']['download']
+  whisperCancel: BayApi['whisper']['cancelDownload']
+  whisperDelete: BayApi['whisper']['deleteModel']
+  whisperInstall: BayApi['whisper']['installEngine']
   mediaFilmstrip: BayApi['media']['filmstrip']
   mediaWaveform: BayApi['media']['waveform']
   mediaReveal: BayApi['media']['revealInFolder']
@@ -156,12 +170,14 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaImportPaths: (_event, paths) => importPaths(paths),
   mediaProbe: (_event, path) => probe(path),
   mediaThumbnail: (_event, request) => thumbnail(request),
-  mediaTranscribe: async (_event, path, language) => {
+  mediaTranscribe: async (_event, path, language, options) => {
     try {
       const transcript = await transcribeFile(path, {
         userDataDir: app.getPath('userData'),
         homeDir: homedir(),
-        ...(language ? { language } : {})
+        ...(language ? { language } : {}),
+        download: options?.download === true,
+        model: options?.model ?? null
       })
       return { ok: true as const, ...transcript }
     } catch (error) {
@@ -169,6 +185,19 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     }
   },
   mediaFilmstrip: (_event, request) => filmstrip(request),
+
+  whisperStatus: (_event, preferred) => whisperStatus(app.getPath('userData'), homedir(), preferred ?? null),
+  whisperDownload: async (_event, modelId) => {
+    try {
+      await downloadWhisperModel(modelId, app.getPath('userData'), 'user')
+      return { ok: true as const }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  whisperCancel: async () => cancelWhisperDownload(),
+  whisperDelete: (_event, file) => deleteWhisperModel(app.getPath('userData'), file),
+  whisperInstall: () => installWhisperEngine(),
   mediaWaveform: (_event, assetId, path, buckets) => waveform(assetId, path, buckets),
   mediaReveal: async (_event, path) => {
     shell.showItemInFolder(path)
@@ -215,6 +244,14 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.on(IPC.mcpExecutorReady, (event, ready: boolean) => {
     setExecutorReady(event.sender, ready === true)
+  })
+
+  // Download progress goes to every window: Settings may be open in one while a transcription in
+  // another started the download.
+  onWhisperDownload((download) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(IPC.whisperProgress, download)
+    }
   })
 
   for (const key of Object.keys(handlers) as (keyof ChannelApi)[]) {

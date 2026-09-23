@@ -7,6 +7,7 @@ import {
   PanelLeft,
   PanelRight,
   Redo2,
+  Settings,
   Sun,
   Undo2,
   Upload
@@ -177,6 +178,13 @@ export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): React
         icon={THEME_ICON[theme]}
         onClick={cycleTheme}
         disabled={!bayTheme()}
+      />
+      <IconButton
+        label="Settings"
+        shortcut="⌘,"
+        icon={<Settings className="size-4" />}
+        onClick={() => useEditor.getState().setSettingsOpen(true)}
+        className="no-drag"
       />
 
       <button

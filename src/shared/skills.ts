@@ -57,7 +57,7 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       'Add readable captions.',
       '',
       '1. Before doing anything else, ask the user whether they have a transcript or subtitle file (SRT or WebVTT) for this video, and end your turn to wait for the answer. Skip the question only if their message already answers it — they attached or pinned a subtitle file, or said to transcribe. If they have one, use it with add_captions (srt): their words are better than a transcription.',
-      '2. If they do not, transcribe the speech on this Mac with the transcribe tool, passing the clip\'s itemId: it runs whisper.cpp locally (nothing is uploaded) and returns cues already on the timeline. Tell the user you are doing this. If transcribe says whisper.cpp or a model is missing, pass its instructions on exactly; never invent words.',
+      '2. If they do not, transcribe the speech on this Mac with the transcribe tool, passing the clip\'s itemId: it runs whisper.cpp locally (nothing is uploaded) and returns cues already on the timeline. Tell the user you are doing this. The first transcription may download a speech model first, which takes a minute or two; say so if it is slow. If transcribe says whisper.cpp or a model is missing, pass its instructions on exactly; never invent words.',
       '3. Keep each caption short enough to read in its time on screen (about 15–17 characters per second at most); transcribe already splits lines to about 42 characters.',
       '4. Place them with add_captions (cues). It puts them on their own track, as one undo step.',
       '5. Check two or three frames with preview_frame so no caption covers a face or other text.',

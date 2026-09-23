@@ -156,8 +156,9 @@ export const TOOLS: ToolSpec[] = [
       'where before cutting. Pass itemId for a clip on the timeline: the lines come back as ' +
       'cues in timeline frames, already shifted and clipped to what the clip plays, ready for ' +
       'add_captions. Pass assetId for a whole file: lines in seconds from its start, and SRT. ' +
-      'Takes a few seconds per minute of audio. If whisper.cpp or a model is missing, the ' +
-      'error says exactly what to install — tell the user; do not guess words.',
+      'Takes a few seconds per minute of audio. The first run on a Mac with no model may ' +
+      'download one (~150 MB, a minute or two) if the user allows it in Settings. If whisper.cpp ' +
+      'or a model is missing, the error says what to do in Settings — tell the user; do not guess words.',
     category: 'read',
     readOnly: true,
     timeoutMs: 15 * 60_000,

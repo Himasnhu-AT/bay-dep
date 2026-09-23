@@ -11,6 +11,7 @@
 import { findAsset } from '@shared/project'
 import { segmentsToCues, segmentsToSrt } from '@shared/transcribe'
 import { bay } from '@/lib/bay'
+import { useEditor } from '@/store/editor'
 import { fail, project, resolveAsset, resolveItem, timeline } from './helpers'
 
 export async function transcribe(args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -27,7 +28,9 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
   const api = bay()
   if (!api) fail('This window has no bridge to the app, so it cannot run the transcriber.')
   const language = typeof args['language'] === 'string' ? args['language'] : undefined
-  const result = await api.media.transcribe(asset.path, language)
+  // The user's Settings decide whether a missing model may be fetched, and which model to use.
+  const { autoDownloadModels, whisperModel } = useEditor.getState()
+  const result = await api.media.transcribe(asset.path, language, { download: autoDownloadModels, model: whisperModel })
   if (!result.ok) fail(result.error)
 
   const base = { model: result.model, language: result.language, asset: asset.name }

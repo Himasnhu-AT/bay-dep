@@ -11,6 +11,7 @@
 import type { Asset, Project } from './project'
 import type { AgentEntry, AgentEvent } from './agent'
 import type { TranscriptSegment } from './transcribe'
+import type { WhisperDownload, WhisperStatus } from './whisper'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 
@@ -204,6 +205,8 @@ export type MenuCommand =
   | { type: 'open-path'; path: string }
   /** View → Toggle Debug Mode: shows debug tools such as transcript export. */
   | { type: 'toggle-debug' }
+  /** bay → Settings… (⌘,). */
+  | { type: 'open-settings' }
 
 // ---------------------------------------------------------------------------
 // The bridge
@@ -252,10 +255,15 @@ export interface BayApi {
     /**
      * Transcribe a media file on this machine with whisper.cpp. Lines come back in seconds from
      * the start of the file. `ok: false` carries what to install or download, in words.
+     *
+     * `download` lets main fetch the default model when none is on this machine — the renderer
+     * passes the user's "Download models when needed" setting, so the network is reached only
+     * when they allowed it. `model` is the file chosen in Settings.
      */
     transcribe(
       path: string,
-      language?: string
+      language?: string,
+      options?: { download?: boolean; model?: string | null }
     ): Promise<
       | { ok: true; segments: TranscriptSegment[]; model: string; language: string }
       | { ok: false; error: string }
@@ -285,6 +293,23 @@ export interface BayApi {
     waveform(assetId: string, path: string, buckets: number): Promise<number[]>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
+  }
+
+  /**
+   * Local transcription's moving parts, for Settings: whether whisper.cpp is installed, which
+   * models are on this machine, and the one download that may be running. Downloads report
+   * through `onDownload` — including ones a transcription started on its own.
+   */
+  whisper: {
+    status(preferredModel?: string | null): Promise<WhisperStatus>
+    /** Resolves when the file is on disk and verified. */
+    download(modelId: string): Promise<{ ok: true } | { ok: false; error: string }>
+    cancelDownload(): Promise<void>
+    /** Only models in bay's own folder; another app's are left alone. */
+    deleteModel(file: string): Promise<{ ok: boolean; error?: string }>
+    /** `brew install whisper-cpp`. Takes minutes on a cold Homebrew. */
+    installEngine(): Promise<{ ok: true } | { ok: false; error: string }>
+    onDownload(listener: (download: WhisperDownload) => void): () => void
   }
 
   /**
@@ -476,6 +501,14 @@ export const IPC = {
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
   mediaTranscribe: 'media:transcribe',
+
+  whisperStatus: 'whisper:status',
+  whisperDownload: 'whisper:download',
+  whisperCancel: 'whisper:cancel',
+  whisperDelete: 'whisper:delete',
+  whisperInstall: 'whisper:install',
+  /** main -> renderer: one `WhisperDownload`, pushed as it changes. */
+  whisperProgress: 'whisper:progress',
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
   mediaReveal: 'media:reveal',

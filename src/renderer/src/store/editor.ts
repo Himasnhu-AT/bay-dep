@@ -60,8 +60,28 @@ import {
   type CaptionCue
 } from '@shared/captions'
 import { applyScriptOps, type ScriptOp } from '@shared/script'
+import type { WhisperDownload } from '@shared/whisper'
 
 const HISTORY_LIMIT = 100
+
+/** A remembered preference, or null when storage is empty or throws (private mode, a probe). */
+function remembered(key: string): string | null {
+  try {
+    return globalThis.localStorage?.getItem(key) ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Remember a preference; a null clears it. It still applies this session if storage throws. */
+function remember(key: string, value: string | null): void {
+  try {
+    if (value === null) globalThis.localStorage?.removeItem(key)
+    else globalThis.localStorage?.setItem(key, value)
+  } catch {
+    // Not remembered; still applied.
+  }
+}
 
 /** The three regions around the preview that can be hidden. The preview itself cannot. */
 export type RegionId = 'side' | 'inspector' | 'timeline'
@@ -91,6 +111,18 @@ export interface EditorState {
    * A per-machine preference (localStorage), off by default; View → Toggle Debug Mode.
    */
   debugMode: boolean
+  /** The Settings dialog. Opened from the top bar, the projects screen, or ⌘,. */
+  settingsOpen: boolean
+  /**
+   * Let a transcription fetch a whisper model when this Mac has none. On by default: the user
+   * asked for captions, and a download they can watch and cancel beats an error telling them to
+   * go and find a file. Main reaches the network for it only when this says yes.
+   */
+  autoDownloadModels: boolean
+  /** The whisper model chosen in Settings, by file name; null lets bay pick. */
+  whisperModel: string | null
+  /** The model download in progress (or the last one to fail), pushed from main. */
+  whisperDownload: WhisperDownload | null
   /**
    * The projects screen or the editor. At launch this is `home`, and the project in the store
    * is an empty placeholder nobody chose — which is why the agent surface refuses to act on it.
@@ -323,6 +355,10 @@ export interface EditorActions {
   setRegionHidden(region: RegionId, hidden: boolean): void
   toggleRegion(region: RegionId): void
   toggleDebugMode(): void
+  setSettingsOpen(open: boolean): void
+  setAutoDownloadModels(on: boolean): void
+  setWhisperModel(file: string | null): void
+  setWhisperDownload(download: WhisperDownload | null): void
   /** Open a project in the editor: it becomes the document, with fresh history. */
   enterProject(project: Project): void
   /** Back to the projects screen. The caller decides what happens to unsaved work first. */
@@ -516,6 +552,10 @@ export const useEditor = create<EditorStore>((set, get) => {
         return false
       }
     })(),
+    settingsOpen: false,
+    autoDownloadModels: remembered('bay.autoDownloadModels') !== '0',
+    whisperModel: remembered('bay.whisperModel'),
+    whisperDownload: null,
     screen: 'home',
     scrubbing: false,
     toast: null,
@@ -1399,6 +1439,24 @@ export const useEditor = create<EditorStore>((set, get) => {
       const current = get().hiddenRegions
       if (current[region] === hidden) return
       set({ hiddenRegions: { ...current, [region]: hidden } })
+    },
+
+    setSettingsOpen(open) {
+      set({ settingsOpen: open })
+    },
+
+    setAutoDownloadModels(on) {
+      remember('bay.autoDownloadModels', on ? '1' : '0')
+      set({ autoDownloadModels: on })
+    },
+
+    setWhisperModel(file) {
+      remember('bay.whisperModel', file)
+      set({ whisperModel: file })
+    },
+
+    setWhisperDownload(download) {
+      set({ whisperDownload: download })
     },
 
     toggleDebugMode() {

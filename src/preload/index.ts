@@ -26,6 +26,7 @@ import { IPC } from '@shared/ipc'
 import type { AgentEntry, AgentEvent } from '@shared/agent'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
+import type { WhisperDownload } from '@shared/whisper'
 
 const api: BayApi = {
   app: {
@@ -65,8 +66,8 @@ const api: BayApi = {
     importPaths: (paths: string[]) =>
       ipcRenderer.invoke(IPC.mediaImportPaths, paths) as Promise<ImportedAsset[]>,
     probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path) as Promise<ProbeResult>,
-    transcribe: (path: string, language?: string) =>
-      ipcRenderer.invoke(IPC.mediaTranscribe, path, language),
+    transcribe: (path: string, language?: string, options?: { download?: boolean; model?: string | null }) =>
+      ipcRenderer.invoke(IPC.mediaTranscribe, path, language, options),
     thumbnail: (request: ThumbnailRequest) =>
       ipcRenderer.invoke(IPC.mediaThumbnail, request) as Promise<string | null>,
     filmstrip: (request: FilmstripRequest) =>
@@ -85,6 +86,19 @@ const api: BayApi = {
       } catch {
         return ''
       }
+    }
+  },
+
+  whisper: {
+    status: (preferredModel) => ipcRenderer.invoke(IPC.whisperStatus, preferredModel),
+    download: (modelId) => ipcRenderer.invoke(IPC.whisperDownload, modelId),
+    cancelDownload: () => ipcRenderer.invoke(IPC.whisperCancel),
+    deleteModel: (file) => ipcRenderer.invoke(IPC.whisperDelete, file),
+    installEngine: () => ipcRenderer.invoke(IPC.whisperInstall),
+    onDownload: (listener) => {
+      const handler = (_event: unknown, payload: WhisperDownload): void => listener(payload)
+      ipcRenderer.on(IPC.whisperProgress, handler)
+      return () => ipcRenderer.removeListener(IPC.whisperProgress, handler)
     }
   },
 

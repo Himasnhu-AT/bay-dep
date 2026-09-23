@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, LoaderCircle } from 'lucide-react'
 import { formatFps, formatTimecode } from '@shared/project'
 import { summariseAgentSurface, type AgentSurfaceStatus } from '@shared/mcp'
+import { downloadSentence } from '@shared/whisper'
 import { Toast, Tooltip } from '@/components'
 import { bay } from '@/lib/bay'
 import { catalogMismatch } from '@/mcp'
@@ -23,6 +24,8 @@ export function StatusBar(): ReactNode {
   const selectionCount = useEditor((state) => state.selection.length)
   const assetCount = useEditor((state) => state.project.assets.length)
   const debugMode = useEditor((state) => state.debugMode)
+  const download = useEditor((state) => state.whisperDownload)
+  const downloading = download?.state === 'downloading' || download?.state === 'verifying'
   const [tools, setTools] = useState<{ ready: boolean } | null>(null)
   const [storage, setStorage] = useState<{ ready: boolean; error: string | null } | null>(null)
   const [agent, setAgent] = useState<AgentSurfaceStatus | null>(null)
@@ -82,6 +85,19 @@ export function StatusBar(): ReactNode {
       />
       <Stat label="media" value={assetCount} />
       <Stat label="selected" value={selectionCount} />
+
+      {/* A model download a transcription started on its own would otherwise be a tool call that
+          sat for two minutes with no explanation. */}
+      {download && downloading && (
+        <button
+          type="button"
+          onClick={() => useEditor.getState().setSettingsOpen(true)}
+          className="t-fast flex items-center gap-1 rounded-sm px-1 text-ink-1 tabular-nums hover:bg-surface-3 hover:text-ink-0"
+        >
+          <LoaderCircle aria-hidden="true" className="size-3 animate-spin" />
+          {downloadSentence(download)}
+        </button>
+      )}
 
       {debugMode && (
         <Tooltip side="top" label="Debug mode is on" shortcut="View → Toggle Debug Mode (⌥⌘D)">

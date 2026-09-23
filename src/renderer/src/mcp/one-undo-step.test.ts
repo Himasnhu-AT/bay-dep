@@ -506,6 +506,10 @@ const STORE_CASES: Record<string, StoreCase> = {
   showHome: { delta: 0, run: () => state().showHome() },
   toggleDebugMode: { delta: 0, run: () => state().toggleDebugMode() },
   setAgentApproval: { delta: 0, run: () => state().setAgentApproval(true) },
+  setSettingsOpen: { delta: 0, run: () => state().setSettingsOpen(true) },
+  setAutoDownloadModels: { delta: 0, run: () => state().setAutoDownloadModels(false) },
+  setWhisperModel: { delta: 0, run: () => state().setWhisperModel('ggml-small.en.bin') },
+  setWhisperDownload: { delta: 0, run: () => state().setWhisperDownload(null) },
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },

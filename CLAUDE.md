@@ -161,11 +161,14 @@ first, and expect its commits to conflict in `src/shared/mcp.ts` and
 its defaults — double quotes and semicolons — and rewrote a whole file into a style nothing else
 here uses, which then conflicted with every branch that touched it.
 
-**The in-app agent edits through proposals.** In a panel session every write is refused until
-the user approves a `propose_edit` plan; the approval is delivered to the model as its next turn,
-naming each call byte for byte, and each approved call runs once. Outside a session (a terminal
-client on the socket) nothing is gated and `propose_edit` says so. `validateOnly: true` on a
-dry-runnable tool passes the gate unapproved, because it changes nothing.
+**The in-app agent edits directly; review is a diff, not a gate.** Every turn that changes the
+project ends with a Changes card (`describeChanges` in `src/shared/diff.ts`, compared by id) and a
+Revert that restores the state before that turn as one undoable step. "Ask before editing" in
+Settings turns the old gate back on: every write is refused until the user approves a
+`propose_edit` plan, the approval is delivered as the model's next turn naming each call byte for
+byte, and each approved call runs once. Outside a session (a terminal client on the socket)
+nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, because it changes
+nothing.
 
 ## graft — read the graph before you grep
 
@@ -608,8 +611,15 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network.** No telemetry, no analytics, no remote fonts or images. The CSP in
-  `src/renderer/index.html` permits no remote origin; loosening it is a product decision, not a fix.
+- **Nothing reaches the network — with one exception, and it is main's.** No telemetry, no
+  analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
+  origin; loosening it is a product decision, not a fix. The exception is whisper models, fetched
+  by main from Hugging Face's `ggerganov/whisper.cpp` repo only when the user clicks Download in
+  Settings, or when a transcription finds no model and "Download models when needed" is on (the
+  renderer passes `download: true` only then). `downloadVerified` checks the size and SHA-256 from
+  the redirect's `x-linked-size`/`x-linked-etag` — measured to be exactly `shasum -a 256` of the
+  file — and writes to `.part` until they match, so a half-download never sits at a name the model
+  search would pick. Audio never leaves the machine.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

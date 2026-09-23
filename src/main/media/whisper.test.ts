@@ -35,3 +35,11 @@ test('test fixtures and non-models are never chosen', () => {
 test('with only a large model, it is used rather than nothing', () => {
   assert.equal(pickWhisperModel(['/m/ggml-large-v3.bin'], 'en'), '/m/ggml-large-v3.bin')
 })
+
+test('the model chosen in Settings wins, unless it cannot do the language', () => {
+  assert.equal(pickWhisperModel(models, 'en', 'ggml-large-v3.bin'), '/m/ggml-large-v3.bin')
+  // An English-only choice meeting French falls back to the ranking rather than failing.
+  assert.equal(pickWhisperModel(models, 'fr', 'ggml-tiny.en.bin'), '/m/ggml-base.bin')
+  // A choice that is no longer on disk (deleted since) is ignored.
+  assert.equal(pickWhisperModel(models, 'en', 'ggml-small.en.bin'), '/m/ggml-base.en.bin')
+})
