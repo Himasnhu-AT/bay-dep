@@ -242,7 +242,12 @@ as they do on video.
 
 `export_timeline` renders the timeline to a file and returns a job id at once; poll
 `track_export` on a sensible interval until it reports the output path. Check that result before
-telling the user it is done.
+telling the user it is done. `complete: false` means some frames of the file are wrong: written
+before a graphic on them (a `.brf`, a composition) had rendered, or with a clip whose grade could
+not be applied. The `warning` names the frames and what is wrong on them, and
+`incompleteFrames.items` / `incompleteFrames.gradeIssues` list each with its frame ranges. That
+file is not correct: follow the warning (export again, or fix the grade first) rather than
+reporting it.
 
 ## Errors are instructions
 

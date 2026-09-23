@@ -23,7 +23,9 @@
  *   file must match the override one.
  *
  * `VERIFY_PROBE=1` makes the runtime's `settle` return at once — the export that does not wait
- * for the worker. The probe must fail against it.
+ * for the worker. The probe must fail against it, and `track_export` must say so too: not
+ * `complete`, with every frame the file is missing the graphic on among its `incompleteFrames`,
+ * naming the module. A normal run is the positive control: `complete: true`, no warning.
  *
  * Writes `~/Movies/bay/brf-export-probe-*.mp4` and deletes it; undoes its edits; never saves.
  * `FRAME_PNG=/path.png` also keeps the file's frame at 3.0 s, to read the count ("3,200") by eye.
@@ -162,6 +164,8 @@ await runProbe(async () => {
 
   const dir = await mkdtemp(join(tmpdir(), 'bay-brf-export-'))
   const exported = []
+  /** The last `track_export` answer: what the agent is told about the file. */
+  let lastJob = null
 
   /** Exports cold (cache cleared), waits for the job, and returns every frame's profile. */
   const exportAll = async (label) => {
@@ -178,6 +182,7 @@ await runProbe(async () => {
       await new Promise((r) => setTimeout(r, 500))
     }
     check(`${label}: the export finished`, job.value.stage, 'done')
+    lastJob = job.value
     // The job reports done when main has closed the file; give the filesystem a moment anyway.
     for (let i = 0; i < 20; i++) {
       if (await stat(outputPath).then((s) => s.size > 0, () => false)) break
@@ -249,15 +254,28 @@ await runProbe(async () => {
     // Missing = lighting less than half of what the oracle lights on that frame.
     const missing = got.filter((r) => r.lit < want[r.frame].lit / 2).map((r) => r.frame)
     console.log(`frames of the file without the graphic: ${missing.length ? missing.join(', ') : 'none'}`)
+    console.log(`track_export: complete ${lastJob.complete}; incompleteFrames ${JSON.stringify(lastJob.incompleteFrames ?? null)}`)
+    if (lastJob.warning) console.log(`track_export warning: ${lastJob.warning}`)
     if (sabotage) {
       const caught = bad.length > 0 || missing.length > 0
       console.log(caught
         ? `\nSELF-CHECK PASSED: the probe caught ${bad.length} mismatched / ${missing.length} empty frame(s) from an export that did not wait`
         : '\nSELF-CHECK FAILED: the probe passed against an export that did not wait for the worker')
+      // What the agent is told about that file. Every frame the file is missing the graphic on
+      // must be among the frames track_export reports — an export that wrote them and answered a
+      // plain `done` is the silent wrong picture.
+      const reported = new Set((lastJob.incompleteFrames?.ranges ?? []).flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i)))
+      const unreported = missing.filter((f) => !reported.has(f))
+      check('track_export does not call the export complete', lastJob.complete, false)
+      check(`track_export names every frame of the file that is missing the graphic (${missing.length})`, unreported.join(','), '')
+      check('track_export names the module', (lastJob.incompleteFrames?.items ?? []).map((i) => i.name).join(','), 'Counter probe')
       return caught
     }
     check('no frame of the file is missing the graphic', missing.length, 0)
     check('every frame of the file matches preview_frame', bad.length, 0)
+    // The positive control for the report: a correct file is called complete, with no warning.
+    check('track_export calls the correct export complete', lastJob.complete, true)
+    check('and gives it no warning', lastJob.warning ?? null, null)
 
     // -- a placement override ------------------------------------------------------------------
     const current = (await call('inspect_item', { itemId })).value?.variables?.value ?? 3200

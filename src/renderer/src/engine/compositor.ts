@@ -89,6 +89,12 @@ export interface DrawStats {
    */
   unresolvedNames: string[]
   /**
+   * The names behind `pending` alone — what this frame is still waiting for, as opposed to what
+   * it drew as a placeholder. The exporter reports these when it writes a frame without them, and
+   * `unresolvedNames` cannot tell it which is which.
+   */
+  pendingNames: string[]
+  /**
    * How each text item actually came out.
    *
    * Reported for the same reason `pending` is: the output looks plausible while being wrong.
@@ -221,7 +227,7 @@ export class Compositor {
   ): DrawStats {
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
-    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [] }
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
 
     this.#pool.beginGeneration()
     this.#project = project
@@ -464,8 +470,7 @@ export class Compositor {
         const lastFrame = Math.max(0, Math.ceil((asset.durationUs / 1_000_000) * fps) - 1)
         const scene = brfRuntime.scene(asset.brfCode, values, Math.min(lastFrame, Math.round(seconds * fps)), fps, size.width, size.height)
         if ('pending' in scene) {
-          stats.pending += 1
-          stats.unresolvedNames.push(asset.name)
+          notePending(stats, asset.name)
           return
         }
         if ('error' in scene) {
@@ -488,8 +493,7 @@ export class Compositor {
       const painted = this.#brf.draw(doc, item, seconds, box, { width: box.width * scale, height: box.height * scale }, values)
       if ('pending' in painted) {
         // A variable-font face still loading (`brfFonts.ts`): incomplete, not empty.
-        stats.pending += 1
-        stats.unresolvedNames.push(asset.name)
+        notePending(stats, asset.name)
         return
       }
       if ('error' in painted) {
@@ -524,8 +528,7 @@ export class Compositor {
           }) ?? null)
         : null
       if (!bitmap) {
-        stats.pending += 1
-        stats.unresolvedNames.push(asset.name)
+        notePending(stats, asset.name)
         return
       }
       this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul, stats)
@@ -546,8 +549,7 @@ export class Compositor {
       // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the one
       // or two frames a load takes, which reads as a glitch in the edit rather than as a
       // load; the background showing through for that long does not.
-      stats.pending += 1
-      stats.unresolvedNames.push(asset.name)
+      notePending(stats, asset.name)
       return
     }
 
@@ -902,6 +904,18 @@ function applyLook(ctx: RenderTarget, item: Item): void {
   if (isPlainLook(filter, operation)) return
   if (filter !== NO_FILTER) ctx.filter = filter
   ctx.globalCompositeOperation = operation
+}
+
+/**
+ * One item this frame is still waiting for. The count, the combined list and the pending-only
+ * list move together here, because a pending site that bumped the count and forgot the name is
+ * exactly how an export would report "1 frame incomplete" without saying what was missing — the
+ * variable-font site arrived in a parallel branch after `pendingNames` and did just that.
+ */
+function notePending(stats: DrawStats, name: string): void {
+  stats.pending += 1
+  stats.unresolvedNames.push(name)
+  stats.pendingNames.push(name)
 }
 
 function noteGradeIssue(stats: DrawStats | undefined, message: string): void {

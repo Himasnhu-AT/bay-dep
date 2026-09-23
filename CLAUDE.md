@@ -236,6 +236,18 @@ screened in RGB: in YUV it casts violet. A render target created while its textu
 for reading is a WebGL feedback loop — the first halation draw of every new size failed until
 `target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
 
+**An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter
+waits for pending items for a bounded time and then writes the frame anyway. That frame is a wrong
+picture: a `.brf` or composition still missing, or a clip whose grade failed and was drawn
+ungraded. Each such frame is recorded from the draw that was written (`DrawStats.pendingNames`,
+`gradeIssues`). `describeIncomplete` turns the record into `IncompleteFrames` (`@shared/ipc`),
+which lists the frames and ranges, each item and grade issue, and one sentence with the
+better-hidden fault first. `track_export` reads it live from the exporter, not from main, which
+cannot know. It returns `complete: false`, `incompleteFrames` and a `warning`, and a clean `done`
+returns `complete: true`. The export form shows the same sentence. The frame count used to be a
+counter that nothing read. Every pending site goes through `notePending`: a branch that bumped
+`pending` and forgot the name arrived in parallel with the field.
+
 **Tool calls stream into the panel as the model writes them.** `content_block_start` for a
 `tool_use` shows the card at once, and each `input_json_delta` (keyed by block index, so the stream
 mapping keeps per-run state) appends to it; the card shows what is being written and the end of it —

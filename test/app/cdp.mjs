@@ -26,11 +26,15 @@
 
 export const PROBE_FLAG = 'bay.debug'
 
+const DEV_SERVER_ROOT = /^http:\/\/(localhost|127\.0\.0\.1):\d+\/(\?.*)?$/
+
 export async function findRenderer(port, attempts = 60) {
   for (let i = 0; i < attempts; i += 1) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
-      const page = list.find((t) => t.type === 'page' && t.url.includes('index.html'))
+      // The built app loads `…/renderer/index.html`; under `pnpm dev` the editor is the Vite dev
+      // server's root, `http://localhost:5173/` (or the next free port), with no file name at all.
+      const page = list.find((t) => t.type === 'page' && (t.url.includes('index.html') || DEV_SERVER_ROOT.test(t.url)))
       if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl
     } catch {
       // The app is still starting; the debugging port refuses connections until it is up.

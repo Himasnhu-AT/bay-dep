@@ -12,7 +12,7 @@
  * polls a job that will never finish. That exact gap shipped once already.
  */
 
-import type { ExportFormat, ExportProgress } from '@shared/ipc'
+import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
@@ -175,16 +175,29 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     )
   }
 
-  const { progress } = job
+  // Read live from the exporter, not from main's progress: main encodes what it is handed and
+  // cannot know a frame was missing something. Final before `done` can arrive (see the getter).
+  return exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
+}
+
+/**
+ * What `track_export` answers for a job in this state. Apart from the job map so the answer can
+ * be held still without an encoder.
+ */
+export function exportStatus(
+  progress: ExportProgress,
+  outputPath: string,
+  incomplete: IncompleteFrames | null
+): Record<string, unknown> {
   const finished = ['done', 'failed', 'cancelled'].includes(progress.stage)
   return {
-    jobId,
+    jobId: progress.jobId,
     stage: progress.stage,
     framesDone: progress.framesDone,
     framesTotal: progress.framesTotal,
     percent: progress.progress === null ? null : Math.round(progress.progress * 100),
     finished,
-    ...(progress.stage === 'done' ? { outputPath: progress.outputPath ?? job.outputPath } : {}),
+    ...(progress.stage === 'done' ? { outputPath: progress.outputPath ?? outputPath } : {}),
     ...(progress.error ? { error: progress.error } : {}),
     ...(finished
       ? {}
@@ -193,7 +206,23 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     // means the agent sees it at the moment it is about to report success.
     ...(progress.stage === 'done' && progress.framesDone === 0
       ? { warning: 'The export finished with zero frames — the range held nothing.' }
-      : {})
+      : {}),
+    // A file with a graphic missing from some frames is not a clean export, and `done` alone
+    // would let the agent report it as one. `complete: true` is claimed only once the job is done.
+    ...(incomplete
+      ? {
+          complete: false,
+          incompleteFrames: {
+            frames: incomplete.frames,
+            ranges: incomplete.ranges,
+            items: incomplete.items,
+            gradeIssues: incomplete.gradeIssues
+          },
+          warning: incomplete.message
+        }
+      : progress.stage === 'done'
+        ? { complete: true }
+        : {})
   }
 }
 

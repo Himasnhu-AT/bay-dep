@@ -145,6 +145,38 @@ export interface ExportProgress {
   message?: string
   outputPath?: string
   error?: string
+  /**
+   * Frames written with something still not drawn. Set by the renderer, which composites the
+   * frames — main encodes whatever it is handed and cannot know. Absent when every frame was
+   * complete.
+   */
+  incomplete?: IncompleteFrames
+}
+
+/**
+ * Frames an export wrote with the wrong picture, for one of two reasons:
+ *
+ * - **An item was still pending** — a `.brf` scene still in its worker, a composition frame not
+ *   yet captured, a video that never finished seeking. The frame is in the file with that item
+ *   missing: the background shows where it should be.
+ * - **A clip's grade failed** — the clip is in the file ungraded (or with part of its grade
+ *   skipped, such as a LUT whose asset is gone). This one hides better: an ungraded clip looks
+ *   like a clip nobody graded, so it comes first in the sentence.
+ *
+ * The file is kept (every other frame is right, and a re-export usually fixes a pending item),
+ * but the export is not reported as clean: `message` is the sentence the user and the agent read.
+ */
+export interface IncompleteFrames {
+  /** How many frames of the file are wrong in either way. */
+  frames: number
+  /** Those frames, as inclusive timeline-frame ranges: `[[0, 1], [15, 15]]`. */
+  ranges: [number, number][]
+  /** What was missing, by name, on how many frames and where. Most frames first. */
+  items: { name: string; frames: number; ranges: [number, number][] }[]
+  /** Each distinct grade failure (it names its clip), on how many frames and where. */
+  gradeIssues: { issue: string; frames: number; ranges: [number, number][] }[]
+  /** One paragraph naming the frames, what went wrong on them, and what to do about it. */
+  message: string
 }
 
 export interface ExportJob {

@@ -52,6 +52,11 @@ export default defineConfig({
       }
     },
     plugins: [react(), tailwindcss()],
+    // Dev only. `sucrase` is reached only from the `.brf` worker (`new URL('./brf.worker.ts',
+    // import.meta.url)`), which Vite's start-up scan of index.html does not follow — so the first
+    // `write_brf` of a session with a cold `node_modules/.vite` discovered it, re-optimised, and
+    // reloaded the editor mid-call, taking any unsaved edits with it. Measured twice (test.md §2.10).
+    optimizeDeps: { include: ['sucrase'] },
     build: {
       rollupOptions: {
         input: { index: resolve('src/renderer/index.html') }

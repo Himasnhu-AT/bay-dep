@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
-import type { ExportFormat, ExportProgress } from '@shared/ipc'
+import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { formatTimecode } from '@shared/project'
 import { Button, Field, Modal, Section, Select } from '@/components'
 import { FrameExporter } from '@/engine'
@@ -76,6 +76,9 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
   const [outputPath, setOutputPath] = useState<string | null>(null)
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [starting, setStarting] = useState(false)
+  /** Frames written with something still missing — held apart from `progress`, which main's
+   * `done` event replaces wholesale and which may arrive after the exporter returns. */
+  const [incomplete, setIncomplete] = useState<IncompleteFrames | null>(null)
   const jobRef = useRef<string | null>(null)
   const exporterRef = useRef<FrameExporter | null>(null)
 
@@ -121,6 +124,7 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
     }
     setStarting(true)
     setProgress(null)
+    setIncomplete(null)
     const job = await call('Export', (api) =>
       api.export.start({
         project,
@@ -171,7 +175,13 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
     exporterRef.current = exporter
 
     try {
-      await exporter.run()
+      const outcome = await exporter.run()
+      // An export that wrote frames with a graphic missing is not a clean one. Main says `done`
+      // because the file closed; only the exporter knows what the frames held.
+      if (outcome.incomplete) {
+        setIncomplete(outcome.incomplete)
+        notify(outcome.incomplete.message, 'error')
+      }
     } catch (error) {
       setProgress((previous) => ({
         jobId: job.jobId,
@@ -298,6 +308,12 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
               {progress.message ? ` · ${progress.message}` : ''}
             </p>
             {progress.error && <p className="mt-1 text-[11px] text-danger">{progress.error}</p>}
+            {incomplete && (
+              <p role="alert" className="mt-1 flex gap-1.5 text-[11px] text-warning">
+                <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+                <span>{incomplete.message}</span>
+              </p>
+            )}
           </>
         ) : (
           <p className="text-[11px] text-ink-2">
