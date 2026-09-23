@@ -66,7 +66,71 @@ pnpm typecheck        # tsc over both projects; the renderer and node halves are
 pnpm test             # the whole suite, on node:test — no test framework in the tree
 pnpm bundle           # unpacked app bundle, for checking real app identity
 pnpm release          # packaged artifact via electron-builder (unsigned; see below)
+pnpm release:signed   # signed with BAY_SIGN_IDENTITY; notarised only when Apple creds are set
+./run.sh              # build, then run exactly ONE instance with CDP on 9222 (--no-build, --stop)
 ```
+
+Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app agent on the Agent
+SDK instead of the `claude` CLI (default); `BAY_MCP_MODE=gateway` makes the proxy list three tools
+(`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog.
+
+## Running and testing the app
+
+**Probes of main-process code need a restart, not just a build.** `electron .` runs whatever is
+in `out/`, and a running instance keeps the main bundle it started with — `pnpm build` alone
+changes nothing in a process that is already up. `./run.sh` rebuilds *and* replaces the one
+instance; use it, and read its first line, because a failed typecheck ends it before anything
+launches and a probe run against no app reports `CANNOT MEASURE`, which is not a result.
+
+**Drive the running app with `agent-browser` over CDP**, not with new hand-written CDP scripts:
+`agent-browser connect 9222`, then `snapshot -i`, `click @ref`, `fill`, `screenshot`, `eval`.
+Two traps, both hit:
+
+- **It follows new targets.** Placing an HTML composition opens a hidden render window, and
+  agent-browser switches to it — a screenshot then shows a blank 3840×2160 page, which reads as
+  "the editor is broken". `agent-browser tab` lists targets; `agent-browser tab t1` goes back.
+- **It cannot hold a modifier through a drag.** Alt-drag (slip/slide/roll) has to be exercised
+  by dispatching `PointerEvent`s with `altKey: true` from `eval`. Say so when you report it — that
+  tests the handler, not the OS delivering the modifier.
+
+A value read through a store snapshot taken *before* an action is the old value:
+`const s = getState(); s.undo(); s.project` reports the state before the undo. Re-read.
+
+**Undo what a probe did, and do not save.** `test/app/mcp.mjs` calls every tool and leaves
+~28 edits in the open project; unwinding `past` restores it. The fixture on disk only changes if
+something saves, and nothing a probe does should.
+
+**`--setting-sources ''` does not stop MCP servers from loading.** Measured: a CLI session started
+with it still had another server's tools. Only `--mcp-config` plus `--strict-mcp-config` isolates
+the in-app agent to bay's tools, and the deny list in `src/main/agent/cli.ts` is still needed on
+top, because an allow-list governs what needs approval, not what exists.
+
+**A navigation can start and never commit.** bay's `will-navigate` guard cancels every
+renderer-initiated navigation, so `did-start-navigation` fires for a `location.reload()` that
+never happens. State keyed on navigation *start* (executor readiness was) is then wrong for good;
+key it on `did-navigate`, the commit. `test/app/mcp-during-reload.mjs` holds both cases.
+
+**A race you cannot reproduce is not a race you have disproved.** The executor-readiness wait
+did not change a single outcome on this machine — cold launch and a 0–160ms reload sweep both
+answered with it removed, because the renderer mounts in ~25ms here. It stays because the fault
+it guards (IPC to a page with no listener is dropped silently) is real and was reproduced 2 of 2
+times elsewhere, and its commit says it is unreproduced here. That is the honest version of the
+"defensive code" rule above: keep it only with the evidence and the gap both written down.
+
+**Worktree agents start from `main`, not from your branch.** Every one spawned this way came up
+on an old commit without the files its task named. Tell it to `git merge --ff-only <branch>`
+first, and expect its commits to conflict in `src/shared/mcp.ts` and
+`src/renderer/src/mcp/index.ts`, where every tool is registered.
+
+**There is no Prettier config, so do not run Prettier.** `npx prettier --write` falls back to
+its defaults — double quotes and semicolons — and rewrote a whole file into a style nothing else
+here uses, which then conflicted with every branch that touched it.
+
+**The in-app agent edits through proposals.** In a panel session every write is refused until
+the user approves a `propose_edit` plan; the approval is delivered to the model as its next turn,
+naming each call byte for byte, and each approved call runs once. Outside a session (a terminal
+client on the socket) nothing is gated and `propose_edit` says so. `validateOnly: true` on a
+dry-runnable tool passes the gate unapproved, because it changes nothing.
 
 ## graft — read the graph before you grep
 
