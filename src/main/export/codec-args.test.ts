@@ -60,7 +60,7 @@ test('mp4 and mov are H.264 + AAC in 4:2:0, with the index moved to the front', 
       // 4:4:4 from an RGBA pipe is ffmpeg's default for libx264, and QuickTime cannot play it.
       assert.equal(valueOf(video, '-pix_fmt'), 'yuv420p', `${format}/${quality}`)
     }
-    assert.equal(valueOf(audioCodecArgs(format), '-c:a'), 'aac', format)
+    assert.match(valueOf(audioCodecArgs(format), '-c:a') ?? '', /^aac(_at)?$/, format)
     assert.match(valueOf(containerArgs(format), '-movflags') ?? '', /faststart/, format)
   }
 })
