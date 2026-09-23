@@ -7,7 +7,7 @@
  * directories are.
  */
 
-import { peaksDir, thumbsDir } from '../paths'
+import { peaksDir, thumbsDir } from './cache-dirs'
 import { CACHE_BUDGET_BYTES, enforceCacheBudget, touchEntry } from './cache-budget'
 
 /**

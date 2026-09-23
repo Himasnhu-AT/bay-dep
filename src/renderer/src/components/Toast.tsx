@@ -1,7 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import { AlertTriangle, Info, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import { useEditor } from '@/store/editor'
 
 const DISMISS_MS = { info: 4500, error: 9000 }
 
@@ -9,11 +8,17 @@ const DISMISS_MS = { info: 4500, error: 9000 }
  * The single notification surface, inline in the status bar rather than floating over the
  * timeline. A toast that covers the thing it is telling you about is worse than no toast,
  * and in an editor the bottom-right corner is where clips are.
+ *
+ * It takes the toast as a prop rather than reading the store: `components/` is the
+ * presentational layer, and `src/shared/boundaries.test.ts` keeps the store out of it.
  */
-export function Toast(): ReactNode {
-  const toast = useEditor((state) => state.toast)
-  const dismiss = useEditor((state) => state.dismissToast)
-
+export function Toast({
+  toast,
+  onDismiss: dismiss
+}: {
+  toast: { kind: 'info' | 'error'; text: string } | null
+  onDismiss: () => void
+}): ReactNode {
   useEffect(() => {
     if (!toast) return
     // The store hands back a fresh object with a fresh id on every notify, so two

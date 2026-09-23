@@ -17,7 +17,7 @@
 
 import type { CompositionSound } from '@shared/composition'
 import type { Asset } from '@shared/project'
-import { bay } from '@/lib/bay'
+import { bay } from '@/lib/bridge'
 
 /** The playable sounds `asset` declares; null while not yet known. */
 export type SoundLookup = (asset: Asset) => readonly CompositionSound[] | null

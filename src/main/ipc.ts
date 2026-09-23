@@ -21,9 +21,9 @@ import {
   writeComposition
 } from './html/compositions'
 import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
-import { mediaToolsReady } from './media/ffmpeg'
+import { mediaToolsReady } from './ffmpeg/ffmpeg'
 import { collectMetrics } from './metrics'
-import { probe } from './media/probe'
+import { probe } from './ffmpeg/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
 import {
   cancelWhisperDownload,

@@ -28,9 +28,9 @@ import {
   type WhisperDownload,
   type WhisperStatus
 } from '@shared/whisper'
-import { searchDirs } from '../agent/locate'
+import { searchDirs } from '../search-dirs'
 import { downloadVerified } from './download'
-import { ffmpegBin, run } from './ffmpeg'
+import { ffmpegBin, run } from '../ffmpeg/ffmpeg'
 
 /**
  * Which model to use when several are present. Balanced for editing: accurate enough for

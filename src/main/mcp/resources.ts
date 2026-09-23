@@ -12,17 +12,10 @@
  */
 
 import { ALL_RESOURCES } from '@shared/resources'
-import { templateUri } from '@shared/templates'
 import { examplesGuide, toolReference } from '@shared/guides'
+import { TEMPLATE_BODIES } from '../templates'
 import editing from './docs/editing.md?raw'
 import script from './docs/script.md?raw'
-import tplSubtitle from '../templates/subtitle.html?raw'
-import tplLowerThird from '../templates/lower-third.html?raw'
-import tplTitleCard from '../templates/title-card.html?raw'
-import tplCallout from '../templates/callout.html?raw'
-import tplStat from '../templates/stat.html?raw'
-import tplProgress from '../templates/progress.html?raw'
-import tplEndCard from '../templates/end-card.html?raw'
 import contract from './docs/compositions/contract.md?raw'
 import minimal from './docs/compositions/minimal-composition.md?raw'
 import dataAttributes from './docs/compositions/data-attributes.md?raw'
@@ -50,14 +43,7 @@ const BODIES: Record<string, string> = {
   'bay://guide/composition/sub-compositions': subCompositions,
   'bay://guide/composition/editing-recipes': editingRecipes,
   'bay://guide/composition/full-screen-motion': fullScreenMotion,
-  // Keyed through `templateUri` so the address cannot drift from the catalog's id.
-  [templateUri('subtitle')]: tplSubtitle,
-  [templateUri('lower-third')]: tplLowerThird,
-  [templateUri('title-card')]: tplTitleCard,
-  [templateUri('callout')]: tplCallout,
-  [templateUri('stat')]: tplStat,
-  [templateUri('progress')]: tplProgress,
-  [templateUri('end-card')]: tplEndCard
+  ...TEMPLATE_BODIES
 }
 
 /**

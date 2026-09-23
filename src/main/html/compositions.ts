@@ -40,7 +40,7 @@ import {
   type CompositionInfo
 } from '@shared/composition'
 import { allowPath, isAllowed } from '../protocol'
-import { probe } from '../media/probe'
+import { probe } from '../ffmpeg/probe'
 import { checkSounds, fileChecks } from './audio'
 import { bgraToRgba, describeSizeMismatch } from './bitmap'
 import { seekScript, variablesScript } from './scripts'

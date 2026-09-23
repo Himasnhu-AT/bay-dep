@@ -11,7 +11,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findClaude, notFoundMessage, searchDirs } from './locate'
+import { findClaude, notFoundMessage } from './locate'
+import { searchDirs } from '../search-dirs'
 
 const HOME = '/Users/x'
 /** A GUI-launched process on macOS gets this and nothing else. */

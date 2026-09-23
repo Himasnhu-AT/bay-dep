@@ -18,7 +18,7 @@
  * rational with `Number()`, and dropping the zero-denominator guard. All three fail here.
  *
  * Run with `pnpm test`, or on its own:
- *   node --import ./src/test-hooks.mjs --test src/main/media/probe.test.ts
+ *   node --import ./src/test-hooks.mjs --test src/main/ffmpeg/probe.test.ts
  */
 
 import { test } from 'node:test'

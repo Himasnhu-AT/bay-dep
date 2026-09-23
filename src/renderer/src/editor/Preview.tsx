@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from 'react'
 import { Film } from 'lucide-react'
 import { useElementSize } from '@/lib/useElementSize'
-import { useEngine } from '@/engine'
+import { useEngine } from '@/lib/useEngine'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { DebugHud } from './DebugHud'
 

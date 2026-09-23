@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { findTemplate, sizeTemplate, templateFileName, templateUri, TEMPLATES } from '@shared/templates'
-import { resourceBody } from '../mcp/resources'
+import { TEMPLATE_BODIES } from '../templates'
 import { generatedDir, templatesDir } from '../paths'
 import { writeComposition } from './compositions'
 
@@ -26,7 +26,7 @@ export async function writeTemplate(
       error: `There is no template "${templateId}". bay ships: ${TEMPLATES.map((t) => t.id).join(', ')}.`
     }
   }
-  const body = resourceBody(templateUri(spec.id))
+  const body = TEMPLATE_BODIES[templateUri(spec.id)] ?? null
   if (body === null) {
     return {
       ok: false,

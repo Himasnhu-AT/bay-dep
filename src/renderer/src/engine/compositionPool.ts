@@ -24,7 +24,7 @@ import {
   variablesKey,
   type CompositionVariable
 } from '@shared/composition'
-import { bay } from '@/lib/bay'
+import { bay } from '@/lib/bridge'
 
 /**
  * How much decoded composition imagery to keep.

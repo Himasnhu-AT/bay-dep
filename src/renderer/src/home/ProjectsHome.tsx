@@ -69,6 +69,8 @@ function relativeTime(then: number, now: number): string {
 }
 
 export function ProjectsHome(): ReactNode {
+  const toast = useEditor((state) => state.toast)
+  const dismissToast = useEditor((state) => state.dismissToast)
   const enterProject = useEditor((state) => state.enterProject)
   const notify = useEditor((state) => state.notify)
 
@@ -255,7 +257,7 @@ export function ProjectsHome(): ReactNode {
         </section>
       </div>
       <div className="fixed right-4 bottom-4">
-        <Toast />
+        <Toast toast={toast} onDismiss={dismissToast} />
       </div>
     </div>
   )

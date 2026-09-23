@@ -18,6 +18,8 @@ function Stat({ label, value }: { label: string; value: ReactNode }): ReactNode 
 }
 
 export function StatusBar(): ReactNode {
+  const toast = useEditor((state) => state.toast)
+  const dismissToast = useEditor((state) => state.dismissToast)
   const timeline = useEditor(selectTimeline)
   const duration = useEditor(selectDuration)
   const fps = useEditor(selectFps)
@@ -178,7 +180,7 @@ export function StatusBar(): ReactNode {
       )}
 
       <div className="ml-auto flex min-w-0 items-center">
-        <Toast />
+        <Toast toast={toast} onDismiss={dismissToast} />
       </div>
     </footer>
   )

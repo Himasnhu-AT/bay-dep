@@ -11,13 +11,13 @@ import { access, constants } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc'
 import { US_PER_SECOND } from '@shared/project'
-import { thumbsDir } from '../paths'
+import { thumbsDir } from './cache-dirs'
 import { mediaUrl } from '../protocol'
-import { ffmpegBin, run } from './ffmpeg'
+import { ffmpegBin, run } from '../ffmpeg/ffmpeg'
 import { cacheKey, stampOf } from './cache-key'
 import { once, withSlot } from './queue'
 import { noteCacheHit, scheduleCacheUpkeep } from './cache-upkeep'
-import { probe } from './probe'
+import { probe } from '../ffmpeg/probe'
 
 async function exists(path: string): Promise<boolean> {
   try {

@@ -9,11 +9,11 @@
 
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { peaksDir } from '../paths'
-import { ffmpegBin, runBinary } from './ffmpeg'
+import { peaksDir } from './cache-dirs'
+import { ffmpegBin, runBinary } from '../ffmpeg/ffmpeg'
 import { cacheKey, stampOf } from './cache-key'
 import { once, withSlot } from './queue'
-import { probe } from './probe'
+import { probe } from '../ffmpeg/probe'
 import { noteCacheHit, scheduleCacheUpkeep } from './cache-upkeep'
 
 const SAMPLE_RATE = 8000
