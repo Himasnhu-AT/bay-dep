@@ -170,6 +170,83 @@ body {
   }
 }
 
+/*
+ * Depth. Leaves of one page lifting at different rates as you turn past them.
+ * See DESIGN.md, "Depth".
+ *
+ * Scroll-linked, and entirely CSS: a scroll-driven animation of `translate`
+ * (and, for the hero, `opacity`) runs on the compositor, so scrolling never
+ * wakes a script or lays the page out again. Browsers without scroll-driven
+ * animations get the same curves from DepthFallback. Motion only: with
+ * `prefers-reduced-motion: reduce` none of this applies, and the page is flat.
+ *
+ * peel   the hero. Each line rises faster than the page by --depth of the
+ *        scroll over the first screen, so the lines separate as they leave,
+ *        and fades toward --fade.
+ * enter  a figure arriving: it starts --enter below its place and settles as
+ *        its [data-depth-root] finishes entering, so it reads as set deeper
+ *        than the paper around it.
+ * drift  a marginal note, moving --drift either side of its place while its
+ *        row crosses the screen.
+ *
+ * Nothing here starts hidden: every from-state is visible and a few pixels
+ * off its place, so no content depends on a timeline ever advancing.
+ */
+@keyframes depth-peel {
+  to {
+    translate: 0 calc(var(--depth, 0) * -100vh);
+    opacity: var(--fade, 1);
+  }
+}
+
+@keyframes depth-enter {
+  from {
+    translate: 0 var(--enter, 6vh);
+  }
+  to {
+    translate: 0 0;
+  }
+}
+
+@keyframes depth-drift {
+  from {
+    translate: 0 var(--drift, 18px);
+  }
+  to {
+    translate: 0 calc(var(--drift, 18px) * -1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    [data-depth] {
+      will-change: translate;
+    }
+
+    [data-depth="peel"] {
+      animation: depth-peel linear both;
+      animation-timeline: scroll(root block);
+      animation-range: 0 100vh;
+    }
+
+    [data-depth-root] {
+      view-timeline: --depth-root block;
+    }
+
+    [data-depth="enter"] {
+      animation: depth-enter linear both;
+      animation-timeline: --depth-root;
+      animation-range: entry 0% entry 100%;
+    }
+
+    [data-depth="drift"] {
+      animation: depth-drift linear both;
+      animation-timeline: view(block);
+      animation-range: cover 0% cover 100%;
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-nudge] {
     animation: none;

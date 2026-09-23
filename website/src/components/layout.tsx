@@ -58,6 +58,9 @@ export function PageHeader({
   );
 }
 
+const ACTION =
+  "group inline-flex items-center gap-3 rounded-[1px] border border-ink px-[30px] py-[15px] text-[13px] font-medium tracking-[0.14em] text-ink uppercase transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-ink hover:text-paper disabled:cursor-default disabled:border-line disabled:text-muted disabled:hover:bg-transparent disabled:hover:text-muted";
+
 /**
  * The site's only button. An outlined box that fills with ink on hover, with an
  * arrow that nudges. Use it for the one action a page is asking for.
@@ -83,7 +86,7 @@ export function ActionLink({
       </span>
     </>
   );
-  const classes = `group inline-flex items-center gap-3 rounded-[1px] border border-ink px-[30px] py-[15px] text-[13px] font-medium tracking-[0.14em] text-ink uppercase transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-ink hover:text-paper ${className}`;
+  const classes = `${ACTION} ${className}`;
 
   return external ? (
     <a href={href} className={classes}>
@@ -93,6 +96,115 @@ export function ActionLink({
     <Link href={href} className={classes}>
       {content}
     </Link>
+  );
+}
+
+/**
+ * ActionLink's twin for an action that is not a navigation: sign in, send,
+ * approve. Same box, same fill on hover. `quiet` drops the box for a secondary
+ * action beside a primary one, so a screen still asks for one thing.
+ */
+export function ActionButton({
+  children,
+  onClick,
+  type = "button",
+  disabled = false,
+  quiet = false,
+  className = "",
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  type?: "button" | "submit";
+  disabled?: boolean;
+  quiet?: boolean;
+  className?: string;
+}) {
+  if (quiet) {
+    return (
+      <button
+        type={type}
+        onClick={onClick}
+        disabled={disabled}
+        className={`text-[13px] tracking-[0.06em] text-ink-soft underline decoration-line underline-offset-4 transition-colors duration-200 hover:text-brass-deep hover:decoration-brass-deep disabled:text-muted ${className}`}
+      >
+        {children}
+      </button>
+    );
+  }
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`${ACTION} ${className}`}
+    >
+      {children}
+      <span
+        aria-hidden
+        className="transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1.5 group-disabled:translate-x-0"
+      >
+        &rarr;
+      </span>
+    </button>
+  );
+}
+
+/**
+ * A line to write on. The field is a rule rather than a box, the way a form is
+ * ruled on paper. Here the rule carries meaning, so it is ink-soft (8.6:1) and
+ * never `line` (1.4:1). The label is an eyebrow.
+ */
+export function Field({
+  label,
+  hint,
+  multiline = false,
+  id,
+  value,
+  onChange,
+  ...rest
+}: {
+  label: string;
+  hint?: ReactNode;
+  multiline?: boolean;
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  autoComplete?: string;
+  placeholder?: string;
+  maxLength?: number;
+  required?: boolean;
+}) {
+  const classes =
+    "mt-3 block w-full rounded-none border-0 border-b border-ink-soft bg-transparent px-0 pb-2.5 text-base text-ink placeholder:text-muted focus:border-brass-deep focus:outline-none focus-visible:outline-none";
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="text-eyebrow font-medium text-muted uppercase"
+      >
+        {label}
+      </label>
+      {multiline ? (
+        <textarea
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={3}
+          className={`${classes} resize-y`}
+          {...rest}
+        />
+      ) : (
+        <input
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={classes}
+          {...rest}
+        />
+      )}
+      {hint ? <p className="mt-2 text-xs text-muted">{hint}</p> : null}
+    </div>
   );
 }
 

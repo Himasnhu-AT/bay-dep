@@ -19,6 +19,31 @@ runtime, no cookie banner because there is nothing to consent to. If a change ad
 request to a third party, it contradicts the thing the copy is claiming, and it is a
 product decision rather than a technical one. Stop and raise it.
 
+**There is one exception, it is deliberate, and it is narrow. Do not "fix" it away.**
+The app is by invitation (the owner's decision, 2026-09-23), and access is decided by
+Firebase (project `bay-editor-app`): Firebase Auth for sign-in, Firestore for the
+`waitlist` and `access` collections. So the site talks to Google, under three conditions
+that together are the rule:
+
+- **Only on interaction.** No page loads the Firebase SDK on arrival. It is reached only
+  through `loadFirebase()` in `src/lib/firebase.ts`, a dynamic `import()` called from a
+  button's handler. The exceptions to *that* are pages whose arrival is itself the act:
+  the email-link landing page (`/waitlist/finish`), and a page on a browser where the
+  visitor signed in before (the `bay.signedIn` mark in localStorage, cleared on sign-out).
+  `/` and every page without a sign-in button make zero third-party requests, and that
+  was measured with a network capture. Measure it again after touching any of this.
+- **Only for access.** Sign-in, the waitlist request, the grant check, and the owner's
+  `/admin`. Never analytics, never Firebase Analytics, never Performance Monitoring,
+  never App Check's reCAPTCHA on page load, never a "while we're here".
+- **Only from one module.** `firebase/*` is imported in `src/lib/firebase.ts` and nowhere
+  else (types excepted). A static import anywhere else puts the SDK in a page bundle and
+  starts it before anyone asked.
+
+The copy says exactly this and no more: access is by invitation, you sign in once, the app
+checks access with Google's sign-in service when online and works offline (14-day
+recheck), and projects, media and renders never leave the machine. If the exception
+grows, the copy has to grow with it, and that is again a product decision.
+
 Fonts are self-hosted through `next/font`. Keep it that way.
 
 ## The second rule
@@ -41,10 +66,20 @@ the `rust-engine-final` tag; do not cite it.)
 ## Layout
 
 ```
-src/app/            routes: /, /agents, /status
-src/components/     layout.tsx (the primitives), SiteNav, SiteFooter, Reveal
+src/app/            routes: /, /agents, /status, /waitlist, /waitlist/finish,
+                    /desktop/sign-in, /admin (the last three are noindex and unlinked)
+src/components/     layout.tsx (the primitives), SiteNav, SiteFooter, Reveal,
+                    DepthFallback; access/ holds the sign-in and access pages' clients
 src/lib/product.ts  the name, kind, status, domain, contact, optional download
+src/lib/firebase.ts the Firebase config and the lazy loader; the only firebase import
+src/lib/access.ts   everything done with it: sign-in, waitlist, grants, admin
 ```
+
+`/desktop/sign-in?port=&state=` is the browser half of the desktop app's sign-in: it
+posts `{state, idToken, refreshToken}` to `http://127.0.0.1:<port>/callback` and nowhere
+else. The port and state are validated before anything is sent; the host is never read
+from the URL. The app re-verifies everything itself, so this page is a courier, not an
+authority.
 
 ## Conventions
 
@@ -54,7 +89,9 @@ src/lib/product.ts  the name, kind, status, domain, contact, optional download
 - **Status is honest.** The four words are defined in VOICE.md and describe the app
   today. Do not promote it to balance a layout.
 - **No download link until there is a build.** `download` stays undefined and the button
-  does not render. No "coming soon" buttons, no email capture standing in for one.
+  does not render. No "coming soon" buttons. The waitlist is not email capture standing
+  in for a download: it is how access to the app is granted, it sends no mail beyond a
+  sign-in link, and it must never grow a newsletter checkbox.
 - **Every page carries a "What it will not do" section.** The omissions are the reason
   the site is worth reading, and they are the first thing a rewrite tends to drop.
 - **No screenshots until they are real.** A placeholder dates the page and nobody comes

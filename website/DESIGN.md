@@ -185,9 +185,13 @@ that would make the page read as a dashboard.
 
 ## Components
 
-All of them are in `src/components/layout.tsx`, and they are server components. The site
-has three client components in total and no more: `Reveal`, which needs an observer, the
-nav, which needs the current path, and `ScrollSequence`, which needs scroll position.
+All of them are in `src/components/layout.tsx`, and they are server components. The
+marketing pages have four client components and no more: `Reveal`, which needs an
+observer, the nav, which needs the current path, `ScrollSequence`, which needs scroll
+position, and `DepthFallback`, which does nothing where CSS scroll timelines work. The
+access pages (`/waitlist`, `/waitlist/finish`, `/desktop/sign-in`, `/admin`) are server
+pages around one client component each, in `src/components/access/`, because signing in
+is interactive by nature.
 
 ```tsx
 <main className="flex-1 pt-24 pb-28">
@@ -217,6 +221,16 @@ nav, which needs the current path, and `ScrollSequence`, which needs scroll posi
   numeral, a status, or another marginal note, and the substance on the right. Pass
   `wide` when the left column holds a status and a kind rather than a numeral. It
   collapses to one column below `sm`.
+- **`ActionButton`** is `ActionLink` for an action that is not a navigation: send a link,
+  request access, approve. Same box and fill. `quiet` drops the box to an underlined
+  word, for the secondary action beside a primary one (Continue with Google, Sign out,
+  Revoke), so a screen still asks for one thing. Disabled is `line` border and `muted`
+  text, with no hover.
+- **`Field`** is a line to write on: an eyebrow label and an input ruled underneath in
+  `ink-soft`, turning `brass-deep` on focus, never a box. The rule carries meaning here,
+  so it may not be `line` (1.4:1). `multiline` makes it a textarea; `hint` is a `text-xs`
+  muted line below. Errors are not red: they are a sentence in `ink` ruled down its left
+  edge in `brass-deep`, with `role="alert"`, and every one of them says what to do next.
 - **`Command`** is a line you would actually type. The only monospace on the site, ruled
   down its left edge in brass on a slightly deeper paper rather than boxed in a shadow,
   so it reads as a line from a terminal and not as a widget. One line each; if you want
@@ -241,7 +255,7 @@ happens to paper or ink, it does not belong here.
 One curve, `--ease-paper`, which is `cubic-bezier(0.16, 1, 0.3, 1)`. It decelerates hard,
 so motion reads as a confident arrival rather than a slide. No bounce, no elastic, ever.
 
-Three behaviours, and no fourth without amending this section:
+Four behaviours, and no fifth without amending this section:
 
 **Arrival** (`Reveal`, default). Opacity 0 to 1 and 14px up, 0.7s. Applied to any block of
 content that should announce itself once.
@@ -259,6 +273,33 @@ a 2.1s fall and return. A cue that plays once is missed by anyone who was still 
 headline, which is the whole audience it exists for. It is scoped to
 `@media (scripting: enabled)` and cleared under `prefers-reduced-motion`. Do not add a
 second loop anywhere; a page with two things moving forever has no focal point.
+
+**Depth** (`data-depth`). The one scroll-linked motion besides the sequence, added at the
+owner's request: leaves of one page lifting at different rates as you turn past them.
+Three kinds, all in `globals.css`:
+
+- `peel`, the home hero. Each line rises faster than the page by `--depth` of the scroll
+  over the first screen (eyebrow 0.16, headline 0.10, lead and rule 0.05, the cue 0) and
+  fades toward `--fade`. Upper lines move faster than lower ones, so they separate as they
+  leave rather than colliding, and the bottom of the hero moves with the page so it never
+  runs into the section under it.
+- `enter`, a plate arriving. It starts `--enter` (6vh) below its place and settles as its
+  `[data-depth-root]` finishes entering, so the plate reads as set beneath the paper. The
+  note above it moves with the page. In the pinned sequence it settles exactly as the
+  plate pins; in the stacked fallback each plate does it once.
+- `drift`, the numerals beside the home page's rows, `--drift` (18px) either side of their
+  place while the row crosses the screen. Marginalia sit at a different depth from text.
+
+How it is built, which is the part to keep: CSS scroll-driven animations
+(`animation-timeline: scroll()` / `view()`) of `translate` and `opacity` only, which the
+browser runs on the compositor with no script and no layout. Where they are unsupported,
+`DepthFallback` reproduces the same curves from one passive, rAF-throttled listener that
+reads every rectangle before writing any `translate`. Nothing starts hidden; every
+from-state is visible and a few pixels off its place. `prefers-reduced-motion: reduce`
+switches all of it off in both paths. Measured with a scrolling frame probe at 1440×900,
+before and after, at 1× and 4× CPU throttle: 60fps held in both, with no added layouts
+per frame. Keep that true: never animate `top`, `margin`, `height` or `width` from scroll,
+and never add a depth that makes one element pass over another.
 
 ### Scroll
 
@@ -285,8 +326,9 @@ under, which any future sequence inherits:
   `prefers-reduced-motion`, every chapter renders stacked, each with its own figure at the
   state that chapter leaves the editor in. The fallback tells the whole story rather than a
   truncated one.
-- **No parallax, no autoplaying video, no scroll hijacking.** The page never fights the
-  reader's scroll or changes its speed. Content only ever advances.
+- **No autoplaying video, no scroll hijacking.** The page never fights the reader's scroll
+  or changes its speed. Content only ever advances. Depth (above) moves things relative to
+  one another; it never moves the page.
 
 Stagger is only for siblings that genuinely appear together, which now means the page
 header (0.05s, 0.14s, 0.24s) and the home hero sequence. Rows are not staggered as a list

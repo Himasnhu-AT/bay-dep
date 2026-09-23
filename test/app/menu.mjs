@@ -35,21 +35,31 @@ const osa = (script) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * The pid that owns a menu bar.
+ * The pid that owns a menu bar — of THE app on PORT.
  *
  * Not `$!` from the shell — that is the `npx` wrapper — and not "the first process named
- * Electron", which is usually a helper. `exists menu bar 1` cannot be used inside a whose
- * clause, so the candidates are walked and probed one at a time.
+ * Electron with a menu bar": with more than one bay running (an isolated probe instance beside
+ * the user's), that walked to whichever came first, and once clicked File › Save As in another
+ * agent's window. The process listening on the debugging port is the app's main process, which
+ * is the one that owns the menu bar, so it is found by the port and then checked for a menu bar.
  */
-const findGuiPid = () => osa(`tell application "System Events"
-  repeat with p in (every process whose name is "Electron")
-    try
-      get name of menu bar item 1 of menu bar 1 of p
-      return unix id of p
-    end try
-  end repeat
-  return "none"
+const findGuiPid = () => {
+  let pid = ''
+  try {
+    pid = execFileSync('lsof', ['-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8' }).trim().split('\n')[0] ?? ''
+  } catch {
+    return 'none'
+  }
+  if (!/^\d+$/.test(pid)) return 'none'
+  const owns = osa(`tell application "System Events"
+  try
+    get name of menu bar item 1 of menu bar 1 of (first process whose unix id is ${pid})
+    return "yes"
+  end try
+  return "no"
 end tell`)
+  return owns === 'yes' ? pid : 'none'
+}
 
 let guiPid = 'none'
 const clickFile = (item) =>
@@ -84,8 +94,8 @@ await runProbe(async () => {
 // A harness that cannot reach the menu must say so rather than report every item dead.
 guiPid = findGuiPid()
 if (guiPid === 'none' || guiPid.startsWith('ERR')) {
-  throw new PreconditionError('no Electron process owns a menu bar',
-    'is the app running, and does this terminal have Accessibility permission?')
+  throw new PreconditionError(`no app with a menu bar is listening on port ${PORT}`,
+    'is the app running on that port, and does this terminal have Accessibility permission?')
 }
 console.log('gui pid', guiPid)
 
