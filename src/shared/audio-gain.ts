@@ -5,16 +5,22 @@
  * share the gain curve, not merely agree about it": two copies of a gain curve are re-decided
  * independently the first time either is edited, and both sound fine in isolation.
  *
- * **Scope, stated because it is narrower than the name suggests.** Today this is what an HTML
- * composition's declared sounds are mixed with, in both preview (`engine/audio.ts`) and export
- * (`main/export/audio-graph.ts`). Ordinary clips predate it: preview multiplies `fadeGainAt` by
- * the transition gain in `audioRoutingAt`, and export approximates the fades with `afade` and
- * applies **no** transition gain at all. Moving clips onto this function is the obvious next
- * step and is deliberately not done in the same change as composition audio.
+ * **Scope.** Every source of timeline sound is scaled by this: clips in the preview
+ * (`audioRoutingAt` in `engine/audio.ts`) and in export (`main/export/audio-graph.ts`, which
+ * samples it per frame into a `volume` envelope), and HTML compositions' declared sounds on
+ * both sides. It carries volume, fades, transitions, J/L-cut offsets and ducking — the whole
+ * of "how loud is this item here" — so there is no second place for any of them to be decided.
  */
 
 import type { Frames, Item, Project, Timeline, TransitionKind } from './project'
-import { fadeGainAt, itemEnd, resolveTransition, transitionAtFrame } from './project'
+import {
+  fadeGainAt,
+  findAsset,
+  handlesFor,
+  itemEnd,
+  resolveTransition,
+  transitionAtFrame
+} from './project'
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -54,21 +60,105 @@ export function transitionAudioGains(
 }
 
 /**
- * The frames over which `item` can make sound: its own span, widened by any transition that
- * straddles either of its ends.
+ * An item's J/L-cut offsets as they will actually sound: what was asked for, clamped to what
+ * the source and the timeline allow, with the reason for every clamp.
+ *
+ * Three limits, each reported rather than silently applied, because a J-cut that quietly
+ * became 4 frames instead of 15 is a control that does not do what it says:
+ *
+ * - **Handles.** A lead reads source from before the in-point and a trail from after the
+ *   out-point — the same footage a transition spends (`handlesFor`). There is nothing to play
+ *   past either end of the file.
+ * - **Frame 0.** A lead cannot start before the timeline does.
+ * - **A transition on that cut.** A transition already carries this clip's sound across the
+ *   cut, centred on it, with its own cross-fade. Honouring both would sound at full level
+ *   before the window and then drop to the transition's ramp inside it — a hole. So the
+ *   transition wins at that end, as it does over the item's own fade.
+ *
+ * Offsets are whole frames, non-negative; anything else reads as 0.
+ */
+export interface AudioOffsets {
+  leadFrames: Frames
+  trailFrames: Frames
+  /** Why an offset is smaller than the one stored, one sentence each. Empty when none is. */
+  clamped: string[]
+}
+
+function wholeFrames(value: unknown): Frames {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 0
+  return n > 0 ? n : 0
+}
+
+export function resolveAudioOffsets(project: Project, timeline: Timeline, item: Item): AudioOffsets {
+  let leadFrames = wholeFrames(item.audioLeadFrames)
+  let trailFrames = wholeFrames(item.audioTrailFrames)
+  const clamped: string[] = []
+  if (leadFrames === 0 && trailFrames === 0) return { leadFrames, trailFrames, clamped }
+
+  for (const transition of timeline.transitions ?? []) {
+    if (transition.fromItemId !== item.id && transition.toItemId !== item.id) continue
+    const resolved = resolveTransition(project, timeline, transition)
+    if (!resolved) continue
+    if (resolved.to.id === item.id && leadFrames > 0) {
+      clamped.push(
+        `the ${leadFrames}-frame audio lead is ignored: a transition on this clip's in-point ` +
+          `already carries its sound across that cut`
+      )
+      leadFrames = 0
+    }
+    if (resolved.from.id === item.id && trailFrames > 0) {
+      clamped.push(
+        `the ${trailFrames}-frame audio trail is ignored: a transition on this clip's out-point ` +
+          `already carries its sound across that cut`
+      )
+      trailFrames = 0
+    }
+  }
+
+  const handles = handlesFor(findAsset(project, item.assetId), item, timeline.fps)
+  if (leadFrames > handles.before) {
+    clamped.push(
+      `the audio lead is ${handles.before} frames, not ${leadFrames}: the source has only ` +
+        `${handles.before} frames before this clip's in-point`
+    )
+    leadFrames = handles.before
+  }
+  if (leadFrames > item.from) {
+    clamped.push(
+      `the audio lead is ${item.from} frames, not ${leadFrames}: the clip starts at frame ` +
+        `${item.from} and sound cannot start before the timeline does`
+    )
+    leadFrames = item.from
+  }
+  if (trailFrames > handles.after) {
+    clamped.push(
+      `the audio trail is ${handles.after} frames, not ${trailFrames}: the source has only ` +
+        `${handles.after} frames after this clip's out-point`
+    )
+    trailFrames = handles.after
+  }
+  return { leadFrames, trailFrames, clamped }
+}
+
+/**
+ * The frames over which `item` can make sound: its own span, widened by its J/L-cut offsets
+ * and by any transition that straddles either of its ends.
  *
  * A transition's window is centred on the cut, so the incoming clip must sound before its own
  * `from` and the outgoing one past its own end — both reading handle material. A schedule
  * clipped to the item's own span would hard-cut the outgoing sound at the cut while its
- * picture is still half visible.
+ * picture is still half visible. A J-cut's lead and an L-cut's trail read the same handles;
+ * `resolveAudioOffsets` sets an offset aside where a transition holds that end, so the two
+ * never both widen one side.
  */
 export function audibleSpan(
   project: Project,
   timeline: Timeline,
   item: Item
 ): { firstFrame: Frames; endFrame: Frames } {
-  let firstFrame = item.from
-  let endFrame = itemEnd(item)
+  const offsets = resolveAudioOffsets(project, timeline, item)
+  let firstFrame = item.from - offsets.leadFrames
+  let endFrame = itemEnd(item) + offsets.trailFrames
   for (const transition of timeline.transitions ?? []) {
     if (transition.fromItemId !== item.id && transition.toItemId !== item.id) continue
     const resolved = resolveTransition(project, timeline, transition)
@@ -80,14 +170,91 @@ export function audibleSpan(
 }
 
 /**
- * `item`'s gain at `frame`: its volume, times its fade envelope, times any transition over it.
+ * How far a duck is pulled down at `frame` by one key span, 0 (not at all) to 1 (fully).
  *
- * Three independent things multiply, and collapsing any two would make one unreachable while
+ * Linear in gain, with the attack *ending* where the key starts and the release *starting*
+ * where it ends. Two choices, both deliberate:
+ *
+ * - **The attack anticipates.** A signal-driven sidechain cannot look ahead, so it ducks after
+ *   the first syllable has already been masked; an editor riding the fader by hand dips the
+ *   music just before the line. The key's timing is known here, so this does what the editor
+ *   does.
+ * - **Linear in gain, not in dB.** Export turns the envelope into a piecewise-linear `volume`
+ *   expression and keeps only its corners; a linear ramp is four corners per duck, a dB ramp
+ *   one point per frame of every ramp — a nested expression thousands deep on a long bed.
+ */
+export function duckDepth(
+  frame: Frames,
+  span: { firstFrame: Frames; endFrame: Frames },
+  attackFrames: Frames,
+  releaseFrames: Frames
+): number {
+  if (frame >= span.firstFrame && frame < span.endFrame) return 1
+  if (attackFrames > 0 && frame >= span.firstFrame - attackFrames && frame < span.firstFrame) {
+    return (frame - (span.firstFrame - attackFrames)) / attackFrames
+  }
+  if (releaseFrames > 0 && frame >= span.endFrame && frame < span.endFrame + releaseFrames) {
+    return (span.endFrame + releaseFrames - frame) / releaseFrames
+  }
+  return 0
+}
+
+/** The most a duck may take off. Past this it is a mute, and there is a control for that. */
+export const MAX_DUCK_DB = 40
+
+/**
+ * The duck multiplier on `item` at `frame`: 1 when it is not ducked, down to
+ * `10^(−amountDb/20)` while any clip on the key track is sounding.
+ *
+ * **Keyed on presence, not on signal level — the decision this feature turns on.** A classic
+ * sidechain follows the key's level. That cannot be one implementation: the preview is Web
+ * Audio, whose `DynamicsCompressorNode` has no sidechain input, so it would need an analyser
+ * loop polled at the picture rate; export would be ffmpeg's `sidechaincompress`, whose
+ * detector, knee and time constants are its own. Two detectors are two answers, and "preview
+ * and export must share the gain curve, not merely agree about it". Presence is a pure
+ * function of the timeline, so preview and export call this same function and cannot
+ * disagree — and it is what an editor does by hand: pull the music down under the line, not
+ * under each syllable. The cost, stated: a pause inside a dialogue clip stays ducked.
+ *
+ * A key is a clip on the key track that can sound — an asset with audio, readable, volume
+ * above 0 — over its `audibleSpan`, so a key's own J-cut lead ducks the music too. A muted key
+ * track ducks nothing: ducking exists to make the key heard, and a dip under something muted
+ * is a hole under nothing. Overlapping keys do not stack; the deepest wins.
+ */
+export function duckGainAt(project: Project, timeline: Timeline, item: Item, frame: Frames): number {
+  const duck = item.duck
+  if (!duck) return 1
+  const amount = Number.isFinite(duck.amountDb) ? Math.min(MAX_DUCK_DB, duck.amountDb) : 0
+  if (!(amount > 0)) return 1
+  const key = timeline.tracks.find((track) => track.id === duck.keyTrackId)
+  if (!key || key.muted) return 1
+  const attack = wholeFrames(duck.attackFrames)
+  const release = wholeFrames(duck.releaseFrames)
+
+  let depth = 0
+  for (const keyItem of key.items) {
+    if (keyItem.id === item.id) continue
+    const asset = findAsset(project, keyItem.assetId)
+    if (!asset || asset.error || !asset.hasAudio || !(keyItem.volume > 0)) continue
+    depth = Math.max(depth, duckDepth(frame, audibleSpan(project, timeline, keyItem), attack, release))
+  }
+  return 1 - depth * (1 - 10 ** (-amount / 20))
+}
+
+/**
+ * `item`'s gain at `frame`: its volume, times its fade envelope, times any transition over it,
+ * times its duck.
+ *
+ * Independent things multiply, and collapsing any two would make one unreachable while
  * the other is set — with one exception, which is a rule rather than an accident: **where a
  * transition and the item's own fade meet, the transition wins and the fade at that end is
  * ignored.** They express the same intent at the same place, and multiplied, a 12-frame
  * fade-out against a dissolve's ramp dips to near-silence mid-window — a hole neither side
  * asked for. It lives here, in the function both sides call, so it is decided once.
+ *
+ * With a J/L cut the fades belong to the *sound's* edges, not the picture's: a lead starting at
+ * full level clicks in under the previous shot, which is exactly where the 3–4 frame edge fade
+ * a J-cut needs goes.
  *
  * Volume is clamped to 0..2 as the inspector allows; a non-finite one is treated as 1, since
  * one NaN would otherwise silence the item with no error anywhere.
@@ -119,9 +286,21 @@ export function itemAudioGainAt(
     }
   }
 
-  // Outside the item's own span only a transition can make it sound, and there the fade at
+  const offsets = resolveAudioOffsets(project, timeline, item)
+  const soundFrom = item.from - offsets.leadFrames
+  const soundEnd = itemEnd(item) + offsets.trailFrames
+  // Outside the item's sound span only a transition can make it sound, and there the fade at
   // that end has just been set aside.
-  if (!inTransition && (frame < item.from || frame >= itemEnd(item))) return 0
-  const fade = fadeGainAt({ ...item, fadeInFrames: fadeIn, fadeOutFrames: fadeOut }, frame)
-  return volume * fade * transitionGain
+  if (!inTransition && (frame < soundFrom || frame >= soundEnd)) return 0
+  const fade = fadeGainAt(
+    {
+      ...item,
+      from: soundFrom,
+      durationInFrames: soundEnd - soundFrom,
+      fadeInFrames: fadeIn,
+      fadeOutFrames: fadeOut
+    },
+    frame
+  )
+  return volume * fade * transitionGain * duckGainAt(project, timeline, item, frame)
 }

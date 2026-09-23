@@ -177,6 +177,21 @@ The dips pass through solid colour at the midpoint; the rest cross-fade. Audio f
 picture, except on a dip, where both sides go silent at the middle because that is what a dip
 means.
 
+## Sound: J/L cuts and ducking
+
+`edit_item` `audioLeadFrames` is a J-cut: the clip's sound starts that many frames before its
+picture, reading footage from before its in-point — the next shot's sound arriving under the
+current one (15 frames at 30 fps is a common half second). `audioTrailFrames` is the L-cut, the
+sound running on past the picture. Both spend handles like a transition does, are clamped to the
+footage there is, and are set aside on a cut that already has a transition; the result says when
+either happens, with the numbers. Fades apply to the sound's own edges, so give a lead 3–4 frames
+of `fadeInFrames` or it clicks in under the previous shot.
+
+`duck: { keyTrackId, amountDb, attackFrames, releaseFrames }` pulls a clip down under another
+track — the music bed under the dialogue track. It follows the key track's clips being *present*,
+not their loudness, so the preview and the export duck identically; the dip is complete as the
+key starts and a pause inside a dialogue clip stays ducked. 6 dB is light, 12 firm.
+
 ## Looks
 
 `edit_item` carries `adjustments` (brightness, contrast, saturate, hueRotate, blur, grayscale,
@@ -216,6 +231,12 @@ as they do on video.
 `export_timeline` renders the timeline to a file and returns a job id at once; poll
 `track_export` on a sensible interval until it reports the output path. Check that result before
 telling the user it is done.
+
+`loudness: "streaming"` (−14 LUFS, −1 dBTP; also `"podcast"`, `"broadcast"`, or
+`{ integratedLufs, truePeakDb }`) masters the audio: a linear gain and a true-peak limiter,
+re-measured on the *encoded* file until it lands, because the codec moves the peaks. It is off
+unless asked, so a file plays at the level the preview did. When done, `track_export` reports what
+the delivered file measures; `status: "missed"` means it did not converge and says by how much.
 
 ## Errors are instructions
 

@@ -46,6 +46,32 @@ export const tool: ToolSpec = {
       speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
       fadeInFrames: { type: 'integer', minimum: 0 },
       fadeOutFrames: { type: 'integer', minimum: 0 },
+      audioLeadFrames: {
+        type: 'integer',
+        minimum: 0,
+        description:
+          'J-cut: start this clip\'s SOUND this many frames before its picture, reading source ' +
+          'from before its in-point — the next shot\'s sound arriving under the current one ' +
+          '(~0.5 s is typical). Clamped to the footage before the in-point, and ignored where ' +
+          'a transition already crosses that cut; the result says when. Fades apply to the ' +
+          'sound\'s own edges, so give a lead a few frames of fadeInFrames. 0 removes it.'
+      },
+      audioTrailFrames: {
+        type: 'integer',
+        minimum: 0,
+        description:
+          'L-cut: let this clip\'s SOUND run on this many frames after its picture ends, ' +
+          'reading source past its out-point. Same clamps as audioLeadFrames. 0 removes it.'
+      },
+      duck: {
+        description:
+          'Duck this clip under another track — music under dialogue: { keyTrackId, amountDb ' +
+          '(dB down, default 6), attackFrames (ramp down, ending as the key starts; default ' +
+          '0.25 s), releaseFrames (ramp up after it ends; default 0.5 s) }. Keyed on the key ' +
+          'track\'s clips being present, not on their loudness, so preview and export duck ' +
+          'identically; a pause inside a dialogue clip stays ducked. Fields merge with the ' +
+          'current duck; null removes it.'
+      },
       crop: {
         type: 'object',
         description:

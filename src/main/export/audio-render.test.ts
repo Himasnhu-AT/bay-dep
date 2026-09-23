@@ -153,3 +153,128 @@ test(
     assert.ok(at(85).low > at(95).low && at(95).high > at(85).high, 'out falls while in rises')
   }
 )
+
+// ---------------------------------------------------------------------------
+// J/L cuts and ducking, rendered and measured. The preview's routing of the same cases is
+// checked in `engine/audio-finish.test.ts` and metered in `test/app/audio-finish.mjs`; these
+// are about the exported file only.
+// ---------------------------------------------------------------------------
+
+const SKIP = existsSync(FFMPEG) ? false : `no bundled ffmpeg at "${FFMPEG}" — run pnpm install`
+
+function lavfi(dir: string, name: string, graph: string): string {
+  const path = join(dir, name)
+  execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', graph, '-ac', '2', '-ar', String(RATE), path])
+  return path
+}
+
+function timelineOf(tracks: Timeline['tracks']): Timeline {
+  return { id: 'tl', name: 'Timeline 1', fps: FPS, width: 1920, height: 1080, background: '#000000', tracks, transitions: [] }
+}
+
+function projectOf(timeline: Timeline, assets: Asset[]): Project {
+  return { id: 'p', name: 'p', version: 1, assets, timelines: [timeline], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0 }
+}
+
+/** Mixes `timeline` through the real ffmpeg and returns mono samples. */
+function render(dir: string, project: Project, timeline: Timeline, frames: number): Int16Array {
+  const graph = buildAudioGraph(project, timeline, 0, frames)
+  assert.ok(graph, 'an audible timeline must produce a graph')
+  const mix = join(dir, `mix-${Math.random().toString(36).slice(2)}.wav`)
+  execFileSync(FFMPEG, [
+    '-v', 'error', '-y',
+    ...graph.inputs.flatMap((path) => ['-i', path]),
+    '-filter_complex', graph.filter,
+    '-map', '[aout]', '-t', String(frames / FPS), '-ac', '1', '-ar', String(RATE), mix
+  ])
+  const raw = execFileSync(FFMPEG, ['-v', 'error', '-i', mix, '-f', 's16le', '-ac', '1', '-ar', String(RATE), '-'])
+  return new Int16Array(raw.buffer, raw.byteOffset, Math.floor(raw.length / 2))
+}
+
+test('a J-cut is heard exactly lead frames before its picture, playing the footage before its in-point', { skip: SKIP }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-jcut-'))
+  // The incoming source is 660 Hz for its first 1.75 s and 880 Hz after. The clip's in-point is
+  // 2.0 s, so a 15-frame (0.5 s) lead must play 1.5–2.0 s of source: 660 Hz for its first
+  // quarter-second, then 880. A lead that merely shifted the clip earlier would play 880 at once.
+  const handle = join(dir, 'handle.wav')
+  execFileSync(FFMPEG, [
+    '-v', 'error', '-y',
+    '-f', 'lavfi', '-i', 'sine=frequency=660:duration=1.75',
+    '-f', 'lavfi', '-i', 'sine=frequency=880:duration=8.25',
+    '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1', '-ac', '2', '-ar', String(RATE), handle
+  ])
+  const lead = 15
+  const incoming = { ...clip('in', 'high', 90, 60, 2_000_000), audioLeadFrames: lead }
+  const timeline = timelineOf([
+    { id: 't', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, items: [incoming] }
+  ])
+  const project = projectOf(timeline, [tone('high', handle)])
+  const samples = render(dir, project, timeline, 150)
+
+  // Onset to the sample: the first non-silent sample is the lead's first frame, 2.5 s.
+  const onset = samples.findIndex((s) => Math.abs(s) > 64)
+  const expected = ((90 - lead) / FPS) * RATE
+  assert.ok(
+    Math.abs(onset - expected) <= RATE / 1000,
+    `the sound must start ${lead} frames (${expected} samples) early; it starts at sample ${onset}`
+  )
+  // And it is the handle footage: 660 in the first quarter-second of the lead, 880 after.
+  const full = levelAt(samples, 880, 120)
+  assert.ok(full > 0.02, `the clip must be audible in its own span (${full})`)
+  assert.ok(levelAt(samples, 660, 78) > full * 0.8, 'the lead opens on the footage before the in-point')
+  assert.ok(levelAt(samples, 880, 78) < full * 0.1, 'and not on the footage at the in-point')
+  assert.ok(levelAt(samples, 880, 86) > full * 0.8, 'reaching the in-point footage by source time 1.75 s')
+})
+
+test('an L-cut runs trail frames past the picture and stops there', { skip: SKIP }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-lcut-'))
+  const trail = 12
+  const outgoing = { ...clip('out', 'low', 0, 60, 0), audioTrailFrames: trail }
+  const timeline = timelineOf([
+    { id: 't', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, items: [outgoing] }
+  ])
+  const project = projectOf(timeline, [tone('low', lavfi(dir, 'low.wav', 'sine=frequency=440:duration=10'))])
+  const samples = render(dir, project, timeline, 120)
+  const full = levelAt(samples, 440, 30)
+  assert.ok(full > 0.02)
+  assert.ok(levelAt(samples, 440, 60 + trail - 1) > full * 0.8, 'still sounding on the last trail frame')
+  assert.ok(levelAt(samples, 440, 60 + trail + 1) < full * 0.05, 'silent after it')
+  let last = samples.length - 1
+  while (last > 0 && Math.abs(samples[last] ?? 0) <= 64) last -= 1
+  const end = ((60 + trail) / FPS) * RATE
+  assert.ok(Math.abs(last - end) <= RATE / 1000, `the sound must end at sample ${end}; it ends at ${last}`)
+})
+
+test('ducked music is amountDb down under the key, and back up after the release', { skip: SKIP }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-duck-'))
+  const amountDb = 12
+  const music = {
+    ...clip('bed', 'music', 0, 180, 0),
+    trackId: 'mus',
+    duck: { keyTrackId: 'dia', amountDb, attackFrames: 6, releaseFrames: 6 }
+  }
+  const line = { ...clip('line', 'voice', 60, 60, 0), trackId: 'dia' }
+  const timeline = timelineOf([
+    { id: 'mus', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, items: [music] },
+    { id: 'dia', kind: 'audio', name: 'A2', locked: false, muted: false, hidden: false, items: [line] }
+  ])
+  const project = projectOf(timeline, [
+    tone('music', lavfi(dir, 'music.wav', 'sine=frequency=450:duration=10')),
+    tone('voice', lavfi(dir, 'voice.wav', 'sine=frequency=900:duration=10'))
+  ])
+  const samples = render(dir, project, timeline, 180)
+  const open = levelAt(samples, 450, 30)
+  const under = levelAt(samples, 450, 90)
+  const measuredDb = 20 * Math.log10(under / open)
+  assert.ok(open > 0.02, `the bed must be audible before the line (${open})`)
+  assert.ok(
+    Math.abs(measuredDb + amountDb) <= 0.5,
+    `the bed must sit ${amountDb} dB down under the line; measured ${measuredDb.toFixed(2)} dB`
+  )
+  // The attack ends as the line starts: already part way down three frames before it.
+  const midAttack = 20 * Math.log10(levelAt(samples, 450, 57) / open)
+  assert.ok(midAttack < -2 && midAttack > -amountDb + 2, `mid-attack must be between (${midAttack.toFixed(2)} dB)`)
+  assert.ok(Math.abs(20 * Math.log10(levelAt(samples, 450, 150) / open)) <= 0.5, 'back to unity after the release')
+  // The key itself is untouched.
+  assert.ok(levelAt(samples, 900, 90) > open * 0.8, 'the line plays at its own level')
+})

@@ -36,6 +36,8 @@ import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
 import { frameProblem, writeFrame } from './frame-pipe'
 import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } from './codec-args'
+import { masterAudio, verifyDelivered } from './master'
+import type { LoudnessReport } from '@shared/loudness'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
 
@@ -379,6 +381,38 @@ async function buildAudioTrack(job: Job): Promise<string | null> {
   return target
 }
 
+/**
+ * Where a mastered track is encoded before the mux copies it in: a container that holds the
+ * export's own audio codec, so the stream the loop measured is byte for byte the one shipped.
+ */
+function masteredExtension(format: ExportFormat): string {
+  return format === 'webm' ? 'webm' : 'm4a'
+}
+
+/**
+ * The mix at `wavPath`, mastered to the job's loudness target and encoded with the export's
+ * codec at `target`. Deletes nothing; the caller owns both files.
+ */
+async function masterTrack(job: Job, wavPath: string, target: string): Promise<LoudnessReport> {
+  const loudness = job.request.loudness
+  if (!loudness) throw new Error('masterTrack called for a job that asked for no mastering.')
+  emit(job, {
+    progress: null,
+    framesDone: job.framesDone,
+    framesTotal: job.framesTotal,
+    stage: 'encoding',
+    message: 'Mastering audio loudness'
+  })
+  return masterAudio({
+    ffmpeg: ffmpegBin(),
+    input: wavPath,
+    output: target,
+    codecArgs: audioCodecArgs(job.request.format),
+    target: loudness,
+    outputArgs: AUDIO_ONLY.has(job.request.format) ? [] : ['-vn']
+  })
+}
+
 async function renderAudioOnly(job: Job): Promise<void> {
   try {
     emit(job, {
@@ -396,27 +430,41 @@ async function renderAudioOnly(job: Job): Promise<void> {
       await declaredSounds(job)
     )
     if (!graph) throw new Error('This timeline has no audio to export.')
-    const duration = job.framesTotal / job.fps
-    const args: string[] = ['-nostdin', '-v', 'error']
-    for (const input of graph.inputs) args.push('-i', input)
-    args.push(
-      '-filter_complex',
-      graph.filter,
-      '-map',
-      `[${graph.outputLabel}]`,
-      '-t',
-      duration.toFixed(6),
-      ...audioCodecArgs(job.request.format),
-      '-y',
-      job.request.outputPath
-    )
-    await runFfmpeg(args)
+    let loudness: LoudnessReport | undefined
+    if (job.request.loudness) {
+      // Mix to PCM first, then master straight into the deliverable: for an audio-only format
+      // the loop's encoded file *is* the file, so what it measured is what ships.
+      const wav = await buildAudioTrack(job)
+      if (!wav) throw new Error('This timeline has no audio to export.')
+      try {
+        loudness = await masterTrack(job, wav, job.request.outputPath)
+      } finally {
+        await discard(wav)
+      }
+    } else {
+      const duration = job.framesTotal / job.fps
+      const args: string[] = ['-nostdin', '-v', 'error']
+      for (const input of graph.inputs) args.push('-i', input)
+      args.push(
+        '-filter_complex',
+        graph.filter,
+        '-map',
+        `[${graph.outputLabel}]`,
+        '-t',
+        duration.toFixed(6),
+        ...audioCodecArgs(job.request.format),
+        '-y',
+        job.request.outputPath
+      )
+      await runFfmpeg(args)
+    }
     emit(job, {
       progress: 1,
       framesDone: job.framesTotal,
       framesTotal: job.framesTotal,
       stage: 'done',
-      outputPath: job.request.outputPath
+      outputPath: job.request.outputPath,
+      ...(loudness ? { loudness, message: loudness.summary } : {})
     })
   } catch (error) {
     emit(job, {
@@ -489,8 +537,31 @@ export async function finish(jobId: string): Promise<void> {
 
     let audioPath: string | null = null
     let audioNote: string | undefined
+    let loudness: LoudnessReport | undefined
+    // True when `audioPath` is already encoded in the export's codec (mastered), so the mux
+    // copies it rather than encoding it a second time — a second encode would move the true
+    // peak the loop just verified.
+    let encoded = false
     try {
       audioPath = await buildAudioTrack(job)
+      if (audioPath && job.request.loudness) {
+        const wav = audioPath
+        const mastered = join(
+          exportScratchDir(),
+          `${job.id}.audio.master.${masteredExtension(job.request.format)}`
+        )
+        try {
+          loudness = await masterTrack(job, wav, mastered)
+          audioPath = mastered
+          encoded = true
+        } catch (error) {
+          await discard(mastered)
+          // The unmastered mix is still good; deliver it with the shortfall stated rather than
+          // lose the whole file — and never call it mastered.
+          audioNote = `Exported without loudness mastering — it failed: ${messageOf(error)}`
+        }
+        if (encoded) await discard(wav)
+      }
     } catch (error) {
       // The video is real and finished; refusing to deliver it would be worse than
       // delivering it with the shortfall stated. What is not allowed is calling this a
@@ -513,7 +584,7 @@ export async function finish(jobId: string): Promise<void> {
         '1:a:0',
         '-c:v',
         'copy',
-        ...audioCodecArgs(job.request.format),
+        ...(encoded ? ['-c:a', 'copy'] : audioCodecArgs(job.request.format)),
         '-shortest',
         ...containerArgs(job.request.format),
         '-y',
@@ -521,17 +592,20 @@ export async function finish(jobId: string): Promise<void> {
       ])
       await discard(audioPath)
       await discard(scratch)
+      if (loudness) loudness = await verifyDelivered(ffmpegBin(), job.request.outputPath, loudness)
     } else {
       await moveInto(scratch, job.request.outputPath)
     }
 
+    const message = [audioNote, loudness?.summary].filter(Boolean).join(' ')
     emit(job, {
       progress: 1,
       framesDone: job.framesDone,
       framesTotal: job.framesTotal,
       stage: 'done',
       outputPath: job.request.outputPath,
-      ...(audioNote ? { message: audioNote } : {})
+      ...(message ? { message } : {}),
+      ...(loudness ? { loudness } : {})
     })
   } catch (error) {
     job.failed = true

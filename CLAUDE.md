@@ -685,6 +685,18 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
   resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
   independently.
+- **J/L cuts and ducking are in that same function, `itemAudioGainAt`** (`src/shared/audio-gain.ts`),
+  and the preview's clip gain now reads it too — before, the preview multiplied fade × transition
+  itself and so ignored the transition-wins rule above. A J/L item's sound plays from its own
+  `<audio>` stand-in for its whole audible span (no seam at the picture cut), and its picture
+  element is *claimed* silently, because an unclaimed media element plays to the speakers
+  unmixed. Ducking is keyed on the key track's clips being present, not on signal level: Web
+  Audio has no sidechain and ffmpeg's `sidechaincompress` has its own detector, so a level-driven
+  duck would be two answers. Loudness mastering (`main/export/master.ts`) is a closed loop on the
+  **encoded** file — gain, 4×-oversampled `alimiter` with `latency=1`, encode, `ebur128`, correct —
+  never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
+  peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
+  default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field
