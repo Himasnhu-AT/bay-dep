@@ -61,6 +61,12 @@ import { applyScriptOps, type ScriptOp } from '@shared/script'
 
 const HISTORY_LIMIT = 100
 
+/** The three regions around the preview that can be hidden. The preview itself cannot. */
+export type RegionId = 'side' | 'inspector' | 'timeline'
+
+/** What the window shows: the projects screen, or a project open in the editor. */
+export type Screen = 'home' | 'editor'
+
 export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export'
 
 export interface EditorState {
@@ -73,6 +79,16 @@ export interface EditorState {
   pixelsPerFrame: number
   /** Which left-hand panel is showing. */
   panel: PanelId
+  /**
+   * Which regions are hidden. View state, never project state: it is not saved in the document
+   * and never lands on the undo stack — hiding the inspector is not an edit.
+   */
+  hiddenRegions: Record<RegionId, boolean>
+  /**
+   * The projects screen or the editor. At launch this is `home`, and the project in the store
+   * is an empty placeholder nobody chose — which is why the agent surface refuses to act on it.
+   */
+  screen: Screen
   /** Set while the user drags the playhead — playback yields to scrubbing. */
   scrubbing: boolean
   /** Non-blocking messages surfaced in the status bar. */
@@ -269,6 +285,13 @@ export interface EditorActions {
   setPixelsPerFrame(pixelsPerFrame: number): void
   zoomBy(factor: number): void
   setPanel(panel: PanelId): void
+  /** Show or hide one region. */
+  setRegionHidden(region: RegionId, hidden: boolean): void
+  toggleRegion(region: RegionId): void
+  /** Open a project in the editor: it becomes the document, with fresh history. */
+  enterProject(project: Project): void
+  /** Back to the projects screen. The caller decides what happens to unsaved work first. */
+  showHome(): void
   notify(text: string, kind?: 'info' | 'error'): void
   dismissToast(): void
 
@@ -450,6 +473,8 @@ export const useEditor = create<EditorStore>((set, get) => {
     playing: false,
     pixelsPerFrame: 4,
     panel: 'media',
+    hiddenRegions: { side: false, inspector: false, timeline: false },
+    screen: 'home',
     scrubbing: false,
     toast: null,
     agentGate: null,
@@ -1257,6 +1282,28 @@ export const useEditor = create<EditorStore>((set, get) => {
 
     setPanel(panel) {
       set({ panel })
+    },
+
+    setRegionHidden(region, hidden) {
+      const current = get().hiddenRegions
+      if (current[region] === hidden) return
+      set({ hiddenRegions: { ...current, [region]: hidden } })
+    },
+
+    toggleRegion(region) {
+      const current = get().hiddenRegions
+      set({ hiddenRegions: { ...current, [region]: !current[region] } })
+    },
+
+    enterProject(project) {
+      get().setProject(project)
+      set({ screen: 'editor' })
+    },
+
+    showHome() {
+      // The agent conversation belongs to the project it was about; carrying it onto the next
+      // project would put one timeline's proposals in front of another's.
+      set({ screen: 'home', agentLog: [], agentProposal: null, agentGate: null })
     },
 
     notify(text, kind = 'info') {

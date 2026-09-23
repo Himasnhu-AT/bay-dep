@@ -27,6 +27,19 @@ const PAGES: { id: PanelId; label: string; icon: ReactNode }[] = [
 export function LeftRail(): ReactNode {
   const panel = useEditor((state) => state.panel)
   const setPanel = useEditor((state) => state.setPanel)
+  const sideHidden = useEditor((state) => state.hiddenRegions.side)
+  const setRegionHidden = useEditor((state) => state.setRegionHidden)
+
+  // The page already showing, clicked again, hides the panel — the gesture every editor with a
+  // rail uses. Any page clicked while it is hidden brings it back, on that page.
+  const choose = (id: PanelId): void => {
+    if (id === panel && !sideHidden) {
+      setRegionHidden('side', true)
+      return
+    }
+    setPanel(id)
+    setRegionHidden('side', false)
+  }
 
   return (
     <nav
@@ -45,8 +58,8 @@ export function LeftRail(): ReactNode {
             label={page.label}
             tooltipSide="right"
             icon={page.icon}
-            active={panel === page.id}
-            onClick={() => setPanel(page.id)}
+            active={panel === page.id && !sideHidden}
+            onClick={() => choose(page.id)}
           />
         </div>
       ))}

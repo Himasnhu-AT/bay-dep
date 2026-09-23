@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
 import { useKeyboard } from '@/lib/useKeyboard'
@@ -7,7 +7,11 @@ import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
 import { Inspector } from '@/editor/Inspector'
 import { LeftRail, SidePanel } from '@/editor/LeftRail'
-import { useDefaultLayout } from 'react-resizable-panels'
+import { ProjectsHome } from '@/home/ProjectsHome'
+import { Button, Modal } from '@/components'
+import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
+import type { RefObject } from 'react'
+import type { RegionId } from '@/store/editor'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Preview } from '@/editor/Preview'
 import { StatusBar } from '@/editor/StatusBar'
@@ -71,17 +75,83 @@ export function App(): ReactNode {
   const workLayout = useDefaultLayout({ id: 'bay.layout.work', storage: layoutStorage })
   const stageLayout = useDefaultLayout({ id: 'bay.layout.stage', storage: layoutStorage })
 
+  // -- hiding regions ----------------------------------------------------------
+  //
+  // The store says which regions are hidden; the panels are made to agree with it. Collapsing
+  // rather than unmounting keeps the panel's last size, so showing it again puts it back where
+  // it was. And the sync runs the other way too: a panel dragged shut against its edge
+  // collapses, and its button must then read as "hidden" rather than disagree with the screen.
+  const sideRef = usePanelRef()
+  const inspectorRef = usePanelRef()
+  const timelineRef = usePanelRef()
+  const hiddenRegions = useEditor((state) => state.hiddenRegions)
+  const setRegionHidden = useEditor((state) => state.setRegionHidden)
+
+  // The width a region had when it was hidden, so showing it restores exactly that. The library's
+  // own `expand()` restored the inspector to its minimum (236px came back as 220px) when the
+  // side panel was wide, because it re-solves the whole group; an explicit resize does not.
+  const sizeBeforeHide = useRef<Partial<Record<RegionId, number>>>({})
+  useEffect(() => {
+    const refs: [RegionId, RefObject<PanelImperativeHandle | null>][] = [
+      ['side', sideRef],
+      ['inspector', inspectorRef],
+      ['timeline', timelineRef]
+    ]
+    for (const [region, ref] of refs) {
+      const panel = ref.current
+      if (!panel) continue
+      if (hiddenRegions[region] && !panel.isCollapsed()) {
+        sizeBeforeHide.current[region] = panel.getSize().inPixels
+        panel.collapse()
+      }
+      if (!hiddenRegions[region] && panel.isCollapsed()) {
+        panel.expand()
+        const before = sizeBeforeHide.current[region]
+        if (before) panel.resize(`${Math.round(before)}px`)
+      }
+    }
+  }, [hiddenRegions, sideRef, inspectorRef, timelineRef])
+
+  const followCollapse =
+    (region: RegionId, ref: RefObject<PanelImperativeHandle | null>) => (): void => {
+      const collapsed = ref.current?.isCollapsed()
+      if (collapsed !== undefined) setRegionHidden(region, collapsed)
+    }
+
   // -- the project the window opens with ------------------------------------
 
+  // Launch lands on the projects screen, unless the OS asked for a particular file — a `.bay`
+  // double-clicked in Finder — in which case the user already chose, and it opens directly.
+  const screen = useEditor((state) => state.screen)
+  const enterProject = useEditor((state) => state.enterProject)
+  const showHome = useEditor((state) => state.showHome)
   useEffect(() => {
     let live = true
-    void call('Opening the last project', (api) => api.project.initial()).then((project) => {
-      if (live && project) setProject(project)
-    })
+    void call('Opening the requested project', (api) => api.project.launchRequest()).then(
+      (project) => {
+        if (live && project) enterProject(project)
+      }
+    )
     return () => {
       live = false
     }
-  }, [setProject])
+  }, [enterProject])
+
+  // -- leaving a project -------------------------------------------------------
+  //
+  // Unsaved work is asked about, never dropped and never saved behind the user's back: going
+  // home is not a request to write their file. The agent is stopped either way — its
+  // conversation was about the project being left.
+  const [confirmingHome, setConfirmingHome] = useState(false)
+  const leaveToHome = useCallback((): void => {
+    setConfirmingHome(false)
+    void bay()?.agent.dispose()
+    showHome()
+  }, [showHome])
+  const requestHome = useCallback((): void => {
+    if (useEditor.getState().dirty) setConfirmingHome(true)
+    else leaveToHome()
+  }, [leaveToHome])
 
   const onSave = useCallback(async (): Promise<void> => {
     setSaving(true)
@@ -233,9 +303,17 @@ export function App(): ReactNode {
     }
   }, [importPaths, notify])
 
+  // After every hook, so switching screens never changes the order React sees them in.
+  if (screen === 'home') return <ProjectsHome />
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-surface-0 text-ink-0">
-      <TopBar onExport={() => setExportOpen(true)} onSave={() => void onSave()} saving={saving} />
+      <TopBar
+        onHome={requestHome}
+        onExport={() => setExportOpen(true)}
+        onSave={() => void onSave()}
+        saving={saving}
+      />
 
       {/* Every boundary between regions is a separator that can be dragged or moved with the
           arrow keys, and the layout is remembered. The rail is outside the groups: it is a
@@ -257,6 +335,10 @@ export function App(): ReactNode {
             // Pixel-stable: resizing the window, or any panel beside it, goes to the preview —
             // the one region that is meant to take whatever space is left.
             groupResizeBehavior="preserve-pixel-size"
+            collapsible
+            collapsedSize="0px"
+            panelRef={sideRef}
+            onResize={followCollapse('side', sideRef)}
           >
             <SidePanel />
           </ResizablePanel>
@@ -289,6 +371,10 @@ export function App(): ReactNode {
                     minSize="220px"
                     maxSize="45%"
                     groupResizeBehavior="preserve-pixel-size"
+                    collapsible
+                    collapsedSize="0px"
+                    panelRef={inspectorRef}
+                    onResize={followCollapse('inspector', inspectorRef)}
                   >
                     <Inspector />
                   </ResizablePanel>
@@ -300,6 +386,10 @@ export function App(): ReactNode {
                 defaultSize="260px"
                 minSize="150px"
                 groupResizeBehavior="preserve-pixel-size"
+                collapsible
+                collapsedSize="0px"
+                panelRef={timelineRef}
+                onResize={followCollapse('timeline', timelineRef)}
               >
                 <div className="flex h-full min-h-0 flex-col">
                   <Timeline />
@@ -313,6 +403,40 @@ export function App(): ReactNode {
       <StatusBar />
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+
+      <Modal
+        open={confirmingHome}
+        title="Save changes before leaving?"
+        onClose={() => setConfirmingHome(false)}
+        width={380}
+        footer={
+          <>
+            <Button variant="subtle" onClick={() => setConfirmingHome(false)}>
+              Cancel
+            </Button>
+            <Button variant="subtle" onClick={leaveToHome}>
+              Don't save
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                void (async () => {
+                  await onSave()
+                  // Only leave once it actually saved: a cancelled Save dialog keeps the user here.
+                  if (!useEditor.getState().dirty) leaveToHome()
+                })()
+              }}
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[12px] leading-relaxed text-ink-1">
+          “{useEditor.getState().project.name}” has changes that are not saved. Leave without them,
+          or save first.
+        </p>
+      </Modal>
 
       {/* A drop target you cannot see is a drop target you do not use. */}
       <div

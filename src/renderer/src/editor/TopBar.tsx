@@ -1,11 +1,24 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Monitor, Moon, Redo2, Sun, Undo2, Upload } from 'lucide-react'
+import {
+  House,
+  Monitor,
+  Moon,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  Redo2,
+  Sun,
+  Undo2,
+  Upload
+} from 'lucide-react'
 import { Button, IconButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { bayTheme, NEXT_THEME, type ThemePreference } from '@/lib/theme'
 import { useEditor } from '@/store/editor'
 
 export interface TopBarProps {
+  /** Back to the projects screen. The caller handles unsaved work. */
+  onHome(): void
   onExport(): void
   onSave(): void
   saving: boolean
@@ -31,7 +44,7 @@ const THEME_LABEL: Record<ThemePreference, string> = {
   system: 'Theme: system — switch to dark'
 }
 
-export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
+export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): ReactNode {
   const name = useEditor((state) => state.project.name)
   const dirty = useEditor((state) => state.dirty)
   const canUndo = useEditor((state) => state.past.length > 0)
@@ -39,6 +52,8 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
   const renameProject = useEditor((state) => state.renameProject)
   const undo = useEditor((state) => state.undo)
   const redo = useEditor((state) => state.redo)
+  const hidden = useEditor((state) => state.hiddenRegions)
+  const toggleRegion = useEditor((state) => state.toggleRegion)
 
   const [theme, setTheme] = useState<ThemePreference>(() => bayTheme()?.get() ?? 'dark')
   const cycleTheme = (): void => {
@@ -70,6 +85,12 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
     // The project name is centred on the window, not on the space left over: it is the title of
     // the window, and a title that drifts as the controls either side change width looks broken.
     <header className="drag-region relative flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface-1 pr-3 pl-[80px]">
+      <IconButton
+        label="All projects"
+        icon={<House className="size-4" />}
+        onClick={onHome}
+        className="no-drag"
+      />
       <span className="shrink-0 text-[13px] font-semibold tracking-tight text-ink-0 select-none">
         bay
       </span>
@@ -127,6 +148,29 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
         </div>
       </div>
 
+
+      {/* Lit while the region is showing, like a toggle in any editor's View menu. */}
+      <div className="no-drag flex items-center gap-0.5">
+        <IconButton
+          label={hidden.side ? 'Show side panel' : 'Hide side panel'}
+          icon={<PanelLeft className="size-4" />}
+          active={!hidden.side}
+          onClick={() => toggleRegion('side')}
+        />
+        <IconButton
+          label={hidden.timeline ? 'Show timeline' : 'Hide timeline'}
+          icon={<PanelBottom className="size-4" />}
+          active={!hidden.timeline}
+          onClick={() => toggleRegion('timeline')}
+        />
+        <IconButton
+          label={hidden.inspector ? 'Show inspector' : 'Hide inspector'}
+          icon={<PanelRight className="size-4" />}
+          active={!hidden.inspector}
+          onClick={() => toggleRegion('inspector')}
+        />
+      </div>
+      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-line-strong" />
 
       <IconButton
         label={THEME_LABEL[theme]}
