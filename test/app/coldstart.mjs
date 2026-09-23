@@ -14,14 +14,34 @@
  *
  * Seed one by hand: launch with a `--user-data-dir`, import a clip, place it, save the
  * project, quit. Then point this at a launch using that profile.
+ *
+ * **What it can and cannot prove depends on how `attach()` found the app**, and the probe says
+ * which one it measured:
+ *
+ * - **The app was on its projects screen** (a fresh launch): `attach()` opened the most recent
+ *   project through `open_project`, which reads it from disk — the real reopen path. This is
+ *   the case the probe exists for.
+ * - **A project was already open** (a live instance someone is using): nothing was reopened,
+ *   and `attach()` no longer reloads a page that already has the probe handle, so the project
+ *   on screen arrived long ago. The probe then re-delivers it with `setProject` — a structural
+ *   copy, so the engine sees a new project — and waits for a draw with nothing forcing one.
+ *   That proves a project *arriving* draws itself (the `latearrival.mjs` question), not that
+ *   persistence hands the store a drawable project. For that, run it against a fresh launch.
+ *
+ * Either way it is read-only against the file: nothing is saved, and `runProbe` restores the
+ * open project, its history and its dirty flag afterwards.
  */
 
 import { attach, CANVAS_PROFILE, requirePrecondition, runProbe } from './cdp.mjs'
 
-const { evaluate, close } = await attach()
+const { evaluate, close, opened } = await attach()
+const DRAW_WAIT_MS = Number(process.env.DRAW_WAIT_MS ?? 8000)
 
 await runProbe(async () => {
-  // `attach()` has already reloaded, so project.initial() has run for this page.
+  const path = opened === 'editor' ? 'redelivered' : 'reopened'
+  console.log(path === 'reopened'
+    ? `path       reopened from disk by attach() (${opened}) — the real launch path`
+    : 'path       a project was already open; re-delivered with setProject — proves arrival, NOT persistence')
   await requirePrecondition(
     evaluate,
     'the profile has a saved project with an item on the timeline (seed one by hand; this probe will not)',
@@ -36,6 +56,30 @@ await runProbe(async () => {
        return !!c && !(c.width === 300 && c.height === 150) && c.width > 0 })()`
   )
 
+  if (path === 'redelivered') {
+    // The canvas is blanked first, in the same turn: it already shows this project, so without
+    // that a lit canvas afterwards would be the old frame and prove nothing about a new draw.
+    await evaluate(`(() => {
+      const { store } = window.bayEngine
+      const c = document.querySelector('canvas')
+      const x = c.getContext('2d')
+      x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height); x.restore()
+      store.getState().setProject(structuredClone(store.getState().project))
+      return true
+    })()`)
+  }
+
+  // Wait for a draw rather than sampling once. The old comment here said "attach() has already
+  // reloaded" and read the canvas immediately; attach() no longer reloads a live page, and a
+  // single read taken in the same turn as the delivery measures the frame before it.
+  const deadline = Date.now() + DRAW_WAIT_MS
+  let lit = 0
+  while (Date.now() < deadline) {
+    lit = await evaluate(`(${CANVAS_PROFILE}).lit`)
+    if (lit > 0) break
+    await new Promise((r) => setTimeout(r, 250))
+  }
+
   const seen = await evaluate(`(() => {
     const { engine, store } = window.bayEngine
     const st = store.getState()
@@ -49,11 +93,14 @@ await runProbe(async () => {
     }
   })()`)
 
-  console.log('reopened  ', JSON.stringify({ ...seen, profile: undefined }))
+  console.log(path.padEnd(11), JSON.stringify({ ...seen, profile: undefined }))
   console.log('canvas    ', `lit ${seen.profile.lit}, rowExtent ${JSON.stringify(seen.profile.rowExtent)}`)
 
   if (seen.profile.lit > 0) {
-    console.log('\nPASS  a project reopened from disk draws itself, with nothing forcing a redraw')
+    console.log(path === 'reopened'
+      ? '\nPASS  a project reopened from disk draws itself, with nothing forcing a redraw'
+      : '\nPASS  a project delivered to a live editor draws itself, with nothing forcing a redraw'
+        + '\n      (the persistence path was not exercised: run against a fresh launch for that)')
     close()
     return true
   }

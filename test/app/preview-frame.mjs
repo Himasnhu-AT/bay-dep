@@ -20,7 +20,7 @@
 import { attach, requirePrecondition, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
-const { evaluate, close } = await attach()
+const { evaluate, close, patch } = await attach()
 
 await runProbe(async () => {
   const asset = await evaluate(`(async () => {
@@ -55,13 +55,14 @@ await runProbe(async () => {
     // A tool that always returns something plausible. This is the failure being guarded,
     // and it has to break the *rendering*, not the edit: moving the clip back would remove
     // the difference the probe looks for and prove nothing.
-    await evaluate(`(() => {
+    // Through `patch()`, so the real `toDataURL` is back after the run: left in place, every
+    // later `preview_frame` in the user's session returned this constant.
+    await patch('HTMLCanvasElement.prototype', 'toDataURL', `(original) => {
       const c = document.createElement('canvas')
       c.width = 8; c.height = 8
-      const frozen = c.toDataURL('image/png')
-      HTMLCanvasElement.prototype.toDataURL = function () { return frozen }
-      return true
-    })()`)
+      const frozen = original.call(c, 'image/png')
+      return function () { return frozen }
+    }`)
   }
 
   /** Renders through the engine's own entry point and measures the PNG that comes back. */

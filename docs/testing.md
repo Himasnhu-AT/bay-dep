@@ -140,9 +140,38 @@ every later check depends on.
 
 ## Recipes
 
-**The agent can propose and apply an edit.**
+**The agent edits directly, and the Changes card reverts it** (the default since *Ask before
+editing* became opt-in). No model needed: a turn is only the events the runtime would emit
+(`AgentEvent` in `src/shared/agent.ts`), and an edit made through `window.bayMcp.execute` while
+a turn is running counts as the agent's.
 
 ```bash
+agent-browser --session bay eval "(() => { const s = window.bayEngine.store.getState()
+  s.setPanel('agent'); s.startAgentSession()
+  s.applyAgentEvent({ type: 'started', runId: 'probe' }); return s.agentApproval })()"   # false: ungated
+agent-browser --session bay eval "window.bayMcp.execute({ id: 'x', tool: 'add_track', args: { kind: 'video' } })"
+agent-browser --session bay eval "(() => { const s = window.bayEngine.store.getState()
+  s.applyAgentEvent({ type: 'done', runId: 'probe', reason: 'complete' })
+  return window.bayEngine.store.getState().agentLog.at(-1) })()"   # re-read, not s: { kind: 'changes', lines: [{ text: 'Added track V2' }], state: 'applied' }
+agent-browser --session bay find text "Revert" click
+agent-browser --session bay eval "(() => { const s = window.bayEngine.store.getState()
+  return { state: s.agentLog.at(-1).state, toast: s.toast?.text } })()"   # 'reverted', 'Reverted. ⌘Z to undo.'
+```
+
+Then undo the revert's own history entry and the track (section 5), and `endAgentSession()`.
+Measured with these store calls and the card's Revert button clicked in the page (not yet through
+`find text`): the track count went 2 → 3 → 2 and the card read *Reverted*. `reason: 'stopped'` or
+`'error'` adds an error entry after the card; a turn that changed nothing leaves no card.
+
+**The agent can propose and apply an edit** — only with *Ask before editing* on. Since the agent
+edits directly by default, a session without it has no gate, no proposal card and nothing to
+Approve; this recipe then just watches the agent make the edit. Turn it on first, and put it
+back after (it is remembered in `localStorage['bay.agentApproval']`, so leaving it on changes
+the user's app):
+
+```bash
+agent-browser --session bay eval "(() => { const s = window.bayEngine.store.getState()
+  const was = s.agentApproval; s.setAgentApproval(true); return was })()"   # note it
 agent-browser --session bay snapshot -i                # find the rail's button "Agent" → @ref
 agent-browser --session bay click @e21                  # (the ref from that snapshot)
 agent-browser --session bay fill textarea "Put a 12-frame fade-in on the first clip. Propose it and wait."
@@ -151,6 +180,7 @@ agent-browser --session bay click 'button[aria-label="Send"]'   # the round send
 agent-browser --session bay eval "window.bayEngine.store.getState().agentProposal?.options.map(o => o.label)"
 agent-browser --session bay find text "Approve" click
 # poll again, then read the item and s.agentGate.approved.consumed; undo afterwards
+agent-browser --session bay eval "window.bayEngine.store.getState().setAgentApproval(false)"   # or what it was
 ```
 
 **A template fits the canvas.** Templates rail → expand one → fill its fields → *Add to
@@ -174,14 +204,27 @@ status bar. With it on, the Agent panel's **Export transcript** writes a folder 
   saw, including pinned context and the skill bodies it loaded. Compare the two when the agent
   seems to have misread a request.
 
-With agent-browser: `click 'button[title^="Debug mode"]'`. Menu accelerators do not reach the page
-from agent-browser (they belong to the native menu); drive the menu item through System Events
-instead, or call `useEditor.getState().toggleDebugMode()`.
+With agent-browser, turn it on through the store — menu accelerators (⌥⌘D, and ⌘, for
+Settings) belong to the native menu and do not reach the page from agent-browser:
+
+```bash
+agent-browser --session bay eval "(() => { const s = window.bayEngine.store.getState()
+  s.toggleDebugMode(); return window.bayEngine.store.getState().debugMode })()"
+```
+
+or open Settings (`window.bayEngine.store.getState().setSettingsOpen(true)`) and click its
+**Debug mode** switch. `button[title^="Debug mode"]` is **not** the toggle: it is the Agent
+panel's *Export transcript* button, which only exists once debug mode is already on — so it is
+how you export, not how you switch it on. Toggle it back off when you are done.
 
 ## The `test/app` probes
 
 `test/app/*.mjs` are scripted regression checks over CDP (`node test/app/<name>.mjs` against a
 running `./run.sh` instance). Run them as gates after a change; write new app-level checks with
-agent-browser. [`test/app/README.md`](../test/app/README.md) collects the measurement traps they
+agent-browser. Exit 0 is right, 1 is a finding, 2 is "could not measure"; a few are marked
+*report, no verdict* and exit 0 whenever they measured. Every probe that attaches restores the
+project, its undo history, dirty flag, agent state and any patched prototype when it ends —
+`[cdp] restored: …` is its last line; anything else there is worth reading. The full list, with
+what each needs, is the table in the README. [`test/app/README.md`](../test/app/README.md) collects the measurement traps they
 were built around. `mcp-during-reload.mjs` reloads the editor on purpose, repeatedly — expect the
 window to flash while it runs, and do not run it while someone is working in the app.

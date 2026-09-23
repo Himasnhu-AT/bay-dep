@@ -14,6 +14,9 @@
  * So: same comparison, real `<video>` source, at the sizes an export actually uses. Each cell
  * is the full per-frame cycle the export loop performs — `drawImage` plus a whole-frame
  * `getImageData` — because moving cost from the draw to the read would not help anyone.
+ *
+ * **Report, no verdict.** Exits 0 whenever it could measure and 2 when it could not; nothing is
+ * compared with an expectation, so a green exit says the numbers exist, not that they are good.
  */
 
 import { attach, runProbe } from './cdp.mjs'

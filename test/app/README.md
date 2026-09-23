@@ -335,6 +335,14 @@ So seed a `--user-data-dir` by saving a project by hand once, then point the pro
 using that profile. Against an unseeded profile it reports CANNOT MEASURE, which is the correct
 answer and not a failure of the app.
 
+**Against a live instance it proves less, and says so.** `attach()` no longer reloads a page
+that already has the probe handle, so when a project is already open nothing was reopened. The
+probe then blanks the canvas, re-delivers the open project with `setProject` (a structural copy)
+and waits for a draw: that proves a project *arriving* draws itself, not that persistence hands
+the store a drawable one. Its first line names which path it measured. Only a fresh launch —
+bay on its projects screen, `attach()` opening the project through `open_project` — exercises
+the real reopen path.
+
 
 ## The bridge cannot be faked from the renderer
 
@@ -363,22 +371,97 @@ storage one — and that one *is* verified, by `storage-warning.mjs`.
 
 ## The probes
 
-| probe | what it settles | needs |
+Every probe runs as `node test/app/<name>.mjs` against the one running instance
+(`./run.sh`, CDP on 9222; `PORT=` to point elsewhere). Exit codes: **0** right, **1** wrong,
+**2** could not measure — see below. Every probe that uses `attach()` restores the project,
+its undo history, dirty flag, playhead, selection, agent state and any prototype it patched
+when it ends (see *Probes leave the app as they found it*). "Live app" means it is safe to run
+against the instance someone is using; the others say what they need instead.
+
+**Report, no verdict** marks a probe that prints numbers and exits 0 whenever it could
+measure. Its green exit says the numbers exist, not that they are good — read them.
+
+| probe | what it settles | run / needs |
 |---|---|---|
-| `geometry.mjs` | the compositor puts a clip where the layout says | flags on |
-| `ticks.mjs`, `transport.mjs` | the clock advances and pictures reach the screen | flags on |
-| `latearrival.mjs`, `coldstart.mjs` | a project arriving after mount still draws | flags on |
-| `audio-mute.mjs` | mute silences, hide does not, and they are independent | flags on |
-| `menu.mjs` | no item in the File menu is dead | flags on, Accessibility permission |
-| `storage-warning.mjs` | the status bar speaks when the database is down | a deliberately broken profile |
-| `occlusion.mjs` | whether a hidden window drops or defers an rAF callback | **flags OFF** |
-| `mcp.mjs` | every tool in the catalog answers, and the errors say what to do next | flags on |
-| `text-style.mjs` | text draws as styled, and the engine reports what it could not honour | flags on |
-| `filter-support.mjs` | `ctx.filter` and blend modes apply on the **export** context, and what they cost | flags on |
-| `transitions-ui.mjs` | a cut can be given a transition, and says so when it cannot | flags on |
-| `item-source-look.mjs` | `sourceStartSeconds`, `adjustments` and `blendMode` behave as documented | flags on |
-| `export-readback-synthetic.mjs` | draw+readback cost with a CPU-side source — **reports, does not assert** | flags on |
-| `adjustments-ui.mjs` | the Adjustments panel reaches the compositor, in the compositor's order | flags on |
+| `adjustments-ui.mjs` | the Adjustments panel reaches the compositor, in the compositor's order | live app |
+| `agent-gate.mjs` | the approval gate in the executor: no session ungated; default session (Ask before editing **off**) ungated and writes land; with it **on**, writes refused until approved, each approval spent once, a failed call keeps its approval | live app; turns the setting on itself, restores it |
+| `agent-panel.mjs` | a real `claude` spawned by bay reaches bay's tools, and with Ask before editing on its write is refused with the refusal text intact | **costs tokens** — `claude` signed in; do not sweep |
+| `agent-proposal.mjs` | propose → Approve on the card → the model makes exactly the approved edit, and a further write is refused | **costs tokens**; turns Ask before editing on itself |
+| `agent-sees-frame.mjs` | `preview_frame` returns an image and the model can actually see it | **costs tokens** |
+| `audio.mjs` | the audio graph runs, meters read, a muted track still meters, volume 0 silences | live app |
+| `audio-mute.mjs` | mute disconnects each muted track's analyser (count derived from the tracks muted), hide removes the picture and leaves audio alone | live app, flags on |
+| `coldstart.mjs` | a project reopened from disk draws with nothing forcing a redraw — on a live instance it can only re-deliver the open project (arrival, not persistence), and says so | fresh launch for the real claim; needs a project with an item |
+| `composition-scale.mjs` | more compositions on one frame than the pool fetches at once all draw | live app |
+| `compositions.mjs` | HTML compositions render at 1080p and authored size, follow time, re-render when rewritten, keep transparency, and tool calls survive composition windows | live app; uses `script/demo/gsap.min.js` |
+| `export-boundary.mjs` | a clip's first exported frame carries picture, not background | live app |
+| `export-readback-cost.mjs` | `willReadFrequently` cost with a real decoded frame — **report, no verdict** | live app |
+| `export-readback-synthetic.mjs` | the same cost with a CPU-side source, the lower bound — **report, no verdict** | live app |
+| `export-vs-preview.mjs` | a real MP4 export matches `preview_frame` frame by frame across cuts | live app; runs a real export |
+| `filter-support.mjs` | `ctx.filter` and blend modes apply on the **export** context, and what they cost | live app |
+| `frame-rate.mjs` | the frame-rate control exists, retimes the timeline, and says what it nudged | live app |
+| `geometry.mjs` | the compositor puts a clip where the layout says (`VERIFY_PROBE=1` sabotages `drawImage` and must still exit 0) | live app, flags on |
+| `item-source-look.mjs` | `sourceStartSeconds`, `adjustments` and `blendMode` behave as documented, on positions derived from the timeline | live app |
+| `latearrival.mjs` | a project handed to the store after mount still draws — **reloads the page**, so its restore can only put the project back, not its undo history | not on a live app someone is using |
+| `looks.mjs` | adjustments and blend modes change pixels in the predicted direction | live app |
+| `mcp.mjs` | every catalog tool answers, and the refusals say what to do next | live app |
+| `mcp-during-reload.mjs` | a tool call during a reload is resent or failed, never stranded — **reloads repeatedly**, the window flashes | not while someone is working |
+| `mcp-scale.mjs` | what `read_project` costs an agent at 10/50/200 clips — **report, no verdict** | live app |
+| `mcp-socket.mjs` | the tools over the real stdio → socket → IPC path, and a call the renderer never answers rejects | live app; needs the built proxy |
+| `menu.mjs` | no item in the File menu is dead | flags on, Accessibility permission; drives the native menu |
+| `occlusion.mjs` | whether a hidden window drops or defers an rAF callback | **flags OFF**, own instance |
+| `playback-probe.mjs` | pictures per second, ticks and fingerprints during 6s of real playback — **report, no verdict** | live app |
+| `preview-frame.mjs` | `preview_frame` follows the edit (content, empty, back); `VERIFY_PROBE=1` freezes `toDataURL` | live app |
+| `shared-asset.mjs` | two items on one asset each draw from their own element at their own source time (`TRIALS=10`) | live app |
+| `shared-asset-two-times.mjs` | two items on one asset at two source times draw **different** pictures — the gate for transitions | live app |
+| `storage-warning.mjs` | the status bar speaks when the database is down | a deliberately broken profile; `EXPECT=healthy` for the control |
+| `templates.mjs` | every shipped template draws, animates, fits the canvas and honours its variables | live app |
+| `text-style.mjs` | text draws as styled, and the engine reports what it could not honour | live app |
+| `ticks.mjs` | the clock runs, with and without `bringToFront` — **report, no verdict** | live app, flags on |
+| `transition-audio.mjs` | a transition cross-fades the sound as well as the picture (preview analysers, not export) | live app |
+| `transition-playback.mjs` | a transition plays in real time with nothing dropped | live app |
+| `transitions.mjs` | the seven transition kinds draw across their window, and a clamped one says why | live app |
+| `transitions-ui.mjs` | a cut can be given a transition in the UI, and says so when it cannot | live app |
+| `transport.mjs` | clicking the real Play button advances the clock, the store and the on-screen timecode | live app |
+| `whichcanvas.mjs` | forensics: which canvas the engine draws to — **reloads the page**, no verdict | not on a live app someone is using |
+
+`latch.mjs` was deleted: it referenced an undefined `PROFILE` from the commit that added it, so
+it had never run; it had no verdict, minimised the user's window without restoring it, and its
+question — does a redraw requested while hidden land on restore — is answered, with controls,
+by `occlusion.mjs`.
+
+## Probes leave the app as they found it
+
+The probes run against the app someone is using, and they used to leave their work in it: a
+clip on the timeline, a timeline replaced wholesale by `setProject`, playback running, and —
+worst — a sabotaged `drawImage` or `toDataURL` still installed, so the user's editor drew
+nothing until a reload. A replaced project also carried the probe's idea of `filePath` and
+`dirty`, which put the user one Cmd+S from writing a probe's timeline over their file.
+
+Cleanup is now in `cdp.mjs`, not in each probe, because the probes that most need it are the
+ones whose author did not think about it:
+
+- `attach()` snapshots the store — `project`, `past`, `future`, `dirty`, `playhead`,
+  `selection`, `playing`, `panel`, `debugMode` and every `agent*` key — plus
+  `localStorage['bay.agentApproval']` and which screen was showing. The snapshot is held in the
+  page **by reference**: the store never mutates a project in place, so the objects captured
+  are the state as it stood.
+- `runProbe` restores in a `finally` — on pass, fail, cannot-measure, the watchdog, an escaped
+  error, and Ctrl-C — through `store.setState` with those same objects, so the user's undo stack
+  and unsaved-changes flag end exactly as they began. It then compares a fingerprint (project
+  hash, `filePath`, history lengths, dirty, playhead, screen, gate, approval) with the one taken
+  at attach, and prints `[cdp] restored: …` or `RESTORE INCOMPLETE: …`. **A restore that fails
+  turns a pass into exit 2**: a green run has to mean the app was left as found.
+- Sabotage goes through `patch(target, key, factory)` from `attach()`, which records the
+  original; the restore puts every patched method back and checks that `drawImage`,
+  `toDataURL` and `AnalyserNode.connect/disconnect` are native again.
+- A probe that **reloads** the page loses the in-page snapshot. The restore then puts the
+  project back from a JSON copy taken at attach, says the undo history could not come back, and
+  exits 2 on an otherwise green run.
+- Outside `runProbe`, `close()` restores and must be awaited before `process.exit`.
+
+What it cannot put back: media imported into main's allowlist and database, composition windows
+opened, files a probe wrote to `/tmp`, and a `claude` process — the agent probes dispose theirs
+in their own `finally`.
 
 ## `electron .` runs the last build, not your working tree
 
@@ -504,8 +587,10 @@ compositor** — the false-accusation class again, one level below where it was 
 Rather than restructure ten probes, `cdp.mjs` now installs `uncaughtException` and
 `unhandledRejection` handlers at import, and the connection failures throw `PreconditionError`:
 `findRenderer` when no target appears, `send` when a call is not answered, and the socket's close
-and error events. Anything escaping any probe is classified and exits 2 — including probes written
-later by someone who never read this file, which is the point of putting it at import.
+and error events. Anything escaping any probe is classified — exit 2, except a `ProbeFailure` or
+`AssertionError`, which is a finding and exits 1 — and the app is restored first, including for
+probes written later by someone who never read this file, which is the point of putting it at
+import.
 
 Verified in all four directions, exit codes read **without a pipe**:
 
@@ -514,11 +599,29 @@ Verified in all four directions, exit codes read **without a pipe**:
     a probe returning false     -> exit 1   (a real finding is still reportable)
     a normal run                -> exit 0
 
+**And the opposite hole, closed later: a failed assertion exiting 2.** Every probe's `check()`
+threw a plain `Error`, and `runProbe` mapped anything unclassified to "PROBE ERROR — nothing was
+measured", exit 2. So a real finding read as a harness fault: the false *acquittal*, the mirror
+of the false accusation above. `cdp.mjs` now exports `ProbeFailure` (and a shared `check()` that
+throws it); it and `node:assert`'s `AssertionError` exit **1** with `FAIL: <message>`, whether
+thrown inside `runProbe` or escaping it. `PreconditionError` and anything else still exit 2.
+Verified by breaking one expectation in a scratch copy of `item-source-look.mjs` (exit 1,
+`FAIL: and the new one is applied / got 4 / expected 5`) and of `audio-mute.mjs` (exit 1).
+
 The third line matters as much as the first two: a global "exit 2 on anything" would have made
 every genuine finding unreportable, which is the failure this fix could easily have introduced.
 
 
 ## `shared-asset.mjs` — the seek thrash, and why it is asserted the way it is
+
+**Current contract, ahead of the history below:** the pool now holds an element per item drawing
+an asset, so the probe asserts that the elements in **slots 0 and 1** — the two the compositor
+binds this frame, in draw order — are each ready and on their own item's source time (20s and
+0s). It used to also require that the pool held *exactly two* elements for the asset, which
+failed whenever an earlier draw had left an idle element in slot 2; the pool keeps up to 12 and
+evicts least-recently-used, so that was correct behaviour reported as a fault. Extra slots are
+now listed and not judged, and a failure names what it saw (nothing drawn, or a slot on the
+wrong time) instead of "seek thrash", a mechanism the shared-element pool no longer has.
 
 Two items under the playhead sharing one asset share the single pooled element, and each
 wants it at a different `currentTime`. Before `seekOwners()` both issued their target every
@@ -544,9 +647,9 @@ Three decisions in it, each of which was a wrong turn first:
   decode timing moves it. "The picture is there and the element settled" is deterministic with
   the fix and fails often without it. Asserting *blankness* would be pinning a race. One trial
   would call the fix unnecessary about one time in ten — run `TRIALS=10`.
-- **It never reloads between building and measuring.** `attach()` reloads, and
-  `project.initial()` then restores the profile's own project, so the second item disappears
-  before it can be seen. That is why the failing state looked like a one-item timeline to three
+- **It never reloads between building and measuring.** `attach()` used to reload on every run
+  (it now reloads only when the probe handle is missing), and a reload restores the profile's
+  own project, so the second item disappeared before it could be seen. That is why the failing state looked like a one-item timeline to three
   people. Timeline state is read in the *same* evaluate as the pixels.
 
 Self-check (`VERIFY_PROBE=1`) replaces `drawImage` with a no-op and asserts FAIL — 0/3 drew.

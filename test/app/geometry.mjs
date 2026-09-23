@@ -16,7 +16,7 @@
 import { attach, CANVAS_PROFILE, CANVAS_READY, requirePrecondition, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
-const { evaluate, close } = await attach()
+const { evaluate, close, patch } = await attach()
 
 await runProbe(async () => {
 
@@ -86,15 +86,11 @@ await requirePrecondition(
  * the code did, which is the tautology this check exists to avoid.
  */
 if (process.env.VERIFY_PROBE === '1') {
-  await evaluate(`(() => {
-    const proto = CanvasRenderingContext2D.prototype
-    if (!proto.__bayOriginalDrawImage) proto.__bayOriginalDrawImage = proto.drawImage
-    proto.drawImage = function (image, x, y, w, h) {
-      return proto.__bayOriginalDrawImage.call(this, image, x, y, w / 2, h)
-    }
-    window.bayEngine.engine.redraw()
-    return true
-  })()`)
+  // Through `patch()`, so `runProbe` puts the real `drawImage` back — this used to stay
+  // installed in the user's editor after the run, halving every clip until a reload.
+  await patch('CanvasRenderingContext2D.prototype', 'drawImage',
+    '(original) => function (image, x, y, w, h) { return original.call(this, image, x, y, w / 2, h) }')
+  await evaluate(`(() => { window.bayEngine.engine.redraw(); return true })()`)
   await new Promise((r) => setTimeout(r, 1200))
 }
 

@@ -5,15 +5,21 @@
  * restricted to bay's tools, actually reach the timeline — and does the refusal come back when
  * it tries to write without an approval. Everything below the panel is unit tested; this is the
  * only thing that proves the pieces are connected to each other.
+ *
+ * The refusal only exists with *Ask before editing* on — since 40cf2a5 the default agent edits
+ * directly — so this turns it on (`setAgentApproval(true)`) before the session starts, rather
+ * than assuming the user left it on. `runProbe` restores the user's setting afterwards.
+ *
+ * Costs real tokens: it spawns the `claude` CLI. Do not run it as part of a sweep.
  */
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const { evaluate, close } = await attach()
 let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 
@@ -33,11 +39,16 @@ await runProbe(async () => {
     `Boolean(document.querySelector('textarea[placeholder*="create"]'))`
   ), true)
 
-  console.log('\n── a real claude process, restricted to bay')
+  console.log('\n── a real claude process, restricted to bay, with "Ask before editing" on')
+  await evaluate(`(() => { window.bayEngine.store.getState().setAgentApproval(true); return true })()`)
   const started = await evaluate(`window.bay.agent.start()`, 60000)
   if (!started.ok) throw new PreconditionError('the agent could not start', started.error)
+  // From here on a failure must still stop the process; the restore puts back state, not
+  // processes.
+  try {
   check('it started', started.ok, true)
   await evaluate(`(() => { window.bayEngine.store.getState().startAgentSession(); return true })()`)
+  check('the session is gated, because approval is on', await state('s.agentGate !== null'), true)
 
   // Ask it to read, which needs no approval, and to attempt a write, which does.
   await evaluate(`window.bay.agent.send(${JSON.stringify(
@@ -67,7 +78,9 @@ await runProbe(async () => {
   check('with the refusal text intact, not a status', write?.result, (r) => /propose/i.test(r ?? ''))
 
   check('the run ended', await state('s.agentRunning'), false)
-  await evaluate(`window.bay.agent.dispose()`)
+  } finally {
+    await evaluate(`window.bay.agent.dispose()`)
+  }
   console.log(`\n${checks}/${checks} checks passed`)
   close()
   return true

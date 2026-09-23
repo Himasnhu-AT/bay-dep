@@ -13,15 +13,20 @@
  * judging a picture — and because it takes no ids, so the model cannot get it wrong by copying.
  * The track count is read before and compared after, never assumed (CLAUDE.md: derive, do not
  * write literals about shared state).
+ *
+ * Proposals only exist with *Ask before editing* on — since 40cf2a5 the default agent edits
+ * directly and leaves a Changes card instead — so this turns it on (`setAgentApproval(true)`)
+ * before the turn, rather than assuming the user left it on. `runProbe` restores the user's
+ * setting afterwards. Costs real tokens: do not run it as part of a sweep.
  */
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const { evaluate, close } = await attach()
 let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -56,8 +61,12 @@ await runProbe(async () => {
   }
 
   // A clean conversation, whatever an earlier probe left behind.
-  await evaluate(`(async () => { await window.bay.agent.dispose(); const s = window.bayEngine.store.getState(); s.endAgentSession(); s.clearAgentLog(); s.setPanel('agent'); return true })()`)
+  await evaluate(`(async () => { await window.bay.agent.dispose(); const s = window.bayEngine.store.getState(); s.endAgentSession(); s.clearAgentLog(); s.setAgentApproval(true); s.setPanel('agent'); return true })()`)
   await sleep(400)
+  check('"Ask before editing" is on for this run', await state('s.agentApproval'), true)
+
+  // A failure part-way must still stop the claude process; the restore puts back state only.
+  try {
 
   const before = await trackCount()
   console.log(`\n── video tracks before: ${before}`)
@@ -118,11 +127,13 @@ await runProbe(async () => {
   check('a further write after the plan is spent is refused', again.ok, false)
   check('…and the refusal says why', again.error ?? '', (e) => /already been carried out|does not match/.test(e))
 
-  // Leave the fixture as found: one undo for the one edit.
+  // One undo for the one edit — asserted, because it is part of the contract, not cleanup;
+  // `runProbe` restores the project whatever happens here.
   await evaluate(`window.bayEngine.store.getState().undo()`)
   check('undo restores the track count', await trackCount(), before)
-
-  await evaluate(`(async () => { await window.bay.agent.dispose(); window.bayEngine.store.getState().endAgentSession(); return true })()`)
+  } finally {
+    await evaluate(`(async () => { await window.bay.agent.dispose(); window.bayEngine.store.getState().endAgentSession(); return true })()`)
+  }
   console.log(`\n${checks}/${checks} checks passed`)
   close()
   return true

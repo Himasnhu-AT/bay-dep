@@ -180,9 +180,14 @@ await evaluate(`(() => {
   return true
 })()`)
 
+// Everything from here to the re-registration runs against a dead executor, so the
+// re-registration is in a `finally`: a throw in between used to leave every tool in the user's
+// app hanging until a reload.
+let hung, elapsed
+try {
 const began = Date.now()
-const hung = await proxy.send('tools/call', { name: 'read_project', arguments: {} }, 60_000)
-const elapsed = Date.now() - began
+hung = await proxy.send('tools/call', { name: 'read_project', arguments: {} }, 60_000)
+elapsed = Date.now() - began
 
 check('a never-answered call comes back rather than hanging', hung.timedOut !== true,
   hung.timedOut ? `still nothing after ${elapsed}ms` : `answered in ${elapsed}ms`)
@@ -192,12 +197,15 @@ check('  and it comes back as an error, not a success',
 check('  within the declared MCP_CALL_TIMEOUT_MS (30s) plus slack',
   hung.timedOut !== true && elapsed < 45_000, `${elapsed}ms`)
 
+} finally {
 // Put the real executor back, or everything after this measures a dead app.
 await evaluate(`(() => {
   if (window.__restoreExecutor) window.__restoreExecutor()
+  delete window.__restoreExecutor
   window.bay.mcp.onToolCall(window.bayMcp.execute)
   return true
 })()`)
+}
 const recovered = await proxy.send('tools/call', { name: 'read_project', arguments: {} })
 check('the executor recovers once re-registered',
   recovered.result?.isError !== true && /"timeUnit"/.test(textOf(recovered)),

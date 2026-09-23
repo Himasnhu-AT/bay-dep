@@ -7,7 +7,7 @@
  * description matches a colour we painted (the half only a model can prove). The colour is
  * chosen fresh each run from the current fixture, never assumed.
  */
-import { attach, runProbe } from './cdp.mjs'
+import { attach, runProbe, ProbeFailure } from './cdp.mjs'
 
 const { evaluate, close } = await attach()
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -15,7 +15,7 @@ let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 

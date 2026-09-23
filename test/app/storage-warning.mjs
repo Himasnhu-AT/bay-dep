@@ -22,13 +22,17 @@
  * `EXPECT=healthy` for the negative control — the same probe must then report no warning.
  */
 
-import { runProbe } from './cdp.mjs'
+import { findRenderer, PreconditionError, runProbe } from './cdp.mjs'
 
 const PORT = Number(process.env.PORT ?? 9222)
 const EXPECT = process.env.EXPECT === 'healthy' ? 'healthy' : 'broken'
 
-const list = await (await fetch(`http://localhost:${PORT}/json/list`)).json()
-const ws = new WebSocket(list.find((t) => t.type === 'page').webSocketDebuggerUrl)
+// bay's own window, not "the first page": once a composition has been opened its offscreen
+// window is a page target too, has no `window.bay`, and every read below would come back
+// undefined — which this probe would have reported as storage being broken.
+// Its own socket rather than `attach()`, because it reads the status bar and must not open a
+// project or touch the store; so there is nothing here for `runProbe` to restore.
+const ws = new WebSocket(await findRenderer(PORT))
 let id = 0
 const pending = new Map()
 ws.onmessage = (e) => {
@@ -71,10 +75,10 @@ if (EXPECT === 'healthy') {
 // Both halves. A broken profile that still reports ready means the break did not take, and
 // then "no warning" is correct rather than a fault — a setup failure, not a verdict.
 if (status?.ready !== false) {
-  console.log('\nCANNOT MEASURE: the profile is not actually broken, so nothing should warn.')
-  console.log('Make app.db a directory inside the --user-data-dir you launch with.')
   ws.close()
-  return false
+  // Exit 2, not 1: this returned `false` and so reported a healthy app as a fault in the code.
+  throw new PreconditionError('the profile is not actually broken, so nothing should warn',
+    'make app.db a directory inside the --user-data-dir you launch with, or pass EXPECT=healthy')
 }
 const ok = hasStorageWarning
 console.log(ok

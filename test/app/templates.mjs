@@ -25,7 +25,7 @@
 
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const SRC = `${process.cwd()}/src/main/templates`
 const DIR = '/tmp/bay-probe-templates'
@@ -35,7 +35,7 @@ let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 

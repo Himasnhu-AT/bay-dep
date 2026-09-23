@@ -77,10 +77,10 @@ if (process.env.VERIFY_PROBE === '1') {
   const quiet = !advancedStore && !timecodeMoved
   console.log(quiet ? 'SELF-CHECK PASSED: clicking a non-Play button advances nothing'
                     : 'SELF-CHECK FAILED: something advanced without Play being clicked')
-  close(); process.exit(quiet ? 0 : 1)
+  await close(); process.exit(quiet ? 0 : 1)
 }
 console.log(ticked ? `PASS  the clock ran (${after.ticks} ticks, ${after.pictures} pictures)` : 'FAIL  the clock never ticked')
 console.log(advancedStore ? `PASS  the playhead advanced in the store (${before.playhead} -> ${after.playhead})` : 'FAIL  the playhead never moved in the store')
 console.log(timecodeMoved ? `PASS  the on-screen timecode changed (${before.timecodes[0]} -> ${after.timecodes[0]})` : `FAIL  the timecode is still ${before.timecodes[0]} - the store moved but the UI did not`)
-close()
+await close()
 process.exit(ticked && advancedStore && timecodeMoved ? 0 : 1)

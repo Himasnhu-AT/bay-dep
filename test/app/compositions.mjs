@@ -20,9 +20,10 @@
  *                                renders its first frame forever, which looks like a still.
  */
 
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 import { writeFileSync, mkdirSync, copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
+import { fileURLToPath } from 'node:url'
 
 /**
  * One tool call over the real MCP socket.
@@ -81,15 +82,19 @@ const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
   if (!ok) {
-    throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+    throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   }
   console.log(`  ok  ${label}`)
 }
 
 const DIR = '/tmp/bay-probe-compositions'
+// The copy tracked in the repo (the demo scripts use the same file), found from this file's
+// location rather than the cwd. This used to name another session's /tmp scratchpad first, so
+// the probe worked on one machine for as long as that directory happened to survive.
+const REPO = fileURLToPath(new URL('../../', import.meta.url))
 const GSAP_SOURCES = [
-  '/private/tmp/claude-501/-Users-himanshu-codes-synthai-vii/040091dd-ab41-47c2-a7dd-937a61a97337/scratchpad/spike/gsap.min.js',
-  `${process.cwd()}/test/app/fixtures/gsap.min.js`
+  `${REPO}script/demo/gsap.min.js`,
+  `${REPO}test/app/fixtures/gsap.min.js`
 ]
 
 const composition = (id, w, h, duration) => `<!doctype html>
@@ -112,7 +117,7 @@ await runProbe(async () => {
     throw new PreconditionError(
       'gsap.min.js is not on this machine',
       'a composition cannot animate without it, and bay blocks remote origins, so it has to ' +
-        `be a local file — put one at ${GSAP_SOURCES[1]}`
+        `be a local file — looked for ${GSAP_SOURCES.join(' and ')}`
     )
   }
   mkdirSync(DIR, { recursive: true })

@@ -15,7 +15,7 @@
  *    and produces a blur appearing on clips nobody blurred.
  */
 
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 const BED = `${process.cwd()}/assets/round2/bed_pad_c3.wav`
@@ -25,7 +25,7 @@ let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 const waitFor = async (expression, attempts = 40) => {

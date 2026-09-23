@@ -9,9 +9,19 @@
  * The first version of this feature refused every write whenever nothing was approved,
  * regardless of who was calling, which locked out the socket surface bay already ships. So the
  * no-session case is checked first and checked hardest: it is the one that must not regress.
+ *
+ * **The gate is opt-in now.** Since 40cf2a5 the in-app agent edits directly and every turn
+ * leaves a diff with a Revert; the gate only exists when the user turns on *Ask before editing*
+ * (`setAgentApproval(true)`, remembered in `localStorage['bay.agentApproval']`). This probe
+ * asserted a gate after `startAgentSession()` for as long as that was the default, and went red
+ * the day it stopped being — on a change made on purpose. So it checks both: the default
+ * session is ungated and writes land, and with approval on, the whole gate as before.
+ *
+ * It turns the setting on itself and never assumes it: the user's own choice is whatever it
+ * was, and `runProbe` puts that choice (store and localStorage both) back afterwards.
  */
 
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const { evaluate, close } = await attach()
 
@@ -19,7 +29,7 @@ let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 
@@ -55,7 +65,19 @@ const ungated = await call('edit_item', { itemId: item, volume: 0.4 })
 check('a write runs with no approval anywhere', ungated.ok, true)
 check('and it actually changed the item', (await call('inspect_item', { itemId: item })).value.audio.volume, 0.4)
 
-console.log('\n── a session with nothing approved')
+console.log('\n── a session, by default: the agent edits directly')
+await act('setAgentApproval(false)')
+await act('startAgentSession()')
+check('the session is active', await evaluate(`window.bayEngine.store.getState().agentSessionActive`), true)
+check('and no gate exists — the diff is the review, not an approval', await gate(), null)
+const direct = await call('edit_item', { itemId: item, volume: 0.5 })
+check('a write runs with nothing approved', direct.ok, true)
+check('and it landed', (await call('inspect_item', { itemId: item })).value.audio.volume, 0.5)
+await call('edit_item', { itemId: item, volume: 0.4 })
+await act('endAgentSession()')
+
+console.log('\n── "Ask before editing" on: a session with nothing approved')
+await act('setAgentApproval(true)')
 await act('startAgentSession()')
 check('the gate is present and permits nothing', await gate(), (g) => g !== null && g.approved === null)
 
@@ -137,6 +159,14 @@ await act('endAgentSession()')
 check('the gate is gone', await gate(), null)
 const after = await call('edit_item', { itemId: item, volume: 0.6 })
 check('writes run freely again', after.ok, true)
+
+console.log('\n── turning approval off mid-session lifts the gate at once')
+await act('startAgentSession()')
+check('POSITIVE CONTROL: gated while the setting is on', await gate(), (g) => g !== null)
+await act('setAgentApproval(false)')
+check('the gate is gone the moment the setting goes off', await gate(), null)
+check('writes land in the still-active session', (await call('edit_item', { itemId: item, volume: 0.3 })).ok, true)
+await act('endAgentSession()')
 
 await call('delete_items', { itemIds: [item] })
 console.log(`\n${checks}/${checks} checks passed`)

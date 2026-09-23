@@ -14,7 +14,7 @@
  *    teaches the user that the feature is broken rather than that this cut is full.
  */
 
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 // A video asset is refused by an audio track, so the audio half of this probe needs its own.
@@ -25,7 +25,7 @@ let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 
