@@ -31,7 +31,7 @@ const built = [
   },
   {
     title: "Titles, captions and templates",
-    body: "Seven motion templates, a lower third, a title card, subtitles and more, that size themselves to a landscape, portrait or square canvas. Captions from an SRT or WebVTT file, or from timed lines, on their own track in one undo step.",
+    body: "Seven motion templates, a lower third, a title card, subtitles and more, that size themselves to a landscape, portrait or square canvas. Captions from an SRT or WebVTT file, or from timed lines, on their own track in one undo step. A motion graphic can carry its own sound, heard in the preview and in the file.",
   },
   {
     title: "An agent inside the editor",

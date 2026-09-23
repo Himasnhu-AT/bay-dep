@@ -110,6 +110,13 @@ renderer-initiated navigation, so `did-start-navigation` fires for a `location.r
 never happens. State keyed on navigation *start* (executor readiness was) is then wrong for good;
 key it on `did-navigate`, the commit. `test/app/mcp-during-reload.mjs` holds both cases.
 
+**A probe of the preview is not a probe of the export, however alike the names.** Export's clip
+audio applied no transition gain for as long as it existed — every dissolve a hard cut in the
+file — while `test/app/transition-audio.mjs` passed, because it meters the preview's analysers and
+the preview was right. CLAUDE.md even said export sampled the shared curve. It took unrelated
+work reading `audio-graph.ts` to see it. `src/main/export/audio-render.test.ts` now renders a
+dissolve through the real ffmpeg and measures it. When a check covers one of two paths, say which.
+
 **A race you cannot reproduce is not a race you have disproved.** The executor-readiness wait
 did not change a single outcome on this machine — cold launch and a 0–160ms reload sweep both
 answered with it removed, because the renderer mounts in ~25ms here. It stays because the fault
