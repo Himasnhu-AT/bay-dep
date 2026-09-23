@@ -255,12 +255,12 @@ function ClipImpl({
       )}
 
       <div className="pointer-events-none relative flex h-full items-start gap-1 px-1.5 py-1">
-        <Icon aria-hidden="true" className="mt-px size-3 shrink-0 text-ink-0/70" />
-        <span className="truncate text-[11px] leading-tight font-medium text-ink-0 [text-shadow:0_1px_2px_rgb(0_0_0/0.65)]">
+        <Icon aria-hidden="true" className="mt-px size-3 shrink-0 text-on-media/70" />
+        <span className="truncate text-[11px] leading-tight font-medium text-on-media [text-shadow:0_1px_2px_rgb(0_0_0/0.65)]">
           {asset?.name ?? 'Missing media'}
         </span>
         {item.speed !== 1 && (
-          <span className="ml-auto shrink-0 rounded-xs bg-black/55 px-1 text-[10px] text-ink-0 tabular-nums">
+          <span className="ml-auto shrink-0 rounded-xs bg-black/55 px-1 text-[10px] text-on-media tabular-nums">
             {item.speed}×
           </span>
         )}

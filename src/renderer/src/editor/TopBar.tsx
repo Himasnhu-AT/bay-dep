@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Redo2, Undo2, Upload } from 'lucide-react'
+import { Monitor, Moon, Redo2, Sun, Undo2, Upload } from 'lucide-react'
 import { Button, IconButton } from '@/components'
 import { cn } from '@/lib/cn'
+import { bayTheme, NEXT_THEME, type ThemePreference } from '@/lib/theme'
 import { useEditor } from '@/store/editor'
 
 export interface TopBarProps {
@@ -17,6 +18,19 @@ export interface TopBarProps {
  * The 80px of left padding is the macOS traffic lights. They are drawn by the system at a
  * fixed offset and nothing may sit under them.
  */
+const THEME_ICON: Record<ThemePreference, ReactNode> = {
+  dark: <Moon className="size-4" />,
+  light: <Sun className="size-4" />,
+  system: <Monitor className="size-4" />
+}
+
+/** Names the current state and what a click does, since the icon alone shows only the first. */
+const THEME_LABEL: Record<ThemePreference, string> = {
+  dark: 'Theme: dark — switch to light',
+  light: 'Theme: light — switch to system',
+  system: 'Theme: system — switch to dark'
+}
+
 export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
   const name = useEditor((state) => state.project.name)
   const dirty = useEditor((state) => state.dirty)
@@ -25,6 +39,13 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
   const renameProject = useEditor((state) => state.renameProject)
   const undo = useEditor((state) => state.undo)
   const redo = useEditor((state) => state.redo)
+
+  const [theme, setTheme] = useState<ThemePreference>(() => bayTheme()?.get() ?? 'dark')
+  const cycleTheme = (): void => {
+    const next = NEXT_THEME[theme]
+    bayTheme()?.set(next)
+    setTheme(next)
+  }
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -100,6 +121,13 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
       </div>
 
       <div className="flex-1" />
+
+      <IconButton
+        label={THEME_LABEL[theme]}
+        icon={THEME_ICON[theme]}
+        onClick={cycleTheme}
+        disabled={!bayTheme()}
+      />
 
       <button
         type="button"

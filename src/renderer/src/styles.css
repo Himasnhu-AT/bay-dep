@@ -1,33 +1,63 @@
 @import 'tailwindcss';
 
 /*
- * The palette is deliberately narrow: four greys with a faint cool cast, three ink levels,
- * two border weights, one warm accent. The footage in the preview is the brightest thing
- * on screen and nothing in the chrome is allowed to compete with it — which is why there
- * are no gradients on surfaces and why the only saturated colour is the accent.
+ * The palette is deliberately narrow: greys with a faint cool cast, four ink levels, three
+ * border weights, one warm accent. The footage in the preview is the brightest thing on
+ * screen and nothing in the chrome is allowed to compete with it — which is why there are no
+ * gradients on surfaces and why the only saturated colour outside the semantic three is the
+ * accent.
  *
  * Declaring these inside `@theme` (rather than a plain `:root`) is what makes them real
- * Tailwind utilities: `bg-surface-1`, `text-ink-1`, `border-line`, `ring-accent`.
+ * Tailwind utilities: `bg-surface-1`, `text-ink-1`, `border-line`, `ring-accent`. `static`
+ * emits every token as a custom property whether or not a class uses it, so a component can
+ * reach for `var(--color-warning)` and find it.
+ *
+ * The values here are the DARK palette, which is the default and what a window shows if the
+ * theme script in index.html never ran. The light palette below overrides only the tokens
+ * that change; everything it does not name is shared by both themes on purpose.
+ *
+ * The scale, by role:
+ *   surface-0 … 4   ground → panel → control → hover → pressed. Ordered by elevation: each
+ *                   step sits visually on top of the one before, in either theme.
+ *   ink-0 … 3       primary text → secondary → tertiary/hints → disabled.
+ *   line, line-strong, line-hover
+ *                   hairlines between panels → control outlines → hovered outlines.
+ *   accent, accent-hover, accent-ink
+ *                   the one brand colour, its hovered state, and text drawn *on* it.
+ *   danger, warning, success
+ *                   semantic; never decorative.
+ *   on-media        text drawn over footage, thumbnails or clip bodies. It is the same in
+ *                   both themes because the thing underneath it does not change with theme.
  */
-@theme {
+@theme static {
   --color-surface-0: #0b0c0e;
   --color-surface-1: #121317;
   --color-surface-2: #191b20;
   --color-surface-3: #22252b;
+  --color-surface-4: #2b2f36;
 
   --color-ink-0: #e8eaed;
   --color-ink-1: #9ba1ab;
   --color-ink-2: #61666f;
+  --color-ink-3: #464a52;
 
   --color-line: #24272e;
   --color-line-strong: #32363f;
+  --color-line-hover: #454a55;
 
   --color-accent: #e9a23b;
+  --color-accent-hover: #f0b458;
   --color-accent-ink: #0b0c0e;
   --color-playhead: #f5f7fa;
-  --color-danger: #e5484d;
 
-  /* Track-kind tints. Clip bodies are these; their borders are the -edge variant. */
+  --color-danger: #e5484d;
+  --color-warning: #f2c94c;
+  --color-success: #3dba7e;
+
+  --color-on-media: #e8eaed;
+
+  /* Track-kind tints. Clip bodies are these; their borders are the -edge variant. They are
+     media, not chrome, and carry `on-media` text, so they do not change with the theme. */
   --color-clip-video: #2c3a4a;
   --color-clip-video-edge: #3d5166;
   --color-clip-audio: #25382f;
@@ -35,9 +65,17 @@
   /* The waveform has to read on top of `clip-audio`, so it is lighter than the edge. */
   --color-waveform: #5fd39a;
 
+  /* The transparency checkerboard behind the preview canvas. */
+  --color-checker-a: #15171b;
+  --color-checker-b: #1d2026;
+
+  /* Bundled locally (see main.tsx) — the CSP forbids remote fonts, and so does the product. */
   --font-sans:
-    ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, sans-serif;
+    'Inter Variable', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
 
   /* Nothing in this app is rounder than 6px. */
   --radius-xs: 2px;
@@ -49,11 +87,58 @@
   --radius-3xl: 6px;
 
   /* The one elevation, for popovers and the modal. Borders do the rest of the work. */
-  --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.72), 0 0 0 1px var(--color-line-strong);
+  --color-shadow: rgb(0 0 0 / 0.72);
+  --shadow-pop: 0 12px 32px -8px var(--color-shadow), 0 0 0 1px var(--color-line-strong);
 
   /* Motion only where it communicates. Both are referenced from utilities below. */
   --duration-fast: 120ms;
   --duration-panel: 150ms;
+}
+
+/*
+ * The light palette. `data-theme` is set on <html> by public/theme.js before first paint.
+ * Overriding the `--color-*` properties themselves (rather than a second set of names) means
+ * every utility, every `bg-accent/70` colour-mix and every `var(--color-…)` in a component
+ * follows the theme with no per-class work.
+ *
+ * Accent and danger are darkened here: the dark theme's values fall below 3:1 against a
+ * near-white surface, and both are used as text.
+ */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --color-surface-0: #e4e6e9;
+  --color-surface-1: #f1f2f4;
+  --color-surface-2: #fafafb;
+  --color-surface-3: #e2e5e9;
+  --color-surface-4: #d6dadf;
+
+  --color-ink-0: #15171b;
+  --color-ink-1: #4f5560;
+  --color-ink-2: #7b818b;
+  --color-ink-3: #a9aeb6;
+
+  --color-line: #d8dbe0;
+  --color-line-strong: #c3c8cf;
+  --color-line-hover: #a6acb5;
+
+  --color-accent: #b86a00;
+  --color-accent-hover: #9e5a00;
+  --color-accent-ink: #ffffff;
+  --color-playhead: #15171b;
+
+  --color-danger: #cc2f36;
+  --color-warning: #9a7400;
+  --color-success: #1d8452;
+
+  --color-checker-a: #d9dce0;
+  --color-checker-b: #cdd1d6;
+
+  --color-shadow: rgb(20 24 32 / 0.2);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 @layer base {
@@ -115,7 +200,7 @@
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #454a55;
+    background: var(--color-line-hover);
     border: 3px solid transparent;
     background-clip: padding-box;
   }
@@ -135,10 +220,22 @@
    * at a 12px cell; kept dark enough that it never reads brighter than the footage on top.
    */
   .checkerboard {
-    background-color: #15171b;
+    background-color: var(--color-checker-a);
     background-image:
-      linear-gradient(45deg, #1d2026 25%, transparent 25%, transparent 75%, #1d2026 75%),
-      linear-gradient(45deg, #1d2026 25%, transparent 25%, transparent 75%, #1d2026 75%);
+      linear-gradient(
+        45deg,
+        var(--color-checker-b) 25%,
+        transparent 25%,
+        transparent 75%,
+        var(--color-checker-b) 75%
+      ),
+      linear-gradient(
+        45deg,
+        var(--color-checker-b) 25%,
+        transparent 25%,
+        transparent 75%,
+        var(--color-checker-b) 75%
+      );
     background-size: 12px 12px;
     background-position:
       0 0,

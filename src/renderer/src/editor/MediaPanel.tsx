@@ -85,16 +85,16 @@ function AssetCard({ asset }: { asset: Asset }): ReactNode {
             className={cn(
               'absolute top-1 left-1 rounded-xs px-1 text-[10px] leading-4 font-medium tracking-wide uppercase',
               asset.kind === 'audio'
-                ? 'bg-clip-audio text-ink-0'
+                ? 'bg-clip-audio text-on-media'
                 : asset.kind === 'video'
-                  ? 'bg-clip-video text-ink-0'
+                  ? 'bg-clip-video text-on-media'
                   : 'bg-surface-3 text-ink-1'
             )}
           >
             {asset.kind}
           </span>
           {asset.durationUs > 0 && (
-            <span className="absolute right-1 bottom-1 rounded-xs bg-black/70 px-1 text-[10px] leading-4 text-ink-0 tabular-nums">
+            <span className="absolute right-1 bottom-1 rounded-xs bg-black/70 px-1 text-[10px] leading-4 text-on-media tabular-nums">
               {formatSourceDuration(asset.durationUs)}
             </span>
           )}
