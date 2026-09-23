@@ -19,6 +19,8 @@ bun.lockb
 !*.env.example
 
 dist/
+# Packaged apps from `pnpm bundle` / `pnpm release` (electron-builder.yml `directories.output`).
+release/
 
 # --- rendered video output (reproducible from the project JSON + assets/) ---
 out/

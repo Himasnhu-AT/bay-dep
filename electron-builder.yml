@@ -4,7 +4,23 @@ copyright: Freeholt
 
 directories:
   buildResources: build
-  output: dist
+  # Not `dist`: every JS toolchain treats that as its own build output (see CLAUDE.md on the
+  # retired `dist` script). These are packaged apps, so they go where the name says.
+  output: release
+
+# Electron's fuses, flipped in the packaged binary. `runAsNode` stays on: the MCP proxy runs this
+# binary as Node (ELECTRON_RUN_AS_NODE) — turning it off would break every agent connection.
+# Inspect arguments go off, so a local process cannot attach a debugger to the signed app and
+# borrow its permissions. The probes' --remote-debugging-port is a Chromium switch, not this one,
+# and development runs the unfused binary in node_modules anyway.
+electronFuses:
+  runAsNode: true
+  enableNodeCliInspectArguments: false
+  # Flipping a fuse rewrites the binary, and on Apple silicon macOS SIGKILLs a binary whose
+  # signature no longer matches — measured: the unsigned bundle died with 137 on launch. An
+  # unsigned build (identity: null) is never re-signed afterwards, so re-sign it ad hoc here.
+  # A signed release is signed after the fuses anyway; this changes nothing for it.
+  resetAdHocDarwinSignature: true
 
 files:
   - out/**
