@@ -30,6 +30,7 @@ import type { WhisperDownload } from '@shared/whisper'
 
 const api: BayApi = {
   app: {
+    metrics: () => ipcRenderer.invoke(IPC.appMetrics),
     version: () => ipcRenderer.invoke(IPC.appVersion) as Promise<string>,
     platform: () => ipcRenderer.invoke(IPC.appPlatform) as Promise<NodeJS.Platform>,
     mediaToolsReady: () =>

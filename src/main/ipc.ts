@@ -22,6 +22,7 @@ import {
 } from './html/compositions'
 import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './media/ffmpeg'
+import { collectMetrics } from './metrics'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
 import {
@@ -47,6 +48,7 @@ type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | '
 
 interface ChannelApi {
   appVersion: BayApi['app']['version']
+  appMetrics: BayApi['app']['metrics']
   appPlatform: BayApi['app']['platform']
   appMediaToolsReady: BayApi['app']['mediaToolsReady']
   appStorageReady: BayApi['app']['storageReady']
@@ -155,6 +157,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   compositionRelease: async (_event, assetId) => releaseComposition(assetId),
 
   appVersion: async () => app.getVersion(),
+  appMetrics: () => collectMetrics(),
   appPlatform: async () => process.platform,
   appMediaToolsReady: async () => {
     const tools = mediaToolsReady()

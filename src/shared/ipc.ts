@@ -212,8 +212,27 @@ export type MenuCommand =
 // The bridge
 // ---------------------------------------------------------------------------
 
+export type ProcessGroup = 'renderer' | 'gpu' | 'main' | 'other'
+
+/**
+ * What the debug HUD shows about the machine, sampled on request. Each line a person reads:
+ * "CPU 43% of one core (renderer 32 · gpu 8 · main 3)", "Memory 928 MB", "GPU 37% (whole Mac)" or
+ * "GPU not reported".
+ */
+export interface AppMetrics {
+  /** This app's processes by kind. CPU is percent of one core (as Activity Monitor shows it), so it can pass 100. */
+  groups: { group: ProcessGroup; count: number; cpu: number; memoryMB: number }[]
+  totals: { cpu: number; memoryMB: number }
+  /** The GPU for the whole machine (macOS, from IOAccelerator) — null when not reported. */
+  gpu: { utilization: number; renderer: number | null; tiler: number | null; memoryMB: number | null } | null
+  /** When it was sampled, ms since the epoch. */
+  at: number
+}
+
 export interface BayApi {
   app: {
+    /** Debug mode's HUD: CPU and memory per process kind, and GPU utilisation where the OS reports it. */
+    metrics(): Promise<AppMetrics>
     version(): Promise<string>
     platform(): Promise<NodeJS.Platform>
     /** Whether a usable ffmpeg/ffprobe pair was found. Everything media degrades without it. */
@@ -482,6 +501,7 @@ export const IPC = {
   appStorageReady: 'app:storage-ready',
   appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
+  appMetrics: 'app:metrics',
 
   /** renderer -> main: start, drive and stop the in-app agent. */
   agentStart: 'agent:start',

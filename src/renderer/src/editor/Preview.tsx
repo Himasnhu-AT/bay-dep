@@ -3,6 +3,7 @@ import { Film } from 'lucide-react'
 import { useElementSize } from '@/lib/useElementSize'
 import { useEngine } from '@/engine'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
+import { DebugHud } from './DebugHud'
 
 /** The letterboxed rectangle for `aspect` inside `box`, inset so the canvas has air. */
 function fitBox(
@@ -36,7 +37,8 @@ export function Preview(): ReactNode {
   const duration = useEditor(selectDuration)
   const size = useElementSize(containerRef)
 
-  useEngine(canvasRef)
+  const engine = useEngine(canvasRef)
+  const debugMode = useEditor((state) => state.debugMode)
 
   const aspect = timeline && timeline.height > 0 ? timeline.width / timeline.height : 16 / 9
   const box = fitBox(size.width, size.height, aspect)
@@ -47,6 +49,7 @@ export function Preview(): ReactNode {
       ref={containerRef}
       className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-surface-0"
     >
+      {debugMode && <DebugHud stats={engine.stats} />}
       <div
         className="checkerboard relative shrink-0 border border-line"
         style={{ width: box.width || 1, height: box.height || 1 }}
