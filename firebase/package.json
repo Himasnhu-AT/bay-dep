@@ -1,0 +1,17 @@
+{
+  "name": "bay-firebase",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "sh scripts/with-java.sh firebase emulators:exec --only firestore --project demo-bay-rules \"$npm_node_execpath --test --test-timeout=30000 test/rules.test.mjs\"",
+    "mutate": "sh scripts/with-java.sh firebase emulators:exec --only firestore --project demo-bay-rules \"$npm_node_execpath test/mutate.mjs\"",
+    "auth:configure": "node scripts/configure-auth.mjs",
+    "deploy": "firebase deploy --only firestore:rules,firestore:indexes --project bay-editor-app"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0"
+  },
+  "packageManager": "pnpm@12.5.1"
+}
