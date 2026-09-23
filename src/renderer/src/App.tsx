@@ -12,6 +12,7 @@ import { SettingsDialog } from '@/settings/SettingsDialog'
 import { Button, Modal } from '@/components'
 import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
 import type { RefObject } from 'react'
+import type { Project } from '@shared/project'
 import type { RegionId } from '@/store/editor'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Preview } from '@/editor/Preview'
@@ -154,6 +155,24 @@ export function App(): ReactNode {
     else leaveToHome()
   }, [leaveToHome])
 
+  /**
+   * Opening another project from the menu is leaving this one, exactly as going home is: the
+   * agent's conversation, its session and its change cards were all about the project being
+   * left. (The store also expires the cards on any change of project id — this is the part only
+   * a user-initiated switch should do: stopping the agent.)
+   */
+  const switchProject = useCallback(
+    (project: Project): void => {
+      void bay()?.agent.dispose()
+      const state = useEditor.getState()
+      state.endAgentSession()
+      state.clearAgentLog()
+      state.clearAgentPins()
+      setProject(project)
+    },
+    [setProject]
+  )
+
   const onSave = useCallback(async (): Promise<void> => {
     setSaving(true)
     const saved = await call('Save', (api) => api.project.save(useEditor.getState().project))
@@ -216,19 +235,19 @@ export function App(): ReactNode {
           void call('Open project', (client) => client.project.open()).then((project) => {
             // Null is either a failed call, already reported, or the user cancelling the
             // picker. Neither should replace what they are working on.
-            if (project) setProject(project)
+            if (project) switchProject(project)
           })
           break
         case 'open-path':
           void call('Open project', (client) =>
             client.project.openPath(command.path)
           ).then((project) => {
-            if (project) setProject(project)
+            if (project) switchProject(project)
           })
           break
       }
     })
-  }, [onSave, onSaveAs, onImport, setProject])
+  }, [onSave, onSaveAs, onImport, switchProject])
 
   /**
    * The agent surface. Registered here because the executor reaches the store directly and

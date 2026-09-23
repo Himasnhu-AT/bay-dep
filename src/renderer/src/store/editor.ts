@@ -165,8 +165,25 @@ export interface EditorState {
   agentApproval: boolean
   /** The project as it was when the current agent turn started; null between turns. */
   agentTurnBase: Project | null
-  /** Before and after for each `changes` entry, by its id — what a revert restores. */
-  agentCheckpoints: Record<string, { before: Project; after: Project }>
+  /**
+   * Files the agent rewrote this turn (compositions), with what each held before its first
+   * write — null when the file did not exist. A composition rewrite changes the picture without
+   * changing the project, so the project diff alone would show nothing to revert.
+   */
+  agentTurnFiles: Record<string, { before: string | null; after: string }>
+  /** Whether the project took a real (non-silent) change during the current turn. */
+  agentTurnEdited: boolean
+  /** Whether any of those changes came from the user rather than the agent's tool calls. */
+  agentTurnUserEdited: boolean
+  /** What each `changes` entry can restore, by its id. Capped at `MAX_AGENT_CHECKPOINTS`. */
+  agentCheckpoints: Record<string, AgentCheckpoint>
+  /** Every revert still reachable by undo/redo, so the cards follow the project back and forth. */
+  agentReverts: AgentRevert[]
+  /**
+   * Bumped per path when a composition file is rewritten underneath the app (a revert restoring
+   * it). The engine drops that composition's cached frames when its count moves.
+   */
+  compositionEpochs: Record<string, number>
   /**
    * What the composer's `@` menu has pinned: assets, clips, time ranges. Sticky — they stay
    * until removed, and every message carries them — because "work only in 0:10–0:15" is usually
@@ -176,6 +193,71 @@ export interface EditorState {
   dirty: boolean
   past: Project[]
   future: Project[]
+}
+
+/** One agent turn, as a revert needs it. */
+export interface AgentCheckpoint {
+  before: Project
+  /** The project when the turn ended — what "has anything changed since?" compares against. */
+  after: Project
+  files: { path: string; before: string | null; after: string }[]
+}
+
+/** A revert, remembered so undo/redo can say which cards it touched. */
+export interface AgentRevert {
+  /** The project the revert put in place. */
+  restored: Project
+  /** The project it replaced. */
+  replaced: Project
+  ids: string[]
+}
+
+/** How many reverts bay keeps ready. Each holds two whole projects; older turns expire. */
+export const MAX_AGENT_CHECKPOINTS = 20
+
+/**
+ * What reverting `id` would take with it, for the card to say before the click:
+ * how many later agent turns, and whether the project has changed since those turns ended
+ * (the user's own edits, which a revert discards too).
+ */
+export function revertImpact(state: EditorState, id: string): { laterTurns: number; laterEdits: boolean } {
+  const index = state.agentLog.findIndex((e) => e.kind === 'changes' && e.id === id)
+  if (index < 0) return { laterTurns: 0, laterEdits: false }
+  const applied = state.agentLog.filter(
+    (e, i): e is Extract<AgentEntry, { kind: 'changes' }> => i >= index && e.kind === 'changes' && e.state === 'applied'
+  )
+  const last = applied[applied.length - 1]
+  const checkpoint = last ? state.agentCheckpoints[last.id] : undefined
+  return {
+    laterTurns: Math.max(0, applied.length - 1),
+    laterEdits: checkpoint ? checkpoint.after !== state.project : false
+  }
+}
+
+/**
+ * Writes a file back during a revert (or its undo). Registered by the MCP executor, which owns
+ * the bridge; a store with none registered — a test, a window without the bridge — reports that
+ * the files could not be restored rather than pretending they were.
+ */
+type FileWriter = (path: string, contents: string) => Promise<{ ok: boolean; error?: string }>
+let agentFileWriter: FileWriter | null = null
+export function setAgentFileWriter(writer: FileWriter | null): void {
+  agentFileWriter = writer
+}
+
+/**
+ * Depth of tool calls currently running on the agent's behalf. An edit made while this is zero
+ * during a turn is the user's own, and the turn's card says so — reverting the turn takes it
+ * too, because the diff is between two whole projects.
+ */
+let agentActing = 0
+export async function asAgent<T>(work: () => Promise<T> | T): Promise<T> {
+  agentActing += 1
+  try {
+    return await work()
+  } finally {
+    agentActing -= 1
+  }
 }
 
 export interface EditorActions {
@@ -206,6 +288,10 @@ export interface EditorActions {
    * has changed since that turn, those later changes go too — the confirmation says so.
    */
   revertAgentChange(id: string): void
+  /** An agent tool rewrote a file this turn; remember what it held first so a revert can restore it. */
+  recordAgentFileWrite(path: string, before: string | null, after: string): void
+  /** A composition file changed on disk; cached frames of it are stale. */
+  markCompositionChanged(path: string): void
   addAgentPin(pin: Pin): void
   removeAgentPin(key: string): void
   clearAgentPins(): void
@@ -511,17 +597,82 @@ export const useEditor = create<EditorStore>((set, get) => {
       if (options?.silent) {
         return { project: next }
       }
+      const turn = turnMarks(state)
       if (txDepth > 0) {
         // Inside a transaction the mutation lands but the history entry does not: the whole
         // group gets one, pushed on close. Without this, a tool that needs two store calls
         // makes two undo steps and `undo` reverses half of what it did.
         txRecorded = true
-        return { project: next, dirty: true }
+        return { project: next, dirty: true, ...turn }
       }
       const past = [...state.past, before]
       if (past.length > HISTORY_LIMIT) past.shift()
-      return { project: next, past, future: [], dirty: true }
+      return { project: next, past, future: [], dirty: true, ...turn }
     })
+  }
+
+  /**
+   * What a real change to the project means for the agent turn in progress, if one is: the turn
+   * changed something, and — when no agent tool call is running — the user did.
+   */
+  function turnMarks(state: EditorState): Partial<EditorState> {
+    if (!state.agentRunning) return {}
+    return agentActing > 0 ? { agentTurnEdited: true } : { agentTurnEdited: true, agentTurnUserEdited: true }
+  }
+
+  /**
+   * Put files back to what one side of a set of turns held — `before` for a revert, `after` for
+   * undoing one. Earliest turn's `before` wins per path; latest turn's `after`. A file that did not
+   * exist before is left alone: the revert removes what uses it, and deleting a file the user may
+   * have opened elsewhere is not a revert's call to make.
+   */
+  function restoreFiles(ids: string[], side: 'before' | 'after'): void {
+    const checkpoints = get().agentCheckpoints
+    const target = new Map<string, string>()
+    const ordered = side === 'before' ? [...ids].reverse() : ids
+    for (const id of ordered) {
+      for (const file of checkpoints[id]?.files ?? []) {
+        const contents = file[side]
+        if (contents !== null) target.set(file.path, contents)
+      }
+    }
+    if (target.size === 0) return
+    const writer = agentFileWriter
+    if (!writer) {
+      get().notify('The project was restored, but the composition files could not be: this window cannot write files.', 'error')
+      return
+    }
+    for (const [path, contents] of target) {
+      void writer(path, contents).then(
+        (result) => {
+          if (result.ok) get().markCompositionChanged(path)
+          else get().notify(`Could not restore ${path}: ${result.error ?? 'the write failed'}.`, 'error')
+        },
+        (error: unknown) => get().notify(`Could not restore ${path}: ${String(error)}.`, 'error')
+      )
+    }
+  }
+
+  /**
+   * After undo or redo lands on `project`, bring the change cards along: undoing a revert makes
+   * its turns applied again (and rewrites their files); redoing it reverts them again.
+   */
+  function followReverts(project: Project): void {
+    for (const record of get().agentReverts) {
+      const to = project === record.replaced ? 'applied' : project === record.restored ? 'reverted' : null
+      if (!to) continue
+      const changed: string[] = []
+      set((state) => ({
+        agentLog: state.agentLog.map((entry) => {
+          if (entry.kind !== 'changes' || !record.ids.includes(entry.id) || entry.state === to || entry.state === 'expired') {
+            return entry
+          }
+          changed.push(entry.id)
+          return { ...entry, state: to }
+        })
+      }))
+      if (changed.length > 0) restoreFiles(changed, to === 'applied' ? 'after' : 'before')
+    }
   }
 
   /** Runs `mutator` against the active timeline, or does nothing if there isn't one. */
@@ -573,22 +724,51 @@ export const useEditor = create<EditorStore>((set, get) => {
       }
     })(),
     agentTurnBase: null,
+    agentTurnFiles: {},
+    agentTurnEdited: false,
+    agentTurnUserEdited: false,
     agentCheckpoints: {},
+    agentReverts: [],
+    compositionEpochs: {},
     dirty: false,
     past: [],
     future: [],
 
     // -- project ------------------------------------------------------------
     setProject(project, options) {
-      set((state) => ({
-        project,
-        selection: [],
-        playhead: 0,
-        playing: false,
-        dirty: false,
-        past: options?.resetHistory === false ? state.past : [],
-        future: []
-      }))
+      set((state) => {
+        // A different project makes every checkpoint a snapshot of something else: reverting one
+        // would put that project's contents in this window, and a save would write them over
+        // this file. So they go, and their cards say they can no longer be reverted. A turn in
+        // progress (the agent opened this project itself) diffs from here on.
+        const switched = project.id !== state.project.id
+        const agent: Partial<EditorState> = switched
+          ? {
+              agentCheckpoints: {},
+              agentReverts: [],
+              agentTurnFiles: {},
+              agentTurnEdited: false,
+              agentTurnUserEdited: false,
+              agentTurnBase: state.agentRunning ? project : null,
+              agentProposal: null,
+              agentPins: [],
+              agentGate: state.agentGate ? { approved: null } : null,
+              agentLog: state.agentLog.map((entry) =>
+                entry.kind === 'changes' && entry.state !== 'expired' ? { ...entry, state: 'expired' as const } : entry
+              )
+            }
+          : {}
+        return {
+          project,
+          selection: [],
+          playhead: 0,
+          playing: false,
+          dirty: false,
+          past: options?.resetHistory === false ? state.past : [],
+          future: [],
+          ...agent
+        }
+      })
     },
 
     renameProject(name) {
@@ -614,24 +794,51 @@ export const useEditor = create<EditorStore>((set, get) => {
     },
 
     revertAgentChange(id) {
-      const checkpoint = get().agentCheckpoints[id]
-      if (!checkpoint) return
-      set((state) => {
-        const index = state.agentLog.findIndex((e) => e.kind === 'changes' && e.id === id)
-        const past = [...state.past, state.project]
+      const state = get()
+      const checkpoint = state.agentCheckpoints[id]
+      const index = state.agentLog.findIndex((e) => e.kind === 'changes' && e.id === id)
+      const entry = state.agentLog[index]
+      if (!checkpoint || !entry || entry.kind !== 'changes' || entry.state !== 'applied') return
+      // Mid-turn, the revert would become part of the running turn's own diff, and the agent
+      // would carry on editing a project it no longer has.
+      if (state.agentRunning) {
+        state.notify('Wait for the agent to finish, or stop it, before reverting.', 'error')
+        return
+      }
+      // This turn and every later applied one: they were built on what this one did.
+      const ids = state.agentLog
+        .filter((e, i) => i >= index && e.kind === 'changes' && e.state === 'applied')
+        .map((e) => e.id)
+      // A fresh object, stamped like any edit — and the identity undo/redo recognise it by.
+      const restored = { ...checkpoint.before, updatedAt: Date.now() }
+      set((current) => {
+        const past = [...current.past, current.project]
         if (past.length > HISTORY_LIMIT) past.shift()
         return {
-          project: checkpoint.before,
+          project: restored,
           past,
           future: [],
           selection: [],
           dirty: true,
-          // This turn and every later one are gone from the timeline now; say so on their cards.
-          agentLog: state.agentLog.map((entry, i) =>
-            entry.kind === 'changes' && i >= index ? { ...entry, state: 'reverted' as const } : entry
+          agentReverts: [...current.agentReverts, { restored, replaced: current.project, ids }],
+          agentLog: current.agentLog.map((e) =>
+            e.kind === 'changes' && ids.includes(e.id) ? { ...e, state: 'reverted' as const } : e
           )
         }
       })
+      restoreFiles(ids, 'before')
+    },
+
+    recordAgentFileWrite(path, before, after) {
+      set((state) => {
+        if (!state.agentRunning) return {}
+        const first = state.agentTurnFiles[path]
+        return { agentTurnFiles: { ...state.agentTurnFiles, [path]: { before: first ? first.before : before, after } } }
+      })
+    },
+
+    markCompositionChanged(path) {
+      set((state) => ({ compositionEpochs: { ...state.compositionEpochs, [path]: (state.compositionEpochs[path] ?? 0) + 1 } }))
     },
 
     logUserMessage(text, pins) {
@@ -648,7 +855,15 @@ export const useEditor = create<EditorStore>((set, get) => {
         const log = state.agentLog
         switch (event.type) {
           case 'started':
-            return { agentRunning: true, agentTurnBase: state.agentTurnBase ?? state.project }
+            return state.agentRunning
+              ? {}
+              : {
+                  agentRunning: true,
+                  agentTurnBase: state.project,
+                  agentTurnFiles: {},
+                  agentTurnEdited: false,
+                  agentTurnUserEdited: false
+                }
 
           case 'text':
           case 'thinking': {
@@ -699,23 +914,50 @@ export const useEditor = create<EditorStore>((set, get) => {
             }
 
           case 'done': {
-            // A turn that changed the project leaves a diff behind, with what a revert needs.
-            // Compared by reference first: a turn that only read never pays for the diff.
+            // A turn that changed something leaves a diff behind, with what a revert needs. Keyed
+            // on whether a real edit happened (not on the project's identity, which a poster
+            // arriving also changes), and on the files it rewrote, which the project does not show.
             const base = state.agentTurnBase
-            const lines = base && base !== state.project ? describeChanges(base, state.project) : []
+            const files = Object.entries(state.agentTurnFiles).map(([path, file]) => ({ path, ...file }))
+            const edited = base !== null && state.agentTurnEdited && base !== state.project
+            const lines = edited ? describeChanges(base, state.project) : []
+            if (edited && lines.length === 0) {
+              lines.push({ kind: 'changed', text: 'Changed settings this summary does not list' })
+            }
+            for (const file of files) {
+              const name = file.path.split(/[\\/]/).pop() ?? file.path
+              lines.push(file.before === null ? { kind: 'added', text: `Created “${name}”` } : { kind: 'changed', text: `Rewrote “${name}”` })
+            }
             const changeId = newId('chg')
-            const withChanges: AgentEntry[] =
-              lines.length > 0 ? [...log, { kind: 'changes', id: changeId, lines, state: 'applied' }] : log
+            const note = state.agentTurnUserEdited
+              ? 'Includes edits you made while the agent was working — reverting takes those too.'
+              : undefined
+            let checkpoints = state.agentCheckpoints
+            let entries: AgentEntry[] = log
+            if (lines.length > 0 && base) {
+              checkpoints = { ...checkpoints, [changeId]: { before: base, after: state.project, files } }
+              entries = [...log, { kind: 'changes', id: changeId, lines, state: 'applied', ...(note ? { note } : {}) }]
+              // Oldest first out: its card stays, readable, but can no longer be reverted.
+              const ids = Object.keys(checkpoints)
+              const expired = new Set(ids.slice(0, Math.max(0, ids.length - MAX_AGENT_CHECKPOINTS)))
+              if (expired.size > 0) {
+                checkpoints = Object.fromEntries(Object.entries(checkpoints).filter(([id]) => !expired.has(id)))
+                entries = entries.map((e) =>
+                  e.kind === 'changes' && expired.has(e.id) ? { ...e, state: 'expired' as const } : e
+                )
+              }
+            }
             return {
               agentRunning: false,
               agentTurnBase: null,
-              ...(lines.length > 0 && base
-                ? { agentCheckpoints: { ...state.agentCheckpoints, [changeId]: { before: base, after: state.project } } }
-                : {}),
+              agentTurnFiles: {},
+              agentTurnEdited: false,
+              agentTurnUserEdited: false,
+              agentCheckpoints: checkpoints,
               agentLog:
                 event.reason === 'complete'
-                  ? withChanges
-                  : [...withChanges, { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }]
+                  ? entries
+                  : [...entries, { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }]
             }
           }
         }
@@ -723,7 +965,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     },
 
     clearAgentLog() {
-      set({ agentLog: [], agentProposal: null, agentCheckpoints: {} })
+      set({ agentLog: [], agentProposal: null, agentCheckpoints: {}, agentReverts: [] })
     },
 
     endAgentSession() {
@@ -1490,7 +1732,11 @@ export const useEditor = create<EditorStore>((set, get) => {
         agentPins: [],
         agentSessionActive: false,
         agentTurnBase: null,
-        agentCheckpoints: {}
+        agentTurnFiles: {},
+        agentTurnEdited: false,
+        agentTurnUserEdited: false,
+        agentCheckpoints: {},
+        agentReverts: []
       })
     },
 
@@ -1505,31 +1751,33 @@ export const useEditor = create<EditorStore>((set, get) => {
 
     // -- history ------------------------------------------------------------
     undo() {
-      set((state) => {
-        const previous = state.past[state.past.length - 1]
-        if (!previous) return state
-        return {
-          project: previous,
-          past: state.past.slice(0, -1),
-          future: [state.project, ...state.future],
-          selection: [],
-          dirty: true
-        }
+      const state = get()
+      const previous = state.past[state.past.length - 1]
+      if (!previous) return
+      set({
+        project: previous,
+        past: state.past.slice(0, -1),
+        future: [state.project, ...state.future],
+        selection: [],
+        dirty: true,
+        ...turnMarks(state)
       })
+      followReverts(previous)
     },
 
     redo() {
-      set((state) => {
-        const next = state.future[0]
-        if (!next) return state
-        return {
-          project: next,
-          past: [...state.past, state.project],
-          future: state.future.slice(1),
-          selection: [],
-          dirty: true
-        }
+      const state = get()
+      const next = state.future[0]
+      if (!next) return
+      set({
+        project: next,
+        past: [...state.past, state.project],
+        future: state.future.slice(1),
+        selection: [],
+        dirty: true,
+        ...turnMarks(state)
       })
+      followReverts(next)
     },
 
     markSaved() {

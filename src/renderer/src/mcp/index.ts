@@ -17,6 +17,7 @@ import { dryRunRequest, findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
 import { checkApproval } from '@shared/agent'
 import { store, ToolError } from './helpers'
+import { asAgent, setAgentFileWriter } from '@/store/editor'
 import { browseAssets, inspectItem, readProject } from './read'
 import { exportTimeline, trackExport } from './exports'
 import {
@@ -196,7 +197,9 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
       const wouldReturn = dryRun(() => handler(request.args))
       return { id: call.id, ok: true, value: { validateOnly: true, wouldReturn } }
     }
-    const value = await handler(request.args)
+    // Edits made inside a tool call are the agent's; anything else during a turn is the user's,
+    // which the turn's change card has to own up to (see `asAgent`).
+    const value = await asAgent(() => handler(request.args))
     if (verdict.index !== undefined) store().consumeApproval(verdict.index)
     return { id: call.id, ok: true, value }
   } catch (error) {
@@ -251,8 +254,16 @@ export function registerMcpExecutor(): () => void {
     ;(window as Window & { bayMcp?: unknown }).bayMcp = { execute: executeToolCall, tools: TOOLS }
   }
   const api = bay()
+  // Reverting an agent turn that rewrote a composition puts the file back through here.
+  if (api) setAgentFileWriter((path, contents) => api.composition.write(path, contents))
   // `mcp` arrives with the transport; a build whose preload predates it still runs, it just
   // has no agent surface.
-  if (!api?.mcp) return () => {}
-  return api.mcp.onToolCall(executeToolCall)
+  if (!api?.mcp) {
+    return () => setAgentFileWriter(null)
+  }
+  const off = api.mcp.onToolCall(executeToolCall)
+  return () => {
+    off()
+    setAgentFileWriter(null)
+  }
 }

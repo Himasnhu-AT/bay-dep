@@ -11,7 +11,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, killTree, mcpConfig } from './cli'
+import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, killTree, mcpConfig, TURN_TIMEOUT_MS } from './cli'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
 
@@ -143,4 +143,12 @@ test('killing the agent signals its whole process group, not just the pid we hol
   const none: number[] = []
   killTree(undefined, 'SIGTERM', (pid) => none.push(pid))
   assert.deepEqual(none, [])
+})
+
+test('a turn outlasts the slowest tool call, with room for the model around it', () => {
+  // `transcribe` may spend minutes downloading a model before it transcribes; a turn that
+  // times out first kills an agent whose tool was still inside its own budget.
+  const slowest = Math.max(...TOOLS.map((tool) => tool.timeoutMs ?? 0))
+  assert.ok(slowest > 10 * 60 * 1000, 'specimen: some tool is allowed longer than the old 10-minute turn')
+  assert.ok(TURN_TIMEOUT_MS >= slowest + 5 * 60 * 1000, `turn ${TURN_TIMEOUT_MS} ms vs tool ${slowest} ms`)
 })

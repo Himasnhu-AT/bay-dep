@@ -9,15 +9,18 @@
  * **Bay's tools and nothing else.** Four flags together:
  *
  * - `--tools` naming the only built-ins it gets — the two MCP resource readers, so it can read
- *   bay's guides — which removes every other built-in outright: no shell, no files, no web, no
- *   subagents, no `Skill` tool. Measured: with this, a request to run `id` had nothing to run it
- *   with, and the session's tool list was bay's tools plus those two.
+ *   bay's guides, and `Skill`, so it can load a bay skill named anywhere in a message (see
+ *   `BUILT_IN_TOOLS`) — which removes every other built-in outright: no shell, no files, no web,
+ *   no subagents. Measured: with the two readers alone, a request to run `id` had nothing to run
+ *   it with, and the session's tool list was bay's tools plus those two.
  * - `--mcp-config` with only bay, plus `--strict-mcp-config`, so the user's *other* MCP servers
  *   are not inherited. Measured, not assumed: a session started with `--setting-sources ''`
  *   still had a Gmail server's tools in its tool list.
- * - `--allowedTools` naming exactly those tools, and `--permission-prompts none`, so anything
- *   else is **denied** rather than left waiting on a prompt nobody can answer — the panel
- *   deliberately renders no permission dialogs; the approval gate is where permission lives.
+ * - `--allowedTools` naming exactly those tools — `Skill` narrowed to `Skill(<slug>)` for bay's
+ *   own skills — and `--permission-prompts none`, so anything else is **denied** rather than left
+ *   waiting on a prompt nobody can answer. The panel deliberately renders no permission dialogs:
+ *   by default the agent edits directly and each turn's Changes card, with its Revert, is the
+ *   review; with "Ask before editing" on, the `propose_edit` gate is where permission lives.
  * - `--setting-sources project`, from the agent's own working directory, which holds nothing but
  *   bay's skills (see `host.ts`). The user's own settings, CLAUDE.md files and skills stay out.
  *
@@ -68,8 +71,18 @@ export function killTree(
   }
 }
 
-/** How long a turn may run before it is abandoned. A stuck turn must not be a stuck panel. */
-export const TURN_TIMEOUT_MS = 10 * 60 * 1000
+/**
+ * How long a turn may run before it is abandoned. A stuck turn must not be a stuck panel.
+ *
+ * Derived from the catalog rather than written down: it has to outlast the slowest single tool
+ * call plus the model's own work around it. It was a literal 10 minutes while `transcribe` was
+ * allowed 15 (a first run downloads a model), so on a slow link the panel killed a turn whose
+ * tool was still inside its own budget, and the transcription ran on with nobody waiting.
+ */
+export const TURN_TIMEOUT_MS = Math.max(
+  10 * 60 * 1000,
+  ...TOOLS.map((tool) => (tool.timeoutMs ?? 0) + 5 * 60 * 1000)
+)
 
 export interface CliOptions {
   /** The `claude` binary. Found on PATH when not given. */

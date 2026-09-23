@@ -36,8 +36,16 @@ export async function writeComposition(
   const api = bay()
   if (!api) fail('bay is not answering. The main process may be starting; try again.')
 
+  // During an in-app turn, keep what the file held so the turn's Revert can put it back: a
+  // rewrite changes the picture without changing the project, so the project diff cannot.
+  const turn = store().agentRunning
+  const previous = turn ? ((await api.composition.inspect(path, true).catch(() => null))?.html ?? null) : null
+
   const written = await api.composition.write(path, html)
   if (!written.ok) fail(written.error)
+  if (turn) store().recordAgentFileWrite(path, previous, html)
+  // Frames of the old document are cached in the preview; they are not this document.
+  store().markCompositionChanged(path)
 
   const { info, faults } = await api.composition.inspect(path)
   const fatal = fatalFaults(faults)

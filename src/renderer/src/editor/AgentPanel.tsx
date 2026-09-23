@@ -4,7 +4,7 @@ import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agen
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
 import { bay } from '@/lib/bay'
-import { selectFps, useEditor } from '@/store/editor'
+import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
 import { Composer } from './Composer'
@@ -491,40 +491,72 @@ function ProposalCard({
 function ChangesCard({ entry }: { entry: Extract<AgentEntry, { kind: 'changes' }> }): ReactNode {
   const revert = useEditor((state) => state.revertAgentChange)
   const notify = useEditor((state) => state.notify)
-  const later = useEditor((state) => {
-    const index = state.agentLog.findIndex((e) => e.id === entry.id)
-    return state.agentLog.filter((e, i) => i > index && e.kind === 'changes' && e.state === 'applied').length
-  })
+  const running = useEditor((state) => state.agentRunning)
+  // Two numbers, not an object: a selector returning a fresh object re-renders on every change.
+  const laterTurns = useEditor((state) => revertImpact(state, entry.id).laterTurns)
+  const laterEdits = useEditor((state) => revertImpact(state, entry.id).laterEdits)
   const [open, setOpen] = useState(false)
-  const reverted = entry.state === 'reverted'
+  // A revert that would also discard edits made since asks once, in place.
+  const [confirming, setConfirming] = useState(false)
+  const settled = entry.state !== 'applied'
   const shown = open ? entry.lines : entry.lines.slice(0, 4)
   const glyph = { added: '+', removed: '−', changed: '~' } as const
   const tone = { added: 'text-success', removed: 'text-danger', changed: 'text-ink-2' } as const
+  const heading =
+    entry.state === 'reverted'
+      ? 'Reverted'
+      : entry.state === 'expired'
+        ? 'Can no longer be reverted'
+        : `${entry.lines.length} change${entry.lines.length === 1 ? '' : 's'}`
+
+  const doRevert = (): void => {
+    setConfirming(false)
+    revert(entry.id)
+    if (useEditor.getState().agentLog.find((e) => e.id === entry.id && e.kind === 'changes' && e.state === 'reverted')) {
+      notify(
+        laterTurns > 0
+          ? `Reverted this and ${laterTurns} later change${laterTurns === 1 ? '' : 's'}. ⌘Z to undo.`
+          : 'Reverted. ⌘Z to undo.'
+      )
+    }
+  }
 
   return (
-    <div className={`rounded-lg border border-line bg-surface-2 text-[11px] ${reverted ? 'opacity-60' : ''}`}>
+    <div className={`rounded-lg border border-line bg-surface-2 text-[11px] ${settled ? 'opacity-60' : ''}`}>
       <div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
-        <span className="font-medium text-ink-0">
-          {reverted ? 'Reverted' : `${entry.lines.length} change${entry.lines.length === 1 ? '' : 's'}`}
-        </span>
+        <span className="font-medium text-ink-0">{heading}</span>
         <div className="flex-1" />
-        {!reverted && (
+        {entry.state === 'applied' && !confirming && (
           <Button
             variant="subtle"
             icon={<Undo2 className="size-3" />}
-            title="Put the project back as it was before this — ⌘Z brings it back"
-            onClick={() => {
-              revert(entry.id)
-              notify(later > 0 ? `Reverted this and ${later} later change${later === 1 ? '' : 's'}. ⌘Z to undo.` : 'Reverted. ⌘Z to undo.')
-            }}
+            disabled={running}
+            title={running ? 'Wait for the agent to finish, or stop it, to revert' : 'Put the project back as it was before this — ⌘Z brings it back'}
+            onClick={() => (laterEdits ? setConfirming(true) : doRevert())}
           >
-            {later > 0 ? `Revert (+${later} later)` : 'Revert'}
+            {laterTurns > 0 ? `Revert (+${laterTurns} later)` : 'Revert'}
           </Button>
         )}
       </div>
+      {confirming && (
+        <div className="flex items-center gap-2 border-b border-line bg-warning/10 px-2 py-1.5">
+          <span className="min-w-0 flex-1 text-pretty text-ink-1">
+            The project has changed since. Reverting also undoes those changes (⌘Z brings them back).
+          </span>
+          <Button variant="ghost" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+          <Button variant="subtle" icon={<Undo2 className="size-3" />} onClick={doRevert}>
+            Revert anyway
+          </Button>
+        </div>
+      )}
+      {entry.note && entry.state === 'applied' && (
+        <p className="border-b border-line px-2 py-1 text-pretty text-ink-2">{entry.note}</p>
+      )}
       <ul className="flex flex-col gap-0.5 px-2 py-1.5">
         {shown.map((line, index) => (
-          <li key={index} className={`flex gap-1.5 leading-relaxed ${reverted ? 'line-through' : ''}`}>
+          <li key={index} className={`flex gap-1.5 leading-relaxed ${entry.state === 'reverted' ? 'line-through' : ''}`}>
             <span aria-hidden="true" className={`w-2 shrink-0 font-mono ${tone[line.kind]}`}>
               {glyph[line.kind]}
             </span>

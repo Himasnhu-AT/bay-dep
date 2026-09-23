@@ -101,9 +101,20 @@ export type AgentEntry =
   /**
    * What an agent turn changed, like a commit's diff. The project before and after lives in the
    * store (`agentCheckpoints`), keyed by `id`, so a transcript export does not carry whole
-   * projects. `reverted` once the user took it back — directly, or by reverting an earlier one.
+   * projects. `reverted` once the user took it back — directly, or by reverting an earlier one;
+   * back to `applied` if they undo that revert. `expired` when it can no longer be reverted:
+   * another project was opened, or it fell out of the checkpoints bay keeps.
+   *
+   * `note` carries what the lines cannot, such as "this turn includes edits you made while the
+   * agent was working" — the reason a revert may take more than the agent's work.
    */
-  | { kind: 'changes'; id: string; lines: ChangeLine[]; state: 'applied' | 'reverted' }
+  | {
+      kind: 'changes'
+      id: string
+      lines: ChangeLine[]
+      state: 'applied' | 'reverted' | 'expired'
+      note?: string
+    }
 
 // ---------------------------------------------------------------------------
 // Proposals
@@ -136,12 +147,14 @@ export interface Proposal {
  *
  * Three states, one field, so they cannot disagree — each has its own sentence:
  *
- * - `null` — **nothing is gated.** No in-app agent is driving. This is bay answering Claude
+ * - `null` — **nothing is gated.** Either no in-app agent is driving — bay answering Claude
  *   Code over the socket, where the person is in a terminal watching every call go past and
- *   there is no panel to approve anything in. Gating that would not make it safer, it would
- *   make it impossible.
- * - `{ approved: null }` — an in-app agent session is running and has had nothing approved
- *   yet. Writes are refused, and the refusal says to propose first.
+ *   there is no panel to approve anything in; gating that would not make it safer, it would
+ *   make it impossible — or an in-app session is running with "Ask before editing" off (the
+ *   default), where the agent edits directly and each turn's Changes card, with its Revert, is
+ *   the review.
+ * - `{ approved: null }` — an in-app agent session is running with "Ask before editing" on,
+ *   and has had nothing approved yet. Writes are refused, and the refusal says to propose first.
  * - `{ approved: … }` — the user approved a plan. Exactly that plan may run, once each.
  *
  * The gate therefore prevents an agent from **deviating from what was approved**; it is not a

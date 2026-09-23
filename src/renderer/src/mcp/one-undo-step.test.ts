@@ -510,6 +510,8 @@ const STORE_CASES: Record<string, StoreCase> = {
   setAutoDownloadModels: { delta: 0, run: () => state().setAutoDownloadModels(false) },
   setWhisperModel: { delta: 0, run: () => state().setWhisperModel('ggml-small.en.bin') },
   setWhisperDownload: { delta: 0, run: () => state().setWhisperDownload(null) },
+  recordAgentFileWrite: { delta: 0, run: () => state().recordAgentFileWrite('/tmp/c.html', null, '<html></html>') },
+  markCompositionChanged: { delta: 0, run: () => state().markCompositionChanged('/tmp/c.html') },
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },

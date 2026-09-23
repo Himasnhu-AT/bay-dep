@@ -124,3 +124,36 @@ test('a long turn is summarised with a count rather than a wall of lines', () =>
   assert.equal(lines.length, 14)
   assert.equal(lines[13]!.text, '…and 17 more changes')
 })
+
+test('renaming a track is one line, not a move of every clip on it', () => {
+  const before = project([item('i1', 'a1', 0, 150)])
+  const after = structuredClone(before)
+  after.timelines[0]!.tracks[0]!.name = 'Interview'
+  assert.deepEqual(texts(describeChanges(before, after)), ['Renamed track V1 to Interview'])
+})
+
+test('track flags, background and marker edits are each reported', () => {
+  const before = project([], {})
+  before.timelines[0]!.markers = [{ id: 'm', frame: 30, label: 'Hook' }]
+  const after = structuredClone(before)
+  const timeline = after.timelines[0]!
+  timeline.tracks[0]!.muted = true
+  timeline.tracks[0]!.locked = true
+  timeline.background = '#ffffff'
+  timeline.markers![0]!.frame = 60
+  assert.deepEqual(texts(describeChanges(before, after)), [
+    'Background #000 → #ffffff',
+    'Muted track V1',
+    'Locked track V1',
+    'Moved marker “Hook” 0:01:00 → 0:02:00'
+  ])
+})
+
+test('a clip moved to another track is still reported as moved', () => {
+  const before = project([item('i1', 'a1', 0, 150)])
+  before.timelines[0]!.tracks.push({ id: 'v2', kind: 'video', name: 'V2', locked: false, muted: false, hidden: false, items: [] })
+  const after = structuredClone(before)
+  const [moved] = after.timelines[0]!.tracks[0]!.items.splice(0, 1)
+  after.timelines[0]!.tracks[1]!.items.push({ ...moved!, trackId: 'v2' })
+  assert.deepEqual(texts(describeChanges(before, after)), ['Moved “interview.mp4” from V1 to V2'])
+})

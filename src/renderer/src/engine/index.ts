@@ -61,7 +61,7 @@ export {
  * clock, which cannot answer the only question that matters: what reaches the screen when a
  * real decoder feeds a real display. Nothing inside the bundle is reachable from outside it,
  * so measuring the running app needs one handle a debugger can find — the same trade the
- * Rust tree makes with `BAY_UI_FRAMETIME=1`.
+ * deleted Rust tree made with `BAY_UI_FRAMETIME=1` (tag `rust-engine-final`).
  *
  * It is **off unless asked for**. A handle that lets arbitrary page script read and mutate
  * the whole project should not exist in a release build merely because the page happens to
@@ -147,6 +147,23 @@ class Engine {
       })
     )
     this.#offs.push(useEditor.subscribe(this.#onStoreChange))
+
+    // A composition file rewritten on disk (by the agent, or by reverting one of its turns)
+    // leaves this pool's frames of the old document cached under the same asset id. Drop them
+    // for every asset at that path, and draw again.
+    let epochs = state.compositionEpochs
+    this.#offs.push(
+      useEditor.subscribe((next) => {
+        if (next.compositionEpochs === epochs) return
+        const before = epochs
+        epochs = next.compositionEpochs
+        const changed = Object.keys(epochs).filter((path) => epochs[path] !== before[path])
+        for (const asset of next.project.assets) {
+          if (asset.path && changed.includes(asset.path)) this.compositions.release(asset.id)
+        }
+        this.redraw()
+      })
+    )
 
     // Media becoming drawable is the fourth thing that changes the picture, alongside the
     // clock, the store and the canvas size — and it was the missing one. A decode or a

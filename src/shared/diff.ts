@@ -49,6 +49,9 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
     if (!old) out.push({ kind: 'added', text: `Imported “${asset.name}”` })
     else if (old.name !== asset.name || old.text !== asset.text) {
       out.push({ kind: 'changed', text: `Changed the text of “${old.text ?? old.name}” to “${asset.text ?? asset.name}”` })
+    } else if (!same(old.compositionVariables, asset.compositionVariables) || old.durationUs !== asset.durationUs) {
+      // A composition re-read after its file was rewritten: new knobs, or a new length.
+      out.push({ kind: 'changed', text: `Updated “${asset.name}”` })
     }
   }
   for (const [id, asset] of oldAssets) {
@@ -60,17 +63,30 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       out.push({ kind: 'changed', text: `Canvas ${was.width}×${was.height} → ${now.width}×${now.height}` })
     }
     if (was.fps !== now.fps) out.push({ kind: 'changed', text: `Frame rate ${was.fps} → ${now.fps}` })
+    if (was.background !== now.background) out.push({ kind: 'changed', text: `Background ${was.background} → ${now.background}` })
 
     const oldTracks = new Map(was.tracks.map((t) => [t.id, t]))
     const newTracks = new Map(now.tracks.map((t) => [t.id, t]))
     for (const [id, track] of newTracks) if (!oldTracks.has(id)) out.push({ kind: 'added', text: `Added track ${track.name}` })
     for (const [id, track] of oldTracks) if (!newTracks.has(id)) out.push({ kind: 'removed', text: `Removed track ${track.name}` })
+    for (const [id, track] of newTracks) {
+      const old = oldTracks.get(id)
+      if (!old) continue
+      if (old.name !== track.name) out.push({ kind: 'changed', text: `Renamed track ${old.name} to ${track.name}` })
+      const flag = (on: boolean, yes: string, no: string): void => {
+        out.push({ kind: 'changed', text: `${on ? yes : no} track ${track.name}` })
+      }
+      if (old.muted !== track.muted) flag(track.muted, 'Muted', 'Unmuted')
+      if (old.hidden !== track.hidden) flag(track.hidden, 'Hid', 'Showed')
+      if (old.locked !== track.locked) flag(track.locked, 'Locked', 'Unlocked')
+    }
 
-    const items = (timeline: Timeline): Map<string, { item: Item; track: string }> =>
-      new Map(timeline.tracks.flatMap((t) => t.items.map((item) => [item.id, { item, track: t.name }] as const)))
+    // By track id: renaming a track is not moving every clip on it.
+    const items = (timeline: Timeline): Map<string, { item: Item; track: string; trackId: string }> =>
+      new Map(timeline.tracks.flatMap((t) => t.items.map((item) => [item.id, { item, track: t.name, trackId: t.id }] as const)))
     const oldItems = items(was)
     const newItems = items(now)
-    for (const [id, { item, track }] of newItems) {
+    for (const [id, { item, track, trackId }] of newItems) {
       const old = oldItems.get(id)
       const name = assetName(after, item)
       const span = `${tc(item.from)}–${tc(item.from + item.durationInFrames)}`
@@ -79,7 +95,7 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
         continue
       }
       const o = old.item
-      if (old.track !== track) out.push({ kind: 'changed', text: `Moved ${name} from ${old.track} to ${track}` })
+      if (old.trackId !== trackId) out.push({ kind: 'changed', text: `Moved ${name} from ${old.track} to ${track}` })
       if (o.from !== item.from && o.durationInFrames === item.durationInFrames) {
         out.push({ kind: 'changed', text: `Moved ${name} ${tc(o.from)} → ${tc(item.from)}` })
       } else if (o.from !== item.from || o.durationInFrames !== item.durationInFrames) {
@@ -116,7 +132,12 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
 
     const oldMarkers = new Map((was.markers ?? []).map((m) => [m.id, m]))
     const newMarkers = new Map((now.markers ?? []).map((m) => [m.id, m]))
-    for (const [id, m] of newMarkers) if (!oldMarkers.has(id)) out.push({ kind: 'added', text: `Added marker “${m.label}” at ${tc(m.frame)}` })
+    for (const [id, m] of newMarkers) {
+      const old = oldMarkers.get(id)
+      if (!old) out.push({ kind: 'added', text: `Added marker “${m.label}” at ${tc(m.frame)}` })
+      else if (old.frame !== m.frame) out.push({ kind: 'changed', text: `Moved marker “${m.label}” ${tc(old.frame)} → ${tc(m.frame)}` })
+      else if (old.label !== m.label || old.color !== m.color) out.push({ kind: 'changed', text: `Changed marker “${old.label}”${old.label !== m.label ? ` to “${m.label}”` : ''}` })
+    }
     for (const [id, m] of oldMarkers) if (!newMarkers.has(id)) out.push({ kind: 'removed', text: `Removed marker “${m.label}”` })
   }
 
