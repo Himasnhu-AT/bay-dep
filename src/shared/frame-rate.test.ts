@@ -204,3 +204,22 @@ test('retiming to the same rate, or to nonsense, changes nothing', () => {
     assert.equal(tl.fps, 30)
   }
 })
+
+test('a marker on a cut is still on that cut after a retime', () => {
+  // The same specimen as the abutment test: the cut at frame 6 lands on 5 at 24fps, where the
+  // naive `from + duration` would say 4. A marker scaled any other way than an edge drifts off.
+  const tl = timeline([item('a', 3, 3), item('b', 6, 3)])
+  tl.markers = [{ id: 'mk_cut', frame: 6, label: 'the cut' }]
+
+  retimeTimeline(tl, 24)
+
+  const b = tl.tracks[0]!.items[1]!
+  assert.equal(tl.markers[0]!.frame, b.from, 'the marker must still name the cut it was placed on')
+})
+
+test('a marker keeps its wall-clock time when the rate changes', () => {
+  const tl = timeline([item('a', 0, 900)])
+  tl.markers = [{ id: 'mk', frame: 300, label: 'ten seconds' }]
+  retimeTimeline(tl, 60)
+  assert.equal(tl.markers[0]!.frame, 600)
+})

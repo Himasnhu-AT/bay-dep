@@ -26,7 +26,8 @@ import {
   isCropped,
   itemEnd,
   timelineDuration,
-  type Item
+  type Item,
+  type Marker
 } from '@shared/project'
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline } from './helpers'
 
@@ -41,6 +42,16 @@ function describeItem(item: Item): Record<string, unknown> {
     // asset is rare, so it costs nothing here, and it is a correctness signal an agent
     // scanning items must not have to resolve an id to notice.
     ...(findAsset(project(), item.assetId) ? {} : { assetMissing: true })
+  }
+}
+
+/** One marker as every tool result reports it. */
+export function describeMarker(marker: Marker): Record<string, unknown> {
+  return {
+    id: marker.id,
+    frame: marker.frame,
+    label: marker.label,
+    ...(marker.color ? { color: marker.color } : {})
   }
 }
 
@@ -89,6 +100,9 @@ export function readProject(): Record<string, unknown> {
       hidden: track.hidden,
       items: track.items.map(describeItem)
     })),
+    // Always present, empty or not: an agent that has to test for the key before reading it
+    // will eventually forget, and "no markers" is an answer worth stating.
+    markers: [...(tl.markers ?? [])].sort((a, b) => a.frame - b.frame).map(describeMarker),
     assetCount: state.project.assets.length
   }
 }

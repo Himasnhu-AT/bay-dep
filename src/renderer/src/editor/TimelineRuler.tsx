@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from 'react'
-import { formatTimecode } from '@shared/project'
+import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
 
 export interface TimelineRulerProps {
@@ -8,6 +8,8 @@ export interface TimelineRulerProps {
   /** Full scrollable width of the lane area, in CSS pixels. */
   contentWidth: number
   durationFrames: number
+  /** Timeline markers, drawn as flags along the top edge. */
+  markers: readonly Marker[]
   /** Visible frame window, so a two-hour timeline does not mount ten thousand ticks. */
   viewStart: number
   viewEnd: number
@@ -47,6 +49,7 @@ export function TimelineRuler({
   pixelsPerFrame,
   contentWidth,
   durationFrames,
+  markers,
   viewStart,
   viewEnd,
   innerRef,
@@ -91,6 +94,29 @@ export function TimelineRuler({
       className="relative h-[26px] shrink-0 cursor-ew-resize border-b border-line bg-surface-1 select-none"
       style={{ width: contentWidth }}
     >
+      {/*
+        Flags along the top edge, clear of the timecode labels at the bottom. Pointer events stay
+        on so the label shows as a tooltip; a press still bubbles to the ruler and scrubs, so a
+        marker never gets in the way of moving the playhead — and pressing one lands on it.
+        Only markers inside the visible window are mounted, for the same reason ticks are.
+      */}
+      {markers
+        .filter((marker) => marker.frame >= viewStart && marker.frame <= viewEnd)
+        .map((marker) => (
+          <div
+            key={marker.id}
+            title={`${marker.label} · ${formatTimecode(marker.frame, fps, true)}`}
+            aria-label={`Marker: ${marker.label}`}
+            className="absolute top-0 z-[1] -ml-[4px] h-[9px] w-[9px]"
+            style={{ left: marker.frame * pixelsPerFrame }}
+          >
+            <div
+              aria-hidden="true"
+              className="size-full [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]"
+              style={{ backgroundColor: marker.color ?? 'var(--color-accent)' }}
+            />
+          </div>
+        ))}
       {ticks.map((frame) => {
         const major = frame % labelStep === 0
         return (

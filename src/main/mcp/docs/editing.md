@@ -73,6 +73,18 @@ A transition stays on its cut through all three, because every cut that existed 
 can change is how much footage each side has left to spend on it; the result's `transitions` and
 `warnings` say when a dissolve is now shorter than you asked for.
 
+## Markers are notes in time
+
+`add_marker` puts a labelled flag on the timeline at a frame (the playhead if you omit it), and
+`read_project` returns every marker on every later call, in frame order. Use them to remember
+what you found before you act on it — the laugh, the chapter break, the cut to check — and to
+leave the user points to review. They show on the ruler; the user adds one with `M`.
+
+A marker belongs to the program, not to a clip, so moving or replacing clips leaves it alone.
+It moves only when time itself does: `remove_range` slides markers after the cut up with the
+footage, and one inside the removed span lands on the cut rather than vanishing. `remove_marker`
+takes one away.
+
 ## Transitions belong to the cut, not the clip
 
 `add_transition` joins two clips that already abut. A transition needs footage on **both** sides

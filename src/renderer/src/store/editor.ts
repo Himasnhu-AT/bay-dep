@@ -210,6 +210,16 @@ export interface EditorActions {
     patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
   ): void
 
+  // markers -----------------------------------------------------------------
+  /**
+   * Put a marker on the active timeline. Returns its id, or null when there is no timeline.
+   * With no label it is numbered, because an unlabelled flag in a row of them is a flag nobody
+   * can refer to.
+   */
+  addMarker(frame: Frames, label?: string, color?: string): string | null
+  moveMarker(markerId: string, frame: Frames): void
+  removeMarker(markerId: string): void
+
   // selection / view ---------------------------------------------------------
   select(itemIds: string[], additive?: boolean): void
   clearSelection(): void
@@ -1033,6 +1043,42 @@ export const useEditor = create<EditorStore>((set, get) => {
         if (!transition) return
         Object.assign(transition, patch)
         if (transition.durationInFrames < 2) transition.durationInFrames = 2
+      })
+    },
+
+    // -- markers ------------------------------------------------------------
+    addMarker(frame, label, color) {
+      const timeline = currentTimeline()
+      if (!timeline) return null
+      const id = newId('mk')
+      const name = label?.trim() || `Marker ${(timeline.markers?.length ?? 0) + 1}`
+      editTimeline((tl) => {
+        const list = tl.markers ?? (tl.markers = [])
+        list.push({
+          id,
+          frame: Math.max(0, Math.round(frame)),
+          label: name,
+          ...(color ? { color } : {})
+        })
+      })
+      return id
+    },
+
+    moveMarker(markerId, frame) {
+      editTimeline((tl) => {
+        const marker = tl.markers?.find((m) => m.id === markerId)
+        if (!marker) return
+        marker.frame = Math.max(0, Math.round(frame))
+      })
+    },
+
+    removeMarker(markerId) {
+      editTimeline((tl) => {
+        if (!tl.markers) return
+        tl.markers = tl.markers.filter((m) => m.id !== markerId)
+        // Back to absent rather than an empty list, so a project that tried markers and removed
+        // them all saves exactly as one that never had any.
+        if (tl.markers.length === 0) delete tl.markers
       })
     },
 

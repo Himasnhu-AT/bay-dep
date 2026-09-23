@@ -193,5 +193,15 @@ export function rippleDelete(
     timeline.transitions = keptTransitions
   }
 
+  // Markers name moments in the program, so they move with the time around them: after the cut
+  // they slide up by the span, like every unlocked track. One *inside* the removed span names a
+  // moment that no longer exists; it lands on the cut rather than vanishing, because a note
+  // someone left is worth more than the exact frame it was on, and the cut is where that
+  // moment went.
+  for (const marker of timeline.markers ?? []) {
+    if (marker.frame >= end) marker.frame -= span
+    else if (marker.frame >= start) marker.frame = start
+  }
+
   return result
 }

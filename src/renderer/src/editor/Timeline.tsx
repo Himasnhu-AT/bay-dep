@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Music2, Video } from 'lucide-react'
-import { allItems, findAsset, itemEnd, type Item, type Track } from '@shared/project'
+import { allItems, findAsset, itemEnd, type Item, type Marker, type Track } from '@shared/project'
 import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
 import { IconButton } from '@/components'
 import { cn } from '@/lib/cn'
@@ -13,6 +13,9 @@ import { JunctionMarkers } from './JunctionMarkers'
 import { TransitionDialog } from './TransitionDialog'
 import { TimelineRuler } from './TimelineRuler'
 import { TrackHeader } from './TrackHeader'
+
+/** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
+const NO_MARKERS: readonly Marker[] = []
 
 const HEADER_WIDTH = 148
 const RULER_HEIGHT = 26
@@ -475,6 +478,7 @@ export function Timeline(): ReactNode {
               pixelsPerFrame={pixelsPerFrame}
               contentWidth={contentWidth}
               durationFrames={duration}
+              markers={timeline?.markers ?? NO_MARKERS}
               viewStart={viewStart}
               viewEnd={viewEnd}
               innerRef={rulerRef}

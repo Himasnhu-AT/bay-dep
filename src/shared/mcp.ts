@@ -98,8 +98,9 @@ export const TOOLS: ToolSpec[] = [
     name: 'read_project',
     description:
       'The project as it stands: name, canvas size and frame rate, every track, and every ' +
-      'item with its id, position and duration in frames. Start here. Everything else takes ' +
-      'ids that come from this output, and the frame rate here is what every other time in ' +
+      'item with its id, position and duration in frames, and every marker. Start here. ' +
+      'Everything else takes ids that come from this output, and the frame rate here is what ' +
+      'every other time in ' +
       'this surface is measured in. ' +
       'Call it to **orient**, not to confirm — the write tools return the item they changed, ' +
       'and that answer is authoritative. Measured on a 200-clip timeline, a turn that re-reads ' +
@@ -681,6 +682,42 @@ export const TOOLS: ToolSpec[] = [
       type: 'object',
       properties: { transitionId: { type: 'string' } },
       required: ['transitionId']
+    }
+  },
+  {
+    name: 'add_marker',
+    description:
+      'Put a named marker on the timeline at a frame — a note in time that read_project hands ' +
+      'back on every later call. Reach for it to mark something you will act on later ("the ' +
+      'laugh", "chapter 2", "check this cut"), to leave the user a point to review, or to record ' +
+      'beats you found before editing to them. Markers belong to the program, not to a clip: ' +
+      'they stay put when clips are moved or replaced, and move with time only when time itself ' +
+      'is removed (remove_range) or the frame rate changes.',
+    category: 'write',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        frame: frames('Where the marker goes. Defaults to the playhead.'),
+        label: {
+          type: 'string',
+          description: 'What it says. Omit it and bay numbers it ("Marker 3").'
+        },
+        color: { type: 'string', description: 'Hex, such as "#F5A524". Omit for the default.' }
+      }
+    }
+  },
+  {
+    name: 'remove_marker',
+    description:
+      'Take a marker off the timeline. Nothing else changes. Marker ids come from read_project ' +
+      'or add_marker; an unknown id is refused with the list of markers that do exist.',
+    category: 'write',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: { markerId: { type: 'string' } },
+      required: ['markerId']
     }
   },
   {

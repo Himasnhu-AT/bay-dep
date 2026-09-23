@@ -37,6 +37,7 @@ import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from '@shared/validate'
 import { proposeEdit } from './proposals'
 import { trimItem } from './trim'
+import { addMarker, removeMarker } from './markers'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -59,6 +60,8 @@ const HANDLERS: Record<string, Handler> = {
   add_track: (args) => addTrack(args),
   add_transition: (args) => addTransition(args),
   remove_transition: (args) => removeTransition(args),
+  add_marker: (args) => addMarker(args),
+  remove_marker: (args) => removeMarker(args),
   set_playhead: (args) => setPlayhead(args),
   undo: () => undo(),
   export_timeline: (args) => exportTimeline(args),

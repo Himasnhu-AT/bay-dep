@@ -225,3 +225,21 @@ test('a fade that no longer fits is shortened, not left longer than its clip', (
     `fade ${only.fadeOutFrames} exceeds clip ${only.durationInFrames}`
   )
 })
+
+test('markers after a cut slide up with the program, and one inside it lands on the cut', () => {
+  const tl = timeline([track('v1', [item({ id: 'a', from: 0, durationInFrames: 300 })])])
+  tl.markers = [
+    { id: 'before', frame: 40, label: 'before' },
+    { id: 'inside', frame: 120, label: 'inside' },
+    { id: 'at-end', frame: 150, label: 'first frame kept' },
+    { id: 'after', frame: 200, label: 'after' }
+  ]
+  const named = (id: string): number => tl.markers!.find((m) => m.id === id)!.frame
+
+  rippleDelete(tl, 100, 150, makeId)
+
+  assert.equal(named('before'), 40, 'a marker before the cut does not move')
+  assert.equal(named('after'), 150, 'a marker after the cut moves with the footage under it')
+  assert.equal(named('at-end'), 100, 'toFrame is kept, so a marker on it moves like the rest')
+  assert.equal(named('inside'), 100, 'a marker on removed time lands on the cut, not nowhere')
+})

@@ -433,6 +433,23 @@ export interface Transition {
   params?: Record<string, number | string>
 }
 
+/**
+ * A named point on the timeline — "the laugh", "cut here", "chapter 2".
+ *
+ * **On the timeline, not on an item**, because a marker names a moment in the program rather
+ * than in any one clip's footage: it stays put when the clip under it is replaced, and it still
+ * means something where no clip is. That is also why it moves with *time* edits — a ripple or a
+ * frame-rate change moves it, because both move the moment it names — and not with clip edits.
+ */
+export interface Marker {
+  id: string
+  /** Timeline frame, at the timeline's fps. */
+  frame: Frames
+  label: string
+  /** Hex, such as `#F5A524`. Absent means the default marker colour. */
+  color?: string
+}
+
 export interface Timeline {
   id: string
   name: string
@@ -452,6 +469,11 @@ export interface Timeline {
    * would reject all of them.
    */
   transitions?: Transition[]
+  /**
+   * Markers, in no guaranteed order. Optional for the same reason `transitions` is: every
+   * `.bay` file written before markers existed has no such key, and must still load.
+   */
+  markers?: Marker[]
 }
 
 export interface Project {
@@ -529,6 +551,12 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
     // what the handles allow. So this scales the ask and lets the draw path clamp, rather than
     // baking a clamp into storage at a rate the user may change again.
     transition.durationInFrames = Math.max(2, Math.round(transition.durationInFrames * k))
+  }
+
+  for (const marker of timeline.markers ?? []) {
+    // A marker names a wall-clock moment, so it is scaled like an edge — the same rounding as
+    // the clip edges above, which keeps a marker placed on a cut on that cut.
+    marker.frame = Math.max(0, Math.round(marker.frame * k))
   }
 
   timeline.fps = fps
