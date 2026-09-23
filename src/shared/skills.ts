@@ -28,9 +28,10 @@ export interface BaySkill {
 }
 
 const PROPOSE =
-  'Nothing changes until the user approves: gather what you need with the read tools, then call ' +
-  'propose_edit with the exact calls and end your turn. After the approved calls run, look at the ' +
-  'result with preview_frame before you report it done.'
+  'Make the edits directly — bay shows the user a diff of everything you changed and they can ' +
+  'revert it. (If a write is refused because the user turned on "Ask before editing", propose ' +
+  'with propose_edit and wait instead.) Look at the result with preview_frame before you report ' +
+  'it done.'
 
 export const BAY_SKILLS: readonly BaySkill[] = [
   {
@@ -41,7 +42,7 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       'Tighten a talking-head recording without changing what is said.',
       '',
       '1. Read the timeline with read_project (or read_script for many clips). If there are pinned time ranges, work only inside them.',
-      '2. Find long pauses, false starts and repeated takes. You cannot hear audio: say so, and ask the user to point at the moments, or to give you a transcript with timings, rather than guessing from picture alone.',
+      '2. Find long pauses, false starts and repeated takes from the words and their timings: call transcribe with the clip\'s itemId (it runs locally) — gaps between lines are the pauses, repeated lines are the retakes. Say what you found before cutting.',
       '3. Cut with remove_range so every track stays in sync. Leave a natural breath (about 6–10 frames) between sentences; never jump-cut every gap.',
       '4. Propose all the cuts as one plan, listing each range and why.',
       '',
@@ -55,10 +56,11 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     body: [
       'Add readable captions.',
       '',
-      '1. Ask whether the user has an SRT or WebVTT file, or will give lines and timings. Do not transcribe audio yourself — you cannot hear it.',
-      '2. Keep each caption short enough to read in its time on screen (about 15–17 characters per second at most); split long lines.',
-      '3. Use add_captions (cues or srt). It places them on their own track, as one undo step.',
-      '4. Check two or three frames with preview_frame so no caption covers a face or other text.',
+      '1. Before doing anything else, ask the user whether they have a transcript or subtitle file (SRT or WebVTT) for this video, and end your turn to wait for the answer. Skip the question only if their message already answers it — they attached or pinned a subtitle file, or said to transcribe. If they have one, use it with add_captions (srt): their words are better than a transcription.',
+      '2. If they do not, transcribe the speech on this Mac with the transcribe tool, passing the clip\'s itemId: it runs whisper.cpp locally (nothing is uploaded) and returns cues already on the timeline. Tell the user you are doing this. If transcribe says whisper.cpp or a model is missing, pass its instructions on exactly; never invent words.',
+      '3. Keep each caption short enough to read in its time on screen (about 15–17 characters per second at most); transcribe already splits lines to about 42 characters.',
+      '4. Place them with add_captions (cues). It puts them on their own track, as one undo step.',
+      '5. Check two or three frames with preview_frame so no caption covers a face or other text.',
       '',
       PROPOSE
     ].join('\n')
@@ -156,8 +158,8 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     body: [
       'Mark the chapters.',
       '',
-      '1. You cannot hear the audio: ask the user for the topics and roughly where each starts, or for a transcript with timings.',
-      '2. Propose a labelled marker for each chapter start (add_marker), with the timecodes.',
+      '1. Read what is said, with timings, using transcribe on the clip (it runs locally). If the user already has a transcript, use theirs.',
+      '2. Find where the topic changes and add a labelled marker at each chapter start (add_marker), then list the chapters with their timecodes.',
       '',
       PROPOSE
     ].join('\n')

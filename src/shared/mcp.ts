@@ -91,6 +91,8 @@ export interface ToolSpec {
    * so a new write tool cannot arrive with neither and answer a dry run with a bare "no".
    */
   dryRunRefusal?: string
+  /** How long main waits for an answer, when longer than `MCP_CALL_TIMEOUT_MS`. */
+  timeoutMs?: number
   /** JSON Schema for the arguments. Plain data so no validator leaks into `shared/`. */
   inputSchema: {
     type: 'object'
@@ -146,6 +148,31 @@ export const TOOLS: ToolSpec[] = [
   },
 
   // -- read ------------------------------------------------------------------
+  {
+    name: 'transcribe',
+    description:
+      'Transcribe a clip\'s speech on this Mac with whisper.cpp — nothing is uploaded. Use it ' +
+      'for captions when the user has no transcript or subtitle file, or to find what is said ' +
+      'where before cutting. Pass itemId for a clip on the timeline: the lines come back as ' +
+      'cues in timeline frames, already shifted and clipped to what the clip plays, ready for ' +
+      'add_captions. Pass assetId for a whole file: lines in seconds from its start, and SRT. ' +
+      'Takes a few seconds per minute of audio. If whisper.cpp or a model is missing, the ' +
+      'error says exactly what to install — tell the user; do not guess words.',
+    category: 'read',
+    readOnly: true,
+    timeoutMs: 15 * 60_000,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        itemId: { ...itemId, description: 'A clip on the timeline. ' + itemId.description },
+        assetId: { type: 'string', description: 'An imported file, from browse_assets.' },
+        language: {
+          type: 'string',
+          description: 'Spoken language as a code ("en", "fr", …) or "auto". Default "en".'
+        }
+      }
+    }
+  },
   {
     name: 'read_project',
     description:

@@ -37,6 +37,7 @@ import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from '@shared/validate'
 import { proposeEdit } from './proposals'
 import { listProjects, openProject } from './projects'
+import { transcribe } from './transcribe'
 import { trimItem } from './trim'
 import { addMarker, removeMarker } from './markers'
 import { editAsset } from './assets'
@@ -48,6 +49,7 @@ type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
 const HANDLERS: Record<string, Handler> = {
   list_projects: () => listProjects(),
+  transcribe: (args) => transcribe(args),
   open_project: (args) => openProject(args),
   read_project: () => readProject(),
   browse_assets: () => browseAssets(),

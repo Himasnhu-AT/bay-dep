@@ -24,6 +24,8 @@ import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } fr
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
+import { transcribeFile } from './media/whisper'
+import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import * as store from './project/store'
@@ -46,6 +48,7 @@ interface ChannelApi {
   mediaImportPaths: BayApi['media']['importPaths']
   mediaProbe: BayApi['media']['probe']
   mediaThumbnail: BayApi['media']['thumbnail']
+  mediaTranscribe: BayApi['media']['transcribe']
   mediaFilmstrip: BayApi['media']['filmstrip']
   mediaWaveform: BayApi['media']['waveform']
   mediaReveal: BayApi['media']['revealInFolder']
@@ -153,6 +156,18 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaImportPaths: (_event, paths) => importPaths(paths),
   mediaProbe: (_event, path) => probe(path),
   mediaThumbnail: (_event, request) => thumbnail(request),
+  mediaTranscribe: async (_event, path, language) => {
+    try {
+      const transcript = await transcribeFile(path, {
+        userDataDir: app.getPath('userData'),
+        homeDir: homedir(),
+        ...(language ? { language } : {})
+      })
+      return { ok: true as const, ...transcript }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
   mediaFilmstrip: (_event, request) => filmstrip(request),
   mediaWaveform: (_event, assetId, path, buckets) => waveform(assetId, path, buckets),
   mediaReveal: async (_event, path) => {

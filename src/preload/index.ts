@@ -65,6 +65,8 @@ const api: BayApi = {
     importPaths: (paths: string[]) =>
       ipcRenderer.invoke(IPC.mediaImportPaths, paths) as Promise<ImportedAsset[]>,
     probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path) as Promise<ProbeResult>,
+    transcribe: (path: string, language?: string) =>
+      ipcRenderer.invoke(IPC.mediaTranscribe, path, language),
     thumbnail: (request: ThumbnailRequest) =>
       ipcRenderer.invoke(IPC.mediaThumbnail, request) as Promise<string | null>,
     filmstrip: (request: FilmstripRequest) =>

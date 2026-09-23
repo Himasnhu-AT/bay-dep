@@ -10,6 +10,7 @@
 
 import type { Asset, Project } from './project'
 import type { AgentEntry, AgentEvent } from './agent'
+import type { TranscriptSegment } from './transcribe'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 
@@ -248,6 +249,17 @@ export interface BayApi {
   }
 
   media: {
+    /**
+     * Transcribe a media file on this machine with whisper.cpp. Lines come back in seconds from
+     * the start of the file. `ok: false` carries what to install or download, in words.
+     */
+    transcribe(
+      path: string,
+      language?: string
+    ): Promise<
+      | { ok: true; segments: TranscriptSegment[]; model: string; language: string }
+      | { ok: false; error: string }
+    >
     /** Opens the system file picker and probes everything the user chose. */
     importDialog(): Promise<ImportedAsset[]>
     /** Import specific paths — used by drag-and-drop onto the window. */
@@ -463,6 +475,7 @@ export const IPC = {
   mediaImportPaths: 'media:import-paths',
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
+  mediaTranscribe: 'media:transcribe',
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
   mediaReveal: 'media:reveal',

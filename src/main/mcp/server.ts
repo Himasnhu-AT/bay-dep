@@ -160,6 +160,9 @@ export async function callRenderer(
     return { id, ok: false, error: `bay's window closed before "${tool}" could run. Nothing was changed.` }
   }
 
+  // A tool may declare a longer budget: transcribing a long file takes longer than the default,
+  // and "bay did not answer" about a job that was still working would send the agent to retry it.
+  const timeoutMs = findTool(tool)?.timeoutMs ?? MCP_CALL_TIMEOUT_MS
   return new Promise<McpToolResult>((resolve) => {
     const timer = setTimeout(() => {
       pending.delete(id)
@@ -167,11 +170,11 @@ export async function callRenderer(
         id,
         ok: false,
         error:
-          `bay did not answer "${tool}" within ${Math.round(MCP_CALL_TIMEOUT_MS / 1000)}s. ` +
+          `bay did not answer "${tool}" within ${Math.round(timeoutMs / 1000)}s. ` +
           `The edit may or may not have been applied — call read_project before retrying, ` +
           `rather than repeating the call.`
       })
-    }, MCP_CALL_TIMEOUT_MS)
+    }, timeoutMs)
 
     pending.set(id, { resolve, timer, targetId: target.id, tool, args })
     const call: McpToolCall = { id, tool, args }
