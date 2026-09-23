@@ -6,20 +6,27 @@
  * The cost is that bay does not own the model loop — which is why `AgentRuntime` exists, so the
  * panel never learns which of the two it is talking to.
  *
- * **Bay's tools and nothing else.** Three flags together, and all three are needed:
+ * **Bay's tools and nothing else.** Four flags together:
  *
+ * - `--tools` naming the only built-ins it gets — the two MCP resource readers, so it can read
+ *   bay's guides — which removes every other built-in outright: no shell, no files, no web, no
+ *   subagents, no `Skill` tool. Measured: with this, a request to run `id` had nothing to run it
+ *   with, and the session's tool list was bay's tools plus those two.
  * - `--mcp-config` with only bay, plus `--strict-mcp-config`, so the user's *other* MCP servers
  *   are not inherited. Measured, not assumed: a session started with `--setting-sources ''`
  *   still had a Gmail server's tools in its tool list.
- * - `--allowedTools` naming bay's tools explicitly.
- * - `--permission-prompts none`, so anything not on that list is **denied** rather than
- *   prompted. Without it the run would stall on a prompt nobody can answer — there is no
- *   terminal here, and the panel deliberately does not render permission dialogs, because the
- *   approval gate is the place where permission is decided.
+ * - `--allowedTools` naming exactly those tools, and `--permission-prompts none`, so anything
+ *   else is **denied** rather than left waiting on a prompt nobody can answer — the panel
+ *   deliberately renders no permission dialogs; the approval gate is where permission lives.
+ * - `--setting-sources project`, from the agent's own working directory, which holds nothing but
+ *   bay's skills (see `host.ts`). The user's own settings, CLAUDE.md files and skills stay out.
  *
- * That leaves Read, Write, Edit, Bash and the rest denied. An agent editing video does not need
- * the user's home directory, and starting narrow is reversible in a way that starting wide is
- * not.
+ * This replaced `--restricted` plus a deny-list of built-ins by name. `--restricted` also
+ * disables project skills — measured: with it the skill was absent from the session and
+ * `/motion-graphics` was "not installed" — and a deny-list goes stale as the CLI adds tools:
+ * this one still named `Task` after the subagent tool had become `Agent`, and it did not name
+ * `Monitor` (which runs commands), `RemoteTrigger` or `Workflow`. An allow-list of built-ins
+ * cannot miss a tool the CLI adds later.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -77,55 +84,15 @@ export interface CliOptions {
 
 /** Bay's tools, namespaced the way the CLI reports them. */
 export function allowedToolNames(): string[] {
-  return TOOLS.map((tool) => `mcp__bay__${tool.name}`)
+  return [...TOOLS.map((tool) => `mcp__bay__${tool.name}`), ...BUILT_IN_TOOLS]
 }
 
 /**
- * The built-ins, denied by name.
- *
- * `--allowedTools` turned out not to be enough, and the gap was only visible by asking an agent
- * to try: **`Bash` with `id` ran and returned the user's uid and groups**, while `Read`, `Write`
- * and `WebFetch` were denied. An allow-list governs what needs approval, not what exists, and a
- * command judged safe enough not to need approval runs regardless of what the list says.
- *
- * `Read` and `Write` were denied for a reason that does not hold in general, either — "path is
- * outside allowed working directories". The agent's working directory *is* a directory, so a
- * path inside it would have been permitted. Bay's tools are the whole surface, so the file
- * tools are named here rather than left to a boundary that happens to sit in the right place.
+ * The only built-in tools the in-app agent has: reading bay's MCP resources (its guides).
+ * Everything else built in — shell, files, web, subagents, skills-as-a-tool — does not exist in
+ * the session at all. MCP tools are not built-ins, so bay's own are unaffected.
  */
-export const DENIED_TOOLS = [
-  'Bash',
-  'Read',
-  'Write',
-  'Edit',
-  'NotebookEdit',
-  'Glob',
-  'Grep',
-  'WebFetch',
-  'WebSearch',
-  'Task',
-  // The agent-harness tools. None of them touches the user's files, but none of them is
-  // editing video either, and `SendMessage` reaches other Claude sessions on this machine.
-  // Named by observation: the agent listed exactly these when asked what it had left.
-  'Skill',
-  'SlashCommand',
-  'ToolSearch',
-  'ScheduleWakeup',
-  'SendMessage',
-  'ListAgents',
-  'TaskOutput',
-  'TaskStop',
-  'CronCreate',
-  'CronList',
-  'CronDelete',
-  'PushNotification',
-  'EnterWorktree',
-  'ExitWorktree',
-  // Reported by the SDK runtime's live run as still reaching the agent: harness tools for
-  // design sync and code review, neither of which is editing video.
-  'DesignSync',
-  'ReportFindings'
-]
+export const BUILT_IN_TOOLS = ['ListMcpResourcesTool', 'ReadMcpResourceTool'] as const
 
 /**
  * Bay's MCP proxy as a stdio server entry.
@@ -172,17 +139,15 @@ export function cliArgs(options: CliOptions, sessionId: string, resume = false):
     '--verbose',
     '--mcp-config', mcpConfig(options),
     '--strict-mcp-config',
+    // The built-ins that exist at all. Everything not named is absent, not merely denied.
+    '--tools', BUILT_IN_TOOLS.join(','),
     '--allowedTools', ...allowedToolNames(),
-    // Two mechanisms because they do different things: `--restricted` removes the tools that
-    // run commands or code outright, and `--disallowedTools` denies the rest by name. Neither
-    // alone was sufficient — see `DENIED_TOOLS`.
-    '--restricted',
-    '--disallowedTools', ...DENIED_TOOLS,
     // Anything not allowed above is refused rather than queued behind a prompt no one can see.
     '--permission-prompts', 'none',
-    // The user's own instructions are theirs, not bay's. Inheriting a CLAUDE.md written for
-    // some other repository would put rules about that repository into a video edit.
-    '--setting-sources', '',
+    // Project settings from the agent's own directory, which holds only bay's skills. The
+    // user's own instructions are theirs, not bay's: a CLAUDE.md written for some other
+    // repository would put that repository's rules into a video edit.
+    '--setting-sources', 'project',
     '--system-prompt', options.systemPrompt,
     ...(resume ? ['--resume', sessionId] : ['--session-id', sessionId])
   ]

@@ -7,10 +7,11 @@
  * that a process exists.
  */
 
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import { IPC } from '@shared/ipc'
+import { BAY_SKILLS, skillMarkdown } from '@shared/skills'
 import type { AgentEvent } from '@shared/agent'
 import { socketPathIn } from '../mcp/socket-path'
 import { CliAgentRuntime } from './cli'
@@ -36,7 +37,26 @@ function workspace(): string {
   // a missing binary gives, and two different faults wearing one error message is how an
   // afternoon disappears.
   mkdirSync(dir, { recursive: true })
+  installSkills(dir)
   return dir
+}
+
+/**
+ * bay's skills, as the project skills of the agent's working directory.
+ *
+ * The CLI runs with project settings from this directory and nothing else, so these — and only
+ * these — are the skills the in-app agent has. Rewritten on every start: the directory is bay's,
+ * the skills ship with the build, and a skill removed or renamed in a new build must not linger
+ * from an old one.
+ */
+function installSkills(dir: string): void {
+  const root = join(dir, '.claude', 'skills')
+  rmSync(root, { recursive: true, force: true })
+  for (const skill of BAY_SKILLS) {
+    const folder = join(root, skill.slug)
+    mkdirSync(folder, { recursive: true })
+    writeFileSync(join(folder, 'SKILL.md'), skillMarkdown(skill))
+  }
 }
 
 function broadcast(event: AgentEvent): void {

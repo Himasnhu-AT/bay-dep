@@ -11,7 +11,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowedToolNames, cliArgs, DENIED_TOOLS, killTree, mcpConfig } from './cli'
+import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, killTree, mcpConfig } from './cli'
 import { TOOLS } from '@shared/mcp'
 
 const OPTIONS = {
@@ -26,37 +26,26 @@ const valueAfter = (flag: string): string | undefined => args[args.indexOf(flag)
 
 test('every bay tool is allowed, under the name the CLI reports', () => {
   // Derived from the catalog, so a tool added tomorrow is allowed without editing this.
-  assert.equal(allowedToolNames().length, TOOLS.length)
   for (const tool of TOOLS) assert.ok(allowedToolNames().includes(`mcp__bay__${tool.name}`))
+  assert.equal(allowedToolNames().length, TOOLS.length + BUILT_IN_TOOLS.length)
 })
 
-test('the shell is removed, not merely un-allowed', () => {
-  // `--allowedTools` alone governs what needs *approval*, not what exists. Measured: with only
-  // an allow-list, `Bash` with `id` ran and returned the user's uid and groups.
-  assert.ok(args.includes('--restricted'), 'removes the tools that run commands or code')
-  assert.ok(DENIED_TOOLS.includes('Bash'))
-  assert.ok(args.includes('--disallowedTools'))
-})
-
-test('the file tools are denied by name, not left to a directory boundary', () => {
-  // They were refused with "path is outside allowed working directories" — which means a path
-  // *inside* the agent's working directory would have been allowed. Bay's tools are the whole
-  // surface, so the boundary happening to sit in the right place is not the guarantee wanted.
-  for (const tool of ['Read', 'Write', 'Edit', 'Glob', 'Grep']) {
-    assert.ok(DENIED_TOOLS.includes(tool), `${tool} must be denied by name`)
+test('the built-ins that exist are named, so everything else — shell, files, web — is absent', () => {
+  // `--allowedTools` alone governs what needs *approval*, not what exists: measured, with only
+  // an allow-list `Bash` ran `id`. `--tools` decides what exists. Measured with this exact
+  // list: the session's tools were bay's plus these two, and a request to run `id` had nothing
+  // to run it with.
+  assert.deepEqual([...BUILT_IN_TOOLS], ['ListMcpResourcesTool', 'ReadMcpResourceTool'])
+  assert.equal(valueAfter('--tools'), 'ListMcpResourcesTool,ReadMcpResourceTool')
+  for (const tool of ['Bash', 'Read', 'Write', 'Edit', 'WebFetch', 'Agent', 'Task', 'Monitor', 'Skill']) {
+    assert.equal(valueAfter('--tools')?.split(',').includes(tool), false, `${tool} must not exist`)
   }
 })
 
-test('nothing reaches the network or other sessions', () => {
-  for (const tool of ['WebFetch', 'WebSearch', 'SendMessage', 'Task']) {
-    assert.ok(DENIED_TOOLS.includes(tool), `${tool} must be denied`)
-  }
-})
-
-test('no denied tool is also allowed', () => {
-  // A tool in both lists is a contradiction the CLI resolves however it likes.
-  const allowed = new Set(allowedToolNames())
-  for (const denied of DENIED_TOOLS) assert.equal(allowed.has(denied), false)
+test('--restricted is not passed: it switches off project skills', () => {
+  // Measured: with --restricted the workspace skill was absent from the session and
+  // "/motion-graphics" was "not installed". --tools covers what it removed, and more.
+  assert.equal(args.includes('--restricted'), false)
 })
 
 test("the user's other MCP servers are not inherited", () => {
@@ -95,10 +84,10 @@ test('anything that would prompt is denied instead of waiting', () => {
   assert.equal(valueAfter('--permission-prompts'), 'none')
 })
 
-test("the user's own instructions are not inherited", () => {
-  // A CLAUDE.md written for some other repository would put rules about that repository into
-  // a video edit.
-  assert.equal(valueAfter('--setting-sources'), '')
+test("only the workspace's project settings load: bay's skills, not the user's instructions", () => {
+  // A CLAUDE.md written for some other repository would put rules about that repository into a
+  // video edit. The workspace holds nothing but bay's skills.
+  assert.equal(valueAfter('--setting-sources'), 'project')
 })
 
 test('the stream is machine-readable in both directions', () => {

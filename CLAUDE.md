@@ -112,10 +112,24 @@ A value read through a store snapshot taken *before* an action is the old value:
 ~28 edits in the open project; unwinding `past` restores it. The fixture on disk only changes if
 something saves, and nothing a probe does should.
 
-**`--setting-sources ''` does not stop MCP servers from loading.** Measured: a CLI session started
-with it still had another server's tools. Only `--mcp-config` plus `--strict-mcp-config` isolates
-the in-app agent to bay's tools, and the deny list in `src/main/agent/cli.ts` is still needed on
-top, because an allow-list governs what needs approval, not what exists.
+**The in-app agent's sandbox is `--tools`, not a deny list.** Measured, each one:
+- `--setting-sources ''` does not stop MCP servers loading; only `--mcp-config` plus
+  `--strict-mcp-config` isolates the agent to bay's tools.
+- An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
+- `--tools ListMcpResourcesTool,ReadMcpResourceTool` makes every other built-in *absent* — the
+  session's tool list is bay's 30 plus those two, and a request to run `id` had nothing to run
+  it with. MCP tools are not built-ins, so bay's are unaffected.
+- `--restricted` also switches off project skills (the skill was simply missing from the
+  session), which is why it went. The deny list it was paired with had gone stale: it named
+  `Task` after the tool became `Agent`, and never named `Monitor`, which runs commands. A list
+  of what is *allowed* cannot miss a tool the CLI adds later; a list of what is denied can.
+
+**bay's skills are real Claude Code skills.** `src/shared/skills.ts` defines them; main writes
+each as `.claude/skills/<slug>/SKILL.md` in the agent's working directory on every start, and the
+CLI loads them with `--setting-sources project` from that directory (nothing else is there, so
+the user's own skills and CLAUDE.md stay out). A `/skill` typed at the very start of a message is
+expanded by the CLI even though the agent has no `Skill` tool, so skills are user-invoked only;
+the composer therefore always keeps `/skill` first, and puts pinned context after it.
 
 **A navigation can start and never commit.** bay's `will-navigate` guard cancels every
 renderer-initiated navigation, so `did-start-navigation` fires for a `location.reload()` that

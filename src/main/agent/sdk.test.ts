@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
-import { allowedToolNames, cliArgs, DENIED_TOOLS } from './cli'
+import { allowedToolNames, BUILT_IN_TOOLS, cliArgs } from './cli'
 import {
   bundledExecutable,
   childEnv,
@@ -44,25 +44,19 @@ const cliValueAfter = (flag: string): string | undefined => cli[cli.indexOf(flag
 
 test('the same bay tools are allowed as the CLI allows', () => {
   assert.deepEqual(options.allowedTools, allowedToolNames())
-  assert.equal(options.allowedTools?.length, TOOLS.length)
+  assert.equal(options.allowedTools?.length, TOOLS.length + BUILT_IN_TOOLS.length)
   // And the CLI really does pass these — so this is a comparison, not a shared constant
   // agreeing with itself.
   const start = cli.indexOf('--allowedTools') + 1
-  assert.deepEqual(cli.slice(start, start + TOOLS.length), options.allowedTools)
+  assert.deepEqual(cli.slice(start, start + TOOLS.length + BUILT_IN_TOOLS.length), options.allowedTools)
 })
 
-test('the same built-ins are denied by name as the CLI denies', () => {
-  assert.deepEqual(options.disallowedTools, DENIED_TOOLS)
-  for (const tool of ['Bash', 'Read', 'Write', 'Edit', 'WebFetch', 'WebSearch', 'SendMessage']) {
-    assert.ok(options.disallowedTools?.includes(tool), `${tool} must be denied`)
-  }
-})
-
-test('the shell is removed, not merely un-allowed — `--restricted` reaches the argv', () => {
-  // The SDK has no named option for it; `extraArgs` is appended verbatim, `null` meaning a
-  // bare flag. Measured on the CLI: an allow-list alone let `Bash` run `id`.
-  assert.ok(cli.includes('--restricted'))
-  assert.deepEqual(options.extraArgs, { restricted: null })
+test('the same built-ins exist as in the CLI — only the resource readers', () => {
+  assert.deepEqual(options.tools, [...BUILT_IN_TOOLS])
+  assert.equal(cliValueAfter('--tools'), BUILT_IN_TOOLS.join(','))
+  // `--restricted` is gone from both: it also switched off project skills.
+  assert.equal(cli.includes('--restricted'), false)
+  assert.equal(options.extraArgs, undefined)
 })
 
 test("the user's other MCP servers are not inherited", () => {
@@ -90,10 +84,11 @@ test('anything that would prompt is denied instead of waiting', () => {
   assert.equal(options.permissionPromptToolName, undefined)
 })
 
-test("the user's own settings and CLAUDE.md files are not inherited", () => {
-  assert.equal(cliValueAfter('--setting-sources'), '')
-  // `[]`, not omitted: omitted means *all* sources, the SDK's documented default.
-  assert.deepEqual(options.settingSources, [])
+test("only the workspace's project settings load — bay's skills, not the user's", () => {
+  assert.equal(cliValueAfter('--setting-sources'), 'project')
+  // Explicit, not omitted: omitted means *all* sources, the SDK's documented default, which
+  // would bring in the user's own settings, CLAUDE.md and skills.
+  assert.deepEqual(options.settingSources, ['project'])
 })
 
 test("bay's own system prompt and workspace are the ones in force", () => {
@@ -276,8 +271,8 @@ test('the second turn resumes the session the first one reported', { timeout: 50
   assert.equal(calls[1]?.options?.resume, SESSION)
   assert.equal(calls[1]?.prompt, 'second')
   // The sandbox is not a first-turn-only property.
-  assert.deepEqual(calls[1]?.options?.settingSources, [])
-  assert.deepEqual(calls[1]?.options?.disallowedTools, DENIED_TOOLS)
+  assert.deepEqual(calls[1]?.options?.settingSources, ['project'])
+  assert.deepEqual(calls[1]?.options?.tools, [...BUILT_IN_TOOLS])
 })
 
 test('stop aborts the running turn and ends it exactly once', { timeout: 5000 }, async () => {

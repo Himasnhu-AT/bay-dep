@@ -5,7 +5,7 @@
  * Selected with `BAY_AGENT_RUNTIME=sdk`; the CLI runtime (`cli.ts`) stays the default. The two
  * are meant to be indistinguishable from the panel, so the sandbox here is **the CLI's sandbox,
  * imported, not restated**: the same proxy entry (`bayMcpServer`), the same allow-list
- * (`allowedToolNames`), the same deny-list (`DENIED_TOOLS`). A restriction added to one
+ * (`allowedToolNames`), the same built-in allow-list (`BUILT_IN_TOOLS`). A restriction added to one
  * reaches the other without anyone remembering to copy it. Mapped onto the SDK's options:
  *
  * | CLI flag                         | SDK option                         |
@@ -13,15 +13,13 @@
  * | `--mcp-config` (bay only)        | `mcpServers: { bay }`              |
  * | `--strict-mcp-config`            | `strictMcpConfig: true`            |
  * | `--allowedTools …`               | `allowedTools`                     |
- * | `--restricted`                   | `extraArgs: { restricted: null }`  |
- * | `--disallowedTools …`            | `disallowedTools`                  |
+ * | `--tools <resource readers>`     | `tools: [...BUILT_IN_TOOLS]`       |
  * | `--permission-prompts none`      | `permissionPrompts: 'none'`        |
- * | `--setting-sources ''`           | `settingSources: []`               |
+ * | `--setting-sources project`      | `settingSources: ['project']`      |
  * | `--system-prompt`                | `systemPrompt` (a plain string)    |
  * | `--include-partial-messages`     | `includePartialMessages: true`     |
  *
- * `--restricted` has no named SDK option, so it goes through `extraArgs`, which the SDK
- * appends to the argv verbatim. `canUseTool` is deliberately **not** set: providing it makes
+ * `canUseTool` is deliberately **not** set: providing it makes
  * the SDK add `--permission-prompt-tool stdio`, which would route every denied call to this
  * process as a prompt — the thing `permissionPrompts: 'none'` exists to prevent.
  *
@@ -53,7 +51,7 @@ import type { AgentEvent } from '@shared/agent'
 import {
   allowedToolNames,
   bayMcpServer,
-  DENIED_TOOLS,
+  BUILT_IN_TOOLS,
   TURN_TIMEOUT_MS,
   type CliOptions
 } from './cli'
@@ -103,10 +101,10 @@ export function sdkOptions(
     mcpServers: { bay: { type: 'stdio', ...bayMcpServer(options) } },
     strictMcpConfig: true,
     allowedTools: allowedToolNames(),
-    disallowedTools: [...DENIED_TOOLS],
-    extraArgs: { restricted: null },
+    tools: [...BUILT_IN_TOOLS],
     permissionPrompts: 'none',
-    settingSources: [],
+    // The agent's own working directory, which holds only bay's skills — see cli.ts.
+    settingSources: ['project'],
     includePartialMessages: true,
     env: childEnv(),
     abortController: turn.abortController,
