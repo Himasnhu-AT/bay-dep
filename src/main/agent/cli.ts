@@ -120,7 +120,11 @@ export const DENIED_TOOLS = [
   'CronDelete',
   'PushNotification',
   'EnterWorktree',
-  'ExitWorktree'
+  'ExitWorktree',
+  // Reported by the SDK runtime's live run as still reaching the agent: harness tools for
+  // design sync and code review, neither of which is editing video.
+  'DesignSync',
+  'ReportFindings'
 ]
 
 /**

@@ -299,7 +299,13 @@ function ProposalCard({
             <p className="mt-0.5 leading-relaxed text-ink-2">{option.summary}</p>
             <ul className="mt-1 flex flex-col gap-0.5">
               {option.operations.map((operation) => (
-                <li key={operation.index} className="font-mono text-[10px] text-ink-3">
+                <li
+                  key={operation.index}
+                  // Wrapped, never clipped: the arguments are what is being approved, and a card
+                  // that cut them off at `"fadeInF` asked the user to approve what they could not
+                  // read.
+                  className="font-mono text-[10px] break-all whitespace-pre-wrap text-ink-3"
+                >
                   {operation.tool} {JSON.stringify(operation.args)}
                 </li>
               ))}
