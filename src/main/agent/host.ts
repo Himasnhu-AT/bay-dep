@@ -15,7 +15,7 @@ import { IPC } from '@shared/ipc'
 import { BAY_SKILLS, skillMarkdown } from '@shared/skills'
 import type { AgentEntry, AgentEvent } from '@shared/agent'
 import { claudeProjectFolder, transcriptFolderName, transcriptMarkdown } from '@shared/transcript'
-import { socketPathIn } from '../mcp/socket-path'
+import { AGENT_SOCKET_NAME, socketPathIn } from '../mcp/socket-path'
 import { CliAgentRuntime } from './cli'
 import { findClaude, notFoundMessage, searchDirs } from './locate'
 import { AGENT_SYSTEM_PROMPT } from './prompt'
@@ -98,7 +98,8 @@ export async function startAgent(): Promise<
   const base = {
     // `out/main/agent/…` at runtime, so the proxy is two levels up beside main's own bundle.
     proxyPath: join(__dirname, 'mcp', 'index.js'),
-    socketPath: socketPathIn(app.getPath('userData')),
+    // The agent's own socket, under the in-app file policy (`mcp/policy.ts`).
+    socketPath: socketPathIn(app.getPath('userData'), AGENT_SOCKET_NAME),
     cwd: workspace(),
     systemPrompt: AGENT_SYSTEM_PROMPT
   }

@@ -88,3 +88,22 @@ async function substituteValue(value: unknown, readFile: ReadFile): Promise<unkn
 
   return value
 }
+
+/** The first file reference anywhere in `value`, or null — for callers that may not use them. */
+export function findFileReference(value: unknown): string | null {
+  if (typeof value === 'string') return isFileReference(value) ? value : null
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findFileReference(entry)
+      if (found) return found
+    }
+    return null
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const entry of Object.values(value)) {
+      const found = findFileReference(entry)
+      if (found) return found
+    }
+  }
+  return null
+}

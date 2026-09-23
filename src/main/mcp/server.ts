@@ -20,8 +20,11 @@ import { isCompositionWindow } from '../html/compositions'
 import { pickExecutorWindow } from './executor-target'
 import { resourceBody } from './resources'
 import { substituteFileArgs } from './file-args'
-import { socketPathIn } from './socket-path'
-import { readFile } from 'node:fs/promises'
+import { AGENT_SOCKET_NAME, socketPathIn } from './socket-path'
+import { checkCallPolicy, type CallOrigin, type PolicyEnv } from './policy'
+import { open, readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness, strandedCall } from './executor-ready'
 
 // ---------------------------------------------------------------------------
@@ -192,11 +195,17 @@ export async function callRenderer(
  */
 export async function runTool(
   tool: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  origin: CallOrigin = 'socket'
 ): Promise<ToolOutcome> {
+  // What the caller may touch on disk — see `./policy`. Before substitution, so an in-app
+  // `@file` is refused rather than read.
+  const refused = await checkCallPolicy(tool, args, origin, policyEnv())
+  if (refused) return { ok: false, value: refused }
+
   let resolved: Record<string, unknown>
   try {
-    resolved = await substituteFileArgs(args, (path) => readFile(path, 'utf8'))
+    resolved = origin === 'in-app' ? args : await substituteFileArgs(args, (path) => readFile(path, 'utf8'))
   } catch (error) {
     return { ok: false, value: error instanceof Error ? error.message : String(error) }
   }
@@ -227,7 +236,50 @@ export async function startMcpServer(): Promise<SocketStatus> {
     resourceBody
   )
   running = started
+  // The in-app agent's own door: the same tools, under the in-app policy. Its status is not the
+  // one the UI reports — the panel says for itself whether it could start.
+  runningAgent = await startSocketServer(
+    () => socketPathIn(app.getPath('userData'), AGENT_SOCKET_NAME),
+    (tool, args) => runTool(tool, args, 'in-app'),
+    resourceBody
+  )
+  if (!runningAgent.status.ready) console.warn(`[bay] agent socket did not open: ${runningAgent.status.error}`)
   return started.status
+}
+
+let runningAgent: RunningSocket | null = null
+
+/** Where the file checks look: home, and the temp folders by both their names. */
+function policyEnv(): PolicyEnv {
+  const temps = new Set(['/tmp', tmpdir()])
+  for (const path of [...temps]) {
+    try {
+      temps.add(realpathSync(path))
+    } catch {
+      // Not there; nothing to add.
+    }
+  }
+  return {
+    home: homedir(),
+    roots: [...temps],
+    head: async (path) => {
+      let handle
+      try {
+        handle = await open(path, 'r')
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : ''
+      }
+      try {
+        const buffer = Buffer.alloc(4096)
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+        return buffer.subarray(0, bytesRead).toString('utf8')
+      } catch {
+        return '' // exists, but unreadable as a file (a folder): not a composition, not media
+      } finally {
+        await handle.close()
+      }
+    }
+  }
 }
 
 export interface McpSurfaceStatus {
@@ -261,6 +313,9 @@ export async function stopMcpServer(): Promise<void> {
   for (const [, waiting] of pending) clearTimeout(waiting.timer)
   pending.clear()
   const current = running
+  const agent = runningAgent
   running = null
+  runningAgent = null
   await current?.close()
+  await agent?.close()
 }
