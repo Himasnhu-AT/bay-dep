@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, ChevronRight, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, ChevronRight, Download, Loader2 } from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
@@ -102,6 +102,23 @@ export function AgentPanel(): ReactNode {
     void bay()?.agent.stop()
   }
 
+  const debugMode = useEditor((state) => state.debugMode)
+  const notify = useEditor((state) => state.notify)
+  const [exporting, setExporting] = useState(false)
+  const exportTranscript = async (): Promise<void> => {
+    const api = bay()
+    if (!api) return
+    setExporting(true)
+    try {
+      const state = useEditor.getState()
+      const result = await api.agent.exportTranscript(state.project.name, state.agentLog)
+      if (result.ok) notify(`Transcript exported to ${result.folder}`)
+      else notify(result.error, 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const reset = (): void => {
     void bay()?.agent.dispose()
     endAgentSession()
@@ -117,10 +134,25 @@ export function AgentPanel(): ReactNode {
       className="h-full"
       bodyClassName="flex flex-col"
       actions={
-        log.length > 0 ? (
-          <Button variant="subtle" onClick={reset}>
-            New
-          </Button>
+        debugMode || log.length > 0 ? (
+          <>
+            {debugMode && (
+              <Button
+                variant="subtle"
+                icon={<Download className="size-3.5" />}
+                disabled={log.length === 0 || exporting}
+                onClick={() => void exportTranscript()}
+                title="Debug mode: write this conversation to a folder in Downloads"
+              >
+                {exporting ? 'Exporting…' : 'Export transcript'}
+              </Button>
+            )}
+            {log.length > 0 && (
+              <Button variant="subtle" onClick={reset}>
+                New
+              </Button>
+            )}
+          </>
         ) : undefined
       }
     >

@@ -9,7 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
-import type { AgentEvent } from './agent'
+import type { AgentEntry, AgentEvent } from './agent'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 
@@ -201,6 +201,8 @@ export type MenuCommand =
    * renderer's handler does not care which case it is.
    */
   | { type: 'open-path'; path: string }
+  /** View → Toggle Debug Mode: shows debug tools such as transcript export. */
+  | { type: 'toggle-debug' }
 
 // ---------------------------------------------------------------------------
 // The bridge
@@ -298,6 +300,14 @@ export interface BayApi {
     dispose(): Promise<void>
     /** Every event from every turn, in order. Returns an unsubscribe function. */
     onEvent(listener: (event: AgentEvent) => void): () => void
+    /**
+     * Debug mode: write the conversation to a new folder in Downloads — as markdown, as the
+     * panel's JSON, and Claude Code's own session file — and reveal it in Finder.
+     */
+    exportTranscript(
+      projectName: string,
+      log: AgentEntry[]
+    ): Promise<{ ok: true; folder: string } | { ok: false; error: string }>
   }
 
   composition: {
@@ -435,6 +445,7 @@ export const IPC = {
   agentSend: 'agent:send',
   agentStop: 'agent:stop',
   agentDispose: 'agent:dispose',
+  agentExportTranscript: 'agent:export-transcript',
   /** main -> renderer: one `AgentEvent`, pushed as it happens. */
   agentEvent: 'agent:event',
 

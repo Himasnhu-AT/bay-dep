@@ -22,6 +22,7 @@ export function StatusBar(): ReactNode {
   const fps = useEditor(selectFps)
   const selectionCount = useEditor((state) => state.selection.length)
   const assetCount = useEditor((state) => state.project.assets.length)
+  const debugMode = useEditor((state) => state.debugMode)
   const [tools, setTools] = useState<{ ready: boolean } | null>(null)
   const [storage, setStorage] = useState<{ ready: boolean; error: string | null } | null>(null)
   const [agent, setAgent] = useState<AgentSurfaceStatus | null>(null)
@@ -81,6 +82,14 @@ export function StatusBar(): ReactNode {
       />
       <Stat label="media" value={assetCount} />
       <Stat label="selected" value={selectionCount} />
+
+      {debugMode && (
+        <Tooltip side="top" label="Debug mode is on" shortcut="View → Toggle Debug Mode (⌥⌘D)">
+          <span className="rounded-sm bg-warning/15 px-1 text-[10px] font-semibold tracking-[0.08em] text-warning uppercase">
+            Debug
+          </span>
+        </Tooltip>
+      )}
 
       {tools && !tools.ready && (
         <Tooltip

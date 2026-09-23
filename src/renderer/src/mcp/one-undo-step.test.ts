@@ -504,6 +504,7 @@ const STORE_CASES: Record<string, StoreCase> = {
   setRegionHidden: { delta: 0, run: () => state().setRegionHidden('inspector', true) },
   toggleRegion: { delta: 0, run: () => state().toggleRegion('timeline') },
   showHome: { delta: 0, run: () => state().showHome() },
+  toggleDebugMode: { delta: 0, run: () => state().toggleDebugMode() },
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },

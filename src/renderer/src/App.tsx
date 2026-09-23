@@ -205,6 +205,9 @@ export function App(): ReactNode {
         case 'export':
           setExportOpen(true)
           break
+        case 'toggle-debug':
+          useEditor.getState().toggleDebugMode()
+          break
         case 'open':
           void call('Open project', (client) => client.project.open()).then((project) => {
             // Null is either a failed call, already reported, or the user cancelling the

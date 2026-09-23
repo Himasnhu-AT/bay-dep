@@ -198,6 +198,10 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
   /** The session to resume. Null until a turn has told us its id. */
   #sessionId: string | null = null
 
+  get sessionId(): string | null {
+    return this.#sessionId
+  }
+
   readonly #options: SdkOptions
 
   constructor(options: SdkOptions) {

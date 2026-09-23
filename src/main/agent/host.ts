@@ -7,12 +7,14 @@
  * that a process exists.
  */
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { IPC } from '@shared/ipc'
 import { BAY_SKILLS, skillMarkdown } from '@shared/skills'
-import type { AgentEvent } from '@shared/agent'
+import type { AgentEntry, AgentEvent } from '@shared/agent'
+import { claudeProjectFolder, transcriptFolderName, transcriptMarkdown } from '@shared/transcript'
 import { socketPathIn } from '../mcp/socket-path'
 import { CliAgentRuntime } from './cli'
 import { findClaude, notFoundMessage, searchDirs } from './locate'
@@ -22,6 +24,8 @@ import { bundledExecutable, SdkAgentRuntime } from './sdk'
 
 let runtime: HostedAgentRuntime | null = null
 let offEvents: (() => void) | null = null
+/** The last conversation's session id, kept past `dispose` so its transcript can still be exported. */
+let lastSessionId: string | null = null
 
 /**
  * Where the agent's own files go.
@@ -31,8 +35,12 @@ let offEvents: (() => void) | null = null
  * inherited by anything spawned beneath it, and pointing that at a project folder is how a
  * "safe" agent ends up one `cd ..` from everything.
  */
+function workspacePath(): string {
+  return join(app.getPath('userData'), 'agent-workspace')
+}
+
 function workspace(): string {
-  const dir = join(app.getPath('userData'), 'agent-workspace')
+  const dir = workspacePath()
   // Created up front: spawning into a directory that does not exist fails with the same ENOENT
   // a missing binary gives, and two different faults wearing one error message is how an
   // afternoon disappears.
@@ -125,8 +133,56 @@ export function stopAgent(): void {
 }
 
 export function disposeAgent(): void {
+  lastSessionId = runtime?.sessionId ?? lastSessionId
   offEvents?.()
   offEvents = null
   runtime?.dispose()
   runtime = null
+}
+
+/**
+ * Debug mode's "Export transcript": the conversation as the user saw it (markdown and the panel's
+ * JSON) and as the model saw it (Claude Code's own session file), in a new folder in Downloads,
+ * revealed in Finder. See `@shared/transcript` for why both.
+ *
+ * The session file is found by id, never by "newest in the folder": with a stopped turn or two
+ * sessions in a day, the newest is not necessarily this one. When it cannot be found, the panel
+ * JSON says where it looked rather than the folder silently lacking it.
+ */
+export async function exportTranscript(
+  projectName: string,
+  log: AgentEntry[]
+): Promise<{ ok: true; folder: string } | { ok: false; error: string }> {
+  try {
+    const now = new Date()
+    const folder = join(app.getPath('downloads'), transcriptFolderName(projectName, now))
+    mkdirSync(folder, { recursive: true })
+    const sessionId = runtime?.sessionId ?? lastSessionId
+    const sessionFile = sessionId
+      ? join(homedir(), '.claude', 'projects', claudeProjectFolder(workspacePath()), `${sessionId}.jsonl`)
+      : null
+    const copied = sessionFile !== null && existsSync(sessionFile)
+    if (copied) copyFileSync(sessionFile, join(folder, 'claude-session.jsonl'))
+    writeFileSync(join(folder, 'transcript.md'), transcriptMarkdown(projectName, log, now.toISOString()))
+    writeFileSync(
+      join(folder, 'panel.json'),
+      JSON.stringify(
+        {
+          project: projectName,
+          exportedAt: now.toISOString(),
+          sessionId,
+          claudeSession: copied
+            ? 'claude-session.jsonl'
+            : `not found${sessionFile ? ` at ${sessionFile}` : ' — no conversation has started'}`,
+          log
+        },
+        null,
+        2
+      )
+    )
+    shell.showItemInFolder(join(folder, 'transcript.md'))
+    return { ok: true, folder }
+  } catch (error) {
+    return { ok: false, error: `The transcript could not be written: ${(error as Error).message}` }
+  }
 }

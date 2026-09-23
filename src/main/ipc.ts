@@ -20,7 +20,7 @@ import {
   releasePath,
   writeComposition
 } from './html/compositions'
-import { disposeAgent, sendToAgent, startAgent, stopAgent } from './agent/host'
+import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './media/ffmpeg'
 import { probe } from './media/probe'
 import { thumbnail, filmstrip } from './media/thumbnails'
@@ -73,6 +73,7 @@ interface ChannelApi {
   agentSend: BayApi['agent']['send']
   agentStop: BayApi['agent']['stop']
   agentDispose: BayApi['agent']['dispose']
+  agentExportTranscript: BayApi['agent']['exportTranscript']
 
   exportStart: BayApi['export']['start']
   exportPushFrame: BayApi['export']['pushFrame']
@@ -108,6 +109,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   agentSend: async (_event, text) => sendToAgent(text),
   agentStop: async () => stopAgent(),
   agentDispose: async () => disposeAgent(),
+  agentExportTranscript: (_event, projectName, log) => exportTranscript(projectName, log),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {

@@ -23,7 +23,7 @@ import type {
   ThumbnailRequest
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
-import type { AgentEvent } from '@shared/agent'
+import type { AgentEntry, AgentEvent } from '@shared/agent'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 
@@ -91,6 +91,8 @@ const api: BayApi = {
     send: (text: string) => ipcRenderer.invoke(IPC.agentSend, text),
     stop: () => ipcRenderer.invoke(IPC.agentStop),
     dispose: () => ipcRenderer.invoke(IPC.agentDispose),
+    exportTranscript: (projectName: string, log: AgentEntry[]) =>
+      ipcRenderer.invoke(IPC.agentExportTranscript, projectName, log),
     // Same push-and-unsubscribe shape as `export.onProgress`: one listener pattern in this
     // bridge, not two. The wrapper drops `event` so the renderer never sees an Electron type.
     onEvent: (listener: (event: AgentEvent) => void) => {

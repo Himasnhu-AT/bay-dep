@@ -86,6 +86,11 @@ export interface EditorState {
    */
   hiddenRegions: Record<RegionId, boolean>
   /**
+   * Debug mode: shows tools for reporting problems, such as exporting the agent transcript.
+   * A per-machine preference (localStorage), off by default; View → Toggle Debug Mode.
+   */
+  debugMode: boolean
+  /**
    * The projects screen or the editor. At launch this is `home`, and the project in the store
    * is an empty placeholder nobody chose — which is why the agent surface refuses to act on it.
    */
@@ -298,6 +303,7 @@ export interface EditorActions {
   /** Show or hide one region. */
   setRegionHidden(region: RegionId, hidden: boolean): void
   toggleRegion(region: RegionId): void
+  toggleDebugMode(): void
   /** Open a project in the editor: it becomes the document, with fresh history. */
   enterProject(project: Project): void
   /** Back to the projects screen. The caller decides what happens to unsaved work first. */
@@ -484,6 +490,13 @@ export const useEditor = create<EditorStore>((set, get) => {
     pixelsPerFrame: 4,
     panel: 'media',
     hiddenRegions: { side: false, inspector: false, timeline: false },
+    debugMode: (() => {
+      try {
+        return globalThis.localStorage?.getItem('bay.debugMode') === '1'
+      } catch {
+        return false
+      }
+    })(),
     screen: 'home',
     scrubbing: false,
     toast: null,
@@ -1316,6 +1329,16 @@ export const useEditor = create<EditorStore>((set, get) => {
       const current = get().hiddenRegions
       if (current[region] === hidden) return
       set({ hiddenRegions: { ...current, [region]: hidden } })
+    },
+
+    toggleDebugMode() {
+      const next = !get().debugMode
+      set({ debugMode: next })
+      try {
+        globalThis.localStorage?.setItem('bay.debugMode', next ? '1' : '0')
+      } catch {
+        // Not remembered this time; still on for this session.
+      }
     },
 
     toggleRegion(region) {

@@ -183,6 +183,11 @@ export class CliAgentRuntime implements HostedAgentRuntime {
   #listeners = new Set<(event: AgentEvent) => void>()
   #runId: string | null = null
   #timer: NodeJS.Timeout | null = null
+  /** The CLI is started with `--session-id` set to the runtime id, so they are the same. */
+  get sessionId(): string {
+    return this.id
+  }
+
   /** Whether a process has ever been started for this session, so the next one resumes it. */
   #spawned = false
 

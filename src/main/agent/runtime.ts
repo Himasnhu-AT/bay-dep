@@ -18,6 +18,12 @@ import type { AgentEvent } from '@shared/agent'
 
 export interface HostedAgentRuntime {
   readonly id: string
+  /**
+   * Claude Code's session id for this conversation, once known — what names its transcript file
+   * under `~/.claude/projects`. The CLI runtime chooses it up front; the SDK learns it from the
+   * first message of the first turn, so it is null until then.
+   */
+  readonly sessionId: string | null
   /** Subscribe to every event of every turn. Returns the unsubscribe. */
   onEvent(listener: (event: AgentEvent) => void): () => void
   /** Start a turn. Returns its `runId`; `started` is emitted before this returns. */

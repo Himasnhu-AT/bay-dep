@@ -162,6 +162,22 @@ clip; screenshot and look.
 ffmpeg (`require('ffmpeg-ffprobe-static').ffmpegPath`) — decode to raw samples and check the
 level per frame, not "a file exists".
 
+## Debug mode and agent transcripts
+
+View → **Toggle Debug Mode** (⌥⌘D) turns on reporting tools, marked by a **Debug** tag in the
+status bar. With it on, the Agent panel's **Export transcript** writes a folder in Downloads:
+
+- `transcript.md` — the conversation as the user saw it: turns, every tool call with its
+  arguments and result, and proposals with their operations.
+- `panel.json` — the same log, raw, plus the session id.
+- `claude-session.jsonl` — Claude Code's own session file, found by that id: what the *model*
+  saw, including pinned context and the skill bodies it loaded. Compare the two when the agent
+  seems to have misread a request.
+
+With agent-browser: `click 'button[title^="Debug mode"]'`. Menu accelerators do not reach the page
+from agent-browser (they belong to the native menu); drive the menu item through System Events
+instead, or call `useEditor.getState().toggleDebugMode()`.
+
 ## The `test/app` probes
 
 `test/app/*.mjs` are scripted regression checks over CDP (`node test/app/<name>.mjs` against a

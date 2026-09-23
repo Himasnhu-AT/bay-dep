@@ -91,6 +91,12 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
       { role: 'zoomOut' },
       { type: 'separator' },
       { role: 'togglefullscreen' },
+      { type: 'separator' },
+      {
+        label: 'Toggle Debug Mode',
+        accelerator: 'CmdOrCtrl+Alt+D',
+        click: send({ type: 'toggle-debug' })
+      },
       ...(includeDevTools
         ? ([{ type: 'separator' }, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[])
         : [])
