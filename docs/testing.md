@@ -25,6 +25,24 @@ exported file, a window reload that stranded a call — was invisible to the uni
 ./run.sh --stop
 ```
 
+**The access gate, and the dev bypass.** bay is invite-only (`src/main/auth/`, `src/shared/access.ts`):
+until an account with access signs in, the window shows the access screen, main refuses every
+editor IPC channel, and both MCP sockets answer every tool call with *"bay is locked: … open the bay
+window and sign in …"*. `./run.sh` launches with `BAY_ACCESS=dev`, which skips the check so the
+probes work unchanged; launching `electron .` by hand needs it too:
+
+```bash
+BAY_ACCESS=dev ./node_modules/.bin/electron . --remote-debugging-port=9222 …   # probes: gate off
+./run.sh --gate                                                               # the real sign-in screen
+BAY_ACCESS_NO_BROWSER=1 ./run.sh --gate   # Sign in logs the URL instead of opening a browser
+```
+
+Both switches are honoured **only when `app.isPackaged` is false** (`src/main/auth/build.ts`,
+held by `build.test.ts`); an installed bay ignores them and says so in its log. The access screen
+is `data-access-state=<state>` on its card, and `window.bay.access.status()` answers even while
+locked. `BAY_SITE=local` (unpackaged only) sends the browser to the website's dev server on
+`localhost:3000` instead of bay.everholt.com.
+
 `electron .` compiles nothing, and a running process keeps the main bundle it started with. After
 changing main-process code you need a **restart**, not only a build. Read the first line `run.sh`
 prints: if the typecheck failed, nothing launched, and anything you "test" next is measuring the

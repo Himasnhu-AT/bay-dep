@@ -26,6 +26,10 @@ fake DOM whose fidelity is itself the thing under test.
 
 ## Launch the app with the throttling flags
 
+**And with `BAY_ACCESS=dev`.** bay is invite-only: without it a build shows the sign-in screen and
+refuses every MCP tool call with "bay is locked" (`src/main/auth/`). `./run.sh` sets it; a hand
+launch must too. It is honoured only by an unpackaged build — see `docs/testing.md`.
+
 Trap 1 stops being a trap. Found by `interface`: under a fullscreen terminal macOS marks the
 Electron window occluded, Chromium freezes `requestAnimationFrame`, and `Page.bringToFront` is
 **not** enough to undo it — the window reports `visibilityState: 'hidden'` and `rafOk: false`
@@ -33,7 +37,7 @@ with front-ing already called. Every probe then measures a dead clock.
 
 ```bash
 pnpm build
-./node_modules/.bin/electron . \
+BAY_ACCESS=dev ./node_modules/.bin/electron . \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/bay-probe \
   --disable-backgrounding-occluded-windows \
@@ -544,12 +548,12 @@ Two of these need setting up rather than just running:
 ```bash
 # storage-warning: app.db as a directory is what node:sqlite cannot open
 mkdir -p /tmp/bay-broken/app.db
-./node_modules/.bin/electron . --remote-debugging-port=9222 --user-data-dir=/tmp/bay-broken &
+BAY_ACCESS=dev ./node_modules/.bin/electron . --remote-debugging-port=9222 --user-data-dir=/tmp/bay-broken &
 PORT=9222 node test/app/storage-warning.mjs              # expects the warning
 PORT=9223 EXPECT=healthy node test/app/storage-warning.mjs   # control: must stay quiet
 
 # occlusion: launch WITHOUT the throttling flags, or there is nothing to measure
-./node_modules/.bin/electron . --remote-debugging-port=9222 --user-data-dir=/tmp/bay-occ &
+BAY_ACCESS=dev ./node_modules/.bin/electron . --remote-debugging-port=9222 --user-data-dir=/tmp/bay-occ &
 PORT=9222 HOLD_MS=5000 node test/app/occlusion.mjs
 ```
 

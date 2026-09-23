@@ -16,6 +16,7 @@ import type { WhisperDownload, WhisperStatus } from './whisper'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessReport, LoudnessTarget } from './loudness'
+import type { AccessStatus, ReferralResult } from './access'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -527,6 +528,27 @@ export interface BayApi {
     onToolCall(handler: (call: McpToolCall) => Promise<McpToolResult>): () => void
   }
 
+  /**
+   * Who may use bay (`src/shared/access.ts`). Main decides and enforces; this is how the access
+   * screen asks and listens. Every other channel refuses while the status is not `entitled`.
+   */
+  access: {
+    status(): Promise<AccessStatus>
+    /** Opens the system browser on the sign-in page; resolves with `waiting`. */
+    signIn(): Promise<AccessStatus>
+    cancelSignIn(): Promise<AccessStatus>
+    /** Forgets the stored sign-in on this Mac. */
+    signOut(): Promise<AccessStatus>
+    /** Verify now, instead of waiting for the next scheduled check. */
+    recheck(): Promise<AccessStatus>
+    /** Opens the website's waitlist in the browser. */
+    requestAccess(): Promise<void>
+    /** Grant `email` access as a referral from this account (entitled only). */
+    refer(email: string): Promise<ReferralResult>
+    /** Every status change, pushed. Returns an unsubscribe function. */
+    onChange(listener: (status: AccessStatus) => void): () => void
+  }
+
   window: {
     minimise(): Promise<void>
     toggleMaximise(): Promise<void>
@@ -613,6 +635,16 @@ export const IPC = {
   exportCancel: 'export:cancel',
   exportChoosePath: 'export:choose-path',
   exportProgress: 'export:progress',
+
+  accessStatus: 'access:status',
+  accessSignIn: 'access:sign-in',
+  accessCancelSignIn: 'access:cancel-sign-in',
+  accessSignOut: 'access:sign-out',
+  accessRecheck: 'access:recheck',
+  accessRequestAccess: 'access:request-access',
+  accessRefer: 'access:refer',
+  /** main -> renderer: the new `AccessStatus`, whenever it changes. */
+  accessChanged: 'access:changed',
 
   windowMinimise: 'window:minimise',
   windowToggleMaximise: 'window:toggle-maximise',

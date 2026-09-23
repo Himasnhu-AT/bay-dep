@@ -24,6 +24,9 @@ import { describeSocket } from './mcp/socket-server'
 import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
+import { onAccessChange, startAccess, stopAccess } from './auth/access'
+import { disposeAgent } from './agent/host'
+import { isEntitled } from '@shared/access'
 
 // The main bundle is ESM, where `__dirname` does not exist. Everything loaded by path — the
 // preload script and the production renderer — is resolved from here.
@@ -180,6 +183,15 @@ void app.whenReady().then(() => {
 
   registerBayProtocolHandler()
   registerIpcHandlers()
+
+  // Access before anything can be asked of bay: until `startAccess` has read the stored state
+  // the status is `signed-out`, so the gate (IPC and both sockets) refuses rather than guessing.
+  // Losing access while running ends the in-app agent's session — its tool calls would all be
+  // refused anyway, and a model left talking to a locked app only produces refusals.
+  onAccessChange((status) => {
+    if (!isEntitled(status)) void disposeAgent()
+  })
+  void startAccess().then((status) => console.log(`[bay] access: ${status.state}`))
   installMenu()
 
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
@@ -225,6 +237,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  stopAccess()
   cancelCacheUpkeep()
   void stopMcpServer()
   // Anything queued and never claimed — a document double-clicked at launch that the renderer

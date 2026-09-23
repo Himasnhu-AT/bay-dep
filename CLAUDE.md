@@ -72,7 +72,8 @@ pnpm release:signed   # signed with BAY_SIGN_IDENTITY; notarised only when Apple
 
 Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app agent on the Agent
 SDK instead of the `claude` CLI (default); `BAY_MCP_MODE=gateway` makes the proxy list three tools
-(`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog.
+(`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
+invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
 
 ## Running and testing the app
 
@@ -310,6 +311,16 @@ Settings turns the old gate back on: every write is refused until the user appro
 byte, and each approved call runs once. Outside a session (a terminal client on the socket)
 nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, because it changes
 nothing.
+
+**bay is invite-only, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A Mac
+is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST to a
+127.0.0.1 loopback server that checks Origin and `state`) was verified against `access/{email}` in
+Firestore. Until then `ipc.ts` refuses every channel outside `OPEN_WHILE_LOCKED` and both sockets
+answer tool calls with the unlock instructions (`auth/gate.ts`); the access screen is only UI.
+Offline it keeps working for 14 days from the last successful check; a 404 on the access doc, an
+unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
+bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
+`safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
 
 ## graft — read the graph before you grep
 
@@ -777,9 +788,15 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with one exception, and it is main's.** No telemetry, no
+- **Nothing reaches the network — with two exceptions, both main's.** No telemetry, no
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
-  origin; loosening it is a product decision, not a fix. The exception is whisper models, fetched
+  origin; loosening it is a product decision, not a fix. The first exception is **access**: main
+  (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
+  to refresh the sign-in and read/write the access documents (`src/main/auth/google.ts`, whose
+  `guardedFetch` refuses any other host). What it sends is a refresh token, an ID token and email
+  addresses — never project data, media, paths or usage. It uses Node's `fetch`, because
+  Electron's `net.fetch` rides the editor's session, which `offline.ts` (untouched) blocks. The
+  second exception is whisper models, fetched
   by main from Hugging Face's `ggerganov/whisper.cpp` repo only when the user clicks Download in
   Settings, or when a transcription finds no model and "Download models when needed" is on (the
   renderer passes `download: true` only then). `downloadVerified` checks the size and SHA-256 from

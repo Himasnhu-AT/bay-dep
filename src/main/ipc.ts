@@ -42,9 +42,11 @@ import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
 import { writeGenerated, writeTemplate } from './html/templates'
+import * as access from './auth/access'
+import { refuseChannel } from './auth/gate'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'accessChanged'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
@@ -102,6 +104,14 @@ interface ChannelApi {
   exportFinish: BayApi['export']['finish']
   exportCancel: BayApi['export']['cancel']
   exportChoosePath: BayApi['export']['chooseOutputPath']
+
+  accessStatus: BayApi['access']['status']
+  accessSignIn: BayApi['access']['signIn']
+  accessCancelSignIn: BayApi['access']['cancelSignIn']
+  accessSignOut: BayApi['access']['signOut']
+  accessRecheck: BayApi['access']['recheck']
+  accessRequestAccess: BayApi['access']['requestAccess']
+  accessRefer: BayApi['access']['refer']
 
   windowMinimise: BayApi['window']['minimise']
   windowToggleMaximise: BayApi['window']['toggleMaximise']
@@ -236,6 +246,14 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   exportChoosePath: (event, defaultName, format) =>
     encode.chooseOutputPath(defaultName, format, windowOf(event)),
 
+  accessStatus: async () => access.accessStatus(),
+  accessSignIn: () => access.signIn(),
+  accessCancelSignIn: async () => access.cancelSignIn(),
+  accessSignOut: () => access.signOut(),
+  accessRecheck: () => access.recheck(),
+  accessRequestAccess: async () => access.requestAccess(),
+  accessRefer: (_event, email) => access.refer(email),
+
   windowMinimise: async (event) => {
     windowOf(event)?.minimize()
   },
@@ -273,6 +291,13 @@ export function registerIpcHandlers(): void {
       event: IpcMainInvokeEvent,
       ...args: unknown[]
     ) => unknown
-    ipcMain.handle(IPC[key], handler)
+    // The access gate, in main: while bay is not entitled, every channel outside the access
+    // screen's own (`OPEN_WHILE_LOCKED`) rejects with the unlock instructions — the editor,
+    // projects, export, the agent. The renderer's access screen is UI; this is the lock.
+    ipcMain.handle(IPC[key], (event, ...args: unknown[]) => {
+      const refused = refuseChannel(key, access.accessStatus())
+      if (refused) throw new Error(refused)
+      return handler(event, ...args)
+    })
   }
 }
