@@ -413,6 +413,11 @@ export const IPC = {
   mcpToolCall: 'mcp:tool-call',
   /** renderer -> main: the answer, carrying the same id. */
   mcpToolResult: 'mcp:tool-result',
+  /**
+   * renderer -> main: the executor is (true) or is no longer (false) listening. Main holds a
+   * call until this arrives, because a call pushed into a page that has not mounted is lost.
+   */
+  mcpExecutorReady: 'mcp:executor-ready',
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',

@@ -161,8 +161,12 @@ const api: BayApi = {
       // At most one executor, per the contract: a second registration replaces the first.
       ipcRenderer.removeAllListeners(IPC.mcpToolCall)
       ipcRenderer.on(IPC.mcpToolCall, wrapped)
+      // Only now is anything listening, so only now may main send. Said from here rather than
+      // by the renderer because this is the line that makes it true.
+      ipcRenderer.send(IPC.mcpExecutorReady, true)
       return () => {
         ipcRenderer.removeListener(IPC.mcpToolCall, wrapped)
+        ipcRenderer.send(IPC.mcpExecutorReady, false)
       }
     }
   },

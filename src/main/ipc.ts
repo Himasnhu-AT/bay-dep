@@ -28,11 +28,11 @@ import { waveform } from './media/waveform'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
-import { mcpStatus, settleToolCall } from './mcp/server'
+import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
 type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent'
-type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult'>
+type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
   appVersion: BayApi['app']['version']
@@ -183,6 +183,9 @@ export function registerIpcHandlers(): void {
   // replying rather than asking — the correlation is by the id main put on the call.
   ipcMain.on(IPC.mcpToolResult, (_event, result: McpToolResult) => {
     settleToolCall(result)
+  })
+  ipcMain.on(IPC.mcpExecutorReady, (event, ready: boolean) => {
+    setExecutorReady(event.sender, ready === true)
   })
 
   for (const key of Object.keys(handlers) as (keyof ChannelApi)[]) {

@@ -22,6 +22,7 @@ import { resourceBody } from './resources'
 import { substituteFileArgs } from './file-args'
 import { socketPathIn } from './socket-path'
 import { readFile } from 'node:fs/promises'
+import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness } from './executor-ready'
 
 // ---------------------------------------------------------------------------
 // The main ↔ renderer round trip
@@ -33,6 +34,29 @@ interface Pending {
 }
 
 const pending = new Map<string, Pending>()
+
+const readiness = new ExecutorReadiness()
+const watched = new WeakSet<WebContents>()
+
+/**
+ * The renderer's executor started (or stopped) listening. A reload or a crash makes it stop
+ * without saying so, so those are watched here — a page that is tearing down cannot be trusted
+ * to announce it.
+ */
+export function setExecutorReady(contents: WebContents, ready: boolean): void {
+  readiness.set(contents.id, ready)
+  if (watched.has(contents)) return
+  watched.add(contents)
+  const id = contents.id
+  // Main-frame, cross-document only. `did-start-loading` also fires for subframes and in-page
+  // navigations, neither of which unmounts the executor — and marking it not-ready then would
+  // hold every call for the full wait, since nothing would re-announce it.
+  contents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) readiness.set(id, false)
+  })
+  contents.on('render-process-gone', () => readiness.set(id, false))
+  contents.once('destroyed', () => readiness.forget(id))
+}
 
 /** Called by the IPC handler when the renderer answers. */
 export function settleToolCall(result: McpToolResult): void {
@@ -75,17 +99,36 @@ function executorWebContents(): WebContents | null {
  * would otherwise leave the agent's turn stalled with no verdict at all, which is strictly
  * worse than a failure: a failure it can read and route around.
  */
-export function callRenderer(tool: string, args: Record<string, unknown>): Promise<McpToolResult> {
+export async function callRenderer(
+  tool: string,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
   const target = executorWebContents()
   const id = randomUUID()
 
   if (!target) {
-    return Promise.resolve({
+    return {
       id,
       ok: false,
       error:
         'bay has no window open, so there is nothing to apply this to. Open bay and try again.'
-    })
+    }
+  }
+
+  // Wait for the page to be listening before sending — see `./executor-ready`. Separate from the
+  // call timeout below: a window still loading is not a tool taking too long.
+  if (!(await readiness.whenReady(target.id, EXECUTOR_READY_TIMEOUT_MS))) {
+    return {
+      id,
+      ok: false,
+      error:
+        `bay's window did not finish loading within ${Math.round(EXECUTOR_READY_TIMEOUT_MS / 1000)}s, ` +
+        `so "${tool}" was never sent to it and nothing was changed. Try the call again; if it ` +
+        `keeps failing, the editor window has a problem bay logs at startup.`
+    }
+  }
+  if (target.isDestroyed()) {
+    return { id, ok: false, error: `bay's window closed before "${tool}" could run. Nothing was changed.` }
   }
 
   return new Promise<McpToolResult>((resolve) => {
