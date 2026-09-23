@@ -196,6 +196,21 @@ The dips pass through solid colour at the midpoint; the rest cross-fade. Audio f
 picture, except on a dip, where both sides go silent at the middle because that is what a dip
 means.
 
+## Sound: J/L cuts and ducking
+
+`edit_item` `audioLeadFrames` is a J-cut: the clip's sound starts that many frames before its
+picture, reading footage from before its in-point — the next shot's sound arriving under the
+current one (15 frames at 30 fps is a common half second). `audioTrailFrames` is the L-cut, the
+sound running on past the picture. Both spend handles like a transition does, are clamped to the
+footage there is, and are set aside on a cut that already has a transition; the result says when
+either happens, with the numbers. Fades apply to the sound's own edges, so give a lead 3–4 frames
+of `fadeInFrames` or it clicks in under the previous shot.
+
+`duck: { keyTrackId, amountDb, attackFrames, releaseFrames }` pulls a clip down under another
+track — the music bed under the dialogue track. It follows the key track's clips being *present*,
+not their loudness, so the preview and the export duck identically; the dip is complete as the
+key starts and a pause inside a dialogue clip stays ducked. 6 dB is light, 12 firm.
+
 ## Looks
 
 `edit_item` carries `adjustments` (brightness, contrast, saturate, hueRotate, blur, grayscale,
@@ -206,6 +221,33 @@ reads back as the number you asked for having been accepted.
 Two things the result will warn you about, because neither is visible from the numbers: setting
 every adjustment to its identity value (it is stored and changes nothing), and a blend mode on
 the lowest video track (there is nothing beneath it, so every mode looks the same).
+
+## Colour grade
+
+`adjustments` are CSS filters; a real grade is `edit_item { grade }`, drawn by the GPU through the
+same compositor as preview, `preview_frame` and export — what `preview_frame` shows is what the
+file gets. It runs in a fixed order: temperature/tint → lift/gamma/gain → saturation → curves →
+LUT → halation → vignette → grain. Fields merge; `null` removes the grade or any one group.
+
+    edit_item { itemId, grade: {
+      lift: { r: 0.01, g: 0.015, b: 0.03 },          # teal shadows: small numbers, ±0.03 is visible
+      gain: { r: 0.02, g: -0.008, b: -0.012 },       # amber highlights
+      temperature: 200, saturation: 0.95,             # ~200 K warmer
+      curves: { master: [[0, 0.04], [0.8, 0.795], [1, 0.965]] },   # lifted blacks, soft shoulder
+      halation: { amount: 0.18, threshold: 0.86, radius: 10 },     # warm glow on practicals only
+      grain: { amount: 0.12, size: 1 }, vignette: { amount: 0.2 } } }
+
+- **Curves** are ffmpeg's: per channel, then master, points `[input, output]` in 0..1. Leave out an
+  end and `(0,0)`/`(1,1)` are supplied. An ffmpeg `curves=r='0/0.036 0.25/0.25'` ports as
+  `r: [[0, 0.036], [0.25, 0.25]]`.
+- **LUTs**: `import_media` a `.cube` file — it comes back `kind: "lut"`, not placeable — then
+  `grade: { lut: { assetId, intensity } }`. A malformed file imports with `error` naming the line.
+- **Halation** is screened in RGB and tinted warm (`color`, default `#FF8C40`); keep `threshold`
+  around 0.85 so skin and mid-tones never glow. **Grain** is animated per frame and deterministic,
+  drawn at output resolution. Both are measured in timeline pixels.
+- Grades apply to picture clips only (video, image, gif, html, brf) — text is refused. An all-neutral
+  grade is stored, warned about, and costs nothing. `inspect_item` reports `grade` and `gradeActive`;
+  `preview_frame` reports `gradeWarnings` if a grade could not run (a missing LUT asset, no WebGL2).
 
 ## HTML compositions
 
@@ -235,6 +277,12 @@ as they do on video.
 `export_timeline` renders the timeline to a file and returns a job id at once; poll
 `track_export` on a sensible interval until it reports the output path. Check that result before
 telling the user it is done.
+
+`loudness: "streaming"` (−14 LUFS, −1 dBTP; also `"podcast"`, `"broadcast"`, or
+`{ integratedLufs, truePeakDb }`) masters the audio: a linear gain and a true-peak limiter,
+re-measured on the *encoded* file until it lands, because the codec moves the peaks. It is off
+unless asked, so a file plays at the level the preview did. When done, `track_export` reports what
+the delivered file measures; `status: "missed"` means it did not converge and says by how much.
 
 ## Errors are instructions
 

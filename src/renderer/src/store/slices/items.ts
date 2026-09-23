@@ -94,6 +94,11 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         get().notify(`${asset.name} could not be read, so it cannot be placed.`, 'error')
         return null
       }
+      if (asset.kind === 'lut') {
+        // A LUT has no picture; placing it would make a clip that draws nothing forever.
+        get().notify(`${asset.name} is a colour LUT — apply it to a clip from Grade in the inspector.`, 'info')
+        return null
+      }
 
       const from = Math.max(0, Math.round(atFrame ?? state.playhead))
       const kind: TrackKind = asset.hasVideo || asset.kind === 'image' || asset.kind === 'text'

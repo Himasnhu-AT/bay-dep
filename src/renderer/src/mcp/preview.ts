@@ -75,6 +75,9 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
     image: still.dataUrl,
     ...(still.textFits && still.textFits.length > 0 ? { textFits: still.textFits } : {}),
     ...(textWarnings.length > 0 ? { textWarnings } : {}),
+    // A grade that could not run leaves the clip drawn ungraded, which looks like a grade that was
+    // never set — nothing in the picture says otherwise, so the result must.
+    ...(still.gradeIssues && still.gradeIssues.length > 0 ? { gradeWarnings: still.gradeIssues } : {}),
     ...(incomplete
       ? {
           incomplete: true,

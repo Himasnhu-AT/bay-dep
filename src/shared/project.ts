@@ -16,8 +16,13 @@
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
+import type { Grade, LutData } from './grade'
 
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf'
+/**
+ * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
+ * timeline — a clip's `grade.lut` refers to it by id.
+ */
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -89,6 +94,12 @@ export interface Asset {
    * duration, size and vars are derived from it into the fields above when it is written.
    */
   brfCode?: string
+  /**
+   * For `kind: 'lut'` — the parsed `.cube` table (`@shared/grade`). Main parses it at import and
+   * the table lives in the project, so the renderer never reads the file and a moved `.cube` does
+   * not change a graded clip.
+   */
+  lut?: LutData
   /**
    * The source's beat grid (`@shared/beats`), once `detect_beats` has analysed it. In source
    * time, so it is a property of the file and every placement maps it through its own in-point
@@ -349,6 +360,12 @@ export interface Item {
   /** How this clip combines with what is beneath it. Absent means `normal`. */
   blendMode?: BlendMode
   /**
+   * A colour grade drawn by the compositor's WebGL pass (`@shared/grade`): wheels, white balance,
+   * curves, a LUT, halation, vignette and grain. Absent, or all identity, skips the pass entirely.
+   * Applied before `adjustments`, which remain a CSS filter over the graded picture.
+   */
+  grade?: Grade
+  /**
    * Edges cut off this clip's source. Absent means none, which is the fast path.
    *
    * Cropping cuts the source down; it does not rescale what is left. The remaining region is
@@ -367,6 +384,35 @@ export interface Item {
    * clear it.
    */
   variables?: Record<string, string | number | boolean>
+  /**
+   * J-cut: this clip's sound starts this many frames *before* its picture, reading source from
+   * before its in-point. Absent or 0 means the sound starts with the picture. Clamped when it is
+   * read (`resolveAudioOffsets` in `@shared/audio-gain`) to the footage the source has, and set
+   * aside where a transition already carries the sound across that cut.
+   */
+  audioLeadFrames?: Frames
+  /** L-cut: this clip's sound runs on this many frames *after* its picture ends. As above. */
+  audioTrailFrames?: Frames
+  /** Duck this clip's sound while another track is sounding — music under dialogue. */
+  duck?: AudioDuck
+}
+
+/**
+ * Gain reduction applied to an item while the key track has sound.
+ *
+ * Keyed on the key track's clips being *present* (their audible spans), not on its signal
+ * level, so it is a pure function of the timeline that preview and export share exactly. See
+ * `duckGainAt` in `@shared/audio-gain` for why.
+ */
+export interface AudioDuck {
+  /** The track whose sound this item ducks under. */
+  keyTrackId: string
+  /** How far down, in dB, while the key is sounding. Positive: 6 means −6 dB. */
+  amountDb: number
+  /** Frames to ramp down, ending where the key starts, so the first word is not masked. */
+  attackFrames: Frames
+  /** Frames to ramp back up, starting where the key ends. */
+  releaseFrames: Frames
 }
 
 /**

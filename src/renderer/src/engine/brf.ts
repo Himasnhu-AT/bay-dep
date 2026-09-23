@@ -24,6 +24,7 @@ import {
 } from '@shared/brf'
 import { sourceTimeAt, type Asset, type Item } from '@shared/project'
 import { clampToAsset } from './compositionPool'
+import { variationFaces } from './brfFonts'
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
@@ -363,9 +364,21 @@ export class BrfSurfaces {
     box: { width: number; height: number },
     px: { width: number; height: number },
     values: BrfValues
-  ): { surface: OffscreenCanvas } | { error: string } {
+  ): { surface: OffscreenCanvas } | { pending: true } | { error: string } {
     const width = Math.max(1, Math.round(px.width))
     const height = Math.max(1, Math.round(px.height))
+    const where = placement(doc, box, { width, height })
+    const ops = evaluateBrf(doc, seconds, where.width, where.height, values)
+    // Text with variable-font axes draws in a face registered for those settings. Resolved before
+    // anything is painted: a face still loading makes the whole item pending (drawn once it
+    // arrives, and waited for by export), never drawn in the plain face as a stand-in.
+    for (const op of ops) {
+      if (op.kind !== 'text' || !op.variations) continue
+      const face = variationFaces.resolve(op.font, op.variations)
+      if ('pending' in face) return { pending: true }
+      if ('error' in face) return { error: face.error }
+      op.font = face.font
+    }
 
     let surface = this.#surfaces.get(item.id)
     if (!surface || surface.width !== width || surface.height !== height) {
@@ -378,7 +391,6 @@ export class BrfSurfaces {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, width, height)
 
-    const where = placement(doc, box, { width, height })
     if (doc.background) {
       ctx.save()
       ctx.setTransform(...where.base)
@@ -386,7 +398,7 @@ export class BrfSurfaces {
       ctx.fillRect(0, 0, where.width, where.height)
       ctx.restore()
     }
-    paintBrf(ctx, evaluateBrf(doc, seconds, where.width, where.height, values), where.base)
+    paintBrf(ctx, ops, where.base)
     return { surface }
   }
 

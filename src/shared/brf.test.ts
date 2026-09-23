@@ -257,3 +257,37 @@ test('a gradient fill reads its angle and stops, spreading stops without a posit
   assert.equal(only(evaluateBrf(withVars as BrfDocument, 0, 10, 10, { accent: '#00ff00' }), 'rect')[0]!.fill, 'linear(90, #00ff00, #0000ff)')
   assert.match(faultsOf({ ...withVars, vars: {} })[0]!, /refers to \$accent, which "vars" does not declare/)
 })
+
+test('variations: axis tags to numbers, refused with the fix when malformed — beside the legal form', () => {
+  const text = (variations: unknown) => ({ brf: 1, duration: 1, layers: [{ type: 'text', text: 'Brand', font: 'Archivo', variations }] })
+  assert.deepEqual(faultsOf(text({ wdth: 87, wght: 600, GRAD: -50 })), [], 'the positive control: registered and custom axes')
+  const faults = [
+    ...faultsOf(text([87])),
+    ...faultsOf(text({ width: 87 })),
+    ...faultsOf(text({ 'wd"h': 87 })),
+    ...faultsOf(text({ wdth: '87' })),
+    ...faultsOf(text({ wdth: Infinity }))
+  ]
+  assert.equal(faults.length, 5, faults.join('\n'))
+  assert.match(faults[0]!, /layers\[0\]\.variations: must be an object of axis tag to number, e\.g\. \{ wdth: 87, wght: 600 \}/)
+  assert.match(faults[1]!, /variations\.width: is not an axis tag: a tag is exactly 4 letters or digits, e\.g\. wdth/)
+  assert.match(faults[2]!, /is not an axis tag/, 'a quote would break out of the CSS string the painter writes')
+  assert.match(faults[3]!, /variations\.wdth: must be a finite number/)
+  assert.match(faults[4]!, /variations\.wdth: must be a finite number/)
+})
+
+test('variations reach the draw op in tag order, and text without them carries null', () => {
+  const doc: BrfDocument = {
+    brf: 1,
+    duration: 1,
+    layers: [
+      { type: 'text', text: 'axes', font: 'Archivo', variations: { wght: 600, wdth: 87 } },
+      { type: 'text', text: 'plain', font: 'Archivo' },
+      { type: 'text', text: 'empty', font: 'Archivo', variations: {} }
+    ]
+  }
+  const [axes, plain, empty] = only(at(doc, 0.5), 'text')
+  assert.equal(JSON.stringify(axes!.variations), '{"wdth":87,"wght":600}')
+  assert.equal(plain!.variations, null)
+  assert.equal(empty!.variations, null, 'no axes is the plain face, not a face registered for nothing')
+})

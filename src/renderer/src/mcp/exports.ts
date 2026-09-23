@@ -14,6 +14,7 @@
 
 import type { ExportFormat, ExportProgress } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
+import { parseLoudness } from '@shared/loudness'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
 import { fail, project, timeline, type Handlers } from './helpers'
@@ -57,6 +58,11 @@ export async function exportTimeline(
   }
   const format = String(args.format) as ExportFormat
 
+  // Refused before anything starts: an export that ran for minutes and then ignored a
+  // misspelled preset would deliver a file at the wrong level with no word about it.
+  const loudness = parseLoudness(args.loudness)
+  if ('error' in loudness) fail(loudness.error)
+
   const tl = timeline()
   const duration = timelineDuration(tl)
   if (duration === 0) {
@@ -91,7 +97,8 @@ export async function exportTimeline(
       height: tl.height,
       fps: tl.fps,
       fromFrame,
-      toFrame
+      toFrame,
+      ...(loudness.target ? { loudness: loudness.target } : {})
     })
   } catch (error) {
     fail(`Export could not start: ${error instanceof Error ? error.message : String(error)}`)
@@ -158,6 +165,7 @@ export async function exportTimeline(
     fromFrame,
     toFrame,
     framesTotal: toFrame - fromFrame + 1,
+    ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
     note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
   }
 }
@@ -186,6 +194,23 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     finished,
     ...(progress.stage === 'done' ? { outputPath: progress.outputPath ?? job.outputPath } : {}),
     ...(progress.error ? { error: progress.error } : {}),
+    // What the delivered file measures, not what was asked for: the loop verifies the encoded
+    // bytes, and a `missed` status is said here in numbers rather than left to be discovered.
+    ...(progress.loudness
+      ? {
+          loudness: {
+            status: progress.loudness.status,
+            targetLufs: progress.loudness.target.integratedLufs,
+            ceilingDbtp: progress.loudness.target.truePeakDb,
+            measuredLufs: progress.loudness.measured?.integratedLufs ?? null,
+            measuredTruePeakDbtp: progress.loudness.measured?.truePeakDb ?? null,
+            gainDb: Number(progress.loudness.gainDb.toFixed(2)),
+            passes: progress.loudness.passes,
+            summary: progress.loudness.summary
+          }
+        }
+      : {}),
+    ...(progress.message && progress.stage === 'done' ? { message: progress.message } : {}),
     ...(finished
       ? {}
       : { note: 'Still working. Poll again in a few seconds rather than in a tight loop.' }),

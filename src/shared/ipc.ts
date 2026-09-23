@@ -15,6 +15,7 @@ import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
+import type { LoudnessReport, LoudnessTarget } from './loudness'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -134,6 +135,12 @@ export interface ExportRequest {
   /** Inclusive frame range. Whole timeline when omitted. */
   fromFrame?: number
   toFrame?: number
+  /**
+   * Master the audio to this integrated loudness under this true-peak ceiling, verified on the
+   * encoded file (`main/export/master.ts`). Absent means no mastering — the file carries the
+   * level the preview played, which is the default on purpose.
+   */
+  loudness?: LoudnessTarget
 }
 
 export interface ExportProgress {
@@ -146,6 +153,8 @@ export interface ExportProgress {
   message?: string
   outputPath?: string
   error?: string
+  /** On `done`, when the request asked for mastering: what the delivered file measures. */
+  loudness?: LoudnessReport
 }
 
 export interface ExportJob {

@@ -16,6 +16,7 @@
  */
 
 import { brfRuntime } from './brfCode'
+import { variationFaces } from './brfFonts'
 import { findAsset, findTimeline, type Project, type Timeline } from '@shared/project'
 import { Compositor, elementSlots, itemsToDraw, type DrawStats } from './compositor'
 import { CompositionPool } from './compositionPool'
@@ -278,7 +279,7 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       //
       // Bounded by the same timeout as the media wait, so a composition that never renders
       // still costs a reported-incomplete frame rather than a call that does not return.
-      await Promise.all([compositions.settle(timeoutMs), brfRuntime.settle(timeoutMs)])
+      await Promise.all([compositions.settle(timeoutMs), brfRuntime.settle(timeoutMs), variationFaces.settle(timeoutMs)])
       // What settled may be all that was missing. Waiting for the *next* readiness event after
       // it did waited out the whole timeout — nothing else was coming — and cost every frame with
       // a composition or a .brf module ~5s in `preview_frame`. Look again first.
@@ -293,7 +294,7 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       // waited on media returned a picture with the composition missing — correctly warned
       // about, and still the wrong picture. Whichever settles first wakes the retry.
       await new Promise<void>((resolve) => {
-        const offs = [pool.onReady(finish), compositions.onReady(finish), brfRuntime.onReady(finish)]
+        const offs = [pool.onReady(finish), compositions.onReady(finish), brfRuntime.onReady(finish), variationFaces.onReady(finish)]
         const timer = setTimeout(finish, timeoutMs)
         function finish(): void {
           clearTimeout(timer)
