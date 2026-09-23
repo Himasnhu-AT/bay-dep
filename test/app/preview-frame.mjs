@@ -20,9 +20,18 @@
 import { attach, requirePrecondition, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
+/**
+ * `CANVAS=vertical-1080` (any `set_canvas` preset) runs the probe on that canvas; the restore
+ * puts the project's own canvas back. The size check derives from whatever canvas it finds.
+ */
+const CANVAS = process.env.CANVAS
 const { evaluate, close, patch } = await attach()
 
 await runProbe(async () => {
+  if (CANVAS) {
+    const set = await evaluate(`window.bayMcp.execute(${JSON.stringify({ id: 'pf-canvas', tool: 'set_canvas', args: { preset: CANVAS } })})`)
+    if (!set.ok) throw new Error(`set_canvas ${CANVAS} refused: ${set.error}`)
+  }
   const asset = await evaluate(`(async () => {
     const im = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
     if (!im.length) throw new Error('import returned nothing')
@@ -42,7 +51,11 @@ await runProbe(async () => {
     const id = store.getState().placeAsset(${JSON.stringify(asset.id)}, 0)
     if (!id) throw new Error('placeAsset refused')
     store.getState().setPlayhead(30)
-    return { itemId: id }
+    const placedTl = store.getState().project.timelines.find(t => t.id === tl.id)
+    const item = placedTl.tracks.flatMap(k => k.items).find(i => i.id === id)
+    // What the canvas is, and where placement put the clip: the size check and the restore
+    // below both derive from these rather than from a landscape project someone assumed.
+    return { itemId: id, canvas: [placedTl.width, placedTl.height], layout: item.layout }
   })()`)
 
   await requirePrecondition(
@@ -113,22 +126,28 @@ await runProbe(async () => {
   const offCanvas = await render('clip off-canvas')
 
   await evaluate(`(() => {
-    const st = window.bayEngine.store.getState()
-    const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
     window.bayEngine.store.getState().patchLayout(${JSON.stringify(placed.itemId)},
-      { left: 0, top: -1166, width: tl.width, height: 3413 })
+      ${JSON.stringify(placed.layout)})
     return true
   })()`)
   const restored = await render('clip restored')
 
-  const sized = inPlace.width === 640 && inPlace.height === 360 && inPlace.decoded[0] === 640
+  // The requirement, not the implementation: the longest edge is capped at 640 (or the canvas's
+  // own, if smaller), and the picture keeps the canvas's shape to within a pixel of rounding.
+  // It was `640x360` literally, which failed on every vertical project with a working tool.
+  const [cw, ch] = placed.canvas
+  const longest = Math.min(640, Math.max(cw, ch))
+  const [ow, oh] = cw >= ch ? [inPlace.width, inPlace.height] : [inPlace.height, inPlace.width]
+  const [lw, sw] = cw >= ch ? [cw, ch] : [ch, cw]
+  const sized = ow === longest && Math.abs(oh - (longest * sw) / lw) <= 1 &&
+    inPlace.decoded[0] === inPlace.width && inPlace.decoded[1] === inPlace.height
   const hadContent = inPlace.lit > 1000
   const wentEmpty = offCanvas.lit === 0
   const cameBack = restored.lit > 1000
   const changed = inPlace.hash !== offCanvas.hash
 
   console.log()
-  console.log(`capped to 640     ${sized ? 'yes' : 'NO — ' + inPlace.width + 'x' + inPlace.height}`)
+  console.log(`capped to 640     ${sized ? 'yes' : 'NO'} — ${inPlace.width}x${inPlace.height} for a ${cw}x${ch} canvas`)
   console.log(`content in frame  ${inPlace.lit} lit`)
   console.log(`off-canvas        ${offCanvas.lit} lit`)
   console.log(`restored          ${restored.lit} lit`)

@@ -20,6 +20,7 @@ import { MediaPool } from '@/engine/mediaPool'
 import { renderFrame, awaitSources } from '@/engine/render'
 import { FrameExporter } from '@/engine/exporter'
 import { brfRuntime } from '@/engine/brfCode'
+import { variationFaces } from '@/engine/brfFonts'
 
 /**
  * The probe surface, and the flag that gates it.
@@ -63,6 +64,12 @@ declare global {
       awaitSources: typeof awaitSources
       /** So a probe can time the draw alone — the grade pass's cost — without the awaits around it. */
       Compositor: typeof Compositor
+      /**
+       * The `.brf` code runtime, whose scene cache is shared by preview, `renderFrame` and export.
+       * A probe of export clears it first, or the preview's cached scenes hide an export that
+       * never waited for the worker (`test/app/brf-export.mjs`).
+       */
+      brfRuntime: typeof brfRuntime
     }
   }
 }
@@ -150,6 +157,7 @@ class Engine {
     // which waits for the pool; the live engine had no equivalent.
     this.#offs.push(this.compositions.onReady(() => this.redraw()))
     this.#offs.push(brfRuntime.onReady(() => this.redraw()))
+    this.#offs.push(variationFaces.onReady(() => this.redraw()))
 
     // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
     // producing frames while the media elements play on, so the sound runs away from a
@@ -171,7 +179,7 @@ class Engine {
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle && probeSurfaceEnabled()) {
-      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources, Compositor }
+      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources, Compositor, brfRuntime }
     }
     return () => this.detach()
   }
