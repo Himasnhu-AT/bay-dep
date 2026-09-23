@@ -49,6 +49,30 @@ exactly the union.
 If a locked track holds content after the cut, the result names it under `desyncedTracks` with
 how many frames adrift it now is. That is not a warning to skim — say so, or fix it.
 
+## Refining a cut: slip, slide and roll
+
+`edit_item` moves one edge of one clip. `trim_item` does the three trims that change *what plays*
+without changing how long the program is, and each keeps a different thing still:
+
+- **slip** — the clip stays where it is; it shows a different part of its source. Positive
+  `deltaFrames` shows later footage.
+- **slide** — the clip moves with its content unchanged, and the clips either side absorb it: the
+  one before lengthens or shortens at its out-point, the one after at its in-point. Nothing
+  downstream shifts. A gap on one side absorbs the move up to its size. A clip touching nothing on
+  either side cannot slide — that is a plain move, so use `edit_item` `from`.
+- **roll** — the cut between two abutting clips moves: the outgoing clip ends later and the
+  incoming starts later by the same amount. `edge: "start"` rolls the cut before the clip instead
+  of the one after it.
+
+All three spend footage beyond the clips' visible range, and a clip must keep at least one frame.
+When a move does not fit, the call is **refused, never clamped**, and the refusal gives the legal
+`deltaFrames` range and which clip ran out. Pass `deltaFrames: 0` to ask for the range without
+changing anything.
+
+A transition stays on its cut through all three, because every cut that existed still exists. What
+can change is how much footage each side has left to spend on it; the result's `transitions` and
+`warnings` say when a dissolve is now shorter than you asked for.
+
 ## Transitions belong to the cut, not the clip
 
 `add_transition` joins two clips that already abut. A transition needs footage on **both** sides

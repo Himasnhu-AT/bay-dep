@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Music2, Video } from 'lucide-react'
 import { allItems, findAsset, itemEnd, type Item, type Track } from '@shared/project'
+import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
 import { IconButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
@@ -41,6 +42,25 @@ interface TrimGesture {
   durationInFrames: number
 }
 
+/**
+ * A slip, slide or roll in progress — Alt on a clip (slip), Alt+Shift on a clip (slide), Alt on
+ * a trim handle (roll that cut).
+ *
+ * The legal range is asked for once, at pointer-down, and the drag is clamped to it: a gesture
+ * that ran past the handles and was refused on release would read as the editor ignoring the
+ * drag. The preview is the planner's own output, so what is drawn during the drag is exactly
+ * what the store will commit on release.
+ */
+interface TrimModeGesture {
+  itemId: string
+  mode: TrimMode
+  edge?: 'start' | 'end'
+  range: { min: number; max: number }
+  deltaFrames: number
+  /** Every item the plan changes, keyed by id, as it will be after the edit. */
+  preview: Map<string, TrimChange>
+}
+
 function trackHeight(track: Track): number {
   return track.kind === 'video' ? VIDEO_TRACK_HEIGHT : AUDIO_TRACK_HEIGHT
 }
@@ -62,6 +82,7 @@ export function Timeline(): ReactNode {
   const [view, setView] = useState({ left: 0, width: 0 })
   const [move, setMove] = useState<MoveGesture | null>(null)
   const [trim, setTrim] = useState<TrimGesture | null>(null)
+  const [trimMode, setTrimMode] = useState<TrimModeGesture | null>(null)
   // The junction under edit. Local because a cut is not a selectable object in the store —
   // `selection` holds item ids — and inventing a second kind of selection there to carry a
   // transient dialog would be a worse trade than holding it here.
@@ -302,9 +323,85 @@ export function Timeline(): ReactNode {
     onClick: () => setTrim(null)
   })
 
+  const beginTrimMode = useDrag({
+    onMove: (state) => {
+      if (!timeline) return
+      setTrimMode((current) => {
+        if (!current) return current
+        // A slip drags the *footage*: pulling right reveals what came before, the way the
+        // picture moves under a fixed window. Slide and roll drag the clip or the cut itself.
+        const raw = Math.round(state.dx / pixelsPerFrame) * (current.mode === 'slip' ? -1 : 1)
+        const deltaFrames = Math.max(current.range.min, Math.min(current.range.max, raw))
+        if (deltaFrames === current.deltaFrames) return current
+        const plan =
+          deltaFrames === 0
+            ? null
+            : planTrim(useEditor.getState().project, timeline, {
+                itemId: current.itemId,
+                mode: current.mode,
+                deltaFrames,
+                ...(current.edge ? { edge: current.edge } : {})
+              })
+        const preview = new Map<string, TrimChange>()
+        if (plan?.ok) for (const change of plan.changes) preview.set(change.itemId, change)
+        return { ...current, deltaFrames, preview }
+      })
+    },
+    onEnd: () => {
+      const current = trimMode
+      setTrimMode(null)
+      if (!current || current.deltaFrames === 0) return
+      const store = useEditor.getState()
+      const result = store.trimEdit({
+        itemId: current.itemId,
+        mode: current.mode,
+        deltaFrames: current.deltaFrames,
+        ...(current.edge ? { edge: current.edge } : {})
+      })
+      // Only reachable if the project changed under the drag; say why rather than dropping it.
+      if (!result.ok) store.notify(result.error, 'error')
+    },
+    onClick: () => setTrimMode(null)
+  })
+
+  /**
+   * Starts a slip, slide or roll if the pointer-down asked for one. Returns false when the
+   * modifiers do not, so the caller falls through to an ordinary move or trim.
+   */
+  const startTrimMode = useCallback(
+    (event: React.PointerEvent, item: Item, mode: TrimMode, edge?: 'start' | 'end'): boolean => {
+      if (!timeline) return false
+      const store = useEditor.getState()
+      // A zero delta is refused with the legal range attached, which is exactly the question
+      // "how far can this go" — one planner, asked before the drag instead of after it.
+      const probe = planTrim(store.project, timeline, {
+        itemId: item.id,
+        mode,
+        deltaFrames: 0,
+        ...(edge ? { edge } : {})
+      })
+      if (probe.ok || !probe.range) {
+        if (!probe.ok) store.notify(probe.error, 'error')
+        return true
+      }
+      store.select([item.id])
+      setTrimMode({ itemId: item.id, mode, edge, range: probe.range, deltaFrames: 0, preview: new Map() })
+      beginTrimMode(event)
+      return true
+    },
+    [timeline, beginTrimMode]
+  )
+
   const onClipPointerDown = useCallback(
     (event: React.PointerEvent, item: Item): void => {
       const store = useEditor.getState()
+      // Alt is the trim-mode modifier: alone it slips the footage inside the clip, with Shift it
+      // slides the clip between its neighbours. Checked before the Shift-click branch below, so
+      // Alt+Shift is a slide rather than a selection toggle.
+      if (event.altKey) {
+        startTrimMode(event, item, event.shiftKey ? 'slide' : 'slip')
+        return
+      }
       // Shift-click edits the selection and nothing else — dragging a shift-click would
       // move whatever was already selected, which is never what the gesture meant.
       if (event.shiftKey) {
@@ -325,18 +422,23 @@ export function Timeline(): ReactNode {
       })
       beginMove(event)
     },
-    [tracks, beginMove]
+    [tracks, beginMove, startTrimMode]
   )
 
   const onTrimPointerDown = useCallback(
     (event: React.PointerEvent, item: Item, edge: 'start' | 'end'): void => {
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
+      // Alt on a handle rolls the cut at that edge instead of trimming one side of it.
+      if (event.altKey) {
+        startTrimMode(event, item, 'roll', edge)
+        return
+      }
       useEditor.getState().select([item.id])
       setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames })
       beginTrim(event)
     },
-    [tracks, beginTrim]
+    [tracks, beginTrim, startTrimMode]
   )
 
   // -- render ---------------------------------------------------------------
@@ -426,8 +528,21 @@ export function Timeline(): ReactNode {
                   )}
                   style={{ width: contentWidth, height }}
                 >
-                  {track.items.map((item) => {
-                    const trimming = trim?.itemId === item.id
+                  {track.items.map((original) => {
+                    const trimming = trim?.itemId === original.id
+                    // During a slip, slide or roll, draw the item as the plan will leave it —
+                    // including its read point, so a slipped filmstrip visibly moves.
+                    const planned = trimMode?.preview.get(original.id)
+                    const item: Item = planned
+                      ? {
+                          ...original,
+                          from: planned.from,
+                          durationInFrames: planned.durationInFrames,
+                          sourceStartUs: planned.sourceStartUs,
+                          fadeInFrames: planned.fadeInFrames,
+                          fadeOutFrames: planned.fadeOutFrames
+                        }
+                      : original
                     return (
                       <Clip
                         key={item.id}
@@ -440,7 +555,7 @@ export function Timeline(): ReactNode {
                         locked={track.locked}
                         previewFrom={trimming ? trim.from : item.from}
                         previewDuration={trimming ? trim.durationInFrames : item.durationInFrames}
-                        dragging={movingIds?.has(item.id) ?? false}
+                        dragging={(movingIds?.has(item.id) ?? false) || trimMode?.itemId === item.id}
                         onPointerDownBody={onClipPointerDown}
                         onPointerDownTrim={onTrimPointerDown}
                       />
@@ -524,6 +639,21 @@ export function Timeline(): ReactNode {
           </div>
         </div>
       </div>
+
+      {/* What the drag will do, in the units the result will be reported in. The range is
+          shown because the drag stops at it, and a drag that stops for no visible reason reads
+          as the editor sticking. */}
+      {trimMode && (
+        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
+          {trimMode.mode === 'slip' ? 'Slip' : trimMode.mode === 'slide' ? 'Slide' : 'Roll'}{' '}
+          {trimMode.deltaFrames > 0 ? '+' : ''}
+          {trimMode.deltaFrames} frames
+          <span className="ml-2 text-ink-2">
+            {Number.isFinite(trimMode.range.min) ? trimMode.range.min : '−∞'} to{' '}
+            {Number.isFinite(trimMode.range.max) ? `+${trimMode.range.max}` : '+∞'}
+          </span>
+        </div>
+      )}
 
       {/* Centred on the *lanes*, not on the panel — otherwise it lands over the add-track
           row and reads as a label for it. `cursor` is where the last lane ends. */}

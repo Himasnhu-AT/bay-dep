@@ -36,6 +36,7 @@ import { addTemplate } from './templates'
 import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from '@shared/validate'
 import { proposeEdit } from './proposals'
+import { trimItem } from './trim'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -51,6 +52,7 @@ const HANDLERS: Record<string, Handler> = {
   add_template: (args) => addTemplate(args),
   place_asset: (args) => placeAsset(args),
   edit_item: (args) => editItem(args),
+  trim_item: (args) => trimItem(args),
   split_at: (args) => splitAt(args),
   delete_items: (args) => deleteItems(args),
   remove_range: (args) => removeRange(args),

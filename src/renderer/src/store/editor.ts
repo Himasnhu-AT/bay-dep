@@ -48,6 +48,7 @@ import {
 } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
+import { applyTrimPlan, planTrim, type TrimPlan, type TrimRefusal, type TrimSpec } from '@shared/trim'
 
 const HISTORY_LIMIT = 100
 
@@ -146,6 +147,15 @@ export interface EditorActions {
   placeAsset(assetId: string, atFrame?: Frames, trackId?: string): string | null
   moveItem(itemId: string, toFrame: Frames, toTrackId?: string): void
   trimItem(itemId: string, edge: 'start' | 'end', toFrame: Frames): void
+  /**
+   * Slip, slide or roll one clip — see `@shared/trim` for what each keeps still.
+   *
+   * Returns the plan it applied, or the refusal with the legal range. Unlike `trimItem`, which
+   * clamps a drag to what fits, this never clamps: the caller asked for a specific number of
+   * frames, and "moved by 12 when you asked for 40" reported as success is a lie. The timeline
+   * clamps its gestures *before* calling, using the same planner.
+   */
+  trimEdit(spec: TrimSpec): TrimPlan | TrimRefusal
   splitAt(frame?: Frames): void
   deleteSelected(): void
   /**
@@ -728,6 +738,19 @@ export const useEditor = create<EditorStore>((set, get) => {
         if (item.fadeInFrames > item.durationInFrames) item.fadeInFrames = item.durationInFrames
         if (item.fadeOutFrames > item.durationInFrames) item.fadeOutFrames = item.durationInFrames
       })
+    },
+
+    trimEdit(spec) {
+      const project = get().project
+      const timeline = activeTimeline(project)
+      if (!timeline) return { ok: false, error: 'No timeline is open.' }
+      // Planned against the live project and applied to `edit()`'s clone. The plan names items
+      // by id and carries absolute values, so it lands identically on the copy — and a refusal
+      // never reaches `edit()` at all, so it cannot leave an empty undo step behind.
+      const plan = planTrim(project, timeline, spec)
+      if (!plan.ok) return plan
+      editTimeline((tl) => applyTrimPlan(tl, plan))
+      return plan
     },
 
     splitAt(frame) {
