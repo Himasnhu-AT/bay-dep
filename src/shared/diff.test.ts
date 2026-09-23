@@ -4,7 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Asset, Item, Project } from './project'
+import type { Adjustments, Asset, Item, Project, TextStyle, Transition } from './project'
 import { describeChanges } from './diff'
 
 const asset = (id: string, name: string, extra: Partial<Asset> = {}): Asset => ({
@@ -156,4 +156,101 @@ test('a clip moved to another track is still reported as moved', () => {
   const [moved] = after.timelines[0]!.tracks[0]!.items.splice(0, 1)
   after.timelines[0]!.tracks[1]!.items.push({ ...moved!, trackId: 'v2' })
   assert.deepEqual(texts(describeChanges(before, after)), ['Moved “interview.mp4” from V1 to V2'])
+})
+
+// ---------------------------------------------------------------------------
+// The rest of the vocabulary: every kind of change the card can report.
+// ---------------------------------------------------------------------------
+
+/** Two clips that meet at frame 150, so a transition has a junction to sit on. */
+const junction = (transitions: Transition[] = []): Project => {
+  const p = project([item('i1', 'a1', 0, 150), item('i2', 'a2', 150, 150)])
+  p.timelines[0]!.transitions = transitions
+  return p
+}
+
+const dissolve: Transition = { id: 'tr1', kind: 'cross-dissolve', fromItemId: 'i1', toItemId: 'i2', durationInFrames: 10 }
+
+test('a transition added, changed and removed each reads as such — and one left alone is silent', () => {
+  assert.deepEqual(texts(describeChanges(junction(), junction([dissolve]))), ['Added a cross-dissolve (10 frames)'])
+  assert.deepEqual(
+    texts(describeChanges(junction([dissolve]), junction([{ ...dissolve, kind: 'wipe', durationInFrames: 12 }]))),
+    ['Changed a transition to wipe (12 frames)']
+  )
+  assert.deepEqual(texts(describeChanges(junction([dissolve]), junction())), ['Removed a cross-dissolve'])
+  // Positive control for the three above: the same transition on both sides is no change.
+  assert.deepEqual(describeChanges(junction([dissolve]), junction([{ ...dissolve }])), [])
+})
+
+test('renaming the project is reported with the new name', () => {
+  const before = project([])
+  assert.deepEqual(texts(describeChanges(before, { ...before, name: 'Final cut' })), ['Renamed the project to “Final cut”'])
+})
+
+test('a slip is reported; a left trim that also moves the in-point is a trim, not a slip', () => {
+  const before = project([item('i1', 'a1', 0, 150)])
+  const slipped = project([item('i1', 'a1', 0, 150, { sourceStartUs: 2_500_000 })])
+  assert.deepEqual(texts(describeChanges(before, slipped)), ['Slipped “interview.mp4” to start 2.50s into its source'])
+  // Trimming the head moves `from` and the in-point together; that is one edit, a trim.
+  const trimmed = project([item('i1', 'a1', 30, 120, { sourceStartUs: 1_000_000 })])
+  assert.deepEqual(texts(describeChanges(before, trimmed)), ['Trimmed “interview.mp4” to 0:01:00–0:05:00'])
+})
+
+test('each property of a clip’s picture reports its own line, and only its own', () => {
+  const base = item('i1', 'a1', 0, 150)
+  const cases: [string, Partial<Item>][] = [
+    ['Repositioned “interview.mp4”', { layout: { ...base.layout, left: 100 } }],
+    ['Cropped “interview.mp4”', { crop: { left: 0.1, top: 0, right: 0, bottom: 0 } }],
+    ['Adjusted the look of “interview.mp4”', { adjustments: { brightness: 1.2 } as Adjustments }],
+    ['Blend mode of “interview.mp4”: normal → screen', { blendMode: 'screen' }],
+    ['Restyled the text of “interview.mp4”', { text: { fontFamily: 'Helvetica' } as TextStyle }],
+    ['Changed the content of “interview.mp4”', { variables: { headline: 'Hello' } }]
+  ]
+  for (const [line, change] of cases) {
+    const after = project([{ ...base, ...change }])
+    assert.deepEqual(texts(describeChanges(project([base]), after)), [line])
+  }
+})
+
+test('a blend mode set back to normal names both ends', () => {
+  const before = project([item('i1', 'a1', 0, 150, { blendMode: 'multiply' })])
+  const after = project([item('i1', 'a1', 0, 150)])
+  assert.deepEqual(texts(describeChanges(before, after)), ['Blend mode of “interview.mp4”: multiply → normal'])
+})
+
+test('media removed from the pool is reported; a text asset going with its caption is not', () => {
+  const before = project([])
+  const after = project([], { assets: [before.assets[0]!] })
+  assert.deepEqual(texts(describeChanges(before, after)), ['Removed “broll.mp4” from the media'])
+
+  const text = asset('t1', 'Caption: Hello', { kind: 'text', text: 'Hello', path: null })
+  const withCaption = project([], { assets: [...before.assets, text] })
+  assert.deepEqual(describeChanges(withCaption, before), [], 'the text asset is bookkeeping')
+})
+
+test('changing a caption’s words reads as the old words and the new', () => {
+  const text = asset('t1', 'Caption: Hello', { kind: 'text', text: 'Hello', path: null })
+  const before = project([item('c1', 't1', 0, 30)], { assets: [text] })
+  const after = project([item('c1', 't1', 0, 30)], { assets: [{ ...text, text: 'Goodbye' }] })
+  assert.deepEqual(texts(describeChanges(before, after)), ['Changed the text of “Hello” to “Goodbye”'])
+})
+
+test('a frame-rate change is reported with both rates', () => {
+  const before = project([])
+  const after = structuredClone(before)
+  after.timelines[0]!.fps = 25
+  assert.deepEqual(texts(describeChanges(before, after)), ['Frame rate 30 → 25'])
+})
+
+test('fourteen changes are all shown; the fifteenth turns the last line into a count', () => {
+  const many = (n: number): Project => project(Array.from({ length: n }, (_, i) => item(`i${i}`, 'a1', i * 10, 10)))
+  const fourteen = describeChanges(project([]), many(14))
+  assert.equal(fourteen.length, 14)
+  assert.ok(fourteen.every((line) => !line.text.includes('more changes')), 'fourteen fit, so none is summarised')
+  assert.equal(fourteen[13]!.text, 'Added “interview.mp4” on V1, 0:04:10–0:04:20')
+
+  const fifteen = describeChanges(project([]), many(15))
+  assert.equal(fifteen.length, 14)
+  assert.equal(fifteen[12]!.text, 'Added “interview.mp4” on V1, 0:04:00–0:04:10', 'thirteen real lines')
+  assert.equal(fifteen[13]!.text, '…and 2 more changes')
 })

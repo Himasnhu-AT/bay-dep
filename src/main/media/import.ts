@@ -7,21 +7,22 @@
  * list the fortieth with its error, not fail as a batch.
  */
 
-import { randomUUID } from 'node:crypto'
-import { basename, extname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { BrowserWindow, dialog } from 'electron'
-import type { ImportedAsset, ProbeResult } from '@shared/ipc'
-import type { Asset, AssetKind } from '@shared/project'
+import type { ImportedAsset } from '@shared/ipc'
+import type { Asset } from '@shared/project'
 import { allowPath } from '../protocol'
 import { probe } from './probe'
 import { compositionAsset } from '../html/compositions'
 import { COMPOSITION_EXTENSIONS, isCompositionPath } from '@shared/composition'
 import { thumbnail } from './thumbnails'
-
-const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', 'mpg', 'mpeg', 'wmv', 'flv']
-
-const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'aiff', 'aif']
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'heic']
+import {
+  AUDIO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  assetFrom,
+  failedAsset
+} from './asset-mint'
 
 /**
  * Assets already imported this session, by absolute path. The renderer owns the project and
@@ -37,58 +38,6 @@ export function adoptAssets(assets: readonly Asset[]): void {
     const absolute = resolve(asset.path)
     byPath.set(absolute, asset)
     allowPath(absolute)
-  }
-}
-
-function kindFor(path: string, result: ProbeResult): AssetKind {
-  const extension = extname(path).slice(1).toLowerCase()
-  if (extension === 'gif') return 'gif'
-  if (result.hasVideo && result.hasAudio) return 'video'
-  if (result.hasVideo) {
-    // A single-frame source with no rate is a still, however it is packaged. The importer
-    // has to get this right: a still placed as a one-frame video is unusable on a timeline.
-    if (result.fps === null || result.durationUs === 0) return 'image'
-    return 'video'
-  }
-  if (result.hasAudio) return 'audio'
-  return IMAGE_EXTENSIONS.includes(extension) ? 'image' : 'video'
-}
-
-function assetFrom(path: string, result: ProbeResult): Asset {
-  const kind = kindFor(path, result)
-  return {
-    id: randomUUID(),
-    kind,
-    name: basename(path),
-    path,
-    durationUs: result.durationUs,
-    width: result.width,
-    height: result.height,
-    fps: result.fps,
-    hasAudio: result.hasAudio,
-    hasVideo: result.hasVideo,
-    posterPath: null,
-    waveformPath: null,
-    createdAt: Date.now()
-  }
-}
-
-function failedAsset(path: string, message: string): Asset {
-  return {
-    id: randomUUID(),
-    kind: 'video',
-    name: basename(path),
-    path,
-    durationUs: 0,
-    width: null,
-    height: null,
-    fps: null,
-    hasAudio: false,
-    hasVideo: false,
-    posterPath: null,
-    waveformPath: null,
-    createdAt: Date.now(),
-    error: message
   }
 }
 

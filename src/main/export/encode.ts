@@ -35,6 +35,7 @@ import { inspectComposition } from '../html/compositions'
 import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
 import { frameProblem, writeFrame } from './frame-pipe'
+import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } from './codec-args'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
 
@@ -88,72 +89,8 @@ function messageOf(error: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Encoder arguments
-// ---------------------------------------------------------------------------
-
-const CRF: Record<'draft' | 'good' | 'best', { h264: number; vp9: number }> = {
-  draft: { h264: 28, vp9: 38 },
-  good: { h264: 20, vp9: 32 },
-  best: { h264: 16, vp9: 26 }
-}
-
-function videoCodecArgs(format: ExportFormat, quality: 'draft' | 'good' | 'best'): string[] {
-  const crf = CRF[quality]
-  switch (format) {
-    case 'webm':
-      return ['-c:v', 'libvpx-vp9', '-crf', String(crf.vp9), '-b:v', '0', '-row-mt', '1', '-pix_fmt', 'yuv420p']
-    case 'png-sequence':
-      return ['-c:v', 'png']
-    default:
-      return [
-        '-c:v',
-        'libx264',
-        '-preset',
-        quality === 'draft' ? 'veryfast' : 'medium',
-        '-crf',
-        String(crf.h264),
-        '-pix_fmt',
-        'yuv420p'
-      ]
-  }
-}
-
-function containerArgs(format: ExportFormat): string[] {
-  // faststart moves the index to the front so the file starts playing before it is fully
-  // downloaded — the difference between a shareable file and one that only works locally.
-  return format === 'mp4' || format === 'mov' ? ['-movflags', '+faststart'] : []
-}
-
-function audioCodecArgs(format: ExportFormat): string[] {
-  switch (format) {
-    case 'webm':
-      return ['-c:a', 'libopus', '-b:a', '128k']
-    case 'wav':
-      return ['-c:a', 'pcm_s16le']
-    case 'mp3':
-      return ['-c:a', 'libmp3lame', '-q:a', '2']
-    default:
-      return ['-c:a', 'aac', '-b:a', '192k']
-  }
-}
-
-function extensionFor(format: ExportFormat): string {
-  switch (format) {
-    case 'png-sequence':
-      return ''
-    default:
-      return format
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Running ffmpeg
 // ---------------------------------------------------------------------------
-
-function tailOf(text: string): string {
-  const trimmed = text.trimEnd()
-  return trimmed.length > 4096 ? trimmed.slice(-4096) : trimmed
-}
 
 /** Spawns ffmpeg and resolves on a clean exit, rejecting with stderr's tail otherwise. */
 function runFfmpeg(args: readonly string[]): Promise<void> {

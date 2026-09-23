@@ -10,9 +10,11 @@
  * be the one under test, and the store's `emptyProject`/`placeAsset` are where the project,
  * timeline, track, item and layout records are actually minted.
  *
- * Assets are not covered here: they are minted in main by `media/import.ts`, which imports
- * Electron and so cannot run under `pnpm test`. The loader-side fixture test still pins their
- * keys on the way in.
+ * Assets are minted in main, not by the store: `src/main/media/asset-mint.ts` (split out of
+ * `import.ts` so it can run under `pnpm test`) is their writer, and
+ * `src/main/media/asset-mint.test.ts` holds it to the same promise against this same fixture.
+ * That check lives in main because this file is in the renderer's tsconfig project, which may
+ * not import from `src/main`.
  *
  * Run with `pnpm test`.
  */
