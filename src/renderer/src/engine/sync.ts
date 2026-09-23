@@ -17,6 +17,23 @@ import { sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/proj
  */
 export const DRIFT_TOLERANCE_SECONDS = 0.08
 
+/**
+ * How far ahead of the playhead live playback puts the next clip's element in place. A seek to a
+ * trimmed in-point decodes from the keyframe before it — up to 20 frames on the reporter's takes,
+ * seconds on long-GOP footage — so this is generous; each clip costs one paused, seeked decoder.
+ */
+export const PREROLL_SECONDS = 1
+
+/**
+ * How long a seek in flight is left alone during playback before it is assumed lost and asked
+ * again. Longer than {@link STALE_SEEK_MS} because a playing element's seek is not a scrub that a
+ * newer one supersedes: restarting it only restarts the decode from the keyframe.
+ */
+export const PLAYBACK_SEEK_PATIENCE_MS = 2000
+
+/** The most a playback seek is aimed ahead of the clock to cover its own latency. */
+export const MAX_SEEK_LEAD_MS = 1000
+
 /** How long a seek may be outstanding before we assume it was dropped and re-issue it. */
 export const STALE_SEEK_MS = 400
 

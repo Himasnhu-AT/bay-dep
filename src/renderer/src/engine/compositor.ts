@@ -17,6 +17,7 @@ import {
   fadeGainAt,
   findAsset,
   itemsAtFrame,
+  resolveTransition,
   transitionAtFrame,
   type Asset,
   type TransitionKind,
@@ -48,6 +49,9 @@ import {
 } from './text'
 import {
   DRIFT_TOLERANCE_SECONDS,
+  MAX_SEEK_LEAD_MS,
+  PLAYBACK_SEEK_PATIENCE_MS,
+  PREROLL_SECONDS,
   STALE_SEEK_MS,
   clamp,
   clamp01,
@@ -129,6 +133,11 @@ export interface DrawStats {
 interface SeekState {
   targetSeconds: number
   issuedAt: number
+  /**
+   * A playback seek whose landing has not been timed yet. Only those measure latency: a scrub or
+   * preroll seek may have landed long before anyone looks, and would read as a huge latency.
+   */
+  timing?: boolean
 }
 
 const PLACEHOLDER_FILL = '#232329'
@@ -200,6 +209,8 @@ export class Compositor {
    * as the pixels, or the evidence destroys itself.
    */
   readonly #seeks = new Map<string, SeekState>()
+  /** How long each element's last playback seek took to land, in ms. See `#syncElement`. */
+  readonly #seekLatency = new Map<string, number>()
 
   readonly #compositions: CompositionPool | null
   /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
@@ -323,9 +334,51 @@ export class Compositor {
     })
   }
 
+  /**
+   * Puts the element of every clip about to come on screen at that clip's first source frame,
+   * paused, before the playhead reaches it. Live playback only — export and `preview_frame`
+   * wait for their sources instead, and never call this.
+   *
+   * Without it the incoming clip's element is wherever it was left (source 0 when new, the end of
+   * its last play when warm), so the draw at the cut issues the seek, finds the element mid-seek
+   * with nothing drawable, and paints the background: **one black picture at every cut**, cold
+   * and warm, graded or not — measured by `test/app/cut-playback.mjs` on the reporter's own takes,
+   * whose in-points sit up to 20 frames past their only keyframe. Prerolled, the draw at the cut
+   * finds the element already there and only has to press play.
+   *
+   * Call it after every consumer has acquired what this frame needs and before
+   * `MediaPool.retireIdle`: an element anything asked for this generation is in use — the picture
+   * of another clip, or a hidden track's sound, which the compositor never sees — and is left
+   * alone rather than paused and moved under its user. A same-asset jump cut is that case (one
+   * element, two source times); `PictureHold` covers it.
+   */
+  preroll(project: Project, timeline: Timeline, frame: number, options: { now?: number } = {}): void {
+    const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
+    const now = options.now ?? performance.now()
+    for (const target of prerollTargets(project, timeline, frame, Math.ceil(PREROLL_SECONDS * fps))) {
+      if (this.#pool.inUse(target.asset.id, target.slot)) continue
+      const entry = this.#pool.acquire(target.asset, target.slot)
+      const element = entry.element
+      if (!(element instanceof HTMLVideoElement)) continue
+      if (!element.paused) element.pause()
+      const seconds = sourceSecondsAt(target.item, target.asset, target.startFrame, fps)
+      // There, or on its way: `currentTime` reads a seek's target from the moment it is set.
+      if (Math.abs(element.currentTime - seconds) <= 0.5 / fps) continue
+      try {
+        element.currentTime = seconds
+        // Recorded where the draw will find it: a preroll seek still in flight when the clip
+        // starts is then waited for, not restarted (`#syncElement`'s patience).
+        this.#seeks.set(`${entry.assetId}#${entry.slot}`, { targetSeconds: seconds, issuedAt: now })
+      } catch {
+        // Before metadata a seek throws; the next frame asks again.
+      }
+    }
+  }
+
   /** Drops seek bookkeeping for assets no longer on screen. */
   reset(): void {
     this.#seeks.clear()
+    this.#seekLatency.clear()
     this.#brf.reset()
   }
 
@@ -716,6 +769,16 @@ export class Compositor {
    * the same target means the element restarts the seek before finishing it and never
    * arrives, so the outstanding target is remembered and only re-issued when the target
    * moves or the seek goes stale.
+   *
+   * **During playback the target always moves**, so "re-issue when it moves" was the same
+   * restart one step removed: past {@link DRIFT_TOLERANCE_SECONDS} of clock (two frames at 24
+   * fps) the seek was abandoned for a new one, and a seek slower than that never landed.
+   * Measured on a same-asset jump cut 74 frames past its only keyframe: a new `currentTime`
+   * every 83 ms, no `seeked` for 20 frames, the clip black for half a second. So in playback a
+   * seek in flight is left to land ({@link PLAYBACK_SEEK_PATIENCE_MS}), and the next one is
+   * aimed where the clock will be when it lands — ahead by how long this element's last seek
+   * took — rather than where it was when it was asked, which would land late by that much again
+   * and be corrected for ever.
    */
   #syncElement(
     entry: MediaEntry,
@@ -750,20 +813,37 @@ export class Compositor {
       element.pause()
     }
 
+    const pending = this.#seeks.get(seekKey)
+    if (pending && mode === 'playback') {
+      // Before the drift check, because `currentTime` reports a seek's *target* from the moment it
+      // is set: judged by drift, a seek in flight looks landed, its bookkeeping is dropped, and two
+      // frames later it looks late and is asked again — the restart this exists to prevent.
+      if (element.seeking && now - pending.issuedAt <= PLAYBACK_SEEK_PATIENCE_MS) return
+      if (pending.timing && !element.seeking) {
+        // Landed at most a frame ago, so this reads a little long. What the next seek leads by.
+        this.#seekLatency.set(seekKey, Math.min(now - pending.issuedAt, MAX_SEEK_LEAD_MS))
+        pending.timing = false
+      }
+    }
+
     const drift = Math.abs(element.currentTime - target)
     if (drift <= tolerance) {
       this.#seeks.delete(seekKey)
       return
     }
 
-    const pending = this.#seeks.get(seekKey)
     const sameTarget = pending !== undefined && Math.abs(pending.targetSeconds - target) <= tolerance
     const stale = pending !== undefined && now - pending.issuedAt > STALE_SEEK_MS
     if (sameTarget && !stale) return
 
+    // Rounded, not ceiled: the latency is read at the first draw after landing, so it is already up
+    // to a frame long, and a ceiling turned every fast (~25 ms) seek into a one-frame lead that
+    // opened the clip a source frame late.
+    const leadFrames = mode === 'playback' ? Math.round(((this.#seekLatency.get(seekKey) ?? 0) / 1000) * fps) : 0
+    const aim = leadFrames > 0 ? sourceSecondsAt(item, asset, frame + leadFrames, fps) : target
     try {
-      element.currentTime = target
-      this.#seeks.set(seekKey, { targetSeconds: target, issuedAt: now })
+      element.currentTime = aim
+      this.#seeks.set(seekKey, { targetSeconds: aim, issuedAt: now, timing: mode === 'playback' })
     } catch {
       // Seeking before metadata arrives throws; the next frame retries with metadata.
     }
@@ -845,6 +925,58 @@ export function itemsToDraw(
   const pair = [active.resolved.from, active.resolved.to]
   const others = present.filter((item) => !pair.some((p) => p.id === item.id))
   return { items: [...others, ...pair], active }
+}
+
+/** A clip that is not drawn yet, the frame it first will be, and the element it will be drawn from. */
+export interface PrerollTarget {
+  item: Item
+  asset: Asset
+  /** The slot `elementSlots` will give it at `startFrame` — the element the draw will read. */
+  slot: number
+  startFrame: number
+}
+
+/**
+ * The video clips first drawn in `(frame, frame + lookahead]`, soonest first, one per element.
+ *
+ * "First drawn" is the clip's `from`, or earlier when it is the incoming side of a transition,
+ * whose window starts before the cut. The slot is taken from `itemsToDraw` at that frame, the
+ * same derivation the draw will use — prerolling a different element than the one drawn would
+ * look exactly like no preroll at all. Two clips wanting one element keep the sooner.
+ */
+export function prerollTargets(
+  project: Project,
+  timeline: Timeline,
+  frame: number,
+  lookaheadFrames: number
+): PrerollTarget[] {
+  const early = new Map<string, number>()
+  for (const transition of timeline.transitions ?? []) {
+    const resolved = resolveTransition(project, timeline, transition)
+    if (resolved) early.set(resolved.to.id, Math.min(resolved.firstFrame, resolved.to.from))
+  }
+  const candidates: Array<{ item: Item; asset: Asset; start: number }> = []
+  for (const track of timeline.tracks) {
+    if (track.kind !== 'video' || track.hidden) continue
+    for (const item of track.items) {
+      const start = early.get(item.id) ?? item.from
+      if (start <= frame || start > frame + lookaheadFrames) continue
+      const asset = findAsset(project, item.assetId)
+      if (!asset || asset.error || asset.kind !== 'video' || !asset.hasVideo) continue
+      candidates.push({ item, asset, start })
+    }
+  }
+  candidates.sort((a, b) => a.start - b.start)
+  const claimed = new Set<string>()
+  const out: PrerollTarget[] = []
+  for (const { item, asset, start } of candidates) {
+    const slot = elementSlots(itemsToDraw(project, timeline, start).items).get(item.id) ?? 0
+    const key = `${asset.id}#${slot}`
+    if (claimed.has(key)) continue
+    claimed.add(key)
+    out.push({ item, asset, slot, startFrame: start })
+  }
+  return out
 }
 
 export function elementSlots(drawing: Item[]): Map<string, number> {

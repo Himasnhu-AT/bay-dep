@@ -21,6 +21,7 @@ import { renderFrame, awaitSources } from '@/engine/render'
 import { FrameExporter } from '@/engine/exporter'
 import { brfRuntime } from '@/engine/brfCode'
 import { variationFaces } from '@/engine/brfFonts'
+import { PictureHold } from '@/engine/pictureHold'
 
 /**
  * The probe surface, and the flag that gates it.
@@ -98,6 +99,9 @@ class Engine {
   readonly compositor = new Compositor(this.pool, this.compositions)
   readonly audio = new AudioEngine(this.pool)
   readonly clock = new PlaybackClock()
+  /** Stands the last complete picture in for an incomplete one during playback. See `pictureHold.ts`. */
+  readonly #hold = new PictureHold()
+  #heldPicture: OffscreenCanvas | null = null
 
   /** Set by the hook so the probe surface can hand out the same object callers get. */
   handle: EngineHandle | null = null
@@ -241,6 +245,9 @@ class Engine {
     // duration walks every item on every track, so it is gated on the project actually
     // having changed rather than run per keystroke.
     if (state.project !== previous.project) this.#syncTimeline(state)
+    if (state.project.id !== previous.project.id || state.project.activeTimelineId !== previous.project.activeTimelineId) {
+      this.#hold.clear()
+    }
 
     if (state.scrubbing !== previous.scrubbing) this.clock.setYielding(state.scrubbing)
 
@@ -313,6 +320,36 @@ class Engine {
     this.clock.setDuration(timeline ? timelineDuration(timeline) : 0)
   }
 
+  /**
+   * Keeps a copy of every complete picture, and puts it back over an incomplete one while playing.
+   * Both copies happen before the browser presents the canvas, so the incomplete frame is never
+   * shown. One canvas-to-canvas blit per picture.
+   */
+  #holdOrKeep(ctx: CanvasRenderingContext2D, complete: boolean, playing: boolean, now: number): void {
+    const { width, height } = ctx.canvas
+    const verdict = this.#hold.decide({ complete, playing, now, width, height })
+    if (verdict === 'incomplete') return
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'copy'
+    if (verdict === 'fresh') {
+      if (!this.#heldPicture || this.#heldPicture.width !== width || this.#heldPicture.height !== height) {
+        this.#heldPicture = new OffscreenCanvas(width, height)
+      }
+      const held = this.#heldPicture.getContext('2d')
+      if (held) {
+        held.globalCompositeOperation = 'copy'
+        held.drawImage(ctx.canvas, 0, 0)
+      } else {
+        this.#hold.clear()
+      }
+    } else if (this.#heldPicture) {
+      ctx.drawImage(this.#heldPicture, 0, 0)
+    }
+    ctx.restore()
+  }
+
   #drawTimed(frame: number): void {
     const canvas = this.#getCanvas()
     if (!canvas) return
@@ -336,9 +373,10 @@ class Engine {
 
     const playing = this.clock.running && !state.scrubbing
     const started = performance.now()
-    this.compositor.drawFrame(ctx, state.project, timeline, frame, {
+    const stats = this.compositor.drawFrame(ctx, state.project, timeline, frame, {
       mode: playing ? 'playback' : 'scrub'
     })
+    this.#holdOrKeep(ctx, stats.pending === 0, playing, started)
     this.clock.recordComposite(performance.now() - started)
 
     // Creating an AudioContext before anything wants sound leaves a suspended context on
@@ -347,6 +385,9 @@ class Engine {
     if (playing || this.audio.hasContext) {
       this.audio.update({ project: state.project, timeline, frame, playing })
     }
+
+    // After both consumers, so an element either of them is using is never moved under it.
+    if (playing) this.compositor.preroll(state.project, timeline, frame)
 
     // Both consumers have now voted for this generation, so anything neither asked for is
     // genuinely idle. Doing this inside the compositor would silence hidden tracks, whose

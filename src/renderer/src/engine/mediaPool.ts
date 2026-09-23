@@ -206,6 +206,15 @@ export class MediaPool {
     for (const asset of assets) this.acquire(asset)
   }
 
+  /**
+   * Whether any consumer asked for this element in the current generation — the picture, or the
+   * sound of a track the picture never sees. A caller about to move an element it does not own
+   * (the compositor's preroll) must leave one that is in use alone.
+   */
+  inUse(assetId: string, slot = 0): boolean {
+    return this.#slots.get(elementKey(assetId, slot))?.generation === this.#generation
+  }
+
   /** Drops one element. Without `slot`, every element of the asset goes. */
   release(assetId: string, slot?: number): void {
     if (slot !== undefined) {

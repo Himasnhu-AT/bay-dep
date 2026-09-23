@@ -236,6 +236,18 @@ within a second, the newest queued capture is served first, stale ones are dropp
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
 
+**A cut during playback is prepared before the playhead reaches it** (`Compositor.preroll`,
+`engine/pictureHold.ts`, `test/app/cut-playback.mjs`). Every cut played one black picture, cold
+and warm, graded or not: the incoming clip's element was first told where to be by the draw *at*
+the cut, and a seeking element has nothing to draw. Now the engine, after both consumers have
+acquired their elements, seeks the next second's clips paused to their first frame (never an
+element anything used this frame — a hidden track's sound is invisible to the compositor). A
+same-asset jump cut cannot be prerolled (one element, two times), so live playback puts the last
+complete picture back over an incomplete one for at most a second; export, `preview_frame` and a
+paused preview never hold. And a playback seek in flight is left to land: `currentTime` reads a
+seek's *target* the moment it is set, so judged by drift a slow seek looked landed, lost its
+bookkeeping and was restarted every two frames — measured as a jump cut black for half a second.
+
 **A colour grade is a source transform inside the compositor, not a second renderer**
 (`item.grade`, `@shared/grade`, `engine/grade.ts`). `#drawSource` hands the element it was about to
 draw to one shared WebGL2 context, gets back a graded canvas of the same framing at the size it
