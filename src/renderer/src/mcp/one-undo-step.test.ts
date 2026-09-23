@@ -220,6 +220,34 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
       args: () => ({ transitionId: state().project.timelines[0]!.transitions![0]!.id })
     }
   ],
+  trim_item: [
+    { delta: 1, args: (f) => ({ itemId: f.a, mode: 'slip', deltaFrames: 10 }) },
+    // A roll moves two clips at once — the shape the gate exists for.
+    { delta: 1, args: (f) => ({ itemId: f.a, mode: 'roll', deltaFrames: 10 }) }
+  ],
+  add_captions: [
+    {
+      delta: 1,
+      args: () => ({
+        cues: [
+          { fromFrame: 0, toFrame: 30, text: 'First line' },
+          { fromFrame: 30, toFrame: 60, text: 'Second line' },
+          { fromFrame: 60, toFrame: 90, text: 'First line' }
+        ]
+      })
+    }
+  ],
+  add_marker: [{ delta: 1, args: () => ({ frame: 45, label: 'Beat' }) }],
+  remove_marker: [
+    {
+      delta: 1,
+      before: () => {
+        assert.ok(state().addMarker(45, 'Beat'), 'the fixture must accept a marker to remove')
+      },
+      args: () => ({ markerId: state().project.timelines[0]!.markers![0]!.id })
+    }
+  ],
+  edit_asset: [{ delta: 1, args: () => ({ assetId: ASSET.id, name: 'renamed.mp4' }) }],
   // Moving the playhead is not an edit, and must not become one.
   set_playhead: [{ delta: 0, args: () => ({ frame: 45 }) }],
   undo: [
@@ -317,7 +345,48 @@ const STORE_CASES: Record<string, StoreCase> = {
 
   // Single-target edits: one entry each, which a stray second `edit()` would break.
   renameProject: { delta: 1, run: () => state().renameProject('Renamed') },
-  renameAsset: { delta: 1, run: () => state().renameAsset(ASSET.id, 'renamed.mp4') },
+  editAsset: { delta: 1, run: () => state().editAsset(ASSET.id, { name: 'renamed.mp4' }) },
+  trimEdit: {
+    delta: 1,
+    run: (f) => {
+      const result = state().trimEdit({ itemId: f.a, mode: 'roll', deltaFrames: 10 })
+      assert.ok(!('error' in result) && !('refused' in result), `the fixture must allow a roll: ${JSON.stringify(result)}`)
+    }
+  },
+  addCaptions: {
+    delta: 1,
+    run: () => {
+      const placed = state().addCaptions([
+        { fromFrame: 0, toFrame: 30, text: 'One' },
+        { fromFrame: 30, toFrame: 60, text: 'Two' }
+      ])
+      assert.ok(!('error' in placed), JSON.stringify(placed))
+    }
+  },
+  addMarker: { delta: 1, run: () => { state().addMarker(30, 'Here') } },
+  moveMarker: {
+    delta: 1,
+    run: () => {
+      const id = state().addMarker(30)
+      assert.ok(id)
+      const before = past()
+      state().moveMarker(id, 50)
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeMarker: {
+    delta: 1,
+    run: () => {
+      // Two, so removing one still leaves the project different from the fixture — with one,
+      // "remove" restores it exactly and the changed-something control would misfire.
+      state().addMarker(10)
+      const id = state().addMarker(30)
+      assert.ok(id)
+      const before = past()
+      state().removeMarker(id)
+      assert.equal(past() - before, 1)
+    }
+  },
   placeAsset: { delta: 1, run: () => { state().placeAsset(ASSET.id, 300) } },
   moveItem: { delta: 1, run: (f) => state().moveItem(f.a, 200, f.v3) },
   trimItem: { delta: 1, run: (f) => state().trimItem(f.a, 'start', 10) },
@@ -436,7 +505,13 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
     }
     // Cases that measure their own step (because their setup is edits too) have asserted
     // already; for the rest the whole run is the one action.
-    const selfMeasured = ['setCompositionVariable', 'removeTransition', 'patchTransition']
+    const selfMeasured = [
+      'setCompositionVariable',
+      'removeTransition',
+      'patchTransition',
+      'moveMarker',
+      'removeMarker'
+    ]
     if (!selfMeasured.includes(action)) {
       assert.equal(
         past() - before,
