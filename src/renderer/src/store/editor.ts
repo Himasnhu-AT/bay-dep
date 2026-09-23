@@ -38,6 +38,7 @@ import {
   type Item,
   type Layout,
   type Project,
+  type TextStyle,
   type Timeline,
   type Track,
   type TrackKind,
@@ -49,6 +50,13 @@ import {
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyTrimPlan, planTrim, type TrimPlan, type TrimRefusal, type TrimSpec } from '@shared/trim'
+import {
+  captionAssetName,
+  captionLayout,
+  captionStyle,
+  checkCues,
+  type CaptionCue
+} from '@shared/captions'
 
 const HISTORY_LIMIT = 100
 
@@ -215,6 +223,24 @@ export interface EditorActions {
     transitionId: string,
     patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
   ): void
+
+  // captions ------------------------------------------------------------------
+  /**
+   * Place caption cues as text items on a new video track above every other, in one undo step.
+   *
+   * A new track rather than free space on an existing one, because captions must draw over
+   * the picture and a track's position in the stack is what decides that; and a dedicated one
+   * so that muting, hiding or deleting the captions is one track-level action. Refuses the
+   * whole set if any cue is unplaceable — half a caption file is worse than none, because the
+   * missing lines are the ones nobody checks.
+   *
+   * Identical lines share one text asset, since text lives on the asset: a repeated "[music]"
+   * is one asset placed many times, not many copies of one string.
+   */
+  addCaptions(
+    cues: readonly CaptionCue[],
+    look?: { style?: TextStyle; layout?: Layout }
+  ): { trackId: string; trackName: string; itemIds: string[]; assetIds: string[] } | { error: string }
 
   // markers -----------------------------------------------------------------
   /**
@@ -1052,6 +1078,82 @@ export const useEditor = create<EditorStore>((set, get) => {
         Object.assign(transition, patch)
         if (transition.durationInFrames < 2) transition.durationInFrames = 2
       })
+    },
+
+    // -- captions -----------------------------------------------------------
+    addCaptions(cues, look) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'No timeline is open.' }
+      const problem = checkCues(cues, timeline.fps)
+      if (problem) return { error: problem }
+
+      const style = look?.style ?? captionStyle(timeline)
+      const layout = look?.layout ?? captionLayout(timeline)
+      const existing = new Set(timeline.tracks.map((t) => t.name))
+      let trackName = 'Captions'
+      for (let n = 2; existing.has(trackName); n += 1) trackName = `Captions ${n}`
+
+      const trackId = newId('trk')
+      const now = Date.now()
+      const assets = new Map<string, Asset>()
+      const ordered = [...cues].sort((a, b) => a.fromFrame - b.fromFrame)
+      const items: Item[] = ordered.map((cue) => {
+        let asset = assets.get(cue.text)
+        if (!asset) {
+          asset = {
+            id: newId('ast'),
+            kind: 'text',
+            name: captionAssetName(cue.text),
+            path: null,
+            durationUs: 0,
+            width: null,
+            height: null,
+            fps: null,
+            hasAudio: false,
+            hasVideo: false,
+            posterPath: null,
+            waveformPath: null,
+            text: cue.text,
+            createdAt: now
+          }
+          assets.set(cue.text, asset)
+        }
+        return {
+          id: newId('itm'),
+          assetId: asset.id,
+          trackId,
+          from: cue.fromFrame,
+          durationInFrames: cue.toFrame - cue.fromFrame,
+          sourceStartUs: 0,
+          layout: { ...layout },
+          volume: 1,
+          fadeInFrames: 0,
+          fadeOutFrames: 0,
+          speed: 1,
+          // Cloned per item: styles are per item by design, and a shared object would let one
+          // caption's edit reach every other through the reference.
+          text: clone(style)
+        }
+      })
+
+      // One `edit()`, so assets, track and every item are one undo step by construction.
+      edit((project) => {
+        const tl = activeTimeline(project)
+        if (!tl) return
+        project.assets.push(...assets.values())
+        const track = makeTrack('video', 1)
+        track.id = trackId
+        track.name = trackName
+        track.items = items
+        // Pushed last: later video tracks draw on top, so this is above every picture.
+        tl.tracks.push(track)
+      })
+      return {
+        trackId,
+        trackName,
+        itemIds: items.map((item) => item.id),
+        assetIds: [...assets.values()].map((asset) => asset.id)
+      }
     },
 
     // -- markers ------------------------------------------------------------

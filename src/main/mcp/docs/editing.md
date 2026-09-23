@@ -80,6 +80,25 @@ A transition stays on its cut through all three, because every cut that existed 
 can change is how much footage each side has left to spend on it; the result's `transitions` and
 `warnings` say when a dissolve is now shorter than you asked for.
 
+## Captions
+
+`add_captions` places a whole set of timed lines in one call: each cue becomes a text item on a
+**new** video track above every other, so the captions draw over the picture and can be hidden
+or deleted as one track. Pass either `cues` — `[{ fromFrame, toFrame, text }]` in timeline
+frames, for lines you timed yourself — or `srt`, the text of an SRT or WebVTT file (or
+`@./captions.srt`), which bay converts from wall clock at the timeline's rate. `offsetFrames`
+shifts the lot, for captions of a clip that starts partway in.
+
+Cues share one track, so they may not overlap. An overlap refuses the **whole** call, naming both
+cues (by position, and by line for a file) and the frame that would fix it; nothing is placed.
+Lines overlapping by less than a frame round onto the same frame and are accepted. Markup such as
+`<i>` is stripped, because a caption draws in one style.
+
+The look is white on a translucent plate in the lower third, sized to the frame; `style` takes the
+same fields as `edit_item` `text` and applies them to every caption. Afterwards each caption is an
+ordinary text item: restyle one with `edit_item`, and reword a line everywhere it repeats with
+`edit_asset` — identical lines share one text asset.
+
 ## Markers are notes in time
 
 `add_marker` puts a labelled flag on the timeline at a frame (the playhead if you omit it), and

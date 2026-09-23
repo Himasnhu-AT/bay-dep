@@ -39,6 +39,7 @@ import { proposeEdit } from './proposals'
 import { trimItem } from './trim'
 import { addMarker, removeMarker } from './markers'
 import { editAsset } from './assets'
+import { addCaptions } from './captions'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -62,6 +63,7 @@ const HANDLERS: Record<string, Handler> = {
   add_track: (args) => addTrack(args),
   add_transition: (args) => addTransition(args),
   remove_transition: (args) => removeTransition(args),
+  add_captions: (args) => addCaptions(args),
   add_marker: (args) => addMarker(args),
   remove_marker: (args) => removeMarker(args),
   set_playhead: (args) => setPlayhead(args),
