@@ -41,6 +41,7 @@
  */
 
 import {
+  effectiveSpeed,
   findAsset,
   findItem,
   framesToUs,
@@ -139,7 +140,7 @@ export function sourceRoom(
   if (!asset || asset.durationUs <= 0) {
     return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
   }
-  const speed = item.speed > 0 ? item.speed : 1
+  const speed = effectiveSpeed(item.speed)
   const usPerFrame = (US_PER_SECOND / fps) * speed
   const consumedUs = framesToUs(item.durationInFrames, fps) * speed
   const beforeUs = Math.max(0, item.sourceStartUs)

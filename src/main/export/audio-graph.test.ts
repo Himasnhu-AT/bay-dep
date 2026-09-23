@@ -26,6 +26,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Layout, Project, Timeline, Track, TrackKind } from '@shared/project'
+import { effectiveSpeed, sourceTimeAt } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { itemAudioGainAt } from '@shared/audio-gain'
 import { buildAudioGraph } from './audio-graph'
@@ -511,4 +512,27 @@ test('clips and declared sounds share one mix, with every input index accounted 
   const referenced = [...(graph?.filter.matchAll(/\[(\d+):a\]/g) ?? [])].map((m) => Number(m[1]))
   assert.deepEqual(referenced, [0, 1, 2])
   assert.match(graph?.filter ?? '', /amix=inputs=3:normalize=0/)
+})
+
+test('export reads the same source time the preview seeks to, sped up and part-way in', () => {
+  // The preview seeks with `sourceTimeAt`; export used to redo the arithmetic by hand, which is
+  // how preview and export once disagreed about transition gain. A partial export of a 2× clip
+  // with a source offset is where a second copy of the mapping would drift first.
+  const { project, timeline } = single({ from: 10, durationInFrames: 90, sourceStartUs: 3_250_000, speed: 2 })
+  const graph = buildAudioGraph(project, timeline, 40, 90)
+  const start = /atrim=start=([0-9.]+)/.exec(chainFor(graph?.filter ?? '', 0))?.[1]
+  const expected = sourceTimeAt(timeline.tracks[0]!.items[0]!, 40, timeline.fps) / 1_000_000
+  assert.ok(expected > 3.25, 'specimen: part-way in, so the offset and the speed both count')
+  assert.equal(Number(start), expected)
+})
+
+test('an unplayable speed plays at 1× in both, never NaN', () => {
+  for (const speed of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(effectiveSpeed(speed), 1, String(speed))
+    const { project, timeline } = single({ from: 0, durationInFrames: 90, sourceStartUs: 1_000_000, speed })
+    const clip = timeline.tracks[0]!.items[0]!
+    assert.equal(sourceTimeAt(clip, 30, timeline.fps), 2_000_000, `preview at speed ${speed}`)
+    assert.match(buildAudioGraph(project, timeline, 30, 90)?.filter ?? '', /atrim=start=2(\.0+)?:/, `export at speed ${speed}`)
+  }
+  assert.equal(effectiveSpeed(1.5), 1.5, 'positive control: a real speed passes through')
 })

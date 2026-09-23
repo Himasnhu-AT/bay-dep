@@ -8,7 +8,7 @@
  * on the timeline, or nowhere. That mapping lives here, once, tested, rather than in every caller.
  */
 
-import { US_PER_SECOND, type Item } from './project'
+import { effectiveSpeed, US_PER_SECOND, type Item } from './project'
 
 /** One spoken line, in seconds from the start of the source file. */
 export interface TranscriptSegment {
@@ -55,7 +55,7 @@ export function segmentsToCues(
   clip: Pick<Item, 'from' | 'durationInFrames' | 'sourceStartUs' | 'speed'>,
   fps: number
 ): TimelineCue[] {
-  const speed = clip.speed > 0 ? clip.speed : 1
+  const speed = effectiveSpeed(clip.speed)
   const sourceStart = clip.sourceStartUs / US_PER_SECOND
   const toFrame = (sourceSeconds: number): number =>
     clip.from + Math.round(((sourceSeconds - sourceStart) / speed) * fps)

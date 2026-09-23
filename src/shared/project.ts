@@ -719,7 +719,16 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
  */
 export function sourceTimeAt(item: Item, frame: Frames, fps: number): Micros {
   const elapsed = framesToUs(frame - item.from, fps)
-  return item.sourceStartUs + Math.round(elapsed * item.speed)
+  return item.sourceStartUs + Math.round(elapsed * effectiveSpeed(item.speed))
+}
+
+/**
+ * The speed a clip actually plays at: a non-finite or non-positive one plays at 1×. One rule for
+ * the preview, the export's audio and every calculation that spends source, because three copies
+ * of it disagreed — two let `Infinity` through and one let `NaN` reach the source time.
+ */
+export function effectiveSpeed(speed: number): number {
+  return Number.isFinite(speed) && speed > 0 ? speed : 1
 }
 
 // ---------------------------------------------------------------------------
@@ -741,7 +750,7 @@ export function handlesFor(asset: Asset | undefined, item: Item, fps: number): {
   if (!asset || asset.durationUs <= 0) {
     return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
   }
-  const speed = item.speed > 0 ? item.speed : 1
+  const speed = effectiveSpeed(item.speed)
   const consumedUs = framesToUs(item.durationInFrames, fps) * speed
   const sourceEndUs = item.sourceStartUs + consumedUs
   const beforeUs = Math.max(0, item.sourceStartUs)

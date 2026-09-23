@@ -9,7 +9,7 @@
  */
 
 import type { Item, Project, Timeline } from '@shared/project'
-import { US_PER_SECOND, findAsset } from '@shared/project'
+import { US_PER_SECOND, effectiveSpeed, findAsset, sourceTimeAt } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
 import { scheduleCompositionSounds, type ScheduledSound } from '@shared/composition-audio'
@@ -263,15 +263,13 @@ export function buildAudioGraph(
   // measures the preview, so nothing said so.
   found.forEach((candidate, index) => {
     const { item } = candidate
-    const speed = Number.isFinite(item.speed) && item.speed > 0 ? item.speed : 1
-    // Source seconds at the first heard frame. Before `from` this reads the handle a transition
-    // was resolved against; `resolveTransition` only grants a window the footage can cover, so
-    // this is non-negative by construction, and clamped only so a malformed item cannot hand
-    // ffmpeg a negative start.
-    const sourceStart = Math.max(
-      0,
-      item.sourceStartUs / US_PER_SECOND + ((candidate.startFrame - item.from) / fps) * speed
-    )
+    const speed = effectiveSpeed(item.speed)
+    // Source seconds at the first heard frame — through `sourceTimeAt`, the same mapping the
+    // preview seeks with, so preview and export cannot drift apart the way transition gain once
+    // did. Before `from` this reads the handle a transition was resolved against;
+    // `resolveTransition` only grants a window the footage can cover, so this is non-negative by
+    // construction, and clamped only so a malformed item cannot hand ffmpeg a negative start.
+    const sourceStart = Math.max(0, sourceTimeAt(item, candidate.startFrame, fps) / US_PER_SECOND)
     const heard = (candidate.endFrame - candidate.startFrame) / fps
 
     const steps: string[] = [COMMON_FORMAT]

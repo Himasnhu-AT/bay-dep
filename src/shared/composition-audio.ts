@@ -29,7 +29,7 @@
 
 import type { CompositionSound } from './composition'
 import type { Frames, Item } from './project'
-import { US_PER_SECOND } from './project'
+import { effectiveSpeed, US_PER_SECOND } from './project'
 
 /** A declared sound placed on the timeline for one item. */
 export interface ScheduledSound {
@@ -47,10 +47,6 @@ export interface ScheduledSound {
   speed: number
 }
 
-/** A clip's speed as the mix applies it — a non-finite or non-positive one plays at 1×. */
-export function mixSpeed(item: Pick<Item, 'speed'>): number {
-  return Number.isFinite(item.speed) && item.speed > 0 ? item.speed : 1
-}
 
 /**
  * Every declared sound `item` makes heard, placed on the timeline.
@@ -69,7 +65,7 @@ export function scheduleCompositionSounds(
   fps: number
 ): ScheduledSound[] {
   const rate = fps > 0 ? fps : 30
-  const speed = mixSpeed(item)
+  const speed = effectiveSpeed(item.speed)
   const itemStart = item.from / rate
   const sourceStart = item.sourceStartUs / US_PER_SECOND
   // Composition time at a timeline second, and back — the clip mapping and its inverse.
