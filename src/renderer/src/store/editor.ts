@@ -18,6 +18,8 @@ import {
   activeTimeline,
   allItems,
   placementLayout,
+  coverLayout,
+  containLayout,
   normaliseCrop,
   isCropped,
   NO_CROP,
@@ -417,7 +419,17 @@ export const useEditor = create<EditorStore>((set, get) => {
             return { agentLog: [...log, { kind, id: newId('msg'), text: event.delta }] }
           }
 
-          case 'tool':
+          case 'tool': {
+            // The same call arrives twice: when the model starts writing it (no arguments yet)
+            // and when its arguments settle. The second fills in the first's card.
+            const index = log.findIndex((e) => e.kind === 'tool' && e.id === event.callId)
+            if (index >= 0) {
+              const entry = log[index] as Extract<AgentEntry, { kind: 'tool' }>
+              if (Object.keys(event.args).length === 0) return {}
+              const { input: _streamed, ...settled } = entry
+              const updated: AgentEntry = { ...settled, tool: event.tool, args: event.args }
+              return { agentLog: [...log.slice(0, index), updated, ...log.slice(index + 1)] }
+            }
             return {
               agentLog: [
                 ...log,
@@ -430,6 +442,17 @@ export const useEditor = create<EditorStore>((set, get) => {
                 }
               ]
             }
+          }
+
+          case 'tool-input': {
+            const index = log.findIndex((e) => e.kind === 'tool' && e.id === event.callId)
+            if (index < 0) return {}
+            const entry = log[index] as Extract<AgentEntry, { kind: 'tool' }>
+            // Kept whole while it streams — the card shows its tail — and dropped once the
+            // arguments settle, since then the arguments say the same thing parsed.
+            const updated: AgentEntry = { ...entry, input: (entry.input ?? '') + event.delta }
+            return { agentLog: [...log.slice(0, index), updated, ...log.slice(index + 1)] }
+          }
 
           case 'tool-result': {
             // Patched in place, so a call becomes its own result rather than spawning a second
@@ -1048,6 +1071,93 @@ export const useEditor = create<EditorStore>((set, get) => {
         Object.assign(transition, patch)
         if (transition.durationInFrames < 2) transition.durationInFrames = 2
       })
+    },
+
+    // -- subtitles and canvas ----------------------------------------------------
+    placeSubtitles(sourceItemId, asset) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'No timeline is open.' }
+      const source = allItems(timeline).find((item) => item.id === sourceItemId)
+      if (!source) return { error: `There is no clip ${sourceItemId} on the open timeline.` }
+      const from = source.from
+      const to = itemEnd(source)
+      const isSubtitles = (project: Project, item: Item): boolean =>
+        findAsset(project, item.assetId)?.compositionId?.startsWith('subtitles-') === true
+      const itemId = newId('itm')
+      let replaced = 0
+      let trackName = 'Subtitles'
+      edit((project) => {
+        const tl = activeTimeline(project)
+        if (!tl) return
+        if (!project.assets.some((a) => a.id === asset.id)) project.assets.push(clone(asset))
+        let track = tl.tracks.find((t) => t.kind === 'video' && t.name === 'Subtitles')
+        if (!track) {
+          track = makeTrack('video', 1)
+          track.name = 'Subtitles'
+          // Pushed last: later video tracks draw on top, so subtitles sit above every picture.
+          tl.tracks.push(track)
+        }
+        trackName = track.name
+        const before = track.items.length
+        track.items = track.items.filter(
+          (item) => !(isSubtitles(project, item) && item.from < to && itemEnd(item) > from)
+        )
+        replaced = before - track.items.length
+        track.items.push({
+          id: itemId,
+          assetId: asset.id,
+          trackId: track.id,
+          from,
+          durationInFrames: to - from,
+          sourceStartUs: 0,
+          layout: defaultLayout(tl),
+          volume: 1,
+          fadeInFrames: 0,
+          fadeOutFrames: 0,
+          speed: 1
+        })
+      })
+      return { itemId, trackName, replaced }
+    },
+
+    resizeCanvas(width, height, fit) {
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16 || width > 8192 || height > 8192) {
+        return { error: `A canvas must be whole pixels from 16 to 8192 a side; got ${width}×${height}.` }
+      }
+      let refitted = 0
+      editTimeline((timeline, project) => {
+        const oldWidth = timeline.width
+        const oldHeight = timeline.height
+        timeline.width = width
+        timeline.height = height
+        for (const item of allItems(timeline)) {
+          const asset = findAsset(project, item.assetId)
+          if (!asset) continue
+          const keep = { opacity: item.layout.opacity, rotation: item.layout.rotation }
+          if ((asset.kind === 'video' || asset.kind === 'image') && asset.width && asset.height) {
+            const fitted =
+              fit === 'cover'
+                ? coverLayout(timeline, asset.width, asset.height)
+                : fit === 'contain'
+                  ? containLayout(timeline, asset.width, asset.height)
+                  : placementLayout(timeline, asset.width, asset.height)
+            item.layout = { ...fitted, ...keep }
+          } else if (asset.kind === 'html') {
+            item.layout = { ...defaultLayout(timeline), ...keep }
+          } else {
+            // Text and the rest: the same place in proportion, the same width in proportion.
+            const sx = width / oldWidth
+            const sy = height / oldHeight
+            const cx = (item.layout.left + item.layout.width / 2) * sx
+            const cy = (item.layout.top + item.layout.height / 2) * sy
+            const w = item.layout.width * sx
+            const h = item.layout.height * Math.min(sx, sy)
+            item.layout = { ...item.layout, left: cx - w / 2, top: cy - h / 2, width: w, height: h }
+          }
+          refitted += 1
+        }
+      })
+      return { refitted }
     },
 
     // -- captions -----------------------------------------------------------

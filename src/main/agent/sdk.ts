@@ -57,7 +57,7 @@ import {
   childEnv
 } from './cli'
 import type { HostedAgentRuntime } from './runtime'
-import { toAgentEvents } from './stream'
+import { newStreamState, toAgentEvents } from './stream'
 
 /** The SDK's `query`, narrowed to the part bay uses. Injected in tests. */
 export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>
@@ -245,17 +245,18 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
     try {
       const query = this.#options.query ?? (await import('@anthropic-ai/claude-agent-sdk')).query
       if (runId !== this.#runId) return
-      const stream = query({
+      const stream = newStreamState()
+      const messages = query({
         prompt: text,
         options: sdkOptions(this.#options, { resume: this.#sessionId, abortController: abort })
       })
-      for await (const message of stream) {
+      for await (const message of messages) {
         // A settled turn drains silently. Not `break`: after a successful result the SDK may
         // still be writing the transcript the next turn resumes from.
         if (runId !== this.#runId) continue
         const session = sessionIdOf(message)
         if (session) this.#sessionId = session
-        for (const event of toAgentEvents(message as unknown as Record<string, unknown>, runId)) {
+        for (const event of toAgentEvents(message as unknown as Record<string, unknown>, runId, stream)) {
           if (event.type === 'done') this.#settle()
           this.#emit(event)
         }

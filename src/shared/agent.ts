@@ -47,8 +47,18 @@ export type AgentEvent =
    * thinking also hides the answer.
    */
   | { type: 'thinking'; runId: string; delta: string }
-  /** A tool call began. `callId` pairs it with its result. */
+  /**
+   * A tool call began, or its arguments settled. `callId` pairs it with its input and result. The
+   * first one arrives as the model starts writing the call, with no arguments yet; a later one
+   * for the same `callId` carries the finished arguments and replaces them.
+   */
   | { type: 'tool'; runId: string; callId: string; tool: string; args: Record<string, unknown> }
+  /**
+   * A fragment of a tool call's input as the model writes it — raw JSON, not yet parseable. A
+   * composition can be many kilobytes, and without this the panel sat on "Working…" for the
+   * whole time it took to write one.
+   */
+  | { type: 'tool-input'; runId: string; callId: string; delta: string }
   /**
    * A tool call finished. `ok: false` carries the refusal text, which in this codebase is a
    * recovery instruction rather than a diagnosis, so it is shown to the user rather than
@@ -95,6 +105,8 @@ export type AgentEntry =
       args: Record<string, unknown>
       state: 'running' | 'done' | 'failed'
       result?: string
+      /** The input as it streamed in, until the arguments settle. */
+      input?: string
     }
   | { kind: 'proposal'; id: string; proposal: Proposal }
   | { kind: 'error'; id: string; text: string }

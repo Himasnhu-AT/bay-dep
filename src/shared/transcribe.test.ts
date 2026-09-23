@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseWhisperJson, segmentsToCues, segmentsToSrt } from './transcribe'
+import { parseWhisperJson, segmentsToCues, segmentsToSrt, segmentsToWords } from './transcribe'
 
 const fixture = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures-whisper-jfk.json'), 'utf8'))
 
@@ -81,4 +81,37 @@ test('lines whose rounded frames would overlap are made to abut, never overlap',
     cues.map((c) => [c.fromFrame, c.toFrame]),
     [[150, 164], [164, 180]]
   )
+})
+
+const full = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures-whisper-jfk-full.json'), 'utf8'))
+
+test('token output gives each line its words, merged from tokens, punctuation attached', () => {
+  const segments = parseWhisperJson(full)
+  const words = segments.flatMap((s) => s.words ?? [])
+  // The words must spell the lines: nothing dropped, nothing split, no timing markers.
+  assert.equal(words.map((w) => w.text).join(' '), segments.map((s) => s.text).join(' '))
+  assert.ok(words.some((w) => w.text === 'Americans,'), 'a comma stays on its word')
+  assert.ok(!words.some((w) => /\[/.test(w.text)), 'no [_BEG_] or [_TT_] markers')
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!
+    assert.ok(w.endSeconds > w.startSeconds, `${w.text} has length`)
+    if (i > 0) assert.ok(w.startSeconds >= words[i - 1]!.endSeconds, `${w.text} starts after the previous word ends`)
+  }
+  // Control: plain -oj output (no tokens) gives lines without words, as before.
+  assert.equal(parseWhisperJson(fixture)[0]?.words, undefined)
+})
+
+test('words map onto the timeline through the clip, like lines do', () => {
+  const segments = parseWhisperJson(full)
+  const clip = { from: 30, durationInFrames: 120, sourceStartUs: 1_000_000, speed: 2 }
+  const words = segmentsToWords(segments, clip, 30)
+  const all = segments.flatMap((s) => s.words ?? [])
+  // The first word still sounding at the in-point — one that straddles it is kept, clipped.
+  const first = all.find((w) => w.endSeconds > 1)!
+  assert.ok(first.startSeconds < 1, 'specimen: this word straddles the in-point')
+  assert.equal(words[0]!.text, first.text, 'the first word the clip plays')
+  assert.equal(words[0]!.fromFrame, 30, 'clipped to the clip’s start')
+  const next = all[all.indexOf(first) + 1]!
+  assert.equal(words[1]!.fromFrame, 30 + Math.round(((next.startSeconds - 1) / 2) * 30), 'the next one shifted and sped')
+  for (const w of words) assert.ok(w.fromFrame >= 30 && w.toFrame <= 150, `${w.text} inside the clip`)
 })

@@ -316,7 +316,9 @@ export async function transcribeFile(
     // whisper.cpp wants 16 kHz mono PCM; any other rate is refused or mis-timed.
     await run(ffmpegBin(), ['-nostdin', '-v', 'error', '-y', '-i', mediaPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav])
     const out = join(work, 'transcript')
-    await run(setup.engine, ['-m', setup.model, '-f', wav, '-l', language, '-oj', '-ml', '42', '-sow', '-np', '-of', out])
+    // `-ojf`, the full JSON: the same lines plus each token's times, which is what word-by-word
+    // subtitles are made from (`parseWhisperJson` reads both shapes).
+    await run(setup.engine, ['-m', setup.model, '-f', wav, '-l', language, '-ojf', '-ml', '42', '-sow', '-np', '-of', out])
     const segments = parseWhisperJson(JSON.parse(await readFile(`${out}.json`, 'utf8')))
     return { segments, model: basename(setup.model), language }
   } finally {

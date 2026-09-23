@@ -271,3 +271,20 @@ test('undoing back to the saved state reads as saved; one step further does not'
   state().redo()
   assert.equal(state().dirty, true)
 })
+
+test('a streamed tool call is one card: it appears empty, fills as it streams, then settles', () => {
+  fresh()
+  const apply = state().applyAgentEvent
+  apply({ type: 'started', runId: 's' })
+  apply({ type: 'tool', runId: 's', callId: 'c1', tool: 'write_composition', args: {} })
+  apply({ type: 'tool-input', runId: 's', callId: 'c1', delta: '{"path":"/p/a.html",' })
+  apply({ type: 'tool-input', runId: 's', callId: 'c1', delta: '"html":"<div>' })
+  const cards = () => state().agentLog.filter((e) => e.kind === 'tool')
+  assert.equal(cards().length, 1)
+  assert.equal((cards()[0] as { input?: string }).input, '{"path":"/p/a.html","html":"<div>')
+  apply({ type: 'tool', runId: 's', callId: 'c1', tool: 'write_composition', args: { path: '/p/a.html', html: '<div></div>' } })
+  assert.equal(cards().length, 1, 'the settled call fills the same card, not a second one')
+  assert.deepEqual((cards()[0] as { args: unknown }).args, { path: '/p/a.html', html: '<div></div>' })
+  assert.equal((cards()[0] as { input?: string }).input, undefined, 'the raw stream goes once the arguments exist')
+  apply({ type: 'done', runId: 's', reason: 'complete' })
+})

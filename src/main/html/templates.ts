@@ -7,10 +7,11 @@
  * it is short — and why it is not under test, since it cannot load outside Electron.
  */
 
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { findTemplate, sizeTemplate, templateFileName, templateUri, TEMPLATES } from '@shared/templates'
 import { resourceBody } from '../mcp/resources'
-import { templatesDir } from '../paths'
+import { generatedDir, templatesDir } from '../paths'
 import { writeComposition } from './compositions'
 
 export async function writeTemplate(
@@ -46,5 +47,22 @@ export async function writeTemplate(
   // stale, and forgetting the path would mint a second asset for an identical file.
   const path = join(templatesDir(), templateFileName(spec.id, width, height, sized))
   const written = await writeComposition(path, sized)
+  return written.ok ? { ok: true, path } : written
+}
+
+/**
+ * A composition bay generated for the user — a clip's subtitles — written where bay keeps its own.
+ * Content-addressed like the templates: the same document is the same file, so regenerating
+ * identical subtitles reuses one asset instead of minting another, and a changed document never
+ * overwrites a file a placed clip still reads.
+ */
+export async function writeGenerated(
+  name: string,
+  html: string
+): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'generated'
+  const hash = createHash('sha256').update(html).digest('hex').slice(0, 12)
+  const path = join(generatedDir(), `${slug}-${hash}.html`)
+  const written = await writeComposition(path, html)
   return written.ok ? { ok: true, path } : written
 }

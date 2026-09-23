@@ -57,11 +57,34 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     body: [
       'Add readable captions.',
       '',
-      '1. Before doing anything else, ask the user whether they have a transcript or subtitle file (SRT or WebVTT) for this video, and end your turn to wait for the answer. Skip the question only if their message already answers it — they attached or pinned a subtitle file, or said to transcribe. If they have one, use it with add_captions (srt): their words are better than a transcription.',
-      '2. If they do not, transcribe the speech on this Mac with the transcribe tool, passing the clip\'s itemId: it runs whisper.cpp locally (nothing is uploaded) and returns cues already on the timeline. Tell the user you are doing this. The first transcription may download a speech model first, which takes a minute or two; say so if it is slow. If transcribe says whisper.cpp or a model is missing, pass its instructions on exactly; never invent words.',
-      '3. Keep each caption short enough to read in its time on screen (about 15–17 characters per second at most); transcribe already splits lines to about 42 characters.',
-      '4. Place them with add_captions (cues). It puts them on their own track, as one undo step.',
-      '5. Check two or three frames with preview_frame so no caption covers a face or other text.',
+      '1. Before doing anything else, ask the user in ONE message (then end your turn to wait): do they have a transcript or subtitle file (SRT or WebVTT) for this video, and which subtitle design they want — Spotlight (bold white, the spoken word lit sky blue; the default), Punch (outlined uppercase, one or two words, yellow pop), Boxed (dark card, coloured chip on the spoken word), Clean (whole phrases, no highlight) or Reveal (words appear as spoken). They can also pick a design in the Text panel. Skip whatever their message already answers — a pinned subtitle file, "transcribe it", a named design.',
+      '2. With their file: add_captions (srt). Their words are better than a transcription; it places plain lines.',
+      '3. Without one: add_subtitles with the clip\'s itemId and the chosen style. It transcribes on this Mac with whisper.cpp (nothing is uploaded), times every word, and places word-by-word subtitles over the clip as one undo step; calling it again with another style swaps the design. Tell the user you are transcribing. The first run may download a speech model, which takes a minute or two; say so if it is slow. If it says whisper.cpp or a model is missing, pass its instructions on exactly; never invent words.',
+      '4. Check two or three frames with preview_frame, mid-sentence, so the text never covers a face or other graphics. If it does, call add_subtitles again with bottom (percent from the bottom) or scale.',
+      '',
+      PROPOSE
+    ].join('\n')
+  },
+  {
+    slug: 'short-form',
+    title: 'Short-form Edit',
+    description: 'Use when the user wants a talking-head clip turned into a vertical short, reel or TikTok: word-by-word subtitles and story graphics that keep viewers watching.',
+    body: [
+      'Turn a talking-head recording into a vertical short in bay\'s short-form grammar: the speaker fills a 9:16 frame, word-by-word subtitles sit in the lower third, and one graphic at a time in a band across the top carries the story beat being spoken.',
+      '',
+      '1. Read the timeline (read_project). If the canvas is not 1080×1920, call set_canvas { preset: "vertical-1080", fit: "cover" } so the speaker fills the frame. Check a frame with preview_frame: the face should sit in the middle third, with room above the head for the graphics band.',
+      '2. If the user has not named a subtitle design, ask once — Spotlight (the default: bold white, spoken word sky blue), Punch, Boxed, Clean or Reveal — and end your turn. Skip the question if they said "just do it" or named one.',
+      '3. transcribe the clip (itemId) and read what is said. Find the beats: the hook (the first line, usually a question or a label), each claim or turn, the answer or reveal, and the closing question or call to action. Pick 4–8 moments for graphics — not every sentence.',
+      '4. add_subtitles with the chosen style over the clip.',
+      '5. Write ONE composition (write_composition; read bay://guide/composition/contract first) covering the whole clip, for the top band. It draws one element at a time, each appearing on the word it names (use the transcript times, in seconds from the clip start) and leaving before the next: keep every element in the top quarter of the frame, over a dark gradient that fades from about 55% black at the top edge to clear, so it reads over any background. Use these elements, with the words copied verbatim from what is said and kept short:',
+      '   - Label: one bold uppercase word in red (#EF4B3C) for the topic, at the hook ("OVERTHINKER").',
+      '   - Stack: short chips that pile up one per item as each is said (dark translucent chip, thin red outline); the last, the punchline, slightly larger ("you" / "your friend" / "the top person in your list" / "everyone").',
+      '   - Reveal: a small, widely spaced red kicker over a heavy two-line white headline, for an answer or a turn ("THE ANSWER" / "TOO MUCH INPUT").',
+      '   - Key phrase: a short phrase with its key word in sky blue (#8EC8FF) ("CRITICAL thinking").',
+      '   - Choice: two stacked rows with a coloured left edge, red then blue, for a closing either/or; the one being said is bright and the other dimmed ("consuming too much?" / "or thinking too much?").',
+      '   Entrances are quick (about 0.2 s, a short rise and fade); nothing loops or wobbles. Use system fonts (-apple-system, Helvetica Neue). Place it with place_asset on its own track above the video, at the clip\'s first frame, spanning the clip.',
+      '6. Check a frame at each graphic with preview_frame: the band must clear the top of the head and never touch the subtitles; the subtitles must sit below the chin. Fix and rewrite the composition if anything collides.',
+      '7. Tell the user what you added, beat by beat, and offer to export (export_timeline, mp4, 1080×1920).',
       '',
       PROPOSE
     ].join('\n')

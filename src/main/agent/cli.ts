@@ -38,7 +38,7 @@ import { setPriority } from 'node:os'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
-import { parseLine, toAgentEvents } from './stream'
+import { newStreamState, parseLine, toAgentEvents } from './stream'
 import type { HostedAgentRuntime } from './runtime'
 
 /**
@@ -217,6 +217,8 @@ export class CliAgentRuntime implements HostedAgentRuntime {
   #buffer = ''
   #listeners = new Set<(event: AgentEvent) => void>()
   #runId: string | null = null
+  /** Which content block is which tool call, for the run in progress. */
+  #stream = newStreamState()
   #timer: NodeJS.Timeout | null = null
   /** The CLI is started with `--session-id` set to the runtime id, so they are the same. */
   get sessionId(): string {
@@ -297,7 +299,7 @@ export class CliAgentRuntime implements HostedAgentRuntime {
       this.#buffer = this.#buffer.slice(index + 1)
       const message = parseLine(line)
       if (!message || !this.#runId) continue
-      for (const event of toAgentEvents(message, this.#runId)) {
+      for (const event of toAgentEvents(message, this.#runId, this.#stream)) {
         if (event.type === 'done') this.#settle()
         this.#emit(event)
       }
@@ -320,6 +322,7 @@ export class CliAgentRuntime implements HostedAgentRuntime {
   send(text: string): string {
     const runId = randomUUID()
     this.#runId = runId
+    this.#stream = newStreamState()
     this.#emit({ type: 'started', runId })
 
     let child: ChildProcessWithoutNullStreams

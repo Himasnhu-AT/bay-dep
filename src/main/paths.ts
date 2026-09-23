@@ -58,6 +58,14 @@ export function templatesDir(): string {
   return ensure(join(app.getPath('userData'), 'templates'))
 }
 
+/**
+ * Compositions bay generates for a project — a clip's subtitles. Kept for the same reason as
+ * templates: a placed clip reads its document from here for as long as the project uses it.
+ */
+export function generatedDir(): string {
+  return ensure(join(app.getPath('userData'), 'generated'))
+}
+
 /** Scratch space for export intermediates — half-written video before the audio is muxed. */
 export function exportScratchDir(): string {
   return ensure(join(cacheDir(), 'export'))

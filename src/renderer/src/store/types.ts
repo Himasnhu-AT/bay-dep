@@ -289,6 +289,18 @@ export interface EditorActions {
    * Identical lines share one text asset, since text lives on the asset: a repeated "[music]"
    * is one asset placed many times, not many copies of one string.
    */
+  /**
+   * Put a clip's generated subtitles (a composition, see `@shared/subtitles`) over it on the
+   * "Subtitles" track, replacing subtitles already over that clip — choosing another design swaps
+   * the file rather than stacking two. One undo step.
+   */
+  placeSubtitles(sourceItemId: string, asset: Asset): { itemId: string; trackName: string; replaced: number } | { error: string }
+  /**
+   * Change the canvas and re-fit what was fitted to the old one: video and images by `fit`
+   * (`auto` picks cover or contain the way placement does), compositions to the full frame, text
+   * kept at the same place in proportion. One undo step.
+   */
+  resizeCanvas(width: number, height: number, fit: 'auto' | 'cover' | 'contain'): { refitted: number } | { error: string }
   addCaptions(
     cues: readonly CaptionCue[],
     look?: { style?: TextStyle; layout?: Layout }

@@ -7,6 +7,7 @@ import { bay } from '@/lib/bay'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
+import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
 
 /**
@@ -361,6 +362,7 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
           />
         )}
       </button>
+      {entry.state === 'running' && entry.input && <StreamingInput tool={entry.tool} input={entry.input} />}
       {expanded && (
         <div className="border-t border-line px-2 py-1.5">
           {hasArgs && (
@@ -377,6 +379,31 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * A tool call while the model is still writing it: what is being written, how much so far, and the
+ * end of it, kept scrolled to the newest line — the way a terminal shows a file being written.
+ */
+function StreamingInput({ tool, input }: { tool: string; input: string }): ReactNode {
+  const { label, tail } = toolPreview(tool, input)
+  const boxRef = useRef<HTMLPreElement>(null)
+  useEffect(() => {
+    const box = boxRef.current
+    if (box) box.scrollTop = box.scrollHeight
+  }, [tail])
+  return (
+    <div className="border-t border-line px-2 py-1.5">
+      <div className="mb-1 text-[10.5px] text-ink-2 tabular-nums">{label}</div>
+      <pre
+        ref={boxRef}
+        aria-live="off"
+        className="max-h-40 overflow-hidden font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-ink-2"
+      >
+        {tail}
+      </pre>
     </div>
   )
 }

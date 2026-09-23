@@ -9,12 +9,16 @@
  * says what to do instead.
  */
 
-import { test } from 'node:test'
+import { beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Project } from '@shared/project'
 import { segmentsToCues, type TranscriptSegment } from '@shared/transcribe'
 import { useEditor, emptyProject } from '@/store/editor'
 import { executeToolCall } from './index'
+import { forgetTranscripts } from './transcribe'
+
+// Each case answers the same file its own way; the session cache would hand back the first.
+beforeEach(() => forgetTranscripts())
 
 type TranscribeResult =
   | { ok: true; segments: TranscriptSegment[]; model: string; language: string }
@@ -214,4 +218,20 @@ test('the user’s download and model settings are forwarded, both ways round', 
     assert.ok(result.ok, result.ok ? '' : result.error)
     assert.deepEqual(sent.at(-1)?.options, { download, model })
   }
+})
+
+test('the same clip asked twice is transcribed once; a different model is a new transcription', async () => {
+  const project: Project = emptyProject()
+  project.assets.push(asset('cached', {}))
+  project.timelines[0]!.tracks[0]!.items.push(item('clip_cached', 'cached', {}))
+  useEditor.getState().enterProject(project)
+  answer = { ok: true, segments: SEGMENTS, model: 'ggml-base.en.bin', language: 'en' }
+  sent.length = 0
+  await executeToolCall({ id: 'a', tool: 'transcribe', args: { itemId: 'clip_cached' } })
+  await executeToolCall({ id: 'b', tool: 'transcribe', args: { itemId: 'clip_cached' } })
+  assert.equal(sent.length, 1, 'the second call reused the first transcript')
+  useEditor.getState().setWhisperModel('ggml-small.en.bin')
+  await executeToolCall({ id: 'c', tool: 'transcribe', args: { itemId: 'clip_cached' } })
+  assert.equal(sent.length, 2, 'another model is another transcription')
+  useEditor.getState().setWhisperModel(null)
 })

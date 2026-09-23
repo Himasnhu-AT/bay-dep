@@ -3,6 +3,7 @@ import { Type as TypeIcon } from 'lucide-react'
 import { textAssetName, type Asset } from '@shared/project'
 import { Button, Panel, ScrollArea } from '@/components'
 import { newId, useEditor } from '@/store/editor'
+import { SubtitlesSection } from './SubtitlesSection'
 
 export function TextPanel(): ReactNode {
   const addAssets = useEditor((state) => state.addAssets)
@@ -38,6 +39,7 @@ export function TextPanel(): ReactNode {
   return (
     <Panel title="Text" className="h-full" bodyClassName="flex flex-col">
       <ScrollArea className="flex-1 p-3">
+        <SubtitlesSection />
         <label htmlFor="text-draft" className="mb-1.5 block text-[11px] text-ink-1">
           Title text
         </label>

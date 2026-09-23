@@ -17,6 +17,7 @@ import { dryRunRequest, findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
 import { checkApproval } from '@shared/agent'
 import { store, ToolError } from './helpers'
+import { addSubtitles, setCanvas } from './subtitles'
 import { asAgent, setAgentFileWriter } from '@/store/editor'
 import { browseAssets, inspectItem, readProject } from './read'
 import { exportTimeline, trackExport } from './exports'
@@ -51,6 +52,8 @@ type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 const HANDLERS: Record<string, Handler> = {
   list_projects: () => listProjects(),
   transcribe: (args) => transcribe(args),
+  add_subtitles: (args) => addSubtitles(args),
+  set_canvas: (args) => setCanvas(args),
   open_project: (args) => openProject(args),
   read_project: () => readProject(),
   browse_assets: () => browseAssets(),

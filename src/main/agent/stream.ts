@@ -43,25 +43,63 @@ export function parseLine(line: string): StreamMessage | null {
 }
 
 /**
+ * `mcp__bay__edit_item` is bay's own tool and reads as noise with the prefix on. Other servers
+ * keep theirs, because "which server" is information the user needs there.
+ */
+function shortToolName(tool: string): string {
+  return tool.startsWith('mcp__bay__') ? tool.slice('mcp__bay__'.length) : tool
+}
+
+/**
  * What one stream message means for the panel.
  *
  * Returns an array because a single `assistant` message can carry several content blocks, and
  * because most messages mean nothing at all and return none.
  */
-export function toAgentEvents(message: StreamMessage, runId: string): AgentEvent[] {
+/**
+ * What a run's stream has said so far that later messages depend on: which tool call each
+ * content block index belongs to. An `input_json_delta` names only its block index, so without
+ * this its fragment could not be put on the right card. One per run.
+ */
+export interface StreamState {
+  toolBlocks: Map<number, string>
+}
+
+export function newStreamState(): StreamState {
+  return { toolBlocks: new Map() }
+}
+
+export function toAgentEvents(message: StreamMessage, runId: string, state: StreamState = newStreamState()): AgentEvent[] {
   const type = asString(message['type'])
 
-  // Streaming deltas: the only path that produces text while the model is still writing.
+  // Streaming deltas: the only path that produces anything while the model is still writing.
   if (type === 'stream_event') {
     const event = asRecord(message['event'])
     if (!event) return []
     const eventType = asString(event['type'])
+
+    // A tool call starting: show its card now, not when its whole input has arrived.
+    if (eventType === 'content_block_start') {
+      const block = asRecord(event['content_block'])
+      const index = event['index']
+      const callId = asString(block?.['id'])
+      const tool = asString(block?.['name'])
+      if (asString(block?.['type']) !== 'tool_use' || !callId || !tool || typeof index !== 'number') return []
+      state.toolBlocks.set(index, callId)
+      return [{ type: 'tool', runId, callId, tool: shortToolName(tool), args: {} }]
+    }
 
     if (eventType === 'content_block_delta') {
       const delta = asRecord(event['delta'])
       const deltaType = asString(delta?.['type'])
       const text = asString(delta?.['text'])
       if (deltaType === 'text_delta' && text) return [{ type: 'text', runId, delta: text }]
+      const partial = asString(delta?.['partial_json'])
+      const index = event['index']
+      if (deltaType === 'input_json_delta' && partial && typeof index === 'number') {
+        const callId = state.toolBlocks.get(index)
+        return callId ? [{ type: 'tool-input', runId, callId, delta: partial }] : []
+      }
       // Thinking arrives as its own delta type and is kept separate: a setting that hides
       // reasoning must not also hide the answer.
       const thinking = asString(delta?.['thinking'])
@@ -89,9 +127,7 @@ export function toAgentEvents(message: StreamMessage, runId: string): AgentEvent
         type: 'tool',
         runId,
         callId,
-        // `mcp__bay__edit_item` is bay's own tool and reads as noise with the prefix on. Other
-        // servers keep theirs, because "which server" is information the user needs there.
-        tool: tool.startsWith('mcp__bay__') ? tool.slice('mcp__bay__'.length) : tool,
+        tool: shortToolName(tool),
         args: asRecord(block?.['input']) ?? {}
       })
     }

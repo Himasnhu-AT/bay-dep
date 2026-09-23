@@ -63,7 +63,7 @@ frames.
 
 ## Agents
 
-bay exposes its project model over [Model Context Protocol](https://modelcontextprotocol.io) — 31
+bay exposes its project model over [Model Context Protocol](https://modelcontextprotocol.io) — 33
 tools covering opening a project, reading it, importing media, placing and editing items,
 splitting, trimming, transitions, captions, removing a range, transcribing speech, rendering a
 single frame to look at, and exporting. `src/shared/mcp.ts` is the catalog, and the count is

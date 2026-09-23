@@ -260,6 +260,7 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     }
   ],
   add_marker: [{ delta: 1, args: () => ({ frame: 45, label: 'Beat' }) }],
+  set_canvas: [{ delta: 1, args: () => ({ preset: 'vertical-1080' }) }],
   remove_marker: [
     {
       delta: 1,
@@ -284,6 +285,7 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
 
 /** Write tools with no case, each with the reason it cannot reach the undo stack. */
 const TOOL_EXEMPT: Record<string, string> = {
+  add_subtitles: 'transcribes and writes a file through the bridge; add-subtitles.test.ts asserts it is one undo step',
   open_project:
     'replaces the document and starts fresh history by design — it is not an edit to undo',
   export_timeline:
@@ -512,6 +514,7 @@ const STORE_CASES: Record<string, StoreCase> = {
   setWhisperDownload: { delta: 0, run: () => state().setWhisperDownload(null) },
   recordAgentFileWrite: { delta: 0, run: () => state().recordAgentFileWrite('/tmp/c.html', null, '<html></html>') },
   markCompositionChanged: { delta: 0, run: () => state().markCompositionChanged('/tmp/c.html') },
+  resizeCanvas: { delta: 1, run: () => state().resizeCanvas(1080, 1920, 'auto') },
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },
@@ -523,6 +526,7 @@ const STORE_EXEMPT: Record<string, string> = {
   setProject: 'replaces the document and resets history by design',
   enterProject: 'opens a project: setProject plus the screen, so it resets history by design',
   revertAgentChange: 'restores a saved state as one undo step; agent-changes.test.ts covers it',
+  placeSubtitles: 'needs a source clip and a composition asset; add-subtitles.test.ts covers it as one step',
   undo: 'moves an entry from past to future',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it'

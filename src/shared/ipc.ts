@@ -387,6 +387,12 @@ export interface BayApi {
       width: number,
       height: number
     ): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    /**
+     * Write a composition bay generated — a clip's subtitles — where bay keeps its own
+     * (`<userData>/generated`), under a name from `name` and the content. Same document, same
+     * file: regenerating identical subtitles reuses one asset.
+     */
+    writeGenerated(name: string, html: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
     /** Import a composition as an asset, probing it the way media is probed. */
     import(paths: string[]): Promise<ImportedAsset[]>
     /** One frame, at a time. Resolves null when the composition could not be opened. */
@@ -516,6 +522,7 @@ export const IPC = {
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',
   compositionWriteTemplate: 'composition:write-template',
+  compositionWriteGenerated: 'composition:write-generated',
   compositionImport: 'composition:import',
   compositionFrameAt: 'composition:frame-at',
   compositionRelease: 'composition:release',

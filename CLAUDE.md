@@ -117,7 +117,7 @@ something saves, and nothing a probe does should.
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
 - `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
-  the session's tool list is bay's 31 plus those three, and a request to run `id` had nothing to
+  the session's tool list is bay's catalog (33 tools as of this writing) plus those three, and a request to run `id` had nothing to
   run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
   `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
   bundled skill (`cli.test.ts` pins both).
@@ -160,6 +160,31 @@ the shipped ffmpeg it changed nothing any specimen could observe: a local playli
 `src/main/media/local-only.test.ts` pins that property with a direct fetch as its positive control,
 so an ffmpeg upgrade that loosens it fails the suite — a test of the property instead of an
 unfalsifiable flag.
+
+**Subtitles are compositions, one per clip, in a chosen design** (`src/shared/subtitles.ts`,
+`add_subtitles`). A text item can show a line; it cannot light the word being spoken, which is what
+short-form subtitles are. whisper runs with `-ojf` so every token has a time, tokens are merged
+into words, the words the clip plays are mapped onto it (`segmentsToWords`, the same mapping as the
+cues), and the words are baked into a composition whose `time(t)` draws the group on screen with the
+spoken word marked. Main writes it content-addressed under `<userData>/generated`; the store places
+it over the clip on a "Subtitles" track and replaces subtitles already there, so choosing another
+design swaps rather than stacks. The documents are checked by bay's own composition reader and their
+script is run against a DOM stand-in in the tests — which word is lit at a given second is the
+behaviour, not the markup.
+
+**The preview's composition pool answers with the latest decoded frame, not nothing**
+(`CompositionPool({ live: true })`). A composition frame is a 40-80ms capture in main, and every frame
+of a playing composition is a new moment, so an exact-or-nothing pool drew compositions only while
+paused — they vanished during playback. Live, a miss shows the latest decoded frame of that clip
+within a second, the newest queued capture is served first, stale ones are dropped, and three frames
+ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
+answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
+
+**Tool calls stream into the panel as the model writes them.** `content_block_start` for a
+`tool_use` shows the card at once, and each `input_json_delta` (keyed by block index, so the stream
+mapping keeps per-run state) appends to it; the card shows what is being written and the end of it —
+a composition's HTML as it arrives. Before this a large `write_composition` was minutes of
+"Working…" with nothing on screen.
 
 **A navigation can start and never commit.** bay's `will-navigate` guard cancels every
 renderer-initiated navigation, so `did-start-navigation` fires for a `location.reload()` that

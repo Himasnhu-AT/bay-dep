@@ -11,7 +11,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseLine, toAgentEvents } from './stream'
+import { newStreamState, parseLine, toAgentEvents } from './stream'
 
 const RUN = 'run_1'
 const events = (line: string) => {
@@ -250,4 +250,27 @@ test('a failed result carries its errors when it has no result text', () => {
     (event as { message: string }).message,
     'MCP server "bay" failed to start\nno tools available'
   )
+})
+
+test('a tool call shows as soon as it starts, and its input streams onto the same card', () => {
+  const state = newStreamState()
+  const start = toAgentEvents(
+    { type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_1', name: 'mcp__bay__write_composition', input: {} } } },
+    'r1',
+    state
+  )
+  assert.deepEqual(start, [{ type: 'tool', runId: 'r1', callId: 'toolu_1', tool: 'write_composition', args: {} }])
+  const fragment = toAgentEvents(
+    { type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"path":"/p/a.ht' } } },
+    'r1',
+    state
+  )
+  assert.deepEqual(fragment, [{ type: 'tool-input', runId: 'r1', callId: 'toolu_1', delta: '{"path":"/p/a.ht' }])
+  // A fragment for a block that was never a tool call (text is index 0) is not guessed onto one.
+  const stray = toAgentEvents(
+    { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } } },
+    'r1',
+    state
+  )
+  assert.deepEqual(stray, [])
 })
