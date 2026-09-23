@@ -168,7 +168,9 @@ function emit(download: WhisperDownload): void {
 export function downloadWhisperModel(
   modelId: string,
   userDataDir: string,
-  reason: WhisperDownload['reason']
+  reason: WhisperDownload['reason'],
+  /** The fetch-and-verify step; a test substitutes one that needs no network. */
+  download: typeof downloadVerified = downloadVerified
 ): Promise<string> {
   const spec = findWhisperModel(modelId)
   if (!spec) return Promise.reject(new Error(`There is no whisper model called "${modelId}".`))
@@ -181,8 +183,9 @@ export function downloadWhisperModel(
   const controller = new AbortController()
   const base = { modelId, reason, totalBytes: spec.bytes }
   emit({ ...base, state: 'downloading', receivedBytes: 0 })
-  const promise = downloadVerified(whisperModelUrl(modelId), dest, {
+  const promise = download(whisperModelUrl(modelId), dest, {
     signal: controller.signal,
+    expected: { bytes: spec.bytes, sha256: spec.sha256 },
     onProgress: (p) => emit({ ...base, state: 'downloading', receivedBytes: p.receivedBytes, totalBytes: p.totalBytes || spec.bytes }),
     onVerifying: () => emit({ ...base, state: 'verifying', receivedBytes: lastDownload?.receivedBytes ?? 0 })
   }).then(
@@ -223,6 +226,7 @@ export async function whisperStatus(userDataDir: string, homeDir: string, prefer
     modelDir: ownDir,
     installed,
     activeForEnglish: active ? basename(active) : null,
+    installing: whisperInstalling(),
     download: running || lastDownload?.state === 'failed' ? lastDownload : null
   }
 }
@@ -237,7 +241,26 @@ export async function deleteWhisperModel(userDataDir: string, file: string): Pro
 }
 
 /** `brew install whisper-cpp`. Minutes on a cold Homebrew; the caller shows it as running. */
-export async function installWhisperEngine(): Promise<{ ok: true } | { ok: false; error: string }> {
+let installing: Promise<{ ok: true } | { ok: false; error: string }> | null = null
+
+/** Whether `brew install whisper-cpp` is running, for Settings reopened while it does. */
+export function whisperInstalling(): boolean {
+  return installing !== null
+}
+
+/**
+ * One install at a time: a second request (Settings closed and reopened, the button pressed
+ * again) joins the running one rather than starting another `brew`, which would fail on
+ * Homebrew's own lock with an error about a lock file.
+ */
+export function installWhisperEngine(): Promise<{ ok: true } | { ok: false; error: string }> {
+  installing ??= runInstall().finally(() => {
+    installing = null
+  })
+  return installing
+}
+
+async function runInstall(): Promise<{ ok: true } | { ok: false; error: string }> {
   if (await findExecutable('whisper-cli', BREW_DIRS)) return { ok: true }
   const brew = await findExecutable('brew', BREW_DIRS)
   if (!brew) {
@@ -277,7 +300,9 @@ export async function transcribeFile(
     model?: string | null
   }
 ): Promise<Transcript> {
-  const language = options.language?.trim() || 'en'
+  // Lowercased: "EN" is English, and treating it as another language would pass over every
+  // English-only model and download a multilingual one.
+  const language = options.language?.trim().toLowerCase() || 'en'
   let setup = await findWhisper(options.userDataDir, options.homeDir, language, options.model)
   if (setup.engine && !setup.model && options.download) {
     await downloadWhisperModel(defaultWhisperModel(language).id, options.userDataDir, 'transcribe')

@@ -66,3 +66,19 @@ test('SRT output uses whisper-style timestamps and 1-based numbering', () => {
   assert.match(srt, /^1\n00:00:00,000 --> 00:00:05,410\nAnd so my fellow Americans, ask not what\n/)
   assert.match(srt, /3\n00:00:09,040 --> 00:00:11,000\ncan do for your country\.\n$/)
 })
+
+test('lines whose rounded frames would overlap are made to abut, never overlap', () => {
+  // whisper can start a line a hair before the last one ends; at 30 fps 5.45 s rounds to frame
+  // 164 and 5.44 s to 163, so the raw mapping would overlap by a frame.
+  const segments = [
+    { startSeconds: 5.0, endSeconds: 5.45, text: 'first' },
+    { startSeconds: 5.44, endSeconds: 6.0, text: 'second' }
+  ]
+  const clip = { from: 0, durationInFrames: 300, sourceStartUs: 0, speed: 1 }
+  assert.ok(Math.round(5.44 * 30) < Math.round(5.45 * 30), 'specimen: the raw frames do overlap')
+  const cues = segmentsToCues(segments, clip, 30)
+  assert.deepEqual(
+    cues.map((c) => [c.fromFrame, c.toFrame]),
+    [[150, 164], [164, 180]]
+  )
+})

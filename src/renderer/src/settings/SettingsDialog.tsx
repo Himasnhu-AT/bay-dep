@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Download, LoaderCircle, Trash2, X } from 'lucide-react'
 import {
   WHISPER_MODELS,
@@ -96,13 +96,20 @@ function TranscriptionSection(): ReactNode {
 
   const [status, setStatus] = useState<WhisperStatus | null>(null)
   const [installing, setInstalling] = useState(false)
+  const waitingOnInstall = useRef(false)
   const [installError, setInstallError] = useState<string | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     const api = bay()
     if (!api) return
     const next = await api.whisper.status(useEditor.getState().whisperModel).catch(() => null)
-    if (next) setStatus(next)
+    if (!next) return
+    setStatus(next)
+    // A window reloaded mid-download (or after one failed) has no events yet to say so.
+    if (next.download && !useEditor.getState().whisperDownload) useEditor.getState().setWhisperDownload(next.download)
+    // Reopened while an install runs: wait on the same one (main joins it) so this dialog learns
+    // when it ends, rather than offering the button again.
+    if (next.installing && !waitingOnInstall.current) void install()
   }, [])
 
   // Asked again whenever a download settles or the choice changes, so the list is what is on
@@ -127,10 +134,12 @@ function TranscriptionSection(): ReactNode {
     await refresh()
   }
 
-  const install = async (): Promise<void> => {
+  async function install(): Promise<void> {
+    waitingOnInstall.current = true
     setInstalling(true)
     setInstallError(null)
-    const result = await api?.whisper.installEngine()
+    const result = await bay()?.whisper.installEngine()
+    waitingOnInstall.current = false
     setInstalling(false)
     if (result && !result.ok) setInstallError(result.error)
     await refresh()
