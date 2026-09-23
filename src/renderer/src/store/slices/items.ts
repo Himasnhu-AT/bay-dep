@@ -2,6 +2,7 @@
  * Assets, clips and tracks: importing, placing, moving, trimming, splitting and deleting.
  */
 
+import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyTrimPlan, planTrim } from '@shared/trim'
@@ -63,6 +64,14 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         if (!asset) return
         if (patch.name !== undefined) asset.name = patch.name
         if (patch.text !== undefined && asset.kind === 'text') asset.text = patch.text
+        if (patch.brf !== undefined && asset.kind === 'brf') {
+          delete asset.brfCode
+          Object.assign(asset, brfAssetFields(patch.brf))
+        }
+        if (patch.brfCode !== undefined && asset.kind === 'brf') {
+          delete asset.brf
+          Object.assign(asset, brfCodeAssetFields(patch.brfCode.source, patch.brfCode.meta))
+        }
       })
     },
 

@@ -409,6 +409,7 @@ measure. Its green exit says the numbers exist, not that they are good — read 
 | `agent-sees-frame.mjs` | `preview_frame` returns an image and the model can actually see it | **costs tokens** |
 | `audio.mjs` | the audio graph runs, meters read, a muted track still meters, volume 0 silences | live app |
 | `audio-mute.mjs` | mute disconnects each muted track's analyser (count derived from the tracks muted), hide removes the picture and leaves audio alone | live app, flags on |
+| `brf.mjs` | `.brf` modules in the real worker: every sandbox door shut (checked from inside, with a sentinel throw as the control), foreign imports and endless loops refused, a module draws, moves, repeats exactly and takes placement vars; `renderFrame` timing against the HTML lower third | live app |
 | `changes-revert.mjs` | an agent turn's Changes card, driven without a model: a read-only turn leaves none; a write leaves one with the derived line; its Revert restores the pre-turn project and reads *Reverted*; the top bar's Undo brings it back; a mid-turn user edit earns the note; another project id expires every card | live app |
 | `coldstart.mjs` | a project reopened from disk draws with nothing forcing a redraw — on a live instance it can only re-deliver the open project (arrival, not persistence), and says so | fresh launch for the real claim; needs a project with an item |
 | `composition-scale.mjs` | more compositions on one frame than the pool fetches at once all draw | live app |

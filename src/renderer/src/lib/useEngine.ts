@@ -19,6 +19,7 @@ import { PlaybackClock, type ClockStats } from '@/engine/clock'
 import { MediaPool } from '@/engine/mediaPool'
 import { renderFrame, awaitSources } from '@/engine/render'
 import { FrameExporter } from '@/engine/exporter'
+import { brfRuntime } from '@/engine/brfCode'
 
 /**
  * The probe surface, and the flag that gates it.
@@ -146,6 +147,7 @@ class Engine {
     // `preview_frame` and export both rendered it correctly. They go through `render.ts`,
     // which waits for the pool; the live engine had no equivalent.
     this.#offs.push(this.compositions.onReady(() => this.redraw()))
+    this.#offs.push(brfRuntime.onReady(() => this.redraw()))
 
     // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
     // producing frames while the media elements play on, so the sound runs away from a

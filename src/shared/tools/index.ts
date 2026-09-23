@@ -21,6 +21,7 @@ import { tool as openProject } from './open-project'
 import { tool as placeAsset } from './place-asset'
 import { tool as previewFrame } from './preview-frame'
 import { tool as proposeEdit } from './propose-edit'
+import { tool as readBrf } from './read-brf'
 import { tool as readComposition } from './read-composition'
 import { tool as readProject } from './read-project'
 import { tool as readScript } from './read-script'
@@ -34,6 +35,7 @@ import { tool as trackExport } from './track-export'
 import { tool as transcribe } from './transcribe'
 import { tool as trimItem } from './trim-item'
 import { tool as undo } from './undo'
+import { tool as writeBrf } from './write-brf'
 import { tool as writeComposition } from './write-composition'
 
 /** Every tool bay serves, in the order the manifest lists them. */
@@ -47,6 +49,8 @@ export const TOOLS: ToolSpec[] = [
   previewFrame,
   readScript,
   proposeEdit,
+  writeBrf,
+  readBrf,
   writeComposition,
   addTemplate,
   readComposition,

@@ -30,6 +30,10 @@ import {
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
+import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
+import { brfRuntime } from './brfCode'
+import type { BrfDocument } from '@shared/brf'
+import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
 import {
   anchorFor,
@@ -119,6 +123,8 @@ const PLACEHOLDER_INK = '#8b8b96'
 
 export class Compositor {
   readonly #pool: MediaPool
+  /** Where `.brf` items are painted before they are drawn like any other source. */
+  readonly #brf = new BrfSurfaces()
   /**
    * Outstanding seeks, keyed by asset rather than by item. One element cannot be at two
    * source times at once, so two items sharing an asset in the same frame would otherwise
@@ -303,6 +309,7 @@ export class Compositor {
   /** Drops seek bookkeeping for assets no longer on screen. */
   reset(): void {
     this.#seeks.clear()
+    this.#brf.reset()
   }
 
   // -- internals ------------------------------------------------------------
@@ -312,7 +319,7 @@ export class Compositor {
     // An ImageBitmap joins the two element types here because a composition frame arrives as
     // pixels rather than as a loaded element. Everything below is geometry, alpha, look and
     // rotation, none of which cares which of the three it was handed.
-    element: HTMLVideoElement | HTMLImageElement | ImageBitmap,
+    element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas,
     item: Item,
     frame: number,
     alphaMul = 1
@@ -394,6 +401,54 @@ export class Compositor {
     if (asset.kind === 'text') {
       const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
       if (fit) stats.textFits.push(fit)
+      stats.drawn += 1
+      return
+    }
+
+    if (asset.kind === 'brf') {
+      // Painted here, from the document, at the size it will appear — no window, no capture,
+      // nothing to wait for — then drawn like any source so crop, looks and fades apply.
+      const box = layoutBox(item)
+      if (!box) return
+      const scale = Math.min(1, Math.abs(ctx.getTransform().a) || 1)
+      const seconds = secondsAt(asset, item, frame, fps)
+      const values = resolveVariables({ variables: asset.compositionVariables ?? [] }, item.variables)
+      let doc: BrfDocument
+      if (asset.brfCode !== undefined) {
+        // Code runs in a worker; its scene for this frame is cached, on its way, or failed.
+        const size = layoutSizeOf(asset, box)
+        const lastFrame = Math.max(0, Math.ceil((asset.durationUs / 1_000_000) * fps) - 1)
+        const scene = brfRuntime.scene(asset.brfCode, values, Math.min(lastFrame, Math.round(seconds * fps)), fps, size.width, size.height)
+        if ('pending' in scene) {
+          stats.pending += 1
+          stats.unresolvedNames.push(asset.name)
+          return
+        }
+        if ('error' in scene) {
+          this.#drawPlaceholder(ctx, item, asset.name)
+          stats.placeholders += 1
+          stats.unresolvedNames.push(`${asset.name} (${scene.error})`)
+          return
+        }
+        doc = scene.doc
+      } else {
+        const entry = documentOf(asset)
+        if ('error' in entry) {
+          this.#drawPlaceholder(ctx, item, asset.name)
+          stats.placeholders += 1
+          stats.unresolvedNames.push(`${asset.name} (${entry.error})`)
+          return
+        }
+        doc = entry.doc
+      }
+      const painted = this.#brf.draw(doc, item, seconds, box, { width: box.width * scale, height: box.height * scale }, values)
+      if ('error' in painted) {
+        this.#drawPlaceholder(ctx, item, asset.name)
+        stats.placeholders += 1
+        stats.unresolvedNames.push(`${asset.name} (${painted.error})`)
+        return
+      }
+      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul)
       stats.drawn += 1
       return
     }
@@ -819,7 +874,7 @@ export { clamp, sourceSecondsAt }
  * rather than as an empty source.
  */
 function intrinsicWidth(
-  element: HTMLVideoElement | HTMLImageElement | ImageBitmap
+  element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas
 ): number {
   if (element instanceof HTMLVideoElement) return element.videoWidth
   if (element instanceof HTMLImageElement) return element.naturalWidth
@@ -827,7 +882,7 @@ function intrinsicWidth(
 }
 
 function intrinsicHeight(
-  element: HTMLVideoElement | HTMLImageElement | ImageBitmap
+  element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas
 ): number {
   if (element instanceof HTMLVideoElement) return element.videoHeight
   if (element instanceof HTMLImageElement) return element.naturalHeight

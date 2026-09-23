@@ -196,7 +196,7 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
                   ? containLayout(timeline, asset.width, asset.height)
                   : placementLayout(timeline, asset.width, asset.height)
             item.layout = { ...fitted, ...keep }
-          } else if (asset.kind === 'html') {
+          } else if (asset.kind === 'html' || (asset.kind === 'brf' && !asset.width)) {
             item.layout = { ...defaultLayout(timeline), ...keep }
           } else {
             // Text and the rest: the same place in proportion, the same width in proportion.

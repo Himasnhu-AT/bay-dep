@@ -112,6 +112,9 @@ function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
   switch (asset.kind) {
     case 'text':
       return null
+    case 'brf':
+      // Drawn from its document by the compositor; there is nothing to load or decode.
+      return null
     case 'html':
       // A composition has no media element. It is a page that gets seeked and captured, and
       // its frames arrive as bitmaps from the composition pool — giving it a <video> or an

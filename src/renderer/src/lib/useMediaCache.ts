@@ -35,7 +35,8 @@ export function usePoster(asset: Asset | undefined, size = 160): string | null {
 
   useEffect(() => {
     if (!asset || !asset.path || asset.error) return
-    if (asset.kind === 'audio') return
+    // A .brf has no media for ffmpeg to take a frame of; the tile shows its icon.
+    if (asset.kind === 'audio' || asset.kind === 'brf') return
     const cached = posters.get(key)
     if (cached !== undefined) {
       setUrl(cached)

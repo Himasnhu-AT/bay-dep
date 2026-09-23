@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { completeBrfImports } from '@/lib/brfImport'
 import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
 import { useKeyboard } from '@/lib/useKeyboard'
@@ -192,8 +193,9 @@ export function App(): ReactNode {
   }, [notify, markSaved])
 
   const onImport = useCallback(async (): Promise<void> => {
-    const imported = await call('Import', (api) => api.media.importDialog())
-    if (!imported || imported.length === 0) return
+    const picked = await call('Import', (api) => api.media.importDialog())
+    if (!picked || picked.length === 0) return
+    const imported = await completeBrfImports(picked)
     addAssets(imported.map((entry) => entry.asset))
     const message = importMessage(imported)
     notify(message.text, message.kind)
@@ -294,8 +296,9 @@ export function App(): ReactNode {
       if (paths.length === 0) return
       // Going through `importPaths` is not optional: it is what adds these paths to the
       // `bay://` allowlist, and a path that skips it reads back as a 403 on playback.
-      const imported = await call('Import', (api) => api.media.importPaths(paths))
-      if (!imported) return
+      const arrived = await call('Import', (api) => api.media.importPaths(paths))
+      if (!arrived) return
+      const imported = await completeBrfImports(arrived)
       addAssets(imported.map((entry) => entry.asset))
       const message = importMessage(imported)
       notify(message.text, message.kind)

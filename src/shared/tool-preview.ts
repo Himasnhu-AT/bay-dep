@@ -10,6 +10,7 @@
 /** The argument worth showing as it streams, per tool. Anything else shows its raw input. */
 const STREAMED_FIELD: Record<string, string> = {
   write_composition: 'html',
+  write_brf: 'code',
   apply_script: 'script',
   add_captions: 'srt'
 }

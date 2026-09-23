@@ -18,6 +18,7 @@
  * export positions does not scramble the preview the user is watching.
  */
 
+import { brfRuntime } from './brfCode'
 import {
   findTimeline,
   timelineDuration,
@@ -162,7 +163,7 @@ export class FrameExporter {
         let stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         for (let attempt = 0; stats.pending > 0 && attempt < MAX_PENDING_REDRAWS; attempt += 1) {
           if (this.#cancelled) break
-          await this.#compositions.settle(this.#seekTimeout)
+          await Promise.all([this.#compositions.settle(this.#seekTimeout), brfRuntime.settle(this.#seekTimeout)])
           stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         }
         if (stats.pending > 0) this.#pendingFrames += 1

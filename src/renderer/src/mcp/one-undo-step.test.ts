@@ -38,6 +38,22 @@ import { findTemplate } from '@shared/templates'
 import type { ImportedAsset } from '@shared/ipc'
 import { useEditor, emptyProject, newId, type EditorStore } from '@/store/editor'
 import { executeToolCall } from './index'
+import { brfRuntime, type BrfWorkerReply, type BrfWorkerRequest, type WorkerLike } from '@/engine/brfCode'
+import { createHandler } from '@/engine/brfWorkerCore'
+
+// write_brf runs its module in a worker; here the same handler runs in-process.
+brfRuntime.useWorkers((): WorkerLike => {
+  const handle = createHandler()
+  const worker: WorkerLike = {
+    onmessage: null,
+    onerror: null,
+    postMessage(message) {
+      queueMicrotask(() => worker.onmessage?.({ data: handle(message as BrfWorkerRequest) } as MessageEvent<BrfWorkerReply>))
+    },
+    terminate() {}
+  }
+  return worker
+})
 import { planScript, renderScript } from '@shared/script'
 
 // ---------------------------------------------------------------------------
@@ -60,6 +76,8 @@ const ASSET: Asset = {
   waveformPath: null,
   createdAt: 1
 }
+
+const MOTION = `export default () => <scene duration={2}><text x="50%" y="50%" in="up">Hi</text></scene>`
 
 interface Fixture {
   a: string
@@ -208,6 +226,19 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     }
   ],
   place_asset: [{ delta: 1, args: () => ({ assetId: ASSET.id, atFrame: 300 }) }],
+  write_brf: [
+    // Create and place: `addAssets` then `placeAsset`, two store calls, one step.
+    { delta: 1, args: () => ({ code: MOTION, atFrame: 300 }) },
+    { delta: 1, args: () => ({ code: MOTION }) },
+    {
+      delta: 1,
+      before: () =>
+        state().addAssets([
+          { ...ASSET, id: 'ast_motion', kind: 'brf', path: null, brfCode: MOTION, durationUs: 2_000_000, compositionVariables: [] }
+        ]),
+      args: () => ({ code: MOTION.replace('duration={2}', 'duration={3}'), assetId: 'ast_motion' })
+    }
+  ],
   edit_item: [
     // A track change and a patch: `moveItem` then `patchItem`, two store calls.
     { delta: 1, args: (f) => ({ itemId: f.a, trackId: f.v3, from: 10, volume: 0.5, fadeInFrames: 5 }) }

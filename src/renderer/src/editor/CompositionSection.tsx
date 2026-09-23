@@ -32,7 +32,7 @@ export function CompositionSection({ items, asset }: CompositionSectionProps): R
   const setVariable = useEditor((state) => state.setCompositionVariable)
   const transact = useEditor((state) => state.transact)
   const first = items[0]
-  if (!first || asset?.kind !== 'html') return null
+  if (!first || (asset?.kind !== 'html' && asset?.kind !== 'brf')) return null
 
   const declared = asset.compositionVariables ?? []
   const values = resolveVariables({ variables: declared }, first.variables)

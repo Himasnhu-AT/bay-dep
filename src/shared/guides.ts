@@ -139,6 +139,7 @@ const BROLL = 'itm_m1broll9c2'
 const INTERVIEW_A = 'itm_m1inta7e31'
 const INTERVIEW_B = 'itm_m1intb2d08'
 const CARD_ASSET = 'ast_m1card5b17'
+const MOTION_ITEM = 'itm_m1motn3c90'
 
 /**
  * The operations of the proposal in the approval example, kept as a constant because the calls
@@ -254,9 +255,56 @@ export const EXAMPLES: readonly GuideExample[] = [
     ]
   },
   {
-    title: 'Lower third written by hand',
+    title: 'A lower third as a .brf module',
     when:
-      'No template matches the brief. Write the composition, then place it on its own track ' +
+      'No template fits and the graphic is text and shapes — which is nearly every title, ' +
+      'lower third, callout and caption. One call writes, validates and places it; bay draws it ' +
+      'natively, so it scrubs and exports instantly.',
+    steps: [
+      {
+        tool: 'write_brf',
+        args: {
+          name: 'Name card',
+          atFrame: 45,
+          code: [
+            "import { spring, interpolate } from 'bay'",
+            "export const vars = { name: 'Jane Goodall', role: 'Primatologist', accent: '#11D1A0' }",
+            'export default ({ t, vars }) => (',
+            '  <scene duration={4}>',
+            '    <group x="6%" y="80%" anchor={[0, 0.5]} out={[\'fade\', 0.3]}>',
+            '      <rect anchor={[0, 0.5]} w={10} h={130} radius={5} fill={vars.accent} sy={spring(t, { damping: 14 })} />',
+            '      <text x={34} y={-26} anchor={[0, 0.5]} align="left" size={64} weight={900} in={[\'left\', 0.45, 0.1]}>{vars.name}</text>',
+            '      <text x={34} y={40} anchor={[0, 0.5]} align="left" size={36} fill={vars.accent} opacity={interpolate(t, [0.2, 0.6], [0, 1])}>{vars.role}</text>',
+            '    </group>',
+            '  </scene>',
+            ')'
+          ].join('\n')
+        },
+        note:
+          'A module written as React/Remotion is written: t is seconds from its start, atFrame is ' +
+          'where it lands on the timeline. It is run across its whole duration first; a compile or ' +
+          'runtime error comes back with its line and frame and nothing changes.'
+      },
+      {
+        tool: 'preview_frame',
+        args: { frame: 75 },
+        note: 'Look at it at rest, and mid-entrance: an anchor on the wrong corner is the usual surprise.'
+      },
+      {
+        tool: 'edit_item',
+        args: { itemId: MOTION_ITEM, variables: { name: 'Louis Leakey', role: 'Palaeoanthropologist' } },
+        note:
+          'Its vars are per placement: place the same asset again for the next person and change ' +
+          'only the words. To change the design everywhere, read_brf, edit the code, and write_brf ' +
+          'with its assetId.'
+      }
+    ]
+  },
+  {
+    title: 'Lower third written by hand as HTML',
+    when:
+      'No template matches the brief and it needs a web page — CSS layout or a JS library; ' +
+      'otherwise prefer the .brf route above. Write the composition, then place it on its own track ' +
       'so it draws over the footage.',
     steps: [
       {

@@ -172,6 +172,35 @@ design swaps rather than stacks. The documents are checked by bay's own composit
 script is run against a DOM stand-in in the tests — which word is lit at a given second is the
 behaviour, not the markup.
 
+**Motion graphics are `.brf` modules: JSX the agent writes like React/Remotion, drawn natively**
+(`src/shared/brf-code.ts`, `write_brf`). A module's default export returns
+`<scene duration>` of `<rect>/<ellipse>/<path>/<text>/<group>`; it may import from `'bay'` or
+`'remotion'` (`interpolate`, `spring`, `useCurrentFrame`, `<Sequence>`, `Easing`) and nothing
+else. Each frame resolves to a JSON scene (`src/shared/brf.ts`) that `engine/brf.ts` paints
+straight onto the compositor's canvas — no window, no capture, the same path in preview,
+`preview_frame` and export. HTML compositions stay for what needs a web page. Why not
+Remotion/HyperFrames-style HTML: everything DOM renders by screenshotting Chrome, the cost this
+removes. Why code rather than JSON: models write React-shaped code fluently, and raw animation
+JSON is what they fail at (~13% for GPT-5 writing Lottie, OmniLottie, CVPR 2026).
+
+**The code runs in a worker, and a worker does not inherit the page's CSP — measured.** Inside a
+same-origin worker `new Function` ran and `fetch` to a remote origin *reached the network*. So:
+one worker per module (no bridge to main, killable after 3s), `lockdown` before any user code
+(network/storage/`importScripts` removed on the global *and its prototype chain*, every function
+constructor and `eval` blocked, the message channel sealed), `import()` refused at load, and
+**main cancels every remote request from the editor's session** (`src/main/offline.ts`) so the
+lockdown is not the only wall. The lockdown's stand-in for `Function` must be made in the
+target realm — made in the lockdown's own, `blocked.constructor` was a live `Function` from
+another realm, which `brf-lockdown.test.ts` caught. The JSX factory is `__brf_h`, not `h`:
+`const h = height / 2` is ordinary code and shadowed it.
+
+A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
+undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
+anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main
+imports a `.brf` file as text and never runs it; `lib/brfImport.ts` probes it in the worker.
+Every example in `bay://guide/brf` and the worked-edits guide is compiled and run on every frame
+by `brf-code.test.ts`.
+
 **The preview's composition pool answers with the latest decoded frame, not nothing**
 (`CompositionPool({ live: true })`). A composition frame is a 40-80ms capture in main, and every frame
 of a playing composition is a new moment, so an exact-or-nothing pool drew compositions only while

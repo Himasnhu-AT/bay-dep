@@ -14,8 +14,9 @@
  */
 
 import type { CompositionVariable } from './composition'
+import type { BrfDocument } from './brf'
 
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html'
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -71,6 +72,22 @@ export interface Asset {
    * A type-only import, so the cycle with `composition.ts` is erased at build time.
    */
   compositionVariables?: CompositionVariable[]
+  /**
+   * For `kind: 'brf'` — the motion document itself (`@shared/brf`), held in the project rather
+   * than read from a file. So an edit to it is an ordinary edit: it goes through `edit()`, lands
+   * on the undo stack, shows in an agent turn's diff, reverts with the turn and dry-runs — none
+   * of which a file on disk can do. `path` is where it was imported from, if anywhere.
+   *
+   * Its `vars` are mirrored into `compositionVariables` so a placement overrides them through
+   * the same `item.variables` an html composition uses.
+   */
+  brf?: BrfDocument
+  /**
+   * For `kind: 'brf'` — the module's JSX/TS source, when the motion is code (`@shared/brf-code`)
+   * rather than a scene document. Kept in the project for the same reasons as `brf`; its
+   * duration, size and vars are derived from it into the fields above when it is written.
+   */
+  brfCode?: string
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string

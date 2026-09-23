@@ -17,6 +17,7 @@ import type {
   TransitionDirection,
   TransitionKind
 } from '@shared/project'
+import type { BrfCodeMeta, BrfDocument } from '@shared/brf'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { RippleDeleteResult } from '@shared/ripple'
@@ -200,9 +201,13 @@ export interface EditorActions {
    * Change what an asset *is*, for every item that places it: its name, and for a text asset
    * the words it draws. An undoable edit, unlike `patchAsset`, which exists for poster and
    * waveform arrivals that are not edits at all. `text` on a non-text asset is ignored here and
-   * refused by the tool, which can say why.
+   * refused by the tool, which can say why. `brf` replaces a motion asset's document, and with it
+   * the duration, size and variables it declares.
    */
-  editAsset(assetId: string, patch: { name?: string; text?: string }): void
+  editAsset(
+    assetId: string,
+    patch: { name?: string; text?: string; brf?: BrfDocument; brfCode?: { source: string; meta: BrfCodeMeta } }
+  ): void
   patchAsset(assetId: string, patch: Partial<Asset>): void
 
   // items --------------------------------------------------------------------

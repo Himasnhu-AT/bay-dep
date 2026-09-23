@@ -15,6 +15,7 @@
  * reason and the way out.
  */
 
+import { completeBrfImports } from '@/lib/brfImport'
 import {
   allItems,
   findAsset,
@@ -66,6 +67,7 @@ export async function importMedia(args: Record<string, unknown>): Promise<Record
     fail(`Import failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 
+  imported = await completeBrfImports(imported)
   store().addAssets(imported.map((entry) => entry.asset))
   return {
     assets: imported.map((entry) => ({
@@ -260,17 +262,20 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
 
   if (args.variables !== undefined) {
     const asset = project().assets.find((a) => a.id === item.assetId)
-    if (asset?.kind !== 'html') {
+    if (asset?.kind !== 'html' && asset?.kind !== 'brf') {
       fail(
         `Item ${item.id} draws ${asset ? `a ${asset.kind} asset` : 'no asset'}, so it has no ` +
-          `composition variables. Only html items declare them.`
+          `variables. Only html compositions and .brf motion declare them.`
       )
     }
     const declared = asset.compositionVariables ?? []
     if (declared.length === 0) {
       fail(
-        `${asset.name} declares no variables, so there is nothing to set. Add them to the file ` +
-          `with data-composition-variables on its <html> element, then re-import it.`
+        asset.kind === 'brf'
+          ? `${asset.name} declares no variables, so there is nothing to set. Add a "vars" object ` +
+              `to its document with write_brf (assetId ${asset.id}) and refer to them as "$name".`
+          : `${asset.name} declares no variables, so there is nothing to set. Add them to the file ` +
+              `with data-composition-variables on its <html> element, then re-import it.`
       )
     }
     const given = args.variables

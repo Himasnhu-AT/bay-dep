@@ -8,6 +8,7 @@
  */
 
 import { resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { BrowserWindow, dialog } from 'electron'
 import type { ImportedAsset } from '@shared/ipc'
 import type { Asset } from '@shared/project'
@@ -15,6 +16,7 @@ import { allowPath } from '../protocol'
 import { probe } from '../ffmpeg/probe'
 import { compositionAsset } from '../html/compositions'
 import { COMPOSITION_EXTENSIONS, isCompositionPath } from '@shared/composition'
+import { isBrfPath } from '@shared/brf'
 import { thumbnail } from './thumbnails'
 import {
   AUDIO_EXTENSIONS,
@@ -91,9 +93,11 @@ export async function importPaths(paths: readonly string[]): Promise<ImportedAss
       // than in a second importer keeps deduplication and path registration in one place: two
       // import paths with separate ideas of "already imported" is how one file lands in the
       // pool twice under different ids.
-      asset = isCompositionPath(path)
-        ? await compositionAsset(path)
-        : assetFrom(path, await probe(path))
+      asset = isBrfPath(path)
+        ? await brfAsset(path)
+        : isCompositionPath(path)
+          ? await compositionAsset(path)
+          : assetFrom(path, await probe(path))
     } catch (error) {
       asset = failedAsset(path, messageOf(error))
     }
@@ -117,13 +121,14 @@ export async function importDialog(window: BrowserWindow | null): Promise<Import
           ...AUDIO_EXTENSIONS,
           ...IMAGE_EXTENSIONS,
           'gif',
-          ...COMPOSITION_EXTENSIONS
+          ...COMPOSITION_EXTENSIONS,
+          'brf'
         ]
       },
       { name: 'Video', extensions: VIDEO_EXTENSIONS },
       { name: 'Audio', extensions: AUDIO_EXTENSIONS },
       { name: 'Images', extensions: [...IMAGE_EXTENSIONS, 'gif'] },
-      { name: 'Compositions', extensions: [...COMPOSITION_EXTENSIONS] },
+      { name: 'Compositions', extensions: [...COMPOSITION_EXTENSIONS, 'brf'] },
       { name: 'All files', extensions: ['*'] }
     ]
   }
@@ -132,4 +137,21 @@ export async function importDialog(window: BrowserWindow | null): Promise<Import
     : await dialog.showOpenDialog(options)
   if (result.canceled || result.filePaths.length === 0) return []
   return importPaths(result.filePaths)
+}
+
+/**
+ * A `.brf` file becomes an asset carrying its source. Main reads it and never runs it: the code
+ * runs only in the renderer's locked-down workers, which is also where its duration, size and
+ * vars are read (`lib/brfImport.ts` fills them in before the asset reaches the project).
+ */
+async function brfAsset(path: string): Promise<Asset> {
+  let source: string
+  try {
+    source = await readFile(path, 'utf8')
+  } catch (error) {
+    return failedAsset(path, `could not be read: ${messageOf(error)}`)
+  }
+  const base = failedAsset(path, '')
+  delete base.error
+  return { ...base, kind: 'brf', brfCode: source, hasVideo: true }
 }

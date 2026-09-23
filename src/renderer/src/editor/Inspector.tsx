@@ -178,7 +178,10 @@ export function Inspector(): ReactNode {
   const first = selected[0]
   const asset = first ? findAsset(project, first.assetId) : undefined
   const textItems = selected.filter((item) => findAsset(project, item.assetId)?.kind === 'text')
-  const htmlItems = selected.filter((item) => findAsset(project, item.assetId)?.kind === 'html')
+  const htmlItems = selected.filter((item) => {
+    const kind = findAsset(project, item.assetId)?.kind
+    return kind === 'html' || kind === 'brf'
+  })
   const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
     common(selected, read)
 

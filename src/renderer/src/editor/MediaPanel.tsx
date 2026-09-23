@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { completeBrfImports } from '@/lib/brfImport'
 import {
   Code2,
   FilmIcon,
@@ -7,7 +8,8 @@ import {
   Plus,
   Trash2,
   Type as TypeIcon,
-  type LucideIcon
+  type LucideIcon,
+  Sparkles
 } from 'lucide-react'
 import type { Asset, AssetKind } from '@shared/project'
 import { Button, EmptyState, IconButton, Panel, ScrollArea } from '@/components'
@@ -33,7 +35,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   image: ImageIcon,
   gif: ImageIcon,
   text: TypeIcon,
-  html: Code2
+  html: Code2,
+  brf: Sparkles
 }
 
 function AssetCard({ asset }: { asset: Asset }): ReactNode {
@@ -135,11 +138,15 @@ export function MediaPanel(): ReactNode {
 
   const runImport = async (): Promise<void> => {
     setImporting(true)
-    const imported = await call('Import', (api) => api.media.importDialog())
-    setImporting(false)
+    const picked = await call('Import', (api) => api.media.importDialog())
     // Null is a failure, which `call` has already reported; an empty array is the user
     // dismissing the picker, which needs no comment at all.
-    if (!imported || imported.length === 0) return
+    if (!picked || picked.length === 0) {
+      setImporting(false)
+      return
+    }
+    const imported = await completeBrfImports(picked)
+    setImporting(false)
     addAssets(imported.map((entry) => entry.asset))
     const message = importMessage(imported)
     notify(message.text, message.kind)

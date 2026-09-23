@@ -59,6 +59,16 @@ export const RESOURCES: readonly ResourceSpec[] = [
     mimeType: 'text/markdown'
   },
   {
+    uri: 'bay://guide/brf',
+    name: 'Motion graphics as .brf',
+    description:
+      'The .brf format write_brf takes: layers, positions and anchors, keyed animation and ' +
+      'easings, entrance and exit presets, text split word by word, groups and clipping, ' +
+      'variables — with complete, valid documents for a title, a lower third, a stat card and ' +
+      'kinetic captions to start from.',
+    mimeType: 'text/markdown'
+  },
+  {
     uri: 'bay://guide/script',
     name: 'The Script surface',
     description:
