@@ -48,12 +48,13 @@ export function setExecutorReady(contents: WebContents, ready: boolean): void {
   if (watched.has(contents)) return
   watched.add(contents)
   const id = contents.id
-  // Main-frame, cross-document only. `did-start-loading` also fires for subframes and in-page
-  // navigations, neither of which unmounts the executor — and marking it not-ready then would
-  // hold every call for the full wait, since nothing would re-announce it.
-  contents.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) readiness.set(id, false)
-  })
+  // On *commit*, not on start. A navigation can start and never commit — bay's own
+  // `will-navigate` guard cancels every renderer-initiated one — and the old document then
+  // lives on, still listening, with nothing to re-announce it. Keyed on `did-start-navigation`
+  // that left the window not-ready for good, and every later call waited out the full 45s:
+  // found by `test/app/mcp-during-reload.mjs`, not by reading. `did-navigate` is main-frame and
+  // cross-document by definition, and it lands before the new page's own ready message.
+  contents.on('did-navigate', () => readiness.set(id, false))
   contents.on('render-process-gone', () => readiness.set(id, false))
   contents.once('destroyed', () => readiness.forget(id))
 }
