@@ -364,6 +364,21 @@ export interface BayApi {
     recent(): Promise<RecentProject[]>
     /** Fire-and-forget autosave. Resolves once written. */
     autosave(project: Project): Promise<void>
+    /**
+     * The project the OS asked bay to open at launch — a `.bay` double-clicked in Finder — or
+     * null. The projects screen is skipped for it: the user already said which one they wanted.
+     */
+    launchRequest(): Promise<Project | null>
+    /**
+     * A new, empty project, already written to disk in the projects folder under a name that
+     * does not collide, and already in the recents list. No dialog: creating a project should
+     * not start with a question.
+     */
+    create(): Promise<Project>
+    /** Take one project off the recents list. The file itself is not touched. */
+    forget(filePath: string): Promise<void>
+    /** Show the project file in Finder. */
+    reveal(filePath: string): Promise<void>
   }
 
   export: {
@@ -455,6 +470,10 @@ export const IPC = {
   projectOpenPath: 'project:open-path',
   projectRecent: 'project:recent',
   projectAutosave: 'project:autosave',
+  projectLaunchRequest: 'project:launch-request',
+  projectCreate: 'project:create',
+  projectForget: 'project:forget',
+  projectReveal: 'project:reveal',
 
   exportStart: 'export:start',
   exportPushFrame: 'export:push-frame',

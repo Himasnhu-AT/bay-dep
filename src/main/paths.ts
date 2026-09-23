@@ -36,6 +36,14 @@ export function peaksDir(): string {
 }
 
 /** Autosaves for projects that have never been saved and so have no sidecar location. */
+/**
+ * Where "Create new project" puts projects: a folder of the user's own, beside their other
+ * video work, not somewhere inside Application Support they would never think to look.
+ */
+export function projectsDir(): string {
+  return ensure(join(app.getPath('videos'), 'bay'))
+}
+
 export function autosaveDir(): string {
   return ensure(join(app.getPath('userData'), 'autosave'))
 }

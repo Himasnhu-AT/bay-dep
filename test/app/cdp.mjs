@@ -124,13 +124,30 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
   // screen flickers every time the agent count goes up", because the probes also connect. It
   // was never the count, and never a tool call; a marker set in the page survived a tool call
   // and an agent-browser connect, and did not survive `attach()`.
-  const ready = await evaluate(`Boolean(window.bayEngine) && localStorage.getItem(${JSON.stringify(PROBE_FLAG)}) === '1'`)
+  const ready = await evaluate(`Boolean(window.bayEngine || window.bayMcp) && localStorage.getItem(${JSON.stringify(PROBE_FLAG)}) === '1'`)
   if (!ready) {
     await evaluate(`localStorage.setItem(${JSON.stringify(PROBE_FLAG)}, '1')`)
     await cdp.send('Page.reload', {})
     await new Promise((r) => setTimeout(r, 2500))
   }
   await cdp.send('Page.bringToFront', {})
+
+  // bay launches on its projects screen with no project open, and every probe measures a
+  // project. `window.bayEngine` belongs to the editor, so it does not exist yet; the executor's
+  // own probe handle does, and `list_projects` + `open_project` are exactly how an agent gets
+  // past that screen — so the probes take the same road. Opens the most recently edited project;
+  // probes that need a particular one still require it as a precondition.
+  await evaluate(`(async () => {
+    for (let i = 0; i < 120 && !window.bayMcp && !window.bayEngine; i++) await new Promise((r) => setTimeout(r, 250))
+    if (window.bayEngine?.store.getState().screen === 'editor') return 'editor'
+    const listed = await window.bayMcp.execute({ id: 'attach-list', tool: 'list_projects', args: {} })
+    const latest = listed.ok ? listed.value.projects[0] : null
+    if (!latest) return 'no projects'
+    const opened = await window.bayMcp.execute({ id: 'attach-open', tool: 'open_project', args: { filePath: latest.filePath } })
+    if (!opened.ok) throw new Error(opened.error)
+    for (let i = 0; i < 120 && !window.bayEngine; i++) await new Promise((r) => setTimeout(r, 250))
+    return 'opened ' + latest.name
+  })()`, 45_000)
   await evaluate(`(async () => {
     for (let i = 0; i < 120; i++) {
       if (window.bayEngine) return true

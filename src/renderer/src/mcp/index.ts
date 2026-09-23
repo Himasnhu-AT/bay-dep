@@ -36,6 +36,7 @@ import { addTemplate } from './templates'
 import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from '@shared/validate'
 import { proposeEdit } from './proposals'
+import { listProjects, openProject } from './projects'
 import { trimItem } from './trim'
 import { addMarker, removeMarker } from './markers'
 import { editAsset } from './assets'
@@ -46,6 +47,8 @@ import { applyScript, readScript } from './script'
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
 const HANDLERS: Record<string, Handler> = {
+  list_projects: () => listProjects(),
+  open_project: (args) => openProject(args),
   read_project: () => readProject(),
   browse_assets: () => browseAssets(),
   inspect_item: (args) => inspectItem(args),
@@ -133,6 +136,20 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
         `${call.tool} is listed in this build's catalog but has no implementation behind it. ` +
         `That is a fault in bay, not in the call — no arguments will make it work. Do not ` +
         `retry it, and do not plan the rest of the edit around it.`
+    }
+  }
+
+  // No project open: the projects screen is showing and the store holds a placeholder nobody
+  // chose. Acting on it would edit something invisible that disappears when the user opens a
+  // real project — so refuse, and say exactly how to get to one.
+  if (store().screen !== 'editor' && tool.name !== 'list_projects' && tool.name !== 'open_project') {
+    return {
+      id: call.id,
+      ok: false,
+      error:
+        `No project is open in bay — it is showing the projects screen. Call list_projects, then ` +
+        `open_project with a filePath from it (or ask the user which project to open), and then ` +
+        `${call.tool}.`
     }
   }
 

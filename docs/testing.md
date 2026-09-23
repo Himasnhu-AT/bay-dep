@@ -46,6 +46,17 @@ name is what keeps your commands on your window and other people's off it.
 Check `tab` before you trust anything. If it lists a page that is not bay's `index.html`, you are
 driving the wrong thing; `./run.sh --no-build` restores the editor.
 
+**bay opens on its projects screen, with no project open.** Open one before testing the editor —
+click its card, or:
+
+```bash
+agent-browser --session bay snapshot -i                    # the project cards are buttons
+agent-browser --session bay find text "Smoke test" click   # or click the card's @ref
+```
+
+Every agent tool except `list_projects` and `open_project` is refused until a project is open,
+and `test/app/cdp.mjs`'s `attach()` opens the most recently edited project for the probes.
+
 ## 3. Drive it like a person
 
 ```bash
@@ -106,6 +117,10 @@ every later check depends on.
   To catch something transient, sample it in the page instead — e.g. read one canvas pixel every
   `requestAnimationFrame` — and prove the sampler with a positive control first: make a real
   change and confirm the sampler sees it, or its silence means nothing.
+- **`fill <sel> ""` does not clear a field.** The box keeps its text and React never hears a
+  change, so a search stays applied and the screen looks like it lost data (it has not — read
+  the input's `.value`). Clear a field through the app's own control: the search box has
+  *Clear search* and Escape. Pressing `Meta+a` then `Backspace` did not clear it either.
 - **Never `open <url>` in bay's session.** It navigates the editor away; the project in memory
   goes with it.
 - **To learn whether something reloaded the page,** set a marker and look for it afterwards:

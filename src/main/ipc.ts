@@ -57,6 +57,10 @@ interface ChannelApi {
   projectOpenPath: BayApi['project']['openPath']
   projectRecent: BayApi['project']['recent']
   projectAutosave: BayApi['project']['autosave']
+  projectLaunchRequest: BayApi['project']['launchRequest']
+  projectCreate: BayApi['project']['create']
+  projectForget: BayApi['project']['forget']
+  projectReveal: BayApi['project']['reveal']
 
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
@@ -160,6 +164,10 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   projectOpenPath: (_event, filePath) => store.openPath(filePath),
   projectRecent: () => store.recent(),
   projectAutosave: (_event, project) => store.autosave(project),
+  projectLaunchRequest: () => store.launchRequest(),
+  projectCreate: () => store.create(),
+  projectForget: async (_event, filePath) => store.forget(filePath),
+  projectReveal: async (_event, filePath) => store.reveal(filePath),
 
   exportStart: (event, request) => encode.start(request, event.sender),
   exportPushFrame: (_event, frame) => encode.pushFrame(frame),

@@ -111,7 +111,9 @@ function load(): Fixture {
   const a1 = track('audio', 'A1', [item('', 0, 120)])
   timeline.tracks = [v1, v2, v3, a1]
   project.assets = [ASSET]
-  useEditor.getState().setProject(project)
+  // `enterProject`, not `setProject`: the fixture is a project open in the editor. Loaded with
+  // `setProject` alone the window is still on the projects screen, and every tool is refused.
+  useEditor.getState().enterProject(project)
   return {
     a: v1.items[0]!.id,
     b: v1.items[1]!.id,
@@ -282,6 +284,8 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
 
 /** Write tools with no case, each with the reason it cannot reach the undo stack. */
 const TOOL_EXEMPT: Record<string, string> = {
+  open_project:
+    'replaces the document and starts fresh history by design — it is not an edit to undo',
   export_timeline:
     'renders a file from the project and never edits it; its frame exporter needs a DOM canvas'
 }
@@ -495,12 +499,17 @@ const STORE_CASES: Record<string, StoreCase> = {
   },
   declineProposal: { delta: 0, run: () => state().declineProposal() },
   revokeApproval: { delta: 0, run: () => state().revokeApproval() },
-  consumeApproval: { delta: 0, run: () => state().consumeApproval(0) }
+  consumeApproval: { delta: 0, run: () => state().consumeApproval(0) },
+  // View state: hiding a region is not an edit.
+  setRegionHidden: { delta: 0, run: () => state().setRegionHidden('inspector', true) },
+  toggleRegion: { delta: 0, run: () => state().toggleRegion('timeline') },
+  showHome: { delta: 0, run: () => state().showHome() }
 }
 
 /** Store functions that manage history themselves, so "exactly one entry" does not apply. */
 const STORE_EXEMPT: Record<string, string> = {
   setProject: 'replaces the document and resets history by design',
+  enterProject: 'opens a project: setProject plus the screen, so it resets history by design',
   undo: 'moves an entry from past to future',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it'
