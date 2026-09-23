@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, ChevronRight, Download, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, ChevronRight, Download, Loader2, Undo2 } from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
@@ -30,7 +30,7 @@ import { Composer } from './Composer'
 export function AgentPanel(): ReactNode {
   const log = useEditor((state) => state.agentLog)
   const running = useEditor((state) => state.agentRunning)
-  const gate = useEditor((state) => state.agentGate)
+  const sessionActive = useEditor((state) => state.agentSessionActive)
   const logUserMessage = useEditor((state) => state.logUserMessage)
   const startAgentSession = useEditor((state) => state.startAgentSession)
   const endAgentSession = useEditor((state) => state.endAgentSession)
@@ -65,7 +65,11 @@ export function AgentPanel(): ReactNode {
    * leave the model waiting — correctly, since it was told to end its turn and wait — for a
    * message that never comes. The decision *is* the next message.
    */
-  const deliver = async (text: string, pins: Pin[] = []): Promise<void> => {
+  /**
+   * `shown` is what the conversation displays when it differs from what the agent receives — an
+   * approval is one short line to the user and the full list of calls to the model.
+   */
+  const deliver = async (text: string, pins: Pin[] = [], shown?: string): Promise<void> => {
     if (!text || running) return
     const api = bay()
     if (!api) {
@@ -73,11 +77,11 @@ export function AgentPanel(): ReactNode {
       return
     }
     setProblem(null)
-    logUserMessage(text, pins)
+    logUserMessage(shown ?? text, pins)
 
     // Starting is separate from sending so a missing `claude` binary reads as "could not start"
     // rather than as a model that ignored the message.
-    if (!gate) {
+    if (!sessionActive) {
       const started = await api.agent.start()
       if (!started.ok) {
         setProblem(started.error)
@@ -189,7 +193,7 @@ export function AgentPanel(): ReactNode {
   )
 }
 
-type Deliver = (text: string) => Promise<void>
+type Deliver = (text: string, pins?: Pin[], shown?: string) => Promise<void>
 
 /** What the user sent: their words, with what they had pinned shown as chips above them. */
 function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }): ReactNode {
@@ -317,6 +321,8 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
       return <ToolCard entry={entry} />
     case 'proposal':
       return <ProposalCard entry={entry} deliver={deliver} />
+    case 'changes':
+      return <ChangesCard entry={entry} />
   }
 }
 
@@ -382,6 +388,11 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
  * approving anything. Once a choice is made the card stays in place showing what was approved —
  * a card that vanished would leave the conversation claiming an edit nobody could point at.
  */
+/**
+ * The approval card, for when "Ask before editing" is on. Trimmed to the decision: each option is
+ * its label, one line of what it does, and Approve. The exact calls — what the gate will hold the
+ * agent to — are one click away rather than on screen, and once decided the card is one line.
+ */
 function ProposalCard({
   entry,
   deliver
@@ -394,67 +405,141 @@ function ProposalCard({
   const approved = useEditor((state) => state.agentGate?.approved)
   const approveProposal = useEditor((state) => state.approveProposal)
   const declineProposal = useEditor((state) => state.declineProposal)
-  const chosen = approved?.proposalId === entry.proposal.id ? approved.option.id : null
+  const chosen = entry.proposal.options.find(
+    (option) => approved?.proposalId === entry.proposal.id && approved.option.id === option.id
+  )
+  const [details, setDetails] = useState<string | null>(null)
 
-  // The decision is a turn, and a turn cannot start while the agent is still in one — it was
-  // told to stop after proposing, and it is allowed to finish its sentence first.
+  // The decision is a turn, and a turn cannot start while the agent is still in one.
   const approve = (optionId: string): void => {
     const option = entry.proposal.options.find((o) => o.id === optionId)
     if (!option || running) return
     approveProposal(entry.proposal, optionId)
-    void deliver(approvalMessage(option))
+    void deliver(approvalMessage(option), [], `Approved “${option.label}”`)
   }
   const decline = (): void => {
     if (running) return
     declineProposal()
-    void deliver(DECLINED_MESSAGE)
+    void deliver(DECLINED_MESSAGE, [], 'None of these')
+  }
+
+  if (!pending) {
+    return (
+      <p className="flex items-center gap-1.5 text-[11px] text-ink-2">
+        <Check aria-hidden="true" className="size-3 shrink-0" />
+        {chosen ? `Approved: ${chosen.label}` : `Asked: ${entry.proposal.question}`}
+      </p>
+    )
   }
 
   return (
-    <div className="rounded border border-accent bg-surface-2 p-2 text-[11px]">
-      <p className="mb-1.5 text-[12px] leading-relaxed text-ink-1">{entry.proposal.question}</p>
-      <div className="flex flex-col gap-1.5">
+    <div className="rounded-lg border border-accent/60 bg-surface-2 p-2 text-[11px]">
+      <p className="mb-1.5 text-[12px] font-medium text-ink-0">{entry.proposal.question}</p>
+      <ul className="flex flex-col gap-1">
         {entry.proposal.options.map((option) => (
-          <div
-            key={option.id}
-            className={`rounded border p-1.5 ${chosen === option.id ? 'border-accent' : 'border-line'}`}
-          >
-            <p className="text-ink-1">{option.label}</p>
-            <p className="mt-0.5 leading-relaxed text-ink-2">{option.summary}</p>
-            <ul className="mt-1 flex flex-col gap-0.5">
-              {option.operations.map((operation) => (
-                <li
-                  key={operation.index}
-                  // Wrapped, never clipped: the arguments are what is being approved, and a card
-                  // that cut them off at `"fadeInF` asked the user to approve what they could not
-                  // read.
-                  className="font-mono text-[10px] break-all whitespace-pre-wrap text-ink-3"
-                >
-                  {operation.tool} {JSON.stringify(operation.args)}
-                </li>
-              ))}
-            </ul>
-            {pending && (
-              <Button
-                className="mt-1.5"
-                variant="subtle"
-                disabled={running}
-                onClick={() => approve(option.id)}
-              >
+          <li key={option.id} className="rounded-md border border-line bg-surface-1 px-2 py-1.5">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] text-ink-0">{option.label}</p>
+                <p className="line-clamp-1 text-ink-2" title={option.summary}>
+                  {option.summary}
+                </p>
+              </div>
+              <Button variant="primary" disabled={running} onClick={() => approve(option.id)}>
                 Approve
               </Button>
+            </div>
+            <button
+              type="button"
+              aria-expanded={details === option.id}
+              onClick={() => setDetails((value) => (value === option.id ? null : option.id))}
+              className="t-fast mt-1 flex items-center gap-0.5 text-[10.5px] text-ink-3 hover:text-ink-1"
+            >
+              <ChevronRight
+                aria-hidden="true"
+                className={`size-3 transition-transform ${details === option.id ? 'rotate-90' : ''}`}
+              />
+              {option.operations.length} edit{option.operations.length === 1 ? '' : 's'}
+            </button>
+            {details === option.id && (
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {option.operations.map((operation) => (
+                  <li key={operation.index} className="font-mono text-[10px] break-all whitespace-pre-wrap text-ink-3">
+                    {operation.tool} {JSON.stringify(operation.args)}
+                  </li>
+                ))}
+              </ul>
             )}
-            {chosen === option.id && <p className="mt-1.5 text-ink-2">Approved.</p>}
-          </div>
+          </li>
         ))}
+      </ul>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <Button variant="subtle" disabled={running} onClick={decline}>
+          None of these
+        </Button>
+        {running && <span className="text-ink-3">Waiting for the agent to finish…</span>}
       </div>
-      {pending && (
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <Button variant="subtle" disabled={running} onClick={decline}>
-            None of these
+    </div>
+  )
+}
+
+/**
+ * What an agent turn changed, like a commit: the diff, and Revert. Revert puts the project back
+ * as it was before the turn — as one undoable step, so ⌘Z brings the change back — and says when
+ * later turns will go with it, because restoring an earlier state undoes everything after it.
+ */
+function ChangesCard({ entry }: { entry: Extract<AgentEntry, { kind: 'changes' }> }): ReactNode {
+  const revert = useEditor((state) => state.revertAgentChange)
+  const notify = useEditor((state) => state.notify)
+  const later = useEditor((state) => {
+    const index = state.agentLog.findIndex((e) => e.id === entry.id)
+    return state.agentLog.filter((e, i) => i > index && e.kind === 'changes' && e.state === 'applied').length
+  })
+  const [open, setOpen] = useState(false)
+  const reverted = entry.state === 'reverted'
+  const shown = open ? entry.lines : entry.lines.slice(0, 4)
+  const glyph = { added: '+', removed: '−', changed: '~' } as const
+  const tone = { added: 'text-success', removed: 'text-danger', changed: 'text-ink-2' } as const
+
+  return (
+    <div className={`rounded-lg border border-line bg-surface-2 text-[11px] ${reverted ? 'opacity-60' : ''}`}>
+      <div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
+        <span className="font-medium text-ink-0">
+          {reverted ? 'Reverted' : `${entry.lines.length} change${entry.lines.length === 1 ? '' : 's'}`}
+        </span>
+        <div className="flex-1" />
+        {!reverted && (
+          <Button
+            variant="subtle"
+            icon={<Undo2 className="size-3" />}
+            title="Put the project back as it was before this — ⌘Z brings it back"
+            onClick={() => {
+              revert(entry.id)
+              notify(later > 0 ? `Reverted this and ${later} later change${later === 1 ? '' : 's'}. ⌘Z to undo.` : 'Reverted. ⌘Z to undo.')
+            }}
+          >
+            {later > 0 ? `Revert (+${later} later)` : 'Revert'}
           </Button>
-          {running && <span className="text-ink-3">waiting for the agent to finish its turn</span>}
-        </div>
+        )}
+      </div>
+      <ul className="flex flex-col gap-0.5 px-2 py-1.5">
+        {shown.map((line, index) => (
+          <li key={index} className={`flex gap-1.5 leading-relaxed ${reverted ? 'line-through' : ''}`}>
+            <span aria-hidden="true" className={`w-2 shrink-0 font-mono ${tone[line.kind]}`}>
+              {glyph[line.kind]}
+            </span>
+            <span className="min-w-0 text-ink-1">{line.text}</span>
+          </li>
+        ))}
+      </ul>
+      {entry.lines.length > 4 && (
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="t-fast px-2 pb-1.5 text-[10.5px] text-ink-3 hover:text-ink-1"
+        >
+          {open ? 'Show less' : `Show all ${entry.lines.length}`}
+        </button>
       )}
     </div>
   )

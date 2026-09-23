@@ -7,6 +7,7 @@ import {
   Film,
   Loader2,
   MessageSquarePlus,
+  ShieldCheck,
   Square,
   SquareStop,
   Type as TypeIcon,
@@ -150,6 +151,8 @@ export function Composer({
   const pins = useEditor((state) => state.agentPins)
   const addPin = useEditor((state) => state.addAgentPin)
   const removePin = useEditor((state) => state.removeAgentPin)
+  const approval = useEditor((state) => state.agentApproval)
+  const setApproval = useEditor((state) => state.setAgentApproval)
 
   const [caret, setCaret] = useState(0)
   const [dismissed, setDismissed] = useState<number | null>(null)
@@ -461,6 +464,12 @@ export function Composer({
             Agent
           </span>
           <ToolbarButton label="Pin an asset, clip or time" icon={AtSign} onClick={openMention} />
+          <ToolbarButton
+            label={approval ? 'Ask before editing: on — the agent proposes, you approve' : 'Ask before editing: off — the agent edits, you can revert'}
+            icon={ShieldCheck}
+            pressed={approval}
+            onClick={() => setApproval(!approval)}
+          />
           <ToolbarButton
             label="Pin a time range"
             icon={Clock}

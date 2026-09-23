@@ -49,6 +49,7 @@ import {
 } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import { pinKey, type Pin } from '@shared/pins'
+import { describeChanges } from '@shared/diff'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyTrimPlan, planTrim, type TrimPlan, type TrimRefusal, type TrimSpec } from '@shared/trim'
 import {
@@ -122,6 +123,18 @@ export interface EditorState {
   agentRunning: boolean
   /** The proposal waiting on the user, if any. */
   agentProposal: Proposal | null
+  /** Whether an in-app agent conversation is running — separate from whether it is gated. */
+  agentSessionActive: boolean
+  /**
+   * "Ask before editing": when on, the agent's writes wait for an approved proposal. Off by
+   * default — the agent edits directly, every turn's changes are shown as a diff, and any turn
+   * can be reverted. Remembered per machine.
+   */
+  agentApproval: boolean
+  /** The project as it was when the current agent turn started; null between turns. */
+  agentTurnBase: Project | null
+  /** Before and after for each `changes` entry, by its id — what a revert restores. */
+  agentCheckpoints: Record<string, { before: Project; after: Project }>
   /**
    * What the composer's `@` menu has pinned: assets, clips, time ranges. Sticky — they stay
    * until removed, and every message carries them — because "work only in 0:10–0:15" is usually
@@ -155,6 +168,12 @@ export interface EditorActions {
    * an agent mix operations from two plans the user considered separately.
    */
   approveProposal(proposal: Proposal, optionId: string): void
+  setAgentApproval(on: boolean): void
+  /**
+   * Put the project back as it was before an agent turn. Undoable, like any edit. If the project
+   * has changed since that turn, those later changes go too — the confirmation says so.
+   */
+  revertAgentChange(id: string): void
   addAgentPin(pin: Pin): void
   removeAgentPin(key: string): void
   clearAgentPins(): void
@@ -505,6 +524,16 @@ export const useEditor = create<EditorStore>((set, get) => {
     agentRunning: false,
     agentProposal: null,
     agentPins: [],
+    agentSessionActive: false,
+    agentApproval: (() => {
+      try {
+        return globalThis.localStorage?.getItem('bay.agentApproval') === '1'
+      } catch {
+        return false
+      }
+    })(),
+    agentTurnBase: null,
+    agentCheckpoints: {},
     dirty: false,
     past: [],
     future: [],
@@ -529,7 +558,40 @@ export const useEditor = create<EditorStore>((set, get) => {
     },
 
     startAgentSession() {
-      set({ agentGate: { approved: null } })
+      // Gated only when the user asked to approve edits; otherwise the agent edits directly and
+      // the diffs are the review.
+      set({ agentSessionActive: true, agentGate: get().agentApproval ? { approved: null } : null })
+    },
+
+    setAgentApproval(on) {
+      try {
+        globalThis.localStorage?.setItem('bay.agentApproval', on ? '1' : '0')
+      } catch {
+        // Applies for this session even when it cannot be remembered.
+      }
+      const active = get().agentSessionActive
+      set({ agentApproval: on, ...(active ? { agentGate: on ? { approved: null } : null } : {}) })
+    },
+
+    revertAgentChange(id) {
+      const checkpoint = get().agentCheckpoints[id]
+      if (!checkpoint) return
+      set((state) => {
+        const index = state.agentLog.findIndex((e) => e.kind === 'changes' && e.id === id)
+        const past = [...state.past, state.project]
+        if (past.length > HISTORY_LIMIT) past.shift()
+        return {
+          project: checkpoint.before,
+          past,
+          future: [],
+          selection: [],
+          dirty: true,
+          // This turn and every later one are gone from the timeline now; say so on their cards.
+          agentLog: state.agentLog.map((entry, i) =>
+            entry.kind === 'changes' && i >= index ? { ...entry, state: 'reverted' as const } : entry
+          )
+        }
+      })
     },
 
     logUserMessage(text, pins) {
@@ -546,7 +608,7 @@ export const useEditor = create<EditorStore>((set, get) => {
         const log = state.agentLog
         switch (event.type) {
           case 'started':
-            return { agentRunning: true }
+            return { agentRunning: true, agentTurnBase: state.agentTurnBase ?? state.project }
 
           case 'text':
           case 'thinking': {
@@ -596,28 +658,36 @@ export const useEditor = create<EditorStore>((set, get) => {
               agentLog: [...log, { kind: 'proposal', id: event.proposal.id, proposal: event.proposal }]
             }
 
-          case 'done':
+          case 'done': {
+            // A turn that changed the project leaves a diff behind, with what a revert needs.
+            // Compared by reference first: a turn that only read never pays for the diff.
+            const base = state.agentTurnBase
+            const lines = base && base !== state.project ? describeChanges(base, state.project) : []
+            const changeId = newId('chg')
+            const withChanges: AgentEntry[] =
+              lines.length > 0 ? [...log, { kind: 'changes', id: changeId, lines, state: 'applied' }] : log
             return {
               agentRunning: false,
-              ...(event.reason === 'complete'
-                ? {}
-                : {
-                    agentLog: [
-                      ...log,
-                      { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }
-                    ]
-                  })
+              agentTurnBase: null,
+              ...(lines.length > 0 && base
+                ? { agentCheckpoints: { ...state.agentCheckpoints, [changeId]: { before: base, after: state.project } } }
+                : {}),
+              agentLog:
+                event.reason === 'complete'
+                  ? withChanges
+                  : [...withChanges, { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }]
             }
+          }
         }
       })
     },
 
     clearAgentLog() {
-      set({ agentLog: [], agentProposal: null })
+      set({ agentLog: [], agentProposal: null, agentCheckpoints: {} })
     },
 
     endAgentSession() {
-      set({ agentGate: null })
+      set({ agentGate: null, agentSessionActive: false, agentTurnBase: null })
     },
 
     approveProposal(proposal, optionId) {
@@ -1354,7 +1424,16 @@ export const useEditor = create<EditorStore>((set, get) => {
     showHome() {
       // The agent conversation belongs to the project it was about; carrying it onto the next
       // project would put one timeline's proposals in front of another's.
-      set({ screen: 'home', agentLog: [], agentProposal: null, agentGate: null, agentPins: [] })
+      set({
+        screen: 'home',
+        agentLog: [],
+        agentProposal: null,
+        agentGate: null,
+        agentPins: [],
+        agentSessionActive: false,
+        agentTurnBase: null,
+        agentCheckpoints: {}
+      })
     },
 
     notify(text, kind = 'info') {

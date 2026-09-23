@@ -23,6 +23,7 @@
 
 import { TOOLS, VALIDATE_ONLY, findTool, type ToolSpec } from './mcp'
 import type { Pin } from './pins'
+import type { ChangeLine } from './diff'
 
 // ---------------------------------------------------------------------------
 // What a runtime emits
@@ -97,6 +98,12 @@ export type AgentEntry =
     }
   | { kind: 'proposal'; id: string; proposal: Proposal }
   | { kind: 'error'; id: string; text: string }
+  /**
+   * What an agent turn changed, like a commit's diff. The project before and after lives in the
+   * store (`agentCheckpoints`), keyed by `id`, so a transcript export does not carry whole
+   * projects. `reverted` once the user took it back — directly, or by reverting an earlier one.
+   */
+  | { kind: 'changes'; id: string; lines: ChangeLine[]; state: 'applied' | 'reverted' }
 
 // ---------------------------------------------------------------------------
 // Proposals

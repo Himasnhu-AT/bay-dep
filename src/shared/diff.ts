@@ -1,0 +1,128 @@
+/**
+ * What changed between two states of a project, in the words an editor would use.
+ *
+ * The agent edits without asking; this is how the user sees what it did and decides whether to
+ * keep it. Like a commit's diff: every agent turn that changes the project gets one, and the
+ * state before it is kept so the turn can be reverted exactly (see the store's
+ * `revertAgentChange`). Compared by id, never by position — a clip that moved is the same clip,
+ * not one removed and another added.
+ */
+
+import { findAsset, formatTimecode, type Item, type Project, type Timeline } from './project'
+
+export interface ChangeLine {
+  kind: 'added' | 'removed' | 'changed'
+  text: string
+}
+
+const MAX_LINES = 14
+
+function activeTimeline(project: Project): Timeline | undefined {
+  return project.timelines.find((t) => t.id === project.activeTimelineId) ?? project.timelines[0]
+}
+
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+
+export function describeChanges(before: Project, after: Project): ChangeLine[] {
+  const out: ChangeLine[] = []
+  const was = activeTimeline(before)
+  const now = activeTimeline(after)
+  const fps = now?.fps ?? was?.fps ?? 30
+  const tc = (frame: number): string => formatTimecode(frame, fps, true)
+  const assetName = (project: Project, item: Item): string => {
+    const asset = findAsset(project, item.assetId)
+    if (!asset) return 'a clip'
+    return asset.kind === 'text' ? `“${asset.text ?? asset.name}”` : `“${asset.name}”`
+  }
+
+  if (before.name !== after.name) out.push({ kind: 'changed', text: `Renamed the project to “${after.name}”` })
+
+  // Assets: imported or removed.
+  const oldAssets = new Map(before.assets.map((a) => [a.id, a]))
+  const newAssets = new Map(after.assets.map((a) => [a.id, a]))
+  for (const [id, asset] of newAssets) {
+    const old = oldAssets.get(id)
+    // A text asset is how a title or caption stores its words — bookkeeping, not an import. Its
+    // placement is reported as the clip it becomes; listing it twice made a 4-caption turn read
+    // as nine changes.
+    if (!old && asset.kind === 'text') continue
+    if (!old) out.push({ kind: 'added', text: `Imported “${asset.name}”` })
+    else if (old.name !== asset.name || old.text !== asset.text) {
+      out.push({ kind: 'changed', text: `Changed the text of “${old.text ?? old.name}” to “${asset.text ?? asset.name}”` })
+    }
+  }
+  for (const [id, asset] of oldAssets) {
+    if (!newAssets.has(id) && asset.kind !== 'text') out.push({ kind: 'removed', text: `Removed “${asset.name}” from the media` })
+  }
+
+  if (was && now) {
+    if (was.width !== now.width || was.height !== now.height) {
+      out.push({ kind: 'changed', text: `Canvas ${was.width}×${was.height} → ${now.width}×${now.height}` })
+    }
+    if (was.fps !== now.fps) out.push({ kind: 'changed', text: `Frame rate ${was.fps} → ${now.fps}` })
+
+    const oldTracks = new Map(was.tracks.map((t) => [t.id, t]))
+    const newTracks = new Map(now.tracks.map((t) => [t.id, t]))
+    for (const [id, track] of newTracks) if (!oldTracks.has(id)) out.push({ kind: 'added', text: `Added track ${track.name}` })
+    for (const [id, track] of oldTracks) if (!newTracks.has(id)) out.push({ kind: 'removed', text: `Removed track ${track.name}` })
+
+    const items = (timeline: Timeline): Map<string, { item: Item; track: string }> =>
+      new Map(timeline.tracks.flatMap((t) => t.items.map((item) => [item.id, { item, track: t.name }] as const)))
+    const oldItems = items(was)
+    const newItems = items(now)
+    for (const [id, { item, track }] of newItems) {
+      const old = oldItems.get(id)
+      const name = assetName(after, item)
+      const span = `${tc(item.from)}–${tc(item.from + item.durationInFrames)}`
+      if (!old) {
+        out.push({ kind: 'added', text: `Added ${name} on ${track}, ${span}` })
+        continue
+      }
+      const o = old.item
+      if (old.track !== track) out.push({ kind: 'changed', text: `Moved ${name} from ${old.track} to ${track}` })
+      if (o.from !== item.from && o.durationInFrames === item.durationInFrames) {
+        out.push({ kind: 'changed', text: `Moved ${name} ${tc(o.from)} → ${tc(item.from)}` })
+      } else if (o.from !== item.from || o.durationInFrames !== item.durationInFrames) {
+        out.push({ kind: 'changed', text: `Trimmed ${name} to ${span}` })
+      }
+      if (o.sourceStartUs !== item.sourceStartUs && o.from === item.from) {
+        out.push({ kind: 'changed', text: `Slipped ${name} to start ${(item.sourceStartUs / 1e6).toFixed(2)}s into its source` })
+      }
+      if (o.fadeInFrames !== item.fadeInFrames) out.push({ kind: 'changed', text: `Fade in on ${name}: ${o.fadeInFrames} → ${item.fadeInFrames} frames` })
+      if (o.fadeOutFrames !== item.fadeOutFrames) out.push({ kind: 'changed', text: `Fade out on ${name}: ${o.fadeOutFrames} → ${item.fadeOutFrames} frames` })
+      if (o.volume !== item.volume) out.push({ kind: 'changed', text: `Volume of ${name}: ${Math.round(o.volume * 100)}% → ${Math.round(item.volume * 100)}%` })
+      if (o.speed !== item.speed) out.push({ kind: 'changed', text: `Speed of ${name}: ${o.speed}× → ${item.speed}×` })
+      if (!same(o.layout, item.layout)) out.push({ kind: 'changed', text: `Repositioned ${name}` })
+      if (!same(o.crop, item.crop)) out.push({ kind: 'changed', text: `Cropped ${name}` })
+      if (!same(o.adjustments, item.adjustments)) out.push({ kind: 'changed', text: `Adjusted the look of ${name}` })
+      if (!same(o.blendMode, item.blendMode)) out.push({ kind: 'changed', text: `Blend mode of ${name}: ${o.blendMode ?? 'normal'} → ${item.blendMode ?? 'normal'}` })
+      if (!same(o.text, item.text)) out.push({ kind: 'changed', text: `Restyled the text of ${name}` })
+      if (!same(o.variables, item.variables)) out.push({ kind: 'changed', text: `Changed the content of ${name}` })
+    }
+    for (const [id, { item, track }] of oldItems) {
+      if (!newItems.has(id)) {
+        out.push({ kind: 'removed', text: `Removed ${assetName(before, item)} from ${track}, ${tc(item.from)}–${tc(item.from + item.durationInFrames)}` })
+      }
+    }
+
+    const oldTransitions = new Map((was.transitions ?? []).map((t) => [t.id, t]))
+    const newTransitions = new Map((now.transitions ?? []).map((t) => [t.id, t]))
+    for (const [id, t] of newTransitions) {
+      const old = oldTransitions.get(id)
+      if (!old) out.push({ kind: 'added', text: `Added a ${t.kind} (${t.durationInFrames} frames)` })
+      else if (!same(old, t)) out.push({ kind: 'changed', text: `Changed a transition to ${t.kind} (${t.durationInFrames} frames)` })
+    }
+    for (const [id, t] of oldTransitions) if (!newTransitions.has(id)) out.push({ kind: 'removed', text: `Removed a ${t.kind}` })
+
+    const oldMarkers = new Map((was.markers ?? []).map((m) => [m.id, m]))
+    const newMarkers = new Map((now.markers ?? []).map((m) => [m.id, m]))
+    for (const [id, m] of newMarkers) if (!oldMarkers.has(id)) out.push({ kind: 'added', text: `Added marker “${m.label}” at ${tc(m.frame)}` })
+    for (const [id, m] of oldMarkers) if (!newMarkers.has(id)) out.push({ kind: 'removed', text: `Removed marker “${m.label}”` })
+  }
+
+  if (out.length > MAX_LINES) {
+    const rest = out.length - (MAX_LINES - 1)
+    return [...out.slice(0, MAX_LINES - 1), { kind: 'changed', text: `…and ${rest} more changes` }]
+  }
+  return out
+}

@@ -44,6 +44,11 @@ export function transcriptMarkdown(projectName: string, log: readonly AgentEntry
       case 'error':
         out.push(`**Error:** ${entry.text}`, '')
         break
+      case 'changes':
+        out.push(`### Changes${entry.state === 'reverted' ? ' (reverted)' : ''}`, '')
+        for (const line of entry.lines) out.push(`- ${line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : '~'} ${line.text}`)
+        out.push('')
+        break
     }
   }
   return out.join('\n')

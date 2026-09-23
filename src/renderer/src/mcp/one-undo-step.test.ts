@@ -505,6 +505,7 @@ const STORE_CASES: Record<string, StoreCase> = {
   toggleRegion: { delta: 0, run: () => state().toggleRegion('timeline') },
   showHome: { delta: 0, run: () => state().showHome() },
   toggleDebugMode: { delta: 0, run: () => state().toggleDebugMode() },
+  setAgentApproval: { delta: 0, run: () => state().setAgentApproval(true) },
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },
@@ -515,6 +516,7 @@ const STORE_CASES: Record<string, StoreCase> = {
 const STORE_EXEMPT: Record<string, string> = {
   setProject: 'replaces the document and resets history by design',
   enterProject: 'opens a project: setProject plus the screen, so it resets history by design',
+  revertAgentChange: 'restores a saved state as one undo step; agent-changes.test.ts covers it',
   undo: 'moves an entry from past to future',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it'

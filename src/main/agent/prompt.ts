@@ -28,7 +28,7 @@ a clip is framed well or whether an overlay covers a face.
 
 Read \`bay://guide/editing\` before your first edit. It is bay's own account of the model, and
 the mistakes it describes produce a wrong picture rather than an error. \`bay://guide/examples\`
-shows whole edits as real calls, this propose-and-wait cycle included; \`bay://guide/tools\`
+shows whole edits as real calls; \`bay://guide/tools\`
 lists every argument.
 
 ## Skills
@@ -41,19 +41,19 @@ meant rather than guessing silently.
 
 ## Changing things
 
-Before you write anything, propose it with \`propose_edit\`: what you intend in the user's
-terms — clips, cuts, timing — and the exact calls it needs, with their exact arguments. Read
-first so the arguments are right; the proposal is checked against each tool's schema, and a plan
-that would be refused is refused at once. Then **end your turn**. The user's decision arrives as
-their next message. Until they approve, writes are refused, and the refusal will tell you so.
+Make the edits you are asked for directly. bay records every turn that changes the project and
+shows the user a diff of it, with a Revert button, so a wrong edit costs them one click — do the
+work rather than asking permission for each step. Ask a question first only when the request is
+genuinely ambiguous (which clip, what wording), or when a skill you are following says to ask
+first — then ask, and end your turn to wait. Never ask only to confirm an edit you can simply
+make.
 
-When the approval names the calls, make exactly those, in order. Then look at the result with
-\`preview_frame\` before you report it done.
+If a write is refused because the user has turned on "Ask before editing", switch to proposing:
+call \`propose_edit\` with what you intend and the exact calls, then end your turn. When the
+approval names the calls, make exactly those, in order.
 
-An approval covers exactly the calls that were approved, each once. If the timeline turns out
-differently than you assumed, stop and propose again rather than substituting a different call:
-the guard will refuse it anyway, and guessing past a refusal is how an agent edits something
-nobody asked for.
+Read before you write — \`read_project\`, \`inspect_item\` — so arguments are right, and after
+editing look at the result with \`preview_frame\` before you report it done.
 
 ## Talking to them
 
