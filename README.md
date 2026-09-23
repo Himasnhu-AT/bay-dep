@@ -70,12 +70,12 @@ spawns, because a client wants a command and bay is a GUI that may not be runnin
 ```jsonc
 {
   "command": "/Applications/bay.app/Contents/MacOS/bay",
-  "args": ["<resources>/app.asar/out/mcp/index.js"],
+  "args": ["<resources>/app.asar/out/main/mcp/index.js"],
   "env": { "ELECTRON_RUN_AS_NODE": "1" }
 }
 ```
 
-or, in a checkout, `node out/mcp/index.js`. The app binary doubles as the Node runtime, so nothing
+or, in a checkout, `node out/main/mcp/index.js`. The app binary doubles as the Node runtime, so nothing
 extra is installed and there is no package to publish.
 
 Three decisions in there are worth knowing. It runs as **plain Node, never inside Electron's main
@@ -96,6 +96,14 @@ the real project, its answer comes back as `{ validateOnly: true, wouldReturn }`
 undo history, dirty flag and selection are put back exactly as they were. A dry run needs no
 approval in the in-app panel and spends none. Tools whose effects leave the project — writing a
 composition or template file, importing media, exporting — refuse the flag and say why.
+
+**Gateway mode**, for clients that put every tool schema into every context and do no tool
+search: add `"BAY_MCP_MODE": "gateway"` to the proxy's `env` and `tools/list` publishes three
+tools instead of the catalog — `get_active_project` (name, canvas, fps, track and item counts,
+and whether bay is reachable), `get_guidelines` (every operation with its purpose and argument
+schema, as compact text, plus the guides to read first) and `execute` (`{ tool, args }`). `execute`
+takes the same path a direct call does, so validation, errors, `@./file` arguments and image
+results behave identically. Unset, the full catalog is published.
 
 ## Gates
 

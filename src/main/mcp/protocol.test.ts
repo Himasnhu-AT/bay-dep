@@ -33,7 +33,15 @@ import {
   isNotification,
   parseLine
 } from './jsonrpc'
-import { PROTOCOL_VERSION, handleRequest, toContent, toolManifest, type RunTool } from './protocol'
+import {
+  PROTOCOL_VERSION,
+  TOOL_MODE_ENV,
+  handleRequest,
+  toContent,
+  toolManifest,
+  toolModeFromEnv,
+  type RunTool
+} from './protocol'
 
 const neverCalled: RunTool = async () => {
   throw new Error('runTool must not be called for this request')
@@ -360,4 +368,177 @@ test('pre-built content from the proxy is passed through untouched', async () =>
     async () => ({ ok: true, value: 'ignored', content: prebuilt })
   )) as { result: { content: unknown[] } }
   assert.deepEqual(answer.result.content, prebuilt)
+})
+
+// ---------------------------------------------------------------------------
+// Gateway mode
+// ---------------------------------------------------------------------------
+
+type CallResult = { content: { type: string; text?: string; data?: string }[]; isError: boolean }
+
+async function gatewayCall(name: string, args: unknown, runTool: RunTool): Promise<CallResult> {
+  const answer = await handleRequest(
+    request('tools/call', { name, arguments: args }),
+    runTool,
+    () => null,
+    'gateway'
+  )
+  return (answer as { result: CallResult }).result
+}
+
+async function listed(mode: 'full' | 'gateway' | undefined): Promise<string[]> {
+  const answer = await handleRequest(request('tools/list'), neverCalled, () => null, mode)
+  return (answer as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name)
+}
+
+test('gateway mode lists exactly the three gateway tools; the default lists the catalog', async () => {
+  // Literal names: they are what an external client's config and prompts are written against.
+  assert.deepEqual(await listed('gateway'), ['get_active_project', 'get_guidelines', 'execute'])
+  // Positive control, and the default is still full with no mode given at all.
+  assert.deepEqual(await listed(undefined), TOOLS.map((t) => t.name))
+  assert.deepEqual(await listed('full'), TOOLS.map((t) => t.name))
+})
+
+test('get_guidelines names every catalog tool with its published schema and the guides', async () => {
+  const result = await gatewayCall('get_guidelines', {}, neverCalled)
+  assert.equal(result.isError, false)
+  const text = result.content[0]!.text!
+  for (const spec of TOOLS) {
+    assert.ok(text.includes(`\n${spec.name} [`), `${spec.name} is missing from the guidelines`)
+  }
+  // The schema itself, not a paraphrase: remove_range's own argument names and validateOnly,
+  // which only the published schema carries.
+  const lines = text.split('\n')
+  const line = lines[lines.findIndex((l) => l.startsWith('remove_range [')) + 1]
+  assert.ok(line?.startsWith('  args: {'), 'remove_range has no schema line')
+  const schema = JSON.parse(line!.slice('  args: '.length)) as { properties: object }
+  assert.ok('fromFrame' in schema.properties && 'toFrame' in schema.properties)
+  assert.ok('validateOnly' in schema.properties)
+  assert.match(text, /bay:\/\/guide\/editing/, 'the guide to read first is not pointed at')
+  assert.match(text, /execute \{ tool, args \}/)
+})
+
+test('execute dispatches to the real tool with its arguments, by the ordinary path', async () => {
+  const seen: { name: string; args: Record<string, unknown> }[] = []
+  const recording: RunTool = async (name, args) => {
+    seen.push({ name, args })
+    return { ok: true, value: { frame: 12, image: 'data:image/png;base64,AAAA' } }
+  }
+  const result = await gatewayCall(
+    'execute',
+    { tool: 'preview_frame', args: { frame: 12 } },
+    recording
+  )
+  assert.deepEqual(seen, [{ name: 'preview_frame', args: { frame: 12 } }])
+  assert.equal(result.isError, false)
+  // The image is lifted out exactly as a direct call lifts it.
+  assert.deepEqual(result.content[1], { type: 'image', mimeType: 'image/png', data: 'AAAA' })
+
+  // args may be left out for a tool that takes none.
+  seen.length = 0
+  await gatewayCall('execute', { tool: 'undo' }, recording)
+  assert.deepEqual(seen, [{ name: 'undo', args: {} }])
+})
+
+test('execute answers exactly as a direct call does, failures included', async () => {
+  const failing: RunTool = async () => ({ ok: false, value: 'No id starting with "zz" exists here.' })
+  const viaExecute = await gatewayCall(
+    'execute',
+    { tool: 'inspect_item', args: { itemId: 'zz' } },
+    failing
+  )
+  const direct = (
+    (await handleRequest(
+      request('tools/call', { name: 'inspect_item', arguments: { itemId: 'zz' } }),
+      failing
+    )) as { result: CallResult }
+  ).result
+  assert.deepEqual(viaExecute, direct)
+  assert.equal(viaExecute.isError, true)
+})
+
+test('an unknown tool inside execute gets the recovery instruction a direct call gets', async () => {
+  const result = await gatewayCall('execute', { tool: 'make_it_good', args: {} }, neverCalled)
+  assert.equal(result.isError, true)
+  const text = result.content[0]!.text!
+  assert.match(text, /No tool named "make_it_good"/)
+  assert.match(text, /read_project/, 'the real tools are not named')
+  assert.match(text, /execute/, 'the way to run them is not named')
+  // Nor can execute reach the gateway's own tools as if they were catalog tools.
+  const nested = await gatewayCall('execute', { tool: 'execute', args: {} }, neverCalled)
+  assert.equal(nested.isError, true)
+})
+
+test('a malformed execute says what shape it wants', async () => {
+  const noTool = await gatewayCall('execute', { args: {} }, neverCalled)
+  assert.equal(noTool.isError, true)
+  assert.match(noTool.content[0]!.text!, /requires "tool"/)
+  const badArgs = await gatewayCall('execute', { tool: 'undo', args: [1] }, neverCalled)
+  assert.equal(badArgs.isError, true)
+  assert.match(badArgs.content[0]!.text!, /must be an object/)
+})
+
+test('get_active_project summarises read_project, including when it arrives as relayed content', async () => {
+  // The proxy relays read_project as pre-rendered content, not a value; the summary has to read
+  // through that, which is the case the real client hits.
+  const project = {
+    project: { name: 'Launch film', savedTo: '/x.bay' },
+    timeline: { name: 'Main', width: 1920, height: 1080, fps: 30, durationInFrames: 900 },
+    playhead: 42,
+    tracks: [
+      { id: 't1', items: [{ id: 'a' }, { id: 'b' }] },
+      { id: 't2', items: [{ id: 'c' }] }
+    ],
+    assetCount: 5
+  }
+  const calls: string[] = []
+  const relayed: RunTool = async (name) => {
+    calls.push(name)
+    return { ok: true, value: '', content: [{ type: 'text', text: JSON.stringify(project) }] }
+  }
+  const result = await gatewayCall('get_active_project', {}, relayed)
+  assert.deepEqual(calls, ['read_project'])
+  assert.equal(result.isError, false)
+  const summary = JSON.parse(result.content[0]!.text!) as Record<string, unknown>
+  assert.equal(summary['bay'], 'connected')
+  assert.equal(summary['project'], 'Launch film')
+  assert.deepEqual(summary['canvas'], { width: 1920, height: 1080 })
+  assert.equal(summary['fps'], 30)
+  assert.equal(summary['trackCount'], 2)
+  assert.equal(summary['itemCount'], 3)
+})
+
+test('get_active_project with bay unreachable says so and passes on the reason', async () => {
+  const down: RunTool = async () => ({
+    ok: false,
+    value: '"read_project" was not applied. No agent socket appeared at /tmp/x within 30s.'
+  })
+  const result = await gatewayCall('get_active_project', {}, down)
+  assert.equal(result.isError, true)
+  const summary = JSON.parse(result.content[0]!.text!) as Record<string, unknown>
+  assert.equal(summary['bay'], 'unreachable')
+  assert.match(String(summary['reason']), /No agent socket appeared/)
+})
+
+test('the gateway tools do not exist in full mode', async () => {
+  // Otherwise a full-mode client could reach an undocumented second surface.
+  const answer = await handleRequest(
+    request('tools/call', { name: 'execute', arguments: { tool: 'undo' } }),
+    neverCalled
+  )
+  const result = (answer as { result: CallResult }).result
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]!.text!, /No tool named "execute"/)
+})
+
+test('the mode is read from the environment, and a typo is named rather than ignored', () => {
+  assert.deepEqual(toolModeFromEnv(undefined), { mode: 'full', warning: null })
+  assert.deepEqual(toolModeFromEnv('gateway'), { mode: 'gateway', warning: null })
+  assert.deepEqual(toolModeFromEnv(' Gateway '), { mode: 'gateway', warning: null })
+  const typo = toolModeFromEnv('gatway')
+  assert.equal(typo.mode, 'full')
+  assert.match(typo.warning ?? '', /"gatway" is not a mode/)
+  assert.match(typo.warning ?? '', /BAY_MCP_MODE=gateway/)
+  // Literal: it is the name documented for users' client configs.
+  assert.equal(TOOL_MODE_ENV, 'BAY_MCP_MODE')
 })

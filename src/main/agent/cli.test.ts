@@ -75,6 +75,14 @@ test('the proxy is told which bay to talk to', () => {
   assert.equal(config.mcpServers.bay.args[0], OPTIONS.proxyPath)
 })
 
+test('the panel pins the full tool surface rather than inheriting a gateway mode', () => {
+  // The panel allows its agent tools by name. A BAY_MCP_MODE=gateway inherited from the shell
+  // that launched bay would publish three tools, none of them on the allowed list, and the
+  // agent would have nothing it may call. Literal, because the proxy reads this exact name.
+  const config = JSON.parse(valueAfter('--mcp-config') ?? '{}')
+  assert.equal(config.mcpServers.bay.env.BAY_MCP_MODE, 'full')
+})
+
 test('the proxy runs as plain Node even though the binary is Electron', () => {
   // Chromium writes to stdout when it likes, and the protocol needs that stream byte-exact.
   const config = JSON.parse(valueAfter('--mcp-config') ?? '{}')

@@ -145,7 +145,11 @@ export function bayMcpServer(options: Pick<CliOptions, 'proxyPath' | 'socketPath
       // `ELECTRON_RUN_AS_NODE` because `process.execPath` is Electron here: the proxy must
       // run as plain Node or Chromium writes to the stdout the protocol needs byte-exact.
       ELECTRON_RUN_AS_NODE: '1',
-      BAY_MCP_SOCKET: options.socketPath
+      BAY_MCP_SOCKET: options.socketPath,
+      // Pinned, not inherited. The panel allows the agent bay's tools by name
+      // (`allowedToolNames`); a `BAY_MCP_MODE=gateway` left in the shell that launched bay would
+      // otherwise reach this proxy and publish three tools, none of them on that list.
+      BAY_MCP_MODE: 'full'
     }
   }
 }

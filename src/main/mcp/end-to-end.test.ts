@@ -285,6 +285,139 @@ test('a call with bay not running reports it rather than hanging', async () => {
 })
 
 // ---------------------------------------------------------------------------
+// Gateway mode, through the built proxy
+// ---------------------------------------------------------------------------
+
+test('BAY_MCP_MODE=gateway lists three tools; without it the proxy lists the catalog', async () => {
+  // The env var is read by the entry point, which no unit test reaches — only a spawned bundle
+  // proves the wiring from environment to tools/list.
+  const socketPath = scratchSocket()
+  const gateway = startProxy(socketPath, { BAY_MCP_MODE: 'gateway' })
+  const full = startProxy(socketPath, { BAY_MCP_MODE: '' })
+  try {
+    gateway.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    full.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const g = (await gateway.next()) as { result: { tools: { name: string }[] } }
+    const f = (await full.next()) as { result: { tools: { name: string }[] } }
+    assert.deepEqual(
+      g.result.tools.map((t) => t.name),
+      ['get_active_project', 'get_guidelines', 'execute']
+    )
+    assert.ok(f.result.tools.some((t) => t.name === 'read_project'))
+    assert.ok(f.result.tools.length > 3)
+  } finally {
+    gateway.stop()
+    full.stop()
+  }
+})
+
+test('through execute, a tool reaches the app by its real name and an image arrives as an image', async () => {
+  const socketPath = scratchSocket()
+  const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const seen: { name: string; args: Record<string, unknown> }[] = []
+  const server = await startStubApp(socketPath, async (name, args) => {
+    seen.push({ name, args })
+    return { ok: true, value: { frame: 12, image: `data:image/png;base64,${pixel}` } }
+  })
+  const proxy = startProxy(socketPath, { BAY_MCP_MODE: 'gateway' })
+  try {
+    proxy.send({
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'tools/call',
+      params: { name: 'execute', arguments: { tool: 'preview_frame', args: { frame: 12 } } }
+    })
+    const answer = (await proxy.next()) as {
+      id: number
+      result: {
+        isError: boolean
+        content: { type: string; text?: string; data?: string; mimeType?: string }[]
+      }
+    }
+    assert.equal(answer.id, 6)
+    assert.equal(answer.result.isError, false)
+    // The app saw the real tool, not `execute` — the gateway is the proxy's business alone.
+    assert.deepEqual(seen, [{ name: 'preview_frame', args: { frame: 12 } }])
+    const image = answer.result.content.find((block) => block.type === 'image')
+    assert.ok(image, JSON.stringify(answer.result.content).slice(0, 300))
+    assert.equal(image.mimeType, 'image/png')
+    assert.equal(image.data, pixel)
+    assert.doesNotMatch(answer.result.content[0]?.text ?? '', /base64/)
+  } finally {
+    proxy.stop()
+    server.close()
+  }
+})
+
+test('through execute, an unknown tool is refused with the real ones named, and never reaches the app', async () => {
+  const socketPath = scratchSocket()
+  const seen: string[] = []
+  const server = await startStubApp(socketPath, async (name) => {
+    seen.push(name)
+    return { ok: true, value: 'should not be reached' }
+  })
+  const proxy = startProxy(socketPath, { BAY_MCP_MODE: 'gateway' })
+  try {
+    proxy.send({
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'execute', arguments: { tool: 'make_it_good', args: {} } }
+    })
+    const answer = (await proxy.next()) as {
+      result: { isError: boolean; content: { text: string }[] }
+    }
+    assert.equal(answer.result.isError, true)
+    assert.match(answer.result.content[0]!.text, /No tool named "make_it_good"/)
+    assert.match(answer.result.content[0]!.text, /read_project/)
+    assert.deepEqual(seen, [])
+  } finally {
+    proxy.stop()
+    server.close()
+  }
+})
+
+test('get_active_project summarises the project the app reports', async () => {
+  const socketPath = scratchSocket()
+  const server = await startStubApp(socketPath, async (name) =>
+    name === 'read_project'
+      ? {
+          ok: true,
+          value: {
+            project: { name: 'Stub cut', savedTo: null },
+            timeline: { name: 'Main', width: 1080, height: 1920, fps: 30, durationInFrames: 300 },
+            playhead: 0,
+            tracks: [{ id: 't1', items: [{ id: 'a' }] }, { id: 't2', items: [] }],
+            assetCount: 1
+          }
+        }
+      : { ok: false, value: `unexpected ${name}` }
+  )
+  const proxy = startProxy(socketPath, { BAY_MCP_MODE: 'gateway' })
+  try {
+    proxy.send({
+      jsonrpc: '2.0',
+      id: 8,
+      method: 'tools/call',
+      params: { name: 'get_active_project', arguments: {} }
+    })
+    const answer = (await proxy.next()) as {
+      result: { isError: boolean; content: { text: string }[] }
+    }
+    assert.equal(answer.result.isError, false, answer.result.content[0]?.text)
+    const summary = JSON.parse(answer.result.content[0]!.text) as Record<string, unknown>
+    assert.equal(summary['bay'], 'connected')
+    assert.equal(summary['project'], 'Stub cut')
+    assert.deepEqual(summary['canvas'], { width: 1080, height: 1920 })
+    assert.equal(summary['trackCount'], 2)
+    assert.equal(summary['itemCount'], 1)
+  } finally {
+    proxy.stop()
+    server.close()
+  }
+})
+
+// ---------------------------------------------------------------------------
 // The configuration surface
 // ---------------------------------------------------------------------------
 

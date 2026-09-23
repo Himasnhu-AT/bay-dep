@@ -27,7 +27,7 @@ import { spawn } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { LineBuffer, encode, failure, parseLine, RPC_INTERNAL_ERROR } from './jsonrpc'
-import { handleRequest, type McpContent, type ToolOutcome } from './protocol'
+import { handleRequest, type McpContent, type ToolMode, type ToolOutcome } from './protocol'
 import { resourceBody } from './resources'
 
 /** How long to wait for a launched bay to open its socket before giving up. */
@@ -67,6 +67,8 @@ export interface ProxyOptions {
   socketPath: string
   /** How to start bay when it is not running. Injected so the launch path is testable. */
   launch: () => void
+  /** Which tool surface to publish. `full` unless the entry point read `BAY_MCP_MODE`. */
+  mode?: ToolMode
 }
 
 /**
@@ -196,7 +198,7 @@ export async function runProxy(options: ProxyOptions): Promise<void> {
       // Served from here rather than forwarded to the app on purpose. The bodies are static and
       // inlined at build time, so reading the contract costs nothing and — like `tools/list` —
       // does not boot a video editor to answer a question about documentation.
-      void handleRequest(parsed.request!, runTool, resourceBody)
+      void handleRequest(parsed.request!, runTool, resourceBody, options.mode ?? 'full')
         .then((answer) => {
           if (answer) process.stdout.write(encode(answer))
         })
