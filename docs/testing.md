@@ -127,7 +127,7 @@ every later check depends on.
 agent-browser --session bay snapshot -i                # find the rail's button "Agent" → @ref
 agent-browser --session bay click @e21                  # (the ref from that snapshot)
 agent-browser --session bay fill textarea "Put a 12-frame fade-in on the first clip. Propose it and wait."
-agent-browser --session bay find text "Send" click
+agent-browser --session bay click 'button[aria-label="Send"]'   # the round send button has no text
 # poll: eval "window.bayEngine.store.getState().agentRunning" until false
 agent-browser --session bay eval "window.bayEngine.store.getState().agentProposal?.options.map(o => o.label)"
 agent-browser --session bay find text "Approve" click

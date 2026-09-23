@@ -67,41 +67,13 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
   }
 
   return (
-    <header className="drag-region flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface-1 pr-3 pl-[80px]">
+    // The project name is centred on the window, not on the space left over: it is the title of
+    // the window, and a title that drifts as the controls either side change width looks broken.
+    <header className="drag-region relative flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface-1 pr-3 pl-[80px]">
       <span className="shrink-0 text-[13px] font-semibold tracking-tight text-ink-0 select-none">
         bay
       </span>
       <span aria-hidden="true" className="h-3 w-px shrink-0 bg-line-strong" />
-
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          aria-label="Project name"
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') commit()
-            if (event.key === 'Escape') {
-              setDraft(name)
-              setEditing(false)
-            }
-          }}
-          className="no-drag h-7 w-56 rounded-sm border border-accent/70 bg-surface-2 px-2 text-[12px] text-ink-0 outline-none"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(name)
-            setEditing(true)
-          }}
-          title="Rename project"
-          className="no-drag t-fast max-w-[40ch] truncate rounded-sm px-1.5 py-1 text-[12px] text-ink-1 hover:bg-surface-3 hover:text-ink-0"
-        >
-          {name}
-        </button>
-      )}
 
       <div className="no-drag flex items-center gap-0.5">
         <IconButton
@@ -121,6 +93,40 @@ export function TopBar({ onExport, onSave, saving }: TopBarProps): ReactNode {
       </div>
 
       <div className="flex-1" />
+      <div className="pointer-events-none absolute inset-x-0 flex justify-center">
+        <div className="pointer-events-auto">
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={draft}
+              aria-label="Project name"
+              onChange={(event) => setDraft(event.target.value)}
+              onBlur={commit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') commit()
+                if (event.key === 'Escape') {
+                  setDraft(name)
+                  setEditing(false)
+                }
+              }}
+              className="no-drag h-7 w-56 rounded-sm border border-accent/70 bg-surface-2 px-2 text-[12px] text-ink-0 outline-none"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(name)
+                setEditing(true)
+              }}
+              title="Rename project"
+              className="no-drag t-fast max-w-[40ch] truncate rounded-sm px-2 py-1 text-[13px] font-medium text-ink-0 hover:bg-surface-3"
+            >
+              {name}
+            </button>
+          )}
+        </div>
+      </div>
+
 
       <IconButton
         label={THEME_LABEL[theme]}

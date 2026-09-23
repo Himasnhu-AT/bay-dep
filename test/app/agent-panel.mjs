@@ -30,7 +30,7 @@ await runProbe(async () => {
     `Boolean([...document.querySelectorAll('[aria-label]')].find((e) => e.getAttribute('aria-label') === 'Agent'))`
   ), true)
   check('the composer is on screen', await evaluate(
-    `Boolean(document.querySelector('textarea[placeholder*="Trim"]'))`
+    `Boolean(document.querySelector('textarea[placeholder*="create"]'))`
   ), true)
 
   console.log('\n── a real claude process, restricted to bay')

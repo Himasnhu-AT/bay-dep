@@ -64,7 +64,7 @@ await runProbe(async () => {
 
   console.log('\n── ask, through the composer')
   const typed = await evaluate(`(() => {
-    const box = document.querySelector('textarea[placeholder*="Trim"]')
+    const box = document.querySelector('textarea[placeholder*="create"]')
     if (!box) return false
     const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
     set.call(box, ${JSON.stringify(
@@ -76,7 +76,7 @@ await runProbe(async () => {
   if (!typed) throw new PreconditionError('the composer is not on screen')
   await sleep(200)
   const clicked = await evaluate(`(() => {
-    const b = [...document.querySelectorAll('button')].find((e) => e.textContent.trim() === 'Send')
+    const b = document.querySelector('button[aria-label="Send"]')
     if (!b || b.disabled) return false
     b.click(); return true
   })()`)

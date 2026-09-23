@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, ChevronRight, Loader2, Square, Wrench } from 'lucide-react'
+import { AlertTriangle, ArrowUp, Bot, Check, ChevronRight, Loader2, Square } from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
-import { Button, EmptyState, Panel, ScrollArea } from '@/components'
+import { Button, Panel, ScrollArea } from '@/components'
+import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
 
@@ -35,6 +36,20 @@ export function AgentPanel(): ReactNode {
   const [draft, setDraft] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
   const bottom = useRef<HTMLDivElement | null>(null)
+  const composer = useRef<HTMLTextAreaElement | null>(null)
+
+  // A starter fills the composer and hands it back to the user — never sends. The prompt is a
+  // draft: which clip, whose name, what style are theirs to add, and sending on click would
+  // start a paid turn from a single mis-click.
+  const pickStarter = (starter: AgentStarter): void => {
+    setDraft(starter.prompt)
+    requestAnimationFrame(() => {
+      const box = composer.current
+      if (!box) return
+      box.focus()
+      box.setSelectionRange(box.value.length, box.value.length)
+    })
+  }
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
@@ -104,11 +119,7 @@ export function AgentPanel(): ReactNode {
     >
       <ScrollArea className="flex-1">
         {log.length === 0 ? (
-          <EmptyState
-            icon={<Wrench aria-hidden="true" className="size-6" />}
-            title="Ask for an edit"
-            hint="It reads the project and proposes a plan. Nothing changes until you approve it."
-          />
+          <Starters onPick={pickStarter} />
         ) : (
           <div className="flex flex-col gap-2 p-2">
             {log.map((entry) => (
@@ -126,38 +137,64 @@ export function AgentPanel(): ReactNode {
         </div>
       )}
 
-      <div className="border-t border-line p-2">
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            // Enter sends, Shift+Enter breaks the line. A multi-line box that needs a mouse to
-            // send is a box people stop using.
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-          rows={3}
-          placeholder="Trim the pauses out of the opening…"
-          className="w-full resize-none rounded border border-line bg-surface-2 px-2 py-1.5 text-[12px] leading-relaxed text-ink-1 outline-none placeholder:text-ink-3 focus:border-accent"
-        />
-        <div className="mt-1.5 flex items-center gap-1.5">
-          {running ? (
-            <Button variant="subtle" icon={<Square className="size-3" />} onClick={stop}>
-              Stop
-            </Button>
-          ) : (
-            <Button onClick={() => void send()} disabled={draft.trim().length === 0}>
-              Send
-            </Button>
-          )}
-          {running && (
-            <span className="flex items-center gap-1 text-[11px] text-ink-2">
-              <Loader2 aria-hidden="true" className="size-3 animate-spin" />
-              working
+      <div className="p-2">
+        {/* One rounded box holding the text and its controls, so the controls read as part of
+            what is being written rather than as a separate toolbar. */}
+        <div className="t-fast rounded-xl border border-line-strong bg-surface-2 focus-within:border-line-hover">
+          <textarea
+            ref={composer}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter sends, Shift+Enter breaks the line. A multi-line box that needs a mouse to
+              // send is a box people stop using.
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                void send()
+              }
+            }}
+            rows={draft.length > 120 ? 6 : 3}
+            placeholder="Describe what you'd like to create…"
+            className="block w-full resize-none bg-transparent px-3 pt-2.5 text-[12.5px] leading-relaxed text-ink-0 outline-none placeholder:text-ink-2"
+          />
+          <div className="flex items-center gap-2 px-2 pt-1 pb-2">
+            <span
+              className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] text-ink-1"
+              title="Claude Code, with bay's tools and nothing else"
+            >
+              <Bot aria-hidden="true" className="size-3.5" />
+              Agent
             </span>
-          )}
+            {running && (
+              <span className="flex items-center gap-1 text-[11px] text-ink-2">
+                <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+                working
+              </span>
+            )}
+            <div className="flex-1" />
+            {running ? (
+              <button
+                type="button"
+                onClick={stop}
+                aria-label="Stop"
+                title="Stop"
+                className="t-fast grid size-7 place-items-center rounded-full bg-surface-4 text-ink-0 hover:bg-line-hover"
+              >
+                <Square aria-hidden="true" className="size-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={draft.trim().length === 0}
+                aria-label="Send"
+                title="Send (Enter)"
+                className="t-fast grid size-7 place-items-center rounded-full bg-accent text-accent-ink hover:bg-accent-hover disabled:bg-surface-4 disabled:text-ink-3"
+              >
+                <ArrowUp aria-hidden="true" className="size-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </Panel>
@@ -165,6 +202,66 @@ export function AgentPanel(): ReactNode {
 }
 
 type Deliver = (text: string) => Promise<void>
+
+/** The empty conversation: a question and a grid of places to start. */
+function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): ReactNode {
+  const [all, setAll] = useState(false)
+  const shown = all ? AGENT_STARTERS : AGENT_STARTERS.slice(0, STARTERS_SHOWN)
+  return (
+    <div className="@container flex min-h-full flex-col justify-center px-3 py-6">
+      <h3 className="mb-3 text-center text-[14px] font-medium text-balance text-ink-0">
+        What do you want to create today?
+      </h3>
+      <div className="grid grid-cols-1 gap-1.5 @[300px]:grid-cols-2">
+        {shown.map((starter) => {
+          const Icon = starter.icon
+          return (
+            <button
+              key={starter.id}
+              type="button"
+              onClick={() => onPick(starter)}
+              className="t-fast flex min-w-0 items-center gap-2 rounded-lg border border-line bg-surface-2 p-1.5 text-left hover:border-line-hover hover:bg-surface-3"
+            >
+              <span
+                aria-hidden="true"
+                className="grid size-7 shrink-0 place-items-center rounded-md text-on-media"
+                style={{
+                  backgroundImage: `linear-gradient(135deg, ${starter.tint[0]}, ${starter.tint[1]})`
+                }}
+              >
+                <Icon className="size-4" />
+              </span>
+              <span className="line-clamp-2 min-w-0 flex-1 text-[12px] leading-snug font-medium text-ink-0">
+                {starter.title}
+              </span>
+              {starter.badge && (
+                <span className="shrink-0 text-[9px] font-semibold tracking-[0.08em] text-accent uppercase">
+                  {starter.badge}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+      {AGENT_STARTERS.length > STARTERS_SHOWN && (
+        <button
+          type="button"
+          onClick={() => setAll((value) => !value)}
+          className="t-fast mx-auto mt-3 flex items-center gap-1 rounded-sm px-2 py-1 text-[11px] text-ink-1 hover:text-ink-0"
+        >
+          {all ? 'Less' : 'More'}
+          <ChevronRight
+            aria-hidden="true"
+            className={`size-3 transition-transform ${all ? '-rotate-90' : ''}`}
+          />
+        </button>
+      )}
+      <p className="mt-4 text-center text-[11px] leading-relaxed text-ink-2">
+        It reads the project and proposes a plan. Nothing changes until you approve it.
+      </p>
+    </div>
+  )
+}
 
 function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): ReactNode {
   switch (entry.kind) {
