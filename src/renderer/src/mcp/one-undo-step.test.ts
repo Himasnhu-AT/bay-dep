@@ -38,6 +38,7 @@ import { findTemplate } from '@shared/templates'
 import type { ImportedAsset } from '@shared/ipc'
 import { useEditor, emptyProject, newId, type EditorStore } from '@/store/editor'
 import { executeToolCall } from './index'
+import { planScript, renderScript } from '@shared/script'
 
 // ---------------------------------------------------------------------------
 // Fixture: V1 holds two abutting clips (a transition's junction), V2 and A1 each hold one clip
@@ -123,6 +124,25 @@ function load(): Fixture {
 }
 
 const state = (): EditorStore => useEditor.getState()
+
+/**
+ * The current script with two clip lines deleted and another track's clip deleted too — an edit
+ * that touches three clips on three tracks, which is exactly the shape one undo step must cover.
+ */
+function scriptWithout(ids: string[]): string {
+  const s = useEditor.getState()
+  const text = renderScript(s.project, s.project.timelines[0]!.id)
+  const lines = text.split('\n')
+  // The rendered id is the shortest unique prefix, and ids made in one tick share a long one —
+  // so match the whole bracketed prefix against each id, never a fixed-length cut.
+  const shown = (line: string): string | null => /^- \[([^\]]+)\]/.exec(line)?.[1] ?? null
+  const kept = lines.filter((line) => {
+    const prefix = shown(line)
+    return !(prefix && ids.some((id) => id.startsWith(prefix)))
+  })
+  assert.equal(lines.length - kept.length, ids.length, `every id must match one clip line:\n${text}`)
+  return kept.join('\n')
+}
 const past = (): number => state().past.length
 
 // ---------------------------------------------------------------------------
@@ -248,6 +268,7 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     }
   ],
   edit_asset: [{ delta: 1, args: () => ({ assetId: ASSET.id, name: 'renamed.mp4' }) }],
+  apply_script: [{ delta: 1, args: (f) => ({ script: scriptWithout([f.a, f.c, f.d]) }) }],
   // Moving the playhead is not an edit, and must not become one.
   set_playhead: [{ delta: 0, args: () => ({ frame: 45 }) }],
   undo: [
@@ -364,6 +385,15 @@ const STORE_CASES: Record<string, StoreCase> = {
     }
   },
   addMarker: { delta: 1, run: () => { state().addMarker(30, 'Here') } },
+  applyScript: {
+    delta: 1,
+    run: (f) => {
+      const tl = state().project.timelines[0]!.id
+      const planned = planScript(state().project, tl, scriptWithout([f.a, f.c, f.d]))
+      assert.ok('diff' in planned, 'error' in planned ? planned.error : '')
+      state().applyScript(tl, planned.diff.operations)
+    }
+  },
   moveMarker: {
     delta: 1,
     run: () => {
