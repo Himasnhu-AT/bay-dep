@@ -42,9 +42,10 @@ mac:
   # that explicit — without it electron-builder hunts the keychain and silently picks whatever
   # it finds, so a build's signature would depend on which machine ran it.
   #
-  # To turn it on later: set `identity` to the Developer ID Application name, drop this line,
-  # keep `hardenedRuntime: true`, and add notarisation with an Apple ID and app-specific
-  # password. The entitlements file is already written for a signed hardened-runtime build.
+  # To sign a build: `BAY_SIGN_IDENTITY="Developer ID Application: …" pnpm release:signed`.
+  # script/release-signed names the identity per build, notarises when Apple credentials are
+  # in the environment, verifies the result, and says plainly when it is signed but not
+  # notarised. The entitlements file is written for exactly that hardened-runtime build.
   identity: null
   hardenedRuntime: true
   gatekeeperAssess: false

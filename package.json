@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --import ./src/test-hooks.mjs --test --test-timeout=30000 \"src/**/*.test.ts\"",
     "bundle": "pnpm build && electron-builder --dir",
-    "release": "pnpm build && electron-builder"
+    "release": "pnpm build && electron-builder",
+    "release:signed": "script/release-signed"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.278",

@@ -1,0 +1,65 @@
+#!/bin/sh
+# A signed (and, when credentials are present, notarised) release. Opt-in, never the default.
+#
+# `electron-builder.yml` sets `identity: null` on purpose: without it electron-builder hunts the
+# keychain and silently signs with whatever it finds, so a build's signature would depend on
+# which machine ran it. This script is the one place that turns signing on, and only with an
+# identity you name:
+#
+#   BAY_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" script/release-signed
+#   BAY_SIGN_IDENTITY=… script/release-signed --dir      # signed .app only, no DMG
+#
+# List the identities this keychain can sign with:
+#
+#   security find-identity -v -p codesigning
+#
+# Notarisation runs only when one of electron-builder's credential sets is in the environment
+# (it reads them itself; nothing here stores or prints them):
+#
+#   APPLE_API_KEY + APPLE_API_KEY_ID + APPLE_API_ISSUER          (recommended)
+#   APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID
+#   APPLE_KEYCHAIN + APPLE_KEYCHAIN_PROFILE
+#
+# Without them the result is signed but not notarised, and the script says so rather than
+# letting a signed build pass for a distributable one — Gatekeeper still warns on a download.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$here"
+
+if [ -z "${BAY_SIGN_IDENTITY:-}" ]; then
+  echo "release-signed: set BAY_SIGN_IDENTITY to a Developer ID Application identity." >&2
+  echo "  available here:" >&2
+  security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | sed 's/^/    /' >&2 || true
+  exit 2
+fi
+
+# electron-builder wants the name without the "Developer ID Application: " prefix.
+identity=${BAY_SIGN_IDENTITY#Developer ID Application: }
+
+notarize=false
+if { [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; } ||
+   { [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; } ||
+   { [ -n "${APPLE_KEYCHAIN:-}" ] && [ -n "${APPLE_KEYCHAIN_PROFILE:-}" ]; }; then
+  notarize=true
+fi
+
+pnpm build
+./node_modules/.bin/electron-builder --mac \
+  -c.mac.identity="$identity" \
+  -c.mac.notarize="$notarize" \
+  "$@"
+
+app=$(find dist -maxdepth 3 -name 'bay.app' -type d | head -1)
+if [ -n "$app" ]; then
+  echo "▶ verifying $app"
+  codesign --verify --deep --strict --verbose=2 "$app"
+  codesign -dv "$app" 2>&1 | grep -E "Authority=Developer ID|TeamIdentifier|flags=" || true
+fi
+
+if [ "$notarize" = false ]; then
+  echo "!  signed, NOT notarised: no Apple credentials in the environment (see the header)."
+  echo "   A downloaded copy of this build will still be blocked by Gatekeeper on first run."
+else
+  echo "✔ signed and notarised"
+fi
