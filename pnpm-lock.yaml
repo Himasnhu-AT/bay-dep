@@ -13,17 +13,17 @@ importers:
         version: 0.3.280(@anthropic-ai/sdk@0.127.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.6.5))(zod@4.6.5)
       '@electron-toolkit/preload':
         specifier: ^3.0.2
-        version: 3.0.2(electron@41.10.7(supports-color@7.2.0))
+        version: 3.0.2(electron@44.4.3(supports-color@7.2.0))
       '@electron-toolkit/utils':
         specifier: ^4.0.0
-        version: 4.0.0(electron@41.10.7(supports-color@7.2.0))
+        version: 4.0.0(electron@44.4.3(supports-color@7.2.0))
       ffmpeg-ffprobe-static:
         specifier: ^6.1.2-rc.1
         version: 6.1.2-rc.1(supports-color@7.2.0)
     devDependencies:
       '@electron-toolkit/tsconfig':
         specifier: ^2.0.0
-        version: 2.0.0(@types/node@24.13.4)
+        version: 2.0.0(@types/node@24.13.6)
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -32,10 +32,10 @@ importers:
         version: 5.3.0
       '@tailwindcss/vite':
         specifier: ^4.1.0
-        version: 4.3.3(vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0))
+        version: 4.3.3(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0))
       '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.4
+        specifier: ^24.13.6
+        version: 24.13.6
       '@types/react':
         specifier: ^19.2.0
         version: 19.3.0
@@ -44,19 +44,19 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: ^5.0.0
-        version: 5.2.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0))
+        version: 5.2.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0))
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
       electron:
-        specifier: 41.10.7
-        version: 41.10.7(supports-color@7.2.0)
+        specifier: 44.4.3
+        version: 44.4.3(supports-color@7.2.0)
       electron-builder:
         specifier: ^26.0.0
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@7.2.0)
       electron-vite:
         specifier: ^5.0.0
-        version: 5.0.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0))
+        version: 5.0.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0))
       lucide-react:
         specifier: ^1.47.0
         version: 1.47.0(react@19.3.0)
@@ -89,7 +89,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^7.3.6
-        version: 7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0)
+        version: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0)
       zustand:
         specifier: ^5.0.8
         version: 5.0.15(@types/react@19.3.0)(react@19.3.0)
@@ -999,6 +999,9 @@ packages:
   '@types/node@24.13.4':
     resolution: {integrity: sha512-YJ7EqCstVTzIr0fMr7qul/977en+pQHrfmuKIo6Zr9i75Be21dr3MovcfvGtyvi2HAUrRerWps5sMO9I7WaxDw==}
 
+  '@types/node@24.13.6':
+    resolution: {integrity: sha512-SGrw/h3KPFshy3OE6ZL53LMBG5vGQQ8/gIpiqz/kRZhPJ7HgwCEs8LBuNtWLa8dvGZVpSF7+Bf+c11HUrCb/yg==}
+
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
     peerDependencies:
@@ -1417,8 +1420,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@41.10.7:
-    resolution: {integrity: sha512-AqIiefddlf5i+HYCGatr8VlBuEbWJpad4/yloBFYcMB2r57j7xhW1ogiJ+BfA5kxQyfmSs5yjwy54Me+wJn1jw==}
+  electron@44.4.3:
+    resolution: {integrity: sha512-LTpSFTB40qVCXIX5xMo+cgHI/Jjkbjw7VpB26PccEbroqOn72LBukeaDwPVo1fBYzSzs0c9iPuAucFCO7Tw81Q==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -2998,17 +3001,17 @@ snapshots:
 
   '@electron-internal/extract-zip@1.0.5': {}
 
-  '@electron-toolkit/preload@3.0.2(electron@41.10.7(supports-color@7.2.0))':
+  '@electron-toolkit/preload@3.0.2(electron@44.4.3(supports-color@7.2.0))':
     dependencies:
-      electron: 41.10.7(supports-color@7.2.0)
+      electron: 44.4.3(supports-color@7.2.0)
 
-  '@electron-toolkit/tsconfig@2.0.0(@types/node@24.13.4)':
+  '@electron-toolkit/tsconfig@2.0.0(@types/node@24.13.6)':
     dependencies:
-      '@types/node': 24.13.4
+      '@types/node': 24.13.6
 
-  '@electron-toolkit/utils@4.0.0(electron@41.10.7(supports-color@7.2.0))':
+  '@electron-toolkit/utils@4.0.0(electron@44.4.3(supports-color@7.2.0))':
     dependencies:
-      electron: 41.10.7(supports-color@7.2.0)
+      electron: 44.4.3(supports-color@7.2.0)
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -3499,12 +3502,12 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.3
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.3
 
-  '@tailwindcss/vite@4.3.3(vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0))':
+  '@tailwindcss/vite@4.3.3(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0))':
     dependencies:
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
       tailwindcss: 4.3.3
-      vite: 7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0)
+      vite: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0)
 
   '@types/babel__core@7.20.5':
     dependencies:
@@ -3570,6 +3573,10 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
+  '@types/node@24.13.6':
+    dependencies:
+      undici-types: 7.18.2
+
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
       '@types/react': 19.3.0
@@ -3588,7 +3595,7 @@ snapshots:
 
   '@ungap/structured-clone@1.4.0': {}
 
-  '@vitejs/plugin-react@5.2.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0))':
+  '@vitejs/plugin-react@5.2.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0))':
     dependencies:
       '@babel/core': 7.29.7(supports-color@7.2.0)
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7(supports-color@7.2.0))
@@ -3596,7 +3603,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-rc.3
       '@types/babel__core': 7.20.5
       react-refresh: 0.18.0
-      vite: 7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0)
+      vite: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -4030,7 +4037,7 @@ snapshots:
 
   electron-to-chromium@1.5.425: {}
 
-  electron-vite@5.0.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0)):
+  electron-vite@5.0.0(supports-color@7.2.0)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0)):
     dependencies:
       '@babel/core': 7.29.7(supports-color@7.2.0)
       '@babel/plugin-transform-arrow-functions': 7.29.7(@babel/core@7.29.7(supports-color@7.2.0))
@@ -4038,7 +4045,7 @@ snapshots:
       esbuild: 0.25.12
       magic-string: 0.30.21
       picocolors: 1.1.1
-      vite: 7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0)
+      vite: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -4054,11 +4061,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@41.10.7(supports-color@7.2.0):
+  electron@44.4.3(supports-color@7.2.0):
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0(supports-color@7.2.0)
-      '@types/node': 24.13.4
+      '@types/node': 24.13.6
     transitivePeerDependencies:
       - supports-color
 
@@ -5697,7 +5704,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  vite@7.3.6(@types/node@24.13.4)(jiti@2.7.0)(lightningcss@1.32.0):
+  vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0):
     dependencies:
       esbuild: 0.28.2
       fdir: 6.5.0(picomatch@4.0.7)
@@ -5706,7 +5713,7 @@ snapshots:
       rollup: 4.63.1
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 24.13.4
+      '@types/node': 24.13.6
       fsevents: 2.3.3
       jiti: 2.7.0
       lightningcss: 1.32.0
