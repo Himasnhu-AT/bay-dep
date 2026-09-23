@@ -5,9 +5,13 @@ reached the screen. They are a second gate, separate from `pnpm test`, because t
 window, a real GPU, a real decoder and a built `out/` — none of which exist under `node --test`.
 
 ```bash
-pnpm build
+./run.sh              # build and run exactly one instance with CDP on 9222
 node test/app/<probe>.mjs
 ```
+
+**New app-level checks are done with `agent-browser`, not by adding probes here.** The guide is
+[`docs/testing.md`](../../docs/testing.md) — use `--session bay`, and read its traps first. These
+probes remain the scripted regression gate.
 
 ## Why these exist
 

@@ -11,7 +11,9 @@
  *   `requestAnimationFrame`, so the clock freezes and the preview never updates. It is
  *   indistinguishable from a dead engine.
  * - **The probe surface is opt-in.** `window.bayEngine` only exists when `bay.debug` is set
- *   in localStorage, so the flag goes in and the page reloads before the engine mounts.
+ *   in localStorage, so the flag goes in and the page reloads before the engine mounts — once.
+ *   A page that already has the handle is not reloaded: an unconditional reload flashed the
+ *   whole editor on every probe run.
  */
 
 export const PROBE_FLAG = 'bay.debug'
@@ -116,10 +118,18 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
     return result.result.value
   }
 
-  // The flag has to be set before the engine mounts, so it goes in and the page reloads.
-  await evaluate(`localStorage.setItem(${JSON.stringify(PROBE_FLAG)}, '1')`)
-  await cdp.send('Page.reload', {})
-  await new Promise((r) => setTimeout(r, 2500))
+  // The flag has to be set before the engine mounts, so a page without the probe handle gets the
+  // flag and one reload. A page that already has it is left alone: this used to reload
+  // unconditionally, so every probe run flashed the whole editor window — reported as "the
+  // screen flickers every time the agent count goes up", because the probes also connect. It
+  // was never the count, and never a tool call; a marker set in the page survived a tool call
+  // and an agent-browser connect, and did not survive `attach()`.
+  const ready = await evaluate(`Boolean(window.bayEngine) && localStorage.getItem(${JSON.stringify(PROBE_FLAG)}) === '1'`)
+  if (!ready) {
+    await evaluate(`localStorage.setItem(${JSON.stringify(PROBE_FLAG)}, '1')`)
+    await cdp.send('Page.reload', {})
+    await new Promise((r) => setTimeout(r, 2500))
+  }
   await cdp.send('Page.bringToFront', {})
   await evaluate(`(async () => {
     for (let i = 0; i < 120; i++) {

@@ -82,16 +82,28 @@ changes nothing in a process that is already up. `./run.sh` rebuilds *and* repla
 instance; use it, and read its first line, because a failed typecheck ends it before anything
 launches and a probe run against no app reports `CANNOT MEASURE`, which is not a result.
 
-**Drive the running app with `agent-browser` over CDP**, not with new hand-written CDP scripts:
-`agent-browser connect 9222`, then `snapshot -i`, `click @ref`, `fill`, `screenshot`, `eval`.
-Two traps, both hit:
+**To test the running app, use `agent-browser` — and read [`docs/testing.md`](docs/testing.md)
+first.** It is the testing guide: the four gates and what each one proves, how to connect, drive,
+read state and clean up, the traps, and recipes. The rules that have already cost the most:
 
-- **It follows new targets.** Placing an HTML composition opens a hidden render window, and
-  agent-browser switches to it — a screenshot then shows a blank 3840×2160 page, which reads as
-  "the editor is broken". `agent-browser tab` lists targets; `agent-browser tab t1` goes back.
-- **It cannot hold a modifier through a drag.** Alt-drag (slip/slide/roll) has to be exercised
-  by dispatching `PointerEvent`s with `altKey: true` from `eval`. Say so when you report it — that
-  tests the handler, not the OS delivering the modifier.
+- **Always `agent-browser --session bay …`.** The default session is shared by every process on
+  the machine; another agent's `open <url>` once navigated bay's editor to a different website
+  through it, and every tool call then timed out. Check `agent-browser --session bay tab` shows
+  bay's `index.html` before trusting anything.
+- **It follows new targets.** Placing an HTML composition opens a hidden render window and
+  agent-browser switches to it — a blank 3840×2160 screenshot. `tab t1` goes back.
+- **It cannot hold a modifier through a drag** (Alt-drag trims): dispatch `PointerEvent`s with
+  `altKey: true` from `eval`, and say that is what you tested.
+- **`record` does not work on Electron.** Sample transient things in the page, with a positive
+  control proving the sampler can see a change.
+
+**A probe that reloads the page makes the window flash, and that was the "flicker".** The report
+was "the screen flickers every time the agent count goes up". It was not the count (a text node
+updated by a 10-second poll) and not tool calls: a marker set in the page survived a socket tool
+call and an agent-browser connect, and did not survive `test/app/cdp.mjs`'s `attach()`, which
+reloaded the editor on every probe run to set the debug flag. The probes also connect, so the
+count moved with them. `attach()` now reloads only when the debug handle is missing. When a
+symptom correlates with a counter, find what else moves the counter.
 
 A value read through a store snapshot taken *before* an action is the old value:
 `const s = getState(); s.undo(); s.project` reports the state before the undo. Re-read.
