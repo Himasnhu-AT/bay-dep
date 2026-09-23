@@ -248,9 +248,20 @@ export function Composer({
     return [...commandRows, ...skillRows]
   })()
 
-  const open = rows.length > 0
-  const active = open ? Math.min(highlight, rows.length - 1) : 0
+  // Open whenever a trigger is live, even with nothing to offer: typing @ or / should always
+  // answer, and a menu that vanishes on a query with no matches reads as "the feature broke".
+  const open = menuTrigger !== null
+  const active = rows.length > 0 ? Math.min(highlight, rows.length - 1) : 0
   useEffect(() => setHighlight(0), [menuTrigger?.char, menuTrigger?.query])
+  // Keep the highlighted row visible as the arrows move it past the menu's edge.
+  useEffect(() => {
+    if (!open || rows.length === 0) return
+    const row = document.getElementById(`${listId}-${active}`)
+    // The first row of a group brings its heading with it, or wrapping back to the top would
+    // show "New conversation" with the "Commands" heading scrolled away above it.
+    const target = row?.previousElementSibling?.tagName === 'P' ? row.parentElement : row
+    target?.scrollIntoView({ block: 'nearest' })
+  }, [open, active, rows.length, listId])
 
   const syncCaret = (): void => setCaret(textareaRef.current?.selectionStart ?? 0)
 
@@ -284,6 +295,13 @@ export function Composer({
           aria-label={menuTrigger?.char === '@' ? 'Pin to this conversation' : 'Commands and skills'}
           className="absolute inset-x-2 bottom-full mb-1 max-h-72 overflow-y-auto overscroll-contain rounded-lg border border-line-strong bg-surface-2 py-1 shadow-pop"
         >
+          {rows.length === 0 && (
+            <p className="px-3 py-2 text-[12px] text-ink-2">
+              {menuTrigger?.char === '@'
+                ? `Nothing to pin matches “${menuTrigger.query}”.`
+                : `No command or skill matches “${menuTrigger?.query ?? ''}”.`}
+            </p>
+          )}
           {rows.map((row, index) => {
             const Icon = row.icon
             const firstOfGroup = index === 0 || rows[index - 1]?.group !== row.group
@@ -389,7 +407,7 @@ export function Composer({
           aria-expanded={open}
           aria-controls={open ? listId : undefined}
           aria-autocomplete="list"
-          aria-activedescendant={open ? `${listId}-${active}` : undefined}
+          aria-activedescendant={open && rows.length > 0 ? `${listId}-${active}` : undefined}
           onChange={(event) => {
             setDraft(event.target.value)
             setCaret(event.target.selectionStart)
@@ -399,17 +417,17 @@ export function Composer({
           onClick={syncCaret}
           onKeyDown={(event) => {
             if (open) {
-              if (event.key === 'ArrowDown') {
+              if (event.key === 'ArrowDown' && rows.length > 0) {
                 event.preventDefault()
                 setHighlight((active + 1) % rows.length)
                 return
               }
-              if (event.key === 'ArrowUp') {
+              if (event.key === 'ArrowUp' && rows.length > 0) {
                 event.preventDefault()
                 setHighlight((active - 1 + rows.length) % rows.length)
                 return
               }
-              if (event.key === 'Enter' || event.key === 'Tab') {
+              if ((event.key === 'Enter' || event.key === 'Tab') && rows.length > 0) {
                 event.preventDefault()
                 rows[active]?.choose()
                 return

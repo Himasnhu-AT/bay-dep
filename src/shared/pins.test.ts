@@ -88,9 +88,11 @@ test('@ opens a mention only at a word start, and ends at a space', () => {
   assert.deepEqual(activeTrigger('trim @interview clip', 9), { char: '@', start: 5, query: 'int' })
 })
 
-test('/ is a command only at the very start of the message', () => {
+test('/ opens the menu wherever a word starts, but not inside one', () => {
   assert.deepEqual(activeTrigger('/cap', 4), { char: '/', start: 0, query: 'cap' })
-  assert.equal(activeTrigger('cut the in /out', 15), null)
+  // Mid-message, after a space: typing / always shows what there is.
+  assert.deepEqual(activeTrigger('then /cap', 9), { char: '/', start: 5, query: 'cap' })
+  // Positive control for the other side: a slash inside a word is prose.
   assert.equal(activeTrigger('use in/out', 10), null)
 })
 

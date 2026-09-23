@@ -130,10 +130,10 @@ export function matchMentions(
 /**
  * The `@` or `/` the caret is in, if any: the trigger character's index and the text after it.
  *
- * A trigger counts only at the start of the text or after whitespace, so an email address or
- * "2@3" never opens the menu, and only until the first space — `@interview clip` is a mention of
- * "interview" followed by the word "clip". `/` counts only at the very start of the message,
- * because a slash mid-sentence ("in/out") is prose.
+ * A trigger counts at the start of the text or after whitespace — anywhere a new word begins —
+ * so typing `@` or `/` always opens the menu, while an email address, "2@3" or "in/out" (no
+ * space before the character) never does. It lasts until the first space: `@interview clip` is a
+ * mention of "interview" followed by the word "clip".
  */
 export function activeTrigger(
   text: string,
@@ -144,7 +144,6 @@ export function activeTrigger(
   if (!match) return null
   const char = match[2] as '@' | '/'
   const start = before.length - match[3]!.length - 1
-  if (char === '/' && start !== 0) return null
   return { char, start, query: match[3]! }
 }
 
