@@ -12,7 +12,7 @@
  *
  * Also measures the draw's cost with and without a grade at 1080x1920 and 2160x3840.
  *
- * Needs media it makes itself (MEDIA dir with grey.mp4, bars.mp4, dot.png — see the report).
+ * Makes its own specimens (grey.mp4, bars.mp4, dot.png) under ~/.bay-probe-media/grade, or uses MEDIA.
  * Renders through `renderFrame` with a project built in the page; the MCP checks edit the open
  * project and the harness puts it back. Nothing saves.
  */
@@ -27,9 +27,20 @@ import { grainSeed, grainValue, evalCurve, curveKnots } from '../../src/shared/g
 
 const run = promisify(execFile)
 const FFMPEG = process.env.FFMPEG ??
-  'node_modules/.pnpm/ffmpeg-ffprobe-static@6.1.2-rc.1_supports-color@7.2.0/node_modules/ffmpeg-ffprobe-static/ffmpeg'
-const MEDIA = process.env.MEDIA
-if (!MEDIA) throw new Error('set MEDIA to the folder holding grey.mp4, bars.mp4 and dot.png')
+  'node_modules/ffmpeg-ffprobe-static/ffmpeg'
+// The specimens are made here unless MEDIA names a folder that already holds them: a probe that
+// needs files nobody can regenerate is a probe nobody else can run.
+const MEDIA = process.env.MEDIA ?? join(homedir(), '.bay-probe-media', 'grade')
+await mkdir(MEDIA, { recursive: true })
+const specimens = [
+  ['grey.mp4', ['-f', 'lavfi', '-i', 'color=c=0x808080:s=1080x1920:r=30:d=5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']],
+  ['bars.mp4', ['-f', 'lavfi', '-i', 'smptehdbars=s=1080x1920:r=30:d=5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']],
+  ['dot.png', ['-f', 'lavfi', '-i', "color=c=black:s=1080x1920,geq=lum='if(lt(hypot(X-540,Y-960),24),255,0)':cb=128:cr=128", '-frames:v', '1']]
+]
+for (const [name, args] of specimens) {
+  const out = join(MEDIA, name)
+  if (!(await readFile(out).then(() => true, () => false))) await run(FFMPEG, ['-v', 'error', '-y', ...args, out])
+}
 
 const { evaluate, close } = await attach()
 
