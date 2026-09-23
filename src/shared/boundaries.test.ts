@@ -37,7 +37,9 @@ for (const config of ['tsconfig.node.json', 'tsconfig.web.json']) {
   const paths = JSON.parse(readFileSync(config, 'utf8')).compilerOptions?.paths ?? {}
   for (const [pattern, targets] of Object.entries(paths as Record<string, string[]>)) {
     const target = targets[0]
-    if (pattern.endsWith('/*') && target?.endsWith('/*')) ALIASES[pattern.slice(0, -1)] = target.slice(0, -1)
+    // `./src/shared/*` and `src/shared/*` are one directory; TypeScript 7 requires the first
+    // (no `baseUrl`), commits from before it hold the second.
+    if (pattern.endsWith('/*') && target?.endsWith('/*')) ALIASES[pattern.slice(0, -1)] = target.slice(0, -1).replace(/^\.\//, '')
   }
 }
 

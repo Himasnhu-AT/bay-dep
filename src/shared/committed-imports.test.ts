@@ -26,7 +26,9 @@ const aliasesAt = (commit: string): Aliases => {
     for (const [pattern, targets] of Object.entries(paths as Record<string, string[]>)) {
       const target = targets[0]
       if (!pattern.endsWith('/*') || !target?.endsWith('/*')) continue
-      aliases[pattern.slice(0, -1)] = target.slice(0, -1)
+      // `./src/shared/*` (TypeScript 7, no `baseUrl`) and `src/shared/*` (older commits) are
+      // the same directory.
+      aliases[pattern.slice(0, -1)] = target.slice(0, -1).replace(/^\.\//, '')
     }
   }
   return aliases
