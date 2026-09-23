@@ -16,8 +16,10 @@ import { socketPathIn } from '../mcp/socket-path'
 import { CliAgentRuntime } from './cli'
 import { findClaude, notFoundMessage, searchDirs } from './locate'
 import { AGENT_SYSTEM_PROMPT } from './prompt'
+import { chooseRuntime, RUNTIME_ENV, type HostedAgentRuntime } from './runtime'
+import { bundledExecutable, SdkAgentRuntime } from './sdk'
 
-let runtime: CliAgentRuntime | null = null
+let runtime: HostedAgentRuntime | null = null
 let offEvents: (() => void) | null = null
 
 /**
@@ -48,22 +50,36 @@ export async function startAgent(): Promise<
 > {
   if (runtime) return { ok: true, id: runtime.id }
 
+  // The CLI unless `BAY_AGENT_RUNTIME=sdk`. Read per start rather than at import, so a
+  // disposed conversation can be restarted under the other runtime without relaunching.
+  const choice = chooseRuntime(process.env[RUNTIME_ENV])
+  if (!choice.ok) return { ok: false, error: choice.error }
+
+  // The SDK runtime prefers the Claude Code binary the SDK ships, pinned to the version it
+  // was built against. Only when there is none does it need the user's own.
+  const bundled = choice.kind === 'sdk' ? bundledExecutable() : null
+
   // Resolved before spawning rather than relying on PATH. A GUI-launched app inherits
   // `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else, so `spawn('claude')` fails with ENOENT on
   // a machine where `claude` works perfectly in a terminal — and the failure names the binary,
   // which sends everyone to check whether it is installed.
-  const located = await findClaude()
-  if (!located) return { ok: false, error: notFoundMessage((await searchDirs()).length) }
+  const located = bundled ? null : await findClaude()
+  const executable = bundled ?? located?.path
+  if (!executable) return { ok: false, error: notFoundMessage((await searchDirs()).length) }
+
+  const base = {
+    // `out/main/agent/…` at runtime, so the proxy is two levels up beside main's own bundle.
+    proxyPath: join(__dirname, 'mcp', 'index.js'),
+    socketPath: socketPathIn(app.getPath('userData')),
+    cwd: workspace(),
+    systemPrompt: AGENT_SYSTEM_PROMPT
+  }
 
   try {
-    const created = new CliAgentRuntime({
-      binary: located.path,
-      // `out/main/agent/…` at runtime, so the proxy is two levels up beside main's own bundle.
-      proxyPath: join(__dirname, 'mcp', 'index.js'),
-      socketPath: socketPathIn(app.getPath('userData')),
-      cwd: workspace(),
-      systemPrompt: AGENT_SYSTEM_PROMPT
-    })
+    const created: HostedAgentRuntime =
+      choice.kind === 'sdk'
+        ? new SdkAgentRuntime({ ...base, executable })
+        : new CliAgentRuntime({ ...base, binary: executable })
     offEvents = created.onEvent(broadcast)
     runtime = created
     return { ok: true, id: created.id }

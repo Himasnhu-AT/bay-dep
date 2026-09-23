@@ -127,9 +127,7 @@ export function toAgentEvents(message: StreamMessage, runId: string): AgentEvent
         type: 'done',
         runId,
         reason: isError ? 'error' : 'complete',
-        ...(isError
-          ? { message: asString(message['result']) ?? subtype ?? 'The run failed.' }
-          : {})
+        ...(isError ? { message: failureText(message) ?? subtype ?? 'The run failed.' } : {})
       }
     ]
   }
@@ -137,6 +135,25 @@ export function toAgentEvents(message: StreamMessage, runId: string): AgentEvent
   // Everything else — `system`/init, `system`/status, `rate_limit_event` — is real information
   // about the run and none of it belongs in a conversation the user is reading.
   return []
+}
+
+/**
+ * Why a run failed, in the words the run itself used.
+ *
+ * Error results do not carry `result` — the error subtypes (`error_during_execution`,
+ * `error_max_turns`, …) put their reasons in an `errors` array instead, which is the shape the
+ * Agent SDK types declare for them. Reading only `result` reduced every such failure to its
+ * subtype name, which tells the user a category and not a cause.
+ */
+function failureText(message: StreamMessage): string | null {
+  const result = asString(message['result'])
+  if (result) return result
+  const errors = message['errors']
+  if (Array.isArray(errors)) {
+    const text = errors.filter((e): e is string => typeof e === 'string' && e.length > 0)
+    if (text.length > 0) return text.join('\n')
+  }
+  return null
 }
 
 /**

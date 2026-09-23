@@ -20,6 +20,11 @@ files:
 # Electron's ABI.
 asarUnpack:
   - node_modules/ffmpeg-ffprobe-static/**
+  # The same reason for the Agent SDK's Claude Code binary (`BAY_AGENT_RUNTIME=sdk`), which
+  # ships in a per-platform optional dependency. `bundledExecutable()` in src/main/agent/sdk.ts
+  # rewrites the resolved `app.asar/…` path to `app.asar.unpacked/…`, and finds nothing unless
+  # this entry put the file there.
+  - node_modules/@anthropic-ai/claude-agent-sdk-*/**
 
 # bay is offline software. No update feed is configured, and none should be: an editor that
 # phones a server on launch is exactly what this is not.

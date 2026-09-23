@@ -234,3 +234,20 @@ test('a failed result with no text still says something', () => {
   const [event] = events(line)
   assert.equal((event as { message: string }).message, 'error_max_turns')
 })
+
+test('a failed result carries its errors when it has no result text', () => {
+  // The error subtypes put their reasons in `errors`, not `result` — the shape the Agent SDK
+  // declares for `SDKResultError`. Reading only `result` reported the subtype name instead.
+  const line = JSON.stringify({
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    errors: ['MCP server "bay" failed to start', 'no tools available']
+  })
+  const [event] = events(line)
+  assert.equal((event as { reason: string }).reason, 'error')
+  assert.equal(
+    (event as { message: string }).message,
+    'MCP server "bay" failed to start\nno tools available'
+  )
+})
