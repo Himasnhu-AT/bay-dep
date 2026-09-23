@@ -11,6 +11,7 @@
 import type { Asset, Project } from './project'
 import type { AgentEntry, AgentEvent } from './agent'
 import type { TranscriptSegment } from './transcribe'
+import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
@@ -310,6 +311,11 @@ export interface BayApi {
     filmstrip(request: FilmstripRequest): Promise<string[]>
     /** Peak pairs, normalised 0..1, for drawing a waveform. */
     waveform(assetId: string, path: string, buckets: number): Promise<number[]>
+    /**
+     * Beat grid of a media file's audio, analysed on this machine (`media/beats.ts`) and cached
+     * by content. Times are in source microseconds. `ok: false` carries ffmpeg's own words.
+     */
+    beats(path: string, options?: { beatsPerBar?: number }): Promise<{ ok: true; grid: BeatGrid } | { ok: false; error: string }>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
   }
@@ -537,6 +543,7 @@ export const IPC = {
   whisperProgress: 'whisper:progress',
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
+  mediaBeats: 'media:beats',
   mediaReveal: 'media:reveal',
 
   compositionInspect: 'composition:inspect',

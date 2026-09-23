@@ -201,6 +201,17 @@ imports a `.brf` file as text and never runs it; `lib/brfImport.ts` probes it in
 Every example in `bay://guide/brf` and the worked-edits guide is compiled and run on every frame
 by `brf-code.test.ts`.
 
+**Beats are analysed in main, kept on the asset in source time, and mapped once**
+(`media/beat-analysis.ts`, `@shared/beats`, `detect_beats`). Spectral flux → autocorrelation picks
+a period family → the octave is chosen by what sits halfway between beats (broadband *and* kick
+band, because after log compression a quiet hat rises in as many bins as a kick) → Ellis's DP →
+bar phase from the kick band only when one position clearly wins → drop-outs as missing beats on
+the continued grid. `beatFramesForItem` is the one mapping onto the timeline; the tool's frames and
+the timeline's snapping (`lib/snap.ts`, which also snaps to markers now) both read it. Measured on
+a real score its eighths are *harder* than its weaker beats, so by onsets alone it is a 220 pulse;
+it reads 110 only because 220 is past the 215 search ceiling, and a pulse over 180 needs the kick
+band to agree. The octave is the fragile part; the tests pair every octave case with its opposite.
+
 **The preview's composition pool answers with the latest decoded frame, not nothing**
 (`CompositionPool({ live: true })`). A composition frame is a 40-80ms capture in main, and every frame
 of a playing composition is a new moment, so an exact-or-nothing pool drew compositions only while

@@ -15,6 +15,7 @@
 
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
+import type { BeatGrid } from './beats'
 
 export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf'
 export type TrackKind = 'video' | 'audio'
@@ -88,6 +89,12 @@ export interface Asset {
    * duration, size and vars are derived from it into the fields above when it is written.
    */
   brfCode?: string
+  /**
+   * The source's beat grid (`@shared/beats`), once `detect_beats` has analysed it. In source
+   * time, so it is a property of the file and every placement maps it through its own in-point
+   * and speed. Derived data like the poster: written silently, and recomputable from the file.
+   */
+  beats?: BeatGrid
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string

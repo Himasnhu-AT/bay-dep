@@ -11,7 +11,8 @@ export const tool: ToolSpec = {
     'laugh", "chapter 2", "check this cut"), to leave the user a point to review, or to record ' +
     'beats you found before editing to them. Markers belong to the program, not to a clip: ' +
     'they stay put when clips are moved or replaced, and move with time only when time itself ' +
-    'is removed (remove_range) or the frame rate changes.',
+    'is removed (remove_range) or the frame rate changes. To place many at once — the beats ' +
+    'or bars detect_beats found — pass `markers` instead: one call, one undo step.',
   category: 'write',
   readOnly: false,
   dryRunnable: true,
@@ -23,7 +24,14 @@ export const tool: ToolSpec = {
         type: 'string',
         description: 'What it says. Omit it and bay numbers it ("Marker 3").'
       },
-      color: { type: 'string', description: 'Hex, such as "#F5A524". Omit for the default.' }
+      color: { type: 'string', description: 'Hex, such as "#F5A524". Omit for the default.' },
+      markers: {
+        type: 'array',
+        items: { type: 'object' },
+        description:
+          '[{ frame, label?, color? }] — several markers in one step, in place of frame/label/color. ' +
+          'detect_beats returns this list ready to pass.'
+      }
     }
   }
 }

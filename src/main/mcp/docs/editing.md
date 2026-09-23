@@ -152,6 +152,25 @@ It moves only when time itself does: `remove_range` slides markers after the cut
 footage, and one inside the removed span lands on the cut rather than vanishing. `remove_marker`
 takes one away.
 
+## Cutting to music
+
+`detect_beats` with the music's `itemId` finds its tempo, every beat, the first beat of each bar
+(`downbeats`) and where it drops out — all in timeline frames for that clip, so a beat is a frame
+you can pass straight to `split_at`, `trim_item`, `place_asset` or `edit_item`. It runs on this Mac
+and is kept on the file, so asking again is free. Land ordinary cuts on beats and the big ones on
+downbeats; `framesPerBeat` tells you how far a nudge of one beat is. A drop-out of kind
+`percussion` starts on the first beat the drums *do not* play — that frame is "the drop", where a
+reveal lands; `silence` is where the level itself falls away.
+
+`markers: "downbeats"` (or `"beats"`) also returns a list ready for `add_marker`'s `markers`, which
+places them all in one undo step so the user can see the grid. Once a file has been analysed, a
+drag or trim in the timeline snaps to its beats and to every marker.
+
+`downbeats` is empty when no beat of the bar is clearly accented; do not invent one. Low
+`confidence` (under ~0.3) means there is no steady beat — say so rather than cutting to a guess.
+The tempo can come back at half or double what a musician would count when the eighth notes are
+played as hard as the beats; if the user names a tempo, check `bpm` against it.
+
 ## Many clips at once: the script
 
 When an edit touches many clips — tightening a whole cut, reordering shots, rewording every

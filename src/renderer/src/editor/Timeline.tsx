@@ -8,6 +8,7 @@ import { useDrag } from '@/lib/useDrag'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
 import { junctionsForTrack } from '@/lib/junctions'
+import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
 import { JunctionMarkers } from './JunctionMarkers'
 import { TransitionDialog } from './TransitionDialog'
@@ -120,28 +121,12 @@ export function Timeline(): ReactNode {
     [pixelsPerFrame]
   )
 
-  /** Snaps to the origin, the playhead, and every other clip's two edges. */
+  /** Snaps to the origin, the playhead, every other clip's two edges, markers and beats (`lib/snap`). */
   const snap = useCallback(
     (frame: number, ignore: Set<string>): number => {
       if (!timeline) return Math.round(frame)
-      const tolerance = SNAP_PX / pixelsPerFrame
-      let best = Math.round(frame)
-      let bestDistance = tolerance
-      const consider = (candidate: number): void => {
-        const distance = Math.abs(candidate - frame)
-        if (distance < bestDistance) {
-          bestDistance = distance
-          best = candidate
-        }
-      }
-      consider(0)
-      consider(useEditor.getState().playhead)
-      for (const item of allItems(timeline)) {
-        if (ignore.has(item.id)) continue
-        consider(item.from)
-        consider(itemEnd(item))
-      }
-      return Math.max(0, Math.round(best))
+      const state = useEditor.getState()
+      return snapFrame(frame, snapTargets(state.project, timeline, state.playhead, ignore), SNAP_PX / pixelsPerFrame)
     },
     [timeline, pixelsPerFrame]
   )
