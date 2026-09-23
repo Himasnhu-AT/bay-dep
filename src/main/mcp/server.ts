@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, type WebContents } from 'electron'
 import { IPC } from '@shared/ipc'
-import { MCP_CALL_TIMEOUT_MS, type McpToolCall, type McpToolResult } from '@shared/mcp'
+import { MCP_CALL_TIMEOUT_MS, findTool, type McpToolCall, type McpToolResult } from '@shared/mcp'
 import { type ToolOutcome } from './protocol'
 import { startSocketServer, type RunningSocket, type SocketStatus } from './socket-server'
 import { isCompositionWindow } from '../html/compositions'
@@ -22,7 +22,7 @@ import { resourceBody } from './resources'
 import { substituteFileArgs } from './file-args'
 import { socketPathIn } from './socket-path'
 import { readFile } from 'node:fs/promises'
-import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness } from './executor-ready'
+import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness, strandedCall } from './executor-ready'
 
 // ---------------------------------------------------------------------------
 // The main ↔ renderer round trip
@@ -31,6 +31,10 @@ import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness } from './executor-ready'
 interface Pending {
   resolve: (result: McpToolResult) => void
   timer: NodeJS.Timeout
+  /** The window it was sent to, so a reload of that window can find what it stranded. */
+  targetId: number
+  tool: string
+  args: Record<string, unknown>
 }
 
 const pending = new Map<string, Pending>()
@@ -54,9 +58,33 @@ export function setExecutorReady(contents: WebContents, ready: boolean): void {
   // that left the window not-ready for good, and every later call waited out the full 45s:
   // found by `test/app/mcp-during-reload.mjs`, not by reading. `did-navigate` is main-frame and
   // cross-document by definition, and it lands before the new page's own ready message.
-  contents.on('did-navigate', () => readiness.set(id, false))
+  contents.on('did-navigate', () => {
+    readiness.set(id, false)
+    rescueStranded(id)
+  })
   contents.on('render-process-gone', () => readiness.set(id, false))
   contents.once('destroyed', () => readiness.forget(id))
+}
+
+/**
+ * Every call still waiting on a window that has just navigated will never be answered by it —
+ * the document it was sent to is gone. See `strandedCall` for why reads are resent and writes
+ * are failed rather than resent.
+ */
+function rescueStranded(targetId: number): void {
+  for (const [callId, waiting] of [...pending]) {
+    if (waiting.targetId !== targetId) continue
+    pending.delete(callId)
+    clearTimeout(waiting.timer)
+    const verdict = strandedCall(waiting.tool, (name) => findTool(name)?.readOnly ?? false)
+    if (verdict.action === 'fail') {
+      waiting.resolve({ id: callId, ok: false, error: verdict.error })
+      continue
+    }
+    void callRenderer(waiting.tool, waiting.args).then((result) =>
+      waiting.resolve({ ...result, id: callId })
+    )
+  }
 }
 
 /** Called by the IPC handler when the renderer answers. */
@@ -145,7 +173,7 @@ export async function callRenderer(
       })
     }, MCP_CALL_TIMEOUT_MS)
 
-    pending.set(id, { resolve, timer })
+    pending.set(id, { resolve, timer, targetId: target.id, tool, args })
     const call: McpToolCall = { id, tool, args }
     target.send(IPC.mcpToolCall, call)
   })

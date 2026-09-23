@@ -4,7 +4,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ExecutorReadiness } from './executor-ready'
+import { ExecutorReadiness, strandedCall } from './executor-ready'
+import { findTool } from '@shared/mcp'
 
 test('a call waits for a window that is still loading, and goes as soon as it is ready', async () => {
   // The cold-start bug: the first call reached a page with no listener and was lost.
@@ -54,4 +55,24 @@ test('a destroyed window releases its waiters at once, as not ready', async () =
   readiness.forget(6)
   assert.equal(await waiting, false)
   assert.ok(Date.now() - started < 1_000, 'waited out the timeout instead of being released')
+})
+
+// --- calls stranded by a reload --------------------------------------------------------------
+
+const readOnly = (name: string): boolean => findTool(name)?.readOnly ?? false
+
+test('a read stranded by a reload is sent again, because it changed nothing', () => {
+  assert.deepEqual(strandedCall('read_project', readOnly), { action: 'resend' })
+  assert.deepEqual(strandedCall('preview_frame', readOnly), { action: 'resend' })
+})
+
+test('a write stranded by a reload fails at once and says to check before retrying', () => {
+  // Resending would apply it twice if the old page got as far as applying it.
+  const verdict = strandedCall('remove_range', readOnly)
+  assert.equal(verdict.action, 'fail')
+  assert.match(verdict.action === 'fail' ? verdict.error : '', /may or may not have been applied.*read_project/)
+})
+
+test('an unknown tool is treated as a write, never resent', () => {
+  assert.equal(strandedCall('no_such_tool', readOnly).action, 'fail')
 })

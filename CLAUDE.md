@@ -118,11 +118,13 @@ work reading `audio-graph.ts` to see it. `src/main/export/audio-render.test.ts` 
 dissolve through the real ffmpeg and measures it. When a check covers one of two paths, say which.
 
 **A race you cannot reproduce is not a race you have disproved.** The executor-readiness wait
-did not change a single outcome on this machine — cold launch and a 0–160ms reload sweep both
-answered with it removed, because the renderer mounts in ~25ms here. It stays because the fault
-it guards (IPC to a page with no listener is dropped silently) is real and was reproduced 2 of 2
-times elsewhere, and its commit says it is unreproduced here. That is the honest version of the
-"defensive code" rule above: keep it only with the evidence and the gap both written down.
+changed no outcome in a whole session of trying — cold launch and a 0–160ms reload sweep both
+answered with it removed. Then the final regression run lost a call at the 0ms offset: sent to a
+page that *was* listening, torn down by the reload before it answered, 30s of silence for the
+agent. That is a different fault from the one the wait guards, which is the second lesson — a
+guard that is correct can still be guarding the wrong gap. Stranded calls are now resent if they
+are reads and failed at once if they are writes (`strandedCall`); the decision is unit-tested,
+the rescue itself has not yet been caught firing, and the commit says so.
 
 **Worktree agents start from `main`, not from your branch.** Every one spawned this way came up
 on an old commit without the files its task named. Tell it to `git merge --ff-only <branch>`
