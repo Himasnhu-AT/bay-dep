@@ -36,7 +36,8 @@ function roundTrip(rgb: [number, number, number], format: 'mp4' | 'webm'): [numb
   const tagged = execFileSync(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=color_space', '-of', 'csv=p=0', file]).toString().trim()
   const matrix = tagged === 'bt709' || tagged === 'bt470bg' || tagged === 'smpte170m' ? tagged.replace('bt470bg', 'bt601').replace('smpte170m', 'bt601') : 'bt709'
   const out = execFileSync(FFMPEG, [
-    '-v', 'error', '-i', file, '-vf', `scale=in_color_matrix=${matrix}:in_range=tv,format=rgb24`, '-frames:v', '1', '-f', 'rawvideo', '-'
+    // zimg, not swscale: this ffmpeg's swscale decodes limited range 2 levels low (Y 126 → 126 for grey 128).
+    '-v', 'error', '-i', file, '-vf', `zscale=min=${matrix === 'bt709' ? '709' : '470bg'}:rin=limited:m=709:r=full,format=rgb24`, '-frames:v', '1', '-f', 'rawvideo', '-'
   ])
   const at = ((SIZE / 2) * SIZE + SIZE / 2) * 3
   return [out[at]!, out[at + 1]!, out[at + 2]!]
@@ -50,11 +51,11 @@ const SPECIMENS: [number, number, number][] = [
 ]
 
 for (const format of ['mp4', 'webm'] as const) {
-  test(`a ${format} export carries the colours the canvas drew (±4 per channel)`, { skip: SKIP, timeout: 30_000 }, () => {
+  test(`a ${format} export carries the colours the canvas drew (±2 per channel)`, { skip: SKIP, timeout: 30_000 }, () => {
     for (const rgb of SPECIMENS) {
       const got = roundTrip(rgb, format)
       const off = Math.max(...got.map((v, i) => Math.abs(v - rgb[i]!)))
-      assert.ok(off <= 4, `${format}: drew rgb(${rgb.join(', ')}), the file plays as rgb(${got.join(', ')}) — ${off} off`)
+      assert.ok(off <= 2, `${format}: drew rgb(${rgb.join(', ')}), the file plays as rgb(${got.join(', ')}) — ${off} off`)
     }
   })
 }

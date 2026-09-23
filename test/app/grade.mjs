@@ -277,8 +277,11 @@ await runProbe(async () => {
   let mismatches = 0
   for (const frame of SAMPLES) {
     const raw = join(scratch, `f${frame}.rgb`)
-    await run(FFMPEG, ['-v', 'error', '-i', outputPath, '-vf', `select=eq(n\\,${frame})`, '-vsync', '0', '-frames:v', '1',
-      '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${W}x${H}`, '-y', raw])
+    // Decoded with zimg, not swscale: this ffmpeg's swscale returns limited-range Y as if it were
+    // full range (Y 126, a correct encode of grey 128, comes back as 126), a −2 bias that sat this
+    // check at the edge of its ±2 tolerance for a reason in the instrument, not the file.
+    await run(FFMPEG, ['-v', 'error', '-i', outputPath, '-vf', `select=eq(n\\,${frame}),zscale=min=709:rin=limited:m=709:r=full,format=rgb24`, '-vsync', '0', '-frames:v', '1',
+      '-f', 'rawvideo', '-s', `${W}x${H}`, '-y', raw])
     const bytes = await readFile(raw)
     let r = 0, g = 0, b = 0
     for (let i = 0; i < bytes.length; i += 3) { r += bytes[i]; g += bytes[i + 1]; b += bytes[i + 2] }
