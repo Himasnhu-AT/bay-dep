@@ -1,3 +1,8 @@
 allowBuilds:
   sharp: false
   unrs-resolver: false
+# Transitive advisories the direct bumps did not clear (proved cleared with `pnpm audit`):
+# nanoid <3.3.18 via postcss, js-yaml <4.3.2 via @eslint/eslintrc.
+overrides:
+  'nanoid@<3.3.18': '^3.3.18'
+  'js-yaml@>=4.0.0 <4.3.2': '^4.3.2'
