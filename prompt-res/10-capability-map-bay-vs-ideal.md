@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Capability map — bay today vs. what kick-ass motion graphics need
 
 Read against the code on **2026-08-11**, branch `fix/pending-sweep`. Every "have" below names

@@ -1,6 +1,6 @@
 # website
 
-The public face of Bay: a native Mac video editor whose engine an agent can drive.
+The public face of Bay: a Mac video editor whose engine an agent can drive.
 
 This is a product site, not a studio site. It has one thing to sell, so the home page is
 the product page rather than a door into a catalogue.
@@ -42,9 +42,11 @@ It is not a funnel. There is no signup, no trial, no newsletter, and nothing to 
 ## Where the copy comes from
 
 Every factual claim traces to the repository above this folder: `../README.md` for the
-shape of the thing, `../docs/native/parity-status.md` for the delivered, open and
-deferred lists behind `/status`. When those move, this site moves with them. A claim on
-this site that no longer survives a reading of those files is a bug.
+shape of the thing, and the code itself (`../src/`) for the delivered, open and deferred
+lists behind `/status`. When those move, this site moves with them. A claim on this site
+that no longer survives a reading of them is a bug. (`/status` was once written from
+`docs/native/parity-status.md`, which went with the Rust engine; it survives only at the
+`rust-engine-final` tag and describes nothing in this tree.)
 
 The product name is unsettled. Everything reads it from `src/lib/product.ts`, so changing
 it is a small edit.

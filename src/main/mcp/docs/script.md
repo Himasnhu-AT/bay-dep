@@ -91,8 +91,8 @@ them a transition; that new cut is straight until you add one with `add_transiti
 retitled, transitions removed and why — and then the new script, so you can keep editing from it
 without another read. The rev in that new script is current; the old one is not.
 
-Inside bay's own agent panel `apply_script` is a write, so propose it first: put the call in
-`propose_edit` with the **entire** script as its `script` argument, exactly as you will send it.
+`apply_script` is a write. If the user has turned on "Ask before editing" in bay's agent panel,
+propose it first: put the call in `propose_edit` with the **entire** script as its `script` argument, exactly as you will send it.
 The approval matches the text byte for byte. For a long script, write it to a file and pass
 `@./edit.md` — bay reads the file for you, both when you propose and when you apply, so leave the
 file alone in between or the two will no longer match.

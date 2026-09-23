@@ -54,7 +54,7 @@ function describeArgument(name: string, schema: Schema, required: boolean): stri
 
 const CATEGORY_TITLES: Record<ToolSpec['category'], string> = {
   read: 'Reading — these change nothing',
-  submit: 'Proposing — asks the user before anything changes',
+  submit: 'Proposing — asks the user before anything changes, when “Ask before editing” is on',
   write: 'Writing — these change the project, one undo step per call'
 }
 
@@ -84,7 +84,7 @@ export function toolReference(tools: readonly ToolSpec[] = TOOLS): string {
       lines.push(
         tool.readOnly
           ? '*Read-only* — safe to call speculatively; never needs approval.'
-          : '*Writes* — changes the project; inside bay’s agent panel it needs an approved proposal.',
+          : '*Writes* — changes the project; in bay’s agent panel with “Ask before editing” on, it needs an approved proposal.',
         ''
       )
       lines.push(tool.description.trim(), '')
@@ -327,10 +327,12 @@ export const EXAMPLES: readonly GuideExample[] = [
     ]
   },
   {
-    title: 'Propose, wait for approval, then carry it out (bay’s own agent panel)',
+    title: 'Propose, wait for approval, then carry it out (“Ask before editing” on)',
     when:
-      'Inside bay’s agent panel every write is refused until the user approves a plan. Read ' +
-      'first, propose with exact calls, end the turn, then make exactly the approved calls.',
+      'In bay’s agent panel with “Ask before editing” on, every write is refused until the ' +
+      'user approves a plan. Read first, propose with exact calls, end the turn, then make ' +
+      'exactly the approved calls. With the setting off (the default) propose_edit answers ' +
+      '`needed: false` and you edit directly.',
     steps: [
       {
         tool: 'read_project',

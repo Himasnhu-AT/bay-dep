@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Round 4 — the repair loop
 
 Two acceptance runs are on record: `research/final-acceptance/REPORT.md` and `REPORT-2.md`. Both

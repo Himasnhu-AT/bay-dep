@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 35 — Music, the score, and sound design
 
 Round 2. Area: **how music makes a 60-second video feel composed**, and why `wicks-v2` — which has

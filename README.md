@@ -25,12 +25,15 @@ src/
 │   ├── mcp.ts        the agent tool catalog
 │   └── ripple.ts     removing a span of time and closing it, across every unlocked track
 ├── main/         filesystem, ffmpeg, persistence, export, the bay:// protocol, the MCP socket
+│   └── agent/    the in-app agent — the `claude` CLI (or the Agent SDK), sandboxed to bay's tools
 ├── preload/      the contextBridge surface, and nothing else
 └── renderer/
     ├── store/    zustand — one edit() that snapshots for undo
     ├── engine/   playback clock, compositor, audio, transitions, exporter — framework-free
     ├── mcp/      the tool executor: every tool goes through a store action, never around it
-    ├── editor/   the panels: timeline, preview, inspector, media pool, effects
+    ├── home/     the projects screen bay opens on
+    ├── editor/   the panels: timeline, preview, inspector, media pool, effects, the agent panel
+    ├── settings/ the Settings dialog (⌘,)
     └── components/  the primitives they are built from
 ```
 
@@ -60,9 +63,11 @@ frames.
 
 ## Agents
 
-bay exposes its project model over [Model Context Protocol](https://modelcontextprotocol.io) — 17
-tools covering reading the project, importing media, placing and editing items, splitting,
-transitions, removing a range, rendering a single frame to look at, and exporting.
+bay exposes its project model over [Model Context Protocol](https://modelcontextprotocol.io) — 31
+tools covering opening a project, reading it, importing media, placing and editing items,
+splitting, trimming, transitions, captions, removing a range, transcribing speech, rendering a
+single frame to look at, and exporting. `src/shared/mcp.ts` is the catalog, and the count is
+whatever it holds.
 
 The transport is stdio in, unix socket out. A short-lived proxy process is what your MCP client
 spawns, because a client wants a command and bay is a GUI that may not be running:
@@ -105,11 +110,42 @@ schema, as compact text, plus the guides to read first) and `execute` (`{ tool, 
 takes the same path a direct call does, so validation, errors, `@./file` arguments and image
 results behave identically. Unset, the full catalog is published.
 
+## The agent in the editor
+
+The same tools drive an agent panel inside the app. It runs the `claude` CLI already on the
+machine — signed in, so there is no API key to ask for — sandboxed to bay's tools, its guides and
+its own skills: no shell, no files, no web.
+
+It **edits directly**. Every turn that changes the project ends with a Changes card listing what
+changed, and a Revert button that puts the project back; each edit is also on the ordinary
+undo stack. For approval first, turn on **Ask before editing** (Settings, or the shield in the
+composer): every write is then refused until you approve a plan the agent proposes, and it may
+run exactly what you approved.
+
+`/` in the composer offers bay's skills — talking-head tightening, captions, a lower third, a
+rough cut, a review and more — and a message may name several anywhere in it. `@` pins a clip, an
+asset, a time range or a frame to the conversation; pins reach the agent with every message as
+ids and frames. Debug mode (Settings, or ⌥⌘D) adds an export of the agent's full transcript, for
+reporting a problem.
+
+## Settings and transcription
+
+Settings (⌘,) holds the agent switch above, the theme, debug mode, and transcription.
+
+Captions and transcript-driven cuts are transcribed **on this Mac** with
+[whisper.cpp](https://github.com/ggerganov/whisper.cpp); the audio never leaves it. Settings can
+install the engine through Homebrew (`brew install whisper-cpp`) and download, verify and delete
+speech models. **This is the one place bay reaches the network**: models come from Hugging Face
+(and Homebrew fetches the engine, when you ask it to). "Download models when needed" is on by
+default, so the first transcription on a Mac with no model fetches one (~148 MB for the default)
+before it starts; turn it off and a transcription with no model stops and says to download one in
+Settings.
+
 ## Gates
 
 ```bash
 pnpm typecheck    # two projects: main+preload+shared, and renderer+shared
-pnpm test         # 340 tests on node:test — no test framework in the dependency tree
+pnpm test         # every *.test.ts under src/, on node:test — no test framework in the tree
 pnpm build        # must pass before any probe result means anything
 node test/app/mcp.mjs          # CDP probes against the built app
 ```

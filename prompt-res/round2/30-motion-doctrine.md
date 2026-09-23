@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 30 — Motion doctrine (executable)
 
 Round 2. Everything here is derived from a measurement of the project model of `wicks-v2`

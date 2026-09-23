@@ -25,8 +25,10 @@ Fonts are self-hosted through `next/font`. Keep it that way.
 
 **Nothing on this site may describe behaviour the app does not have.** `/status` is the
 page the whole site exists to be able to write, and it is worthless the moment one row
-of it is aspirational. Before adding a claim, check it against `../README.md` and
-`../docs/native/parity-status.md`. When those change, this site changes with them.
+of it is aspirational. Before adding a claim, check it against `../README.md` and the
+code in `../src/`. When those change, this site changes with them. (The old
+`../docs/native/parity-status.md` described the deleted Rust engine and survives only at
+the `rust-engine-final` tag; do not cite it.)
 
 ## Read before editing
 

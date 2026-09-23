@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 03 — Capability-and-gaps audit (code read, Aug 15 2026)
 
 Produced for round 3 by an exploration agent reading the workspace. Code, not docs, was treated

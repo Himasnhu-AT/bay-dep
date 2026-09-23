@@ -45,8 +45,8 @@ const features = [
   },
   {
     label: "II",
-    title: "You approve the plan, not every click",
-    body: "Inside the editor, an agent cannot change anything until it has shown you a plan: what it intends in plain words, and the exact edits it needs. You approve one option, and exactly that runs, once. Anything else is refused and it is told why.",
+    title: "Every change comes with a diff",
+    body: "Inside the editor, the agent makes the edit and shows you what it changed, in plain words, with a Revert button that puts the project back in one click. Rather see a plan first? Turn on Ask before editing: then nothing is written until you approve one option, exactly that runs, once, and anything else is refused with the reason.",
   },
   {
     label: "III",

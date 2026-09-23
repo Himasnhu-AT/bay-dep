@@ -32,6 +32,12 @@ unit you set them.
 
 ## Start by looking
 
+bay opens on a projects screen with no project open, and while it shows, every tool but
+`list_projects` and `open_project` is refused — `read_project` included — with a message saying
+so. `list_projects` gives the file paths; open the one the user means with `open_project`, or ask
+which. Once a project is open, bring new files into its media pool with `import_media`, by
+absolute path, and check each returned asset's `error` before placing it.
+
 Call `read_project` first, every time. It gives you the timeline id, the rate, the tracks, and
 every item with its id. Item ids are not guessable and not stable across sessions — copy them
 from what you just read, never invent one. You may pass the first 10 characters of an id; if that
@@ -39,7 +45,8 @@ is ambiguous the refusal names the candidates.
 
 `preview_frame` renders one frame and hands it back as an image. **Use it.** It is the only way
 you can see what you have made, and it is the difference between reporting that a cut works and
-knowing it does. Render a frame either side of every cut you make.
+knowing it does. Render a frame either side of every cut you make. `set_playhead` to where you
+are working, so the user's view follows yours.
 
 ## What `preview_frame` cannot see
 
@@ -48,7 +55,8 @@ tell the user an edit is right, know which question the picture actually answere
 
 - **Sound.** It renders pictures only. A cut in the middle of a word, a music bed at the wrong
   level, a clip that should be muted — none of it is in the image. Judge audio from the
-  transcript, the volumes in `inspect_item`, or by asking.
+  words — `transcribe` reads a clip's speech on this Mac with whisper.cpp and gives each line
+  its timing — the volumes in `inspect_item`, or by asking.
 - **Motion.** One frame cannot show a jump cut's jolt, a dissolve that runs too long, an animation
   that stutters, or a clip playing at the wrong speed. Render frames either side of a change, and
   say that you checked stills rather than playback.
@@ -115,6 +123,13 @@ frames, for lines you timed yourself — or `srt`, the text of an SRT or WebVTT 
 `@./captions.srt`), which bay converts from wall clock at the timeline's rate. `offsetFrames`
 shifts the lot, for captions of a clip that starts partway in.
 
+With no transcript or subtitle file, make the cues: `transcribe` with the clip's `itemId` runs
+whisper.cpp locally (nothing is uploaded) and returns cues already in timeline frames, shifted and
+clipped to what the clip plays — pass them straight to `add_captions` as `cues`, no offset. The
+first run on a Mac with no speech model downloads one (~150 MB) unless the user turned that off in
+Settings; if whisper.cpp or a model is missing, the error says what the user must do there. Pass
+that on — never invent the words.
+
 Cues share one track, so they may not overlap. An overlap refuses the **whole** call, naming both
 cues (by position, and by line for a file) and the frame that would fix it; nothing is placed.
 Lines overlapping by less than a frame round onto the same frame and are accepted. Markup such as
@@ -136,6 +151,7 @@ A marker belongs to the program, not to a clip, so moving or replacing clips lea
 It moves only when time itself does: `remove_range` slides markers after the cut up with the
 footage, and one inside the removed span lands on the cut rather than vanishing. `remove_marker`
 takes one away.
+
 ## Many clips at once: the script
 
 When an edit touches many clips — tightening a whole cut, reordering shots, rewording every
@@ -179,7 +195,9 @@ bay renders HyperFrames compositions as clips. Write an HTML file whose root car
 one **paused** GSAP timeline at `window.__timelines["<that id>"]`. bay seeks that timeline and
 photographs the result, so the picture must be a function of time and nothing else.
 
-Read the composition resources beside this one before writing one. The rules that bite are
+Read the composition resources beside this one before writing one, and check what you wrote with
+`read_composition` before placing it — it lists every fault, including the ones that still
+render. The rules that bite are
 collected there, but three are worth repeating here because each renders as a *wrong picture*
 rather than an error:
 
@@ -193,6 +211,12 @@ rather than an error:
 `remove_range`, transitions, adjustments and blend modes all work on a composition clip exactly
 as they do on video.
 
+## Exporting
+
+`export_timeline` renders the timeline to a file and returns a job id at once; poll
+`track_export` on a sensible interval until it reports the output path. Check that result before
+telling the user it is done.
+
 ## Errors are instructions
 
 Every refusal from bay is written so you can act on it: it names the candidate ids, the clip you
@@ -204,7 +228,7 @@ a reason to guess again.
 
 - **An id you did not read from bay does not exist.** Every id comes from `read_project`,
   `browse_assets` or the result of the call that created the thing.
-- **Splitting on a clip's edge does nothing**, because it would make a zero-length clip. Split
+- **`split_at` on a clip's edge does nothing**, because it would make a zero-length clip. Split
   strictly inside.
 - **A locked track refuses edits.** The refusal names it; tell the user rather than working
   around it.

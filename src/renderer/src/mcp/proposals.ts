@@ -18,14 +18,15 @@ import { fail, store } from './helpers'
 import { validateArgs } from '@shared/validate'
 
 export function proposeEdit(args: Record<string, unknown>): Record<string, unknown> {
-  // No session means no gate, and no gate means nothing to approve: this is a terminal client
-  // over the socket, with a person watching every call. Presenting a card here would be worse
-  // than useless — approving it would *create* a gate, and lock out the client that asked.
+  // No gate means nothing to approve: either "Ask before editing" is off (the agent edits
+  // directly, and the turn's Changes card is the review), or this is a terminal client over the
+  // socket, with a person watching every call. Presenting a card here would be worse than
+  // useless — approving it would *create* a gate, and lock out the client that asked.
   if (!store().agentGate) {
     return {
       needed: false,
       message:
-        'Nothing is gated here: no in-app agent session is running, so edits need no approval. ' +
+        'Nothing is gated: "Ask before editing" is off, or no in-app session is running. ' +
         'Make the edit directly.'
     }
   }

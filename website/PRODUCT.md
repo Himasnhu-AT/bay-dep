@@ -22,7 +22,8 @@ serves. They are technical enough to run a command and add an MCP server to thei
 
 ## Product Purpose
 
-Bay is a native macOS video editor written in Rust. It exists so that editing by hand and
+Bay is a macOS video editor, an Electron app (React and TypeScript, ffmpeg for media and
+export). It exists so that editing by hand and
 editing by instruction are the same operation on the same document, performed by the same
 engine, entirely on the user's machine.
 
@@ -32,45 +33,43 @@ account of what is built.
 
 ## Positioning
 
-**The engine is the product; the window is one way to reach it.** A single Rust engine
-serves both the GPUI desktop shell and an MCP server, so there is no second implementation
-for an agent to disagree with. Concretely, and not copyable by an editor that bolted an
-assistant onto its side:
+**The engine is the product; the window is one way to reach it.** The editor's own project
+model and store serve both the interface and an MCP server, so there is no second
+implementation for an agent to disagree with. Concretely, and not copyable by an editor that
+bolted an assistant onto its side:
 
-- An agent never mutates the project directly. It hands over the same `Command` values a
-  human's interaction produces, applied at one single-writer point. So an agent's edit
-  appears on the timeline immediately and `⌘Z` undoes it like any other edit.
-- The same engine runs headless (`--mcp`), so a cut can be built and encoded with no
-  window, no display, and no second code path.
-- Everything is local. No server holds project data, and the agent endpoint binds to the
-  user's own machine.
+- An agent never mutates the project around the editor. Every tool goes through the same
+  store action a human's interaction uses, so an agent's edit appears on the timeline
+  immediately and `⌘Z` undoes it like any other edit.
+- An MCP client reaches the running app through a small proxy over a local socket; if the
+  app is not running, the first tool call launches it.
+- Everything is local. No server holds project data, and the agent endpoint is a socket on
+  the user's own machine.
 
 ## Operating Context
 
-- macOS, Apple Silicon first. Requires `ffmpeg` on `PATH` and a GPU adapter; both degrade
-  with a message rather than failing silently.
-- The agent is reached over the Model Context Protocol, added to a client with something
-  like `claude mcp add --transport http bay http://127.0.0.1:7333/mcp`.
-- Single-window by design: a second launch raises the existing window rather than opening a
-  rival timeline, so which document the agent is editing is never ambiguous. The bound port
-  is the lock.
-- The app already surfaces agent activity in its own chrome: a chip reading `● Claude ·
-  <label>` appears for 2.5 seconds after each agent edit.
+- macOS first. ffmpeg ships inside the app.
+- The agent is reached over the Model Context Protocol, added to a client as a stdio command
+  (the app binary running bay's proxy script; see `../README.md`), or used from the agent
+  panel inside the editor, which runs the user's own Claude Code sandboxed to bay's tools.
+- Inside the editor the agent edits directly: every turn that changes the project ends with
+  a list of what changed and a Revert button. "Ask before editing" in Settings makes it
+  propose a plan and wait for approval instead.
+- Speech is transcribed on the Mac with whisper.cpp. Its speech models are downloaded from
+  Hugging Face when first needed (the one network exception, and a setting).
 
 ## Capabilities and Constraints
 
-Confirmed and working: the editing loop end to end (import, place, trim, transform, blend,
-play back, export MP4); seventeen blend modes on the GPU; twenty-one MCP tools including
-frame snapshot and render; local text to speech with captions cut to the spoken words; a
-decode path that runs off the render path under a global memory budget; a universal Mac
-app and `.dmg` built locally.
+The live account of what works, what is wrong and what is not written is `/status`
+(`src/app/status/page.tsx`), checked against `../README.md`. In outline: the editing loop end
+to end (import, place, trim, slip, slide and roll, transitions, blend, captions, export
+MP4, MOV or WebM); sixteen blend modes; 31 MCP tools (the catalog is
+`../src/shared/mcp.ts`, and the count is whatever it holds) including rendering a frame to
+look at, local transcription and export.
 
-Known wrong, and stated publicly: long clips play as a low-frame-rate proxy; the media
-panel lists three demo tiles rather than imported media; anamorphic sources render at the
-wrong aspect; a rotation-metadata sign bug flips some phone footage.
-
-Not written: most timeline craft (slip/slide/roll trims, transport, audio mixer, much of
-the inspector); a reliable Windows target; signing and notarization.
+This section once described the Rust/GPUI engine (seventeen GPU blend modes, twenty-one MCP
+tools, a low-frame-rate proxy for long clips). That engine is deleted; its record is at the
+`rust-engine-final` tag.
 
 Status is **In development**: real and running, not ready for a stranger. There is no
 download, and the site must not imply one exists.
@@ -90,6 +89,10 @@ download, and the site must not imply one exists.
   Nothing on the site may describe behaviour the app does not have.
 
 ## Evidence on Hand
+
+Historical: the three items below describe the Rust engine, deleted; recover them with
+`git show rust-engine-final:<path>` (paths relative to the repository root, `docs/native/…`
+and `dep/rust/crates/bay-ui/…`).
 
 - **A real end-to-end build**, documented in `../docs/native/reel-recipe.md`: "Volatility
   Drag", a 21.429s vertical infographic reel at 1080×1920, 30fps, h264 + AAC, driven

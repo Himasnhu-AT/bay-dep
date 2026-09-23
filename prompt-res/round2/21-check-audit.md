@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 21 — Audit of the check suite: why it passed `wicks-v2`
 
 Source: `rust/crates/bay-core/src/check.rs` (2193 lines, 27 finding codes), read in full and

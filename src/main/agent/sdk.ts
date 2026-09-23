@@ -13,7 +13,7 @@
  * | `--mcp-config` (bay only)        | `mcpServers: { bay }`              |
  * | `--strict-mcp-config`            | `strictMcpConfig: true`            |
  * | `--allowedTools …`               | `allowedTools`                     |
- * | `--tools <resource readers>`     | `tools: [...BUILT_IN_TOOLS]`       |
+ * | `--tools <readers>,Skill`        | `tools: [...BUILT_IN_TOOLS]`       |
  * | `--permission-prompts none`      | `permissionPrompts: 'none'`        |
  * | `--setting-sources project`      | `settingSources: ['project']`      |
  * | `--system-prompt`                | `systemPrompt` (a plain string)    |

@@ -157,7 +157,7 @@ export const TOOLS: ToolSpec[] = [
       'cues in timeline frames, already shifted and clipped to what the clip plays, ready for ' +
       'add_captions. Pass assetId for a whole file: lines in seconds from its start, and SRT. ' +
       'Takes a few seconds per minute of audio. The first run on a Mac with no model may ' +
-      'download one (~150 MB, a minute or two) if the user allows it in Settings. If whisper.cpp ' +
+      'download one (~150 MB, a minute or two) unless the user turned that off in Settings. If whisper.cpp ' +
       'or a model is missing, the error says what to do in Settings — tell the user; do not guess words.',
     category: 'read',
     readOnly: true,
@@ -249,9 +249,10 @@ export const TOOLS: ToolSpec[] = [
   {
     name: 'propose_edit',
     description:
-      'Ask the user to approve an edit before you make it. Inside bay\'s own agent panel, every ' +
-      'tool that changes the project is refused until the user has approved a plan, and this ' +
-      'is how a plan reaches them: it appears as a card with one Approve button per option.\n' +
+      'Ask the user to approve an edit before you make it. When the user has turned on "Ask ' +
+      'before editing" in bay\'s agent panel, every tool that changes the project is refused ' +
+      'until the user has approved a plan, and this is how a plan reaches them: it appears as ' +
+      'a card with one Approve button per option.\n' +
       'Give one to four options, each a genuinely different choice, with a label, a summary in ' +
       'the user\'s terms (clips, cuts, timing — never tool names or ids), and the exact calls ' +
       'it needs as [{ tool, args }]. Every operation is checked against its tool\'s schema ' +
@@ -261,8 +262,8 @@ export const TOOLS: ToolSpec[] = [
       'exactly those arguments. The approval covers nothing else. An operation cannot use an ' +
       'id that does not exist yet — if a later step needs an id an earlier step creates, ' +
       'propose the first stage, carry it out, then propose the next.\n' +
-      'Outside the panel (a terminal client over the socket) nothing is gated, and this ' +
-      'returns `needed: false` — make the edit directly.',
+      'When nothing is gated (the setting is off, or a terminal client over the socket), ' +
+      'this returns `needed: false` — make the edit directly.',
     category: 'submit',
     readOnly: true,
     inputSchema: {

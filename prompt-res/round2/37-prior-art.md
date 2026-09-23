@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 37 — Prior art: what other tools do, and what is actually worth stealing
 
 Round 2. Read `EVIDENCE.md` first. This file does **not** repeat round 1's survey of the

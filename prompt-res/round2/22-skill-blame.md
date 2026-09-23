@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 22 — Skill blame: what advice produced wicks-v2
 
 Area: audit of `.claude/skills/bay/` (SKILL.md + 9 references, 2,197 lines / 17,885 words /

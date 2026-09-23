@@ -54,7 +54,7 @@ export const RESOURCES: readonly ResourceSpec[] = [
     description:
       'Whole edits as sequences of real tool calls: trimming a false start with remove_range, a ' +
       'lower third by template or by hand, a cross-dissolve, and propose_edit through approval ' +
-      'to execution in bay\'s agent panel. Checked against the catalog, so none will be refused ' +
+      'to execution when the user has turned on "Ask before editing". Checked against the catalog, so none will be refused ' +
       'for its shape.',
     mimeType: 'text/markdown'
   },

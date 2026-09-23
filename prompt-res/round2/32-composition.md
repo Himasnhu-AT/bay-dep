@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Composition and layout for 9:16 — the frame as a designed object
 
 Round 2. Everything below is measured from `wicks-v2.mp4`, its project JSON, and the two

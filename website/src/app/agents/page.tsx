@@ -24,8 +24,8 @@ const tools = [
   },
   {
     label: "Propose",
-    title: "Show you the plan first",
-    body: "Inside the editor, every change starts as a plan on a card: what it will do in plain words, and the exact edits. Nothing is written until you approve one option.",
+    title: "Show you the plan first, when you ask",
+    body: "Inside the editor the agent edits directly, and every turn that changes the project ends with a diff and a Revert. Turn on Ask before editing and every change starts as a plan on a card instead: what it will do in plain words, and the exact edits. Nothing is written until you approve one option.",
   },
   {
     label: "Edit",
@@ -83,8 +83,10 @@ export default function AgentsPage() {
           <Eyebrow>Inside the editor</Eyebrow>
           <p className="mt-6 mb-7 text-base text-ink-soft">
             The Agent panel runs Claude Code for you, with the editor&apos;s
-            tools and nothing else: no shell, no files, no web. It proposes,
-            you approve, and it checks the frame before it says it is done.
+            tools and nothing else: no shell, no files, no web. It makes the
+            edit, shows you what changed with a one-click Revert, and checks the
+            frame before it says it is done. If you would rather approve each
+            plan first, one switch makes it ask.
           </p>
         </Reveal>
 

@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 39 — Assets: the difference between typography-on-a-field and a made thing
 
 Round 2. Every command in this file was **run on this machine** (macOS 26.5.2, ffmpeg 8.1.2,

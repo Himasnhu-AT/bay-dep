@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 38 — Data, charts, diagrams and formulas in motion
 
 Round 2. Everything below is measured against `wicks-v2.mp4` and

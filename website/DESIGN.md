@@ -101,7 +101,8 @@ it: the editor decides how tall the figure is.
 
 Your own turn is not in the log. It sits on the page above the figure, in the paper voice,
 because the words you type are yours and the log is the machine's. It is a
-re-creation built from `../rust/crates/bay-ui/`, never a screen capture, and the caption
+re-creation first built from the Rust UI's `bay-ui` crate (deleted; at the
+`rust-engine-final` tag), never a screen capture, and the caption
 under it says so. That caption is not decoration: it is the only thing separating an
 honest demonstration from a claim the app is further along than it is.
 
@@ -150,7 +151,11 @@ answered by the shell before a project is open; `snapshot` and `render` return b
 planner because they produce a file. Those beats show what the app really shows, which for
 `snapshot` is the status line `Claude snapshotted {at:.2}s`. Putting a chip on a beat that
 would not raise one is the easiest lie on this site to tell and the hardest to notice.
-Every tool name must appear in `docs/native/mcp.md`.
+Every tool name must appear in the catalog the plate was drawn from, `docs/native/mcp.md`,
+which is historical: it went with the Rust engine (`git show rust-engine-final:docs/native/mcp.md`).
+The plate, its chip and its status line re-create the Rust-era UI; the current app's tool
+catalog is `../src/shared/mcp.ts`, and its agent reports each turn's changes in a Changes card
+with a Revert rather than a chip.
 
 The status line sits in the toolbar before Save, not under the timeline, and only when the
 app has something to say. Its formats are the app's: `Saved to`, `Exported frame to`,

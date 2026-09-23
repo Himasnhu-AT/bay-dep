@@ -35,7 +35,7 @@ const built = [
   },
   {
     title: "An agent inside the editor",
-    body: "Claude Code in a panel, with the editor's tools and nothing else. It proposes a plan, you approve it on a card, and exactly that runs. It renders the frames it changed and looks at them before it reports back.",
+    body: "Claude Code in a panel, with the editor's tools and nothing else. It edits directly, and every turn that changes the project ends with a list of what changed and a Revert button. Turn on Ask before editing and it proposes a plan instead, you approve it on a card, and exactly that runs. Either way it renders the frames it changed and looks at them before it reports back.",
   },
   {
     title: "The agent endpoint",
@@ -45,7 +45,7 @@ const built = [
 
 const wrong = [
   {
-    title: "An approved plan cannot use what it creates",
+    title: "With Ask before editing on, a plan cannot use what it creates",
     body: "Each step of a plan has to name the clips it touches before anything runs, so a plan that splits a clip and then moves the new half has to be approved in two stages. The agent is told this; it is still a limit.",
   },
   {
