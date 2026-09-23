@@ -62,6 +62,12 @@ declare global {
       /** A fresh pool plus the awaited-seek step: the export path's first frame, in isolation. */
       MediaPool: typeof MediaPool
       awaitSources: typeof awaitSources
+      /**
+       * The `.brf` code runtime, whose scene cache is shared by preview, `renderFrame` and export.
+       * A probe of export clears it first, or the preview's cached scenes hide an export that
+       * never waited for the worker (`test/app/brf-export.mjs`).
+       */
+      brfRuntime: typeof brfRuntime
     }
   }
 }
@@ -171,7 +177,7 @@ class Engine {
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle && probeSurfaceEnabled()) {
-      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources }
+      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources, brfRuntime }
     }
     return () => this.detach()
   }

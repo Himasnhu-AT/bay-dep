@@ -50,7 +50,9 @@ await runProbe(async () => {
 
   // -- the sandbox, from inside -----------------------------------------------------------------
   const sentinel = await call('write_brf', { code: `export default () => { throw new Error('sentinel-7') }` })
-  check('the control: a throw inside the worker reaches the caller', !sentinel.ok && /sentinel-7/.test(sentinel.error), true)
+  // The refusal itself is what gets printed on a failure: a worker that never loaded (a packaged
+  // build missing its worker file) answers "crashed: …" here, and that sentence is the diagnosis.
+  check('the control: a throw inside the worker reaches the caller', sentinel.ok ? 'accepted' : sentinel.error, (e) => /sentinel-7/.test(e))
 
   const escapes = `
     const open = []

@@ -236,7 +236,10 @@ export class BrfCodeRuntime {
       runner.pending.delete(reply.id)
       waiting.resolve(reply)
     }
-    worker.onerror = (event) => this.#fail(key, runner, `crashed: ${event.message || 'the worker stopped'}`)
+    // A worker script that cannot be fetched fires this with an empty message, so the fallback
+    // names that case: it is a broken build, not a broken module.
+    worker.onerror = (event) =>
+      this.#fail(key, runner, `crashed: ${event.message || 'the worker could not start (its script failed to load) or stopped without a message'}`)
     runner.loaded = this.#send(key, runner, { type: 'load', source, fps, width, height }).then((reply) => {
       if (reply.ok && 'meta' in reply) return { ok: true, meta: reply.meta }
       const error = reply.ok ? 'answered a load with something else' : reply.error
@@ -262,12 +265,23 @@ export class BrfCodeRuntime {
     })
   }
 
+  /**
+   * Stops a runner and answers everything still waiting on it with the error. Answering is the
+   * point: clearing a waiter's timer without resolving it left its promise pending forever — a
+   * worker that could not even load (`onerror`) made `write_brf` hang with no reply, and a timeout
+   * on one request stranded the runner's other requests, so their chunks stayed in flight and
+   * every `settle` after that waited out its whole timeout.
+   */
   #fail(key: string, runner: Runner, error: string): void {
     this.#errors.set(key, error)
     runner.worker.terminate()
-    for (const waiting of runner.pending.values()) clearTimeout(waiting.timer)
+    const waiting = [...runner.pending.entries()]
     runner.pending.clear()
-    this.#runners.delete(key)
+    for (const [id, entry] of waiting) {
+      clearTimeout(entry.timer)
+      entry.resolve({ id, ok: false, error })
+    }
+    if (this.#runners.get(key) === runner) this.#runners.delete(key)
     this.#notify()
   }
 

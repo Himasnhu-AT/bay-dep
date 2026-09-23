@@ -45,6 +45,8 @@ screen). A probe restores the project; a restart does not.
 | Network wall | `src/main/offline.test.ts` | remote schemes refused however spelt; local schemes allowed; dev server only on loopback |
 | Tools | `src/renderer/src/mcp/brf.test.ts` | create+place is one undo step; compile error and a throw on a *later* frame change nothing and name frame+line; replace is one undoable edit; create-and-place is all or nothing (mutation-tested) |
 | One undo step | `src/renderer/src/mcp/one-undo-step.test.ts` | `write_brf` create, create+place, replace each move history by exactly 1 |
+| Worker failure | `src/renderer/src/engine/brfCode.test.ts` | a worker that cannot load (`onerror`) answers `crashed: …` at once instead of hanging; nothing is left in flight; a timeout on one request answers the runner's others (mutation-tested) |
+| Export | `node test/app/brf-export.mjs` | the guide's counter exported cold: frame count, **every** frame of the file against `renderFrame`, the placement override in the file; `VERIFY_PROBE=1` (settle returns at once) must fail |
 | In the app | `node test/app/brf.mjs` | every sandbox door shut **from inside the real worker** (sentinel throw as the control); foreign imports and endless loops refused; draws, moves, repeats exactly, takes placement vars; timing vs the HTML lower third |
 
 Expected from `test/app/brf.mjs`: exit 0, 15 `ok` lines, a restore line, and
@@ -230,9 +232,9 @@ for p in brf mcp templates compositions composition-scale preview-frame; do node
 PROBE_TIMEOUT_MS=400000 node test/app/export-vs-preview.mjs; echo "export-vs-preview $?"
 ```
 
-Known: `preview-frame.mjs` fails its size check on a **vertical** project (it hard-codes a
-640×360 landscape result — a fixture assumption, not a regression); its content checks must
-still pass. `export-vs-preview.mjs` needs the longer watchdog when the video decoder is busy.
+`preview-frame.mjs` derives its size check from the canvas (it used to hard-code 640×360 and
+fail on every vertical project); `CANVAS=vertical-1080` runs it on a vertical canvas and the
+restore puts the project's own back. `export-vs-preview.mjs` needs the longer watchdog when the video decoder is busy.
 
 ---
 
@@ -242,7 +244,7 @@ still pass. `export-vs-preview.mjs` needs the longer watchdog when the video dec
 |---|---|---|
 | 0 gates | | |
 | 1 automated + `brf.mjs` | | |
-| 2.1 export of a code module | | |
+| 2.1 export of a code module | ✅ | `test/app/brf-export.mjs` against the packaged build (2026-09-23, 1920×1080 @ 30): export finished, `ffprobe -count_frames` 120 = 4 s × 30; all 120 frames of the file match `renderFrame` (worst grid cell 1.8 pts, tol 4; lit share within 0.03 pts); 0.1/1.0/3.0 s: preview 0.20/1.98/1.96 % lit, file 0.20/1.97/1.96 %; no frame missing the graphic; the 3.0 s frame read by eye: **3,200**. Override `value 3200→7`: oracle moves 19.6 pts at 3.0 s, file matches the override (worst cell 0.6). Control `VERIFY_PROBE=1` (settle returns at once): frames 0 and 1 black in the file — caught; the three sampled frames alone all matched, so only the every-frame scan sees it. The exporter already waited; no fix needed there. |
 | 2.2 live playback | | |
 | 2.3 save / reopen / relaunch | | |
 | 2.4 undo / redo / Revert | | |
@@ -250,7 +252,7 @@ still pass. `export-vs-preview.mjs` needs the longer watchdog when the video dec
 | 2.6 Inspector variables | | |
 | 2.7 sandbox, adversarial | **pass after fix** | 2026-09-23, worktree build, isolated profile. **Found open** in the real worker: string `setTimeout`/`setInterval` ran (global and via `WorkerGlobalScope.prototype`; would also have carried a generated `import()` past the source check); a `dispatchEvent`ed `MessageEvent` shaped like a host `load` replaced the probed module with an unprobed one; `new FontFace('x','url(https://…)')` + `self.fonts` issued a request only main's filter stopped; the `webkitRequestFileSystem*` storage API was present. **Fixed** in `brf-lockdown.ts`: timers wrapped (made in the target realm, `Reflect.apply` captured) to refuse non-functions; the host listener ignores untrusted events; `FontFace`, `fonts`, `webkit*FileSystem*` removed. **Shut already:** `Reflect.construct(Function)`, async/generator/async-generator constructors via prototypes, class methods, getters, bound functions, indirect eval, `Worker`/`SharedWorker` (Blob URL), `importScripts`, `navigator.sendBeacon`, WebSocket/EventSource/XHR/WebTransport, `postMessage`, `queueMicrotask`/`scheduler.postTask` with a string (TypeError). **Not doors:** WebAssembly (an instance calls only the imports the module hands it), `structuredClone` (cannot clone functions), `Atomics.wait` (no `SharedArrayBuffer`: not cross-origin isolated). `brf-sandbox.mjs` exit 0, and against the pre-fix build it failed at `shut: setTimeout with a string` (got `OPEN`). Outer wall: iframe fetch rejected, main logged `refused a network request from the editor: https://example.com/?bay-outer-wall`. |
 | 2.8 hostile and heavy | | |
-| 2.9 packaged app | | |
+| 2.9 packaged app | ✅ after a fix | `pnpm bundle` → `release/mac-arm64/bay.app`, launched directly (own `--user-data-dir`, CDP 9231; renderer at `file://…/app.asar/out/renderer/index.html`): `brf.mjs` exit 0, 15 ok, `.brf 3.1 ms · HTML 91.8 ms`. Worker loads from inside `app.asar` over `file:` (allowed by `offline.ts`'s local schemes and by the CSP's `script-src 'self'`). **Broken on purpose** (worker renamed inside the asar header): before the fix `write_brf` never answered (CDP "Promise was collected", probe CANNOT MEASURE after 120 s) — `#fail` dropped waiters without resolving them; after it, `brf.mjs` exits 1 at the control with `The .brf crashed: the worker could not start …`. |
 | 2.10 dev mode | | |
 | 2.11 agent quality | | |
 | 2.12 regression sweep | | |
