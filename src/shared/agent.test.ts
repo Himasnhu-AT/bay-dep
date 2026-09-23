@@ -11,6 +11,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  formatElapsed,
   approvalMessage,
   argsMatch,
   buildProposal,
@@ -477,4 +478,8 @@ test('a proposal whose apply_script has no script is refused when proposed', () 
   })
   assert.equal(built.ok, false)
   assert.match(built.ok ? '' : built.error, /apply_script.*script/)
+})
+
+test('elapsed time reads the way a person says it', () => {
+  assert.deepEqual([0, 8.4, 60, 72, 144, 600, 725].map(formatElapsed), ['0s', '8s', '1m', '1m 12s', '2m 24s', '10m', '12m'])
 })

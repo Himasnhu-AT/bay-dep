@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, ChevronRight, Download, Loader2, Undo2 } from 'lucide-react'
-import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
+import { AlertTriangle, Brain, Check, ChevronRight, Download, Loader2, Undo2 } from 'lucide-react'
+import { approvalMessage, DECLINED_MESSAGE, formatElapsed, type AgentEntry } from '@shared/agent'
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
 import { bay } from '@/lib/bay'
@@ -169,6 +169,7 @@ export function AgentPanel(): ReactNode {
             {log.map((entry) => (
               <Entry key={entry.id} entry={entry} deliver={deliver} />
             ))}
+            <ThinkingNow />
             <div ref={bottom} />
           </div>
         )}
@@ -289,7 +290,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
         </button>
       )}
       <p className="mt-4 text-center text-[11px] leading-relaxed text-ink-2">
-        It reads the project and proposes a plan. Nothing changes until you approve it.
+        It reads the project and makes the edits. Every change shows as a diff you can revert.
       </p>
     </div>
   )
@@ -324,7 +325,37 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
       return <ProposalCard entry={entry} deliver={deliver} />
     case 'changes':
       return <ChangesCard entry={entry} />
+    case 'thinking':
+      return (
+        <p className="flex items-center gap-1.5 text-[11px] text-ink-3 tabular-nums">
+          <Brain aria-hidden="true" className="size-3 shrink-0" />
+          Thought for {formatElapsed(entry.seconds)}
+        </p>
+      )
   }
+}
+
+/**
+ * While the model thinks: a live line with the time so far. Its reasoning is not sent (current
+ * models default to omitting it), so this is the only sign a long think is progress rather than a
+ * hang — the case that read as "stuck for three minutes".
+ */
+function ThinkingNow(): ReactNode {
+  const since = useEditor((state) => state.agentThinkingSince)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (since === null) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [since])
+  if (since === null) return null
+  return (
+    <p role="status" className="flex items-center gap-1.5 text-[11px] text-ink-2 tabular-nums">
+      <Brain aria-hidden="true" className="size-3 shrink-0 animate-pulse" />
+      Thinking · {formatElapsed((now - since) / 1000)}
+    </p>
+  )
 }
 
 function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): ReactNode {

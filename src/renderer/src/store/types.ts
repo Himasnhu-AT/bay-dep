@@ -106,6 +106,8 @@ export interface EditorState {
    * can be reverted. Remembered per machine.
    */
   agentApproval: boolean
+  /** When the model started thinking, if it is thinking now (ms since the epoch); else null. */
+  agentThinkingSince: number | null
   /** The project as it was when the current agent turn started; null between turns. */
   agentTurnBase: Project | null
   /**

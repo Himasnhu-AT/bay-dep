@@ -67,6 +67,13 @@ export type AgentEvent =
   | { type: 'tool-result'; runId: string; callId: string; ok: boolean; summary: string }
   /** The agent is asking for approval before it writes anything. */
   | { type: 'proposal'; runId: string; proposal: Proposal }
+  /**
+   * The model started, or stopped, thinking. Current models send their reasoning with no text
+   * (`display: "omitted"`), so without these a long think — measured: 2 min 24 s, 27k tokens —
+   * is a panel showing nothing at all. The block's start and stop still arrive; these carry them.
+   */
+  | { type: 'thinking-start'; runId: string }
+  | { type: 'thinking-end'; runId: string }
   /** The run ended. `reason` distinguishes a finished turn from a stop and from a failure. */
   | { type: 'done'; runId: string; reason: 'complete' | 'stopped' | 'error'; message?: string }
 
@@ -97,6 +104,8 @@ export type AgentEntry =
   | { kind: 'user'; id: string; text: string; pins?: Pin[] }
   | { kind: 'assistant'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }
+  /** How long the model thought, when its reasoning itself was not sent. */
+  | { kind: 'thinking'; id: string; seconds: number }
   | {
       kind: 'tool'
       /** The call id, so the result can find its own card. */
@@ -497,3 +506,12 @@ export function approvalMessage(option: ProposalOption): string {
 export const DECLINED_MESSAGE =
   'I am not approving any of those options. Nothing was changed. Ask me what I would prefer, ' +
   'or propose something different.'
+
+/** "8s", "1m 12s", "12m" — how long something took, the way a person says it. */
+export function formatElapsed(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rest = s % 60
+  return m >= 10 || rest === 0 ? `${m}m` : `${m}m ${rest}s`
+}

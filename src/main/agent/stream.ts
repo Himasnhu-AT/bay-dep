@@ -63,10 +63,12 @@ function shortToolName(tool: string): string {
  */
 export interface StreamState {
   toolBlocks: Map<number, string>
+  /** Open thinking blocks, by index, so their stop can end the "thinking" indicator. */
+  thinkingBlocks: Set<number>
 }
 
 export function newStreamState(): StreamState {
-  return { toolBlocks: new Map() }
+  return { toolBlocks: new Map(), thinkingBlocks: new Set() }
 }
 
 export function toAgentEvents(message: StreamMessage, runId: string, state: StreamState = newStreamState()): AgentEvent[] {
@@ -78,10 +80,22 @@ export function toAgentEvents(message: StreamMessage, runId: string, state: Stre
     if (!event) return []
     const eventType = asString(event['type'])
 
+    // A thinking block ending: the indicator stops.
+    if (eventType === 'content_block_stop') {
+      const index = event['index']
+      if (typeof index === 'number' && state.thinkingBlocks.delete(index)) return [{ type: 'thinking-end', runId }]
+      return []
+    }
+
     // A tool call starting: show its card now, not when its whole input has arrived.
     if (eventType === 'content_block_start') {
       const block = asRecord(event['content_block'])
       const index = event['index']
+      // A thinking block starting: its text never arrives (display "omitted"), so say it began.
+      if (asString(block?.['type']) === 'thinking' && typeof index === 'number') {
+        state.thinkingBlocks.add(index)
+        return [{ type: 'thinking-start', runId }]
+      }
       const callId = asString(block?.['id'])
       const tool = asString(block?.['name'])
       if (asString(block?.['type']) !== 'tool_use' || !callId || !tool || typeof index !== 'number') return []

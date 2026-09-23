@@ -288,3 +288,34 @@ test('a streamed tool call is one card: it appears empty, fills as it streams, t
   assert.equal((cards()[0] as { input?: string }).input, undefined, 'the raw stream goes once the arguments exist')
   apply({ type: 'done', runId: 's', reason: 'complete' })
 })
+
+test('a think becomes one "thought for" line with its duration; a turn ended mid-think still gets one', async () => {
+  fresh()
+  const apply = state().applyAgentEvent
+  const realNow = Date.now
+  let clock = 1_000_000
+  Date.now = () => clock
+  try {
+    apply({ type: 'started', runId: 't' })
+    apply({ type: 'thinking-start', runId: 't' })
+    assert.equal(state().agentThinkingSince, 1_000_000, 'the indicator knows when it began')
+    clock += 144_000
+    apply({ type: 'thinking-end', runId: 't' })
+    const lines = () => state().agentLog.filter((e) => e.kind === 'thinking') as { seconds: number }[]
+    assert.deepEqual(lines().map((l) => l.seconds), [144])
+    assert.equal(state().agentThinkingSince, null)
+    // A blink of thinking is not worth a line.
+    apply({ type: 'thinking-start', runId: 't' })
+    clock += 400
+    apply({ type: 'thinking-end', runId: 't' })
+    assert.equal(lines().length, 1)
+    // Stopped while thinking: the turn's end closes it.
+    apply({ type: 'thinking-start', runId: 't' })
+    clock += 5_000
+    apply({ type: 'done', runId: 't', reason: 'stopped' })
+    assert.deepEqual(lines().map((l) => l.seconds), [144, 5])
+    assert.equal(state().agentThinkingSince, null)
+  } finally {
+    Date.now = realNow
+  }
+})

@@ -274,3 +274,15 @@ test('a tool call shows as soon as it starts, and its input streams onto the sam
   )
   assert.deepEqual(stray, [])
 })
+
+test('a thinking block says when it starts and when it stops, though its text is empty', () => {
+  const state = newStreamState()
+  const ev = (event: Record<string, unknown>) => toAgentEvents({ type: 'stream_event', event }, 'r1', state)
+  assert.deepEqual(ev({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }), [{ type: 'thinking-start', runId: 'r1' }])
+  assert.deepEqual(ev({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '' } }), [], 'empty deltas stay silent')
+  // Control: a text block's stop is not a thinking stop.
+  assert.deepEqual(ev({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }), [])
+  assert.deepEqual(ev({ type: 'content_block_stop', index: 1 }), [])
+  assert.deepEqual(ev({ type: 'content_block_stop', index: 0 }), [{ type: 'thinking-end', runId: 'r1' }])
+  assert.deepEqual(ev({ type: 'content_block_stop', index: 0 }), [], 'only once')
+})

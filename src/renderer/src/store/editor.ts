@@ -213,6 +213,21 @@ export const useEditor = create<EditorStore>((set, get) => {
     }
   }
 
+  /**
+   * The log line for a think that just ended — "Thought for 2m 24s" — or null when it was too short
+   * to be worth a line (under a second) or nothing was thinking.
+   */
+  function thinkingEntry(state: EditorState): AgentEntry | null {
+    if (state.agentThinkingSince === null) return null
+    const seconds = (Date.now() - state.agentThinkingSince) / 1000
+    return seconds >= 1 ? { kind: 'thinking', id: newId('thk'), seconds } : null
+  }
+
+  function closeThinking(state: EditorState): Partial<EditorState> {
+    const entry = thinkingEntry(state)
+    return { agentThinkingSince: null, ...(entry ? { agentLog: [...state.agentLog, entry] } : {}) }
+  }
+
   /** Runs `mutator` against the active timeline, or does nothing if there isn't one. */
   function editTimeline(mutator: (timeline: Timeline, project: Project) => void): void {
     edit((project) => {
@@ -262,6 +277,7 @@ export const useEditor = create<EditorStore>((set, get) => {
       }
     })(),
     agentTurnBase: null,
+    agentThinkingSince: null,
     agentTurnFiles: {},
     agentTurnEdited: false,
     agentTurnUserEdited: false,
@@ -405,6 +421,12 @@ export const useEditor = create<EditorStore>((set, get) => {
                   agentTurnUserEdited: false
                 }
 
+          case 'thinking-start':
+            return state.agentThinkingSince === null ? { agentThinkingSince: Date.now() } : {}
+
+          case 'thinking-end':
+            return closeThinking(state)
+
           case 'text':
           case 'thinking': {
             // Appended to the open block of the same kind rather than pushed as its own entry:
@@ -475,6 +497,9 @@ export const useEditor = create<EditorStore>((set, get) => {
             }
 
           case 'done': {
+            // A turn stopped mid-think still says how long it thought.
+            const thought = thinkingEntry(state)
+            const log = thought ? [...state.agentLog, thought] : state.agentLog
             // A turn that changed something leaves a diff behind, with what a revert needs. Keyed
             // on whether a real edit happened (not on the project's identity, which a poster
             // arriving also changes), and on the files it rewrote, which the project does not show.
@@ -510,6 +535,7 @@ export const useEditor = create<EditorStore>((set, get) => {
             }
             return {
               agentRunning: false,
+              agentThinkingSince: null,
               agentTurnBase: null,
               agentTurnFiles: {},
               agentTurnEdited: false,
