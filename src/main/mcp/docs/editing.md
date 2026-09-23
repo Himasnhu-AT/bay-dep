@@ -152,6 +152,25 @@ It moves only when time itself does: `remove_range` slides markers after the cut
 footage, and one inside the removed span lands on the cut rather than vanishing. `remove_marker`
 takes one away.
 
+## Cutting to music
+
+`detect_beats` with the music's `itemId` finds its tempo, every beat, the first beat of each bar
+(`downbeats`) and where it drops out — all in timeline frames for that clip, so a beat is a frame
+you can pass straight to `split_at`, `trim_item`, `place_asset` or `edit_item`. It runs on this Mac
+and is kept on the file, so asking again is free. Land ordinary cuts on beats and the big ones on
+downbeats; `framesPerBeat` tells you how far a nudge of one beat is. A drop-out of kind
+`percussion` starts on the first beat the drums *do not* play — that frame is "the drop", where a
+reveal lands; `silence` is where the level itself falls away.
+
+`markers: "downbeats"` (or `"beats"`) also returns a list ready for `add_marker`'s `markers`, which
+places them all in one undo step so the user can see the grid. Once a file has been analysed, a
+drag or trim in the timeline snaps to its beats and to every marker.
+
+`downbeats` is empty when no beat of the bar is clearly accented; do not invent one. Low
+`confidence` (under ~0.3) means there is no steady beat — say so rather than cutting to a guess.
+The tempo can come back at half or double what a musician would count when the eighth notes are
+played as hard as the beats; if the user names a tempo, check `bpm` against it.
+
 ## Many clips at once: the script
 
 When an edit touches many clips — tightening a whole cut, reordering shots, rewording every
@@ -176,6 +195,21 @@ Seven kinds: `cross-dissolve`, `dip-to-black`, `dip-to-white`, `wipe`, `push`, `
 The dips pass through solid colour at the midpoint; the rest cross-fade. Audio follows the
 picture, except on a dip, where both sides go silent at the middle because that is what a dip
 means.
+
+## Sound: J/L cuts and ducking
+
+`edit_item` `audioLeadFrames` is a J-cut: the clip's sound starts that many frames before its
+picture, reading footage from before its in-point — the next shot's sound arriving under the
+current one (15 frames at 30 fps is a common half second). `audioTrailFrames` is the L-cut, the
+sound running on past the picture. Both spend handles like a transition does, are clamped to the
+footage there is, and are set aside on a cut that already has a transition; the result says when
+either happens, with the numbers. Fades apply to the sound's own edges, so give a lead 3–4 frames
+of `fadeInFrames` or it clicks in under the previous shot.
+
+`duck: { keyTrackId, amountDb, attackFrames, releaseFrames }` pulls a clip down under another
+track — the music bed under the dialogue track. It follows the key track's clips being *present*,
+not their loudness, so the preview and the export duck identically; the dip is complete as the
+key starts and a pause inside a dialogue clip stays ducked. 6 dB is light, 12 firm.
 
 ## Looks
 
@@ -248,6 +282,12 @@ not be applied. The `warning` names the frames and what is wrong on them, and
 `incompleteFrames.items` / `incompleteFrames.gradeIssues` list each with its frame ranges. That
 file is not correct: follow the warning (export again, or fix the grade first) rather than
 reporting it.
+
+`loudness: "streaming"` (−14 LUFS, −1 dBTP; also `"podcast"`, `"broadcast"`, or
+`{ integratedLufs, truePeakDb }`) masters the audio: a linear gain and a true-peak limiter,
+re-measured on the *encoded* file until it lands, because the codec moves the peaks. It is off
+unless asked, so a file plays at the level the preview did. When done, `track_export` reports what
+the delivered file measures; `status: "missed"` means it did not converge and says by how much.
 
 ## Errors are instructions
 

@@ -29,6 +29,7 @@ import {
 } from '@shared/project'
 import { findTool, resolveId } from '@shared/mcp'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
+import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
 import { coerce } from '@shared/composition'
 import { isCropped, normaliseCrop } from '@shared/project'
@@ -362,6 +363,9 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     patch.text = mergeTextStyle(item.text, args.text)
   }
 
+  // J/L cuts and ducking: validated in `audioFinish.ts`, where the gain rules they feed live.
+  Object.assign(patch, audioFinishPatch(args, item, track, project(), timeline()))
+
   const fadeIn = patch.fadeInFrames ?? item.fadeInFrames
   const fadeOut = patch.fadeOutFrames ?? item.fadeOutFrames
   if (fadeIn + fadeOut > durationInFrames) {
@@ -384,9 +388,11 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   // from a clip that still plays, and identity adjustments produce a picture identical to the
   // one before. Neither is visible as a fault, so neither may be left to be noticed.
   const look = lookWarnings(after.item, after.track, timeline())
+  const sound = audioFinishReport(after.item, project(), timeline())
   const warnings = [
     ...(sourceTailWarning ? [sourceTailWarning] : []),
     ...gradeWarnings(after.item.grade, findAsset(project(), after.item.assetId)),
+    ...sound.warnings,
     ...look.warnings
   ]
   return {
@@ -410,6 +416,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
     ...(after.item.grade ? { grade: after.item.grade } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
+    ...(sound.report ?? {}),
     ...(warnings.length > 0 ? { warnings } : {})
   }
 }

@@ -14,20 +14,59 @@ import { describeMarker, frameOrPlayhead } from './read'
 /** Hex only, for the same reason text colours are: a name reads back in a different form. */
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
 
-export function addMarker(args: Record<string, unknown>): Record<string, unknown> {
-  const frame = frameOrPlayhead(args)
-  let color: string | undefined
-  if (args.color !== undefined) {
-    const given = String(args.color).trim()
-    if (!HEX.test(given)) {
-      fail(`color must be a hex colour such as "#F5A524", but got "${given}". Omit it for the default.`)
-    }
-    color = given.toUpperCase()
+function markerColor(value: unknown, where: string): string | undefined {
+  if (value === undefined) return undefined
+  const given = String(value).trim()
+  if (!HEX.test(given)) {
+    fail(`${where}color must be a hex colour such as "#F5A524", but got "${given}". Omit it for the default.`)
   }
-  const label = args.label === undefined ? undefined : String(args.label)
+  return given.toUpperCase()
+}
+
+function markerLabel(value: unknown, where: string): string | undefined {
+  const label = value === undefined ? undefined : String(value)
   if (label !== undefined && label.trim() === '') {
-    fail('label is empty. Omit it and bay numbers the marker, or pass the words to show.')
+    fail(`${where}label is empty. Omit it and bay numbers the marker, or pass the words to show.`)
   }
+  return label
+}
+
+/**
+ * The `markers` form: every entry checked before any is placed, so a bad fifth entry refuses the
+ * call rather than leaving four markers behind, and all of them land as one undo step.
+ */
+function addMarkers(list: unknown, args: Record<string, unknown>): Record<string, unknown> {
+  if (args.frame !== undefined || args.label !== undefined || args.color !== undefined) {
+    fail('Pass either markers (a list) or frame/label/color (one marker), not both.')
+  }
+  if (!Array.isArray(list) || list.length === 0) fail('markers is empty. Pass [{ frame, label?, color? }, …].')
+  const planned = list.map((entry, index) => {
+    const where = `markers[${index}].`
+    if (typeof entry !== 'object' || entry === null) fail(`${where.slice(0, -1)} must be { frame, label?, color? }.`)
+    const e = entry as Record<string, unknown>
+    const frame = Number(e.frame)
+    if (e.frame === undefined || !Number.isFinite(frame) || frame < 0) {
+      fail(`${where}frame must be a frame number (0 or more), but got ${JSON.stringify(e.frame)}.`)
+    }
+    return { frame: Math.round(frame), label: markerLabel(e.label, where), color: markerColor(e.color, where) }
+  })
+  if (!timeline()) fail('The markers were not added: there is no timeline open.')
+  const ids: string[] = []
+  store().transact(() => {
+    for (const m of planned) {
+      const id = store().addMarker(m.frame, m.label, m.color)
+      if (id) ids.push(id)
+    }
+  })
+  const placed = (timeline().markers ?? []).filter((m) => ids.includes(m.id))
+  return { markers: placed.map(describeMarker), added: placed.length, markerCount: timeline().markers?.length ?? 0 }
+}
+
+export function addMarker(args: Record<string, unknown>): Record<string, unknown> {
+  if (args.markers !== undefined) return addMarkers(args.markers, args)
+  const frame = frameOrPlayhead(args)
+  const color = markerColor(args.color, '')
+  const label = markerLabel(args.label, '')
 
   const id = store().addMarker(frame, label, color)
   if (!id) fail('The marker was not added: there is no timeline open.')

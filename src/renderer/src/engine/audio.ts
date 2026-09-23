@@ -28,7 +28,6 @@
  */
 
 import {
-  fadeGainAt,
   findAsset,
   itemEnd,
   type Asset,
@@ -38,7 +37,7 @@ import {
   type Track
 } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
-import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
+import { audibleSpan, itemAudioGainAt, resolveAudioOffsets } from '@shared/audio-gain'
 import {
   scheduleCompositionSounds,
   soundSecondsAt,
@@ -81,6 +80,24 @@ export interface AudioRouting {
    */
   transitionGain: number
   /**
+   * The item's whole gain at this frame — `itemAudioGainAt`, the function export's envelope is
+   * sampled from, so volume, fades, transitions, J/L offsets and ducking are decided once for
+   * both. `transitionGain` above is one factor of it, kept for the routing tests that pin it.
+   */
+  gain: number
+  /**
+   * Set when the item's sound is *detached* from its picture — a J/L cut, whose sound runs
+   * before or after the frames its picture is drawn on. It then plays from its own `<audio>`
+   * element (`asset` is a stand-in over the same file), positioned at `mediaSeconds`, for the
+   * whole of its audible span: switching from a stand-in to the video element at the picture
+   * cut would put a seam in the sound exactly where a J-cut is meant to hide one.
+   *
+   * `claim` names the picture's own element when the picture is drawn this frame. Its sound must
+   * be *owned* by the graph and left silent, because a media element no source node has claimed
+   * plays straight to the speakers — a second, unmixed copy of the same sound.
+   */
+  detached?: { mediaSeconds: number; claim: { asset: Asset; slot: number } | null }
+  /**
    * True when this item reaches its track's analyser — i.e. the meter shows it. Mute does
    * not switch this off: the meter must keep showing what is on a muted track, or it is
    * lying about the material.
@@ -112,17 +129,40 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
     ? transitionAudioGains(active.resolved.transition.kind, active.progress)
     : null
 
+  const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
+
   const push = (item: Item, track: Track, transitionGain: number): void => {
     const asset = findAsset(project, item.assetId)
     // An asset that failed to probe has no decodable audio; ffmpeg refuses to open it, and on
     // the export side one bad input fails the whole mix.
     if (!asset || asset.error || !asset.hasAudio) return
+    const gain = itemAudioGainAt(project, timeline, item, frame)
+    if (!isDetached(project, timeline, item)) {
+      out.push({
+        item,
+        track,
+        asset,
+        slot: slots.get(item.id) ?? 0,
+        transitionGain,
+        gain,
+        metered: true,
+        audible: !track.muted
+      })
+      return
+    }
+    const standIn = detachedAsset(asset, item)
+    const drawn = slots.get(item.id)
     out.push({
       item,
       track,
-      asset,
-      slot: slots.get(item.id) ?? 0,
+      asset: standIn,
+      slot: 0,
       transitionGain,
+      gain,
+      detached: {
+        mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
+        claim: drawn !== undefined && asset.hasVideo ? { asset, slot: drawn } : null
+      },
       metered: true,
       audible: !track.muted
     })
@@ -138,7 +178,11 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
       if (active && (item.id === active.resolved.from.id || item.id === active.resolved.to.id)) {
         continue
       }
-      if (frame < item.from || frame >= itemEnd(item)) continue
+      // A J/L cut sounds outside its picture's frames, over its audible span.
+      if (isDetached(project, timeline, item)) {
+        const span = audibleSpan(project, timeline, item)
+        if (frame < span.firstFrame || frame >= span.endFrame) continue
+      } else if (frame < item.from || frame >= itemEnd(item)) continue
       push(item, track, 1)
     }
   }
@@ -151,6 +195,29 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
   }
 
   return out
+}
+
+/** True when `item` has a J/L offset that survives clamping, so its sound leaves its picture. */
+function isDetached(project: Project, timeline: Timeline, item: Item): boolean {
+  if (!item.audioLeadFrames && !item.audioTrailFrames) return false
+  const offsets = resolveAudioOffsets(project, timeline, item)
+  return offsets.leadFrames > 0 || offsets.trailFrames > 0
+}
+
+/**
+ * The stand-in a detached item's sound plays from: the same file as an audio-only asset, keyed
+ * per *item*, so the pool gives it an `<audio>` element of its own that no picture ever seeks.
+ * Its duration is the source's, so `sourceSecondsAt` clamps to the same end.
+ */
+function detachedAsset(asset: Asset, item: Item): Asset {
+  return {
+    ...asset,
+    id: `${asset.id}~detached~${item.id}`,
+    kind: 'audio',
+    hasVideo: false,
+    width: null,
+    height: null
+  }
 }
 
 /** One declared composition sound heard at a frame, and how to play it. */
@@ -348,6 +415,17 @@ export class AudioEngine {
         const nodes = this.#tracks.get(track.id)
         if (!nodes) continue
 
+        // A detached (J/L) item's picture element is claimed silently first: owned by a source
+        // node that is never marked active, so `#silenceInactive` holds it at zero instead of
+        // letting the compositor's playback reach the speakers unmixed.
+        const claim = routed.detached?.claim
+        if (claim) {
+          const drawn = this.#pool.acquire(claim.asset, claim.slot).element
+          if (drawn instanceof HTMLVideoElement) {
+            this.#sourceNodes(context, sourceKey(claim.asset.id, claim.slot), drawn)
+          }
+        }
+
         const entry = this.#pool.acquire(asset, routed.slot)
         const element = entry.element
         if (!(element instanceof HTMLVideoElement) && !(element instanceof HTMLAudioElement)) {
@@ -363,15 +441,17 @@ export class AudioEngine {
         active.add(key)
 
         this.#route(source, nodes, track.id)
-        // Three independent things multiply: the item's own volume, its fade envelope, and
-        // any transition cross-fade over it. Collapsing any two of them would make one
-        // unreachable while the other is set.
-        source.gain.gain.value =
-          clamp(finite(item.volume, 1), 0, 2) *
-          fadeGainAt(item, frame) *
-          clamp(finite(routed.transitionGain, 1), 0, 1)
+        // The shared gain — volume, fades, transition, J/L offsets, duck — the same function
+        // export's envelope is sampled from, so the two cannot be re-decided apart.
+        source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 2)
 
-        this.#drive(element, item, asset, frame, fps, playing)
+        if (routed.detached) {
+          if (element instanceof HTMLAudioElement) {
+            this.#position(element, item.speed, routed.detached.mediaSeconds, fps, playing)
+          }
+        } else {
+          this.#drive(element, item, asset, frame, fps, playing)
+        }
       }
 
       // Declared composition sounds, through the same nodes: an element, a source node keyed

@@ -36,6 +36,7 @@ import {
 } from './media/whisper'
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
+import { detectBeats } from './media/beats'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
@@ -67,6 +68,7 @@ interface ChannelApi {
   whisperInstall: BayApi['whisper']['installEngine']
   mediaFilmstrip: BayApi['media']['filmstrip']
   mediaWaveform: BayApi['media']['waveform']
+  mediaBeats: BayApi['media']['beats']
   mediaReveal: BayApi['media']['revealInFolder']
 
   projectInitial: BayApi['project']['initial']
@@ -204,6 +206,13 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   whisperDelete: (_event, file) => deleteWhisperModel(app.getPath('userData'), file),
   whisperInstall: () => installWhisperEngine(),
   mediaWaveform: (_event, assetId, path, buckets) => waveform(assetId, path, buckets),
+  mediaBeats: async (_event, path, options) => {
+    try {
+      return { ok: true as const, grid: await detectBeats(path, options ?? {}) }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
   mediaReveal: async (_event, path) => {
     shell.showItemInFolder(path)
   },

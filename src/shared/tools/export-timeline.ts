@@ -21,7 +21,15 @@ export const tool: ToolSpec = {
       outputPath: { type: 'string', description: 'Absolute path, with extension.' },
       format: { type: 'string', enum: ['mp4', 'mov', 'webm', 'wav', 'mp3'] },
       fromFrame: frames('First frame. Defaults to 0.'),
-      toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.')
+      toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.'),
+      loudness: {
+        description:
+          'Master the audio to a loudness target, verified on the encoded file: a preset ' +
+          '("streaming" −14 LUFS / −1 dBTP, "podcast" −16 / −1, "broadcast" −23 / −1), "off", ' +
+          'or { integratedLufs, truePeakDb }. Off by default, so the file plays at the level ' +
+          'the preview did. Linear gain plus a true-peak limiter, never a compressor; ' +
+          'track_export reports what the delivered file measures.'
+      }
     },
     required: ['outputPath', 'format']
   }

@@ -15,6 +15,7 @@
 
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
+import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
 
 /**
@@ -99,6 +100,12 @@ export interface Asset {
    * not change a graded clip.
    */
   lut?: LutData
+  /**
+   * The source's beat grid (`@shared/beats`), once `detect_beats` has analysed it. In source
+   * time, so it is a property of the file and every placement maps it through its own in-point
+   * and speed. Derived data like the poster: written silently, and recomputable from the file.
+   */
+  beats?: BeatGrid
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
@@ -377,6 +384,35 @@ export interface Item {
    * clear it.
    */
   variables?: Record<string, string | number | boolean>
+  /**
+   * J-cut: this clip's sound starts this many frames *before* its picture, reading source from
+   * before its in-point. Absent or 0 means the sound starts with the picture. Clamped when it is
+   * read (`resolveAudioOffsets` in `@shared/audio-gain`) to the footage the source has, and set
+   * aside where a transition already carries the sound across that cut.
+   */
+  audioLeadFrames?: Frames
+  /** L-cut: this clip's sound runs on this many frames *after* its picture ends. As above. */
+  audioTrailFrames?: Frames
+  /** Duck this clip's sound while another track is sounding — music under dialogue. */
+  duck?: AudioDuck
+}
+
+/**
+ * Gain reduction applied to an item while the key track has sound.
+ *
+ * Keyed on the key track's clips being *present* (their audible spans), not on its signal
+ * level, so it is a pure function of the timeline that preview and export share exactly. See
+ * `duckGainAt` in `@shared/audio-gain` for why.
+ */
+export interface AudioDuck {
+  /** The track whose sound this item ducks under. */
+  keyTrackId: string
+  /** How far down, in dB, while the key is sounding. Positive: 6 means −6 dB. */
+  amountDb: number
+  /** Frames to ramp down, ending where the key starts, so the first word is not masked. */
+  attackFrames: Frames
+  /** Frames to ramp back up, starting where the key ends. */
+  releaseFrames: Frames
 }
 
 /**
