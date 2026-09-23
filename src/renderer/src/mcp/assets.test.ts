@@ -130,7 +130,7 @@ test('fields the probe measured are not arguments at all', () => {
   // The schema rejects them by name, listing what is accepted — rather than accepting and
   // ignoring a duration the file does not have.
   assert.match(refusal({ assetId: 'ast_video', durationUs: 1 }), /no argument "durationUs"/)
-  assert.match(refusal({ assetId: 'ast_video', path: '/elsewhere.mp4' }), /accepts "assetId", "name" or "text"/)
+  assert.match(refusal({ assetId: 'ast_video', path: '/elsewhere.mp4' }), /accepts "assetId", "name", "text" or "validateOnly"/)
 })
 
 test('setting the value it already has says so and adds no undo step', () => {

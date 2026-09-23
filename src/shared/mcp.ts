@@ -373,6 +373,7 @@ export const TOOLS: ToolSpec[] = [
       'you meant to change only one; to reword a single title, place a new text asset instead.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -573,6 +574,7 @@ export const TOOLS: ToolSpec[] = [
       'result reports any whose length the new handles now shorten. One call is one undo step.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -763,6 +765,7 @@ export const TOOLS: ToolSpec[] = [
       'change the look for all of them. The result lists the item ids in time order.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -806,6 +809,7 @@ export const TOOLS: ToolSpec[] = [
       'is removed (remove_range) or the frame rate changes.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -825,6 +829,7 @@ export const TOOLS: ToolSpec[] = [
       'or add_marker; an unknown id is refused with the list of markers that do exist.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: { markerId: { type: 'string' } },
