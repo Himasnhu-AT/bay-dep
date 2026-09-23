@@ -20,11 +20,29 @@
 /** The extensions a bare relative import may resolve to, in the order TypeScript tries. */
 const CANDIDATE_SUFFIXES = ['.ts', '.tsx', '.d.ts', '/index.ts', '/index.tsx']
 
-/** Only relative specifiers are our problem — bare ones are the package manager's. */
-const RELATIVE_IMPORT = /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*['"](\.[^'"]*)['"]/g
+/**
+ * Path aliases: a specifier prefix and the repo-relative directory it stands for, e.g.
+ * `{ '@shared/': 'src/shared/' }`. An aliased import is ours exactly as a relative one is — it
+ * names a file in this tree — and a gate that only walked relative specifiers could not see
+ * ~400 `@shared/` and `@/` imports — most of what crosses a module boundary, and the ones a
+ * half-committed change is most likely to break. The caller derives these from the tsconfig so
+ * this module does not hold one more copy of the mapping.
+ */
+export type Aliases = Record<string, string>
 
-/** `import './side-effect'` and `import type ... from` both matter; so does `export * from`. */
-const BARE_SIDE_EFFECT = /(?:^|\n)\s*import\s*['"](\.[^'"]*)['"]/g
+const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+
+/** Relative and aliased specifiers are our problem — bare ones are the package manager's. */
+function patterns(aliases: Aliases): RegExp[] {
+  const ours = ['\\.', ...Object.keys(aliases).map(escape)].join('|')
+  const spec = `((?:${ours})[^'"]*)`
+  return [
+    // `import type ... from` matters, and so does `export * from`.
+    new RegExp(`(?:^|\\n)\\s*(?:import|export)[\\s\\S]*?from\\s*['"]${spec}['"]`, 'g'),
+    // `import './side-effect'`.
+    new RegExp(`(?:^|\\n)\\s*import\\s*['"]${spec}['"]`, 'g')
+  ]
+}
 
 export interface UnresolvedImport {
   /** The committed file containing the import. */
@@ -45,10 +63,9 @@ function normalise(path: string): string {
   return parts.join('/')
 }
 
-function specifiersIn(source: string): string[] {
+function specifiersIn(source: string, aliases: Aliases): string[] {
   const found = new Set<string>()
-  for (const pattern of [RELATIVE_IMPORT, BARE_SIDE_EFFECT]) {
-    pattern.lastIndex = 0
+  for (const pattern of patterns(aliases)) {
     let match: RegExpExecArray | null
     while ((match = pattern.exec(source)) !== null) {
       const specifier = match[1]
@@ -61,10 +78,12 @@ function specifiersIn(source: string): string[] {
 /**
  * @param files every source path present in the commit, repo-relative
  * @param read the contents of one of those paths, at that commit
+ * @param aliases specifier prefixes that name directories in this tree (see `Aliases`)
  */
 export function unresolvedImports(
   files: string[],
-  read: (path: string) => string
+  read: (path: string) => string,
+  aliases: Aliases = {}
 ): UnresolvedImport[] {
   const present = new Set(files)
   const faults: UnresolvedImport[] = []
@@ -73,14 +92,19 @@ export function unresolvedImports(
     if (!/\.tsx?$/.test(file)) continue
     const dir = file.split('/').slice(0, -1).join('/')
 
-    for (const rawSpecifier of specifiersIn(read(file))) {
+    for (const rawSpecifier of specifiersIn(read(file), aliases)) {
       // A bundler query suffix names how to load the file, not a different file. Vite's
       // `./x.md?raw` inlines x.md as a string; resolving the specifier verbatim looks for a
       // file called `x.md?raw`, finds nothing, and reports a healthy import as broken. The
       // gate exists to catch a missing file, and this is the opposite error.
       const specifier = rawSpecifier.split('?')[0] ?? rawSpecifier
       if (specifier.length === 0) continue
-      const base = normalise(`${dir}/${specifier}`)
+      const alias = Object.keys(aliases).find((prefix) => specifier.startsWith(prefix))
+      const base = normalise(
+        alias === undefined
+          ? `${dir}/${specifier}`
+          : `${aliases[alias]}/${specifier.slice(alias.length)}`
+      )
       // An explicit extension is tried as written; `./looks` is tried five ways.
       const tried = /\.(tsx?|json|css|svg|png|md|txt|wasm|woff2?)$/.test(specifier)
         ? [base]
