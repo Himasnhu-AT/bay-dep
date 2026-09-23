@@ -9,7 +9,7 @@
  */
 
 import type { Item, Project, Timeline } from '@shared/project'
-import { US_PER_SECOND, findAsset, itemEnd } from '@shared/project'
+import { US_PER_SECOND, findAsset } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
 import { scheduleCompositionSounds, type ScheduledSound } from '@shared/composition-audio'
@@ -54,7 +54,11 @@ function seconds(value: number): string {
 interface Candidate {
   item: Item
   path: string
-  /** Frames of the item that fall inside the export range. */
+  /**
+   * Frames in which the item is *heard* inside the export range — its own span widened into
+   * transition handles by `audibleSpan`, then clipped to the range. Wider than the item on a
+   * dissolve: the outgoing clip sounds past its end and the incoming one before its start.
+   */
   startFrame: number
   endFrame: number
 }
@@ -80,8 +84,9 @@ function candidates(
       // file gets audio the user never heard.
       if (asset.error) continue
       if (item.volume <= 0) continue
-      const startFrame = Math.max(item.from, fromFrame)
-      const endFrame = Math.min(itemEnd(item), toFrameExclusive)
+      const span = audibleSpan(project, timeline, item)
+      const startFrame = Math.max(span.firstFrame, fromFrame)
+      const endFrame = Math.min(span.endFrame, toFrameExclusive)
       if (endFrame <= startFrame) continue
       out.push({ item, path: asset.path, startFrame, endFrame })
     }
@@ -250,37 +255,47 @@ export function buildAudioGraph(
   const chains: string[] = []
   const labels: string[] = []
 
+  // A clip: read exactly the source it is heard over, bring it to speed, put it in place, then
+  // apply the shared gain as an envelope in export seconds — the same function the preview's
+  // gain nodes are driven by, sampled per frame. This used to be `volume` plus two `afade`s,
+  // which carried the fades and the level but no transition at all: a dissolve was a hard cut
+  // in every exported file while the preview cross-faded it, and the `transition-audio` probe
+  // measures the preview, so nothing said so.
   found.forEach((candidate, index) => {
     const { item } = candidate
     const speed = Number.isFinite(item.speed) && item.speed > 0 ? item.speed : 1
-    const itemDuration = item.durationInFrames / fps
-    const sourceStart = item.sourceStartUs / US_PER_SECOND
-    const sourceDuration = itemDuration * speed
+    // Source seconds at the first heard frame. Before `from` this reads the handle a transition
+    // was resolved against; `resolveTransition` only grants a window the footage can cover, so
+    // this is non-negative by construction, and clamped only so a malformed item cannot hand
+    // ffmpeg a negative start.
+    const sourceStart = Math.max(
+      0,
+      item.sourceStartUs / US_PER_SECOND + ((candidate.startFrame - item.from) / fps) * speed
+    )
+    const heard = (candidate.endFrame - candidate.startFrame) / fps
 
     const steps: string[] = [COMMON_FORMAT]
-    steps.push(`atrim=start=${seconds(sourceStart)}:duration=${seconds(sourceDuration)}`)
+    steps.push(`atrim=start=${seconds(sourceStart)}:duration=${seconds(heard * speed)}`)
     steps.push('asetpts=N/SR/TB')
     steps.push(...atempoChain(speed))
-    if (item.volume !== 1) steps.push(`volume=${item.volume.toFixed(4)}`)
-
-    const fadeIn = item.fadeInFrames / fps
-    if (fadeIn > 0) steps.push(`afade=t=in:st=0:d=${seconds(fadeIn)}`)
-    const fadeOut = item.fadeOutFrames / fps
-    if (fadeOut > 0 && fadeOut < itemDuration) {
-      steps.push(`afade=t=out:st=${seconds(itemDuration - fadeOut)}:d=${seconds(fadeOut)}`)
-    }
-
-    // Now clip to the exported range. Doing this after the fades is what keeps a partial
-    // export's envelope identical to the same moment in a full one.
-    const insetStart = (candidate.startFrame - item.from) / fps
-    const segment = (candidate.endFrame - candidate.startFrame) / fps
-    if (insetStart > 0 || candidate.endFrame < itemEnd(item)) {
-      steps.push(`atrim=start=${seconds(insetStart)}:duration=${seconds(segment)}`)
-      steps.push('asetpts=N/SR/TB')
-    }
-
     const delayMs = Math.round(((candidate.startFrame - fromFrame) / fps) * 1000)
     if (delayMs > 0) steps.push(`adelay=${delayMs}:all=1`)
+
+    // Last, because `t` inside `volume` is the stream's own clock, and only after `adelay` is
+    // that the export's — the clock the envelope is written in.
+    const envelope = soundEnvelope(
+      project,
+      timeline,
+      item,
+      1,
+      fromFrame,
+      candidate.startFrame,
+      candidate.endFrame - 1
+    )
+    const first = envelope[0]?.gain ?? 0
+    const constant = envelope.every((point) => point.gain === first)
+    if (!constant) steps.push(`volume='${volumeExpression(envelope)}':eval=frame`)
+    else if (first !== 1) steps.push(`volume=${first.toFixed(6)}`)
 
     const label = `a${index}`
     inputs.push(candidate.path)

@@ -230,35 +230,72 @@ test('an item at the start of the range is not delayed', () => {
   assert.doesNotMatch(buildAudioGraph(project, timeline, 0, 90)?.filter ?? '', /adelay/)
 })
 
-test('fades are applied before the export range is trimmed out of the item', () => {
-  // The order is the whole point. Exporting the back half of a faded clip must produce the
-  // same envelope at that moment as exporting the whole thing; applying the fade after the
-  // sub-range trim would restart it at the cut.
+/** The chain for one input, so a test reads its gain and nobody else's. */
+function chainFor(filter: string, input: number): string {
+  return filter.split(';').find((chain) => chain.startsWith(`[${input}:a]`)) ?? ''
+}
+
+test("a clip's exported gain is the shared gain, frame for frame, in full and partial exports", () => {
+  // The requirement the old afade assertions stood in for: the level heard at a moment of the
+  // file is the level the preview plays at that moment — and exporting only the back half of a
+  // faded clip changes nothing about that moment. Checked by evaluating the filter, not by
+  // reading which ffmpeg filter names it happens to contain.
   const { project, timeline } = single({
     from: 0,
     durationInFrames: 90,
+    volume: 0.5,
     fadeInFrames: 15,
     fadeOutFrames: 15
   })
-  const filter = buildAudioGraph(project, timeline, 45, 90)?.filter ?? ''
-
-  const fadeIn = filter.indexOf('afade=t=in')
-  const fadeOut = filter.indexOf('afade=t=out')
-  const rangeTrim = filter.indexOf('atrim=start=1.500000')
-
-  assert.notEqual(fadeIn, -1, 'the fade-in survived into a partial export')
-  assert.notEqual(rangeTrim, -1, 'the export sub-range was trimmed out of the item')
-  assert.ok(fadeIn < rangeTrim, 'fade-in must precede the sub-range trim')
-  assert.ok(fadeOut < rangeTrim, 'fade-out must precede the sub-range trim')
+  const clip = timeline.tracks[0]!.items[0]!
+  for (const [fromFrame, toFrame] of [[0, 90], [45, 90], [10, 80]] as const) {
+    const filter = buildAudioGraph(project, timeline, fromFrame, toFrame)?.filter ?? ''
+    for (let frame = fromFrame; frame < toFrame; frame += 1) {
+      const expected = itemAudioGainAt(project, timeline, clip, frame)
+      const actual = evaluate(chainFor(filter, 0), (frame - fromFrame) / 30)
+      assert.ok(
+        Math.abs(actual - expected) < 1e-5,
+        `export ${fromFrame}-${toFrame}, frame ${frame}: ${actual} vs ${expected}`
+      )
+    }
+  }
 })
 
-test('the fade-out is positioned from the end of the item, not the end of the range', () => {
-  const { project, timeline } = single({ durationInFrames: 90, fadeOutFrames: 15 })
-  // 90 frames is 3s; a 0.5s fade-out starts at 2.5s.
-  assert.match(
-    buildAudioGraph(project, timeline, 0, 90)?.filter ?? '',
-    /afade=t=out:st=2\.500000:d=0\.500000/
-  )
+test('clips either side of a dissolve are heard across its window, on the shared curve', () => {
+  // The fault this replaced: export mixed each clip over its own span with `afade`, so a
+  // dissolve was a hard cut in the file while the preview cross-faded it.
+  const out = item({ id: 'o', assetId: 'a1', trackId: 't1', from: 0, durationInFrames: 90 })
+  const into = item({
+    id: 'n',
+    assetId: 'a1',
+    trackId: 't1',
+    from: 90,
+    durationInFrames: 60,
+    sourceStartUs: 2_000_000
+  })
+  const { project, timeline } = projectWith([track('t1', 'video', [out, into])], [asset('a1', '/a.mp4')])
+  timeline.transitions = [
+    { id: 'x', kind: 'cross-dissolve', fromItemId: 'o', toItemId: 'n', durationInFrames: 20 }
+  ]
+  const filter = buildAudioGraph(project, timeline, 0, 150)?.filter ?? ''
+  const outgoing = chainFor(filter, 0)
+  const incoming = chainFor(filter, 1)
+
+  // Outgoing is heard to frame 100, ten frames past its end; incoming from frame 80, reading
+  // the ten frames of handle before its own source start.
+  assert.match(outgoing, /atrim=start=0\.000000:duration=3\.333333/, outgoing)
+  assert.match(incoming, /atrim=start=1\.666667:duration=2\.333333/, incoming)
+  assert.match(incoming, /adelay=2667:all=1/, incoming)
+
+  for (let frame = 78; frame <= 102; frame += 1) {
+    const t = frame / 30
+    const heardOut = frame < 100 ? evaluate(outgoing, t) : 0
+    const heardIn = frame >= 80 ? evaluate(incoming, t) : 0
+    assert.ok(Math.abs(heardOut - itemAudioGainAt(project, timeline, out, frame)) < 1e-5, `out @${frame}`)
+    assert.ok(Math.abs(heardIn - itemAudioGainAt(project, timeline, into, frame)) < 1e-5, `in @${frame}`)
+  }
+  // And it is a cross-fade, not two full-level signals overlapping.
+  assert.ok(evaluate(outgoing, 90 / 30) < 1 && evaluate(incoming, 90 / 30) < 1, 'mid-window is a ramp on both sides')
 })
 
 test('a fade longer than the item does not produce a negative start time', () => {
@@ -385,7 +422,9 @@ function evaluate(filter: string, t: number): number {
   const constant = /volume=([0-9.]+)(?:[,;[]|$)/.exec(filter)
   if (constant) return Number(constant[1])
   const expression = /volume='([^']*)':eval=frame/.exec(filter)?.[1]
-  assert.ok(expression, `no volume stage in ${filter}`)
+  // A chain at unity gain carries no volume stage at all; every test comparing against a ramp
+  // expects something other than 1, so reading this as 1 cannot hide a missing ramp.
+  if (!expression) return 1
   const run = new Function('t', 'iff', 'lt', `return ${expression.replace(/\bif\(/g, 'iff(')}`)
   return run(t, (c: number, a: number, b: number) => (c ? a : b), (a: number, b: number) => (a < b ? 1 : 0))
 }
