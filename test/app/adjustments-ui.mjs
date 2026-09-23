@@ -95,6 +95,20 @@ check('the sliders are present', await evaluate(`
   ['Brightness','Contrast','Saturation','Hue','Blur','Greyscale','Sepia','Invert']
     .every((label) => [...document.querySelectorAll('[aria-label]')].some((el) => el.getAttribute('aria-label') === label))
 `), true)
+// An aria-label is not a caption. All eight shipped as bare tracks with the name only in
+// `aria-label` — the check above passed while a sighted person saw eight identical lines. So
+// the name must be *rendered* in the slider's own row, as text a person can read.
+const uncaptioned = await evaluate(`
+  ['Brightness','Contrast','Saturation','Hue','Blur','Greyscale','Sepia','Invert'].filter((label) => {
+    const el = [...document.querySelectorAll('[role=slider]')].find((e) => e.getAttribute('aria-label') === label)
+    let row = el?.parentElement
+    while (row && !row.className.includes('grid-cols-')) row = row.parentElement
+    return !row || row.innerText.split('\\n')[0].trim() !== label
+  })
+`)
+check('every Adjustments slider shows its name beside it, not only in aria-label', uncaptioned, (list) => list.length === 0)
+check('the Transform section is shown for a video clip (the positive control for audio below)',
+  await evaluate(`[...document.querySelectorAll('h3')].some((h) => h.textContent.trim().toLowerCase() === 'transform')`), true)
 
 // -- a slider move reaches the store --------------------------------------
 const moveSlider = (label, value) =>
@@ -117,6 +131,15 @@ const blurred = await waitFor(`(() => {
   return item.adjustments && item.adjustments.blur > 0 ? item.adjustments : null
 })()`)
 check('moving it changes the stored adjustments', blurred !== null, true)
+// The readout is derived from the stored value, so it survives any starting blur.
+const blurReadout = await evaluate(`(() => {
+  const el = [...document.querySelectorAll('[role=slider]')].find((e) => e.getAttribute('aria-label') === 'Blur')
+  let row = el?.parentElement
+  while (row && !row.className.includes('grid-cols-')) row = row.parentElement
+  return row ? row.innerText : null
+})()`)
+check('the Blur row reads out the stored value with its unit', blurReadout,
+  (text) => typeof text === 'string' && blurred !== null && text.includes(`${blurred.blur.toFixed(1)}px`))
 check('and leaves the other seven at identity', blurred, (a) => a.brightness === 1 && a.grayscale === 0)
 
 // -- the readout is in the COMPOSITOR's order, blur last ------------------
@@ -198,6 +221,10 @@ check('an audio-only clip is offered no Adjustments — there is nothing to filt
 check('POSITIVE CONTROL: the inspector is showing that clip, not empty', await evaluate(`
   document.body.textContent.includes('Audio & speed')
 `), true)
+// X/Y/W/H/Rotate/Opacity move nothing anyone can see on a music bed.
+check('an audio-only clip is offered no Transform section either', await evaluate(`
+  [...document.querySelectorAll('h3')].some((h) => h.textContent.trim().toLowerCase() === 'transform')
+`), false)
 
 console.log(`\n${checks}/${checks} checks passed`)
 close()

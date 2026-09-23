@@ -86,7 +86,9 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
         className="t-panel flex max-h-full flex-col overflow-hidden rounded-md border border-line-strong bg-surface-1 shadow-pop"
       >
         <header className="flex h-10 shrink-0 items-center justify-between border-b border-line pl-3 pr-1.5">
-          <h2 className="text-[13px] font-medium text-ink-0">{title}</h2>
+          {/* The dialog's name must outrank the section headings inside it, which are 13px
+              semibold in Settings — at 13px medium it read as the smaller of the two. */}
+          <h2 className="text-[14px] font-semibold text-ink-0">{title}</h2>
           <IconButton label="Close" icon={<X className="size-4" />} onClick={onClose} />
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>

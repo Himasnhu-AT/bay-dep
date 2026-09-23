@@ -12,7 +12,7 @@
  * cannot open.
  *
  *     mkdir -p /tmp/bay-broken/app.db
- *     ./node_modules/.bin/electron . --remote-debugging-port=9222 \
+ *     BAY_ACCESS=dev ./node_modules/.bin/electron . --remote-debugging-port=9222 \
  *       --user-data-dir=/tmp/bay-broken --disable-backgrounding-occluded-windows &
  *     PORT=9222 node test/app/storage-warning.mjs
  *

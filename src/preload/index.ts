@@ -27,6 +27,7 @@ import type { AgentEntry, AgentEvent } from '@shared/agent'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 import type { WhisperDownload } from '@shared/whisper'
+import type { AccessStatus } from '@shared/access'
 
 const api: BayApi = {
   app: {
@@ -195,6 +196,21 @@ const api: BayApi = {
         ipcRenderer.removeListener(IPC.mcpToolCall, wrapped)
         ipcRenderer.send(IPC.mcpExecutorReady, false)
       }
+    }
+  },
+
+  access: {
+    status: () => ipcRenderer.invoke(IPC.accessStatus),
+    signIn: () => ipcRenderer.invoke(IPC.accessSignIn),
+    cancelSignIn: () => ipcRenderer.invoke(IPC.accessCancelSignIn),
+    signOut: () => ipcRenderer.invoke(IPC.accessSignOut),
+    recheck: () => ipcRenderer.invoke(IPC.accessRecheck),
+    requestAccess: () => ipcRenderer.invoke(IPC.accessRequestAccess),
+    refer: (email: string) => ipcRenderer.invoke(IPC.accessRefer, email),
+    onChange: (listener: (status: AccessStatus) => void) => {
+      const handler = (_event: unknown, payload: AccessStatus): void => listener(payload)
+      ipcRenderer.on(IPC.accessChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.accessChanged, handler)
     }
   },
 

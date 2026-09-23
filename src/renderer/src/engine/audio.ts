@@ -123,7 +123,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
   const out: AudioRouting[] = []
   // The same list and the same slot assignment the compositor draws from, so a source node is
   // always bound to the element its picture comes from.
-  const { items: drawing, active } = itemsToDraw(project, timeline, frame)
+  const { items: drawing, active } = itemsToDraw(project, timeline, frame, 'sound')
   const slots = elementSlots(drawing)
   const gains = active
     ? transitionAudioGains(active.resolved.transition.kind, active.progress)

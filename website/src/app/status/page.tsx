@@ -146,9 +146,16 @@ export default function StatusPage() {
           <Eyebrow>No download</Eyebrow>
           <p className="mt-6 text-base text-ink-soft">
             There is no build on this site, because there is not one worth
-            handing to a stranger. When there is, it will be a notarized disk
-            image served from here. Not a store listing, not a waiting list,
-            and not a button that says coming soon.
+            handing to a stranger. {product.name} is by invitation: you can{" "}
+            <a
+              href="/waitlist"
+              className="text-brass-deep underline underline-offset-2 transition-colors hover:text-ink"
+            >
+              ask for access
+            </a>
+            , and when there is a build it will be a notarized disk image
+            served from here. Not a store listing, and not a button that says
+            coming soon.
           </p>
         </Reveal>
       </Wrap>

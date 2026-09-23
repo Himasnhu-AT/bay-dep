@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
+import { Field } from './Panel'
 
 export interface SliderProps {
   label: string
@@ -122,5 +123,58 @@ export function Slider({
         />
       </div>
     </div>
+  )
+}
+
+export interface SliderFieldProps extends Omit<SliderProps, 'label' | 'onInput'> {
+  /** The visible caption, kept short enough for the Field's 64px label column. */
+  label: string
+  /** The accessible name, when it needs more than the caption (units, a longer word). */
+  ariaLabel?: string
+  /** The readout beside the track. Receives the live value while dragging. */
+  format(value: number): string
+  /** A multi-selection that disagrees: the readout says so rather than showing one clip's value. */
+  mixed?: boolean
+}
+
+/**
+ * A captioned slider with a live readout — the row every inspector slider should be.
+ *
+ * A bare `Slider` carries its name only in `aria-label`, so a stack of them is a column of
+ * identical lines: eight in Adjustments and ten in Grade shipped that way, and the only way to
+ * tell Brightness from Contrast was to drag one and watch the picture. The readout has a fixed
+ * width so every track in a section ends on the same line whatever the value's length.
+ */
+export function SliderField({
+  label,
+  ariaLabel,
+  format,
+  mixed = false,
+  value,
+  onCommit,
+  ...slider
+}: SliderFieldProps): ReactNode {
+  const [live, setLive] = useState<number | null>(null)
+  const shown = live ?? value
+  return (
+    <Field
+      label={label}
+      hint={
+        <span className="inline-block w-11 text-right">
+          {mixed && live === null ? 'Mixed' : format(shown)}
+        </span>
+      }
+    >
+      <Slider
+        {...slider}
+        label={ariaLabel ?? label}
+        value={value}
+        onInput={setLive}
+        onCommit={(next) => {
+          setLive(null)
+          onCommit(next)
+        }}
+      />
+    </Field>
   )
 }

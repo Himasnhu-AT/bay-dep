@@ -99,7 +99,7 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
           tracks directly rather than through `itemsAtFrame` and applies `!track.muted` to
           every kind.
         */}
-        {video && (
+        {video ? (
           <IconButton
             size="xs"
             tooltipSide="right"
@@ -108,6 +108,10 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
             icon={track.hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
             onClick={() => patchTrack(track.id, { hidden: !track.hidden })}
           />
+        ) : (
+          // The eye's slot is kept empty rather than closed up, so mute and delete sit in the
+          // same column on every track and the eye reads as "absent here", not "moved".
+          <span aria-hidden="true" className="size-5 shrink-0" />
         )}
         <IconButton
           size="xs"

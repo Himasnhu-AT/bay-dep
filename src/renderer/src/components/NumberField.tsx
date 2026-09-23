@@ -103,7 +103,10 @@ export function NumberField({
     <div
       className={cn(
         'flex h-7 items-center rounded-sm border border-line bg-surface-2 t-fast',
-        'focus-within:border-accent/70',
+        // The global focus ring is a 2px accent outline; a composite control's input has its
+        // outline off (the box is the control), so the box carries the same 2px here — a 1px
+        // border at 70% was the weakest focus indicator in the app.
+        'focus-within:border-accent focus-within:ring-1 focus-within:ring-accent',
         disabled ? 'opacity-40' : 'hover:border-line-strong',
         className
       )}

@@ -260,7 +260,17 @@ function ClipImpl({
 
       <div className="pointer-events-none relative flex h-full items-start gap-1 px-1.5 py-1">
         <Icon aria-hidden="true" className="mt-px size-3 shrink-0 text-on-media/70" />
-        <span className="truncate text-[11px] leading-tight font-medium text-on-media [text-shadow:0_1px_2px_rgb(0_0_0/0.65)]">
+        {/* Over a filmstrip the name gets the same dark backing as the speed badge: a text
+            shadow alone left it unreadable over bright frames (white on colour bars, sky). */}
+        <span
+          className={cn(
+            'truncate text-[11px] leading-tight font-medium text-on-media [text-shadow:0_1px_2px_rgb(0_0_0/0.65)]',
+            !audio &&
+              showThumbs &&
+              (asset?.kind === 'video' || asset?.kind === 'image' || asset?.kind === 'gif') &&
+              '-mx-0.5 rounded-xs bg-black/55 px-0.5'
+          )}
+        >
           {asset?.name ?? 'Missing media'}
         </span>
         {item.speed !== 1 && (

@@ -913,15 +913,27 @@ export function resolveTransition(
  * Progress is the only number a renderer needs: 0 means show the outgoing clip alone, 1 the
  * incoming alone. That contract is worth stating because every gl-transitions shader assumes
  * it, so a future WebGL path can consume the same value unchanged.
+ *
+ * `kind` limits it to transitions on tracks `itemsAtFrame(…, kind)` would draw from — for
+ * `'video'`, visible video tracks. The compositor must pass it: a cross-dissolve between two
+ * music clips on an audio track is a transition too, and without the filter the picture pass
+ * took it for the frame's transition, added the two music clips to the draw list, waited on a
+ * picture they will never have, and reported every frame of the window incomplete (measured:
+ * an export flagged frames 424-441 over an audio crossfade).
  */
 export function transitionAtFrame(
   project: Project,
   timeline: Timeline,
-  frame: Frames
+  frame: Frames,
+  kind?: TrackKind
 ): { resolved: ResolvedTransition; progress: number } | null {
   for (const transition of timeline.transitions ?? []) {
     const resolved = resolveTransition(project, timeline, transition)
     if (!resolved) continue
+    if (kind) {
+      const track = timeline.tracks.find((t) => t.id === resolved.from.trackId)
+      if (!track || track.kind !== kind || (kind === 'video' && track.hidden)) continue
+    }
     if (frame < resolved.firstFrame || frame > resolved.lastFrame) continue
     const span = resolved.lastFrame - resolved.firstFrame + 1
     const progress = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)

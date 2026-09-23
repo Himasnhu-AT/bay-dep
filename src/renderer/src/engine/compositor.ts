@@ -913,13 +913,21 @@ export class Compositor {
  * Order is `from` then `to`, always. That is what makes `elementSlots` stable across the
  * window: a split clip transitioning into itself is one asset and two items, and an
  * assignment that flipped mid-window would swap what the two elements hold.
+ *
+ * `purpose` is which transition counts. The picture takes only one on a visible video track: a
+ * crossfade between two music clips is a transition too, and taking it here put the music on
+ * the draw list, where it waited for a picture it will never have and marked every frame of the
+ * window incomplete in export. The sound (`audioRoutingAt`) takes any, as it always has — it
+ * needs the pair to crossfade, and the pair's slots come after every picture item's, so the
+ * picture items keep the slots the compositor gave them.
  */
 export function itemsToDraw(
   project: Project,
   timeline: Timeline,
-  frame: number
+  frame: number,
+  purpose: 'picture' | 'sound' = 'picture'
 ): { items: Item[]; active: ReturnType<typeof transitionAtFrame> } {
-  const active = transitionAtFrame(project, timeline, frame)
+  const active = transitionAtFrame(project, timeline, frame, purpose === 'picture' ? 'video' : undefined)
   const present = itemsAtFrame(timeline, frame, 'video')
   if (!active) return { items: present, active }
   const pair = [active.resolved.from, active.resolved.to]

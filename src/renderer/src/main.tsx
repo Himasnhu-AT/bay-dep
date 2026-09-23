@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { AccessGate } from './access/AccessGate'
 // Bundled, not fetched: the CSP permits no remote origin, and Vite emits the woff2 files
 // beside the stylesheet where `font-src 'self'` covers them.
 import '@fontsource-variable/inter'
@@ -12,6 +13,8 @@ if (!container) throw new Error('#root is missing from index.html')
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <AccessGate>
+      <App />
+    </AccessGate>
   </StrictMode>
 )

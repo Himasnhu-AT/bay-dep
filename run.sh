@@ -15,6 +15,12 @@
 #   ./run.sh --no-build   run what is already in out/ (say so out loud)
 #   ./run.sh --dev        electron-vite dev, with renderer HMR
 #   ./run.sh --stop       stop every instance and exit
+#   ./run.sh --gate       run WITHOUT the dev access bypass (see below), to see the sign-in screen
+#
+# bay is invite-only: a build shows its access screen until an account with access signs in, and
+# refuses every MCP tool call until then. This script launches with BAY_ACCESS=dev, which skips
+# that check — honoured only by an unpackaged build (`electron .`), never by an installed app — so
+# the probes in test/app/ drive the editor as before. `--gate` leaves it off.
 #
 # The debugging port is always on: `test/app/*.mjs` drive the app through it, and an instance
 # started without it is one the probes cannot see.
@@ -25,14 +31,16 @@ cd "$here"
 
 PORT=9222
 MODE=build
+GATE=0
 
 for arg in "$@"; do
   case "$arg" in
     --no-build) MODE=nobuild ;;
     --dev)      MODE=dev ;;
     --stop)     MODE=stop ;;
+    --gate)     GATE=1 ;;
     --port=*)   PORT=${arg#--port=} ;;
-    -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "run.sh: unknown option $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -77,6 +85,7 @@ stop
 
 if [ "$MODE" = dev ]; then
   echo "▶ electron-vite dev (renderer HMR; main changes still need a restart)"
+  if [ "$GATE" = 1 ]; then unset BAY_ACCESS; else BAY_ACCESS=dev; export BAY_ACCESS; fi
   exec pnpm dev
 fi
 
@@ -92,7 +101,14 @@ fi
 
 [ -f out/main/index.js ] || { echo "run.sh: out/main/index.js is missing — run without --no-build" >&2; exit 1; }
 
-echo "▶ starting one instance on port $PORT"
+if [ "$GATE" = 1 ]; then
+  echo "▶ starting one instance on port $PORT (access gate ON: sign-in screen, MCP locked)"
+  unset BAY_ACCESS
+else
+  echo "▶ starting one instance on port $PORT (BAY_ACCESS=dev: access check skipped)"
+  BAY_ACCESS=dev
+  export BAY_ACCESS
+fi
 ./node_modules/.bin/electron . \
   --remote-debugging-port="$PORT" \
   --disable-backgrounding-occluded-windows \

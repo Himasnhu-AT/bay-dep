@@ -12,6 +12,7 @@ import { product } from "@/lib/product";
 const links = [
   { href: "/agents", label: "Agents" },
   { href: "/status", label: "Status" },
+  { href: "/waitlist", label: "Request access" },
 ];
 
 export function SiteNav() {

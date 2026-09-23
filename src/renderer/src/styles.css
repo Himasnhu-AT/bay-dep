@@ -40,7 +40,12 @@
 
   --color-ink-0: #ededed;
   --color-ink-1: #a1a1a1;
-  --color-ink-2: #6e6e6e;
+  /* ink-2 carries every field label, hint and readout in the app (100+ uses at 10-11px), so it
+     has to clear WCAG AA's 4.5:1 on the surfaces text sits on: 5.4 on surface-0, 5.1 on
+     surface-1, 4.7 on surface-2. It was #6e6e6e — 3.5:1 on panels, 3.2 inside controls. */
+  --color-ink-2: #8a8a8a;
+  /* Disabled only. At ~2:1 it is below any text threshold by design, so it must never carry
+     text someone is meant to read. */
   --color-ink-3: #4a4a4a;
 
   --color-line: #262626;
@@ -117,7 +122,8 @@
 
   --color-ink-0: #161616;
   --color-ink-1: #525252;
-  --color-ink-2: #7d7d7d;
+  /* 4.6:1 on surface-0, 5.2 on surface-1, 5.6 on surface-2 (was #7d7d7d: 3.3-4.0). */
+  --color-ink-2: #666666;
   --color-ink-3: #ababab;
 
   --color-line: #dadada;

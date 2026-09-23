@@ -52,6 +52,22 @@ export function finite(value: number, fallback: number): number {
 }
 
 /**
+ * How far past the computed source time a media element is asked to seek.
+ *
+ * Source time is whole microseconds, so a frame-exact in-point at 24 fps cannot be stored
+ * exactly: frame 68 is 2.8333333 s, stored as 2 833 333 µs, and a timeline frame's offset is
+ * rounded again. The sum lands up to a microsecond *before* the source frame's timestamp, and a
+ * video element shows the frame whose timestamp is at or before `currentTime` — so the clip
+ * showed the previous source frame on every timeline frame where the roundings fell short, and
+ * the right one where they did not: a one-frame judder through the whole clip (measured on a
+ * 24 fps take placed at 2.833333 s: timeline frames alternated between source 94 and 95 where 95
+ * was asked). Half a millisecond is far larger than any rounding here and far smaller than a
+ * frame at any rate a source has (4.2 ms at 240 fps), and inaudible where the audio engine
+ * seeks by the same number.
+ */
+export const FRAME_EDGE_SECONDS = 0.0005
+
+/**
  * Where in the source, in seconds, `item` should be reading at timeline `frame`.
  *
  * Clamped inside the asset: a clip trimmed past the end of its source, or one whose
@@ -60,7 +76,7 @@ export function finite(value: number, fallback: number): number {
  * frozen picture rather than as the out-of-range request it is.
  */
 export function sourceSecondsAt(item: Item, asset: Asset, frame: number, fps: number): number {
-  const raw = sourceTimeAt(item, frame, fps) / US_PER_SECOND
+  const raw = sourceTimeAt(item, frame, fps) / US_PER_SECOND + FRAME_EDGE_SECONDS
   if (asset.durationUs <= 0) return Math.max(0, raw)
   // Half a frame short of the end: asking for exactly the duration seeks past the last
   // decodable frame on some containers and lands on nothing.

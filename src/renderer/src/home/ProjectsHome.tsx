@@ -131,7 +131,7 @@ export function ProjectsHome(): ReactNode {
       <div className="flex min-h-0 flex-1 justify-center px-8 pb-8">
         <section className="flex min-h-0 w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-line bg-surface-1">
           <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
-            <label className="flex h-8 w-72 items-center gap-2 rounded-md border border-line-strong bg-surface-2 px-2.5 focus-within:border-line-hover">
+            <label className="flex h-8 w-72 items-center gap-2 rounded-md border border-line-strong bg-surface-2 px-2.5 focus-within:border-accent">
               <Search aria-hidden="true" className="size-3.5 text-ink-2" />
               <input
                 value={query}

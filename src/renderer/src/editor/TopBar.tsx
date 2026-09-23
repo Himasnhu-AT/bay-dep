@@ -45,6 +45,9 @@ const THEME_LABEL: Record<ThemePreference, string> = {
   system: 'Theme: system — switch to dark'
 }
 
+/** A region toggle's "on" state: a neutral fill, overriding IconButton's accent `active`. */
+const REGION_ON = 'aria-pressed:bg-surface-3 aria-pressed:text-ink-0 aria-pressed:hover:bg-surface-4'
+
 export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): ReactNode {
   const name = useEditor((state) => state.project.name)
   const dirty = useEditor((state) => state.dirty)
@@ -150,24 +153,29 @@ export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): React
       </div>
 
 
-      {/* Lit while the region is showing, like a toggle in any editor's View menu. */}
+      {/* Lit while the region is showing, like a toggle in any editor's View menu — but lit
+          neutrally. In the accent, all three were orange in the normal layout and outshouted
+          Export, the one primary action in the bar; the accent is for state that needs noticing. */}
       <div className="no-drag flex items-center gap-0.5">
         <IconButton
           label={hidden.side ? 'Show side panel' : 'Hide side panel'}
           icon={<PanelLeft className="size-4" />}
           active={!hidden.side}
+          className={REGION_ON}
           onClick={() => toggleRegion('side')}
         />
         <IconButton
           label={hidden.timeline ? 'Show timeline' : 'Hide timeline'}
           icon={<PanelBottom className="size-4" />}
           active={!hidden.timeline}
+          className={REGION_ON}
           onClick={() => toggleRegion('timeline')}
         />
         <IconButton
           label={hidden.inspector ? 'Show inspector' : 'Hide inspector'}
           icon={<PanelRight className="size-4" />}
           active={!hidden.inspector}
+          className={REGION_ON}
           onClick={() => toggleRegion('inspector')}
         />
       </div>

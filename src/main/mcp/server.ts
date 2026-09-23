@@ -26,6 +26,8 @@ import { open, readFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness, strandedCall } from './executor-ready'
+import { gateToolRunner } from '../auth/gate'
+import { accessStatus } from '../auth/access'
 
 // ---------------------------------------------------------------------------
 // The main ↔ renderer round trip
@@ -230,9 +232,13 @@ let running: RunningSocket | null = null
  */
 export async function startMcpServer(): Promise<SocketStatus> {
   if (running) return running.status
+  // Both doors are gated on access: a locked bay answers every tool call with how to unlock it
+  // and never reaches the renderer (`auth/gate.ts`). The guides stay readable — they are the
+  // product's documentation, not the user's data.
+  const locked = (message: string): ToolOutcome => ({ ok: false, value: message })
   const started = await startSocketServer(
     () => socketPathIn(app.getPath('userData')),
-    runTool,
+    gateToolRunner((tool, args) => runTool(tool, args), accessStatus, locked),
     resourceBody
   )
   running = started
@@ -240,7 +246,7 @@ export async function startMcpServer(): Promise<SocketStatus> {
   // one the UI reports — the panel says for itself whether it could start.
   runningAgent = await startSocketServer(
     () => socketPathIn(app.getPath('userData'), AGENT_SOCKET_NAME),
-    (tool, args) => runTool(tool, args, 'in-app'),
+    gateToolRunner((tool, args) => runTool(tool, args, 'in-app'), accessStatus, locked),
     resourceBody
   )
   if (!runningAgent.status.ready) console.warn(`[bay] agent socket did not open: ${runningAgent.status.error}`)

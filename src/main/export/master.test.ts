@@ -110,6 +110,45 @@ test('the streaming preset lands on −14 LUFS / −1 dBTP, and mp3 is judged as
   }
 })
 
+/**
+ * Kick, a noise snare with a sharp attack and a pad at 110 BPM, driven into clipping — the shape of
+ * a loud score's drums, which is what the codec overshoots on. Pink noise is stationary and does
+ * not show it. Found by search: of five drum-like specimens this is the one ffmpeg's native aac
+ * cannot be mastered through, which the control in the test below re-proves on every run.
+ */
+function drums(dir: string): string {
+  const path = join(dir, 'drums.wav')
+  const beat = 0.5454
+  const channel = (seed: number, pad: number): string =>
+    `0.7*max(-1,min(1,1.6*(0.9*sin(2*PI*55*t)*exp(-15*mod(t,${beat}))+0.9*(random(${seed})*2-1)*exp(-70*mod(t+${beat / 2},${beat}))+0.25*sin(2*PI*${pad}*t))))`
+  execFileSync(FFMPEG, [
+    '-v', 'error', '-y', '-f', 'lavfi',
+    '-i', `aevalsrc='${channel(0, 220)}|${channel(1, 330)}':s=${RATE}:d=12`,
+    '-c:a', 'pcm_s16le', path
+  ])
+  return path
+}
+
+test('drums master to the streaming preset on the encoded file; ffmpeg\'s own aac cannot get there', { skip: SKIP, timeout: 240_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-master-'))
+  const input = drums(dir)
+  const target = { integratedLufs: -14, truePeakDb: -1 }
+  const run = async (codecArgs: string[], name: string) => {
+    const output = join(dir, name)
+    const report = await masterAudio({ ffmpeg: FFMPEG, input, output, codecArgs, target, outputArgs: ['-vn'] })
+    return { report, measured: meter(output) }
+  }
+  // The control: the same loop through the encoder exports used to ship with. If this ever meets
+  // the target, the specimen no longer tells the encoders apart and the assertion below is empty.
+  const native = await run(['-c:a', 'aac', '-b:a', '192k'], 'native.m4a')
+  assert.ok(native.measured.TP > target.truePeakDb, `native aac should miss the ceiling on this specimen (TP ${native.measured.TP})`)
+
+  const shipped = await run(audioCodecArgs('mp4'), 'shipped.m4a')
+  assert.ok(shipped.measured.TP <= target.truePeakDb, `TP ${shipped.measured.TP} over ${target.truePeakDb}: ${shipped.report.summary}`)
+  assert.ok(Math.abs(shipped.measured.I - target.integratedLufs) <= 0.5, `I ${shipped.measured.I}`)
+  assert.equal(shipped.report.status, 'met', shipped.report.summary)
+})
+
 test('mastering does not move the sound in time: the limiter lookahead is compensated', { skip: SKIP, timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bay-master-'))
   // One second of silence, then a tone. The onset must stay at exactly 1.0 s after mastering.
