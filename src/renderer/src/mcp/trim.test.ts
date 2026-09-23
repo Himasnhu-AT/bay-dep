@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { findTool } from '@shared/mcp'
 import { framesToUs, itemEnd, type Asset, type Item } from '@shared/project'
 import { emptyProject, useEditor } from '@/store/editor'
-import { validateArgs } from './validate'
+import { validateArgs } from '@shared/validate'
 import { trimItem } from './trim'
 import { ToolError } from './helpers'
 

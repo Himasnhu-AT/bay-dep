@@ -13,7 +13,7 @@ import assert from 'node:assert/strict'
 import { findTool } from '@shared/mcp'
 import { usToFrames, type Item, type Timeline } from '@shared/project'
 import { emptyProject, useEditor } from '@/store/editor'
-import { validateArgs } from './validate'
+import { validateArgs } from '@shared/validate'
 import { addCaptions } from './captions'
 import { ToolError } from './helpers'
 
