@@ -12,21 +12,52 @@
 
 import type { Project } from '@shared/project'
 
-export const NEW_PROJECT_BASE = 'Untitled project'
+/*
+ * Three words, adjective–colour–animal: "Quiet Amber Heron". A name a person can say and find
+ * again in a grid of thumbnails, where "Untitled project 7" is a number they have to decode —
+ * the way ChatCut names new projects. Every word is short, plain and unambiguous as a filename.
+ */
+const ADJECTIVES = [
+  'Quiet', 'Bright', 'Gentle', 'Swift', 'Brave', 'Calm', 'Clever', 'Early', 'Golden', 'Honest',
+  'Lucky', 'Mellow', 'Nimble', 'Patient', 'Primary', 'Rapid', 'Silent', 'Steady', 'Sunny',
+  'Tidy', 'Vivid', 'Warm', 'Wild', 'Young', 'Bold', 'Crisp', 'Fresh', 'Lively', 'Proud', 'Shy'
+]
+const COLOURS = [
+  'Amber', 'Azure', 'Coral', 'Crimson', 'Ivory', 'Jade', 'Indigo', 'Lilac', 'Olive', 'Ochre',
+  'Rose', 'Ruby', 'Sage', 'Scarlet', 'Silver', 'Slate', 'Tan', 'Teal', 'Umber', 'Violet'
+]
+const ANIMALS = [
+  'Heron', 'Otter', 'Fox', 'Moth', 'Lynx', 'Falcon', 'Badger', 'Wren', 'Hare', 'Orca', 'Finch',
+  'Gecko', 'Ibis', 'Koala', 'Lark', 'Marten', 'Newt', 'Owl', 'Panda', 'Quail', 'Raven', 'Seal',
+  'Stoat', 'Swift', 'Tapir', 'Vole', 'Whale', 'Yak', 'Zebra', 'Crane'
+]
+
+/** The word lists, for the test that every generated name is a safe filename. */
+export const NAME_WORDS = { ADJECTIVES, COLOURS, ANIMALS } as const
 
 /**
- * The first free name in the sequence "Untitled project", "Untitled project 2", …
+ * A random three-word name not already taken.
  *
- * Compared case-insensitively, because the macOS default filesystem is: "untitled project.bay"
- * and "Untitled project.bay" are one file there, and picking the one that "does not exist" would
- * overwrite the other.
+ * Compared case-insensitively, because the macOS default filesystem is: "quiet amber heron.bay"
+ * and "Quiet Amber Heron.bay" are one file there, and picking the one that "does not exist"
+ * would overwrite the other. 18,000 combinations make a collision rare; after a bounded number
+ * of draws it falls back to numbering the last draw, so a full folder can never loop forever.
+ * `random` is injected so the test can drive the collision path deterministically.
  */
-export function uniqueProjectName(taken: readonly string[]): string {
+export function uniqueProjectName(
+  taken: readonly string[],
+  random: () => number = Math.random
+): string {
   const lower = new Set(taken.map((name) => name.toLowerCase()))
-  if (!lower.has(NEW_PROJECT_BASE.toLowerCase())) return NEW_PROJECT_BASE
-  for (let n = 2; ; n += 1) {
-    const candidate = `${NEW_PROJECT_BASE} ${n}`
+  const pick = <T>(list: readonly T[]): T => list[Math.floor(random() * list.length) % list.length]!
+  let candidate = ''
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    candidate = `${pick(ADJECTIVES)} ${pick(COLOURS)} ${pick(ANIMALS)}`
     if (!lower.has(candidate.toLowerCase())) return candidate
+  }
+  for (let n = 2; ; n += 1) {
+    const numbered = `${candidate} ${n}`
+    if (!lower.has(numbered.toLowerCase())) return numbered
   }
 }
 

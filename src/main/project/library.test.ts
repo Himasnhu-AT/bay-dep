@@ -5,23 +5,39 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset } from '@shared/project'
-import { MAX_POSTER_BYTES, posterFor, uniqueProjectName } from './library'
+import { MAX_POSTER_BYTES, NAME_WORDS, posterFor, uniqueProjectName } from './library'
 
-test('the first new project is plainly named, and later ones count up', () => {
-  assert.equal(uniqueProjectName([]), 'Untitled project')
-  assert.equal(uniqueProjectName(['Untitled project']), 'Untitled project 2')
-  assert.equal(uniqueProjectName(['Untitled project', 'Untitled project 2']), 'Untitled project 3')
+/** A deterministic `random` that replays a fixed sequence. */
+const sequence = (...values: number[]): (() => number) => {
+  let i = 0
+  return () => values[i++ % values.length]!
+}
+
+test('a new project gets a random three-word name', () => {
+  const name = uniqueProjectName([], sequence(0, 0, 0))
+  assert.equal(name, `${NAME_WORDS.ADJECTIVES[0]} ${NAME_WORDS.COLOURS[0]} ${NAME_WORDS.ANIMALS[0]}`)
+  // And it is random, not fixed: another draw gives another name.
+  assert.notEqual(uniqueProjectName([], sequence(0.5, 0.5, 0.5)), name)
 })
 
-test('a gap in the sequence is reused rather than skipped past', () => {
-  assert.equal(uniqueProjectName(['Untitled project', 'Untitled project 3']), 'Untitled project 2')
+test('a name already taken is drawn again, case-insensitively, as macOS compares files', () => {
+  const first = uniqueProjectName([], sequence(0, 0, 0))
+  // The first draw collides (in lower case); the second draw is taken instead.
+  const next = uniqueProjectName([first.toLowerCase()], sequence(0, 0, 0, 0.5, 0.5, 0.5))
+  assert.notEqual(next.toLowerCase(), first.toLowerCase())
+  assert.equal(next, uniqueProjectName([], sequence(0.5, 0.5, 0.5)))
 })
 
-test('names collide case-insensitively, as files do on macOS', () => {
-  // Otherwise "Untitled project" would be chosen beside "untitled project.bay" and overwrite it.
-  assert.equal(uniqueProjectName(['untitled project']), 'Untitled project 2')
-  // Positive control: an unrelated name takes nothing.
-  assert.equal(uniqueProjectName(['Holiday edit']), 'Untitled project')
+test('when every draw collides it numbers the name rather than looping forever', () => {
+  const only = uniqueProjectName([], sequence(0, 0, 0))
+  assert.equal(uniqueProjectName([only], sequence(0, 0, 0)), `${only} 2`)
+  assert.equal(uniqueProjectName([only, `${only} 2`], sequence(0, 0, 0)), `${only} 3`)
+})
+
+test('every word is safe in a filename', () => {
+  for (const list of Object.values(NAME_WORDS)) {
+    for (const word of list) assert.match(word, /^[A-Z][a-z]+$/, word)
+  }
 })
 
 const asset = (id: string, posterPath: string | null, error?: string): Asset => ({
