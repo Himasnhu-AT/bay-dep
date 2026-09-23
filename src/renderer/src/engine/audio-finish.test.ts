@@ -12,6 +12,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { audioRoutingAt } from './audio'
+import { FRAME_EDGE_SECONDS } from './sync'
 import { itemAudioGainAt } from '@shared/audio-gain'
 import type { Asset, Item, Project, Timeline, Track } from '@shared/project'
 
@@ -108,8 +109,9 @@ test("a J-cut's sound is routed under the previous shot, from its own element, a
   assert.equal(at80.asset.kind, 'audio', 'from an <audio> stand-in, not the picture element')
   assert.notEqual(at80.asset.id, 'shot', 'with an id of its own, so the pool gives it its own element')
   assert.equal(at80.asset.path, '/m/shot.mp4', 'over the same file')
-  // 2.0 s in-point, 10 frames earlier.
-  assert.ok(Math.abs(at80.detached.mediaSeconds - (2 - 10 / FPS)) < 1e-6, `source ${at80.detached.mediaSeconds}`)
+  // 2.0 s in-point, 10 frames earlier (plus the half-millisecond every seek is nudged past a
+  // frame's edge, `sync.ts`).
+  assert.ok(Math.abs(at80.detached.mediaSeconds - (2 - 10 / FPS) - FRAME_EDGE_SECONDS) < 1e-6, `source ${at80.detached.mediaSeconds}`)
   assert.equal(at80.detached.claim, null, 'nothing to claim while its picture is not drawn')
   // Positive control: the frame before the lead, it is not routed at all.
   assert.equal(audioRoutingAt(project, timeline, 74).find((r) => r.item.id === 'B'), undefined)

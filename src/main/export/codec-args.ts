@@ -43,6 +43,20 @@ export function containerArgs(format: ExportFormat): string[] {
   return format === 'mp4' || format === 'mov' ? ['-movflags', '+faststart'] : []
 }
 
+/**
+ * The AAC encoder: AudioToolbox's on macOS, where the bundled ffmpeg has it; ffmpeg's own elsewhere.
+ *
+ * ffmpeg's native `aac` at 192k overshoots limited, transient material by an amount that depends
+ * on where each hit falls against its 1024-sample frames — measured on a real mix limited to
+ * −1.5 dBFS: +4.3, +0.9, −0.3, +2.0, +0.2, +3.9 dBTP for the same audio shifted by 0–512
+ * samples, and still +0.4 with the limiter lowered to −5. The mastering loop lowers the ceiling
+ * to correct an overshoot, which cannot converge against one that does not fall with it, so a
+ * `loudness: "streaming"` export shipped at +2.6 dBTP. `aac_at` on the same audio holds −1.0 to
+ * −0.1 at every shift, and its overshoot falls as the ceiling does. 256k because that is what a
+ * delivery spec asks for and what leaves the codec least to smear.
+ */
+export const AAC_ENCODER = process.platform === 'darwin' ? 'aac_at' : 'aac'
+
 export function audioCodecArgs(format: ExportFormat): string[] {
   switch (format) {
     case 'webm':
@@ -52,7 +66,7 @@ export function audioCodecArgs(format: ExportFormat): string[] {
     case 'mp3':
       return ['-c:a', 'libmp3lame', '-q:a', '2']
     default:
-      return ['-c:a', 'aac', '-b:a', '192k']
+      return ['-c:a', AAC_ENCODER, '-b:a', '256k']
   }
 }
 
