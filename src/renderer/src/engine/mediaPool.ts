@@ -19,6 +19,7 @@
  * frame to wait for, the second is a placeholder to draw.
  */
 
+import { LOAD_RETRY_DELAYS_MS, RETRY_CROSS_ORIGIN, loadRetryDelay } from './mediaRetry'
 import type { Asset, AssetKind } from '@shared/project'
 
 /** Live `<video>` elements. Chosen as a cap, not measured — raise it with a measurement. */
@@ -68,8 +69,8 @@ interface PoolSlot extends MediaEntry {
   lastUsed: number
   /** Which draw generation last touched this, so the frame in flight is never evicted. */
   generation: number
-  /** Set once we have retried without `crossOrigin`; the retry happens at most once. */
-  retriedWithoutCors: boolean
+  /** How many times a failed load has been retried (with CORS; see mediaRetry.ts). */
+  loadRetries: number
   detach: () => void
 }
 
@@ -294,7 +295,7 @@ export class MediaPool {
       kind: asset.kind,
       lastUsed: ++this.#clock,
       generation: this.#generation,
-      retriedWithoutCors: false
+      loadRetries: 0
     }
 
     if (kind === null) {
@@ -322,10 +323,8 @@ export class MediaPool {
     // `bay://` is a different origin from the document, so a media element loaded from it
     // taints any canvas it is drawn into and `getImageData` throws — which would fail the
     // export at readback, after every frame already looked right on screen. Asking for an
-    // anonymous (CORS) load is what keeps the canvas clean. If the protocol handler does
-    // not send `Access-Control-Allow-Origin`, that same request *fails*, so the error
-    // handler retries once without it: preview keeps working and only export is affected,
-    // which is a better failure than a blank window.
+    // anonymous (CORS) load is what keeps the canvas clean — and what lets Web Audio hear the
+    // element at all. A failed load is retried with CORS, never without (mediaRetry.ts).
     element.crossOrigin = 'anonymous'
 
     if (element instanceof HTMLImageElement) {
@@ -348,20 +347,21 @@ export class MediaPool {
     // that bites at a standing playhead: `readyState` drops below HAVE_CURRENT_DATA while
     // a seek is in flight, so the frame that asked for it draws nothing.
     const onSeeked = (): void => this.#announceReady(slot)
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
     const onError = (): void => {
-      if (!slot.retriedWithoutCors && element.crossOrigin !== null) {
-        // The protocol handler sends `Access-Control-Allow-Origin`, so this should never
-        // run. If it does, media still loads — but the canvas is tainted and every export
-        // will fail at `getImageData`, long after the frames looked right on screen. That
-        // is worth saying out loud rather than absorbing into a working-looking preview.
+      const delay = loadRetryDelay(slot.loadRetries)
+      if (delay !== null) {
+        slot.loadRetries += 1
         console.warn(
-          `[bay] ${asset.name} would not load as a CORS request; retrying without it. ` +
-            'Export readback will fail until the bay:// handler sends access-control-allow-origin.'
+          `[bay] ${asset.name} did not load (media error ${element instanceof HTMLImageElement ? 'image' : (element.error?.code ?? '?')}); ` +
+            `retrying in ${delay} ms (attempt ${slot.loadRetries} of ${LOAD_RETRY_DELAYS_MS.length}).`
         )
-        slot.retriedWithoutCors = true
-        element.crossOrigin = null
-        element.src = url
-        if (!(element instanceof HTMLImageElement)) element.load()
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          element.crossOrigin = RETRY_CROSS_ORIGIN
+          element.src = url
+          if (!(element instanceof HTMLImageElement)) element.load()
+        }, delay)
         return
       }
       slot.status = 'error'
@@ -373,6 +373,7 @@ export class MediaPool {
     element.addEventListener('error', onError)
     if (element instanceof HTMLVideoElement) element.addEventListener('seeked', onSeeked)
     slot.detach = () => {
+      if (retryTimer !== null) clearTimeout(retryTimer)
       element.removeEventListener(readyEvent, onReady)
       element.removeEventListener('error', onError)
       if (element instanceof HTMLVideoElement) element.removeEventListener('seeked', onSeeked)
