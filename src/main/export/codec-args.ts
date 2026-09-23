@@ -16,11 +16,33 @@ const CRF: Record<ExportQuality, { h264: number; vp9: number }> = {
   best: { h264: 16, vp9: 26 }
 }
 
+/**
+ * The frames arrive as sRGB RGBA, and 4:2:0 needs a matrix to get there. Left to itself, swscale
+ * converts with BT.601 and writes no tags — and every player decodes an untagged HD file as
+ * BT.709, so the picture came back darker and shifted: Gym Buddy green #30d158 (48, 209, 88)
+ * decoded as (33, 183, 83). Convert with BT.709 in limited range and say so in the stream, so
+ * the file carries the colours the canvas drew.
+ */
+const BT709 = [
+  '-vf',
+  'scale=out_color_matrix=bt709:out_range=tv',
+  '-pix_fmt',
+  'yuv420p',
+  '-color_primaries',
+  'bt709',
+  '-color_trc',
+  'bt709',
+  '-colorspace',
+  'bt709',
+  '-color_range',
+  'tv'
+]
+
 export function videoCodecArgs(format: ExportFormat, quality: ExportQuality): string[] {
   const crf = CRF[quality]
   switch (format) {
     case 'webm':
-      return ['-c:v', 'libvpx-vp9', '-crf', String(crf.vp9), '-b:v', '0', '-row-mt', '1', '-pix_fmt', 'yuv420p']
+      return ['-c:v', 'libvpx-vp9', '-crf', String(crf.vp9), '-b:v', '0', '-row-mt', '1', ...BT709]
     case 'png-sequence':
       return ['-c:v', 'png']
     default:
@@ -31,8 +53,7 @@ export function videoCodecArgs(format: ExportFormat, quality: ExportQuality): st
         quality === 'draft' ? 'veryfast' : 'medium',
         '-crf',
         String(crf.h264),
-        '-pix_fmt',
-        'yuv420p'
+        ...BT709
       ]
   }
 }
