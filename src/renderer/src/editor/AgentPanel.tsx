@@ -6,6 +6,7 @@ import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarte
 import { bay } from '@/lib/bay'
 import { selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
+import { applySkill, leadingSkill } from '@shared/skills'
 import { Composer } from './Composer'
 
 /**
@@ -44,7 +45,7 @@ export function AgentPanel(): ReactNode {
   // draft: which clip, whose name, what style are theirs to add, and sending on click would
   // start a paid turn from a single mis-click.
   const pickStarter = (starter: AgentStarter): void => {
-    setDraft(starter.prompt)
+    setDraft(applySkill(draft, starter.skill))
     requestAnimationFrame(() => {
       const box = composer.current
       if (!box) return
@@ -161,6 +162,7 @@ type Deliver = (text: string) => Promise<void>
 /** What the user sent: their words, with what they had pinned shown as chips above them. */
 function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }): ReactNode {
   const fps = useEditor(selectFps)
+  const skill = leadingSkill(entry.text)
   return (
     <div className="flex max-w-[92%] flex-col items-end gap-1 self-end">
       {entry.pins && entry.pins.length > 0 && (
@@ -178,7 +180,16 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
         </ul>
       )}
       <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
-        {entry.text}
+        {skill ? (
+          <>
+            <span className="mr-1 rounded-sm bg-accent/15 px-1 py-px font-medium text-accent">
+              /{skill.skill.slug}
+            </span>
+            {skill.rest}
+          </>
+        ) : (
+          entry.text
+        )}
       </p>
     </div>
   )
@@ -198,7 +209,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
           const Icon = starter.icon
           return (
             <button
-              key={starter.id}
+              key={starter.skill}
               type="button"
               onClick={() => onPick(starter)}
               className="t-fast flex min-w-0 items-center gap-2 rounded-lg border border-line bg-surface-2 p-1.5 text-left hover:border-line-hover hover:bg-surface-3"

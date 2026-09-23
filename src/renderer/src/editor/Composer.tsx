@@ -27,6 +27,7 @@ import {
 import { cn } from '@/lib/cn'
 import { selectFps, selectTimeline, useEditor } from '@/store/editor'
 import { AGENT_STARTERS } from './agentStarters'
+import { applySkill } from '@shared/skills'
 
 /**
  * The agent's composer: the text box, what is pinned, and the `@` and `/` menus.
@@ -236,14 +237,29 @@ export function Composer({
         }
       }))
     const skillRows: MenuRow[] = AGENT_STARTERS.filter(
-      (starter) => !needle || starter.title.toLowerCase().includes(needle)
+      (starter) =>
+        !needle || starter.title.toLowerCase().includes(needle) || starter.skill.includes(needle)
     ).map((starter) => ({
-      key: `skill:${starter.id}`,
+      key: `skill:${starter.skill}`,
       group: 'Skills',
-      label: starter.title,
-      detail: starter.prompt.split('. ')[0] ?? '',
+      label: `/${starter.skill}`,
+      detail: starter.title,
       icon: starter.icon,
-      choose: () => replaceTrigger(starter.prompt)
+      // Like Claude Code: the skill goes first as `/name`, the typed "/query" goes, and the caret
+      // waits after it for the user's own words. The skill's instructions are in the session.
+      choose: () => {
+        if (!menuTrigger) return
+        const without =
+          draft.slice(0, menuTrigger.start) + draft.slice(menuTrigger.start + 1 + menuTrigger.query.length)
+        const next = applySkill(without.trim() === '' ? '' : without, starter.skill)
+        setDraft(next)
+        requestAnimationFrame(() => {
+          const box = textareaRef.current
+          box?.focus()
+          box?.setSelectionRange(next.length, next.length)
+          setCaret(next.length)
+        })
+      }
     }))
     return [...commandRows, ...skillRows]
   })()
