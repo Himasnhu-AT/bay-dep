@@ -30,6 +30,7 @@ import {
 import { findTool, resolveId } from '@shared/mcp'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
+import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
 import { coerce } from '@shared/composition'
 import { isCropped, normaliseCrop } from '@shared/project'
 import { bay } from '@/lib/bay'
@@ -82,7 +83,13 @@ export async function importMedia(args: Record<string, unknown>): Promise<Record
       reused: entry.reused,
       ...(entry.asset.error
         ? { error: entry.asset.error, placeable: false }
-        : { placeable: true })
+        : entry.asset.kind === 'lut'
+          ? {
+              placeable: false,
+              lutSize: entry.asset.lut?.size,
+              use: `A colour LUT — apply it with edit_item { grade: { lut: { assetId: "${entry.asset.id}", intensity: 1 } } }.`
+            }
+          : { placeable: true })
     })),
     // Said explicitly because the catalog warns about it and an agent that retries a
     // corrupt file burns a turn discovering the same thing.
@@ -96,6 +103,13 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
     fail(
       `Asset ${asset.name} could not be read (${asset.error}), so it cannot be placed. ` +
         `Re-importing will not help — the file itself is the problem.`
+    )
+  }
+
+  if (asset.kind === 'lut') {
+    fail(
+      `${asset.name} is a colour LUT, which has no picture of its own to place. Apply it to a clip ` +
+        `with edit_item { itemId, grade: { lut: { assetId: "${asset.id}", intensity: 1 } } }.`
     )
   }
 
@@ -314,6 +328,19 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   if (args.adjustments !== undefined) {
     patch.adjustments = mergeAdjustments(item.adjustments, args.adjustments)
   }
+  if (args.grade !== undefined) {
+    const asset = findAsset(project(), item.assetId)
+    // Refused rather than stored: a grade on a text or audio clip reads back exactly as written
+    // and changes nothing, because the grade pass only runs on picture sources.
+    if (args.grade !== null && (!asset || !(GRADEABLE_KINDS as readonly string[]).includes(asset.kind))) {
+      fail(
+        `Item ${item.id} draws ${asset ? `a ${asset.kind} asset` : 'a missing asset'}, which has no ` +
+          `picture to grade. grade applies to ${GRADEABLE_KINDS.join(', ')} clips` +
+          (asset?.kind === 'text' ? ' — for type, set text.color instead.' : '.')
+      )
+    }
+    patch.grade = mergeGrade(item.grade, args.grade, (id) => findAsset(project(), id))
+  }
   if (args.blendMode !== undefined) {
     const spec = findTool('edit_item')
     const allowed =
@@ -364,6 +391,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   const sound = audioFinishReport(after.item, project(), timeline())
   const warnings = [
     ...(sourceTailWarning ? [sourceTailWarning] : []),
+    ...gradeWarnings(after.item.grade, findAsset(project(), after.item.assetId)),
     ...sound.warnings,
     ...look.warnings
   ]
@@ -386,6 +414,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.variables ? { variables: after.item.variables } : {}),
     ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
+    ...(after.item.grade ? { grade: after.item.grade } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
     ...(warnings.length > 0 ? { warnings } : {})

@@ -9,6 +9,7 @@ import {
   Trash2,
   Type as TypeIcon,
   type LucideIcon,
+  Palette,
   Sparkles
 } from 'lucide-react'
 import type { Asset, AssetKind } from '@shared/project'
@@ -36,7 +37,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   gif: ImageIcon,
   text: TypeIcon,
   html: Code2,
-  brf: Sparkles
+  brf: Sparkles,
+  lut: Palette
 }
 
 function AssetCard({ asset }: { asset: Asset }): ReactNode {

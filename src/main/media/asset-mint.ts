@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto'
 import { basename, extname } from 'node:path'
 import type { ProbeResult } from '@shared/ipc'
 import type { Asset, AssetKind } from '@shared/project'
+import { parseCube } from '@shared/cube'
+import { encodeLutData } from '@shared/grade'
 
 export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', 'mpg', 'mpeg', 'wmv', 'flv']
 export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'aiff', 'aif']
@@ -64,5 +66,37 @@ export function failedAsset(path: string, message: string): Asset {
     waveformPath: null,
     createdAt: Date.now(),
     error: message
+  }
+}
+
+export const LUT_EXTENSIONS = ['cube']
+
+export function isLutPath(path: string): boolean {
+  return LUT_EXTENSIONS.includes(extname(path).slice(1).toLowerCase())
+}
+
+/**
+ * A `.cube` file becomes a `kind: 'lut'` asset carrying its parsed table. Main parses and the
+ * renderer only ever sees the numbers, so it never reads the file (CLAUDE.md, "The renderer never
+ * touches the filesystem"). A file that will not parse still lists, with the parser's reason — the
+ * same survivable failure as a corrupt clip in a folder of good ones.
+ */
+export function lutAssetFrom(path: string, text: string): Asset {
+  const parsed = parseCube(text)
+  if (!parsed.ok) return { ...failedAsset(path, `is not a usable .cube LUT: ${parsed.error}`), kind: 'lut' }
+  const { cube } = parsed
+  const base = failedAsset(path, '')
+  delete base.error
+  return {
+    ...base,
+    kind: 'lut',
+    name: cube.title ? `${cube.title} (${basename(path)})` : basename(path),
+    lut: {
+      size: cube.size,
+      title: cube.title,
+      domainMin: cube.domainMin,
+      domainMax: cube.domainMax,
+      data: encodeLutData(cube.values)
+    }
   }
 }

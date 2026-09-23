@@ -19,6 +19,7 @@
  */
 
 import { brfRuntime } from './brfCode'
+import { variationFaces } from './brfFonts'
 import {
   findTimeline,
   timelineDuration,
@@ -163,7 +164,7 @@ export class FrameExporter {
         let stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         for (let attempt = 0; stats.pending > 0 && attempt < MAX_PENDING_REDRAWS; attempt += 1) {
           if (this.#cancelled) break
-          await Promise.all([this.#compositions.settle(this.#seekTimeout), brfRuntime.settle(this.#seekTimeout)])
+          await Promise.all([this.#compositions.settle(this.#seekTimeout), brfRuntime.settle(this.#seekTimeout), variationFaces.settle(this.#seekTimeout)])
           stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         }
         if (stats.pending > 0) this.#pendingFrames += 1
