@@ -34,7 +34,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
     "clsx": "^2.1.1",
-    "electron": "^40.0.0",
+    "electron": "41.10.7",
     "electron-builder": "^26.0.0",
     "electron-vite": "^4.0.0",
     "lucide-react": "^0.545.0",
