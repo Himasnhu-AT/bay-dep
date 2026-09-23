@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, ArrowUp, Bot, Check, ChevronRight, Loader2, Square } from 'lucide-react'
+import { AlertTriangle, Check, ChevronRight, Loader2 } from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
 import { bay } from '@/lib/bay'
-import { useEditor } from '@/store/editor'
+import { selectFps, useEditor } from '@/store/editor'
+import { composeMessage, pinLabel, type Pin } from '@shared/pins'
+import { Composer } from './Composer'
 
 /**
  * Claude Code, in the editor.
@@ -62,7 +64,7 @@ export function AgentPanel(): ReactNode {
    * leave the model waiting — correctly, since it was told to end its turn and wait — for a
    * message that never comes. The decision *is* the next message.
    */
-  const deliver = async (text: string): Promise<void> => {
+  const deliver = async (text: string, pins: Pin[] = []): Promise<void> => {
     if (!text || running) return
     const api = bay()
     if (!api) {
@@ -70,7 +72,7 @@ export function AgentPanel(): ReactNode {
       return
     }
     setProblem(null)
-    logUserMessage(text)
+    logUserMessage(text, pins)
 
     // Starting is separate from sending so a missing `claude` binary reads as "could not start"
     // rather than as a model that ignored the message.
@@ -82,15 +84,17 @@ export function AgentPanel(): ReactNode {
       }
       startAgentSession()
     }
-    const sent = await api.agent.send(text)
+    // The log shows what was typed, with the pins as chips; the agent receives the pins spelled
+    // out as ids and frames ahead of it.
+    const sent = await api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())))
     if (!sent.ok) setProblem(sent.error ?? 'The message could not be delivered.')
   }
 
-  const send = async (): Promise<void> => {
-    const text = draft.trim()
-    if (!text || running) return
+  // Typed messages carry the pins; a decision on a proposal card does not — it already names
+  // the exact calls it approves.
+  const send = async (text: string): Promise<void> => {
     setDraft('')
-    await deliver(text)
+    await deliver(text, useEditor.getState().agentPins)
   }
 
   const stop = (): void => {
@@ -101,6 +105,8 @@ export function AgentPanel(): ReactNode {
     void bay()?.agent.dispose()
     endAgentSession()
     clearAgentLog()
+    useEditor.getState().clearAgentPins()
+    setDraft('')
     setProblem(null)
   }
 
@@ -137,71 +143,46 @@ export function AgentPanel(): ReactNode {
         </div>
       )}
 
-      <div className="p-2">
-        {/* One rounded box holding the text and its controls, so the controls read as part of
-            what is being written rather than as a separate toolbar. */}
-        <div className="t-fast rounded-xl border border-line-strong bg-surface-2 focus-within:border-line-hover">
-          <textarea
-            ref={composer}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              // Enter sends, Shift+Enter breaks the line. A multi-line box that needs a mouse to
-              // send is a box people stop using.
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                void send()
-              }
-            }}
-            rows={draft.length > 120 ? 6 : 3}
-            placeholder="Describe what you'd like to create…"
-            className="block w-full resize-none bg-transparent px-3 pt-2.5 text-[12.5px] leading-relaxed text-ink-0 outline-none placeholder:text-ink-2"
-          />
-          <div className="flex items-center gap-2 px-2 pt-1 pb-2">
-            <span
-              className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] text-ink-1"
-              title="Claude Code, with bay's tools and nothing else"
-            >
-              <Bot aria-hidden="true" className="size-3.5" />
-              Agent
-            </span>
-            {running && (
-              <span className="flex items-center gap-1 text-[11px] text-ink-2">
-                <Loader2 aria-hidden="true" className="size-3 animate-spin" />
-                working
-              </span>
-            )}
-            <div className="flex-1" />
-            {running ? (
-              <button
-                type="button"
-                onClick={stop}
-                aria-label="Stop"
-                title="Stop"
-                className="t-fast grid size-7 place-items-center rounded-full bg-surface-4 text-ink-0 hover:bg-line-hover"
-              >
-                <Square aria-hidden="true" className="size-3 fill-current" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void send()}
-                disabled={draft.trim().length === 0}
-                aria-label="Send"
-                title="Send (Enter)"
-                className="t-fast grid size-7 place-items-center rounded-full bg-accent text-accent-ink hover:bg-accent-hover disabled:bg-surface-4 disabled:text-ink-3"
-              >
-                <ArrowUp aria-hidden="true" className="size-4" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      <Composer
+        running={running}
+        onSend={send}
+        onStop={stop}
+        onNewConversation={reset}
+        draft={draft}
+        setDraft={setDraft}
+        textareaRef={composer}
+      />
     </Panel>
   )
 }
 
 type Deliver = (text: string) => Promise<void>
+
+/** What the user sent: their words, with what they had pinned shown as chips above them. */
+function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }): ReactNode {
+  const fps = useEditor(selectFps)
+  return (
+    <div className="flex max-w-[92%] flex-col items-end gap-1 self-end">
+      {entry.pins && entry.pins.length > 0 && (
+        <ul aria-label="Pinned for this message" className="flex flex-wrap justify-end gap-1">
+          {entry.pins.map((pin) => (
+            <li
+              key={`${pin.kind}:${pinLabel(pin, fps)}`}
+              className={`rounded-md border px-1.5 py-0.5 text-[10.5px] tabular-nums ${
+                pin.kind === 'range' ? 'border-accent/50 bg-accent/10 text-ink-0' : 'border-line-strong bg-surface-2 text-ink-1'
+              }`}
+            >
+              {pinLabel(pin, fps)}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
+        {entry.text}
+      </p>
+    </div>
+  )
+}
 
 /** The empty conversation: a question and a grid of places to start. */
 function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): ReactNode {
@@ -266,11 +247,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
 function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): ReactNode {
   switch (entry.kind) {
     case 'user':
-      return (
-        <p className="self-end rounded bg-surface-3 px-2 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-1">
-          {entry.text}
-        </p>
-      )
+      return <UserEntry entry={entry} />
     case 'assistant':
       return <Markdown className="text-[12px] leading-relaxed text-ink-1">{entry.text}</Markdown>
     case 'thought':

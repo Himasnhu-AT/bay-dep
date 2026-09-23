@@ -48,6 +48,7 @@ import {
   retimeTimeline
 } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
+import { pinKey, type Pin } from '@shared/pins'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyTrimPlan, planTrim, type TrimPlan, type TrimRefusal, type TrimSpec } from '@shared/trim'
 import {
@@ -116,6 +117,12 @@ export interface EditorState {
   agentRunning: boolean
   /** The proposal waiting on the user, if any. */
   agentProposal: Proposal | null
+  /**
+   * What the composer's `@` menu has pinned: assets, clips, time ranges. Sticky — they stay
+   * until removed, and every message carries them — because "work only in 0:10–0:15" is usually
+   * a whole conversation, not one sentence. The timeline draws the pinned ranges on its ruler.
+   */
+  agentPins: Pin[]
   dirty: boolean
   past: Project[]
   future: Project[]
@@ -130,7 +137,7 @@ export interface EditorActions {
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
   /** Append what the user typed, so it reads in order beside the replies. */
-  logUserMessage(text: string): void
+  logUserMessage(text: string, pins?: Pin[]): void
   /** Fold one runtime event into the conversation. */
   applyAgentEvent(event: AgentEvent): void
   /** Throw the conversation away. The gate and the session are untouched. */
@@ -143,6 +150,9 @@ export interface EditorActions {
    * an agent mix operations from two plans the user considered separately.
    */
   approveProposal(proposal: Proposal, optionId: string): void
+  addAgentPin(pin: Pin): void
+  removeAgentPin(key: string): void
+  clearAgentPins(): void
   /** Turn down the pending proposal. Nothing is approved; the session stays gated. */
   declineProposal(): void
   /** Withdraw approval, leaving the session gated with nothing permitted. */
@@ -481,6 +491,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     agentLog: [],
     agentRunning: false,
     agentProposal: null,
+    agentPins: [],
     dirty: false,
     past: [],
     future: [],
@@ -508,9 +519,12 @@ export const useEditor = create<EditorStore>((set, get) => {
       set({ agentGate: { approved: null } })
     },
 
-    logUserMessage(text) {
+    logUserMessage(text, pins) {
       set((state) => ({
-        agentLog: [...state.agentLog, { kind: 'user', id: newId('msg'), text }]
+        agentLog: [
+          ...state.agentLog,
+          { kind: 'user', id: newId('msg'), text, ...(pins && pins.length > 0 ? { pins } : {}) }
+        ]
       }))
     },
 
@@ -607,6 +621,20 @@ export const useEditor = create<EditorStore>((set, get) => {
           }
         }
       })
+    },
+
+    addAgentPin(pin) {
+      const pins = get().agentPins
+      if (pins.some((existing) => pinKey(existing) === pinKey(pin))) return
+      set({ agentPins: [...pins, pin] })
+    },
+
+    removeAgentPin(key) {
+      set({ agentPins: get().agentPins.filter((pin) => pinKey(pin) !== key) })
+    },
+
+    clearAgentPins() {
+      set({ agentPins: [] })
     },
 
     declineProposal() {
@@ -1303,7 +1331,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     showHome() {
       // The agent conversation belongs to the project it was about; carrying it onto the next
       // project would put one timeline's proposals in front of another's.
-      set({ screen: 'home', agentLog: [], agentProposal: null, agentGate: null })
+      set({ screen: 'home', agentLog: [], agentProposal: null, agentGate: null, agentPins: [] })
     },
 
     notify(text, kind = 'info') {

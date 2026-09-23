@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react'
 import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
+import { useEditor } from '@/store/editor'
 
 export interface TimelineRulerProps {
   fps: number
@@ -100,6 +101,9 @@ export function TimelineRuler({
         marker never gets in the way of moving the playhead — and pressing one lands on it.
         Only markers inside the visible window are mounted, for the same reason ticks are.
       */}
+      {/* Time ranges pinned in the agent composer: the stretch the agent has been told to stay
+          inside, shown where the user can see it rather than only as a chip in a side panel. */}
+      <PinnedRanges pixelsPerFrame={pixelsPerFrame} />
       {markers
         .filter((marker) => marker.frame >= viewStart && marker.frame <= viewEnd)
         .map((marker) => (
@@ -136,5 +140,27 @@ export function TimelineRuler({
         )
       })}
     </div>
+  )
+}
+
+function PinnedRanges({ pixelsPerFrame }: { pixelsPerFrame: number }): ReactNode {
+  const ranges = useEditor((state) => state.agentPins).filter((pin) => pin.kind === 'range')
+  if (ranges.length === 0) return null
+  return (
+    <>
+      {ranges.map((range) =>
+        range.kind === 'range' ? (
+          <div
+            key={`${range.fromFrame}-${range.toFrame}`}
+            title="Pinned for the agent — it works only inside this range"
+            className="pointer-events-none absolute inset-y-0 border-x border-accent/70 bg-accent/15"
+            style={{
+              left: range.fromFrame * pixelsPerFrame,
+              width: Math.max(1, (range.toFrame - range.fromFrame) * pixelsPerFrame)
+            }}
+          />
+        ) : null
+      )}
+    </>
   )
 }

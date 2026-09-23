@@ -121,6 +121,10 @@ every later check depends on.
   change, so a search stays applied and the screen looks like it lost data (it has not — read
   the input's `.value`). Clear a field through the app's own control: the search box has
   *Clear search* and Escape. Pressing `Meta+a` then `Backspace` did not clear it either.
+- **Scope a selector to the thing you mean.** `[role=listbox]` also matches every timeline track
+  (`V1 clips`, `A1 clips`), so "is the composer's menu open?" read *true* after the menu had
+  closed. Ask the control itself — the composer's textarea carries `aria-expanded` — or select by
+  the menu's own `aria-label`.
 - **Never `open <url>` in bay's session.** It navigates the editor away; the project in memory
   goes with it.
 - **To learn whether something reloaded the page,** set a marker and look for it afterwards:

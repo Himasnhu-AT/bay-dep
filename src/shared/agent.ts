@@ -22,6 +22,7 @@
  */
 
 import { TOOLS, VALIDATE_ONLY, findTool, type ToolSpec } from './mcp'
+import type { Pin } from './pins'
 
 // ---------------------------------------------------------------------------
 // What a runtime emits
@@ -81,7 +82,8 @@ export interface AgentRuntime {
  * state rather than two that must be paired up by eye.
  */
 export type AgentEntry =
-  | { kind: 'user'; id: string; text: string }
+  /** `pins` are what was pinned when it was sent, shown as chips; `text` is what was typed. */
+  | { kind: 'user'; id: string; text: string; pins?: Pin[] }
   | { kind: 'assistant'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }
   | {
