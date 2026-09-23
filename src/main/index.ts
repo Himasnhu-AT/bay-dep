@@ -5,6 +5,7 @@
  * conventions. Anything with a decision in it belongs in the module that owns the decision.
  */
 
+import { isLocalRequest } from './offline'
 import { app, BrowserWindow, Menu, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -116,6 +117,15 @@ function createWindow(): BrowserWindow {
     if (isOpenableExternally(url)) void shell.openExternal(url)
     else console.warn(`[bay] not opening ${url.slice(0, 80)}: only https links leave the app`)
     return { action: 'deny' }
+  })
+
+  // Nothing in this window reaches the network — not the page, and not a worker it starts, which
+  // the page's CSP does not bind (see offline.ts).
+  const offlineDevServer = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  window.webContents.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+    const allowed = isLocalRequest(details.url, offlineDevServer)
+    if (!allowed) console.warn(`[bay] refused a network request from the editor: ${details.url.slice(0, 120)}`)
+    callback({ cancel: !allowed })
   })
 
   // Nothing bay does should ever navigate the shell away from its own document.
