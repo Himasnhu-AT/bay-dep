@@ -13,6 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, killTree, mcpConfig } from './cli'
 import { TOOLS } from '@shared/mcp'
+import { BAY_SKILLS } from '@shared/skills'
 
 const OPTIONS = {
   proxyPath: '/app/out/main/mcp/index.js',
@@ -27,7 +28,13 @@ const valueAfter = (flag: string): string | undefined => args[args.indexOf(flag)
 test('every bay tool is allowed, under the name the CLI reports', () => {
   // Derived from the catalog, so a tool added tomorrow is allowed without editing this.
   for (const tool of TOOLS) assert.ok(allowedToolNames().includes(`mcp__bay__${tool.name}`))
-  assert.equal(allowedToolNames().length, TOOLS.length + BUILT_IN_TOOLS.length)
+})
+
+test('Skill is permitted only for bay’s own skills, by name', () => {
+  const skills = allowedToolNames().filter((name) => name.startsWith('Skill'))
+  assert.deepEqual(skills, BAY_SKILLS.map((skill) => `Skill(${skill.slug})`))
+  // Never the bare tool name, which would permit every bundled skill too.
+  assert.equal(allowedToolNames().includes('Skill'), false)
 })
 
 test('the built-ins that exist are named, so everything else — shell, files, web — is absent', () => {
@@ -35,9 +42,11 @@ test('the built-ins that exist are named, so everything else — shell, files, w
   // an allow-list `Bash` ran `id`. `--tools` decides what exists. Measured with this exact
   // list: the session's tools were bay's plus these two, and a request to run `id` had nothing
   // to run it with.
-  assert.deepEqual([...BUILT_IN_TOOLS], ['ListMcpResourcesTool', 'ReadMcpResourceTool'])
-  assert.equal(valueAfter('--tools'), 'ListMcpResourcesTool,ReadMcpResourceTool')
-  for (const tool of ['Bash', 'Read', 'Write', 'Edit', 'WebFetch', 'Agent', 'Task', 'Monitor', 'Skill']) {
+  // Skill is the one addition since: the CLI expands only a leading /skill, so a message naming
+  // several needs the model to load them — measured, it loaded both and followed both.
+  assert.deepEqual([...BUILT_IN_TOOLS], ['ListMcpResourcesTool', 'ReadMcpResourceTool', 'Skill'])
+  assert.equal(valueAfter('--tools'), 'ListMcpResourcesTool,ReadMcpResourceTool,Skill')
+  for (const tool of ['Bash', 'Read', 'Write', 'Edit', 'WebFetch', 'Agent', 'Task', 'Monitor']) {
     assert.equal(valueAfter('--tools')?.split(',').includes(tool), false, `${tool} must not exist`)
   }
 })

@@ -4,7 +4,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BAY_SKILLS, SKILL_SLUG, applySkill, leadingSkill, skillMarkdown } from './skills'
+import { BAY_SKILLS, SKILL_SLUG, insertSkill, leadingSkill, skillMarkdown, skillSegments } from './skills'
 import { composeMessage } from './pins'
 import { TOOLS } from './mcp'
 
@@ -55,10 +55,24 @@ test('pins go after a skill, so the CLI still sees /skill first', () => {
   assert.match(composeMessage('only this bit', pins, 30), /^I have pinned these/)
 })
 
-test('choosing a skill puts it first, replacing one already there', () => {
-  assert.equal(applySkill('', 'captions'), '/captions ')
-  assert.equal(applySkill('only the intro', 'captions'), '/captions only the intro')
-  assert.equal(applySkill('/review only the intro', 'captions'), '/captions only the intro')
-  // Unknown slash text is the user's words, kept intact after the skill.
-  assert.equal(applySkill('/etc is odd', 'review'), '/review /etc is odd')
+test('choosing a skill adds it where the user is typing, next to any others', () => {
+  // The bug: "…using /motion-graphics and /captions" became "/captions …using … and" — the
+  // second skill replaced the first and jumped to the front.
+  assert.equal(insertSkill('', 'captions'), '/captions ')
+  assert.equal(
+    insertSkill('edit this video using /motion-graphics and', 'captions'),
+    'edit this video using /motion-graphics and /captions '
+  )
+  // Already mentioned: unchanged, not duplicated.
+  assert.equal(insertSkill('use /captions here', 'captions'), 'use /captions here')
+})
+
+test('every skill mentioned is found where it was written, and only real skills count', () => {
+  const parts = skillSegments('edit this video using /motion-graphics and /captions, then /nope')
+  assert.deepEqual(
+    parts.map((part) => (part.skill ? `[${part.skill.slug}]` : part.text)),
+    ['edit this video using ', '[motion-graphics]', ' and ', '[captions]', ', then /nope']
+  )
+  // A slash inside a word or a path is not a skill.
+  assert.deepEqual(skillSegments('see in/out and /etc/hosts').map((p) => p.skill), [undefined])
 })

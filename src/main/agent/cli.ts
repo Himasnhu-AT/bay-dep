@@ -34,6 +34,7 @@ import { randomUUID } from 'node:crypto'
 import { setPriority } from 'node:os'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
+import { BAY_SKILLS } from '@shared/skills'
 import { parseLine, toAgentEvents } from './stream'
 import type { HostedAgentRuntime } from './runtime'
 
@@ -84,15 +85,30 @@ export interface CliOptions {
 
 /** Bay's tools, namespaced the way the CLI reports them. */
 export function allowedToolNames(): string[] {
-  return [...TOOLS.map((tool) => `mcp__bay__${tool.name}`), ...BUILT_IN_TOOLS]
+  return [
+    ...TOOLS.map((tool) => `mcp__bay__${tool.name}`),
+    'ListMcpResourcesTool',
+    'ReadMcpResourceTool',
+    // Scoped to bay's skills by name. Measured as a partial gate, not a wall: it denied a bundled
+    // skill that asks for approval, and one that does not still loaded — harmless here, since a
+    // skill is only instructions and there is nothing to act on them with.
+    ...BAY_SKILLS.map((skill) => `Skill(${skill.slug})`)
+  ]
 }
 
 /**
- * The only built-in tools the in-app agent has: reading bay's MCP resources (its guides).
- * Everything else built in — shell, files, web, subagents, skills-as-a-tool — does not exist in
- * the session at all. MCP tools are not built-ins, so bay's own are unaffected.
+ * The only built-in tools the in-app agent has: reading bay's MCP resources (its guides), and
+ * `Skill`, so it can load a bay skill the user names anywhere in a message. Everything else built
+ * in — shell, files, web, subagents — does not exist in the session at all. MCP tools are not
+ * built-ins, so bay's own are unaffected.
+ *
+ * `Skill` is here because the CLI expands only one `/skill`, at the very start of a message.
+ * "Edit this with /motion-graphics and /captions" needs the model to load both itself — measured:
+ * with the tool, it called Skill for each and followed both. It can also reach Claude Code's
+ * bundled skills; those have nothing to act with here (no shell, no files), the allow-list below
+ * scopes the permission to bay's skill names, and the system prompt says to use only bay's.
  */
-export const BUILT_IN_TOOLS = ['ListMcpResourcesTool', 'ReadMcpResourceTool'] as const
+export const BUILT_IN_TOOLS = ['ListMcpResourcesTool', 'ReadMcpResourceTool', 'Skill'] as const
 
 /**
  * Bay's MCP proxy as a stdio server entry.

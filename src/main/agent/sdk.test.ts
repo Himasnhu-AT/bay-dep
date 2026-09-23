@@ -44,11 +44,11 @@ const cliValueAfter = (flag: string): string | undefined => cli[cli.indexOf(flag
 
 test('the same bay tools are allowed as the CLI allows', () => {
   assert.deepEqual(options.allowedTools, allowedToolNames())
-  assert.equal(options.allowedTools?.length, TOOLS.length + BUILT_IN_TOOLS.length)
+  assert.ok((options.allowedTools?.length ?? 0) > TOOLS.length)
   // And the CLI really does pass these — so this is a comparison, not a shared constant
   // agreeing with itself.
   const start = cli.indexOf('--allowedTools') + 1
-  assert.deepEqual(cli.slice(start, start + TOOLS.length + BUILT_IN_TOOLS.length), options.allowedTools)
+  assert.deepEqual(cli.slice(start, start + (options.allowedTools?.length ?? 0)), options.allowedTools)
 })
 
 test('the same built-ins exist as in the CLI — only the resource readers', () => {

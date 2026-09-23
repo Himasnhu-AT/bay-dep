@@ -200,10 +200,31 @@ export function leadingSkill(text: string): { skill: BaySkill; rest: string } | 
 }
 
 /**
- * `text` with `/<slug>` at its front, replacing a skill already there rather than stacking two —
- * the CLI expands only the first, so a second would reach the agent as literal text.
+ * `text` with `/<slug>` added at the end, where the user is typing — or unchanged when it is
+ * already mentioned. Never moved to the front and never replacing another skill: a message can
+ * name several ("with /motion-graphics and /captions"), and the agent loads each one it names.
  */
-export function applySkill(text: string, slug: string): string {
-  const rest = (leadingSkill(text)?.rest ?? text).replace(/^\s+/, '')
-  return `/${slug} ${rest}`
+export function insertSkill(text: string, slug: string): string {
+  if (skillSegments(text).some((part) => part.skill?.slug === slug)) return text
+  const body = text.replace(/\s+$/, '')
+  return body ? `${body} /${slug} ` : `/${slug} `
+}
+
+/**
+ * A message split into its words and the bay skills it mentions, in order — for showing each
+ * `/skill` as a chip where the user wrote it. Only known skills at a word start count.
+ */
+export function skillSegments(text: string): { text: string; skill?: BaySkill }[] {
+  const parts: { text: string; skill?: BaySkill }[] = []
+  let last = 0
+  for (const match of text.matchAll(/(^|\s)\/([a-z0-9-]+)(?=\s|$|[.,;:!?])/g)) {
+    const skill = findSkill(match[2]!)
+    if (!skill) continue
+    const start = match.index! + match[1]!.length
+    if (start > last) parts.push({ text: text.slice(last, start) })
+    parts.push({ text: `/${skill.slug}`, skill })
+    last = start + 1 + skill.slug.length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
 }

@@ -27,7 +27,6 @@ import {
 import { cn } from '@/lib/cn'
 import { selectFps, selectTimeline, useEditor } from '@/store/editor'
 import { AGENT_STARTERS } from './agentStarters'
-import { applySkill } from '@shared/skills'
 
 /**
  * The agent's composer: the text box, what is pinned, and the `@` and `/` menus.
@@ -245,21 +244,9 @@ export function Composer({
       label: `/${starter.skill}`,
       detail: starter.title,
       icon: starter.icon,
-      // Like Claude Code: the skill goes first as `/name`, the typed "/query" goes, and the caret
-      // waits after it for the user's own words. The skill's instructions are in the session.
-      choose: () => {
-        if (!menuTrigger) return
-        const without =
-          draft.slice(0, menuTrigger.start) + draft.slice(menuTrigger.start + 1 + menuTrigger.query.length)
-        const next = applySkill(without.trim() === '' ? '' : without, starter.skill)
-        setDraft(next)
-        requestAnimationFrame(() => {
-          const box = textareaRef.current
-          box?.focus()
-          box?.setSelectionRange(next.length, next.length)
-          setCaret(next.length)
-        })
-      }
+      // In place, like Claude Code: the typed "/query" becomes `/name` right where it was, and
+      // any other skill in the message stays where it is. The agent loads every one it is given.
+      choose: () => replaceTrigger(`/${starter.skill} `)
     }))
     return [...commandRows, ...skillRows]
   })()

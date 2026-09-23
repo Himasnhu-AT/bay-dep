@@ -6,7 +6,7 @@ import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarte
 import { bay } from '@/lib/bay'
 import { selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
-import { applySkill, leadingSkill } from '@shared/skills'
+import { insertSkill, skillSegments } from '@shared/skills'
 import { Composer } from './Composer'
 
 /**
@@ -45,7 +45,7 @@ export function AgentPanel(): ReactNode {
   // draft: which clip, whose name, what style are theirs to add, and sending on click would
   // start a paid turn from a single mis-click.
   const pickStarter = (starter: AgentStarter): void => {
-    setDraft(applySkill(draft, starter.skill))
+    setDraft(insertSkill(draft, starter.skill))
     requestAnimationFrame(() => {
       const box = composer.current
       if (!box) return
@@ -162,7 +162,7 @@ type Deliver = (text: string) => Promise<void>
 /** What the user sent: their words, with what they had pinned shown as chips above them. */
 function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }): ReactNode {
   const fps = useEditor(selectFps)
-  const skill = leadingSkill(entry.text)
+
   return (
     <div className="flex max-w-[92%] flex-col items-end gap-1 self-end">
       {entry.pins && entry.pins.length > 0 && (
@@ -180,15 +180,18 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
         </ul>
       )}
       <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
-        {skill ? (
-          <>
-            <span className="mr-1 rounded-sm bg-accent/15 px-1 py-px font-medium text-accent">
-              /{skill.skill.slug}
+        {skillSegments(entry.text).map((part, index) =>
+          part.skill ? (
+            <span
+              key={index}
+              title={part.skill.title}
+              className="rounded-sm bg-accent/15 px-1 py-px font-medium text-accent"
+            >
+              {part.text}
             </span>
-            {skill.rest}
-          </>
-        ) : (
-          entry.text
+          ) : (
+            <span key={index}>{part.text}</span>
+          )
         )}
       </p>
     </div>
@@ -306,7 +309,13 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
         ) : (
           <Check aria-hidden="true" className="size-3 shrink-0 text-ink-2" />
         )}
-        <span className="font-mono text-ink-1">{entry.tool}</span>
+        <span className="font-mono text-ink-1">
+          {/* A skill load reads as the skill, the way it was asked for — "Skill" alone says
+              nothing about which one. */}
+          {entry.tool === 'Skill' && typeof entry.args['skill'] === 'string'
+            ? `/${entry.args['skill']} loaded`
+            : entry.tool}
+        </span>
         {(hasArgs || entry.result) && (
           <ChevronRight
             aria-hidden="true"
