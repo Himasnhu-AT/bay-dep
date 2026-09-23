@@ -22,6 +22,13 @@ export const tool: ToolSpec = {
       format: { type: 'string', enum: ['mp4', 'mov', 'webm', 'wav', 'mp3'] },
       fromFrame: frames('First frame. Defaults to 0.'),
       toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.'),
+      quality: {
+        type: 'string',
+        enum: ['draft', 'good', 'best'],
+        description:
+          'Encode quality. "good" (default) is H.264 CRF 20 with 192 kbps AAC; "best" is CRF 16 ' +
+          'with 256 kbps AAC, for a master you deliver; "draft" is fast and small, for a look.'
+      },
       loudness: {
         description:
           'Master the audio to a loudness target, verified on the encoded file: a preset ' +

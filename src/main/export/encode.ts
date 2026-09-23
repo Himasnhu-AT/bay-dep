@@ -407,7 +407,7 @@ async function masterTrack(job: Job, wavPath: string, target: string): Promise<L
     ffmpeg: ffmpegBin(),
     input: wavPath,
     output: target,
-    codecArgs: audioCodecArgs(job.request.format),
+    codecArgs: audioCodecArgs(job.request.format, job.request.quality ?? 'good'),
     target: loudness,
     outputArgs: AUDIO_ONLY.has(job.request.format) ? [] : ['-vn']
   })
@@ -452,7 +452,7 @@ async function renderAudioOnly(job: Job): Promise<void> {
         `[${graph.outputLabel}]`,
         '-t',
         duration.toFixed(6),
-        ...audioCodecArgs(job.request.format),
+        ...audioCodecArgs(job.request.format, job.request.quality ?? 'good'),
         '-y',
         job.request.outputPath
       )
@@ -584,7 +584,7 @@ export async function finish(jobId: string): Promise<void> {
         '1:a:0',
         '-c:v',
         'copy',
-        ...(encoded ? ['-c:a', 'copy'] : audioCodecArgs(job.request.format)),
+        ...(encoded ? ['-c:a', 'copy'] : audioCodecArgs(job.request.format, job.request.quality ?? 'good')),
         '-shortest',
         ...containerArgs(job.request.format),
         '-y',

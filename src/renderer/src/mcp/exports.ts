@@ -62,6 +62,10 @@ export async function exportTimeline(
   // misspelled preset would deliver a file at the wrong level with no word about it.
   const loudness = parseLoudness(args.loudness)
   if ('error' in loudness) fail(loudness.error)
+  const quality = args.quality === undefined ? 'good' : String(args.quality)
+  if (quality !== 'draft' && quality !== 'good' && quality !== 'best') {
+    fail(`quality must be "draft", "good" or "best"; got "${quality}".`)
+  }
 
   const tl = timeline()
   const duration = timelineDuration(tl)
@@ -98,6 +102,7 @@ export async function exportTimeline(
       fps: tl.fps,
       fromFrame,
       toFrame,
+      quality,
       ...(loudness.target ? { loudness: loudness.target } : {})
     })
   } catch (error) {
@@ -165,6 +170,7 @@ export async function exportTimeline(
     fromFrame,
     toFrame,
     framesTotal: toFrame - fromFrame + 1,
+    quality,
     ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
     note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
   }
