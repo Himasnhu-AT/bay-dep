@@ -410,12 +410,14 @@ export function App(): ReactNode {
         onClose={() => setConfirmingHome(false)}
         width={380}
         footer={
+          // macOS order: the destructive choice apart on the left, Cancel beside the default.
+          // "Don't save" throws work away, so it reads as the one that does.
           <>
+            <Button variant="subtle" onClick={leaveToHome} className="mr-auto text-danger">
+              Don't save
+            </Button>
             <Button variant="subtle" onClick={() => setConfirmingHome(false)}>
               Cancel
-            </Button>
-            <Button variant="subtle" onClick={leaveToHome}>
-              Don't save
             </Button>
             <Button
               variant="primary"
@@ -432,9 +434,9 @@ export function App(): ReactNode {
           </>
         }
       >
-        <p className="text-[12px] leading-relaxed text-ink-1">
-          “{useEditor.getState().project.name}” has changes that are not saved. Leave without them,
-          or save first.
+        <p className="px-4 py-3 text-[12px] leading-relaxed text-pretty text-ink-1">
+          “{useEditor.getState().project.name}” has changes that are not saved. Save them before
+          going to your projects, or leave without them.
         </p>
       </Modal>
 

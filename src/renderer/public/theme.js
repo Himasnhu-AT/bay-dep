@@ -35,6 +35,26 @@
     root.setAttribute('data-theme', resolved)
   }
 
+  // A theme flip changes the colour of nearly every element at once, and every transition on
+  // those properties fires together — the switch smears instead of snapping. So transitions are
+  // off for the swap, the new colours are forced to compute, and they come back next frame.
+  // Guarded: this file also runs at first paint and under a test with no real DOM.
+  function applyWithoutTransitions(preference) {
+    var head = document.head
+    if (!head || typeof document.createElement !== 'function') {
+      apply(preference)
+      return
+    }
+    var style = document.createElement('style')
+    style.textContent = '*,*::before,*::after{transition:none !important}'
+    head.appendChild(style)
+    apply(preference)
+    void window.getComputedStyle(root).color
+    window.requestAnimationFrame(function () {
+      style.remove()
+    })
+  }
+
   function set(preference) {
     if (PREFERENCES.indexOf(preference) === -1) {
       throw new Error('theme must be one of ' + PREFERENCES.join(', ') + ', got ' + preference)
@@ -44,12 +64,12 @@
     } catch (error) {
       // Applied for this session even when it cannot be remembered.
     }
-    apply(preference)
+    applyWithoutTransitions(preference)
   }
 
   // Following the OS live only matters while the preference is `system`.
   media.addEventListener('change', function () {
-    if (read() === 'system') apply('system')
+    if (read() === 'system') applyWithoutTransitions('system')
   })
 
   window.bayTheme = { get: read, set: set }

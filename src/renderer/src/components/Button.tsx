@@ -34,7 +34,8 @@ export function Button({
     <button
       type="button"
       className={cn(
-        'no-drag t-fast inline-flex shrink-0 items-center justify-center rounded-sm',
+        // Press feedback: 0.96, the value that reads as tactile without looking like a bounce.
+        'no-drag t-press inline-flex shrink-0 items-center justify-center rounded-sm active:scale-[0.96]',
         'whitespace-nowrap select-none',
         // A disabled control is drawn, not hidden — the greyed-out ones are the map of
         // what the engine cannot do yet.

@@ -48,7 +48,7 @@ export function IconButton({
         aria-label={label}
         aria-pressed={active}
         className={cn(
-          'no-drag t-fast inline-flex shrink-0 items-center justify-center rounded-sm',
+          'no-drag t-press inline-flex shrink-0 items-center justify-center rounded-sm active:scale-[0.96]',
           'disabled:pointer-events-none disabled:opacity-35',
           VARIANTS[variant],
           SIZES[size],

@@ -136,7 +136,7 @@ export function ProjectsHome(): ReactNode {
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') setQuery('')
                 }}
-                placeholder="Search projects"
+                placeholder="Search projects…"
                 aria-label="Search projects"
                 className="w-full bg-transparent text-[12px] text-ink-0 outline-none placeholder:text-ink-2"
               />
@@ -275,7 +275,16 @@ interface ItemProps {
 
 function Poster({ recent, className }: { recent: RecentProject; className?: string }): ReactNode {
   return recent.poster ? (
-    <img src={recent.poster} alt="" draggable={false} className={cn('object-cover', className)} />
+    // 16:9 intrinsic size so the grid never shifts as posters decode; a 1px outline at low
+    // opacity so a dark poster does not dissolve into the dark card around it.
+    <img
+      src={recent.poster}
+      alt=""
+      width={480}
+      height={270}
+      draggable={false}
+      className={cn('object-cover outline outline-1 -outline-offset-1 outline-white/10 [:root[data-theme=light]_&]:outline-black/10', className)}
+    />
   ) : (
     <span className={cn('grid place-items-center bg-surface-2', className)}>
       <Film aria-hidden="true" className="size-5 text-ink-3" />
