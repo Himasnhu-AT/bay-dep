@@ -11,7 +11,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowedToolNames, cliArgs, DENIED_TOOLS, mcpConfig } from './cli'
+import { allowedToolNames, cliArgs, DENIED_TOOLS, killTree, mcpConfig } from './cli'
 import { TOOLS } from '@shared/mcp'
 
 const OPTIONS = {
@@ -109,4 +109,32 @@ test('the config is valid JSON on one line, because it is an argv entry', () => 
   const raw = mcpConfig(OPTIONS)
   assert.doesNotThrow(() => JSON.parse(raw))
   assert.equal(raw.includes('\n'), false)
+})
+
+test('a second process for the same session resumes it rather than re-creating it', () => {
+  // After Stop, the next message starts a new process. `--session-id` with an id that already
+  // exists is refused by the CLI, so the restart must resume.
+  const again = cliArgs(OPTIONS, 'session-1', true)
+  assert.equal(again[again.indexOf('--resume') + 1], 'session-1')
+  assert.equal(again.includes('--session-id'), false)
+  // Positive control: the first process creates it.
+  assert.equal(args.includes('--resume'), false)
+})
+
+test('killing the agent signals its whole process group, not just the pid we hold', () => {
+  // The CLI spawns bay's MCP proxy. Signalling only the CLI's pid orphans the proxy, still
+  // connected to the app's socket — one per stopped turn.
+  const sent: [number, string][] = []
+  killTree(4242, 'SIGTERM', (pid, signal) => sent.push([pid, signal]))
+  assert.deepEqual(sent, [[process.platform === 'win32' ? 4242 : -4242, 'SIGTERM']])
+  // A pid that is already gone is not an error.
+  assert.doesNotThrow(() =>
+    killTree(4242, 'SIGTERM', () => {
+      throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+    })
+  )
+  // No pid (spawn failed) signals nothing.
+  const none: number[] = []
+  killTree(undefined, 'SIGTERM', (pid) => none.push(pid))
+  assert.deepEqual(none, [])
 })

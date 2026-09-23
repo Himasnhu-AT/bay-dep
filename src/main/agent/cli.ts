@@ -22,30 +22,61 @@
  * not.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import type { AgentEvent } from '@shared/agent'
-import { TOOLS } from '@shared/mcp'
-import { parseLine, toAgentEvents } from './stream'
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { setPriority } from "node:os";
+import type { AgentEvent } from "@shared/agent";
+import { TOOLS } from "@shared/mcp";
+import { parseLine, toAgentEvents } from "./stream";
+
+/**
+ * How far below the editor the agent runs. The model's own work happens elsewhere, but the CLI,
+ * its MCP proxy and anything they spawn share this machine with the preview — and a preview that
+ * stutters because an agent is thinking is the editor failing at its one real-time job. Ten is
+ * "background" on every Unix scheduler without being starved.
+ */
+export const AGENT_NICENESS = 10;
+
+/**
+ * Kill a child and everything it started.
+ *
+ * The CLI is not one process: it spawns bay's MCP proxy, and may spawn more. Killing only the
+ * pid we hold leaves those re-parented to launchd, still holding a socket connection into the
+ * app — a proxy per stopped turn, accumulating. Spawning `detached` makes the child a process
+ * group leader, so the negative pid reaches the whole group. Windows has no groups; there the
+ * plain kill is the best available.
+ */
+export function killTree(
+  pid: number | undefined,
+  signal: NodeJS.Signals = "SIGTERM",
+  kill: (pid: number, signal: NodeJS.Signals) => void = process.kill,
+): void {
+  if (pid === undefined) return;
+  try {
+    kill(process.platform === "win32" ? pid : -pid, signal);
+  } catch {
+    // Already gone — the group died between the check and the signal, which is the goal.
+  }
+}
 
 /** How long a turn may run before it is abandoned. A stuck turn must not be a stuck panel. */
-const TURN_TIMEOUT_MS = 10 * 60 * 1000
+const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface CliOptions {
   /** The `claude` binary. Found on PATH when not given. */
-  binary?: string
+  binary?: string;
   /** Absolute path to bay's MCP proxy bundle — `out/main/mcp/index.js`. */
-  proxyPath: string
+  proxyPath: string;
   /** The running app's socket, so the proxy talks to *this* bay rather than launching another. */
-  socketPath: string
+  socketPath: string;
   /** Where the agent's own files live. Never the project directory. */
-  cwd: string
-  systemPrompt: string
+  cwd: string;
+  systemPrompt: string;
 }
 
 /** Bay's tools, namespaced the way the CLI reports them. */
 export function allowedToolNames(): string[] {
-  return TOOLS.map((tool) => `mcp__bay__${tool.name}`)
+  return TOOLS.map((tool) => `mcp__bay__${tool.name}`);
 }
 
 /**
@@ -62,34 +93,34 @@ export function allowedToolNames(): string[] {
  * tools are named here rather than left to a boundary that happens to sit in the right place.
  */
 export const DENIED_TOOLS = [
-  'Bash',
-  'Read',
-  'Write',
-  'Edit',
-  'NotebookEdit',
-  'Glob',
-  'Grep',
-  'WebFetch',
-  'WebSearch',
-  'Task',
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "NotebookEdit",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "Task",
   // The agent-harness tools. None of them touches the user's files, but none of them is
   // editing video either, and `SendMessage` reaches other Claude sessions on this machine.
   // Named by observation: the agent listed exactly these when asked what it had left.
-  'Skill',
-  'SlashCommand',
-  'ToolSearch',
-  'ScheduleWakeup',
-  'SendMessage',
-  'ListAgents',
-  'TaskOutput',
-  'TaskStop',
-  'CronCreate',
-  'CronList',
-  'CronDelete',
-  'PushNotification',
-  'EnterWorktree',
-  'ExitWorktree'
-]
+  "Skill",
+  "SlashCommand",
+  "ToolSearch",
+  "ScheduleWakeup",
+  "SendMessage",
+  "ListAgents",
+  "TaskOutput",
+  "TaskStop",
+  "CronCreate",
+  "CronList",
+  "CronDelete",
+  "PushNotification",
+  "EnterWorktree",
+  "ExitWorktree",
+];
 
 export function mcpConfig(options: CliOptions): string {
   return JSON.stringify({
@@ -100,37 +131,55 @@ export function mcpConfig(options: CliOptions): string {
         env: {
           // `ELECTRON_RUN_AS_NODE` because `process.execPath` is Electron here: the proxy must
           // run as plain Node or Chromium writes to the stdout the protocol needs byte-exact.
-          ELECTRON_RUN_AS_NODE: '1',
-          BAY_MCP_SOCKET: options.socketPath
-        }
-      }
-    }
-  })
+          ELECTRON_RUN_AS_NODE: "1",
+          BAY_MCP_SOCKET: options.socketPath,
+        },
+      },
+    },
+  });
 }
 
-export function cliArgs(options: CliOptions, sessionId: string): string[] {
+/**
+ * `resume` is whether this session already exists on disk. The first process creates it with
+ * `--session-id`; any later one — after a stop, or a crash — must `--resume` it instead, because
+ * the CLI refuses to *create* a session under an id it already has. Getting that wrong turned
+ * the first message after Stop into a failure that named the session, not the cause.
+ */
+export function cliArgs(
+  options: CliOptions,
+  sessionId: string,
+  resume = false,
+): string[] {
   return [
-    '--print',
-    '--output-format', 'stream-json',
-    '--input-format', 'stream-json',
-    '--include-partial-messages',
-    '--verbose',
-    '--mcp-config', mcpConfig(options),
-    '--strict-mcp-config',
-    '--allowedTools', ...allowedToolNames(),
+    "--print",
+    "--output-format",
+    "stream-json",
+    "--input-format",
+    "stream-json",
+    "--include-partial-messages",
+    "--verbose",
+    "--mcp-config",
+    mcpConfig(options),
+    "--strict-mcp-config",
+    "--allowedTools",
+    ...allowedToolNames(),
     // Two mechanisms because they do different things: `--restricted` removes the tools that
     // run commands or code outright, and `--disallowedTools` denies the rest by name. Neither
     // alone was sufficient — see `DENIED_TOOLS`.
-    '--restricted',
-    '--disallowedTools', ...DENIED_TOOLS,
+    "--restricted",
+    "--disallowedTools",
+    ...DENIED_TOOLS,
     // Anything not allowed above is refused rather than queued behind a prompt no one can see.
-    '--permission-prompts', 'none',
+    "--permission-prompts",
+    "none",
     // The user's own instructions are theirs, not bay's. Inheriting a CLAUDE.md written for
     // some other repository would put rules about that repository into a video edit.
-    '--setting-sources', '',
-    '--system-prompt', options.systemPrompt,
-    '--session-id', sessionId
-  ]
+    "--setting-sources",
+    "",
+    "--system-prompt",
+    options.systemPrompt,
+    ...(resume ? ["--resume", sessionId] : ["--session-id", sessionId]),
+  ];
 }
 
 /**
@@ -141,117 +190,144 @@ export function cliArgs(options: CliOptions, sessionId: string): string[] {
  * would make every reply a cold start with no memory of the last one.
  */
 export class CliAgentRuntime {
-  readonly id = randomUUID()
-  #child: ChildProcessWithoutNullStreams | null = null
-  #buffer = ''
-  #listeners = new Set<(event: AgentEvent) => void>()
-  #runId: string | null = null
-  #timer: NodeJS.Timeout | null = null
+  readonly id = randomUUID();
+  #child: ChildProcessWithoutNullStreams | null = null;
+  #buffer = "";
+  #listeners = new Set<(event: AgentEvent) => void>();
+  #runId: string | null = null;
+  #timer: NodeJS.Timeout | null = null;
+  /** Whether a process has ever been started for this session, so the next one resumes it. */
+  #spawned = false;
 
-  readonly #options: CliOptions
+  readonly #options: CliOptions;
 
   constructor(options: CliOptions) {
-    this.#options = options
+    this.#options = options;
   }
 
   onEvent(listener: (event: AgentEvent) => void): () => void {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
   }
 
   #emit(event: AgentEvent): void {
-    for (const listener of this.#listeners) listener(event)
+    for (const listener of this.#listeners) listener(event);
   }
 
   #ensure(): ChildProcessWithoutNullStreams {
-    if (this.#child && !this.#child.killed) return this.#child
-    const child = spawn(this.#options.binary ?? 'claude', cliArgs(this.#options, this.id), {
-      cwd: this.#options.cwd,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined } as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    if (this.#child && !this.#child.killed) return this.#child;
+    const child = spawn(
+      this.#options.binary ?? "claude",
+      cliArgs(this.#options, this.id, this.#spawned),
+      {
+        cwd: this.#options.cwd,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: undefined,
+        } as NodeJS.ProcessEnv,
+        stdio: ["pipe", "pipe", "pipe"],
+        // Its own process group, so `killTree` reaches the proxy it spawns. Not `unref`ed: the
+        // app still owns it and waits on its pipes.
+        detached: process.platform !== "win32",
+      },
+    );
+    this.#spawned = true;
+    if (child.pid !== undefined) {
+      try {
+        // Inherited by everything the CLI spawns, which is the point: the proxy too.
+        setPriority(child.pid, AGENT_NICENESS);
+      } catch {
+        // Not permitted on this platform or already exited. Running at normal priority is a
+        // degradation, not a reason to refuse to run.
+      }
+    }
 
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => this.#consume(chunk))
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => this.#consume(chunk));
 
     // stderr is diagnostics, never protocol. Kept for the failure message rather than parsed.
-    let stderr = ''
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      stderr = `${stderr}${chunk}`.slice(-4000)
-    })
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr = `${stderr}${chunk}`.slice(-4000);
+    });
 
-    child.on('error', (error) => this.#fail(`claude could not be started: ${error.message}`))
-    child.on('exit', (code) => {
-      this.#child = null
+    child.on("error", (error) =>
+      this.#fail(`claude could not be started: ${error.message}`),
+    );
+    child.on("exit", (code) => {
+      this.#child = null;
       if (this.#runId) {
         // Exiting mid-turn is a failure whatever the code says: the panel is waiting for an
         // answer that is never coming, and silence is the one outcome it cannot render.
         this.#fail(
           code === 0
-            ? 'claude exited before finishing the turn.'
-            : `claude exited with code ${code}. ${stderr.trim().slice(-500)}`
-        )
+            ? "claude exited before finishing the turn."
+            : `claude exited with code ${code}. ${stderr.trim().slice(-500)}`,
+        );
       }
-    })
+    });
 
-    this.#child = child
-    return child
+    this.#child = child;
+    return child;
   }
 
   #consume(chunk: string): void {
-    this.#buffer += chunk
-    let index: number
-    while ((index = this.#buffer.indexOf('\n')) >= 0) {
-      const line = this.#buffer.slice(0, index)
-      this.#buffer = this.#buffer.slice(index + 1)
-      const message = parseLine(line)
-      if (!message || !this.#runId) continue
+    this.#buffer += chunk;
+    let index: number;
+    while ((index = this.#buffer.indexOf("\n")) >= 0) {
+      const line = this.#buffer.slice(0, index);
+      this.#buffer = this.#buffer.slice(index + 1);
+      const message = parseLine(line);
+      if (!message || !this.#runId) continue;
       for (const event of toAgentEvents(message, this.#runId)) {
-        if (event.type === 'done') this.#settle()
-        this.#emit(event)
+        if (event.type === "done") this.#settle();
+        this.#emit(event);
       }
     }
   }
 
   #settle(): void {
-    if (this.#timer) clearTimeout(this.#timer)
-    this.#timer = null
-    this.#runId = null
+    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer = null;
+    this.#runId = null;
   }
 
   #fail(message: string): void {
-    const runId = this.#runId
-    this.#settle()
-    if (runId) this.#emit({ type: 'done', runId, reason: 'error', message })
+    const runId = this.#runId;
+    this.#settle();
+    if (runId) this.#emit({ type: "done", runId, reason: "error", message });
   }
 
   /** Send one message. Events arrive through `onEvent`; `started` is emitted first. */
   send(text: string): string {
-    const runId = randomUUID()
-    this.#runId = runId
-    this.#emit({ type: 'started', runId })
+    const runId = randomUUID();
+    this.#runId = runId;
+    this.#emit({ type: "started", runId });
 
-    let child: ChildProcessWithoutNullStreams
+    let child: ChildProcessWithoutNullStreams;
     try {
-      child = this.#ensure()
+      child = this.#ensure();
     } catch (error) {
-      this.#fail(`claude could not be started: ${(error as Error).message}`)
-      return runId
+      this.#fail(`claude could not be started: ${(error as Error).message}`);
+      return runId;
     }
 
     this.#timer = setTimeout(
-      () => this.#fail(`The turn ran past ${Math.round(TURN_TIMEOUT_MS / 60000)} minutes and was stopped.`),
-      TURN_TIMEOUT_MS
-    )
+      () =>
+        this.#fail(
+          `The turn ran past ${Math.round(TURN_TIMEOUT_MS / 60000)} minutes and was stopped.`,
+        ),
+      TURN_TIMEOUT_MS,
+    );
 
     child.stdin.write(
       `${JSON.stringify({
-        type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text }] }
-      })}\n`
-    )
-    return runId
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text }] },
+      })}\n`,
+    );
+    return runId;
   }
 
   /**
@@ -259,20 +335,20 @@ export class CliAgentRuntime {
    *
    * The process is killed rather than asked to stop: there is no in-band cancel in the stream
    * protocol, and a turn that keeps running after the user said stop would keep calling tools
-   * against their timeline. The next `send` starts a fresh process — the cost is the lost
-   * conversation context, which is the right trade against edits nobody asked for.
+   * against their timeline. The next `send` starts a fresh process that resumes the same
+   * session, so the conversation's context survives the stop.
    */
   stop(): void {
-    this.#fail('Stopped.')
-    this.#child?.kill('SIGTERM')
-    this.#child = null
-    this.#buffer = ''
+    this.#fail("Stopped.");
+    killTree(this.#child?.pid);
+    this.#child = null;
+    this.#buffer = "";
   }
 
   dispose(): void {
-    this.#settle()
-    this.#listeners.clear()
-    this.#child?.kill('SIGTERM')
-    this.#child = null
+    this.#settle();
+    this.#listeners.clear();
+    killTree(this.#child?.pid);
+    this.#child = null;
   }
 }
