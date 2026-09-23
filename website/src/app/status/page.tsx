@@ -23,57 +23,49 @@ export const metadata: Metadata = {
 const built = [
   {
     title: "The editing loop",
-    body: "Import media, place it, trim it, transform it, blend it, play it back, and export an MP4. Seventeen blend modes reach the GPU. Sources are fitted rather than stretched to the canvas.",
+    body: "Import media, place it, trim, split, move and fade it, cut a stretch of time out of every track at once, slip, slide and roll, add markers, and export MP4, MOV or WebM, or the audio alone. Sixteen blend modes, image adjustments and type styling.",
+  },
+  {
+    title: "Transitions, picture and sound",
+    body: "Dissolves, dips, wipes, pushes, slides and irises across a cut. The sound cross-fades on the same curve as the picture, in the preview and in the exported file, and an automated check compares the two frame by frame.",
+  },
+  {
+    title: "Titles, captions and templates",
+    body: "Seven motion templates, a lower third, a title card, subtitles and more, that size themselves to a landscape, portrait or square canvas. Captions from an SRT or WebVTT file, or from timed lines, on their own track in one undo step.",
+  },
+  {
+    title: "An agent inside the editor",
+    body: "Claude Code in a panel, with the editor's tools and nothing else. It proposes a plan, you approve it on a card, and exactly that runs. It renders the frames it changed and looks at them before it reports back.",
   },
   {
     title: "The agent endpoint",
-    body: "Twenty-one tools over MCP, headless or against the open window, including frame snapshots and render.",
-  },
-  {
-    title: "Narration and captions",
-    body: "Local text to speech, with captions cut against the spoken words.",
-  },
-  {
-    title: "A decode path that does not freeze the window",
-    body: "Decoding runs off the render path on a background worker under a global memory budget. A ten-minute clip appears in under two seconds instead of locking the editor for half a minute.",
-  },
-  {
-    title: "A bundle you can hand to someone",
-    body: "A universal Mac app and a .dmg, built locally in about a minute. Unsigned by default, which means the OS warns once on first run.",
+    body: "Every editing operation over the Model Context Protocol, to Claude Code or any other client on this Mac, with a three-tool mode for clients that do not search their tools. Frames come back as images. Any edit can be checked with a dry run first.",
   },
 ];
 
 const wrong = [
   {
-    title: "Long clips play as a low-quality proxy",
-    body: "A ten-minute clip no longer freezes the editor, but it plays back at a few frames a second at reduced resolution. Quality is being traded away quietly, which is the wrong trade to make without saying so. Windowed decode around the playhead is the fix.",
+    title: "An approved plan cannot use what it creates",
+    body: "Each step of a plan has to name the clips it touches before anything runs, so a plan that splits a clip and then moves the new half has to be approved in two stages. The agent is told this; it is still a limit.",
   },
   {
-    title: "The media panel shows demo tiles",
-    body: "Imported media works: it renders, plays and exports. The panel just does not list it, so the tiles you see are not the files you have.",
-  },
-  {
-    title: "Anamorphic footage renders at the wrong aspect",
-    body: "The sample aspect ratio in the source is ignored, so anamorphic material comes out with the wrong shape.",
-  },
-  {
-    title: "Rotation metadata has a sign bug",
-    body: "Two ways of recording rotation use opposite conventions and one of them is being read with the wrong sign, so some phone footage arrives upside down.",
+    title: "The alternative agent runtime is slower per message",
+    body: "The in-app agent can run on the Agent SDK instead of the installed Claude Code. It works the same way from the panel, but starts a fresh process for every message, so each reply begins with a few seconds of startup.",
   },
 ];
 
 const notYet = [
   {
-    title: "Most of the timeline craft",
-    body: "Slip, slide and roll trims, the transport, the audio mixer and much of the inspector are planned and not written. What exists is enough to build a cut, not enough to finish one comfortably.",
+    title: "Notarized downloads",
+    body: "Builds can now be signed with a Developer ID. Notarization is wired up but has not been run, so there is no download on this site yet that Gatekeeper will open without a warning.",
   },
   {
-    title: "Windows",
-    body: "The build is wired up and runs on a CI runner, because a Windows build genuinely cannot be produced on a Mac. It is not a target anyone should rely on yet.",
+    title: "Windows and Linux",
+    body: "The packager is configured for both. Neither has been built and used, so neither is something to rely on.",
   },
   {
-    title: "Signing and notarization",
-    body: "The tooling accepts a signing identity, but the builds handed out are unsigned. There is no notarized download on this site, and there will not be one until it is real.",
+    title: "Some controls exist only for the agent",
+    body: "Renaming an asset and importing captions are available to an agent but have no button in the editor yet.",
   },
 ];
 
