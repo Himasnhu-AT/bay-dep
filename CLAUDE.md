@@ -555,6 +555,18 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
   resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
   independently.
+- **The `.bay` format changes additively within a version, and any other change is a bump.** A new
+  *optional* field needs nothing: older builds of the same version load the file, carry the key
+  through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field
+  is a format change and needs all three of: `PROJECT_VERSION` bumped, a migration registered from
+  the previous version in `src/main/project/migrations.ts`, and the new format's document spelled
+  out as a string in `src/shared/project-fixtures.ts`. `migrations.test.ts` fails without any of
+  them, and `project-format.test.ts` fails if the store stops writing a key the version-1 file has
+  — which is what catches a rename that moved every reader along with it. Loading is two layers:
+  **migrations** change what a document means, one version step at a time, and a document from a
+  *newer* version is refused rather than loaded, because saving it would drop what this build does
+  not know; **transforms** repair values (a `null` where `JSON.stringify` wrote a `NaN`, a negative
+  start) and must be no-ops on a well-formed file. Never pass a format change off as a transform.
 - **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
   `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
   not land on the undo stack.

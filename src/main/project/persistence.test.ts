@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Project } from '@shared/project'
 import { PROJECT_VERSION, type Marker } from '@shared/project'
+import { V1_ON_DISK } from '@shared/project-fixtures'
 import { openDatabase } from './db'
 import {
   LAST_PROJECT_KEY,
@@ -163,81 +164,9 @@ test('a saved project is readable JSON on disk, not an opaque blob', async () =>
   assert.ok(Array.isArray(parsed.timelines))
 })
 
-/**
- * A version-1 `.bay` file, written out as a literal.
- *
- * The round-trip test below cannot hold the format still: it writes and reads through the
- * same code, so renaming `durationInFrames` to `duration` would move both sides together and
- * still pass — while every project already on a user's disk stopped loading. This fixture is
- * the fixed point. Every key here is a promise made to files that already exist.
- */
-const V1_ON_DISK = `{
-  "id": "prj_fixed",
-  "name": "Fixture",
-  "version": 1,
-  "assets": [
-    {
-      "id": "asset_1",
-      "kind": "video",
-      "name": "goodall.mp4",
-      "path": "/footage/goodall.mp4",
-      "durationUs": 67833333,
-      "width": 1080,
-      "height": 1920,
-      "fps": 30,
-      "hasAudio": true,
-      "hasVideo": true,
-      "posterPath": null,
-      "waveformPath": null,
-      "createdAt": 1700000000000
-    }
-  ],
-  "timelines": [
-    {
-      "id": "tl_1",
-      "name": "Timeline 1",
-      "fps": 30,
-      "width": 1080,
-      "height": 1920,
-      "background": "#000000",
-      "tracks": [
-        {
-          "id": "trk_v1",
-          "kind": "video",
-          "name": "V1",
-          "locked": false,
-          "muted": false,
-          "hidden": false,
-          "items": [
-            {
-              "id": "item_1",
-              "assetId": "asset_1",
-              "trackId": "trk_v1",
-              "from": 0,
-              "durationInFrames": 150,
-              "sourceStartUs": 20000000,
-              "layout": {
-                "left": 0,
-                "top": 0,
-                "width": 1080,
-                "height": 1920,
-                "opacity": 1,
-                "rotation": 0
-              },
-              "volume": 1,
-              "fadeInFrames": 15,
-              "fadeOutFrames": 15,
-              "speed": 1
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "activeTimelineId": "tl_1",
-  "createdAt": 1700000000000,
-  "updatedAt": 1700000000001
-}`
+// The version-1 document on disk lives in `@shared/project-fixtures`, spelled out key by key,
+// because the renderer checks today's writer against the same literal. See that file for why it
+// is a string rather than an object typed as `Project`.
 
 test('a .bay file already on disk still loads, field for field', async () => {
   const dir = scratch()

@@ -479,7 +479,7 @@ export interface Timeline {
 export interface Project {
   id: string
   name: string
-  /** Schema version. Bump when a migration is needed; `migrate()` keys off it. */
+  /** Format version of the `.bay` document; the migration chain keys off it. */
   version: number
   assets: Asset[]
   timelines: Timeline[]
@@ -490,6 +490,25 @@ export interface Project {
   filePath?: string | null
 }
 
+/**
+ * The `.bay` format version this build writes.
+ *
+ * **Schema changes are additive-only within a version.** Every type in this file that reaches a
+ * `.bay` file — `Project`, `Timeline`, `Track`, `Item`, `Layout`, `Asset`, `Transition` and what
+ * they hold — is a promise to files already on disk and to older builds that will open files
+ * this one writes. So:
+ *
+ * - A new **optional** field needs no bump and no migration. Older builds of this version carry
+ *   it through untouched, and absence must keep meaning what it meant before the field existed.
+ * - **Renaming, removing or retyping** a field, or making an optional one required, is a format
+ *   change: bump this constant, register a migration from the previous version in
+ *   `src/main/project/migrations.ts`, and add the new format's document, spelled out key by key,
+ *   to `src/shared/project-fixtures.ts`. `migrations.test.ts` fails until all three exist, and
+ *   `project-format.test.ts` fails if the store stops writing a key the version-1 file has.
+ *
+ * Load-time repairs (defaults, clamping) are *transforms* in the same file, not migrations: they
+ * do not change what the format is, only fix values in it.
+ */
 export const PROJECT_VERSION = 1
 
 // ---------------------------------------------------------------------------

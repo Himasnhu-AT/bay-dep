@@ -19,6 +19,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { Project, Timeline, Track, TrackKind } from '@shared/project'
 import { CANVAS_PRESETS, PROJECT_VERSION } from '@shared/project'
 import type { AppDatabase } from './db'
+import { applyTransforms, runMigrations, type RawDocument } from './migrations'
 
 export const EXTENSION = 'bay'
 
@@ -100,22 +101,24 @@ export async function writeAtomic(path: string, contents: string): Promise<void>
   }
 }
 
+/**
+ * A parsed `.bay` document in, a `Project` at this build's format out.
+ *
+ * The version chain and the load-time repairs live in `./migrations`, and the order here is the
+ * contract: refuse what is not a project, then upgrade the format (or refuse a newer one), then
+ * normalise. Normalising first would run today's repairs against yesterday's shape.
+ */
 export function migrate(raw: unknown, filePath: string): Project {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new Error(`${basename(filePath)} is not a bay project.`)
+  const name = basename(filePath)
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${name} is not a bay project.`)
   }
-  const project = raw as Partial<Project>
-  if (!Array.isArray(project.timelines) || !Array.isArray(project.assets)) {
-    throw new Error(`${basename(filePath)} is missing its timelines or assets.`)
+  const shaped = raw as Partial<Project>
+  if (!Array.isArray(shaped.timelines) || !Array.isArray(shaped.assets)) {
+    throw new Error(`${name} is missing its timelines or assets.`)
   }
-  const version = typeof project.version === 'number' ? project.version : 0
-  if (version > PROJECT_VERSION) {
-    throw new Error(
-      `${basename(filePath)} was saved by a newer version of bay (project format ${version}, this build reads ${PROJECT_VERSION}).`
-    )
-  }
-  // Nothing to migrate yet — version 0 files predate the field and are otherwise identical.
-  return { ...(project as Project), version: PROJECT_VERSION, filePath }
+  const current = runMigrations(raw as RawDocument, name) as unknown as Project
+  return { ...applyTransforms(current), version: PROJECT_VERSION, filePath }
 }
 
 export async function readProjectFile(filePath: string): Promise<Project> {
