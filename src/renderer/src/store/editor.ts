@@ -51,7 +51,7 @@ import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 
 const HISTORY_LIMIT = 100
 
-export type PanelId = 'agent' | 'media' | 'text' | 'effects' | 'export'
+export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export'
 
 export interface EditorState {
   project: Project

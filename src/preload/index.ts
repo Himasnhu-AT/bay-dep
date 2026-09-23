@@ -104,6 +104,8 @@ const api: BayApi = {
     inspect: (path, includeHtml) =>
       ipcRenderer.invoke(IPC.compositionInspect, path, includeHtml),
     write: (path, html) => ipcRenderer.invoke(IPC.compositionWrite, path, html),
+    writeTemplate: (templateId, width, height) =>
+      ipcRenderer.invoke(IPC.compositionWriteTemplate, templateId, width, height),
     import: (paths) => ipcRenderer.invoke(IPC.compositionImport, paths),
     frameAt: (request) => ipcRenderer.invoke(IPC.compositionFrameAt, request),
     release: (assetId) => ipcRenderer.invoke(IPC.compositionRelease, assetId)

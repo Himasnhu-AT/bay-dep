@@ -326,6 +326,20 @@ export interface BayApi {
      * composition path rather than becoming a general-purpose file writer.
      */
     write(path: string, html: string): Promise<{ ok: true } | { ok: false; error: string }>
+    /**
+     * Size one of bay's shipped templates to a canvas and write it to disk, ready to import.
+     *
+     * Main chooses the path, which is why this is not `write`: the renderer has no directory to
+     * name, and a template is written where bay keeps them (`<userData>/templates`), under a
+     * name derived from template, size and content — so placing the same template twice at one
+     * size reuses one file and one asset, and values live on each clip. The width and height
+     * are the active timeline's; an unknown id or an impossible size is refused by name.
+     */
+    writeTemplate(
+      templateId: string,
+      width: number,
+      height: number
+    ): Promise<{ ok: true; path: string } | { ok: false; error: string }>
     /** Import a composition as an asset, probing it the way media is probed. */
     import(paths: string[]): Promise<ImportedAsset[]>
     /** One frame, at a time. Resolves null when the composition could not be opened. */
@@ -429,6 +443,7 @@ export const IPC = {
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',
+  compositionWriteTemplate: 'composition:write-template',
   compositionImport: 'composition:import',
   compositionFrameAt: 'composition:frame-at',
   compositionRelease: 'composition:release',

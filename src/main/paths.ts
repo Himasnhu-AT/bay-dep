@@ -40,6 +40,16 @@ export function autosaveDir(): string {
   return ensure(join(app.getPath('userData'), 'autosave'))
 }
 
+/**
+ * Templates sized to a canvas, as placed from the Templates panel or `add_template`.
+ *
+ * Not under `cacheDir()`: a cache is safe to delete wholesale and these are not — a placed clip
+ * reads its document from here for as long as the project uses it.
+ */
+export function templatesDir(): string {
+  return ensure(join(app.getPath('userData'), 'templates'))
+}
+
 /** Scratch space for export intermediates — half-written video before the audio is muxed. */
 export function exportScratchDir(): string {
   return ensure(join(cacheDir(), 'export'))

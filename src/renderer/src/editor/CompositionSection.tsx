@@ -100,7 +100,7 @@ function VariableField({
   // the row and the control would label itself again.
   return (
     <div className="flex items-end gap-1.5">
-      <Control variable={variable} value={value} onChange={onChange} />
+      <VariableControl variable={variable} value={value} onChange={onChange} />
       {/* Offered only when there is something to reset to. An always-present control that
           usually does nothing trains people to ignore it. */}
       {overridden ? (
@@ -116,7 +116,8 @@ function VariableField({
   )
 }
 
-function Control({
+/** One declared variable's control. Shared with the Templates panel, so a field is drawn one way. */
+export function VariableControl({
   variable,
   value,
   onChange

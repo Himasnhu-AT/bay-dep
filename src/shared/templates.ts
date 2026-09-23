@@ -12,27 +12,27 @@
  * fails on a user's machine — the same reasoning as `RESOURCES`, and the pairing is checked in
  * the same way.
  *
- * **Every template is authored at 1080x1920, and that matters on a landscape timeline.** A
- * composition's size is static in its root element, and placement *fits* the asset rather than
- * stretching it — measured: a 1080x1920 template on a 1920x1080 project lands in a 608x1080 box
- * at x=656, which is the source aspect to within a rounded pixel. So nothing is distorted, and
- * that is the problem: a lower third authored for a vertical frame becomes a narrow strip down
- * the middle of a landscape one, correct in every proportion and useless for its purpose.
+ * **A template is sized to the canvas it lands on, not the one it was drawn for.** Every
+ * template used to be authored at a fixed 1080x1920 and placed as-is. Placement *fits* an asset
+ * rather than stretching it — measured: a 1080x1920 template on a 1920x1080 project landed in a
+ * 608x1080 box at x=656 — so nothing was distorted, and that was the problem: a lower third for
+ * a vertical frame became a narrow strip down the middle of a landscape one, correct in every
+ * proportion and useless for its purpose.
  *
- * The fix is to change the two numbers in the root's inline style after fetching, before
- * `write_composition`. Stretching the item's layout to the full frame instead *would* distort
- * it, so reach for the size, not the box.
+ * So the templates are size-aware rather than duplicated per orientation. The composition
+ * contract requires a root sized in pixels, and that stays true: `sizeTemplate` rewrites the
+ * root's two numbers to the timeline's width and height before the file is written, and the
+ * layout inside never uses a fixed pixel — lengths are multiples of `--u` (one pixel of a frame
+ * whose short side is 1080, via container units) and positions are percentages of the frame.
+ * `width`/`height` in the catalog are therefore the size the file *ships* at, which is what an
+ * agent fetching the raw resource receives, not a size the template is limited to.
  *
- * (An earlier version of this comment said a landscape project would squash a vertical
- * template. It does not. The note is kept because the wrong version was written from reasoning
- * about the resize call and the right one from placing a template and reading the box back.)
+ * `add_template` (and the Templates panel, which calls the same function) does the sizing,
+ * writing and placing in one step. An agent building from the raw resource instead changes the
+ * root's `width`/`height` itself — never the item's layout, which would stretch the picture.
  */
 
-export interface TemplateVariableSpec {
-  id: string
-  type: 'string' | 'number' | 'color' | 'boolean' | 'enum'
-  label: string
-}
+import type { CompositionVariable } from './composition'
 
 export interface TemplateSpec {
   /** Also the `data-composition-id` inside the file, and the last segment of its uri. */
@@ -42,9 +42,16 @@ export interface TemplateSpec {
   /** What it is for, so a listing can group without parsing descriptions. */
   category: 'caption' | 'identity' | 'emphasis' | 'structure'
   durationSeconds: number
+  /** The size the file ships at. `sizeTemplate` replaces it with the canvas's. */
   width: number
   height: number
-  variables: readonly TemplateVariableSpec[]
+  /**
+   * The declarations exactly as the file makes them, defaults included — so the Templates panel
+   * can draw its fields without reading the file. Held equal to the file by `templates.test.ts`,
+   * which compares the whole declaration rather than the ids: a default that drifted here would
+   * be a field showing one value while the clip renders another.
+   */
+  variables: readonly CompositionVariable[]
 }
 
 export const TEMPLATE_URI_PREFIX = 'bay://template/'
@@ -62,11 +69,11 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'text', type: 'string', label: 'Subtitle' },
-      { id: 'size', type: 'number', label: 'Text size' },
-      { id: 'bottom', type: 'number', label: 'Distance from bottom' },
-      { id: 'ink', type: 'color', label: 'Text' },
-      { id: 'pill', type: 'boolean', label: 'Dark pill behind' }
+      { id: 'text', type: 'string', label: 'Subtitle', default: 'Everything you do lands in the same document.' },
+      { id: 'size', type: 'number', label: 'Text size', default: 64, min: 24, max: 120 },
+      { id: 'bottom', type: 'number', label: 'Distance from bottom', default: 11, min: 0, max: 90, unit: '%' },
+      { id: 'ink', type: 'color', label: 'Text', default: '#FFFFFF' },
+      { id: 'pill', type: 'boolean', label: 'Dark pill behind', default: true }
     ]
   },
   {
@@ -80,10 +87,10 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'name', type: 'string', label: 'Name' },
-      { id: 'role', type: 'string', label: 'Role' },
-      { id: 'accent', type: 'color', label: 'Accent' },
-      { id: 'bottom', type: 'number', label: 'Distance from bottom' }
+      { id: 'name', type: 'string', label: 'Name', default: 'Himanshu' },
+      { id: 'role', type: 'string', label: 'Role', default: 'building bay' },
+      { id: 'accent', type: 'color', label: 'Accent', default: '#11D1A0' },
+      { id: 'bottom', type: 'number', label: 'Distance from bottom', default: 24, min: 0, max: 90, unit: '%' }
     ]
   },
   {
@@ -97,10 +104,10 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'kicker', type: 'string', label: 'Kicker' },
-      { id: 'title', type: 'string', label: 'Title' },
-      { id: 'accent', type: 'color', label: 'Kicker colour' },
-      { id: 'scrim', type: 'number', label: 'Scrim strength' }
+      { id: 'kicker', type: 'string', label: 'Kicker', default: 'A SHORT FILM ABOUT' },
+      { id: 'title', type: 'string', label: 'Title', default: 'Overthinking' },
+      { id: 'accent', type: 'color', label: 'Kicker colour', default: '#FF4D3D' },
+      { id: 'scrim', type: 'number', label: 'Scrim strength', default: 0.72, min: 0, max: 1, step: 0.05 }
     ]
   },
   {
@@ -114,10 +121,10 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'text', type: 'string', label: 'Label' },
-      { id: 'accent', type: 'color', label: 'Border' },
-      { id: 'x', type: 'number', label: 'X from left' },
-      { id: 'y', type: 'number', label: 'Y from top' }
+      { id: 'text', type: 'string', label: 'Label', default: 'one edit is one undo step' },
+      { id: 'accent', type: 'color', label: 'Border', default: '#7DD3FC' },
+      { id: 'x', type: 'number', label: 'X from left', default: 6, min: 0, max: 90, unit: '%' },
+      { id: 'y', type: 'number', label: 'Y from top', default: 14, min: 0, max: 90, unit: '%' }
     ]
   },
   {
@@ -131,10 +138,10 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'to', type: 'number', label: 'Count to' },
-      { id: 'caption', type: 'string', label: 'Caption' },
-      { id: 'ink', type: 'color', label: 'Number' },
-      { id: 'y', type: 'number', label: 'Y from top' }
+      { id: 'to', type: 'number', label: 'Count to', default: 1438 },
+      { id: 'caption', type: 'string', label: 'Caption', default: 'frames, all of them' },
+      { id: 'ink', type: 'color', label: 'Number', default: '#FFFFFF' },
+      { id: 'y', type: 'number', label: 'Y from top', default: 16, min: 0, max: 85, unit: '%' }
     ]
   },
   {
@@ -148,9 +155,9 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'accent', type: 'color', label: 'Fill' },
-      { id: 'thickness', type: 'number', label: 'Thickness' },
-      { id: 'top', type: 'number', label: 'Y from top' }
+      { id: 'accent', type: 'color', label: 'Fill', default: '#11D1A0' },
+      { id: 'thickness', type: 'number', label: 'Thickness', default: 10, min: 2, max: 40 },
+      { id: 'top', type: 'number', label: 'Y from top', default: 0, min: 0, max: 99, unit: '%' }
     ]
   },
   {
@@ -162,9 +169,9 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'line', type: 'string', label: 'Call to action' },
-      { id: 'handle', type: 'string', label: 'Handle' },
-      { id: 'accent', type: 'color', label: 'Accent' }
+      { id: 'line', type: 'string', label: 'Call to action', default: 'follow for more' },
+      { id: 'handle', type: 'string', label: 'Handle', default: '@codesapiens' },
+      { id: 'accent', type: 'color', label: 'Accent', default: '#11D1A0' }
     ]
   }
 ]
@@ -181,4 +188,69 @@ export function findTemplate(id: string): TemplateSpec | undefined {
 export function templateForUri(uri: string): TemplateSpec | undefined {
   if (!uri.startsWith(TEMPLATE_URI_PREFIX)) return undefined
   return findTemplate(uri.slice(TEMPLATE_URI_PREFIX.length))
+}
+
+/** The largest canvas side a template will be sized to — an 8K frame. */
+export const MAX_TEMPLATE_SIDE = 8192
+
+/** The same root the renderer finds: the first element carrying `data-composition-id`. */
+const ROOT_TAG = /<[a-zA-Z][^>]*\bdata-composition-id\s*=\s*["'][^"']*["'][^>]*>/
+
+/**
+ * A template's document, sized to a canvas.
+ *
+ * Rewrites the two pixel numbers in the root's inline style and touches nothing else — the
+ * layout inside is written in frame-relative units, so those two numbers are the whole of what
+ * orientation means to a template. Throws rather than returning the document unchanged when it
+ * cannot do that, because an unchanged document is exactly the bug this exists to fix: a
+ * portrait composition that places without complaint as a strip down a landscape frame.
+ */
+export function sizeTemplate(html: string, width: number, height: number): string {
+  for (const [name, value] of [['width', width], ['height', height]] as const) {
+    if (!Number.isInteger(value) || value < 1 || value > MAX_TEMPLATE_SIDE) {
+      throw new RangeError(
+        `A template's ${name} must be a whole number of pixels from 1 to ${MAX_TEMPLATE_SIDE}; ` +
+          `got ${value}.`
+      )
+    }
+  }
+  const root = ROOT_TAG.exec(html)
+  if (!root) throw new Error('This document has no data-composition-id root to size.')
+
+  const tag = root[0]
+  const style = /\bstyle\s*=\s*(["'])([^"']*)\1/.exec(tag)
+  if (!style) throw new Error('The composition root has no inline style carrying its size.')
+
+  let next = style[2] ?? ''
+  for (const [prop, value] of [['width', width], ['height', height]] as const) {
+    // Anchored on a declaration boundary so `line-height` or `max-width` is never taken for it.
+    const declaration = new RegExp(`(^|;)(\\s*)${prop}\\s*:\\s*[0-9.]+px`, 'i')
+    if (!declaration.test(next)) {
+      throw new Error(`The composition root's style declares no ${prop} in pixels to replace.`)
+    }
+    next = next.replace(declaration, `$1$2${prop}:${value}px`)
+  }
+
+  const quote = style[1] ?? '"'
+  const sizedTag = tag.replace(style[0], `style=${quote}${next}${quote}`)
+  return html.slice(0, root.index) + sizedTag + html.slice(root.index + tag.length)
+}
+
+/**
+ * The file a sized template is written to: `<id>-<width>x<height>-<hash>.html`.
+ *
+ * Named by content rather than by id alone, because clips hold on to the file they were placed
+ * from. A path reused across template versions would rewrite the document under every clip
+ * already placed from it — whose stored variable values were chosen against the old one. With
+ * the hash in the name, the same template at the same size is one file however many times it
+ * is placed (values live on the clip), and a changed template is a new file beside the old.
+ */
+export function templateFileName(id: string, width: number, height: number, html: string): string {
+  // FNV-1a, 32-bit. Not a security property — only "different bytes, different name".
+  let hash = 0x811c9dc5
+  for (let i = 0; i < html.length; i++) {
+    hash ^= html.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `${id}-${width}x${height}-${hash.toString(16).padStart(8, '0')}.html`
 }

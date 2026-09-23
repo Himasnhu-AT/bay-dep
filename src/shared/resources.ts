@@ -126,8 +126,13 @@ const TEMPLATE_RESOURCES: readonly ResourceSpec[] = TEMPLATES.map((template) => 
   uri: templateUri(template.id),
   name: `Template: ${template.name}`,
   description:
-    `${template.description} ${template.durationSeconds}s, authored ${template.width}x${template.height}. ` +
-    `Variables: ${template.variables.map((v) => `${v.id} (${v.type})`).join(', ')}.`,
+    `${template.description} ${template.durationSeconds}s. ` +
+    `Variables: ${template.variables.map((v) => `${v.id} (${v.type})`).join(', ')}. ` +
+    // The body ships at one size and lays out relative to whatever size its root is given.
+    // Saying so here is what stops an agent placing the portrait file on a landscape timeline.
+    `add_template places it sized to the timeline in one call. Fetched raw it is ` +
+    `${template.width}x${template.height}; set the root's width and height to the canvas before ` +
+    `write_composition — the layout inside is frame-relative and follows.`,
   mimeType: 'text/html'
 }))
 

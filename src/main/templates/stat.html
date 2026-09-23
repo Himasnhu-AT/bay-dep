@@ -22,24 +22,29 @@
     "id": "y",
     "type": "number",
     "label": "Y from top",
-    "default": 300,
+    "default": 16,
     "min": 0,
-    "max": 1700,
-    "unit": "px"
+    "max": 85,
+    "unit": "%"
   }
 ]'>
 <head><meta charset="utf-8"><title>stat</title>
 <style>
   html,body{margin:0;padding:0;background:transparent}
-  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+  /* Size-aware. The root's width and height are rewritten to the timeline's canvas when bay
+     instantiates this template, and nothing below is in fixed pixels: the root is a size
+     container and --u is one pixel of a frame whose short side is 1080, so every length is a
+     multiple of it and positions are percentages of the frame. The same file lays out at
+     1080x1920, 1920x1080, 1080x1080 or 3840x2160 without a second copy. */
+  .root{position:relative;overflow:hidden;container-type:size;--u:calc(100cqmin / 1080);font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
 </style></head>
 <body>
 <div class="root" data-composition-id="stat" data-duration="3" style="width:1080px;height:1920px">
-  <div id="wrap" style="position:absolute;left:60px;right:60px;top:var(--y,300px);text-align:center;opacity:0">
-    <div id="n" style="color:var(--ink,#fff);font-size:150px;font-weight:900;letter-spacing:-0.04em;
-         line-height:1;font-variant-numeric:tabular-nums;text-shadow:0 8px 34px rgba(0,0,0,.8)">0</div>
-    <div id="c" data-var-text="caption" style="color:#fff;opacity:.82;font-size:40px;font-weight:700;
-         margin-top:10px;text-shadow:0 4px 20px rgba(0,0,0,.8)">frames, all of them</div>
+  <div id="wrap" style="position:absolute;left:calc(60*var(--u));right:calc(60*var(--u));top:var(--y,16%);text-align:center;opacity:0">
+    <div id="n" style="color:var(--ink,#fff);font-size:calc(150*var(--u));font-weight:900;letter-spacing:-0.04em;
+         line-height:1;font-variant-numeric:tabular-nums;text-shadow:0 calc(8*var(--u)) calc(34*var(--u)) rgba(0,0,0,.8)">0</div>
+    <div id="c" data-var-text="caption" style="color:#fff;opacity:.82;font-size:calc(40*var(--u));font-weight:700;
+         margin-top:calc(10*var(--u));text-shadow:0 calc(4*var(--u)) calc(20*var(--u)) rgba(0,0,0,.8)">frames, all of them</div>
   </div>
 </div>
 <script>

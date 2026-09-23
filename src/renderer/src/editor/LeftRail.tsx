@@ -1,17 +1,19 @@
 import type { ReactNode } from 'react'
-import { Bot, FolderOpen, Sparkles, Type as TypeIcon, Upload } from 'lucide-react'
+import { Bot, FolderOpen, LayoutTemplate, Sparkles, Type as TypeIcon, Upload } from 'lucide-react'
 import { IconButton } from '@/components'
 import { useEditor, type PanelId } from '@/store/editor'
 import { AgentPanel } from './AgentPanel'
 import { EffectsPanel } from './EffectsPanel'
 import { ExportPanel } from './ExportPanel'
 import { MediaPanel } from './MediaPanel'
+import { TemplatesPanel } from './TemplatesPanel'
 import { TextPanel } from './TextPanel'
 
 const PAGES: { id: PanelId; label: string; icon: ReactNode }[] = [
   { id: 'agent', label: 'Agent', icon: <Bot className="size-4" /> },
   { id: 'media', label: 'Media', icon: <FolderOpen className="size-4" /> },
   { id: 'text', label: 'Text', icon: <TypeIcon className="size-4" /> },
+  { id: 'templates', label: 'Templates', icon: <LayoutTemplate className="size-4" /> },
   { id: 'effects', label: 'Effects', icon: <Sparkles className="size-4" /> },
   { id: 'export', label: 'Export', icon: <Upload className="size-4" /> }
 ]
@@ -54,6 +56,7 @@ export function LeftRail(): ReactNode {
         {panel === 'agent' && <AgentPanel />}
         {panel === 'media' && <MediaPanel />}
         {panel === 'text' && <TextPanel />}
+        {panel === 'templates' && <TemplatesPanel />}
         {panel === 'effects' && <EffectsPanel />}
         {panel === 'export' && <ExportPanel />}
       </div>

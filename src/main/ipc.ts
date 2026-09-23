@@ -29,6 +29,7 @@ import { forgetPath, importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
+import { writeTemplate } from './html/templates'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
 type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent'
@@ -59,6 +60,7 @@ interface ChannelApi {
 
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
+  compositionWriteTemplate: BayApi['composition']['writeTemplate']
   compositionImport: BayApi['composition']['import']
   compositionFrameAt: BayApi['composition']['frameAt']
   compositionRelease: BayApi['composition']['release']
@@ -121,6 +123,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     }
     return result
   },
+  compositionWriteTemplate: async (_event, templateId, width, height) =>
+    writeTemplate(templateId, width, height),
   compositionImport: async (_event, paths) => importCompositions(paths),
   compositionFrameAt: async (_event, request) => compositionFrameAt(request),
   compositionRelease: async (_event, assetId) => releaseComposition(assetId),

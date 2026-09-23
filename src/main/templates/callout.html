@@ -16,32 +16,37 @@
     "id": "x",
     "type": "number",
     "label": "X from left",
-    "default": 70,
+    "default": 6,
     "min": 0,
-    "max": 1000,
-    "unit": "px"
+    "max": 90,
+    "unit": "%"
   },
   {
     "id": "y",
     "type": "number",
     "label": "Y from top",
-    "default": 260,
+    "default": 14,
     "min": 0,
-    "max": 1800,
-    "unit": "px"
+    "max": 90,
+    "unit": "%"
   }
 ]'>
 <head><meta charset="utf-8"><title>callout</title>
 <style>
   html,body{margin:0;padding:0;background:transparent}
-  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+  /* Size-aware. The root's width and height are rewritten to the timeline's canvas when bay
+     instantiates this template, and nothing below is in fixed pixels: the root is a size
+     container and --u is one pixel of a frame whose short side is 1080, so every length is a
+     multiple of it and positions are percentages of the frame. The same file lays out at
+     1080x1920, 1920x1080, 1080x1080 or 3840x2160 without a second copy. */
+  .root{position:relative;overflow:hidden;container-type:size;--u:calc(100cqmin / 1080);font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
 </style></head>
 <body>
 <div class="root" data-composition-id="callout" data-duration="2.5" style="width:1080px;height:1920px">
-  <div id="chip" style="position:absolute;left:var(--x,70px);top:var(--y,260px);opacity:0;
-       background:rgba(10,10,12,.82);border:2px solid var(--accent,#7DD3FC);color:#fff;
-       font-size:44px;font-weight:700;padding:14px 26px;border-radius:16px;
-       box-shadow:0 12px 44px rgba(0,0,0,.5)">
+  <div id="chip" style="position:absolute;left:var(--x,6%);top:var(--y,14%);opacity:0;
+       background:rgba(10,10,12,.82);border:calc(2*var(--u)) solid var(--accent,#7DD3FC);color:#fff;
+       font-size:calc(44*var(--u));font-weight:700;padding:calc(14*var(--u)) calc(26*var(--u));border-radius:calc(16*var(--u));
+       box-shadow:0 calc(12*var(--u)) calc(44*var(--u)) rgba(0,0,0,.5)">
     <span data-var-text="text">one edit is one undo step</span>
   </div>
 </div>

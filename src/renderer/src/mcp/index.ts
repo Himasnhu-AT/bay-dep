@@ -32,6 +32,7 @@ import {
 } from './write'
 import { previewFrame } from './preview'
 import { readComposition, writeComposition } from './compositions'
+import { addTemplate } from './templates'
 import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from '@shared/validate'
 import { proposeEdit } from './proposals'
@@ -47,6 +48,7 @@ const HANDLERS: Record<string, Handler> = {
   import_media: (args) => importMedia(args),
   write_composition: (args) => writeComposition(args),
   read_composition: (args) => readComposition(args),
+  add_template: (args) => addTemplate(args),
   place_asset: (args) => placeAsset(args),
   edit_item: (args) => editItem(args),
   split_at: (args) => splitAt(args),

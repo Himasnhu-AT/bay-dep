@@ -12,8 +12,7 @@
     "label": "Thickness",
     "default": 10,
     "min": 2,
-    "max": 40,
-    "unit": "px"
+    "max": 40
   },
   {
     "id": "top",
@@ -21,18 +20,23 @@
     "label": "Y from top",
     "default": 0,
     "min": 0,
-    "max": 1900,
-    "unit": "px"
+    "max": 99,
+    "unit": "%"
   }
 ]'>
 <head><meta charset="utf-8"><title>progress</title>
 <style>
   html,body{margin:0;padding:0;background:transparent}
-  .root{position:relative;overflow:hidden;font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
+  /* Size-aware. The root's width and height are rewritten to the timeline's canvas when bay
+     instantiates this template, and nothing below is in fixed pixels: the root is a size
+     container and --u is one pixel of a frame whose short side is 1080, so every length is a
+     multiple of it and positions are percentages of the frame. The same file lays out at
+     1080x1920, 1920x1080, 1080x1080 or 3840x2160 without a second copy. */
+  .root{position:relative;overflow:hidden;container-type:size;--u:calc(100cqmin / 1080);font-family:-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;-webkit-font-smoothing:antialiased}
 </style></head>
 <body>
 <div class="root" data-composition-id="progress" data-duration="10" style="width:1080px;height:1920px">
-  <div style="position:absolute;left:0;right:0;top:var(--top,0px);height:var(--thickness,10px);
+  <div style="position:absolute;left:0;right:0;top:var(--top,0%);height:calc(var(--thickness,10)*var(--u));
        background:rgba(255,255,255,.18)">
     <div id="fill" style="height:100%;width:100%;background:var(--accent,#11D1A0);
          transform:scaleX(0);transform-origin:left center"></div>
