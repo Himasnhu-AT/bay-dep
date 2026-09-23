@@ -40,23 +40,23 @@ import { product } from "@/lib/product";
 const features = [
   {
     label: "I",
-    title: "One engine, two ways in",
-    body: "The timeline you drag clips around on and the engine an agent talks to are the same Rust code. The window is a shell over it, not a second implementation, so the two can never drift apart on what a cut actually means.",
+    title: "One timeline, two ways in",
+    body: "The timeline you drag clips around on is the one an agent edits. Its changes go through the same code as yours and land on the same undo stack, one step per edit, so there is never a second copy of the project to drift apart from what you see.",
   },
   {
     label: "II",
-    title: "It renders with no window open",
-    body: "Everything above happened with the app in front of you. It also runs headless, serving the same twenty-one tools over the Model Context Protocol, so a cut can be built and encoded on a machine with no display attached.",
+    title: "You approve the plan, not every click",
+    body: "Inside the editor, an agent cannot change anything until it has shown you a plan: what it intends in plain words, and the exact edits it needs. You approve one option, and exactly that runs, once. Anything else is refused and it is told why.",
   },
   {
     label: "III",
-    title: "It reads the script out loud",
-    body: "Hand it a script and it speaks it, then cuts the captions to the words it actually said rather than the words you wrote. The voice is generated on the Mac; nothing is sent away to be spoken.",
+    title: "It looks at its own work",
+    body: "Clip positions do not say whether a caption covers a face. The agent renders the frame it changed and looks at it before telling you it is done, and says so when a picture is incomplete rather than judging an edit from it.",
   },
   {
     label: "IV",
-    title: "Drawn on the GPU, decoded off the render path",
-    body: "A wgpu compositor does the blending, effects and masks. Decoding runs on a background worker under a global memory budget, so dropping a ten-minute clip on the timeline does not freeze the editor while it thinks.",
+    title: "Nothing leaves the Mac",
+    body: "Media is read from your disk and rendered on your machine. The editor loads no remote fonts, images or scripts and sends no telemetry; the only thing that talks to a model is the agent you chose to start.",
   },
 ];
 
@@ -82,7 +82,7 @@ export default function Home() {
 
           <Reveal delay={0.3}>
             <p className="mt-[30px] max-w-[56ch] text-lead text-ink-soft">
-              {product.name} is a video editor for the Mac, written in Rust. You
+              {product.name} is a video editor for the Mac. You
               cut on the timeline the way you always have. You can also describe
               the change you want and let something else make it, on that same
               timeline, on your own machine.

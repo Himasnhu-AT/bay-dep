@@ -8,7 +8,8 @@ import {
 } from "@/lib/sequence";
 
 /**
- * A re-creation of the editor, built from rust/crates/bay-ui/. The panel order
+ * A re-creation of the editor, first built from the Rust UI (rust/crates/bay-ui/,
+ * now only at the `rust-engine-final` tag). The panel order
  * (toolbar, scene bar, media | preview | inspector, timeline), the button set,
  * the inspector fields and the `● Claude · <tool>` chip are the app's, and the
  * palette is theme.rs value for value. It is not a screen capture and the page

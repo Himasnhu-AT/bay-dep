@@ -13,34 +13,34 @@ import { product } from "@/lib/product";
 export const metadata: Metadata = {
   title: "Agents",
   description:
-    "The same engine that draws the timeline serves it over the Model Context Protocol, with the app open or closed.",
+    "The timeline you cut on is served over the Model Context Protocol, to Claude Code in a terminal or to the agent built into the editor.",
 };
 
 const tools = [
   {
-    label: "Build",
-    title: "Make a project and fill it",
-    body: "Create a project at a canvas size and frame rate, import media off the disk, and place text, shapes, images, video and audio on the timeline at the ticks you choose.",
+    label: "Read",
+    title: "See the project as it stands",
+    body: "Tracks, clips, timings in frames, the media pool, and everything about any one clip. Reading needs no permission, so an agent can check before it changes anything.",
   },
   {
-    label: "Move",
-    title: "Animate with easing",
-    body: "Keyframe the properties of anything placed, with easing, so a title can arrive and leave rather than appear and vanish.",
+    label: "Propose",
+    title: "Show you the plan first",
+    body: "Inside the editor, every change starts as a plan on a card: what it will do in plain words, and the exact edits. Nothing is written until you approve one option.",
   },
   {
-    label: "Speak",
-    title: "Narrate and caption",
-    body: "Hand it a script and it is spoken on the machine, then captioned against the words that were actually said rather than the words that were written.",
+    label: "Edit",
+    title: "Cut, trim, layer and style",
+    body: "Place media, remove a stretch of time across every track at once, split, move and fade clips, add transitions, set adjustments and type, and drop in title and caption templates sized to your canvas.",
   },
   {
     label: "Look",
-    title: "Snapshot a frame",
-    body: "Ask for a still of any moment and get an image back. This is the one that matters: an agent that can see the frame it just built can tell whether it was right.",
+    title: "Render a frame and look at it",
+    body: "Ask for any moment and get a picture back. This is the one that matters: an agent that can see the frame it just built can tell whether it was right.",
   },
   {
     label: "Render",
-    title: "Encode the MP4",
-    body: "Export the timeline to a file on your disk. The same path the editor uses, on the same machine, with no queue in front of it.",
+    title: "Export the file",
+    body: "Encode the timeline to MP4, MOV or WebM, or its audio to WAV or MP3, on your machine, through the same path the editor's own Export button uses.",
   },
 ];
 
@@ -60,34 +60,32 @@ export default function AgentsPage() {
         />
 
         <Reveal delay={0.3} className="mt-16 max-w-[60ch]">
-          <Eyebrow>With the app open</Eyebrow>
+          <Eyebrow>From Claude Code</Eyebrow>
           <p className="mt-6 mb-7 text-base text-ink-soft">
             Edits land in the window in front of you, and your undo works on
-            them. Launching a second time raises the window that is already open
-            rather than starting a rival with its own timeline, so there is
-            never a question of which document is being edited.
+            them. If the app is not running, the first tool call opens it. The
+            connection is a local socket only your user account can open; there
+            is no port, and nothing on another machine can reach it.
           </p>
         </Reveal>
 
         <Reveal delay={0.36} className="max-w-[60ch] space-y-2.5">
-          <Command>{product.name.toLowerCase()}</Command>
           <Command>
-            claude mcp add --transport http {product.name.toLowerCase()}{" "}
-            http://127.0.0.1:7333/mcp
+            claude mcp add {product.name.toLowerCase()} --env
+            ELECTRON_RUN_AS_NODE=1 --
+            /Applications/{product.name.toLowerCase()}.app/Contents/MacOS/
+            {product.name.toLowerCase()}{" "}
+            /Applications/{product.name.toLowerCase()}.app/Contents/Resources/app.asar/out/main/mcp/index.js
           </Command>
         </Reveal>
 
         <Reveal delay={0.42} className="mt-14 max-w-[60ch]">
-          <Eyebrow>With the app closed</Eyebrow>
+          <Eyebrow>Inside the editor</Eyebrow>
           <p className="mt-6 mb-7 text-base text-ink-soft">
-            Headless, for rendering. No window, no display, the same engine.
+            The Agent panel runs Claude Code for you, with the editor&apos;s
+            tools and nothing else: no shell, no files, no web. It proposes,
+            you approve, and it checks the frame before it says it is done.
           </p>
-        </Reveal>
-
-        <Reveal delay={0.46} className="max-w-[60ch]">
-          <Command>
-            {product.name.toLowerCase()} --mcp --port 7333
-          </Command>
         </Reveal>
 
         <RuledList>
@@ -111,10 +109,10 @@ export default function AgentsPage() {
         <Reveal delay={0.12} className="mt-20 max-w-[60ch]">
           <Eyebrow>What it will not do</Eyebrow>
           <p className="mt-6 text-base text-ink-soft">
-            The endpoint is bound to your own machine. It is not a hosted API,
-            there is no key to obtain, and nothing about your project is sent
-            anywhere for an agent to reach it. Which model you point at it is
-            your business, including a local one.
+            The connection is bound to your own machine. It is not a hosted
+            API, there is no key to obtain, and nothing about your project is
+            sent anywhere for an agent to reach it. Any MCP client can drive it,
+            including one running a local model.
           </p>
         </Reveal>
       </Wrap>
