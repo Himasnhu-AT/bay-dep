@@ -33,7 +33,8 @@ import {
 import { previewFrame } from './preview'
 import { readComposition, writeComposition } from './compositions'
 import { addTransition, removeTransition } from './transitions'
-import { validateArgs } from './validate'
+import { validateArgs } from '@shared/validate'
+import { proposeEdit } from './proposals'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -42,6 +43,7 @@ const HANDLERS: Record<string, Handler> = {
   browse_assets: () => browseAssets(),
   inspect_item: (args) => inspectItem(args),
   preview_frame: (args) => previewFrame(args),
+  propose_edit: (args) => proposeEdit(args),
   import_media: (args) => importMedia(args),
   write_composition: (args) => writeComposition(args),
   read_composition: (args) => readComposition(args),

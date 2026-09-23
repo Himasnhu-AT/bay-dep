@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, ChevronRight, Loader2, Square, Wrench } from 'lucide-react'
-import type { AgentEntry } from '@shared/agent'
+import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
 import { Button, EmptyState, Panel, ScrollArea } from '@/components'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
@@ -40,8 +40,14 @@ export function AgentPanel(): ReactNode {
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [log])
 
-  const send = async (): Promise<void> => {
-    const text = draft.trim()
+  /**
+   * One user turn, from the text box or from a decision on a proposal card.
+   *
+   * The card goes through here too, and has to: an approval that only changed the gate would
+   * leave the model waiting — correctly, since it was told to end its turn and wait — for a
+   * message that never comes. The decision *is* the next message.
+   */
+  const deliver = async (text: string): Promise<void> => {
     if (!text || running) return
     const api = bay()
     if (!api) {
@@ -49,7 +55,6 @@ export function AgentPanel(): ReactNode {
       return
     }
     setProblem(null)
-    setDraft('')
     logUserMessage(text)
 
     // Starting is separate from sending so a missing `claude` binary reads as "could not start"
@@ -64,6 +69,13 @@ export function AgentPanel(): ReactNode {
     }
     const sent = await api.agent.send(text)
     if (!sent.ok) setProblem(sent.error ?? 'The message could not be delivered.')
+  }
+
+  const send = async (): Promise<void> => {
+    const text = draft.trim()
+    if (!text || running) return
+    setDraft('')
+    await deliver(text)
   }
 
   const stop = (): void => {
@@ -100,7 +112,7 @@ export function AgentPanel(): ReactNode {
         ) : (
           <div className="flex flex-col gap-2 p-2">
             {log.map((entry) => (
-              <Entry key={entry.id} entry={entry} />
+              <Entry key={entry.id} entry={entry} deliver={deliver} />
             ))}
             <div ref={bottom} />
           </div>
@@ -152,7 +164,9 @@ export function AgentPanel(): ReactNode {
   )
 }
 
-function Entry({ entry }: { entry: AgentEntry }): ReactNode {
+type Deliver = (text: string) => Promise<void>
+
+function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): ReactNode {
   switch (entry.kind) {
     case 'user':
       return (
@@ -178,9 +192,13 @@ function Entry({ entry }: { entry: AgentEntry }): ReactNode {
         </p>
       )
     case 'tool':
+      // A proposal that landed is shown as its card, directly below; the call that carried it
+      // would be the same thing twice. One that was refused keeps its card, because the refusal
+      // is what the reader needs.
+      if (entry.tool === 'propose_edit' && entry.state === 'done') return null
       return <ToolCard entry={entry} />
     case 'proposal':
-      return <ProposalCard entry={entry} />
+      return <ProposalCard entry={entry} deliver={deliver} />
   }
 }
 
@@ -240,11 +258,33 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
  * approving anything. Once a choice is made the card stays in place showing what was approved —
  * a card that vanished would leave the conversation claiming an edit nobody could point at.
  */
-function ProposalCard({ entry }: { entry: Extract<AgentEntry, { kind: 'proposal' }> }): ReactNode {
+function ProposalCard({
+  entry,
+  deliver
+}: {
+  entry: Extract<AgentEntry, { kind: 'proposal' }>
+  deliver: Deliver
+}): ReactNode {
   const pending = useEditor((state) => state.agentProposal?.id === entry.proposal.id)
+  const running = useEditor((state) => state.agentRunning)
   const approved = useEditor((state) => state.agentGate?.approved)
   const approveProposal = useEditor((state) => state.approveProposal)
+  const declineProposal = useEditor((state) => state.declineProposal)
   const chosen = approved?.proposalId === entry.proposal.id ? approved.option.id : null
+
+  // The decision is a turn, and a turn cannot start while the agent is still in one — it was
+  // told to stop after proposing, and it is allowed to finish its sentence first.
+  const approve = (optionId: string): void => {
+    const option = entry.proposal.options.find((o) => o.id === optionId)
+    if (!option || running) return
+    approveProposal(entry.proposal, optionId)
+    void deliver(approvalMessage(option))
+  }
+  const decline = (): void => {
+    if (running) return
+    declineProposal()
+    void deliver(DECLINED_MESSAGE)
+  }
 
   return (
     <div className="rounded border border-accent bg-surface-2 p-2 text-[11px]">
@@ -268,7 +308,8 @@ function ProposalCard({ entry }: { entry: Extract<AgentEntry, { kind: 'proposal'
               <Button
                 className="mt-1.5"
                 variant="subtle"
-                onClick={() => approveProposal(entry.proposal, option.id)}
+                disabled={running}
+                onClick={() => approve(option.id)}
               >
                 Approve
               </Button>
@@ -277,6 +318,14 @@ function ProposalCard({ entry }: { entry: Extract<AgentEntry, { kind: 'proposal'
           </div>
         ))}
       </div>
+      {pending && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <Button variant="subtle" disabled={running} onClick={decline}>
+            None of these
+          </Button>
+          {running && <span className="text-ink-3">waiting for the agent to finish its turn</span>}
+        </div>
+      )}
     </div>
   )
 }

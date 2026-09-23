@@ -29,9 +29,14 @@ the mistakes it describes produce a wrong picture rather than an error.
 
 ## Changing things
 
-Before you write anything, propose it. Say what you intend in the user's terms — clips, cuts,
-timing — and list the exact calls it needs. Wait for them to approve. Until they do, writes are
-refused, and the refusal will tell you so.
+Before you write anything, propose it with \`propose_edit\`: what you intend in the user's
+terms — clips, cuts, timing — and the exact calls it needs, with their exact arguments. Read
+first so the arguments are right; the proposal is checked against each tool's schema, and a plan
+that would be refused is refused at once. Then **end your turn**. The user's decision arrives as
+their next message. Until they approve, writes are refused, and the refusal will tell you so.
+
+When the approval names the calls, make exactly those, in order. Then look at the result with
+\`preview_frame\` before you report it done.
 
 An approval covers exactly the calls that were approved, each once. If the timeline turns out
 differently than you assumed, stop and propose again rather than substituting a different call:

@@ -11,13 +11,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  approvalMessage,
   argsMatch,
+  buildProposal,
   checkApproval,
+  MAX_PROPOSAL_OPTIONS,
   requiresApproval,
   type AgentGate,
   type ProposalOperation
 } from './agent'
 import { TOOLS } from './mcp'
+import { validateArgs } from './validate'
 
 const op = (index: number, tool: string, args: Record<string, unknown>): ProposalOperation => ({
   index,
@@ -88,6 +92,9 @@ test('inside a session, a write with nothing approved is refused and told how to
   // The refusal must leave a next move. Naming the readable tools is what makes "plan first"
   // actionable rather than a scolding.
   assert.match(verdict.refusal ?? '', /read_project/)
+  // And it names the tool that makes a proposal. "Propose first" with no way to propose is the
+  // dead end this gate sat in until propose_edit existed.
+  assert.match(verdict.refusal ?? '', /propose_edit/)
 })
 
 test('an exactly matching call is allowed and names the operation it spent', () => {
@@ -194,4 +201,150 @@ test('types are not coerced', () => {
   assert.equal(argsMatch({ frame: 300 }, { frame: '300' }), false)
   assert.equal(argsMatch({ ripple: true }, { ripple: 'true' }), false)
   assert.equal(argsMatch({ a: null }, { a: undefined }), false)
+})
+
+// --- building a proposal ------------------------------------------------------------------
+
+let counter = 0
+const ids = (prefix: string): string => `${prefix}_${++counter}`
+const build = (raw: Record<string, unknown>): ReturnType<typeof buildProposal> =>
+  buildProposal(raw, validateArgs, ids)
+
+const trim = {
+  label: 'Tighten the opening',
+  summary: 'Drops the false start before the first line.',
+  operations: [{ tool: 'remove_range', args: { fromFrame: 0, toFrame: 45 } }]
+}
+
+test('propose_edit is in the catalog and is not itself gated', () => {
+  // If proposing needed approval, nothing could ever be approved: the gate would require the
+  // one thing it exists to wait for.
+  const spec = TOOLS.find((t) => t.name === 'propose_edit')
+  assert.ok(spec, 'propose_edit is missing from the catalog')
+  assert.equal(requiresApproval('propose_edit'), false)
+  const inSession = checkApproval('propose_edit', { question: 'q', options: [] }, gatedButUnapproved)
+  assert.equal(inSession.allowed, true)
+})
+
+test('a valid proposal builds, and what it builds is what the gate then admits', () => {
+  const built = build({ question: 'Cut the false start?', options: [trim] })
+  assert.ok(built.ok, built.ok ? '' : built.error)
+  const option = built.proposal.options[0]!
+  assert.deepEqual(option.operations, [
+    { index: 0, tool: 'remove_range', args: { fromFrame: 0, toFrame: 45 } }
+  ])
+  // The round trip that matters: approve what was built, and the call the model makes from the
+  // approval message goes through — while the same tool with a drifted bound does not.
+  const gate: AgentGate = {
+    approved: { approvalId: 'a', proposalId: built.proposal.id, option, consumed: [] }
+  }
+  assert.equal(checkApproval('remove_range', { fromFrame: 0, toFrame: 45 }, gate).allowed, true)
+  assert.equal(checkApproval('remove_range', { fromFrame: 0, toFrame: 46 }, gate).allowed, false)
+})
+
+test('an operation that would be refused later is refused now, naming where and why', () => {
+  // The failure this prevents: approve a four-step plan, watch steps one and two apply, and
+  // step three bounce off the schema — a half-edited timeline nobody agreed to.
+  const bad = {
+    ...trim,
+    operations: [
+      { tool: 'remove_range', args: { fromFrame: 0, toFrame: 45 } },
+      { tool: 'edit_item', args: { itemId: 'abc', volumee: 0.5 } }
+    ]
+  }
+  const built = build({ question: 'q', options: [bad] })
+  assert.equal(built.ok, false)
+  const error = built.ok ? '' : built.error
+  assert.match(error, /Option 1 \("Tighten the opening"\), operation 2 \(edit_item\)/)
+  assert.match(error, /volumee/)
+  // …and names what IS accepted, so the next call can be right.
+  assert.match(error, /"volume"/)
+
+  // Positive control: the same plan with the field spelled right builds.
+  const fixed = { ...bad, operations: [bad.operations[0]!, { tool: 'edit_item', args: { itemId: 'abc', volume: 0.5 } }] }
+  assert.equal(build({ question: 'q', options: [fixed] }).ok, true)
+})
+
+test('a missing required argument is caught at proposal time', () => {
+  const built = build({
+    question: 'q',
+    options: [{ ...trim, operations: [{ tool: 'remove_range', args: { fromFrame: 0 } }] }]
+  })
+  assert.equal(built.ok, false)
+  assert.match(built.ok ? '' : built.error, /requires "toFrame"/)
+})
+
+test('a read inside a plan is refused, with the reason and the alternative', () => {
+  const built = build({
+    question: 'q',
+    options: [{ ...trim, operations: [{ tool: 'read_project', args: {} }] }]
+  })
+  assert.equal(built.ok, false)
+  assert.match(built.ok ? '' : built.error, /only reads.*Call it directly/)
+})
+
+test('an unknown tool is refused and the proposable ones are listed', () => {
+  const built = build({
+    question: 'q',
+    options: [{ ...trim, operations: [{ tool: 'ripple_delete', args: {} }] }]
+  })
+  assert.equal(built.ok, false)
+  const error = built.ok ? '' : built.error
+  assert.match(error, /no tool "ripple_delete"/)
+  assert.match(error, /remove_range/)
+  // Reads are not offered as proposable.
+  assert.doesNotMatch(error.split('proposed:')[1] ?? '', /read_project/)
+})
+
+test('the client namespace prefix is accepted and stripped', () => {
+  // Claude Code names bay's tools mcp__bay__x in its own transcript, and a model that copies
+  // the name it sees must not be refused for it — nor approved under a name the gate never
+  // sees, since the executor matches on the bare name.
+  const built = build({
+    question: 'q',
+    options: [{ ...trim, operations: [{ tool: 'mcp__bay__remove_range', args: { fromFrame: 0, toFrame: 45 } }] }]
+  })
+  assert.ok(built.ok)
+  assert.equal(built.proposal.options[0]!.operations[0]!.tool, 'remove_range')
+})
+
+test('shape errors each say what the field must be', () => {
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [{ options: [trim] }, /"question"/],
+    [{ question: 'q', options: [] }, /non-empty array/],
+    [{ question: 'q', options: Array(MAX_PROPOSAL_OPTIONS + 1).fill(trim) }, /at most 4 options/],
+    [{ question: 'q', options: [{ ...trim, label: '' }] }, /"label"/],
+    [{ question: 'q', options: [{ ...trim, summary: '' }] }, /"summary"/],
+    [{ question: 'q', options: [{ ...trim, operations: [] }] }, /"operations"/],
+    [{ question: 'q', options: [{ ...trim, operations: [{ tool: 'remove_range', args: [1] }] }] }, /"args" must be an object/]
+  ]
+  for (const [raw, expected] of cases) {
+    const built = build(raw)
+    assert.equal(built.ok, false, JSON.stringify(raw))
+    assert.match(built.ok ? '' : built.error, expected)
+  }
+  // Positive control: exactly MAX options is fine.
+  assert.equal(build({ question: 'q', options: Array(MAX_PROPOSAL_OPTIONS).fill(trim) }).ok, true)
+})
+
+test('the approval message repeats every call byte for byte, in order', () => {
+  // The model works from this message, and the gate matches exactly. Paraphrase here is drift
+  // there.
+  const built = build({
+    question: 'q',
+    options: [
+      {
+        ...trim,
+        operations: [
+          { tool: 'remove_range', args: { fromFrame: 0, toFrame: 45 } },
+          { tool: 'set_playhead', args: { frame: 0 } }
+        ]
+      }
+    ]
+  })
+  assert.ok(built.ok)
+  const message = approvalMessage(built.proposal.options[0]!)
+  assert.match(message, /1\. remove_range \{"fromFrame":0,"toFrame":45\}/)
+  assert.match(message, /2\. set_playhead \{"frame":0\}/)
+  assert.ok(message.indexOf('remove_range') < message.indexOf('set_playhead'))
 })

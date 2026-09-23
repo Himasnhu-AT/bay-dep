@@ -21,7 +21,7 @@
  * not the user's attention, is what enforces it.
  */
 
-import { TOOLS, type ToolSpec } from './mcp'
+import { TOOLS, findTool, type ToolSpec } from './mcp'
 
 // ---------------------------------------------------------------------------
 // What a runtime emits
@@ -226,8 +226,8 @@ export function checkApproval(
       allowed: false,
       refusal:
         `"${toolName}" changes the project, and nothing has been approved in this ` +
-        `conversation yet. Propose the edit first: describe what you intend to do and the ` +
-        `exact calls it needs, and wait for the user to approve one option. Reading tools ` +
+        `conversation yet. Propose it first: call propose_edit with what you intend and the ` +
+        `exact calls it needs, then end your turn and wait for the user to approve. Reading tools ` +
         `(${readableToolNames()}) need no approval — use them to plan.`
     }
   }
@@ -277,7 +277,171 @@ function describeMismatch(
 
   lines.push(
     'If the timeline turned out differently than the proposal assumed, or the edit needs to ' +
-      'change, stop and propose again rather than substituting another call.'
+      'change, stop and call propose_edit again rather than substituting another call.'
   )
   return lines.join(' ')
 }
+
+// ---------------------------------------------------------------------------
+// Building a proposal from what the agent sent
+// ---------------------------------------------------------------------------
+
+/** The most options a proposal may offer. More than this is a menu, not a decision. */
+export const MAX_PROPOSAL_OPTIONS = 4
+/** The most operations one option may carry. A plan longer than this should be staged. */
+export const MAX_PROPOSAL_OPERATIONS = 60
+
+/** How bay's tools are named by a client that namespaces them. Accepted and stripped. */
+const CLIENT_PREFIX = 'mcp__bay__'
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/**
+ * Turn `propose_edit`'s arguments into a `Proposal`, or say exactly what is wrong with them.
+ *
+ * Every operation is checked **now**, against the same schema the executor will check it
+ * against later, and that is the point of doing it here: a proposal whose third operation has a
+ * typo'd field would be approved, and then refused mid-run with half the plan applied. The user
+ * approved a plan that could never have been carried out, and nothing told them.
+ *
+ * Reads are refused inside a proposal rather than silently accepted. They need no approval, so
+ * listing one teaches the model something false about the gate — and an approved read would be
+ * a spent operation that did nothing, which makes "every approved operation has been carried
+ * out" a sentence the gate could no longer say truthfully.
+ *
+ * `validate` is injected because the schema validator lives with the executor in the renderer;
+ * `newId` because ids are the store's business, and a test wants them predictable.
+ */
+export function buildProposal(
+  raw: Record<string, unknown>,
+  validate: (tool: ToolSpec, args: Record<string, unknown>) => string | null,
+  newId: (prefix: string) => string
+): { ok: true; proposal: Proposal } | { ok: false; error: string } {
+  const question = typeof raw['question'] === 'string' ? raw['question'].trim() : ''
+  if (!question) {
+    return { ok: false, error: '"question" must say, in one line, what the user is deciding.' }
+  }
+
+  const rawOptions = raw['options']
+  if (!Array.isArray(rawOptions) || rawOptions.length === 0) {
+    return {
+      ok: false,
+      error:
+        '"options" must be a non-empty array of { label, summary, operations }. One option is ' +
+        'fine when there is only one sensible plan.'
+    }
+  }
+  if (rawOptions.length > MAX_PROPOSAL_OPTIONS) {
+    return {
+      ok: false,
+      error:
+        `A proposal offers at most ${MAX_PROPOSAL_OPTIONS} options, and this one has ` +
+        `${rawOptions.length}. Keep the ones that are genuinely different choices.`
+    }
+  }
+
+  const options: ProposalOption[] = []
+  for (let o = 0; o < rawOptions.length; o += 1) {
+    const where = `Option ${o + 1}`
+    const option = rawOptions[o]
+    if (!isRecord(option)) return { ok: false, error: `${where} must be an object.` }
+
+    const label = typeof option['label'] === 'string' ? option['label'].trim() : ''
+    if (!label) return { ok: false, error: `${where} needs a short "label".` }
+    const named = `${where} ("${label}")`
+    const summary = typeof option['summary'] === 'string' ? option['summary'].trim() : ''
+    if (!summary) {
+      return {
+        ok: false,
+        error: `${named} needs a "summary": what it does, in the user's terms, without tool names.`
+      }
+    }
+
+    const rawOps = option['operations']
+    if (!Array.isArray(rawOps) || rawOps.length === 0) {
+      return {
+        ok: false,
+        error: `${named} needs "operations": the exact calls, as [{ tool, args }], in order.`
+      }
+    }
+    if (rawOps.length > MAX_PROPOSAL_OPERATIONS) {
+      return {
+        ok: false,
+        error:
+          `${named} has ${rawOps.length} operations; the most one option may carry is ` +
+          `${MAX_PROPOSAL_OPERATIONS}. Propose the first stage, carry it out, then propose the next.`
+      }
+    }
+
+    const operations: ProposalOperation[] = []
+    for (let i = 0; i < rawOps.length; i += 1) {
+      const at = `${named}, operation ${i + 1}`
+      const rawOp = rawOps[i]
+      if (!isRecord(rawOp)) return { ok: false, error: `${at} must be { tool, args }.` }
+      const given = typeof rawOp['tool'] === 'string' ? rawOp['tool'] : ''
+      const tool = given.startsWith(CLIENT_PREFIX) ? given.slice(CLIENT_PREFIX.length) : given
+      const spec = findTool(tool)
+      if (!spec) {
+        const writes = TOOLS.filter((t) => !t.readOnly).map((t) => t.name)
+        return {
+          ok: false,
+          error: `${at}: there is no tool "${given}". Tools that can be proposed: ${writes.join(', ')}.`
+        }
+      }
+      if (!requiresApproval(spec.name)) {
+        return {
+          ok: false,
+          error:
+            `${at}: ${spec.name} only reads, and reads need no approval. Call it directly ` +
+            `before proposing, and leave it out of the plan.`
+        }
+      }
+      const args = rawOp['args'] === undefined ? {} : rawOp['args']
+      if (!isRecord(args)) return { ok: false, error: `${at}: "args" must be an object.` }
+      const invalid = validate(spec, args)
+      if (invalid) {
+        return {
+          ok: false,
+          error:
+            `${at} (${spec.name}) would be refused when carried out: ${invalid} ` +
+            `Fix it before proposing — an approved plan that cannot run is worse than none.`
+        }
+      }
+      operations.push({ index: i, tool: spec.name, args })
+    }
+
+    options.push({ id: newId('opt'), label, summary, operations })
+  }
+
+  return { ok: true, proposal: { id: newId('prp'), question, options } }
+}
+
+/**
+ * What the agent is told when the user approves, as the next message of the conversation.
+ *
+ * The approval has to *reach* the model as a turn, not only change the gate: the CLI runtime
+ * has no side channel into a conversation, and a model told to wait for approval is, correctly,
+ * no longer running. The operations are repeated in full because they are what the gate will
+ * match against, byte for byte, and a model working from its memory of what it proposed is a
+ * model that drifts an argument.
+ */
+export function approvalMessage(option: ProposalOption): string {
+  const lines = option.operations.map(
+    (op) => `${op.index + 1}. ${op.tool} ${JSON.stringify(op.args)}`
+  )
+  return [
+    `Approved: "${option.label}".`,
+    '',
+    'Carry out exactly these calls, in this order, with these arguments:',
+    ...lines,
+    '',
+    'If one is refused or the timeline is not what you expected, stop and tell me rather than ' +
+      'substituting another call. When they are done, look at the result before you report it.'
+  ].join('\n')
+}
+
+/** What the agent is told when the user turns every option down. */
+export const DECLINED_MESSAGE =
+  'I am not approving any of those options. Nothing was changed. Ask me what I would prefer, ' +
+  'or propose something different.'

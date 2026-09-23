@@ -117,6 +117,8 @@ export interface EditorActions {
    * an agent mix operations from two plans the user considered separately.
    */
   approveProposal(proposal: Proposal, optionId: string): void
+  /** Turn down the pending proposal. Nothing is approved; the session stays gated. */
+  declineProposal(): void
   /** Withdraw approval, leaving the session gated with nothing permitted. */
   revokeApproval(): void
   /**
@@ -522,6 +524,10 @@ export const useEditor = create<EditorStore>((set, get) => {
           }
         }
       })
+    },
+
+    declineProposal() {
+      set({ agentProposal: null })
     },
 
     revokeApproval() {

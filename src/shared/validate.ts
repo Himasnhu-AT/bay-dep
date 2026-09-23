@@ -13,7 +13,7 @@
  * repeat the same call.
  */
 
-import type { ToolSpec } from '@shared/mcp'
+import type { ToolSpec } from './mcp'
 
 type Schema = Record<string, unknown>
 
