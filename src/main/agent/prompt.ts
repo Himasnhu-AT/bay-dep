@@ -1,7 +1,7 @@
 /**
  * What bay tells the agent about itself.
  *
- * Short on purpose. The eleven guide resources already carry the model — how time works, why
+ * Short on purpose. The guide resources already carry the model — how time works, why
  * removing clips and removing time are different operations, what a transition needs either
  * side of a cut — and repeating that here would give an agent two copies to disagree with. This
  * says only what a resource cannot: who it is talking to, what it may do, and how to behave
@@ -25,7 +25,9 @@ is the only way to see what the edit actually looks like. Item positions do not 
 a clip is framed well or whether an overlay covers a face.
 
 Read \`bay://guide/editing\` before your first edit. It is bay's own account of the model, and
-the mistakes it describes produce a wrong picture rather than an error.
+the mistakes it describes produce a wrong picture rather than an error. \`bay://guide/examples\`
+shows whole edits as real calls, this propose-and-wait cycle included; \`bay://guide/tools\`
+lists every argument.
 
 ## Changing things
 

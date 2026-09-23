@@ -13,6 +13,7 @@
 
 import { ALL_RESOURCES } from '@shared/resources'
 import { templateUri } from '@shared/templates'
+import { examplesGuide, toolReference } from '@shared/guides'
 import editing from './docs/editing.md?raw'
 import tplSubtitle from '../templates/subtitle.html?raw'
 import tplLowerThird from '../templates/lower-third.html?raw'
@@ -34,6 +35,9 @@ import fullScreenMotion from './docs/compositions/full-screen-motion.md?raw'
 
 const BODIES: Record<string, string> = {
   'bay://guide/editing': editing,
+  // Rendered from the catalog at import, not written: see `@shared/guides`.
+  'bay://guide/tools': toolReference(),
+  'bay://guide/examples': examplesGuide(),
   'bay://guide/composition/contract': contract,
   'bay://guide/composition/minimal': minimal,
   'bay://guide/composition/data-attributes': dataAttributes,

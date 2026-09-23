@@ -7,7 +7,9 @@
  * source has a rate the timeline does not control". That sentence has to live somewhere an
  * agent can read before it starts, and a resource is that somewhere.
  *
- * Two kinds sit here. `bay://guide/editing` is bay's own, and is the one to read first. The
+ * Three kinds sit here. `bay://guide/editing` is bay's own, and is the one to read first.
+ * `bay://guide/tools` and `bay://guide/examples` are generated from the tool catalog by
+ * `./guides`, so they cannot drift from it. The
  * `bay://guide/composition/*` set is carried from the HyperFrames project (Apache-2.0) because
  * bay renders HyperFrames compositions, and an agent writing one has to satisfy the same
  * contract the renderer enforces — a second, paraphrased copy of those rules would drift from
@@ -36,6 +38,24 @@ export const RESOURCES: readonly ResourceSpec[] = [
       'Read this first. The project model, why every time is a frame index, how to remove a ' +
       'span without losing sync, how transitions need footage either side of a cut, and the ' +
       'mistakes that produce a wrong picture rather than an error.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/tools',
+    name: 'Tool reference',
+    description:
+      'Every tool, generated from the catalog this build serves: whether it reads or writes, ' +
+      'when to reach for it, and each argument with its type, bounds and choices.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/examples',
+    name: 'Worked edits',
+    description:
+      'Whole edits as sequences of real tool calls: trimming a false start with remove_range, a ' +
+      'lower third by template or by hand, a cross-dissolve, and propose_edit through approval ' +
+      'to execution in bay\'s agent panel. Checked against the catalog, so none will be refused ' +
+      'for its shape.',
     mimeType: 'text/markdown'
   },
   {

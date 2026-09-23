@@ -41,6 +41,32 @@ is ambiguous the refusal names the candidates.
 you can see what you have made, and it is the difference between reporting that a cut works and
 knowing it does. Render a frame either side of every cut you make.
 
+## What `preview_frame` cannot see
+
+It is one still, and it is honest about some of its limits and silent about others. Before you
+tell the user an edit is right, know which question the picture actually answered.
+
+- **Sound.** It renders pictures only. A cut in the middle of a word, a music bed at the wrong
+  level, a clip that should be muted — none of it is in the image. Judge audio from the
+  transcript, the volumes in `inspect_item`, or by asking.
+- **Motion.** One frame cannot show a jump cut's jolt, a dissolve that runs too long, an animation
+  that stutters, or a clip playing at the wrong speed. Render frames either side of a change, and
+  say that you checked stills rather than playback.
+- **Anything outside that frame.** A frame is evidence about itself. A caption correct at frame 75
+  can overflow at frame 90 when the line changes; a clip framed well at its start can drift out of
+  frame by its end.
+- **The wrong typeface.** A substituted font looks deliberate. The result reports it under
+  `textWarnings` (`the requested font is not installed`), along with text shrunk to fit or cut
+  off — read those, because the picture will not show them.
+- **Work still in progress.** A composition still rendering or media still loading is left out of
+  the picture, and the result says `incomplete: true` with the items it is missing. Do not judge
+  that frame; call again in a moment.
+- **Exact colour.** The image is a JPEG. It is fine for "is the grade warmer" and wrong for "is
+  this exactly `#11D1A0`" — read the values back from `inspect_item` instead.
+- **Fine detail.** The image is at most 640 pixels on its long edge, so a 1080p frame is shrunk to
+  a third. Hairline strokes, small type and one-pixel misalignments may not survive; the result
+  reports `canvas` beside the image size so you can scale positions yourself.
+
 ## Removing things: two different operations
 
 `delete_items` removes whole clips. With `ripple: true` it closes the gap on the tracks it
