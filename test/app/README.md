@@ -390,8 +390,10 @@ measure. Its green exit says the numbers exist, not that they are good — read 
 | `agent-sees-frame.mjs` | `preview_frame` returns an image and the model can actually see it | **costs tokens** |
 | `audio.mjs` | the audio graph runs, meters read, a muted track still meters, volume 0 silences | live app |
 | `audio-mute.mjs` | mute disconnects each muted track's analyser (count derived from the tracks muted), hide removes the picture and leaves audio alone | live app, flags on |
+| `changes-revert.mjs` | an agent turn's Changes card, driven without a model: a read-only turn leaves none; a write leaves one with the derived line; its Revert restores the pre-turn project and reads *Reverted*; the top bar's Undo brings it back; a mid-turn user edit earns the note; another project id expires every card | live app |
 | `coldstart.mjs` | a project reopened from disk draws with nothing forcing a redraw — on a live instance it can only re-deliver the open project (arrival, not persistence), and says so | fresh launch for the real claim; needs a project with an item |
 | `composition-scale.mjs` | more compositions on one frame than the pool fetches at once all draw | live app |
+| `composer-menus.mjs` | the composer's `/` menu (skills from `src/shared/skills.ts`, arrow keys, highlight scrolled into view, Enter inserts `/<slug> `) and `@` menu (the project's clips and assets), Escape closes — never sends | live app; puts the draft and pins back |
 | `compositions.mjs` | HTML compositions render at 1080p and authored size, follow time, re-render when rewritten, keep transparency, and tool calls survive composition windows | live app; uses `script/demo/gsap.min.js` |
 | `export-boundary.mjs` | a clip's first exported frame carries picture, not background | live app |
 | `export-readback-cost.mjs` | `willReadFrequently` cost with a real decoded frame — **report, no verdict** | live app |
@@ -411,6 +413,8 @@ measure. Its green exit says the numbers exist, not that they are good — read 
 | `occlusion.mjs` | whether a hidden window drops or defers an rAF callback | **flags OFF**, own instance |
 | `playback-probe.mjs` | pictures per second, ticks and fingerprints during 6s of real playback — **report, no verdict** | live app |
 | `preview-frame.mjs` | `preview_frame` follows the edit (content, empty, back); `VERIFY_PROBE=1` freezes `toDataURL` | live app |
+| `projects-home.mjs` | *All projects* asks before leaving unsaved work (Cancel, never Save), goes straight home when clean, the recents list the open project, search filters and *Clear search* restores, the card reopens it | live app; the open project must be saved and clean |
+| `settings.mjs` | the Settings dialog from the top bar: whisper.cpp row and the 7 model rows against `window.bay.whisper.status()` and the catalog, both switches flip store + localStorage and back, Escape closes — never Download, Delete or Install | live app; puts both localStorage keys back exactly |
 | `shared-asset.mjs` | two items on one asset each draw from their own element at their own source time (`TRIALS=10`) | live app |
 | `shared-asset-two-times.mjs` | two items on one asset at two source times draw **different** pictures — the gate for transitions | live app |
 | `storage-warning.mjs` | the status bar speaks when the database is down | a deliberately broken profile; `EXPECT=healthy` for the control |
@@ -419,6 +423,7 @@ measure. Its green exit says the numbers exist, not that they are good — read 
 | `ticks.mjs` | the clock runs, with and without `bringToFront` — **report, no verdict** | live app, flags on |
 | `transition-audio.mjs` | a transition cross-fades the sound as well as the picture (preview analysers, not export) | live app |
 | `transition-playback.mjs` | a transition plays in real time with nothing dropped | live app |
+| `transcribe.mjs` | a real whisper.cpp run on the open clip: cues inside the clip, ordered, non-overlapping; `add_captions` places exactly those; French with no multilingual model and downloads off is refused naming Settings | whisper.cpp and an English model installed (exit 2 otherwise); never downloads |
 | `transitions.mjs` | the seven transition kinds draw across their window, and a clamped one says why | live app |
 | `transitions-ui.mjs` | a cut can be given a transition in the UI, and says so when it cannot | live app |
 | `transport.mjs` | clicking the real Play button advances the clock, the store and the on-screen timecode | live app |
