@@ -209,8 +209,10 @@ the rescue itself has not yet been caught firing, and the commit says so.
 
 **Worktree agents start from `main`, not from your branch.** Every one spawned this way came up
 on an old commit without the files its task named. Tell it to `git merge --ff-only <branch>`
-first, and expect its commits to conflict in `src/shared/mcp.ts` and
-`src/renderer/src/mcp/index.ts`, where every tool is registered.
+first. Tools no longer share a hand-edited list: a tool is a file in `src/shared/tools/` and an
+entry in its executor module's `handlers`, and the two indexes are generated (`pnpm gen:tools`).
+Two branches that each add a tool conflict only in those generated files, and regenerating
+after the merge resolves it.
 
 **There is no Prettier config, so do not run Prettier.** `npx prettier --write` falls back to
 its defaults — double quotes and semicolons — and rewrote a whole file into a style nothing else
@@ -585,8 +587,9 @@ nothing, and concluded the whole ripple family was missing — while `delete_ite
 `ripple` flag for weeks. The verb was a parameter, not a function name. Two habits fix it: grep the
 *catalog* and the store's action list rather than a vocabulary you brought with you, and check the
 counts move when you think you have added something new. A `git grep` for a name you invented tests
-your naming, not the codebase. (This is also what `graft` is for — `graft skeleton` on the store or
-`src/shared/mcp.ts` lists what is actually there, with no guessing at spelling.)
+your naming, not the codebase. (This is also what `graft` is for — `graft skeleton` on
+`src/renderer/src/store/types.ts` (every store action) or `src/shared/tools/index.ts` (every tool)
+lists what is actually there, with no guessing at spelling.)
 
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
@@ -665,6 +668,18 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   *newer* version is refused rather than loaded, because saving it would drop what this build does
   not know; **transforms** repair values (a `null` where `JSON.stringify` wrote a `NaN`, a negative
   start) and must be no-ops on a well-formed file. Never pass a format change off as a transform.
+- **Layering is a test, not a comment** (`src/shared/boundaries.ts`). `shared/` reaches neither
+  process nor Node/Electron/React; the renderer reaches no `node:`/`electron`; `engine/` reaches
+  no store, React or UI; `components/` reaches no store; and the folders of `src/main/` and of
+  `src/renderer/src/` import each other one way only. The rules are over what a file can
+  *reach*, not what it imports — the engine got to the store through `lib/bay.ts` with no import
+  that looked wrong. The failure names the whole route and where the code belongs. This is the
+  deliberate alternative to workspace packages: the same boundaries with nothing moved out of
+  sight of `committed-imports`, the resolver hook or the tsconfig includes.
+- **The store is `store/editor.ts` (state and selectors) over `store/kit.ts` (`edit()`, undo
+  bookkeeping) and one slice per concern in `store/slices/`.** A new action goes in the slice
+  for its concern and in `EditorActions` (`store/types.ts`); each slice's `Actions` type lists
+  exactly what it provides, so a missing or misplaced action fails typecheck.
 - **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
   `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
   not land on the undo stack.

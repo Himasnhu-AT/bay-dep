@@ -13,7 +13,7 @@
  */
 
 import { captionStyle, cuesToFrames, parseSubtitles, type CaptionCue } from '@shared/captions'
-import { fail, store, timeline } from './helpers'
+import { fail, store, timeline, type Handlers } from './helpers'
 import { mergeTextStyle } from './textStyle'
 
 function cuesFromArgument(given: unknown[]): CaptionCue[] {
@@ -103,4 +103,8 @@ export function addCaptions(args: Record<string, unknown>): Record<string, unkno
       `${outcome.trackName} is the topmost video track, so the captions draw over everything. ` +
       `Restyle one with edit_item "text"; reword every copy of a line with edit_asset.`
   }
+}
+
+export const handlers: Handlers = {
+  add_captions: (args) => addCaptions(args),
 }

@@ -8,7 +8,7 @@
  */
 
 import { bay } from '@/lib/bay'
-import { fail, store } from './helpers'
+import { fail, store, type Handlers } from './helpers'
 
 function api(): NonNullable<ReturnType<typeof bay>> {
   const bridge = bay()
@@ -59,4 +59,9 @@ export async function openProject(args: Record<string, unknown>): Promise<Record
     items: timeline?.tracks.reduce((n, track) => n + track.items.length, 0) ?? 0,
     next: 'The project is open. read_project shows its timeline.'
   }
+}
+
+export const handlers: Handlers = {
+  list_projects: () => listProjects(),
+  open_project: (args) => openProject(args),
 }

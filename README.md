@@ -66,8 +66,8 @@ frames.
 bay exposes its project model over [Model Context Protocol](https://modelcontextprotocol.io) — 33
 tools covering opening a project, reading it, importing media, placing and editing items,
 splitting, trimming, transitions, captions, removing a range, transcribing speech, rendering a
-single frame to look at, and exporting. `src/shared/mcp.ts` is the catalog, and the count is
-whatever it holds.
+single frame to look at, and exporting. Each tool is a file in `src/shared/tools/`, and the count
+is whatever that folder holds.
 
 The transport is stdio in, unix socket out. A short-lived proxy process is what your MCP client
 spawns, because a client wants a command and bay is a GUI that may not be running:

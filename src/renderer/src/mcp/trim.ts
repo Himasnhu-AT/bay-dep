@@ -17,7 +17,7 @@
 
 import { findItem, itemEnd } from '@shared/project'
 import { transitionsAfterTrim, type TrimMode } from '@shared/trim'
-import { fail, project, resolveItem, store, timeline } from './helpers'
+import { fail, project, resolveItem, store, timeline, type Handlers } from './helpers'
 
 export function trimItem(args: Record<string, unknown>): Record<string, unknown> {
   const { item, track } = resolveItem(String(args.itemId))
@@ -80,4 +80,8 @@ export function trimItem(args: Record<string, unknown>): Record<string, unknown>
         }
       : {})
   }
+}
+
+export const handlers: Handlers = {
+  trim_item: (args) => trimItem(args),
 }

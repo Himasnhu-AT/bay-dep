@@ -21,7 +21,7 @@
 import { findItem, resolveTransition, type Transition } from '@shared/project'
 import { resolveId } from '@shared/mcp'
 import { roomAt, whyInactive } from '@/lib/junctions'
-import { fail, project, resolveItem, store, timeline } from './helpers'
+import { fail, project, resolveItem, store, timeline, type Handlers } from './helpers'
 
 /**
  * One transition as a tool result.
@@ -141,4 +141,9 @@ export function removeTransition(args: Record<string, unknown>): Record<string, 
     kind: target.kind,
     note: 'The cut is a straight one again. Neither clip moved.'
   }
+}
+
+export const handlers: Handlers = {
+  add_transition: (args) => addTransition(args),
+  remove_transition: (args) => removeTransition(args),
 }

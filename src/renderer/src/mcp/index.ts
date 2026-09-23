@@ -17,73 +17,11 @@ import { dryRunRequest, findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
 import { checkApproval } from '@shared/agent'
 import { store, ToolError } from './helpers'
-import { addSubtitles, setCanvas } from './subtitles'
+import { HANDLERS } from './registry'
 import { asAgent, setAgentFileWriter } from '@/store/editor'
-import { browseAssets, inspectItem, readProject } from './read'
-import { exportTimeline, trackExport } from './exports'
-import {
-  addTrack,
-  deleteItems,
-  editItem,
-  importMedia,
-  placeAsset,
-  removeRange,
-  setPlayhead,
-  splitAt,
-  undo
-} from './write'
-import { previewFrame } from './preview'
-import { readComposition, writeComposition } from './compositions'
-import { addTemplate } from './templates'
-import { addTransition, removeTransition } from './transitions'
 import { validateArgs } from '@shared/validate'
-import { proposeEdit } from './proposals'
-import { listProjects, openProject } from './projects'
-import { transcribe } from './transcribe'
-import { trimItem } from './trim'
-import { addMarker, removeMarker } from './markers'
-import { editAsset } from './assets'
-import { addCaptions } from './captions'
 import { AsyncDryRunError, dryRun } from '@/store/dry-run'
-import { applyScript, readScript } from './script'
 
-type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
-
-const HANDLERS: Record<string, Handler> = {
-  list_projects: () => listProjects(),
-  transcribe: (args) => transcribe(args),
-  add_subtitles: (args) => addSubtitles(args),
-  set_canvas: (args) => setCanvas(args),
-  open_project: (args) => openProject(args),
-  read_project: () => readProject(),
-  browse_assets: () => browseAssets(),
-  inspect_item: (args) => inspectItem(args),
-  read_script: () => readScript(),
-  preview_frame: (args) => previewFrame(args),
-  propose_edit: (args) => proposeEdit(args),
-  import_media: (args) => importMedia(args),
-  write_composition: (args) => writeComposition(args),
-  read_composition: (args) => readComposition(args),
-  add_template: (args) => addTemplate(args),
-  place_asset: (args) => placeAsset(args),
-  edit_asset: (args) => editAsset(args),
-  edit_item: (args) => editItem(args),
-  trim_item: (args) => trimItem(args),
-  apply_script: (args) => applyScript(args),
-  split_at: (args) => splitAt(args),
-  delete_items: (args) => deleteItems(args),
-  remove_range: (args) => removeRange(args),
-  add_track: (args) => addTrack(args),
-  add_transition: (args) => addTransition(args),
-  remove_transition: (args) => removeTransition(args),
-  add_captions: (args) => addCaptions(args),
-  add_marker: (args) => addMarker(args),
-  remove_marker: (args) => removeMarker(args),
-  set_playhead: (args) => setPlayhead(args),
-  undo: () => undo(),
-  export_timeline: (args) => exportTimeline(args),
-  track_export: (args) => trackExport(args)
-}
 
 /**
  * Every tool in the catalog has a handler, and every handler is in the catalog.

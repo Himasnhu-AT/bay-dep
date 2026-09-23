@@ -12,7 +12,7 @@
 
 import { fatalFaults, type CompositionFault } from '@shared/composition'
 import { bay } from '@/lib/bay'
-import { fail } from './helpers'
+import { fail, type Handlers } from './helpers'
 import { store } from './helpers'
 
 /** A fault as an agent should read it: what is wrong, where, and whether it stops the clip. */
@@ -145,4 +145,9 @@ export async function readComposition(
     problems: faults.map(describe),
     ...(includeHtml && html !== undefined ? { html } : {})
   }
+}
+
+export const handlers: Handlers = {
+  write_composition: (args) => writeComposition(args),
+  read_composition: (args) => readComposition(args),
 }

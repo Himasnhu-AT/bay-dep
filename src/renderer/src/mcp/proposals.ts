@@ -14,7 +14,7 @@
 
 import { buildProposal, type Proposal } from '@shared/agent'
 import { newId } from '@/store/editor'
-import { fail, store } from './helpers'
+import { fail, store, type Handlers } from './helpers'
 import { validateArgs } from '@shared/validate'
 
 export function proposeEdit(args: Record<string, unknown>): Record<string, unknown> {
@@ -51,4 +51,8 @@ export function proposeEdit(args: Record<string, unknown>): Record<string, unkno
 
 function present(proposal: Proposal): void {
   store().applyAgentEvent({ type: 'proposal', runId: 'executor', proposal })
+}
+
+export const handlers: Handlers = {
+  propose_edit: (args) => proposeEdit(args),
 }

@@ -12,7 +12,7 @@ import { findAsset } from '@shared/project'
 import { segmentsToCues, segmentsToSrt, type TranscriptSegment } from '@shared/transcribe'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
-import { fail, project, resolveAsset, resolveItem, timeline, ToolError } from './helpers'
+import { fail, project, resolveAsset, resolveItem, timeline, ToolError, type Handlers } from './helpers'
 
 type Transcript = { segments: TranscriptSegment[]; model: string; language: string }
 
@@ -84,4 +84,8 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
     srt: segmentsToSrt(result.segments),
     next: 'Lines are in seconds from the start of the file. To caption a clip, call transcribe with its itemId instead.'
   }
+}
+
+export const handlers: Handlers = {
+  transcribe: (args) => transcribe(args),
 }

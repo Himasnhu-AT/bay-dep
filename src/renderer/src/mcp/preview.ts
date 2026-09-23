@@ -15,7 +15,7 @@
 
 import { MIN_FONT_SIZE, renderFrame } from '@/engine'
 import { formatTimecode } from '@shared/project'
-import { fail, project, timeline } from './helpers'
+import { fail, project, timeline, type Handlers } from './helpers'
 import { frameOrPlayhead } from './read'
 
 /**
@@ -90,4 +90,8 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
         }
       : {})
   }
+}
+
+export const handlers: Handlers = {
+  preview_frame: (args) => previewFrame(args),
 }

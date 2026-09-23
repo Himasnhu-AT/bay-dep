@@ -11,7 +11,7 @@ import { CANVAS_PRESETS, findAsset } from '@shared/project'
 import { SUBTITLE_STYLES, findSubtitleStyle, subtitleComposition, type SubtitleWord } from '@shared/subtitles'
 import { segmentsToCues, segmentsToWords, type TimelineCue } from '@shared/transcribe'
 import { bay } from '@/lib/bay'
-import { fail, project, resolveItem, store, timeline } from './helpers'
+import { fail, project, resolveItem, store, timeline, type Handlers } from './helpers'
 import { transcribeSource } from './transcribe'
 
 /**
@@ -106,4 +106,9 @@ export function setCanvas(args: Record<string, unknown>): Record<string, unknown
     refitted: result.refitted,
     next: 'Templates and subtitles already placed were written for the old shape; add them again. Check a frame with preview_frame.'
   }
+}
+
+export const handlers: Handlers = {
+  add_subtitles: (args) => addSubtitles(args),
+  set_canvas: (args) => setCanvas(args),
 }

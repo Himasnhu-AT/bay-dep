@@ -16,7 +16,7 @@ import type { ExportFormat, ExportProgress } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
-import { fail, project, timeline } from './helpers'
+import { fail, project, timeline, type Handlers } from './helpers'
 
 interface Job {
   jobId: string
@@ -198,3 +198,8 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
 }
 
 /** Test seam: forget everything this session knows about exports. */
+
+export const handlers: Handlers = {
+  export_timeline: (args) => exportTimeline(args),
+  track_export: (args) => trackExport(args),
+}

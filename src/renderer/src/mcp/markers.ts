@@ -8,7 +8,7 @@
  */
 
 import { resolveId } from '@shared/mcp'
-import { fail, store, timeline } from './helpers'
+import { fail, store, timeline, type Handlers } from './helpers'
 import { describeMarker, frameOrPlayhead } from './read'
 
 /** Hex only, for the same reason text colours are: a name reads back in a different form. */
@@ -51,4 +51,9 @@ export function removeMarker(args: Record<string, unknown>): Record<string, unkn
   if (!target) fail(`No marker ${resolved.id}.`)
   store().removeMarker(target.id)
   return { removed: describeMarker(target), markerCount: timeline().markers?.length ?? 0 }
+}
+
+export const handlers: Handlers = {
+  add_marker: (args) => addMarker(args),
+  remove_marker: (args) => removeMarker(args),
 }

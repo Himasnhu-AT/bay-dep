@@ -14,7 +14,7 @@ import { coerce, type CompositionVariableValue } from '@shared/composition'
 import { itemEnd } from '@shared/project'
 import { findTemplate, TEMPLATES } from '@shared/templates'
 import { bay } from '@/lib/bay'
-import { fail, resolveItem, store, timeline } from './helpers'
+import { fail, resolveItem, store, timeline, type Handlers } from './helpers'
 
 export async function addTemplate(args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const spec = findTemplate(String(args.templateId))
@@ -94,4 +94,8 @@ export async function addTemplate(args: Record<string, unknown>): Promise<Record
       `Change what it says with edit_item { itemId: "${item.id}", variables: { ... } }. ` +
       `Check it with preview_frame at a frame inside it.`
   }
+}
+
+export const handlers: Handlers = {
+  add_template: (args) => addTemplate(args),
 }

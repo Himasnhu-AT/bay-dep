@@ -29,7 +29,7 @@ import {
   type Item,
   type Marker
 } from '@shared/project'
-import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline } from './helpers'
+import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -218,4 +218,10 @@ export function frameOrPlayhead(args: Record<string, unknown>): number {
 /** Items crossing `frame`, used to explain a split that had nothing to cut. */
 export function itemsCrossing(frame: number): Item[] {
   return allItems(timeline()).filter((item) => frame > item.from && frame < itemEnd(item))
+}
+
+export const handlers: Handlers = {
+  read_project: () => readProject(),
+  browse_assets: () => browseAssets(),
+  inspect_item: (args) => inspectItem(args),
 }

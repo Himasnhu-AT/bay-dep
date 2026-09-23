@@ -12,7 +12,7 @@
  */
 
 import { planScript, renderScript, summariseScript } from '@shared/script'
-import { fail, project, store, timeline } from './helpers'
+import { fail, project, store, timeline, type Handlers } from './helpers'
 
 export function readScript(): string {
   return renderScript(project(), timeline().id)
@@ -42,4 +42,9 @@ export function applyScript(args: Record<string, unknown>): string {
     '\n\nThe timeline now reads:\n\n' +
     renderScript(project(), tl.id)
   )
+}
+
+export const handlers: Handlers = {
+  read_script: () => readScript(),
+  apply_script: (args) => applyScript(args),
 }

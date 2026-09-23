@@ -30,6 +30,15 @@ export class ToolError extends Error {
   }
 }
 
+/** One tool's implementation: validated arguments in, the result the agent reads out. */
+export type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
+
+/**
+ * A module's tools, by name. Every executor module that implements tools exports one as
+ * `handlers`; `registry.ts` is generated from them (`pnpm gen:tools`).
+ */
+export type Handlers = Record<string, Handler>
+
 export function fail(message: string): never {
   throw new ToolError(message)
 }

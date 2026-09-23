@@ -41,8 +41,7 @@ import {
   resolveTrack,
   store,
   timeline,
-  usToFramesAtTimeline
-} from './helpers'
+  usToFramesAtTimeline, type Handlers } from './helpers'
 import { frameOrPlayhead, itemsCrossing } from './read'
 import { mergeTextStyle } from './textStyle'
 
@@ -623,3 +622,14 @@ export function undo(): Record<string, unknown> {
   }
 }
 
+export const handlers: Handlers = {
+  import_media: (args) => importMedia(args),
+  place_asset: (args) => placeAsset(args),
+  edit_item: (args) => editItem(args),
+  split_at: (args) => splitAt(args),
+  delete_items: (args) => deleteItems(args),
+  remove_range: (args) => removeRange(args),
+  add_track: (args) => addTrack(args),
+  set_playhead: (args) => setPlayhead(args),
+  undo: () => undo(),
+}

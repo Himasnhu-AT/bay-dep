@@ -17,7 +17,7 @@
  */
 
 import { allItems } from '@shared/project'
-import { fail, project, resolveAsset, store } from './helpers'
+import { fail, project, resolveAsset, store, type Handlers } from './helpers'
 
 /** Everything about an asset an agent might have hoped to set here, and where it lives instead. */
 const NOT_HERE =
@@ -80,4 +80,8 @@ export function editAsset(args: Record<string, unknown>): Record<string, unknown
           : `Every item placing this asset shows the change — ${usedBy.length} ` +
             `${usedBy.length === 1 ? 'item' : 'items'}.`
   }
+}
+
+export const handlers: Handlers = {
+  edit_asset: (args) => editAsset(args),
 }
