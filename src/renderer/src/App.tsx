@@ -1,21 +1,41 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
-import { useDrag } from '@/lib/useDrag'
 import { useKeyboard } from '@/lib/useKeyboard'
 import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
 import { Inspector } from '@/editor/Inspector'
-import { LeftRail } from '@/editor/LeftRail'
+import { LeftRail, SidePanel } from '@/editor/LeftRail'
+import { useDefaultLayout } from 'react-resizable-panels'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Preview } from '@/editor/Preview'
 import { StatusBar } from '@/editor/StatusBar'
 import { Timeline } from '@/editor/Timeline'
 import { TopBar } from '@/editor/TopBar'
 import { Transport } from '@/editor/Transport'
 
-const MIN_TIMELINE_HEIGHT = 150
-const MIN_STAGE_HEIGHT = 220
+/**
+ * Where a panel layout the user dragged into is remembered. `localStorage`, wrapped so that a
+ * profile where storage throws (private mode, a locked-down profile) falls back to the defaults
+ * instead of taking the editor down: a remembered layout is a convenience, never a requirement.
+ */
+const layoutStorage = {
+  getItem(key: string): string | null {
+    try {
+      return localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  },
+  setItem(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // Not remembered this time; the layout still works.
+    }
+  }
+}
 
 /**
  * Electron 32 removed `File.path`, so a file out of a `DataTransfer` no longer names
@@ -45,9 +65,11 @@ export function App(): ReactNode {
   const [exportOpen, setExportOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dropping, setDropping] = useState(false)
-  const [timelineHeight, setTimelineHeight] = useState(260)
-  const splitRef = useRef<HTMLDivElement>(null)
-  const dragStartHeight = useRef(260)
+  // One remembered layout per group. Keys are pinned by these ids: renaming one resets that
+  // group to its defaults for everyone, which costs a drag, not data.
+  const mainLayout = useDefaultLayout({ id: 'bay.layout.main', storage: layoutStorage })
+  const workLayout = useDefaultLayout({ id: 'bay.layout.work', storage: layoutStorage })
+  const stageLayout = useDefaultLayout({ id: 'bay.layout.stage', storage: layoutStorage })
 
   // -- the project the window opens with ------------------------------------
 
@@ -211,74 +233,81 @@ export function App(): ReactNode {
     }
   }, [importPaths, notify])
 
-  // -- the stage / timeline splitter ----------------------------------------
-
-  const onSplitPointerDown = useDrag({
-    onStart: () => {
-      dragStartHeight.current = timelineHeight
-      document.body.style.cursor = 'ns-resize'
-    },
-    onMove: (state) => {
-      const available = splitRef.current?.parentElement?.clientHeight ?? 600
-      const next = dragStartHeight.current - state.dy
-      setTimelineHeight(
-        Math.max(MIN_TIMELINE_HEIGHT, Math.min(next, available - MIN_STAGE_HEIGHT))
-      )
-    },
-    onEnd: () => {
-      document.body.style.cursor = ''
-    },
-    onClick: () => {
-      document.body.style.cursor = ''
-    }
-  })
-
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-surface-0 text-ink-0">
       <TopBar onExport={() => setExportOpen(true)} onSave={() => void onSave()} saving={saving} />
 
+      {/* Every boundary between regions is a separator that can be dragged or moved with the
+          arrow keys, and the layout is remembered. The rail is outside the groups: it is a
+          fixed strip of buttons, and resizing it would only make the buttons harder to hit. */}
       <div className="flex min-h-0 flex-1">
         <LeftRail />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <Preview />
-              <Transport />
-            </div>
-            <div className="w-[268px] shrink-0 border-l border-line">
-              <Inspector />
-            </div>
-          </div>
+        <ResizablePanelGroup
+          id="bay.layout.main"
+          orientation="horizontal"
+          defaultLayout={mainLayout.defaultLayout}
+          onLayoutChanged={mainLayout.onLayoutChanged}
+        >
+          <ResizablePanel
+            id="side"
+            defaultSize="300px"
+            minSize="220px"
+            maxSize="55%"
+            // Pixel-stable: resizing the window, or any panel beside it, goes to the preview —
+            // the one region that is meant to take whatever space is left.
+            groupResizeBehavior="preserve-pixel-size"
+          >
+            <SidePanel />
+          </ResizablePanel>
+          <ResizableHandle aria-label="Resize side panel" />
 
-          {/* A separator that only responds to a pointer is unreachable for anyone
-              driving the app from the keyboard, and it is the one control here that
-              decides how much of the window the timeline gets. */}
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize timeline"
-            aria-valuenow={Math.round(timelineHeight)}
-            tabIndex={0}
-            ref={splitRef}
-            onPointerDown={onSplitPointerDown}
-            onKeyDown={(event) => {
-              const step = event.shiftKey ? 48 : 12
-              if (event.key === 'ArrowUp') {
-                event.preventDefault()
-                setTimelineHeight((height) => height + step)
-              } else if (event.key === 'ArrowDown') {
-                event.preventDefault()
-                setTimelineHeight((height) => Math.max(MIN_TIMELINE_HEIGHT, height - step))
-              }
-            }}
-            className="t-fast h-1 shrink-0 cursor-ns-resize bg-transparent hover:bg-accent/60 focus-visible:bg-accent"
-          />
-
-          <div className="flex min-h-0 flex-col" style={{ height: timelineHeight }}>
-            <Timeline />
-          </div>
-        </div>
+          <ResizablePanel id="work" minSize="45%">
+            <ResizablePanelGroup
+              id="bay.layout.work"
+              orientation="vertical"
+              defaultLayout={workLayout.defaultLayout}
+              onLayoutChanged={workLayout.onLayoutChanged}
+            >
+              <ResizablePanel id="stage" minSize="220px">
+                <ResizablePanelGroup
+                  id="bay.layout.stage"
+                  orientation="horizontal"
+                  defaultLayout={stageLayout.defaultLayout}
+                  onLayoutChanged={stageLayout.onLayoutChanged}
+                >
+                  <ResizablePanel id="viewer" minSize="320px">
+                    <div className="flex h-full min-h-0 min-w-0 flex-col">
+                      <Preview />
+                      <Transport />
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle aria-label="Resize inspector" />
+                  <ResizablePanel
+                    id="inspector"
+                    defaultSize="268px"
+                    minSize="220px"
+                    maxSize="45%"
+                    groupResizeBehavior="preserve-pixel-size"
+                  >
+                    <Inspector />
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              </ResizablePanel>
+              <ResizableHandle aria-label="Resize timeline" />
+              <ResizablePanel
+                id="timeline"
+                defaultSize="260px"
+                minSize="150px"
+                groupResizeBehavior="preserve-pixel-size"
+              >
+                <div className="flex h-full min-h-0 flex-col">
+                  <Timeline />
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       <StatusBar />

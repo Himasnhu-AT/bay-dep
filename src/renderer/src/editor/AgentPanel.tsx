@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, ArrowUp, Bot, Check, ChevronRight, Loader2, Square } from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, type AgentEntry } from '@shared/agent'
-import { Button, Panel, ScrollArea } from '@/components'
+import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
@@ -272,9 +272,7 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
         </p>
       )
     case 'assistant':
-      return (
-        <p className="text-[12px] leading-relaxed whitespace-pre-wrap text-ink-1">{entry.text}</p>
-      )
+      return <Markdown className="text-[12px] leading-relaxed text-ink-1">{entry.text}</Markdown>
     case 'thought':
       return (
         <p className="border-l-2 border-line pl-2 text-[11px] leading-relaxed whitespace-pre-wrap text-ink-3">
