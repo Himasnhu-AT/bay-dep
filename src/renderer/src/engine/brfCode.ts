@@ -16,6 +16,7 @@
 
 import type { BrfDocument } from '@shared/brf'
 import type { BrfMeta } from '@shared/brf-code'
+import { variationFaces, variationRequests } from './brfFonts'
 
 export type BrfWorkerRequest =
   | { id: number; type: 'load'; source: string; fps: number; width: number; height: number }
@@ -124,6 +125,20 @@ export class BrfCodeRuntime {
     if (!reply.ok) {
       this.#fail(key, runner, reply.error)
       return { ok: false, error: reply.error }
+    }
+    // Fonts are the painter's, not the worker's: a family that cannot take the axes asked of it
+    // is refused here, where the author can still fix it, rather than drawn as a placeholder.
+    // Not recorded as the module's failure — the same source may be fine once a font exists.
+    if ('scenes' in reply) {
+      for (const want of variationRequests(reply.scenes)) {
+        let face = variationFaces.resolve(want.font, want.variations)
+        if ('pending' in face) {
+          await variationFaces.settle(TIMEOUT_MS * 3)
+          face = variationFaces.resolve(want.font, want.variations)
+        }
+        if ('error' in face) return { ok: false, error: `text cannot be drawn: ${face.error}` }
+        if ('pending' in face) return { ok: false, error: `text cannot be drawn: font "${want.font}" was still loading after ${(TIMEOUT_MS * 3) / 1000}s` }
+      }
     }
     return loaded
   }

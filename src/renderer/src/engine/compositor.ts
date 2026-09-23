@@ -442,6 +442,12 @@ export class Compositor {
         doc = entry.doc
       }
       const painted = this.#brf.draw(doc, item, seconds, box, { width: box.width * scale, height: box.height * scale }, values)
+      if ('pending' in painted) {
+        // A variable-font face still loading (`brfFonts.ts`): incomplete, not empty.
+        stats.pending += 1
+        stats.unresolvedNames.push(asset.name)
+        return
+      }
       if ('error' in painted) {
         this.#drawPlaceholder(ctx, item, asset.name)
         stats.placeholders += 1

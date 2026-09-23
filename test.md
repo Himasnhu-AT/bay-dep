@@ -163,6 +163,14 @@ Then the outer wall, independently of the lockdown: from DevTools on the editor 
 `await fetch('https://example.com')` must reject, and main's log must show
 `[bay] refused a network request from the editor`.
 
+**Automated:** `node test/app/brf-sandbox.mjs` runs every door above and more (24 synchronous,
+8 deferred, each deferred one judged only after a function control has fired, and the instrument
+shown able to read `OPEN`), then the outer wall. Note on the wall as first written here: a fetch
+from the editor *document* is refused by its CSP (`connect-src 'self' bay:`) before main sees it
+— measured, no `[bay] refused` line appears — so it tests the CSP, not main. The probe turns on
+CDP's CSP bypass and fetches from a fresh iframe (its `data:` fetch answering proves the CSP no
+longer binds it); only main can refuse that one, and the log line appears.
+
 ### 2.8 Hostile and heavy modules
 
 | Module | Expected |
@@ -240,7 +248,7 @@ still pass. `export-vs-preview.mjs` needs the longer watchdog when the video dec
 | 2.4 undo / redo / Revert | | |
 | 2.5 import from disk | | |
 | 2.6 Inspector variables | | |
-| 2.7 sandbox, adversarial | | |
+| 2.7 sandbox, adversarial | **pass after fix** | 2026-09-23, worktree build, isolated profile. **Found open** in the real worker: string `setTimeout`/`setInterval` ran (global and via `WorkerGlobalScope.prototype`; would also have carried a generated `import()` past the source check); a `dispatchEvent`ed `MessageEvent` shaped like a host `load` replaced the probed module with an unprobed one; `new FontFace('x','url(https://…)')` + `self.fonts` issued a request only main's filter stopped; the `webkitRequestFileSystem*` storage API was present. **Fixed** in `brf-lockdown.ts`: timers wrapped (made in the target realm, `Reflect.apply` captured) to refuse non-functions; the host listener ignores untrusted events; `FontFace`, `fonts`, `webkit*FileSystem*` removed. **Shut already:** `Reflect.construct(Function)`, async/generator/async-generator constructors via prototypes, class methods, getters, bound functions, indirect eval, `Worker`/`SharedWorker` (Blob URL), `importScripts`, `navigator.sendBeacon`, WebSocket/EventSource/XHR/WebTransport, `postMessage`, `queueMicrotask`/`scheduler.postTask` with a string (TypeError). **Not doors:** WebAssembly (an instance calls only the imports the module hands it), `structuredClone` (cannot clone functions), `Atomics.wait` (no `SharedArrayBuffer`: not cross-origin isolated). `brf-sandbox.mjs` exit 0, and against the pre-fix build it failed at `shut: setTimeout with a string` (got `OPEN`). Outer wall: iframe fetch rejected, main logged `refused a network request from the editor: https://example.com/?bay-outer-wall`. |
 | 2.8 hostile and heavy | | |
 | 2.9 packaged app | | |
 | 2.10 dev mode | | |

@@ -194,6 +194,22 @@ target realm — made in the lockdown's own, `blocked.constructor` was a live `F
 another realm, which `brf-lockdown.test.ts` caught. The JSX factory is `__brf_h`, not `h`:
 `const h = height / 2` is ordinary code and shadowed it.
 
+**Blocking `Function` does not block code generation: the platform compiles strings too.**
+The adversarial pass (test.md §2.7, `test/app/brf-sandbox.mjs`) found string `setTimeout`/
+`setInterval` running in the locked worker, a `dispatchEvent`ed `MessageEvent` reaching the host
+listener (a module swapped itself for an unprobed one after `write_brf` accepted it), and
+`FontFace` fetching a URL. Timers now refuse non-functions (wrapper made in the target realm,
+`Reflect.apply` captured before user code), the listener answers only `isTrusted` events, and
+`FontFace`/`fonts` are gone. A fetch from the editor *document* tests its CSP, not main's filter;
+the probe uses CDP's CSP bypass in an iframe to reach main.
+
+**`.brf` text takes variable-font axes through registered faces** (`engine/brfFonts.ts`):
+canvas has no `font-variation-settings`, and `ctx.fontStretch` is keywords only, but a
+`FontFace` with a `variationSettings` descriptor draws with any axis — measured, Archivo wdth 62
+vs 125 is 27.5% vs 51.4% of the frame. Each (family, settings) is a face cloned from the family's
+`@font-face` rules or `local()` (full/PostScript names only). A loading face makes the item
+*pending*, so export and `preview_frame` wait on `variationFaces.settle` like any other source.
+
 A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
 undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
 anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main
