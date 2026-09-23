@@ -72,7 +72,8 @@ export const RESOURCES: readonly ResourceSpec[] = [
     name: 'HTML compositions: the contract',
     description:
       'What makes an HTML file renderable by bay: one paused timeline, a sized root, a declared ' +
-      'duration, and the determinism rules. Read before writing a composition.',
+      'duration, the determinism rules, and which declared <audio> bay mixes. Read before ' +
+      'writing a composition.',
     mimeType: 'text/markdown'
   },
   {

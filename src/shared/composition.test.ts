@@ -32,7 +32,8 @@ test('reads what bay needs off a well-formed composition', () => {
     height: 1080,
     // Pinned whole rather than field by field: an inspector reads this to decide what controls
     // to draw, so a field quietly disappearing has to fail here.
-    variables: []
+    variables: [],
+    audio: []
   })
 })
 
@@ -387,4 +388,151 @@ test('strings and colours pass through unchanged', () => {
     name: 'Ada',
     accent: '#66d9ef'
   })
+})
+
+// ---------------------------------------------------------------------------
+// Declared sound
+// ---------------------------------------------------------------------------
+
+const SOUNDED = (audio: string, script = ''): string =>
+  '<!doctype html>\n<html><body>\n' +
+  '<div data-composition-id="hero" data-duration="5" style="width:1920px;height:1080px">\n' +
+  `${audio}\n</div>\n${script}</body></html>`
+
+test('a declared sound is read with every attribute, and its src resolved beside the file', () => {
+  const html = SOUNDED(
+    '<audio id="whoosh" src="../sfx/big%20whoosh.wav?v=2" data-start="0.2" data-duration="1.5" ' +
+      'data-media-start="0.1" data-volume="0.8"></audio>'
+  )
+  const { info, faults } = readComposition(html, '/work/titles/hero.html')
+
+  assert.deepEqual(faults, [])
+  assert.deepEqual(info?.audio, [
+    {
+      id: 'whoosh',
+      src: '../sfx/big%20whoosh.wav?v=2',
+      // `..` climbs out of titles/, %20 is a space and the query names no different file —
+      // the three ways a naive join would hand ffmpeg a path that does not exist.
+      path: '/work/sfx/big whoosh.wav',
+      startSeconds: 0.2,
+      durationSeconds: 1.5,
+      mediaStartSeconds: 0.1,
+      volume: 0.8,
+      line: 4
+    }
+  ])
+})
+
+test('without the composition path, sounds are still declared but point at no file', () => {
+  const { info } = readComposition(SOUNDED('<audio id="a" src="a.wav" data-start="0"></audio>'))
+  assert.equal(info?.audio.length, 1)
+  assert.equal(info?.audio[0]?.path, null)
+})
+
+test('an <audio> with no id is not mixed and says so, while one with an id is', () => {
+  // The HyperFrames mixer selects audio[id][src]; bay must not sound what HyperFrames drops.
+  const bare = readComposition(SOUNDED('<audio src="a.wav" data-start="0"></audio>'), '/c/x.html')
+  assert.deepEqual(bare.info?.audio, [])
+  const fault = bare.faults.find((f) => f.code === 'bad-audio')
+  assert.ok(fault, 'an id-less sound must be reported')
+  assert.match(fault.message, /no id/)
+  assert.match(fault.message, /id="whoosh"/, 'the fault must say what to add')
+  assert.equal(fault.line, 4)
+  assert.equal(fault.fatal, false)
+
+  const named = readComposition(
+    SOUNDED('<audio id="a" src="a.wav" data-start="0"></audio>'),
+    '/c/x.html'
+  )
+  assert.equal(named.info?.audio.length, 1, 'the positive control: the same tag with an id plays')
+})
+
+test('a remote sound is one fault, not two, and is not mixed', () => {
+  const { info, faults } = readComposition(
+    SOUNDED('<audio id="bgm" src="https://cdn.example.com/bgm.mp3" data-start="0"></audio>'),
+    '/c/x.html'
+  )
+  assert.deepEqual(info?.audio, [])
+  assert.equal(faults.length, 1, faults.map((f) => f.code).join(', '))
+  assert.equal(faults[0]?.code, 'bad-audio')
+  assert.match(faults[0]?.message ?? '', /over the network/)
+  assert.match(faults[0]?.message ?? '', /relative path/)
+  assert.equal(faults[0]?.line, 4)
+
+  // And the generic scan still reports remote things that are not declared sounds.
+  const script = readComposition(
+    SOUNDED(
+      '<audio id="bgm" src="bgm.mp3" data-start="0"></audio>',
+      '<script src="https://x.io/g.js"></script>'
+    ),
+    '/c/x.html'
+  )
+  assert.deepEqual(script.faults.map((f) => f.code), ['remote-resource'])
+})
+
+test('a data: sound is refused, and a file: URL is a path', () => {
+  const data = readComposition(
+    SOUNDED('<audio id="a" src="data:audio/wav;base64,AAAA" data-start="0"></audio>'),
+    '/c/x.html'
+  )
+  assert.deepEqual(data.info?.audio, [])
+  assert.match(data.faults[0]?.message ?? '', /data: src/)
+
+  const file = readComposition(
+    SOUNDED('<audio id="a" src="file:///Users/me/a%20b.wav" data-start="0"></audio>'),
+    '/c/x.html'
+  )
+  assert.equal(file.info?.audio[0]?.path, '/Users/me/a b.wav')
+})
+
+test('a missing data-start plays from 0 and says so; a bad one is not mixed', () => {
+  const missing = readComposition(SOUNDED('<audio id="a" src="a.wav"></audio>'), '/c/x.html')
+  assert.equal(missing.info?.audio[0]?.startSeconds, 0)
+  assert.match(missing.faults[0]?.message ?? '', /no data-start/)
+
+  const bad = readComposition(
+    SOUNDED('<audio id="a" src="a.wav" data-start="soon"></audio>'),
+    '/c/x.html'
+  )
+  assert.deepEqual(bad.info?.audio, [])
+  assert.match(bad.faults[0]?.message ?? '', /data-start="soon"/)
+})
+
+test('a sound that starts after the composition ends is reported and dropped', () => {
+  const { info, faults } = readComposition(
+    SOUNDED(
+      '<audio id="late" src="a.wav" data-start="5"></audio>\n' +
+        '<audio id="ok" src="b.wav" data-start="4.9"></audio>'
+    ),
+    '/c/x.html'
+  )
+  assert.deepEqual(info?.audio.map((s) => s.id), ['ok'])
+  assert.equal(faults.length, 1)
+  assert.match(faults[0]?.message ?? '', /never heard/)
+  assert.equal(faults[0]?.line, 4)
+})
+
+test('volume above the +12 dB ceiling is capped, and a volume tween is called out', () => {
+  const { info, faults } = readComposition(
+    SOUNDED(
+      '<audio id="a" src="a.wav" data-start="0" data-volume="9"></audio>',
+      '<script>\ntl.to("#a", { volume: 0, duration: 1 }, 3)\n</script>\n'
+    ),
+    '/c/x.html'
+  )
+  assert.equal(info?.audio[0]?.volume, 3.98)
+  assert.ok(faults.some((f) => /ceiling/.test(f.message)))
+  const tween = faults.find((f) => /tweens volume/.test(f.message))
+  assert.ok(tween, 'a volume tween bay ignores must be reported')
+  assert.equal(tween.line, 7)
+})
+
+test('a volume tween is not reported for a composition that declares no sound', () => {
+  // `volume:` in a script means nothing to bay when nothing is mixed; a fault there would be
+  // noise about a sound that does not exist.
+  const { faults } = readComposition(
+    SOUNDED('', '<script>tl.to(".bar", { volume: 1 })</script>'),
+    '/c/x.html'
+  )
+  assert.deepEqual(faults, [])
 })

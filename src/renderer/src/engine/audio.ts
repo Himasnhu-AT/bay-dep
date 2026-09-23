@@ -19,6 +19,12 @@
  * Transport: this engine drives `<audio>` elements. `<video>` elements belong to the
  * compositor, because their picture is what schedules them, and it corrects their drift
  * against the same {@link DRIFT_TOLERANCE_SECONDS} — see compositor.ts.
+ *
+ * **HTML compositions** have no media element of their own — their picture is captured from a
+ * hidden page — so their sound comes from what they *declare*: each `<audio id src data-start>`
+ * becomes a stand-in audio asset with its own `<audio>` element, routed into the clip's track
+ * exactly like a clip's sound, positioned by the shared schedule in `@shared/composition-audio`
+ * and scaled by `itemAudioGainAt` — the same two functions export mixes with.
  */
 
 import {
@@ -31,6 +37,14 @@ import {
   type Timeline,
   type Track
 } from '@shared/project'
+import type { CompositionSound } from '@shared/composition'
+import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
+import {
+  scheduleCompositionSounds,
+  soundSecondsAt,
+  type ScheduledSound
+} from '@shared/composition-audio'
+import { inspectedSounds, type SoundLookup } from './compositionSounds'
 import { MediaPool, type MediaEntry } from './mediaPool'
 import { elementSlots, itemsToDraw } from './compositor'
 import { transitionAudioGains } from './transitions'
@@ -139,6 +153,97 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
   return out
 }
 
+/** One declared composition sound heard at a frame, and how to play it. */
+export interface SoundRouting {
+  item: Item
+  track: Track
+  /**
+   * A stand-in asset for the sound file, so the media pool holds its element the way it holds
+   * any clip's — and evicts it, and retires it when idle, by the same rules. Its id is per
+   * *item*, not per composition: two placements of one composition overlapping in time are two
+   * sounds at two positions, and one element cannot be in two places.
+   */
+  asset: Asset
+  entry: ScheduledSound
+  /** The item's gain at this frame times the sound's own `data-volume`. */
+  gain: number
+  /** Where in the sound file playback should be at this frame. */
+  mediaSeconds: number
+  /** As for clips: `muted` governs sound, and a muted track still meters. */
+  audible: boolean
+}
+
+/** The stand-in asset id for sound `index` of `item`. */
+export function soundAssetId(item: Item, index: number): string {
+  return `${item.assetId}~sound~${item.id}~${index}`
+}
+
+function soundAsset(item: Item, entry: ScheduledSound): Asset {
+  return {
+    id: soundAssetId(item, entry.index),
+    kind: 'audio',
+    name: entry.sound.id,
+    path: entry.sound.path,
+    durationUs: 0,
+    width: null,
+    height: null,
+    fps: null,
+    hasAudio: true,
+    hasVideo: false,
+    posterPath: null,
+    waveformPath: null,
+    createdAt: 0
+  }
+}
+
+/**
+ * Every declared composition sound heard at `frame`.
+ *
+ * The same walk as {@link audioRoutingAt} — every track, `hidden` ignored, `muted` routed rather
+ * than skipped — over the items whose asset is a composition. `lookup` answers what each one
+ * declares; a composition it cannot answer for yet is silent this frame, not an error.
+ */
+export function compositionSoundsAt(
+  project: Project,
+  timeline: Timeline,
+  frame: number,
+  lookup: SoundLookup
+): SoundRouting[] {
+  const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
+  const out: SoundRouting[] = []
+  for (const track of timeline.tracks) {
+    for (const item of track.items) {
+      const asset = findAsset(project, item.assetId)
+      if (!asset || asset.kind !== 'html' || asset.error) continue
+      const span = audibleSpan(project, timeline, item)
+      if (frame < span.firstFrame || frame >= span.endFrame) continue
+      const declared: readonly CompositionSound[] | null = lookup(asset)
+      if (!declared || declared.length === 0) continue
+      const schedule = scheduleCompositionSounds(
+        item,
+        span,
+        asset.durationUs / 1_000_000,
+        declared,
+        fps
+      )
+      for (const entry of schedule) {
+        const mediaSeconds = soundSecondsAt(entry, frame / fps)
+        if (mediaSeconds === null) continue
+        out.push({
+          item,
+          track,
+          asset: soundAsset(item, entry),
+          entry,
+          gain: itemAudioGainAt(project, timeline, item, frame) * entry.sound.volume,
+          mediaSeconds,
+          audible: !track.muted
+        })
+      }
+    }
+  }
+  return out
+}
+
 export interface AudioUpdate {
   project: Project
   timeline: Timeline
@@ -173,12 +278,14 @@ export class AudioEngine {
   readonly #tracks = new Map<string, TrackNodes>()
   readonly #sources = new Map<string, SourceNodes>()
   readonly #releaseEvictListener: () => void
+  readonly #sounds: SoundLookup
   #context: AudioContext | null = null
   #master: GainNode | null = null
   #masterVolume = 1
 
-  constructor(pool: MediaPool) {
+  constructor(pool: MediaPool, sounds: SoundLookup = inspectedSounds()) {
     this.#pool = pool
+    this.#sounds = sounds
     // An evicted element takes its source node with it: a MediaElementAudioSourceNode is
     // bound to one element for life and cannot be re-pointed.
     this.#releaseEvictListener = pool.onEvict((entry) => this.#forget(entry))
@@ -265,6 +372,22 @@ export class AudioEngine {
           clamp(finite(routed.transitionGain, 1), 0, 1)
 
         this.#drive(element, item, asset, frame, fps, playing)
+      }
+
+      // Declared composition sounds, through the same nodes: an element, a source node keyed
+      // by the stand-in asset, the track's gain and analyser.
+      for (const routed of compositionSoundsAt(project, timeline, frame, this.#sounds)) {
+        const nodes = this.#tracks.get(routed.track.id)
+        if (!nodes) continue
+        const element = this.#pool.acquire(routed.asset).element
+        if (!(element instanceof HTMLAudioElement)) continue
+        const key = sourceKey(routed.asset.id, 0)
+        const source = this.#sourceNodes(context, key, element)
+        if (!source) continue
+        active.add(key)
+        this.#route(source, nodes, routed.track.id)
+        source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 8)
+        this.#position(element, routed.entry.speed, routed.mediaSeconds, fps, playing)
       }
     }
 
@@ -401,8 +524,29 @@ export class AudioEngine {
     playing: boolean
   ): void {
     if (!(element instanceof HTMLAudioElement)) return
+    this.#position(element, item.speed, sourceSecondsAt(item, asset, frame, fps), fps, playing)
+  }
 
-    element.playbackRate = playbackRateFor(item.speed)
+  /**
+   * The transport half of {@link #drive}, shared with composition sounds, whose position comes
+   * from their schedule rather than from `sourceSecondsAt`.
+   */
+  #position(
+    element: HTMLAudioElement,
+    speed: number,
+    expected: number,
+    fps: number,
+    playing: boolean
+  ): void {
+    // A declared sound with no data-duration is scheduled to the end of the composition, and
+    // the file may end first. Past its end there is nothing to play, and seeking there every
+    // frame would be a seek per picture that lands on silence.
+    if (Number.isFinite(element.duration) && expected >= element.duration) {
+      if (!element.paused) element.pause()
+      return
+    }
+
+    element.playbackRate = playbackRateFor(speed)
     if (playing && element.paused) void element.play().catch(() => {})
     if (!playing && !element.paused) element.pause()
 
@@ -410,7 +554,6 @@ export class AudioEngine {
     // Paused, the element is being positioned rather than corrected, so it is pinned to
     // the frame: a play from here has to start at the right sample, not 80ms into it.
     const tolerance = playing ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
-    const expected = sourceSecondsAt(item, asset, frame, fps)
     if (Math.abs(element.currentTime - expected) <= tolerance) return
     try {
       element.currentTime = expected

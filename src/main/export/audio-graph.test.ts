@@ -26,6 +26,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Layout, Project, Timeline, Track, TrackKind } from '@shared/project'
+import type { CompositionSound } from '@shared/composition'
+import { itemAudioGainAt } from '@shared/audio-gain'
 import { buildAudioGraph } from './audio-graph'
 
 const LAYOUT: Layout = { left: 0, top: 0, width: 1920, height: 1080, opacity: 1, rotation: 0 }
@@ -344,4 +346,130 @@ test('padding is the last stage, after the mix, not per input', () => {
   const filter = buildAudioGraph(project, timeline, 0, 200)?.filter ?? ''
   assert.equal((filter.match(/apad/g) ?? []).length, 1, 'exactly one pad, on the mixed result')
   assert.ok(filter.indexOf('amix') < filter.indexOf('apad'), 'the pad must follow the mix')
+})
+
+// ---------------------------------------------------------------------------
+// Sounds an HTML composition declares
+// ---------------------------------------------------------------------------
+
+function declared(over: Partial<CompositionSound> = {}): CompositionSound {
+  return {
+    id: 'whoosh',
+    src: 'whoosh.wav',
+    path: '/c/whoosh.wav',
+    startSeconds: 0,
+    durationSeconds: null,
+    mediaStartSeconds: 0,
+    volume: 1,
+    line: 1,
+    ...over
+  }
+}
+
+const composition = (): Asset =>
+  asset('comp', '/c/title.html', { kind: 'html', hasAudio: false, durationUs: 5_000_000 })
+
+/** One composition clip on one track, declaring `sounds`. */
+function sounding(spec: Partial<ItemSpec> = {}, sounds = [declared()], muted = false) {
+  const one = item({ id: 'c1', assetId: 'comp', trackId: 't1', from: 0, durationInFrames: 150, ...spec })
+  const { project, timeline } = projectWith([track('t1', 'video', [one], muted)], [composition()])
+  return { project, timeline, item: one, map: new Map([['comp', sounds]]) }
+}
+
+/**
+ * Evaluates a `volume` expression the way ffmpeg does, by giving `if` and `lt` their meaning.
+ * The test reads the gain the export will apply rather than the text that encodes it, so a
+ * rewrite of the expression's shape cannot pass by matching a pattern.
+ */
+function evaluate(filter: string, t: number): number {
+  const constant = /volume=([0-9.]+)(?:[,;[]|$)/.exec(filter)
+  if (constant) return Number(constant[1])
+  const expression = /volume='([^']*)':eval=frame/.exec(filter)?.[1]
+  assert.ok(expression, `no volume stage in ${filter}`)
+  const run = new Function('t', 'iff', 'lt', `return ${expression.replace(/\bif\(/g, 'iff(')}`)
+  return run(t, (c: number, a: number, b: number) => (c ? a : b), (a: number, b: number) => (a < b ? 1 : 0))
+}
+
+test('without its declarations a composition contributes nothing, as before', () => {
+  const { project, timeline } = sounding()
+  assert.equal(buildAudioGraph(project, timeline, 0, 150), null)
+})
+
+test('a declared sound is an input, delayed to where the clip shows its data-start', () => {
+  const { project, timeline, map } = sounding({ from: 30 }, [declared({ startSeconds: 0.5 })])
+  const graph = buildAudioGraph(project, timeline, 0, 300, map)
+  assert.deepEqual(graph?.inputs, ['/c/whoosh.wav'])
+  // Frame 30 is 1s; the clip shows composition 0.5s at 1.5s.
+  assert.match(graph?.filter ?? '', /adelay=1500:all=1/)
+})
+
+test('a muted track silences its composition too, and an unmuted one does not', () => {
+  const muted = sounding({}, [declared()], true)
+  assert.equal(buildAudioGraph(muted.project, muted.timeline, 0, 150, muted.map), null)
+  const open = sounding()
+  assert.equal(buildAudioGraph(open.project, open.timeline, 0, 150, open.map)?.inputs.length, 1)
+})
+
+test('an export starting mid-sound enters the file at the matching point', () => {
+  const { project, timeline, map } = sounding({}, [declared({ startSeconds: 1, mediaStartSeconds: 0.25 })])
+  // Exporting from frame 60 (2s): one second into the sound, plus its own media offset.
+  const filter = buildAudioGraph(project, timeline, 60, 150, map)?.filter ?? ''
+  assert.match(filter, /atrim=start=1\.250000:duration=3\.000000/, filter)
+  assert.doesNotMatch(filter, /adelay/)
+})
+
+test('the export gain is the shared gain, frame for frame — fades, volume and data-volume', () => {
+  const spec = { volume: 0.5, fadeInFrames: 15, fadeOutFrames: 30 }
+  const { project, timeline, item: clip, map } = sounding(spec, [declared({ volume: 0.8 })])
+  const filter = buildAudioGraph(project, timeline, 0, 150, map)?.filter ?? ''
+  for (const frame of [0, 3, 7, 14, 15, 60, 119, 120, 121, 135, 149]) {
+    const expected = itemAudioGainAt(project, timeline, clip, frame) * 0.8
+    const actual = evaluate(filter, frame / 30)
+    assert.ok(Math.abs(actual - expected) < 1e-5, `frame ${frame}: ${actual} vs ${expected}`)
+  }
+})
+
+test('a composition leaving through a dissolve is heard past its end, on the shared curve', () => {
+  // The composition hands off to a plain clip at frame 90 with a 20-frame dissolve. Export's
+  // clips predate the shared curve; the composition's sound must follow it anyway.
+  const comp = item({ id: 'c1', assetId: 'comp', trackId: 't1', from: 0, durationInFrames: 90 })
+  const next = item({ id: 'n1', assetId: 'a1', trackId: 't1', from: 90, durationInFrames: 60, sourceStartUs: 2_000_000 })
+  const { project, timeline } = projectWith([track('t1', 'video', [comp, next])], [composition(), asset('a1', '/a.mp4')])
+  timeline.transitions = [
+    { id: 'x', kind: 'cross-dissolve', fromItemId: 'c1', toItemId: 'n1', durationInFrames: 20 }
+  ]
+  const map = new Map([['comp', [declared()]]])
+  const graph = buildAudioGraph(project, timeline, 0, 150, map)
+  const soundInput = graph?.inputs.indexOf('/c/whoosh.wav') ?? -1
+  assert.notEqual(soundInput, -1)
+  const chain = graph?.filter.split(';').find((c) => c.startsWith(`[${soundInput}:a]`)) ?? ''
+  // Heard until the window closes at frame 100, not cut at the cut.
+  assert.match(chain, /atrim=start=0\.000000:duration=3\.333333/, chain)
+  for (const frame of [85, 90, 95, 99]) {
+    const expected = itemAudioGainAt(project, timeline, comp, frame)
+    assert.ok(Math.abs(evaluate(chain, frame / 30) - expected) < 1e-5, `frame ${frame}`)
+  }
+  assert.ok(evaluate(chain, 95 / 30) > 0 && evaluate(chain, 95 / 30) < 1, 'mid-dissolve is a ramp')
+})
+
+test('a steady sound gets a plain volume, not an expression', () => {
+  const { project, timeline, map } = sounding({}, [declared({ volume: 0.8 })])
+  const filter = buildAudioGraph(project, timeline, 0, 150, map)?.filter ?? ''
+  assert.match(filter, /volume=0\.800000/)
+  assert.doesNotMatch(filter, /eval=frame/)
+})
+
+test('clips and declared sounds share one mix, with every input index accounted for', () => {
+  const clip = item({ id: 'i1', assetId: 'a1', trackId: 't2', from: 0, durationInFrames: 90 })
+  const comp = item({ id: 'c1', assetId: 'comp', trackId: 't1', from: 0, durationInFrames: 150 })
+  const { project, timeline } = projectWith(
+    [track('t1', 'video', [comp]), track('t2', 'audio', [clip])],
+    [composition(), asset('a1', '/a.wav')]
+  )
+  const map = new Map([['comp', [declared(), declared({ id: 'b', path: '/c/b.wav', startSeconds: 2 })]]])
+  const graph = buildAudioGraph(project, timeline, 0, 150, map)
+  assert.deepEqual(graph?.inputs, ['/a.wav', '/c/whoosh.wav', '/c/b.wav'])
+  const referenced = [...(graph?.filter.matchAll(/\[(\d+):a\]/g) ?? [])].map((m) => Number(m[1]))
+  assert.deepEqual(referenced, [0, 1, 2])
+  assert.match(graph?.filter ?? '', /amix=inputs=3:normalize=0/)
 })

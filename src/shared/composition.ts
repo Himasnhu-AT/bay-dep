@@ -92,7 +92,56 @@ export interface CompositionInfo {
   /** The root's declared pixel size. A composition is authored at a fixed size. */
   width: number
   height: number
+  /**
+   * The sounds this composition declares, in document order — see {@link CompositionSound}.
+   *
+   * Reported even when empty, because "declares no sound" and "bay did not look" are different
+   * answers, and a composition that is silent in bay has to be told apart from one bay skipped.
+   * When this came through main's `inspectComposition`, only sounds that will actually play are
+   * listed — a missing or undecodable file is a fault instead, never an entry.
+   */
+  audio: CompositionSound[]
 }
+
+/**
+ * One sound a composition declares, read from an `<audio>` element.
+ *
+ * **Declared, not captured.** bay never listens to what a composition page plays — the page is
+ * a hidden window seeked frame by frame, so its media elements neither run in real time nor
+ * reach the mix. What bay does is read the same markup the HyperFrames mixer reads —
+ * `audio[id][src]` with `data-start`, `data-duration`, `data-media-start` and `data-volume` —
+ * and mix that file itself: in preview through the clip audio path, in export as one more
+ * input to the ffmpeg graph. The HyperFrames vocabulary rather than a bay-specific attribute,
+ * because a composition written to that contract should sound the same in both, and a second
+ * vocabulary would be two things to satisfy.
+ *
+ * All times here are **seconds**, as authored, like `data-duration` on the root. They become
+ * timeline positions in `composition-audio.ts`, and nowhere else.
+ */
+export interface CompositionSound {
+  /** The element's `id`. Required, as in HyperFrames: an id-less `<audio>` is never mixed. */
+  id: string
+  /** `src` exactly as written. */
+  src: string
+  /**
+   * The absolute file `src` names, resolved against the composition's own directory; null
+   * when the reader was not told where the composition lives.
+   */
+  path: string | null
+  /** `data-start`: when, in composition time, the sound begins. */
+  startSeconds: number
+  /** `data-duration`, or null to play until the file (or the composition) ends. */
+  durationSeconds: number | null
+  /** `data-media-start`: how far into the file playback begins. */
+  mediaStartSeconds: number
+  /** `data-volume`: a static linear gain, 0..{@link MAX_SOUND_VOLUME}. */
+  volume: number
+  /** 1-based line of the `<audio>` tag, so a fault about it can say where. */
+  line: number
+}
+
+/** HyperFrames' ceiling on `data-volume`: +12 dB. */
+export const MAX_SOUND_VOLUME = 3.98
 
 /**
  * A problem with a composition, phrased as something to do about it.
@@ -117,6 +166,7 @@ export type CompositionFaultCode =
   | 'remote-resource'
   | 'wrapped-in-template'
   | 'bad-variables'
+  | 'bad-audio'
 
 /**
  * Read a composition's declared shape out of its HTML.
@@ -129,7 +179,7 @@ export type CompositionFaultCode =
  * Returns the faults alongside whatever it could read, rather than throwing, because a
  * composition with three problems should report three.
  */
-export function readComposition(html: string): {
+export function readComposition(html: string, compositionPath?: string): {
   info: CompositionInfo | null
   faults: CompositionFault[]
 } {
@@ -219,9 +269,15 @@ export function readComposition(html: string): {
     })
   }
 
+  // Sounds first, because the remote-resource scan below must not report an <audio> twice: the
+  // audio reader already says the same thing, plus the part that matters to it — that the sound
+  // will not be mixed.
+  const { audio, audioFaults, audioTags } = readAudio(html, lineOf, compositionPath ?? null)
+
   // bay's CSP permits no remote origin, so a composition that fetches its libraries or fonts
   // renders without them and looks merely wrong. Cheaper to say so here.
   for (const remote of html.matchAll(/(?:src|href)\s*=\s*["'](https?:)?\/\/[^"']+["']/gi)) {
+    if (audioTags.some((tag) => remote.index >= tag.start && remote.index < tag.end)) continue
     faults.push({
       code: 'remote-resource',
       message:
@@ -236,15 +292,251 @@ export function readComposition(html: string): {
 
   const { variables, variableFaults } = readVariables(html, lineOf)
   faults.push(...variableFaults)
+  faults.push(...audioFaults)
+
+  // A sound that starts at or after the composition ends is declared and never heard. Checked
+  // here rather than in `readAudio` because it needs the duration, and only once that is good.
+  const audible = audio.filter((sound) => {
+    if (!(durationSeconds > 0) || sound.startSeconds < durationSeconds) return true
+    faults.push({
+      code: 'bad-audio',
+      message:
+        `<audio id="${sound.id}"> starts at ${sound.startSeconds}s, at or after the ` +
+        `composition ends (data-duration="${durationAttr}"), so it is never heard. data-start ` +
+        `is seconds from the start of this composition.`,
+      line: sound.line,
+      fatal: false
+    })
+    return false
+  })
 
   const usable = compositionId.length > 0 && size !== null && Number.isFinite(durationSeconds)
   return {
     info:
       usable && durationSeconds > 0 && durationSeconds <= MAX_COMPOSITION_SECONDS
-        ? { compositionId, durationSeconds, width: size.width, height: size.height, variables }
+        ? {
+            compositionId,
+            durationSeconds,
+            width: size.width,
+            height: size.height,
+            variables,
+            audio: audible
+          }
         : null,
     faults
   }
+}
+
+/** One attribute's value off a tag, entity-decoded, or undefined when it is absent. */
+function attributeOf(tag: string, name: string): string | undefined {
+  const found = new RegExp(
+    `\\s${name.replace(/-/g, '\\-')}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`,
+    'i'
+  ).exec(tag)
+  if (!found) return undefined
+  return decodeEntities(found[1] ?? found[2] ?? found[3] ?? '')
+}
+
+/**
+ * Where a sound's `src` points on disk, or why it cannot be played.
+ *
+ * Resolved the way the page itself resolves it — relative to the composition's own file —
+ * because the composition window loads that file with `loadFile`, and a `src` that meant one
+ * file to the page and another to bay's mix would be two meanings for one attribute.
+ * Percent-escapes are decoded (`my%20whoosh.wav` is `my whoosh.wav` to a browser), and a query
+ * or fragment is dropped, since neither names a different file.
+ *
+ * Pure string work rather than `node:path`, because this module is shared with the renderer.
+ */
+export function resolveSoundSource(
+  compositionPath: string,
+  src: string
+): { path: string } | { remote: true } | { unsupported: string } {
+  const trimmed = src.trim()
+  if (/^(?:https?:)?\/\//i.test(trimmed)) return { remote: true }
+  let rest = trimmed
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed)
+  if (scheme) {
+    const name = (scheme[1] ?? '').toLowerCase()
+    if (name !== 'file') return { unsupported: name }
+    rest = trimmed.replace(/^file:(?:\/\/[^/]*)?/i, '')
+  }
+  rest = rest.replace(/[?#].*$/, '')
+  try {
+    rest = decodeURIComponent(rest)
+  } catch {
+    // A stray `%` is a literal percent sign in a filename, which is how a browser reads it too.
+  }
+  const base = rest.startsWith('/') ? '' : compositionPath.slice(0, compositionPath.lastIndexOf('/'))
+  const parts: string[] = []
+  for (const part of `${base}/${rest}`.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+  return { path: `/${parts.join('/')}` }
+}
+
+/** A number off an attribute: null when absent, NaN when present and not a number. */
+function numberAttribute(tag: string, name: string): number | null {
+  const raw = attributeOf(tag, name)
+  if (raw === undefined) return null
+  const trimmed = raw.trim()
+  return trimmed.length === 0 ? Number.NaN : Number(trimmed)
+}
+
+/**
+ * The sounds a composition declares, and everything that keeps one from playing.
+ *
+ * Nothing here is fatal. A composition whose whoosh cannot be found still renders its picture,
+ * and refusing the clip over a sound would be out of proportion — but every sound that will
+ * not play gets a fault saying so, with its line, because silence is the failure nobody sees.
+ */
+function readAudio(
+  html: string,
+  lineOf: (index: number) => number,
+  compositionPath: string | null
+): {
+  audio: CompositionSound[]
+  audioFaults: CompositionFault[]
+  audioTags: { start: number; end: number }[]
+} {
+  const audio: CompositionSound[] = []
+  const audioFaults: CompositionFault[] = []
+  const audioTags: { start: number; end: number }[] = []
+  const seen = new Set<string>()
+
+  for (const match of html.matchAll(/<audio\b[^>]*>/gi)) {
+    const tag = match[0]
+    audioTags.push({ start: match.index, end: match.index + tag.length })
+    const line = lineOf(match.index)
+    const fault = (message: string): void => {
+      audioFaults.push({ code: 'bad-audio', message, line, fatal: false })
+    }
+
+    const id = (attributeOf(tag, 'id') ?? '').trim()
+    const src = (attributeOf(tag, 'src') ?? '').trim()
+    const named = id.length > 0 ? `<audio id="${id}">` : 'An <audio> element'
+    if (src.length === 0) {
+      fault(
+        `${named} has no src attribute, so it is not mixed. bay reads the src attribute only — ` +
+          `not <source> children and not a src set from script — so name the file there, ` +
+          `relative to this composition: src="./whoosh.wav".`
+      )
+      continue
+    }
+    if (id.length === 0) {
+      fault(
+        `An <audio> with src="${truncate(src)}" has no id, so it is not mixed — the HyperFrames ` +
+          `mixer selects audio[id][src], and bay reads the same declarations so a composition ` +
+          `sounds the same in both. Add id="whoosh".`
+      )
+      continue
+    }
+    if (seen.has(id)) {
+      fault(`${named} repeats an id another <audio> already uses; only the first is mixed.`)
+      continue
+    }
+
+    const remote = /^(?:https?:)?\/\//i.test(src)
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(src)?.[1]?.toLowerCase()
+    if (remote) {
+      fault(
+        `${named} loads ${truncate(src)} over the network. bay permits no remote origin, so this ` +
+          `sound is not mixed in preview or export. Save the file next to the composition and ` +
+          `set src to its relative path.`
+      )
+      continue
+    }
+    if (scheme !== undefined && scheme !== 'file') {
+      fault(
+        `${named} has a ${scheme}: src, which bay cannot mix — only a file on disk can be an ` +
+          `export input. Save the sound next to the composition and set src to its relative path.`
+      )
+      continue
+    }
+    let path: string | null = null
+    if (compositionPath !== null) {
+      const resolved = resolveSoundSource(compositionPath, src)
+      if ('path' in resolved) path = resolved.path
+    }
+
+    let startSeconds = numberAttribute(tag, 'data-start')
+    if (startSeconds === null) {
+      fault(
+        `${named} has no data-start, so bay starts it at 0s. Add data-start="0" to say so, or ` +
+          `the second in this composition where it should begin.`
+      )
+      startSeconds = 0
+    } else if (!Number.isFinite(startSeconds) || startSeconds < 0) {
+      fault(
+        `${named} has data-start="${attributeOf(tag, 'data-start')}", which is not a ` +
+          `non-negative number of seconds, so it is not mixed.`
+      )
+      continue
+    }
+
+    let durationSeconds = numberAttribute(tag, 'data-duration')
+    if (durationSeconds !== null && (!Number.isFinite(durationSeconds) || durationSeconds <= 0)) {
+      fault(
+        `${named} has data-duration="${attributeOf(tag, 'data-duration')}", which is not a ` +
+          `positive number of seconds; bay plays it until the file or the composition ends.`
+      )
+      durationSeconds = null
+    }
+
+    let mediaStartSeconds = numberAttribute(tag, 'data-media-start') ?? 0
+    if (!Number.isFinite(mediaStartSeconds) || mediaStartSeconds < 0) {
+      fault(
+        `${named} has data-media-start="${attributeOf(tag, 'data-media-start')}", which is not ` +
+          `a non-negative number of seconds; bay plays it from the start of the file.`
+      )
+      mediaStartSeconds = 0
+    }
+
+    let volume = numberAttribute(tag, 'data-volume') ?? 1
+    if (!Number.isFinite(volume) || volume < 0) {
+      fault(
+        `${named} has data-volume="${attributeOf(tag, 'data-volume')}", which is not a ` +
+          `non-negative gain; bay mixes it at 1.`
+      )
+      volume = 1
+    } else if (volume > MAX_SOUND_VOLUME) {
+      fault(
+        `${named} has data-volume="${volume}", past the ${MAX_SOUND_VOLUME} (+12 dB) ceiling; ` +
+          `bay mixes it at ${MAX_SOUND_VOLUME}.`
+      )
+      volume = MAX_SOUND_VOLUME
+    }
+
+    seen.add(id)
+    audio.push({ id, src, path, startSeconds, durationSeconds, mediaStartSeconds, volume, line })
+  }
+
+  // The documented way to fade a HyperFrames sound is to tween its `volume` on the timeline.
+  // bay seeks the page for pictures and mixes the file itself, so it never sees that tween —
+  // saying so is the difference between "my fade is ignored" and a mystery.
+  if (audio.length > 0) {
+    for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)) {
+      const body = script[1] ?? ''
+      const at = /\bvolume\s*:/.exec(body)
+      if (!at) continue
+      const bodyStart = script.index + script[0].indexOf(body)
+      audioFaults.push({
+        code: 'bad-audio',
+        message:
+          "This composition tweens volume in script. bay mixes a composition's sounds at their " +
+          'static data-volume and does not follow volume tweens, so that fade is not heard in ' +
+          "bay. Fade the clip instead — the clip's fades and volume on the timeline apply to " +
+          'every sound it declares.',
+        line: lineOf(bodyStart + at.index),
+        fatal: false
+      })
+      break
+    }
+  }
+
+  return { audio, audioFaults, audioTags }
 }
 
 /**

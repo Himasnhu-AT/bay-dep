@@ -26,7 +26,9 @@ import {
   type Timeline,
   type TransitionKind
 } from '@shared/project'
-import { audioRoutingAt } from './audio'
+import type { CompositionSound } from '@shared/composition'
+import { itemAudioGainAt } from '@shared/audio-gain'
+import { audioRoutingAt, compositionSoundsAt } from './audio'
 
 function asset(id: string, over: Partial<Asset> = {}): Asset {
   return {
@@ -302,4 +304,90 @@ test('a transition does not change whether a muted track is audible', () => {
     assert.equal(r.audible, false, 'muted stays muted through a transition')
     assert.equal(r.metered, true, 'and the meter still reads, so the user can see what is muted')
   }
+})
+
+// ---------------------------------------------------------------------------
+// Sounds an HTML composition declares
+// ---------------------------------------------------------------------------
+
+function compositionScene(muted = false, second = false): { project: Project; timeline: Timeline } {
+  const comp = asset('comp', { kind: 'html', path: '/c/title.html', hasAudio: false })
+  const one: Item = { ...item('c1', 'v1', 'comp'), fadeInFrames: 10, volume: 0.5 }
+  const two: Item = { ...item('c2', 'v2', 'comp'), from: 0 }
+  const timeline: Timeline = {
+    id: 'tl',
+    name: 'Timeline 1',
+    fps: 30,
+    width: 1920,
+    height: 1080,
+    background: '#000000',
+    tracks: [
+      { id: 'v1', kind: 'video', name: 'V1', locked: false, muted, hidden: false, items: [one] },
+      ...(second
+        ? [{ id: 'v2', kind: 'video' as const, name: 'V2', locked: false, muted: false, hidden: false, items: [two] }]
+        : [])
+    ]
+  }
+  const project: Project = {
+    id: 'p',
+    name: 'p',
+    version: 1,
+    assets: [comp],
+    timelines: [timeline],
+    activeTimelineId: 'tl',
+    createdAt: 0,
+    updatedAt: 0
+  }
+  return { project, timeline }
+}
+
+const WHOOSH: CompositionSound = {
+  id: 'whoosh',
+  src: 'whoosh.wav',
+  path: '/c/whoosh.wav',
+  startSeconds: 0.1,
+  durationSeconds: null,
+  mediaStartSeconds: 0,
+  volume: 0.8,
+  line: 1
+}
+
+test('a declared sound is routed at the shared schedule and the shared gain', () => {
+  const { project, timeline } = compositionScene()
+  const routed = compositionSoundsAt(project, timeline, 6, () => [WHOOSH])
+  assert.equal(routed.length, 1)
+  const [one] = routed
+  assert.equal(one?.asset.path, '/c/whoosh.wav')
+  assert.equal(one?.asset.kind, 'audio', 'a stand-in the pool gives an <audio> element')
+  const item0 = timeline.tracks[0]!.items[0]!
+  assert.equal(one?.gain, itemAudioGainAt(project, timeline, item0, 6) * 0.8)
+  // Frame 6 is 0.2s; the sound began at 0.1s.
+  assert.ok(Math.abs((one?.mediaSeconds ?? -1) - 0.1) < 1e-9)
+  // Before its data-start it is not routed at all.
+  assert.deepEqual(compositionSoundsAt(project, timeline, 2, () => [WHOOSH]), [])
+})
+
+test('a muted track still routes its composition sound, to the meter and not the master', () => {
+  // The same rule as clips: `muted` governs what reaches the master, and the meter keeps
+  // showing what is on the track.
+  const { project, timeline } = compositionScene(true)
+  const [routed] = compositionSoundsAt(project, timeline, 6, () => [WHOOSH])
+  assert.equal(routed?.audible, false)
+  const unmuted = compositionScene(false)
+  const [open] = compositionSoundsAt(unmuted.project, unmuted.timeline, 6, () => [WHOOSH])
+  assert.equal(open?.audible, true, 'the positive control')
+})
+
+test('a composition whose declarations are not known yet is silent, not an error', () => {
+  const { project, timeline } = compositionScene()
+  assert.deepEqual(compositionSoundsAt(project, timeline, 6, () => null), [])
+})
+
+test('two placements of one composition sounding together get two elements', () => {
+  // One element cannot be at two positions; keyed by asset alone, the second placement would
+  // fight the first over currentTime and neither would sound right.
+  const { project, timeline } = compositionScene(false, true)
+  const routed = compositionSoundsAt(project, timeline, 6, () => [WHOOSH])
+  assert.equal(routed.length, 2)
+  assert.notEqual(routed[0]?.asset.id, routed[1]?.asset.id)
 })

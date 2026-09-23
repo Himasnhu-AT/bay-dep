@@ -87,6 +87,7 @@ export async function writeComposition(
     compositionId: info?.compositionId,
     durationSeconds: info?.durationSeconds,
     variables: info?.variables ?? [],
+    audio: info?.audio ?? [],
     width: asset.width,
     height: asset.height,
     // Reported even when nothing is fatal, because the non-fatal ones are the ones that hide:
@@ -126,7 +127,11 @@ export async function readComposition(
           // What this composition can be configured with. Reported even when empty, because
           // "declares nothing" and "I did not look" are different answers and an agent
           // deciding whether to edit the HTML or set a variable needs to tell them apart.
-          variables: info.variables
+          variables: info.variables,
+          // The sounds that will play — in preview and in export — and nothing else: a declared
+          // sound whose file is missing, remote or undecodable is in `problems` instead, with
+          // its line. Reported even when empty, for the same reason as `variables`.
+          audio: info.audio
         }
       : {}),
     problems: faults.map(describe),

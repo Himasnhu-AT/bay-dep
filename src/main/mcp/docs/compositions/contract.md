@@ -1,8 +1,10 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/SKILL.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice, because bay renders HyperFrames
-compositions and an agent writing one needs the same contract the renderer enforces.
+Carried into bay unmodified except for this notice and the section "Sound in bay" at the end,
+which is bay's own: it says which part of the HyperFrames audio contract bay mixes, because
+bay renders HyperFrames compositions and an agent writing one needs the same contract the
+renderer enforces.
 -->
 
 ---
@@ -99,3 +101,52 @@ Use `hyperframes-cli` for command details
 - [ ] Projects with sub-compositions: `npx hyperframes snapshot --at <midpoints>` and eyeball each frame
 - [ ] `npx hyperframes preview --background` for review (the user can edit anything in Studio's timeline, and the server survives the invoking command)
 - [ ] `npx hyperframes render` only after the user approves
+
+## Sound in bay
+
+bay renders a composition by seeking a hidden page frame by frame, so nothing the page *plays*
+is ever heard — a seeked page is not running in real time. Sound is **declared, not captured**:
+bay reads the same `<audio>` declarations the HyperFrames mixer reads and mixes the files itself,
+in the preview and in the export, under the clip's own volume, fades and transitions.
+
+```html
+<div data-composition-id="title" data-duration="4" style="width:1920px;height:1080px">
+  <h1 id="title-text">Launch day</h1>
+  <!-- a whoosh as the title lands, and a sting under the end card -->
+  <audio id="whoosh" src="./sfx/whoosh.wav" data-start="0.2" data-volume="0.8"></audio>
+  <audio id="sting" src="./sfx/sting.wav" data-start="2.5" data-duration="1.5"
+         data-media-start="0.1"></audio>
+</div>
+```
+
+What bay mixes, exactly:
+
+- **`audio[id][src]`** — an `<audio>` needs an `id` and a `src` attribute, as in HyperFrames.
+  `<source>` children and a `src` set from script are not read.
+- **`src` is a local file, relative to the composition's own file** (`./sfx/whoosh.wav`,
+  `../music/bed.mp3`; an absolute path or a `file://` URL also works). Keep sounds beside the
+  composition. `http(s)://`, `//host/…`, `data:` and `blob:` sources are refused: bay reaches no
+  network, and only a file on disk can be an export input.
+- **`data-start`** — seconds into the composition. Missing means `0`, with a warning.
+- **`data-duration`** — seconds to play. Omit it to play until the file or the composition ends.
+- **`data-media-start`** — seconds into the file to begin from.
+- **`data-volume`** — a static linear gain, `1` by default, capped at `3.98` (+12 dB).
+- Nothing plays past the root's `data-duration`.
+
+On the timeline, a sound plays where the clip *shows* its `data-start`: trimming the clip's head
+past a sound enters it part-way, a clip that ends mid-sound cuts it there, and a clip at 2×
+plays its sounds at 2× (through `atempo` in export, as a sped-up clip's own audio does). The
+clip's volume, its fade-in/out and any transition over its ends apply to every sound it
+declares, through the same gain function the preview uses — so what you hear while editing is
+what the export contains. A muted track silences its compositions too.
+
+**Not honoured:** volume *tweens* (`tl.to("#bgm", { volume: 0 })`). bay mixes each sound at its
+static `data-volume` and never sees the page's timeline, so fade the **clip** instead — set its
+fade-in/out or volume on the bay timeline. `read_composition` warns when a composition tweens
+`volume` in script.
+
+`read_composition` lists the sounds that will play under `audio`. A sound that will not — no
+`id`, no `src`, a remote or `data:` source, a file that does not exist where `src` resolves, a
+file ffprobe cannot read or with no audio stream, a `data-start` at or after the composition's
+end — is a `bad-audio` problem with its line instead, never a silent omission. None of these
+is fatal: the picture still places.

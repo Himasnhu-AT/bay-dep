@@ -27,10 +27,12 @@ import type {
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import type { Project, Timeline } from '@shared/project'
-import { findTimeline, timelineDuration } from '@shared/project'
+import { findAsset, findTimeline, timelineDuration } from '@shared/project'
 import { exportScratchDir } from '../paths'
 import { ffmpegBin, MediaToolError } from '../media/ffmpeg'
-import { buildAudioGraph } from './audio-graph'
+import { buildAudioGraph, type CompositionSounds } from './audio-graph'
+import { inspectComposition } from '../html/compositions'
+import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
 import { frameProblem, writeFrame } from './frame-pipe'
 
@@ -383,8 +385,38 @@ export async function pushFrame(frame: ExportFrame): Promise<void> {
 // Finishing
 // ---------------------------------------------------------------------------
 
+/**
+ * What each HTML composition on the timeline declares, read from its file now.
+ *
+ * Read at export rather than trusted from the asset, because the picture is rendered from the
+ * live file too: a sound list captured at import would disagree with the frames after the
+ * first edit to the composition. `inspectComposition` lists only sounds whose files exist and
+ * decode, which is what keeps one missing whoosh from failing the whole mix.
+ */
+async function declaredSounds(job: Job): Promise<CompositionSounds> {
+  const out = new Map<string, readonly CompositionSound[]>()
+  const seen = new Set<string>()
+  for (const track of job.timeline.tracks) {
+    for (const item of track.items) {
+      if (seen.has(item.assetId)) continue
+      seen.add(item.assetId)
+      const asset = findAsset(job.project, item.assetId)
+      if (!asset || asset.kind !== 'html' || !asset.path || asset.error) continue
+      const { info } = await inspectComposition(asset.path)
+      if (info && info.audio.length > 0) out.set(asset.id, info.audio)
+    }
+  }
+  return out
+}
+
 async function buildAudioTrack(job: Job): Promise<string | null> {
-  const graph = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame)
+  const graph = buildAudioGraph(
+    job.project,
+    job.timeline,
+    job.fromFrame,
+    job.toFrame,
+    await declaredSounds(job)
+  )
   if (!graph) return null
   const target = join(exportScratchDir(), `${job.id}.audio.wav`)
   const duration = job.framesTotal / job.fps
@@ -419,7 +451,13 @@ async function renderAudioOnly(job: Job): Promise<void> {
       stage: 'encoding',
       message: 'Mixing audio'
     })
-    const graph = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame)
+    const graph = buildAudioGraph(
+      job.project,
+      job.timeline,
+      job.fromFrame,
+      job.toFrame,
+      await declaredSounds(job)
+    )
     if (!graph) throw new Error('This timeline has no audio to export.')
     const duration = job.framesTotal / job.fps
     const args: string[] = ['-nostdin', '-v', 'error']

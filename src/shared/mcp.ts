@@ -237,7 +237,10 @@ export const TOOLS: ToolSpec[] = [
       'explicit pixel width and height; it must register exactly one paused GSAP timeline at ' +
       'window.__timelines[<that id>]; and nothing may load over the network, because bay blocks ' +
       'remote origins silently and a CDN script tag renders as a still frame. Vendor libraries ' +
-      'and fonts beside the file and reference them by relative path. The result reports every ' +
+      'and fonts beside the file and reference them by relative path. Sound is declared, not ' +
+      'captured: <audio id="whoosh" src="./whoosh.wav" data-start="0.2" data-volume="0.8"> with ' +
+      'a local file beside the composition is mixed in preview and export under the clip\'s ' +
+      'volume and fades; anything else on the page is silent. The result reports every ' +
       'problem found, with the line, before you place anything.',
     category: 'write',
     readOnly: false,
@@ -310,10 +313,12 @@ export const TOOLS: ToolSpec[] = [
   {
     name: 'read_composition',
     description:
-      'Read a composition back: its declared id, duration and size, every fault with the line ' +
-      'it is on, and optionally the HTML itself. Use it to check what you wrote before placing ' +
-      'it, and to inspect one you did not write before editing it. Faults are reported even ' +
-      'when the composition is usable — the non-fatal ones are the ones that matter most, ' +
+      'Read a composition back: its declared id, duration, size, variables and sounds, every ' +
+      'fault with the line it is on, and optionally the HTML itself. `audio` lists the sounds ' +
+      'that will play (<audio id src data-start> elements whose file exists locally); one that ' +
+      'is missing, remote or undecodable is a fault instead. Use it to check what you wrote ' +
+      'before placing it, and to inspect one you did not write before editing it. Faults are ' +
+      'reported even when the composition is usable — the non-fatal ones are the ones that matter most, ' +
       'because a blocked network request renders as a still frame with nothing in any log.',
     category: 'read',
     readOnly: true,

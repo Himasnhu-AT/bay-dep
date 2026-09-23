@@ -20,7 +20,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow } from 'electron'
 import type {
@@ -39,7 +39,9 @@ import {
   type CompositionFault,
   type CompositionInfo
 } from '@shared/composition'
-import { allowPath } from '../protocol'
+import { allowPath, isAllowed } from '../protocol'
+import { probe } from '../media/probe'
+import { checkSounds, fileChecks } from './audio'
 import { bgraToRgba, describeSizeMismatch } from './bitmap'
 import { seekScript, variablesScript } from './scripts'
 
@@ -132,9 +134,9 @@ export async function inspectComposition(
   path: string,
   includeHtml = false
 ): Promise<{ info: CompositionInfo | null; faults: CompositionFault[]; html?: string }> {
+  let html: string
   try {
-    const html = await readFile(path, 'utf8')
-    return { ...readComposition(html), ...(includeHtml ? { html } : {}) }
+    html = await readFile(path, 'utf8')
   } catch (error) {
     return {
       info: null,
@@ -148,6 +150,26 @@ export async function inspectComposition(
       ]
     }
   }
+
+  const { info, faults } = readComposition(html, path)
+  if (info) {
+    // Only sounds that exist and decode are declared onward; the rest become faults. See
+    // `./audio.ts` for why one bad file must not reach the export mix.
+    const checked = await checkSounds(info.audio, {
+      ...fileChecks,
+      hasAudio: async (soundPath) => (await probe(soundPath)).hasAudio
+    })
+    info.audio = checked.playable
+    faults.push(...checked.faults)
+    // The renderer plays these over `bay://`, which serves allowlisted paths only. Allowed on
+    // the composition's authority: a composition the renderer may already read may bring its
+    // own sounds, and one it may not (an unimported file read back by read_composition) grants
+    // nothing — inspecting a file must not become a way to open up whatever it names.
+    if (isAllowed(resolve(path))) {
+      for (const sound of info.audio) if (sound.path) allowPath(sound.path)
+    }
+  }
+  return { info, faults, ...(includeHtml ? { html } : {}) }
 }
 
 /**
@@ -176,9 +198,11 @@ export async function compositionAsset(path: string): Promise<Asset> {
     width: info?.width ?? null,
     height: info?.height ?? null,
     fps: null,
-    // A composition can hold <audio>, but bay does not yet mix a composition's own sound —
-    // saying it has audio would put a silent waveform in the inspector and an empty track in
-    // an export. Claimed when it is true, not before.
+    // False even when the composition declares sounds. `hasAudio` means "this file is a media
+    // source ffmpeg can decode as audio" — it routes clip audio, waveforms and peaks — and an
+    // HTML file is none of those. A composition's declared sounds are mixed by their own path
+    // (`@shared/composition-audio`), read from the live file each time, so they cannot go
+    // stale against the picture the way a flag set at import would.
     hasAudio: false,
     hasVideo: info !== null,
     posterPath: null,
