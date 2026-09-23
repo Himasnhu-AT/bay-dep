@@ -45,7 +45,7 @@ const MIME: Record<string, string> = {
   '.tiff': 'image/tiff'
 }
 
-export function mimeFor(p: string): string {
+function mimeFor(p: string): string {
   return MIME[extname(p).toLowerCase()] ?? 'application/octet-stream'
 }
 

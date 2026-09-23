@@ -33,7 +33,7 @@ import {
  */
 export const PROTOCOL_VERSION = '2024-11-05'
 
-export const SERVER_INFO = { name: 'bay', version: '0.1.0' } as const
+const SERVER_INFO = { name: 'bay', version: '0.1.0' } as const
 
 export interface ToolOutcome {
   ok: boolean
@@ -112,7 +112,7 @@ export function toolModeFromEnv(value: string | undefined): {
   }
 }
 
-export const GATEWAY_TOOLS: readonly Record<string, unknown>[] = [
+const GATEWAY_TOOLS: readonly Record<string, unknown>[] = [
   {
     name: 'get_active_project',
     description:
@@ -167,7 +167,7 @@ function purpose(description: string): string {
  * description is where "frames, not seconds" and "accepts @./file.json" live, and a gateway
  * that dropped them to save bytes would save them from the one call that is meant to carry them.
  */
-export function guidelinesText(): string {
+function guidelinesText(): string {
   const lines: string[] = [
     "bay's operations. Run any of them with execute { tool, args }. Every time is a frame " +
       'index at the timeline fps (get_active_project reports it), never seconds. Ids are ' +

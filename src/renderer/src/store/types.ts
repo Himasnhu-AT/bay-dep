@@ -1,0 +1,355 @@
+/**
+ * The editor store's shape: its state and every action, as the UI and the engine see them.
+ * Split out of `editor.ts` so the store's behaviour and its contract can be read separately.
+ */
+
+import type {
+  Asset,
+  Crop,
+  Frames,
+  Item,
+  Layout,
+  Project,
+  TextStyle,
+  Track,
+  TrackKind,
+  Transition,
+  TransitionDirection,
+  TransitionKind
+} from '@shared/project'
+import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
+import type { Pin } from '@shared/pins'
+import type { RippleDeleteResult } from '@shared/ripple'
+import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
+import type { CaptionCue } from '@shared/captions'
+import type { ScriptOp } from '@shared/script'
+import type { WhisperDownload } from '@shared/whisper'
+import type { AgentCheckpoint, AgentRevert } from './agent-turns'
+
+/** The three regions around the preview that can be hidden. The preview itself cannot. */
+export type RegionId = 'side' | 'inspector' | 'timeline'
+
+/** What the window shows: the projects screen, or a project open in the editor. */
+export type Screen = 'home' | 'editor'
+
+export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export'
+
+export interface EditorState {
+  project: Project
+  /** Item ids. Multi-select is supported; most operations act on all of them. */
+  selection: string[]
+  playhead: Frames
+  playing: boolean
+  /** Horizontal timeline scale, in CSS pixels per frame. */
+  pixelsPerFrame: number
+  /** Which left-hand panel is showing. */
+  panel: PanelId
+  /**
+   * Which regions are hidden. View state, never project state: it is not saved in the document
+   * and never lands on the undo stack — hiding the inspector is not an edit.
+   */
+  hiddenRegions: Record<RegionId, boolean>
+  /**
+   * Debug mode: shows tools for reporting problems, such as exporting the agent transcript.
+   * A per-machine preference (localStorage), off by default; View → Toggle Debug Mode.
+   */
+  debugMode: boolean
+  /** The Settings dialog. Opened from the top bar, the projects screen, or ⌘,. */
+  settingsOpen: boolean
+  /**
+   * Let a transcription fetch a whisper model when this Mac has none. On by default: the user
+   * asked for captions, and a download they can watch and cancel beats an error telling them to
+   * go and find a file. Main reaches the network for it only when this says yes.
+   */
+  autoDownloadModels: boolean
+  /** The whisper model chosen in Settings, by file name; null lets bay pick. */
+  whisperModel: string | null
+  /** The model download in progress (or the last one to fail), pushed from main. */
+  whisperDownload: WhisperDownload | null
+  /**
+   * The projects screen or the editor. At launch this is `home`, and the project in the store
+   * is an empty placeholder nobody chose — which is why the agent surface refuses to act on it.
+   */
+  screen: Screen
+  /** Set while the user drags the playhead — playback yields to scrubbing. */
+  scrubbing: boolean
+  /** Non-blocking messages surfaced in the status bar. */
+  toast: { id: number; kind: 'info' | 'error'; text: string } | null
+  /**
+   * Whether an in-app agent session is driving, and what it has been approved to do.
+   *
+   * `null` means no session — and therefore no gate, which is the state bay is in when Claude
+   * Code drives it over the socket. Session state rather than project state: it must not be
+   * saved, must not land on the undo stack, and must not survive a reload, because an approval
+   * belongs to the conversation in front of you and one that outlived it would be a standing
+   * permission nobody granted.
+   */
+  agentGate: AgentGate | null
+  /**
+   * The conversation, oldest first.
+   *
+   * A flat list rather than a tree of turns: a tool call and the text around it interleave, and
+   * grouping them into turns would put the renderer in charge of deciding where a turn ended —
+   * a judgement the stream already makes and one the panel would get wrong on a run that errors
+   * halfway.
+   */
+  agentLog: AgentEntry[]
+  /** True between `started` and `done`. What the stop button reads. */
+  agentRunning: boolean
+  /** The proposal waiting on the user, if any. */
+  agentProposal: Proposal | null
+  /** Whether an in-app agent conversation is running — separate from whether it is gated. */
+  agentSessionActive: boolean
+  /**
+   * "Ask before editing": when on, the agent's writes wait for an approved proposal. Off by
+   * default — the agent edits directly, every turn's changes are shown as a diff, and any turn
+   * can be reverted. Remembered per machine.
+   */
+  agentApproval: boolean
+  /** The project as it was when the current agent turn started; null between turns. */
+  agentTurnBase: Project | null
+  /**
+   * Files the agent rewrote this turn (compositions), with what each held before its first
+   * write — null when the file did not exist. A composition rewrite changes the picture without
+   * changing the project, so the project diff alone would show nothing to revert.
+   */
+  agentTurnFiles: Record<string, { before: string | null; after: string }>
+  /** Whether the project took a real (non-silent) change during the current turn. */
+  agentTurnEdited: boolean
+  /** Whether any of those changes came from the user rather than the agent's tool calls. */
+  agentTurnUserEdited: boolean
+  /** What each `changes` entry can restore, by its id. Capped at `MAX_AGENT_CHECKPOINTS`. */
+  agentCheckpoints: Record<string, AgentCheckpoint>
+  /** Every revert still reachable by undo/redo, so the cards follow the project back and forth. */
+  agentReverts: AgentRevert[]
+  /**
+   * Bumped per path when a composition file is rewritten underneath the app (a revert restoring
+   * it). The engine drops that composition's cached frames when its count moves.
+   */
+  compositionEpochs: Record<string, number>
+  /**
+   * What the composer's `@` menu has pinned: assets, clips, time ranges. Sticky — they stay
+   * until removed, and every message carries them — because "work only in 0:10–0:15" is usually
+   * a whole conversation, not one sentence. The timeline draws the pinned ranges on its ruler.
+   */
+  agentPins: Pin[]
+  dirty: boolean
+  past: Project[]
+  future: Project[]
+}
+
+export interface EditorActions {
+  // project ------------------------------------------------------------------
+  setProject(project: Project, options?: { resetHistory?: boolean }): void
+  renameProject(name: string): void
+  setCanvasPreset(presetId: string): void
+  // agent ---------------------------------------------------------------------
+  /** Begin an in-app agent session: from here writes are gated until something is approved. */
+  startAgentSession(): void
+  /** Append what the user typed, so it reads in order beside the replies. */
+  logUserMessage(text: string, pins?: Pin[]): void
+  /** Fold one runtime event into the conversation. */
+  applyAgentEvent(event: AgentEvent): void
+  /** Throw the conversation away. The gate and the session are untouched. */
+  clearAgentLog(): void
+  /** End it. Writes stop being gated, because nothing in-app is driving any more. */
+  endAgentSession(): void
+  /**
+   * Record that the user approved one option of a proposal. Replaces any previous approval:
+   * approving a new plan is not an extension of the old one, and leaving both live would let
+   * an agent mix operations from two plans the user considered separately.
+   */
+  approveProposal(proposal: Proposal, optionId: string): void
+  setAgentApproval(on: boolean): void
+  /**
+   * Put the project back as it was before an agent turn. Undoable, like any edit. If the project
+   * has changed since that turn, those later changes go too — the confirmation says so.
+   */
+  revertAgentChange(id: string): void
+  /** An agent tool rewrote a file this turn; remember what it held first so a revert can restore it. */
+  recordAgentFileWrite(path: string, before: string | null, after: string): void
+  /** A composition file changed on disk; cached frames of it are stale. */
+  markCompositionChanged(path: string): void
+  addAgentPin(pin: Pin): void
+  removeAgentPin(key: string): void
+  clearAgentPins(): void
+  /** Turn down the pending proposal. Nothing is approved; the session stays gated. */
+  declineProposal(): void
+  /** Withdraw approval, leaving the session gated with nothing permitted. */
+  revokeApproval(): void
+  /**
+   * Mark one approved operation as carried out. Called by the executor *after* the tool
+   * succeeded, never before: a call that threw changed nothing, and spending the approval on
+   * it would block the retry the error message is asking for.
+   */
+  consumeApproval(index: number): void
+  /**
+   * Change the timeline's frame rate, moving every clip so it stays at the same wall-clock
+   * time. Returns how many clips had to be nudged a frame to keep the order legal, so the UI
+   * can say so — a retime that silently moved something is the kind of edit people discover
+   * three exports later.
+   */
+  setFps(fps: number): { nudged: number }
+
+  // assets -------------------------------------------------------------------
+  addAssets(assets: Asset[]): void
+  removeAsset(assetId: string): void
+  /**
+   * Change what an asset *is*, for every item that places it: its name, and for a text asset
+   * the words it draws. An undoable edit, unlike `patchAsset`, which exists for poster and
+   * waveform arrivals that are not edits at all. `text` on a non-text asset is ignored here and
+   * refused by the tool, which can say why.
+   */
+  editAsset(assetId: string, patch: { name?: string; text?: string }): void
+  patchAsset(assetId: string, patch: Partial<Asset>): void
+
+  // items --------------------------------------------------------------------
+  /** Places an asset at `atFrame`, choosing a track that has room. Returns the new item id. */
+  placeAsset(assetId: string, atFrame?: Frames, trackId?: string): string | null
+  moveItem(itemId: string, toFrame: Frames, toTrackId?: string): void
+  trimItem(itemId: string, edge: 'start' | 'end', toFrame: Frames): void
+  /**
+   * Slip, slide or roll one clip — see `@shared/trim` for what each keeps still.
+   *
+   * Returns the plan it applied, or the refusal with the legal range. Unlike `trimItem`, which
+   * clamps a drag to what fits, this never clamps: the caller asked for a specific number of
+   * frames, and "moved by 12 when you asked for 40" reported as success is a lie. The timeline
+   * clamps its gestures *before* calling, using the same planner.
+   */
+  trimEdit(spec: TrimSpec): TrimPlan | TrimRefusal
+  splitAt(frame?: Frames): void
+  deleteSelected(): void
+  /**
+   * Removes a span of timeline and closes the hole, keeping every unlocked track in step.
+   *
+   * `deleteSelected` lifts and leaves the gap; this one ripples. With no range given it uses
+   * the span the selection covers — from the earliest selected frame to the latest — which
+   * means selecting two clips with a gap between them removes the gap too. That is what
+   * "remove this stretch" means, and the alternative (closing up only the clips and keeping
+   * the hole between them) is not an operation anybody wants.
+   */
+  rippleDelete(fromFrame?: Frames, toFrame?: Frames): RippleDeleteResult | null
+  duplicateSelected(): void
+  patchItem(itemId: string, patch: Partial<Omit<Item, 'id' | 'trackId'>>): void
+  /**
+   * Set one of a composition clip's declared variables, on that clip alone.
+   *
+   * A value equal to the composition's default is **removed** rather than stored. Otherwise a
+   * project records every knob the user ever touched and then touched back, and the stored
+   * value silently stops tracking the composition when its default changes.
+   */
+  setCompositionVariable(itemId: string, id: string, value: string | number | boolean): void
+  /** Set one edge of a clip's crop, as a fraction of the source. */
+  setCrop(itemId: string, edge: keyof Crop, fraction: number): void
+  patchLayout(itemId: string, patch: Partial<Layout>): void
+
+  // tracks -------------------------------------------------------------------
+  addTrack(kind: TrackKind): string
+  removeTrack(trackId: string): void
+  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name'>>): void
+
+  // transitions ---------------------------------------------------------------
+  /**
+   * Add a transition across the cut between two adjacent items. Returns its id, or a reason
+   * it was refused — the caller needs to be able to say *why*, not just that nothing happened.
+   *
+   * Refuses a pair that is not adjacent rather than storing one that `resolveTransition` will
+   * silently drop later. A transition that exists in the project and never draws is the
+   * failure this codebase keeps finding; catching it at the write is the only place the
+   * caller still has the context to fix it.
+   */
+  addTransition(spec: {
+    fromItemId: string
+    toItemId: string
+    kind: TransitionKind
+    durationInFrames: Frames
+    direction?: TransitionDirection
+  }): { id: string } | { error: string }
+  removeTransition(transitionId: string): void
+  /**
+   * Apply a diffed script (see `@shared/script`) as one edit. The operations were validated by
+   * `diffScript` against this exact timeline; callers wrap this in `transact` like any tool.
+   */
+  applyScript(timelineId: string, operations: readonly ScriptOp[]): void
+  patchTransition(
+    transitionId: string,
+    patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
+  ): void
+
+  // captions ------------------------------------------------------------------
+  /**
+   * Place caption cues as text items on a new video track above every other, in one undo step.
+   *
+   * A new track rather than free space on an existing one, because captions must draw over
+   * the picture and a track's position in the stack is what decides that; and a dedicated one
+   * so that muting, hiding or deleting the captions is one track-level action. Refuses the
+   * whole set if any cue is unplaceable — half a caption file is worse than none, because the
+   * missing lines are the ones nobody checks.
+   *
+   * Identical lines share one text asset, since text lives on the asset: a repeated "[music]"
+   * is one asset placed many times, not many copies of one string.
+   */
+  addCaptions(
+    cues: readonly CaptionCue[],
+    look?: { style?: TextStyle; layout?: Layout }
+  ): { trackId: string; trackName: string; itemIds: string[]; assetIds: string[] } | { error: string }
+
+  // markers -----------------------------------------------------------------
+  /**
+   * Put a marker on the active timeline. Returns its id, or null when there is no timeline.
+   * With no label it is numbered, because an unlabelled flag in a row of them is a flag nobody
+   * can refer to.
+   */
+  addMarker(frame: Frames, label?: string, color?: string): string | null
+  moveMarker(markerId: string, frame: Frames): void
+  removeMarker(markerId: string): void
+
+  // selection / view ---------------------------------------------------------
+  select(itemIds: string[], additive?: boolean): void
+  clearSelection(): void
+  setPlayhead(frame: Frames): void
+  nudgePlayhead(deltaFrames: Frames): void
+  setPlaying(playing: boolean): void
+  togglePlay(): void
+  setScrubbing(scrubbing: boolean): void
+  setPixelsPerFrame(pixelsPerFrame: number): void
+  zoomBy(factor: number): void
+  setPanel(panel: PanelId): void
+  /** Show or hide one region. */
+  setRegionHidden(region: RegionId, hidden: boolean): void
+  toggleRegion(region: RegionId): void
+  toggleDebugMode(): void
+  setSettingsOpen(open: boolean): void
+  setAutoDownloadModels(on: boolean): void
+  setWhisperModel(file: string | null): void
+  setWhisperDownload(download: WhisperDownload | null): void
+  /** Open a project in the editor: it becomes the document, with fresh history. */
+  enterProject(project: Project): void
+  /** Back to the projects screen. The caller decides what happens to unsaved work first. */
+  showHome(): void
+  notify(text: string, kind?: 'info' | 'error'): void
+  dismissToast(): void
+
+  // history ------------------------------------------------------------------
+  undo(): void
+  redo(): void
+  markSaved(): void
+  /**
+   * Run several mutations as one undoable step.
+   *
+   * Exists because "one edit is one undo step" is a promise the agent surface makes, and
+   * some operations need more than one store call to keep it — moving an item to another
+   * track is `patchItem` plus `moveItem`, and a ripple delete is a delete plus one move per
+   * item after it. Without grouping, `undo` gives back a fraction of what was done, which is
+   * worse than not undoing at all: the project is left in a state neither the user nor the
+   * agent asked for.
+   *
+   * Nested calls join the outer transaction rather than closing it. A transaction that
+   * changes nothing pushes no entry — an empty undo step is a control that does nothing.
+   * If `work` throws, whatever it managed to change is still committed as one entry, so the
+   * user can take back a half-finished edit.
+   */
+  transact(work: () => void): void
+}
+
+export type EditorStore = EditorState & EditorActions

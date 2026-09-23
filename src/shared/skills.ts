@@ -180,7 +180,7 @@ export const BAY_SKILLS: readonly BaySkill[] = [
 /** The CLI's rule for a skill name: lowercase letters, digits and hyphens. */
 export const SKILL_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
-export function findSkill(slug: string): BaySkill | undefined {
+function findSkill(slug: string): BaySkill | undefined {
   return BAY_SKILLS.find((skill) => skill.slug === slug)
 }
 

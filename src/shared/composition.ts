@@ -364,7 +364,7 @@ function attributeOf(tag: string, name: string): string | undefined {
  *
  * Pure string work rather than `node:path`, because this module is shared with the renderer.
  */
-export function resolveSoundSource(
+function resolveSoundSource(
   compositionPath: string,
   src: string
 ): { path: string } | { remote: true } | { unsupported: string } {

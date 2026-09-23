@@ -147,7 +147,6 @@ export function Composer({
   const timeline = useEditor(selectTimeline)
   const fps = useEditor(selectFps)
   const selection = useEditor((state) => state.selection)
-  const playhead = useEditor((state) => state.playhead)
   const pins = useEditor((state) => state.agentPins)
   const addPin = useEditor((state) => state.addAgentPin)
   const removePin = useEditor((state) => state.removeAgentPin)
@@ -391,6 +390,9 @@ export function Composer({
                   to: Math.max(...selected.map(itemEnd))
                 }
               }
+              // Read when the dialog opens, not subscribed: a subscription re-rendered the whole
+              // composer on every frame of playback to seed a dialog that is almost never open.
+              const playhead = useEditor.getState().playhead
               return { from: playhead, to: playhead + Math.round(5 * fps) }
             })()}
             onCancel={() => {

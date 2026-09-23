@@ -52,7 +52,7 @@ function remember(key: string, value: string): void {
 }
 
 /** "just now", "5 min ago", "3 h ago", "2 d ago", then a date. */
-export function relativeTime(then: number, now: number): string {
+function relativeTime(then: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - then) / 1000))
   if (seconds < 60) return 'just now'
   const minutes = Math.round(seconds / 60)

@@ -131,7 +131,7 @@ function executorWebContents(): WebContents | null {
  * would otherwise leave the agent's turn stalled with no verdict at all, which is strictly
  * worse than a failure: a failure it can read and route around.
  */
-export async function callRenderer(
+async function callRenderer(
   tool: string,
   args: Record<string, unknown>
 ): Promise<McpToolResult> {

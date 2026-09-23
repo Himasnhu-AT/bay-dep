@@ -174,7 +174,7 @@ export interface SoundRouting {
 }
 
 /** The stand-in asset id for sound `index` of `item`. */
-export function soundAssetId(item: Item, index: number): string {
+function soundAssetId(item: Item, index: number): string {
   return `${item.assetId}~sound~${item.id}~${index}`
 }
 

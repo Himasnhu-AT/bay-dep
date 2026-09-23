@@ -253,3 +253,21 @@ test('with approval off, a session is not gated; turning it on gates the running
   assert.equal(state().agentGate, null)
   state().endAgentSession()
 })
+
+test('undoing back to the saved state reads as saved; one step further does not', () => {
+  fresh()
+  state().renameProject('Saved name')
+  state().markSaved()
+  const saved = state().project
+  state().renameProject('Edited after saving')
+  assert.equal(state().dirty, true)
+  state().undo()
+  assert.equal(state().project, saved, 'specimen: back to the very object that was saved')
+  assert.equal(state().dirty, false, 'the file already holds this')
+  state().undo()
+  assert.equal(state().dirty, true, 'before the save is not what the file holds')
+  state().redo()
+  assert.equal(state().dirty, false, 'redo back onto the saved state')
+  state().redo()
+  assert.equal(state().dirty, true)
+})

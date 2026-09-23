@@ -49,7 +49,7 @@ export const MIGRATIONS: Record<number, (doc: RawDocument) => RawDocument> = {
 }
 
 /** The version a raw document claims; absent means it predates the field, which is 0. */
-export function documentVersion(doc: RawDocument): number {
+function documentVersion(doc: RawDocument): number {
   return doc.version === undefined ? 0 : (doc.version as number)
 }
 

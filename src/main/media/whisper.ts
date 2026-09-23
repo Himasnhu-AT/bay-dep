@@ -63,7 +63,7 @@ export function pickWhisperModel(paths: readonly string[], language: string, pre
 export const ownModelDir = (userDataDir: string): string => join(userDataDir, 'whisper-models')
 
 /** Where models are looked for, bay's own folder first. */
-export function modelDirs(userDataDir: string, homeDir: string): string[] {
+function modelDirs(userDataDir: string, homeDir: string): string[] {
   return [
     ownModelDir(userDataDir),
     join(homeDir, '.cache', 'whisper.cpp'),
@@ -121,7 +121,7 @@ async function findExecutable(name: string, extraDirs: readonly string[] = []): 
 // An app launched from the Dock gets a bare PATH, so Homebrew's prefixes are named outright.
 const BREW_DIRS = ['/opt/homebrew/bin', '/usr/local/bin']
 
-export async function findWhisper(
+async function findWhisper(
   userDataDir: string,
   homeDir: string,
   language: string,
