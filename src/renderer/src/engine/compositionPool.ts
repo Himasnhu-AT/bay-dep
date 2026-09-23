@@ -57,7 +57,27 @@ interface CacheEntry {
   bitmap: ImageBitmap
   bytes: number
   usedAt: number
+  /** Asset, size and variables — everything in the key but the time — for finding a held frame. */
+  stream: string
+  atUs: number
 }
+
+/**
+ * Live preview only: how far back a decoded frame may stand in for the one asked for. Long
+ * enough to cover a capture's 40-80ms and a backlog behind it; short enough that a paused
+ * composition never shows a picture from a different moment of its animation for long.
+ */
+const HOLD_US = 1_000_000
+
+/** Live preview only: how many frames ahead of the playhead to fetch while playing. */
+const LOOKAHEAD_FRAMES = 3
+
+/**
+ * Live preview only: queued captures beyond this are dropped, oldest first. While playing, a
+ * capture for a moment already past is work nobody will see; export and `preview_frame` use
+ * their own pools, which queue everything.
+ */
+const LIVE_QUEUE_LIMIT = 8
 
 type ReadyListener = () => void
 
@@ -92,8 +112,26 @@ export class CompositionPool {
   /** Assets this pool has ever opened, so `dispose` can close their windows in main. */
   readonly #opened = new Set<string>()
 
-  constructor(options: { budgetBytes?: number } = {}) {
+  /**
+   * The preview's pool, as opposed to export's or `preview_frame`'s. They answer "the exact frame
+   * or nothing" — a render writes each frame once and waits for it. The preview cannot wait: it
+   * draws thirty times a second, and every frame of a playing composition is a new moment that
+   * is not in the cache yet, so a pool that answered only exact hits drew the composition only
+   * while paused (it was invisible during playback). Live, a miss is answered with the latest
+   * frame already decoded for that clip, the newest requests are served first, and frames ahead
+   * of the playhead are fetched while playing.
+   */
+  readonly #live: boolean
+  #playing = false
+
+  constructor(options: { budgetBytes?: number; live?: boolean } = {}) {
     this.#budgetBytes = options.budgetBytes ?? DEFAULT_BUDGET_BYTES
+    this.#live = options.live === true
+  }
+
+  /** The preview tells the pool when playback starts and stops, so it only looks ahead while playing. */
+  setPlaying(playing: boolean): void {
+    this.#playing = playing
   }
 
   /**
@@ -119,20 +157,57 @@ export class CompositionPool {
     // are two different frames at the same instant, and a key without them would hand the
     // second clip whatever the first rendered — with nothing looking broken.
     const values = resolveVariables({ variables: asset.compositionVariables ?? [] }, item.variables)
-    const key = cacheKey(asset.id, width, height, atUs, variablesKey(values))
+    const variables = variablesKey(values)
+    const key = cacheKey(asset.id, width, height, atUs, variables)
 
     const hit = this.#cache.get(key)
     if (hit) {
       hit.usedAt = performance.now()
       this.#hits += 1
+      if (this.#live && this.#playing) this.#lookAhead(asset, item, frame, fps, width, height, values, variables)
       return hit.bitmap
     }
 
     this.#misses += 1
-    this.#request(key, asset, atUs, width, height, values, {
-      variables: asset.compositionVariables ?? []
-    })
-    return null
+    const info = { variables: asset.compositionVariables ?? [] }
+    this.#request(key, asset, atUs, width, height, values, info)
+    if (!this.#live) return null
+    if (this.#playing) this.#lookAhead(asset, item, frame, fps, width, height, values, variables)
+    return this.#held(streamOf(asset.id, width, height, variables), atUs)
+  }
+
+  /** Ask for the next few frames, so they are decoded by the time the playhead reaches them. */
+  #lookAhead(
+    asset: Asset,
+    item: Item,
+    frame: number,
+    fps: number,
+    width: number,
+    height: number,
+    values: Record<string, string | number | boolean>,
+    variables: string
+  ): void {
+    const info = { variables: asset.compositionVariables ?? [] }
+    for (let k = 1; k <= LOOKAHEAD_FRAMES; k++) {
+      const atUs = clampToAsset(sourceTimeAt(item, frame + k, fps), asset)
+      const key = cacheKey(asset.id, width, height, atUs, variables)
+      if (!this.#cache.has(key)) this.#request(key, asset, atUs, width, height, values, info)
+    }
+  }
+
+  /** The latest decoded frame of this clip at or before `atUs`, within `HOLD_US`; else the nearest after. */
+  #held(stream: string, atUs: number): ImageBitmap | null {
+    let before: CacheEntry | null = null
+    let after: CacheEntry | null = null
+    for (const entry of this.#cache.values()) {
+      if (entry.stream !== stream) continue
+      const gap = atUs - entry.atUs
+      if (gap >= 0 && gap <= HOLD_US && (!before || entry.atUs > before.atUs)) before = entry
+      if (gap < 0 && -gap <= HOLD_US && (!after || entry.atUs < after.atUs)) after = entry
+    }
+    const held = before ?? after
+    if (held) held.usedAt = performance.now()
+    return held?.bitmap ?? null
   }
 
   /**
@@ -245,6 +320,12 @@ export class CompositionPool {
     if (this.#inFlight.size >= MAX_CONCURRENT_REQUESTS) {
       if (!this.#queued.has(key)) {
         this.#queued.set(key, () => this.#start(key, asset, atUs, width, height, variables, info))
+        // Live, the oldest queued moments are the ones the playhead has already passed.
+        while (this.#live && this.#queued.size > LIVE_QUEUE_LIMIT) {
+          const oldest = this.#queued.keys().next()
+          if (oldest.done) break
+          this.#queued.delete(oldest.value)
+        }
       }
       return
     }
@@ -292,7 +373,7 @@ export class CompositionPool {
         }
         const bitmap = await createImageBitmap(new ImageData(data, frame.width, frame.height))
         this.#failedAt.delete(key)
-        this.#store(key, bitmap, data.length)
+        this.#store(key, bitmap, data.length, streamOf(asset.id, width, height, variablesKey(variables)), atUs)
       } catch {
         // A frame that cannot be produced is a frame the compositor draws nothing for. It is
         // retried, but only after a pause — see `#failedAt`.
@@ -317,9 +398,11 @@ export class CompositionPool {
   /** Start queued captures up to the concurrency cap. */
   #pump(): void {
     while (this.#inFlight.size < MAX_CONCURRENT_REQUESTS && this.#queued.size > 0) {
-      const next = this.#queued.entries().next()
-      if (next.done) return
-      const [key, begin] = next.value
+      // Live, newest first: the playhead is at the latest request, not the earliest. A render
+      // needs every queued frame and serves them in order.
+      const next = this.#live ? [...this.#queued.entries()].at(-1) : this.#queued.entries().next().value
+      if (!next) return
+      const [key, begin] = next
       this.#queued.delete(key)
       // A picture that arrived while this was waiting needs no capture at all.
       if (this.#cache.has(key) || this.#inFlight.has(key)) continue
@@ -327,13 +410,13 @@ export class CompositionPool {
     }
   }
 
-  #store(key: string, bitmap: ImageBitmap, bytes: number): void {
+  #store(key: string, bitmap: ImageBitmap, bytes: number, stream: string, atUs: number): void {
     const existing = this.#cache.get(key)
     if (existing) {
       existing.bitmap.close()
       this.#bytes -= existing.bytes
     }
-    this.#cache.set(key, { bitmap, bytes, usedAt: performance.now() })
+    this.#cache.set(key, { bitmap, bytes, usedAt: performance.now(), stream, atUs })
     this.#bytes += bytes
     this.#evictToBudget()
   }
@@ -355,6 +438,11 @@ export class CompositionPool {
       this.#cache.delete(key)
     }
   }
+}
+
+/** Everything that identifies a clip's pictures except the moment: which frames can stand in for each other. */
+function streamOf(assetId: string, width: number, height: number, variables: string): string {
+  return `${assetId}:${width}x${height}:${variables}`
 }
 
 export function cacheKey(

@@ -118,7 +118,7 @@ export interface EngineHandle {
  */
 class Engine {
   readonly pool = new MediaPool()
-  readonly compositions = new CompositionPool()
+  readonly compositions = new CompositionPool({ live: true })
   readonly compositor = new Compositor(this.pool, this.compositions)
   readonly audio = new AudioEngine(this.pool)
   readonly clock = new PlaybackClock()
@@ -267,6 +267,7 @@ class Engine {
     if (state.scrubbing !== previous.scrubbing) this.clock.setYielding(state.scrubbing)
 
     if (state.playing !== previous.playing) {
+      this.compositions.setPlaying(state.playing)
       if (state.playing) {
         void this.audio.resume()
         this.clock.seek(state.playhead)
