@@ -20,6 +20,7 @@ import {
   type Bounds
 } from '../window-state'
 import { allowPaths } from '../protocol'
+import { admissibleFromProject } from '../serve'
 import { adoptAssets } from '../media/import'
 import { describeStorage, openDatabase, type AppDatabase } from './db'
 import {
@@ -178,7 +179,8 @@ export async function recent(): Promise<RecentProject[]> {
  */
 function admitAssets(project: Project): Project {
   adoptAssets(project.assets)
-  allowPaths(project.assets.map((asset) => asset.path))
+  // Not every path a document names: see `admissibleFromProject`.
+  allowPaths(project.assets.map((asset) => asset.path).filter((path) => path !== null && admissibleFromProject(path)))
   return project
 }
 

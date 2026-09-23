@@ -121,6 +121,21 @@ test('size is read from width/height attributes as well as from style', () => {
   assert.equal(info?.height, 720)
 })
 
+test('a file outside the composition’s folder is reported; one inside it is not', () => {
+  const html = ROOT(
+    'data-composition-id="hero" data-duration="5" style="width:10px;height:10px"',
+    '<img src="../shared/logo.png"><img src="/Users/x/pic.png"><img src="file:///etc/hosts">' +
+      '<img src="assets/ok.png"><img src="./also-ok.png"><script src="//cdn.example/x.js"></script>'
+  )
+  const outside = readComposition(html).faults.filter((f) => f.code === 'outside-folder')
+  assert.deepEqual(
+    outside.map((f) => /loads (\S+),/.exec(f.message)?.[1]),
+    ['../shared/logo.png', '/Users/x/pic.png', 'file:///etc/hosts'],
+    'the relative paths inside the folder, and the protocol-relative URL (a remote fault), are not this fault'
+  )
+  assert.ok(outside.every((f) => !f.fatal))
+})
+
 test('a remote resource is reported, and is not fatal', () => {
   const html = ROOT(
     'data-composition-id="hero" data-duration="5" style="width:10px;height:10px"',

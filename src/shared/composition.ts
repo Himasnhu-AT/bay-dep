@@ -164,6 +164,7 @@ export type CompositionFaultCode =
   | 'bad-duration'
   | 'no-size'
   | 'remote-resource'
+  | 'outside-folder'
   | 'wrapped-in-template'
   | 'bad-variables'
   | 'bad-audio'
@@ -286,6 +287,21 @@ export function readComposition(html: string, compositionPath?: string): {
         `as a still frame and a missing font silently substitutes. Vendor the file next to the ` +
         `composition and reference it by relative path.`,
       line: lineOf(remote.index),
+      fatal: false
+    })
+  }
+
+  // And a composition's window may load only from its own folder (main's sandbox), so a path that
+  // climbs out of it, or names an absolute file, is blocked just as silently.
+  for (const outside of html.matchAll(/(?:src|href)\s*=\s*["']((?:\.\.\/|\/(?!\/)|file:)[^"']*)["']/gi)) {
+    if (audioTags.some((tag) => outside.index >= tag.start && outside.index < tag.end)) continue
+    faults.push({
+      code: 'outside-folder',
+      message:
+        `This composition loads ${truncate(outside[1] ?? '')}, which is outside its own folder. A ` +
+        `composition may load only files in its folder or below — anything else is blocked with ` +
+        `no error on the page. Copy the file next to the composition and reference it by relative path.`,
+      line: lineOf(outside.index),
       fatal: false
     })
   }

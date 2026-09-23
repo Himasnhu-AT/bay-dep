@@ -37,7 +37,9 @@ export default defineConfig({
           index: resolve('src/preload/index.ts'),
           composition: resolve('src/preload/composition.ts')
         },
-        output: { entryFileNames: '[name].js' }
+        // CommonJS, because a sandboxed renderer cannot load an ES-module preload, and the
+        // composition window is sandboxed. `.cjs` because package.json says "type": "module".
+        output: { format: 'cjs', entryFileNames: '[name].cjs' }
       }
     }
   },

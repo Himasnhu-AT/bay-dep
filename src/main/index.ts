@@ -79,7 +79,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 20 } : undefined,
     webPreferences: {
-      preload: join(here, '../preload/index.mjs'),
+      preload: join(here, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       // The ffmpeg spawns need Node, and the preload script has to be able to reach the

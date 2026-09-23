@@ -24,7 +24,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { mediaUrl, parseRange, serveFile } from './serve'
+import { admissibleFromProject, mediaUrl, parseRange, serveFile } from './serve'
 
 const SIZE = 1000
 
@@ -231,4 +231,19 @@ test('mediaUrl matches the base64url the renderer engine builds', () => {
     .replace(/\//g, '_')
     .replace(/=+$/, '')
   assert.equal(mediaUrl(path), `bay://media/${expected}`)
+})
+
+test('a project file cannot admit hidden files or folders to bay://; ordinary media can be', () => {
+  // Positive controls first: the paths real projects hold.
+  assert.equal(admissibleFromProject('/Users/me/Movies/interview.mp4'), true)
+  assert.equal(admissibleFromProject('/Users/me/Projects/Launch v2/title.html'), true)
+  assert.equal(admissibleFromProject('/Users/me/Movies/take.1.final.mov'), true, 'dots inside a name are fine')
+  // What a hostile .bay would list as "media".
+  assert.equal(admissibleFromProject('/Users/me/.ssh/id_rsa'), false)
+  assert.equal(admissibleFromProject('/Users/me/.aws/credentials'), false)
+  assert.equal(admissibleFromProject('/Users/me/Movies/.env'), false)
+  assert.equal(admissibleFromProject('relative/clip.mp4'), false)
+  const traversal = '/Users/me/Movies/' + '..' + '/.ssh/id_rsa'
+  assert.ok(traversal.includes('/../'), 'specimen keeps its ..')
+  assert.equal(admissibleFromProject(traversal), false)
 })

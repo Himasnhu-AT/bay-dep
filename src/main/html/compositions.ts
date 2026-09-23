@@ -19,10 +19,10 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, session } from 'electron'
 import type {
   CompositionFrame,
   CompositionFrameRequest,
@@ -44,6 +44,7 @@ import { probe } from '../media/probe'
 import { checkSounds, fileChecks } from './audio'
 import { bgraToRgba, describeSizeMismatch } from './bitmap'
 import { seekScript, variablesScript } from './scripts'
+import { decideCompositionRequest } from './sandbox'
 
 /**
  * How many composition windows may exist at once.
@@ -78,6 +79,30 @@ const here = fileURLToPath(new URL('.', import.meta.url))
  * cache per frame would show up as latency nobody could explain.
  */
 const COMPOSITION_PARTITION = 'persist:bay-compositions'
+
+/** The folder each composition window may load from, by its webContents id. */
+const folders = new Map<number, string>()
+let sandboxInstalled = false
+
+/**
+ * Close the composition partition to everything but each window's own folder (see `sandbox.ts`):
+ * no network, no `bay://`, no file outside the folder, no permissions, no popups. Installed once,
+ * on the first window, because `session.fromPartition` needs the app to be ready.
+ */
+function installSandbox(): void {
+  if (sandboxInstalled) return
+  sandboxInstalled = true
+  const partition = session.fromPartition(COMPOSITION_PARTITION)
+  partition.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+    const folder = details.webContentsId === undefined ? null : (folders.get(details.webContentsId) ?? null)
+    void decideCompositionRequest(details.url, folder, realpath).then((verdict) => {
+      if (!verdict.allow) console.warn(`[bay] composition request blocked: ${verdict.reason}`)
+      callback({ cancel: !verdict.allow })
+    })
+  })
+  partition.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  partition.setPermissionCheckHandler(() => false)
+}
 
 /** How long to wait for a page to load and register its timeline before giving up. */
 const LOAD_TIMEOUT_MS = 10_000
@@ -275,6 +300,7 @@ async function openUncontended(request: CompositionFrameRequest): Promise<Entry 
     release(oldest[0])
   }
 
+  installSandbox()
   const window = new BrowserWindow({
     show: false,
     width: info.width,
@@ -293,9 +319,10 @@ async function openUncontended(request: CompositionFrameRequest): Promise<Entry 
       // it takes the whole app with it, which is not a size anyone can avoid: 1080p is the
       // default composition size. A plain hidden window paints and captures just as well.
       offscreen: false,
-      // A composition is local HTML an agent may have written, so it gets no node integration
-      // and a session of its own — it cannot reach Node, and nothing it stores touches the
-      // app's.
+      // A composition is local HTML an agent — or whoever shared the project — wrote, so it gets
+      // no node integration, a sandboxed renderer, and a session of its own whose requests are
+      // confined to its folder (`installSandbox`): it cannot reach Node, the network, or any
+      // file beside its own.
       nodeIntegration: false,
       partition: COMPOSITION_PARTITION,
       backgroundThrottling: false,
@@ -305,10 +332,18 @@ async function openUncontended(request: CompositionFrameRequest): Promise<Entry 
       // without creating it, and bay loads no runtime that would. The preload exposes nothing
       // else, and with node integration off there is no Node surface for it to leak.
       contextIsolation: false,
-      sandbox: false,
-      preload: join(here, '../preload/composition.mjs')
+      // A sandboxed preload must be CommonJS, which is why the preloads build as `.cjs`.
+      sandbox: true,
+      preload: join(here, '../preload/composition.cjs')
     }
   })
+  const contentsId = window.webContents.id
+  folders.set(contentsId, dirname(request.path))
+  window.on('closed', () => folders.delete(contentsId))
+  // A composition that navigates itself, or opens a window, is doing something no composition
+  // needs — and a new window would escape the folder map above.
+  window.webContents.on('will-navigate', (event) => event.preventDefault())
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
   const ready = (async () => {
     await window.loadFile(request.path)

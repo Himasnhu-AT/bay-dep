@@ -14,7 +14,7 @@
 
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { extname, resolve as resolvePath } from 'node:path'
+import { extname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { Readable } from 'node:stream'
 
 export const BAY_SCHEME = 'bay'
@@ -216,4 +216,17 @@ export async function serveFile(
       'cache-control': 'no-cache'
     })
   })
+}
+
+/**
+ * Whether a path a `.bay` file names may be served to the editor. A project is a document
+ * someone may have sent you, and every asset path in it is admitted to `bay://` on open — so one
+ * listing `~/.ssh/id_rsa` as a "video" would make that file readable by the page. Media never
+ * needs a hidden file or a hidden folder, so any path segment starting with a dot is refused;
+ * the clip then shows as offline instead of the file being served. Media the user imports
+ * through a dialog or a drop is admitted directly and is not subject to this.
+ */
+export function admissibleFromProject(path: string): boolean {
+  if (!isAbsolute(path)) return false
+  return !path.split(/[\\/]/).some((segment) => segment.startsWith('.'))
 }
