@@ -71,6 +71,26 @@ export interface ToolSpec {
   category: ToolCategory
   /** Answers a question without changing anything. Safe to call speculatively. */
   readOnly: boolean
+  /**
+   * Accepts `validateOnly: true`: run against the real project, report what it would return,
+   * and put the project and its undo history back exactly as they were.
+   *
+   * Only for tools whose every effect lands in the project document or the editor's session
+   * state, because that is all the executor can put back. A file written, a job started or a
+   * path registered with main is outside the store and a restore cannot reach it — a dry run
+   * that wrote the file anyway would be a lie about the one thing it promises.
+   *
+   * The `validateOnly` property is not written into any schema below: `publishedSchema` adds
+   * it from this flag, so the manifest, the validator and the gate cannot disagree about which
+   * tools take it.
+   */
+  dryRunnable?: boolean
+  /**
+   * Why a tool that changes something cannot be dry-run, in the words an agent reads when it
+   * asks. Every write tool carries either `dryRunnable: true` or this — asserted in the test —
+   * so a new write tool cannot arrive with neither and answer a dry run with a bare "no".
+   */
+  dryRunRefusal?: string
   /** JSON Schema for the arguments. Plain data so no validator leaks into `shared/`. */
   inputSchema: {
     type: 'object'
@@ -207,6 +227,10 @@ export const TOOLS: ToolSpec[] = [
       'problem found, with the line, before you place anything.',
     category: 'write',
     readOnly: false,
+    dryRunRefusal:
+      'write_composition writes an HTML file to disk and imports it, and a file on disk is ' +
+      'outside what a dry run can put back. To check a composition without committing it, ' +
+      'write it and read it back with read_composition before placing it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -245,6 +269,10 @@ export const TOOLS: ToolSpec[] = [
       'edit_item({ variables }). Returns the placed item and the values it renders with.',
     category: 'write',
     readOnly: false,
+    dryRunRefusal:
+      'add_template writes the template file to disk before it places anything, and a file ' +
+      'on disk is outside what a dry run can put back. Its variables are checked before ' +
+      'anything is written, so a bad value is refused by the real call with nothing changed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -296,6 +324,10 @@ export const TOOLS: ToolSpec[] = [
       'duplicating it.',
     category: 'write',
     readOnly: false,
+    dryRunRefusal:
+      'import_media reads the files and registers them with the app so they can be played, ' +
+      'and that registration lives outside the project where a dry run cannot undo it. ' +
+      'Importing a path twice reuses the asset, so importing for real is safe to repeat.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -318,6 +350,7 @@ export const TOOLS: ToolSpec[] = [
       'authoritative: you do not need to call read_project to confirm it.**',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -366,6 +399,7 @@ export const TOOLS: ToolSpec[] = [
       '36KB to verify an edit that cost 263 bytes.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -575,6 +609,7 @@ export const TOOLS: ToolSpec[] = [
       'than silently skipped.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -593,6 +628,7 @@ export const TOOLS: ToolSpec[] = [
       'in sync while doing it — use remove_range instead.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -617,6 +653,7 @@ export const TOOLS: ToolSpec[] = [
       'cut the result names it under desyncedTracks and that track is now adrift.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -634,6 +671,7 @@ export const TOOLS: ToolSpec[] = [
       'same one.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: { kind: { type: 'string', enum: ['video', 'audio'] } },
@@ -654,6 +692,7 @@ export const TOOLS: ToolSpec[] = [
       'Adding a second transition to a junction that already has one replaces it.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -702,6 +741,7 @@ export const TOOLS: ToolSpec[] = [
       'becomes a straight one again.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: {
       type: 'object',
       properties: { transitionId: { type: 'string' } },
@@ -798,6 +838,10 @@ export const TOOLS: ToolSpec[] = [
       'use. Cheap and safe; move it to where you are working so the user follows along.',
     category: 'write',
     readOnly: false,
+    dryRunRefusal:
+      'set_playhead moves what the user is looking at, not the project, so there is no ' +
+      'document change to predict. Call it without validateOnly; the result reports the ' +
+      'frame it actually landed on.',
     inputSchema: {
       type: 'object',
       properties: { frame: frames('Frame to move to.') },
@@ -811,6 +855,7 @@ export const TOOLS: ToolSpec[] = [
       'what you last did — not the whole turn.',
     category: 'write',
     readOnly: false,
+    dryRunnable: true,
     inputSchema: { type: 'object', properties: {} }
   },
 
@@ -824,6 +869,9 @@ export const TOOLS: ToolSpec[] = [
       'empty over the range you asked for.',
     category: 'submit',
     readOnly: false,
+    dryRunRefusal:
+      'export_timeline starts an encode that writes a file, which a dry run cannot take ' +
+      'back. Check the range with preview_frame at its first and last frames instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -891,6 +939,74 @@ export function summariseAgentSurface(status: AgentSurfaceStatus): string {
 
 export function findTool(name: string): ToolSpec | undefined {
   return TOOLS.find((t) => t.name === name)
+}
+
+// ---------------------------------------------------------------------------
+// Dry runs
+// ---------------------------------------------------------------------------
+
+export const VALIDATE_ONLY = 'validateOnly'
+
+const validateOnlyProperty = {
+  type: 'boolean',
+  description:
+    'Dry run. true: check the call against the real project and return what it would ' +
+    'return, as { validateOnly: true, wouldReturn }, without changing anything — no undo ' +
+    'step, nothing marked unsaved. Needs no approval. A call that would be refused is ' +
+    'refused the same way, so this is how to test a plan before proposing or making it.'
+}
+
+/**
+ * The schema a tool is published and validated with: its own, plus `validateOnly` when the
+ * catalog marks it dry-runnable.
+ *
+ * One function feeding the manifest and the validator, so the two cannot disagree — a tool
+ * that advertised the flag and then refused it as an unknown argument would be a control that
+ * does nothing, and one that accepted it unadvertised would be one no agent finds.
+ */
+export function publishedSchema(spec: ToolSpec): ToolSpec['inputSchema'] {
+  if (!spec.dryRunnable) return spec.inputSchema
+  return {
+    ...spec.inputSchema,
+    properties: { ...spec.inputSchema.properties, [VALIDATE_ONLY]: validateOnlyProperty }
+  }
+}
+
+/**
+ * What a call asks for once `validateOnly` is read off it.
+ *
+ * - `run`: an ordinary call. `args` has `validateOnly: false` removed, so an approval made
+ *   without the flag still matches a call that spells it out.
+ * - `dry`: a dry run. `args` is what the handler receives — the flag removed, because no
+ *   handler declares it and the dry run is the executor's business, not the tool's.
+ * - `refused`: a dry run of a tool that cannot have one, with the reason.
+ *
+ * A non-boolean flag is left in place as a `run`, for the validator to name.
+ */
+export type DryRunRequest =
+  | { mode: 'run'; args: Record<string, unknown> }
+  | { mode: 'dry'; args: Record<string, unknown> }
+  | { mode: 'refused'; error: string }
+
+export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): DryRunRequest {
+  const flag = args[VALIDATE_ONLY]
+  if (flag !== true && flag !== false) return { mode: 'run', args }
+  const { [VALIDATE_ONLY]: _flag, ...rest } = args
+  if (flag === false) return { mode: 'run', args: rest }
+  if (spec.dryRunnable) return { mode: 'dry', args: rest }
+  if (spec.readOnly) {
+    return {
+      mode: 'refused',
+      error:
+        `${spec.name} only reads, so it already changes nothing — call it without validateOnly.`
+    }
+  }
+  return {
+    mode: 'refused',
+    error:
+      `${spec.name} cannot be dry-run. ${spec.dryRunRefusal ?? 'Its effects reach outside the project, where a dry run cannot put them back.'} ` +
+      `Tools that accept validateOnly: ${TOOLS.filter((t) => t.dryRunnable).map((t) => t.name).join(', ')}.`
+  }
 }
 
 // ---------------------------------------------------------------------------

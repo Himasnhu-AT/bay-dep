@@ -91,6 +91,12 @@ sees it. Errors are written as recovery instructions: a refusal names the candid
 conflicting item, or the occupied range, because a message that merely says "not found" ends the
 agent's run.
 
+Edits confined to the project document take `validateOnly: true`: the real handler runs against
+the real project, its answer comes back as `{ validateOnly: true, wouldReturn }`, and the project,
+undo history, dirty flag and selection are put back exactly as they were. A dry run needs no
+approval in the in-app panel and spends none. Tools whose effects leave the project — writing a
+composition or template file, importing media, exporting — refuse the flag and say why.
+
 ## Gates
 
 ```bash

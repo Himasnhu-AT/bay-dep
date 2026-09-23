@@ -13,7 +13,7 @@
  * repeat the same call.
  */
 
-import type { ToolSpec } from './mcp'
+import { publishedSchema, type ToolSpec } from './mcp'
 
 type Schema = Record<string, unknown>
 
@@ -80,8 +80,11 @@ function checkValue(value: unknown, schema: Schema, path: string): string | null
  * list of six invites it to guess at the other five.
  */
 export function validateArgs(tool: ToolSpec, args: Record<string, unknown>): string | null {
-  const properties = tool.inputSchema.properties as Record<string, Schema>
-  const required = tool.inputSchema.required ?? []
+  // The published schema, not the catalog's own: it is the one the client was shown, and it
+  // carries `validateOnly` for the tools that take it.
+  const published = publishedSchema(tool)
+  const properties = published.properties as Record<string, Schema>
+  const required = published.required ?? []
 
   for (const name of required) {
     if (args[name] === undefined || args[name] === null) {

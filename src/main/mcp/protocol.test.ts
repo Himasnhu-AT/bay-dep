@@ -158,6 +158,21 @@ test('tools/list returns every tool in the contract, in MCP shape', async () => 
   }
 })
 
+test('the manifest advertises validateOnly on the dry-runnable tools and only those', () => {
+  // The client sees the schema the manifest publishes; a flag the executor accepts but the
+  // manifest omits is a feature no agent finds.
+  const manifest = toolManifest()
+  const takes = (name: string): boolean => {
+    const tool = manifest.find((t) => t['name'] === name)!
+    return 'validateOnly' in (tool['inputSchema'] as { properties: object }).properties
+  }
+  assert.equal(takes('remove_range'), true)
+  assert.equal(takes('edit_item'), true)
+  assert.equal(takes('export_timeline'), false)
+  assert.equal(takes('read_project'), false)
+  for (const spec of TOOLS) assert.equal(takes(spec.name), spec.dryRunnable === true, spec.name)
+})
+
 test('the manifest can be built without the app running', () => {
   // This is what lets the proxy answer tools/list before bay has started — the milestone the
   // other agents work against.

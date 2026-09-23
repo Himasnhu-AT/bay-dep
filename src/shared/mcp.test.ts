@@ -17,7 +17,16 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { summariseAgentSurface, type AgentSurfaceStatus } from './mcp'
+import {
+  dryRunRequest,
+  findTool,
+  publishedSchema,
+  summariseAgentSurface,
+  TOOLS,
+  VALIDATE_ONLY,
+  type AgentSurfaceStatus
+} from './mcp'
+import { validateArgs } from './validate'
 
 const status = (patch: Partial<AgentSurfaceStatus>): AgentSurfaceStatus => ({
   ready: true,
@@ -65,4 +74,84 @@ test('the three states are three distinct sentences', () => {
   const idle = summariseAgentSurface(status({ connectionsSeen: 0 }))
   const busy = summariseAgentSurface(status({ connectionsSeen: 2 }))
   assert.equal(new Set([failed, idle, busy]).size, 3)
+})
+
+// --- dry runs ------------------------------------------------------------------------------
+
+test('every write tool either dry-runs or says why it cannot', () => {
+  for (const spec of TOOLS.filter((t) => !t.readOnly)) {
+    const runs = spec.dryRunnable === true
+    const why = typeof spec.dryRunRefusal === 'string' && spec.dryRunRefusal.length > 0
+    assert.ok(runs !== why, `${spec.name} must carry exactly one of dryRunnable or dryRunRefusal`)
+  }
+  for (const spec of TOOLS.filter((t) => t.readOnly)) {
+    assert.ok(!spec.dryRunnable, `${spec.name} only reads and has nothing to dry-run`)
+  }
+})
+
+test('tools that reach outside the project are not dry-runnable', () => {
+  // Written from the requirement, as a literal: each of these writes a file, starts a job or
+  // registers a path with main, none of which a store restore can take back. Deriving this list
+  // from the flag would assert nothing.
+  for (const name of ['import_media', 'write_composition', 'add_template', 'export_timeline']) {
+    const spec = findTool(name)
+    assert.ok(spec, `${name} is missing from the catalog`)
+    assert.notEqual(spec.dryRunnable, true, `${name} has effects a dry run cannot undo`)
+  }
+  // Positive control: the surface is not simply refusing everything.
+  assert.equal(findTool('remove_range')?.dryRunnable, true)
+  assert.equal(findTool('edit_item')?.dryRunnable, true)
+})
+
+test('validateOnly is published exactly where the catalog allows it, and nowhere by hand', () => {
+  for (const spec of TOOLS) {
+    assert.ok(
+      !(VALIDATE_ONLY in spec.inputSchema.properties),
+      `${spec.name} spells validateOnly into its own schema; it must come from dryRunnable`
+    )
+    const published = publishedSchema(spec)
+    assert.equal(VALIDATE_ONLY in published.properties, spec.dryRunnable === true, spec.name)
+    // And publishing does not mutate the catalog's own schema object.
+    assert.ok(!(VALIDATE_ONLY in spec.inputSchema.properties), `${spec.name} was mutated`)
+  }
+})
+
+test('the validator accepts validateOnly on a dry-runnable tool and names it elsewhere', () => {
+  const dry = findTool('remove_range')!
+  assert.equal(validateArgs(dry, { fromFrame: 0, toFrame: 10, validateOnly: true }), null)
+  assert.match(
+    validateArgs(dry, { fromFrame: 0, toFrame: 10, validateOnly: 'yes' }) ?? '',
+    /"validateOnly" must be true or false/
+  )
+  const wet = findTool('export_timeline')!
+  assert.match(
+    validateArgs(wet, { outputPath: '/x.mp4', format: 'mp4', validateOnly: true }) ?? '',
+    /has no argument "validateOnly"/
+  )
+})
+
+test('dryRunRequest strips the flag for the handler and refuses with the reason', () => {
+  const dry = findTool('remove_range')!
+  assert.deepEqual(dryRunRequest(dry, { fromFrame: 0, toFrame: 10, validateOnly: true }), {
+    mode: 'dry',
+    args: { fromFrame: 0, toFrame: 10 }
+  })
+  // false is an ordinary call with the flag removed, so an approval made without it matches.
+  assert.deepEqual(dryRunRequest(dry, { fromFrame: 0, toFrame: 10, validateOnly: false }), {
+    mode: 'run',
+    args: { fromFrame: 0, toFrame: 10 }
+  })
+  assert.deepEqual(dryRunRequest(dry, { fromFrame: 0 }), { mode: 'run', args: { fromFrame: 0 } })
+
+  const wet = dryRunRequest(findTool('import_media')!, { paths: ['/a.mp4'], validateOnly: true })
+  assert.equal(wet.mode, 'refused')
+  const error = wet.mode === 'refused' ? wet.error : ''
+  // The reason, and the way forward: which tools *can* be dry-run.
+  assert.match(error, /import_media cannot be dry-run/)
+  assert.match(error, /registers them with the app/)
+  assert.match(error, /remove_range/)
+
+  const read = dryRunRequest(findTool('read_project')!, { validateOnly: true })
+  assert.equal(read.mode, 'refused')
+  assert.match(read.mode === 'refused' ? read.error : '', /only reads/)
 })

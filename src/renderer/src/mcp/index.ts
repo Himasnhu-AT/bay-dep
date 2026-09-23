@@ -13,7 +13,7 @@
  */
 
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
-import { findTool, TOOLS } from '@shared/mcp'
+import { dryRunRequest, findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
 import { checkApproval } from '@shared/agent'
 import { store, ToolError } from './helpers'
@@ -40,6 +40,7 @@ import { trimItem } from './trim'
 import { addMarker, removeMarker } from './markers'
 import { editAsset } from './assets'
 import { addCaptions } from './captions'
+import { AsyncDryRunError, dryRun } from '@/store/dry-run'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -133,6 +134,13 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
   }
 
   const args = call.args ?? {}
+
+  // `validateOnly` is read before validation, because on a tool that cannot dry-run the
+  // validator would only say "no such argument" — true, and useless. The refusal names why
+  // (a file written, a job started) and which tools can.
+  const request = dryRunRequest(tool, args)
+  if (request.mode === 'refused') return { id: call.id, ok: false, error: request.error }
+
   const invalid = validateArgs(tool, args)
   if (invalid) return { id: call.id, ok: false, error: invalid }
 
@@ -146,17 +154,37 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
   // nothing, so spending the approval on it would block the retry its own error message asks
   // for; `edit()` returning unchanged when a mutator declines is what makes that safe to
   // assume rather than hope.
-  const verdict = checkApproval(tool.name, args, store().agentGate)
+  //
+  // A dry run reaches the gate with its flag still on, because the flag is what the gate reads
+  // to let it through unapproved; an ordinary call reaches it with `validateOnly: false`
+  // removed, so an approval proposed without the flag still matches.
+  const verdict = checkApproval(
+    tool.name,
+    request.mode === 'dry' ? args : request.args,
+    store().agentGate
+  )
   if (!verdict.allowed) {
     return { id: call.id, ok: false, error: verdict.refusal ?? 'That edit is not approved.' }
   }
 
   try {
-    const value = await handler(args)
+    if (request.mode === 'dry') {
+      // The real handler against the real store, then everything put back — see `dryRun`. No
+      // approval is consumed: the gate named none, and nothing was done to spend one on.
+      const wouldReturn = dryRun(() => handler(request.args))
+      return { id: call.id, ok: true, value: { validateOnly: true, wouldReturn } }
+    }
+    const value = await handler(request.args)
     if (verdict.index !== undefined) store().consumeApproval(verdict.index)
     return { id: call.id, ok: true, value }
   } catch (error) {
-    if (error instanceof ToolError) return { id: call.id, ok: false, error: error.message }
+    if (error instanceof ToolError) {
+      // A dry run's refusal is the same refusal the real call would get — that is its answer —
+      // but it says so, so the agent does not wonder whether a half-edit landed.
+      const suffix = request.mode === 'dry' ? ' (validateOnly: nothing was changed.)' : ''
+      return { id: call.id, ok: false, error: error.message + suffix }
+    }
+    if (error instanceof AsyncDryRunError) return { id: call.id, ok: false, error: error.message }
     // An unexpected throw is a bug here, not a mistake by the agent. Say so, so it stops
     // rewriting its arguments against something that was never going to work.
     const message = error instanceof Error ? error.message : String(error)

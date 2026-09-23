@@ -21,7 +21,7 @@
  * not the user's attention, is what enforces it.
  */
 
-import { TOOLS, findTool, type ToolSpec } from './mcp'
+import { TOOLS, VALIDATE_ONLY, findTool, type ToolSpec } from './mcp'
 
 // ---------------------------------------------------------------------------
 // What a runtime emits
@@ -220,6 +220,13 @@ export function checkApproval(
   if (!gate) return { allowed: true }
   if (!requiresApproval(toolName)) return { allowed: true }
 
+  // A dry run changes nothing, so there is nothing to approve — and gating it would forbid the
+  // one move that lets an agent check a plan *before* putting it in front of the user. Only for
+  // tools the catalog marks dry-runnable: on any other tool the flag is refused by the executor,
+  // and a gate that waved it through would be trusting that refusal to happen. No `index`, so
+  // nothing is spent.
+  if (args[VALIDATE_ONLY] === true && findTool(toolName)?.dryRunnable) return { allowed: true }
+
   const approved = gate.approved
   if (!approved) {
     return {
@@ -399,6 +406,17 @@ export function buildProposal(
       }
       const args = rawOp['args'] === undefined ? {} : rawOp['args']
       if (!isRecord(args)) return { ok: false, error: `${at}: "args" must be an object.` }
+      if (args[VALIDATE_ONLY] === true) {
+        // An approved dry run would put a card in front of the user whose Approve button
+        // changes nothing — a control that does nothing, presented as a decision.
+        return {
+          ok: false,
+          error:
+            `${at} (${spec.name}) is a dry run (validateOnly: true), and dry runs need no ` +
+            `approval. Make that call directly now if you want its answer, and propose the ` +
+            `real call without validateOnly.`
+        }
+      }
       const invalid = validate(spec, args)
       if (invalid) {
         return {

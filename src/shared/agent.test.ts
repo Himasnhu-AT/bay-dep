@@ -348,3 +348,72 @@ test('the approval message repeats every call byte for byte, in order', () => {
   assert.match(message, /2\. set_playhead \{"frame":0\}/)
   assert.ok(message.indexOf('remove_range') < message.indexOf('set_playhead'))
 })
+
+// --- dry runs ------------------------------------------------------------------------------
+
+test('a dry run passes the gate with nothing approved, and the same call without it does not', () => {
+  // The pair is the test. A gate that let everything through would pass the first half alone,
+  // and one that refused everything would pass the second half alone.
+  const args = { fromFrame: 0, toFrame: 45 }
+  const dry = checkApproval('remove_range', { ...args, validateOnly: true }, gatedButUnapproved)
+  assert.equal(dry.allowed, true, dry.refusal)
+  assert.equal(dry.index, undefined, 'a dry run must not name an operation to spend')
+
+  const real = checkApproval('remove_range', args, gatedButUnapproved)
+  assert.equal(real.allowed, false)
+  assert.match(real.refusal ?? '', /propose_edit/)
+
+  // validateOnly: false is an ordinary call, and is gated like one.
+  const explicitFalse = checkApproval(
+    'remove_range',
+    { ...args, validateOnly: false },
+    gatedButUnapproved
+  )
+  assert.equal(explicitFalse.allowed, false)
+})
+
+test('a dry run does not spend the approval the real call needs', () => {
+  const operations = [op(0, 'remove_range', { fromFrame: 0, toFrame: 45 })]
+  const dry = checkApproval(
+    'remove_range',
+    { fromFrame: 0, toFrame: 45, validateOnly: true },
+    approval(operations)
+  )
+  assert.equal(dry.allowed, true)
+  assert.equal(dry.index, undefined)
+  // Nothing was consumed, so the real call still matches operation 0.
+  const real = checkApproval('remove_range', { fromFrame: 0, toFrame: 45 }, approval(operations))
+  assert.equal(real.index, 0)
+})
+
+test('validateOnly on a tool that cannot dry-run is not a way past the gate', () => {
+  // export_timeline writes a file. If the executor ever failed to refuse the flag, a gate that
+  // trusted it would have let an unapproved encode run.
+  const spec = TOOLS.find((t) => t.name === 'export_timeline')
+  assert.ok(spec && !spec.readOnly && !spec.dryRunnable, 'specimen must be gated and not dry-runnable')
+  const verdict = checkApproval(
+    'export_timeline',
+    { outputPath: '/tmp/x.mp4', format: 'mp4', validateOnly: true },
+    gatedButUnapproved
+  )
+  assert.equal(verdict.allowed, false)
+})
+
+test('a dry run inside a proposal is refused, and told to make it directly', () => {
+  const built = build({
+    question: 'q',
+    options: [
+      {
+        ...trim,
+        operations: [
+          { tool: 'remove_range', args: { fromFrame: 0, toFrame: 45, validateOnly: true } }
+        ]
+      }
+    ]
+  })
+  assert.equal(built.ok, false)
+  assert.match(built.ok ? '' : built.error, /need no approval/)
+  assert.match(built.ok ? '' : built.error, /without validateOnly/)
+  // Positive control: the same operation without the flag builds.
+  assert.equal(build({ question: 'q', options: [trim] }).ok, true)
+})

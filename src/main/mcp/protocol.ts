@@ -13,7 +13,7 @@
  * `tools/list` before bay has started.
  */
 
-import { TOOLS, findTool, type ToolSpec } from '@shared/mcp'
+import { TOOLS, findTool, publishedSchema, type ToolSpec } from '@shared/mcp'
 import { ALL_RESOURCES, findResource } from '@shared/resources'
 import {
   RPC_INVALID_PARAMS,
@@ -61,7 +61,7 @@ function publicTool(spec: ToolSpec): Record<string, unknown> {
   return {
     name: spec.name,
     description: spec.description,
-    inputSchema: spec.inputSchema,
+    inputSchema: publishedSchema(spec),
     annotations: { readOnlyHint: spec.readOnly }
   }
 }
