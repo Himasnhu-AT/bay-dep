@@ -12,8 +12,9 @@
  * polls a job that will never finish. That exact gap shipped once already.
  */
 
-import type { ExportFormat, ExportProgress } from '@shared/ipc'
+import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
+import { parseLoudness } from '@shared/loudness'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
 import { fail, project, timeline, type Handlers } from './helpers'
@@ -57,6 +58,11 @@ export async function exportTimeline(
   }
   const format = String(args.format) as ExportFormat
 
+  // Refused before anything starts: an export that ran for minutes and then ignored a
+  // misspelled preset would deliver a file at the wrong level with no word about it.
+  const loudness = parseLoudness(args.loudness)
+  if ('error' in loudness) fail(loudness.error)
+
   const tl = timeline()
   const duration = timelineDuration(tl)
   if (duration === 0) {
@@ -91,7 +97,8 @@ export async function exportTimeline(
       height: tl.height,
       fps: tl.fps,
       fromFrame,
-      toFrame
+      toFrame,
+      ...(loudness.target ? { loudness: loudness.target } : {})
     })
   } catch (error) {
     fail(`Export could not start: ${error instanceof Error ? error.message : String(error)}`)
@@ -158,6 +165,7 @@ export async function exportTimeline(
     fromFrame,
     toFrame,
     framesTotal: toFrame - fromFrame + 1,
+    ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
     note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
   }
 }
@@ -175,17 +183,47 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     )
   }
 
-  const { progress } = job
+  // Read live from the exporter, not from main's progress: main encodes what it is handed and
+  // cannot know a frame was missing something. Final before `done` can arrive (see the getter).
+  return exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
+}
+
+/**
+ * What `track_export` answers for a job in this state. Apart from the job map so the answer can
+ * be held still without an encoder.
+ */
+export function exportStatus(
+  progress: ExportProgress,
+  outputPath: string,
+  incomplete: IncompleteFrames | null
+): Record<string, unknown> {
   const finished = ['done', 'failed', 'cancelled'].includes(progress.stage)
   return {
-    jobId,
+    jobId: progress.jobId,
     stage: progress.stage,
     framesDone: progress.framesDone,
     framesTotal: progress.framesTotal,
     percent: progress.progress === null ? null : Math.round(progress.progress * 100),
     finished,
-    ...(progress.stage === 'done' ? { outputPath: progress.outputPath ?? job.outputPath } : {}),
+    ...(progress.stage === 'done' ? { outputPath: progress.outputPath ?? outputPath } : {}),
     ...(progress.error ? { error: progress.error } : {}),
+    // What the delivered file measures, not what was asked for: the loop verifies the encoded
+    // bytes, and a `missed` status is said here in numbers rather than left to be discovered.
+    ...(progress.loudness
+      ? {
+          loudness: {
+            status: progress.loudness.status,
+            targetLufs: progress.loudness.target.integratedLufs,
+            ceilingDbtp: progress.loudness.target.truePeakDb,
+            measuredLufs: progress.loudness.measured?.integratedLufs ?? null,
+            measuredTruePeakDbtp: progress.loudness.measured?.truePeakDb ?? null,
+            gainDb: Number(progress.loudness.gainDb.toFixed(2)),
+            passes: progress.loudness.passes,
+            summary: progress.loudness.summary
+          }
+        }
+      : {}),
+    ...(progress.message && progress.stage === 'done' ? { message: progress.message } : {}),
     ...(finished
       ? {}
       : { note: 'Still working. Poll again in a few seconds rather than in a tight loop.' }),
@@ -193,7 +231,23 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     // means the agent sees it at the moment it is about to report success.
     ...(progress.stage === 'done' && progress.framesDone === 0
       ? { warning: 'The export finished with zero frames — the range held nothing.' }
-      : {})
+      : {}),
+    // A file with a graphic missing from some frames is not a clean export, and `done` alone
+    // would let the agent report it as one. `complete: true` is claimed only once the job is done.
+    ...(incomplete
+      ? {
+          complete: false,
+          incompleteFrames: {
+            frames: incomplete.frames,
+            ranges: incomplete.ranges,
+            items: incomplete.items,
+            gradeIssues: incomplete.gradeIssues
+          },
+          warning: incomplete.message
+        }
+      : progress.stage === 'done'
+        ? { complete: true }
+        : {})
   }
 }
 

@@ -8,7 +8,8 @@ export const tool: ToolSpec = {
     'Import files from absolute paths into the media pool. Returns one asset per path, ' +
     'including any that could not be read — check `error` on each before placing it. ' +
     'Importing a path already in the project reuses the existing asset rather than ' +
-    'duplicating it.',
+    'duplicating it. A .cube file imports as a colour LUT (kind "lut"): it is not placed, it is ' +
+    'applied to a clip with edit_item { grade: { lut: { assetId, intensity } } }.',
   category: 'write',
   readOnly: false,
   dryRunRefusal:

@@ -48,7 +48,7 @@ export default ({ t, vars }) => (
 | `<rect>` | `w`, `h`, `radius`, `fill`, `stroke`, `strokeWidth` |
 | `<ellipse>` | `w`, `h`, `fill`, `stroke`, `strokeWidth` |
 | `<path>` | `d` (SVG path data, in pixels, origin at the anchor), `fill`, `stroke`, `strokeWidth`, `draw` (0–1 of the stroke drawn) |
-| `<text>` | children are the text; `size`, `weight` (100–1000, default 700), `font`, `italic`, `fill` (default white), `stroke`, `strokeWidth`, `align` (default `center`), `w` (wrap width), `lineHeight` (×size, default 1.2), `tracking` (px), `split`, `stagger` |
+| `<text>` | children are the text; `size`, `weight` (100–1000, default 700), `font`, `italic`, `fill` (default white), `stroke`, `strokeWidth`, `align` (default `center`), `w` (wrap width), `lineHeight` (×size, default 1.2), `tracking` (px), `split`, `stagger`, `variations` (variable-font axes, below) |
 | `<group>` | children; `w`, `h` (its box, for `anchor`, `clip` and `wipe`), `clip` |
 
 Every element also takes:
@@ -71,6 +71,18 @@ of its **short side** — so `size="8%"` is the same weight on 1080×1920 and 19
 Colours: `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgba(r,g,b,a)`, `white`, `black`, `transparent`.
 Gradient fills: `"linear(180, #000000cc, #00000000 80%)"` (angle as CSS: 0 up, 90 right, 180
 down) or `"radial(#ffffff22, #00000000)"`; they span the element's own box.
+
+Fonts: `font` is a family the editor has — `"Inter Variable"` and `"JetBrains Mono Variable"`
+ship with bay — or one installed on this Mac. Nothing is fetched: a web font name that is not
+installed draws in the fallback.
+
+**Variable-font axes**: `variations={{ wdth: 87, wght: 600 }}` sets any axis the font has —
+width, weight, optical size, slant, or its own (`GRAD`, `XTRA`). An axis given here wins over
+`weight`. Axes need a font bay can load a copy of: one that ships with bay, or an installed font
+named by its **full or PostScript name** (`"Skia-Regular"`, not `"Skia"`). Any other family is
+refused by `write_brf` with the names it tried. Each distinct set of values is a font face of its
+own, loaded the first time it is drawn — so when animating an axis, step it
+(`Math.round(v / 10) * 10`) rather than giving every frame a new value.
 
 ## Animating
 
@@ -246,6 +258,23 @@ export default () => (
       in={['up', 0.2]} out={['fade', 0.15]}>TOO MUCH INPUT</text>
   </scene>
 )
+```
+
+### Weight that breathes (variable-font axes)
+
+```tsx
+import { interpolate } from 'bay'
+
+export default ({ t }) => {
+  const wght = Math.round(interpolate(t, [0, 1.2, 2.4], [200, 900, 200]) / 25) * 25
+  return (
+    <scene duration={3}>
+      <text x="50%" y="50%" size="12%" font="Inter Variable" variations={{ wght }}>
+        Variable
+      </text>
+    </scene>
+  )
+}
 ```
 
 ## When `write_brf` refuses

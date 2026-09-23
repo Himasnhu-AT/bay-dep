@@ -35,6 +35,8 @@ import { brfRuntime } from './brfCode'
 import type { BrfDocument } from '@shared/brf'
 import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
+import { gradeSource, resolvedGradeOf } from './grade'
+import { grainSeed } from '@shared/grade'
 import {
   anchorFor,
   fontIsAvailable,
@@ -87,6 +89,12 @@ export interface DrawStats {
    */
   unresolvedNames: string[]
   /**
+   * The names behind `pending` alone — what this frame is still waiting for, as opposed to what
+   * it drew as a placeholder. The exporter reports these when it writes a frame without them, and
+   * `unresolvedNames` cannot tell it which is which.
+   */
+  pendingNames: string[]
+  /**
    * How each text item actually came out.
    *
    * Reported for the same reason `pending` is: the output looks plausible while being wrong.
@@ -110,6 +118,12 @@ export interface DrawStats {
     requestedFrames: number
     clampedBecause: string | null
   }
+  /**
+   * Clips whose grade could not be applied, and why — drawn ungraded rather than not at all.
+   * Absent when there is nothing to say. A grade that silently fails looks like a grade that was
+   * never set, which is the one outcome an agent reading `preview_frame` cannot tell from success.
+   */
+  gradeIssues?: string[]
 }
 
 interface SeekState {
@@ -188,6 +202,8 @@ export class Compositor {
   readonly #seeks = new Map<string, SeekState>()
 
   readonly #compositions: CompositionPool | null
+  /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
+  #project: Project | null = null
 
   constructor(pool: MediaPool, compositions?: CompositionPool) {
     this.#compositions = compositions ?? null
@@ -211,9 +227,10 @@ export class Compositor {
   ): DrawStats {
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
-    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [] }
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
 
     this.#pool.beginGeneration()
+    this.#project = project
 
     const width = Math.max(1, finite(timeline.width, 1))
     const height = Math.max(1, finite(timeline.height, 1))
@@ -322,12 +339,19 @@ export class Compositor {
     element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas,
     item: Item,
     frame: number,
-    alphaMul = 1
+    alphaMul = 1,
+    stats?: DrawStats
   ): void {
     const box = layoutBox(item)
     if (!box) return
     const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
     if (alpha <= 0) return
+
+    // Read before the rotation is applied, so the device scale is the preview's or the export's
+    // and nothing else.
+    const transform = ctx.getTransform()
+    const scaleX = Math.hypot(transform.a, transform.b) || 1
+    const scaleY = Math.hypot(transform.c, transform.d) || 1
 
     ctx.save()
     ctx.globalAlpha = alpha
@@ -337,28 +361,54 @@ export class Compositor {
     applyLook(ctx, item)
     applyRotation(ctx, item, box)
     try {
-      if (isCropped(item.crop)) {
-        // The source's own pixel size, which each of the three element kinds spells
-        // differently — and `videoWidth`/`naturalWidth` are 0 until the first frame decodes,
-        // which is why this falls back to drawing uncropped rather than skipping: a clip that
-        // vanished for two frames while loading would read as a bug in the crop.
-        const sourceWidth = intrinsicWidth(element)
-        const sourceHeight = intrinsicHeight(element)
-        const source = cropSourceRect(item.crop, sourceWidth, sourceHeight)
-        if (source) {
-          const { dx, dy, dw, dh } = cropDestRect(item.crop, box)
-          ctx.drawImage(element, source.sx, source.sy, source.sw, source.sh, dx, dy, dw, dh)
-        } else {
-          ctx.drawImage(element, box.left, box.top, box.width, box.height)
+      // The source's own pixel size, which each of the three element kinds spells
+      // differently — and `videoWidth`/`naturalWidth` are 0 until the first frame decodes,
+      // which is why a crop falls back to drawing uncropped rather than skipping: a clip that
+      // vanished for two frames while loading would read as a bug in the crop.
+      const sourceWidth = intrinsicWidth(element)
+      const sourceHeight = intrinsicHeight(element)
+      const cropped = isCropped(item.crop) ? cropSourceRect(item.crop, sourceWidth, sourceHeight) : null
+      const src = cropped ?? { sx: 0, sy: 0, sw: sourceWidth, sh: sourceHeight }
+      const dest = cropped
+        ? cropDestRect(item.crop, box)
+        : { dx: box.left, dy: box.top, dw: box.width, dh: box.height }
+
+      // The grade replaces the source with a graded picture of the same framing, at the size it
+      // will be drawn — everything else about the draw (alpha, blend, filter, rotation) is
+      // unchanged. An identity grade resolves to null and costs nothing.
+      const grade = resolvedGradeOf(item.grade)
+      if (grade && src.sw > 0 && src.sh > 0) {
+        const lutAsset = grade.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
+        const graded = gradeSource(grade, {
+          source: element,
+          ...src,
+          width: Math.max(1, Math.round(Math.abs(dest.dw) * scaleX)),
+          height: Math.max(1, Math.round(Math.abs(dest.dh) * scaleY)),
+          boxWidth: Math.abs(dest.dw),
+          boxHeight: Math.abs(dest.dh),
+          frame,
+          seed: grainSeed(item.id),
+          lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
+        })
+        if (graded.ok) {
+          ctx.drawImage(graded.canvas, 0, 0, graded.width, graded.height, dest.dx, dest.dy, dest.dw, dest.dh)
+          if (graded.warning) noteGradeIssue(stats, `clip ${item.id}: ${graded.warning}`)
+          return
         }
+        noteGradeIssue(stats, `clip ${item.id} was drawn ungraded: ${graded.error}`)
+      }
+
+      if (cropped) {
+        ctx.drawImage(element, src.sx, src.sy, src.sw, src.sh, dest.dx, dest.dy, dest.dw, dest.dh)
       } else {
         ctx.drawImage(element, box.left, box.top, box.width, box.height)
       }
     } catch {
       // A frame can be pulled out from under us mid-draw (the element reloaded, the source
       // went away). One missing item must not abandon the rest of the frame.
+    } finally {
+      ctx.restore()
     }
-    ctx.restore()
   }
 
   /**
@@ -420,8 +470,7 @@ export class Compositor {
         const lastFrame = Math.max(0, Math.ceil((asset.durationUs / 1_000_000) * fps) - 1)
         const scene = brfRuntime.scene(asset.brfCode, values, Math.min(lastFrame, Math.round(seconds * fps)), fps, size.width, size.height)
         if ('pending' in scene) {
-          stats.pending += 1
-          stats.unresolvedNames.push(asset.name)
+          notePending(stats, asset.name)
           return
         }
         if ('error' in scene) {
@@ -442,13 +491,18 @@ export class Compositor {
         doc = entry.doc
       }
       const painted = this.#brf.draw(doc, item, seconds, box, { width: box.width * scale, height: box.height * scale }, values)
+      if ('pending' in painted) {
+        // A variable-font face still loading (`brfFonts.ts`): incomplete, not empty.
+        notePending(stats, asset.name)
+        return
+      }
       if ('error' in painted) {
         this.#drawPlaceholder(ctx, item, asset.name)
         stats.placeholders += 1
         stats.unresolvedNames.push(`${asset.name} (${painted.error})`)
         return
       }
-      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul)
+      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats)
       stats.drawn += 1
       return
     }
@@ -474,11 +528,10 @@ export class Compositor {
           }) ?? null)
         : null
       if (!bitmap) {
-        stats.pending += 1
-        stats.unresolvedNames.push(asset.name)
+        notePending(stats, asset.name)
         return
       }
-      this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul)
+      this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul, stats)
       stats.drawn += 1
       return
     }
@@ -496,12 +549,11 @@ export class Compositor {
       // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the one
       // or two frames a load takes, which reads as a glitch in the edit rather than as a
       // load; the background showing through for that long does not.
-      stats.pending += 1
-      stats.unresolvedNames.push(asset.name)
+      notePending(stats, asset.name)
       return
     }
 
-    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul)
+    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul, stats)
     stats.drawn += 1
   }
 
@@ -852,6 +904,24 @@ function applyLook(ctx: RenderTarget, item: Item): void {
   if (isPlainLook(filter, operation)) return
   if (filter !== NO_FILTER) ctx.filter = filter
   ctx.globalCompositeOperation = operation
+}
+
+/**
+ * One item this frame is still waiting for. The count, the combined list and the pending-only
+ * list move together here, because a pending site that bumped the count and forgot the name is
+ * exactly how an export would report "1 frame incomplete" without saying what was missing — the
+ * variable-font site arrived in a parallel branch after `pendingNames` and did just that.
+ */
+function notePending(stats: DrawStats, name: string): void {
+  stats.pending += 1
+  stats.unresolvedNames.push(name)
+  stats.pendingNames.push(name)
+}
+
+function noteGradeIssue(stats: DrawStats | undefined, message: string): void {
+  if (!stats) return
+  const issues = (stats.gradeIssues ??= [])
+  if (!issues.includes(message)) issues.push(message)
 }
 
 function applyRotation(ctx: RenderTarget, item: Item, box: Box): void {

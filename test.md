@@ -45,6 +45,8 @@ screen). A probe restores the project; a restart does not.
 | Network wall | `src/main/offline.test.ts` | remote schemes refused however spelt; local schemes allowed; dev server only on loopback |
 | Tools | `src/renderer/src/mcp/brf.test.ts` | create+place is one undo step; compile error and a throw on a *later* frame change nothing and name frame+line; replace is one undoable edit; create-and-place is all or nothing (mutation-tested) |
 | One undo step | `src/renderer/src/mcp/one-undo-step.test.ts` | `write_brf` create, create+place, replace each move history by exactly 1 |
+| Worker failure | `src/renderer/src/engine/brfCode.test.ts` | a worker that cannot load (`onerror`) answers `crashed: …` at once instead of hanging; nothing is left in flight; a timeout on one request answers the runner's others (mutation-tested) |
+| Export | `node test/app/brf-export.mjs` | the guide's counter exported cold: frame count, **every** frame of the file against `renderFrame`, the placement override in the file; `VERIFY_PROBE=1` (settle returns at once) must fail |
 | In the app | `node test/app/brf.mjs` | every sandbox door shut **from inside the real worker** (sentinel throw as the control); foreign imports and endless loops refused; draws, moves, repeats exactly, takes placement vars; timing vs the HTML lower third |
 
 Expected from `test/app/brf.mjs`: exit 0, 15 `ok` lines, a restore line, and
@@ -163,6 +165,14 @@ Then the outer wall, independently of the lockdown: from DevTools on the editor 
 `await fetch('https://example.com')` must reject, and main's log must show
 `[bay] refused a network request from the editor`.
 
+**Automated:** `node test/app/brf-sandbox.mjs` runs every door above and more (24 synchronous,
+8 deferred, each deferred one judged only after a function control has fired, and the instrument
+shown able to read `OPEN`), then the outer wall. Note on the wall as first written here: a fetch
+from the editor *document* is refused by its CSP (`connect-src 'self' bay:`) before main sees it
+— measured, no `[bay] refused` line appears — so it tests the CSP, not main. The probe turns on
+CDP's CSP bypass and fetches from a fresh iframe (its `data:` fetch answering proves the CSP no
+longer binds it); only main can refuse that one, and the log line appears.
+
 ### 2.8 Hostile and heavy modules
 
 | Module | Expected |
@@ -198,6 +208,17 @@ The worker is served by the Vite dev server; the session filter must allow the d
 its HMR socket. Pass: a module draws; editing `src/shared/brf.ts` hot-reloads without breaking
 the next write; no `[bay] refused a network request` lines for `localhost:5173`.
 
+Run it isolated. electron-vite passes everything after `--` to Electron, and sets the debugging
+port itself:
+
+```bash
+./node_modules/.bin/electron-vite dev --remoteDebuggingPort 9237 -- --user-data-dir=$HOME/.bay-wt/NAME
+```
+
+Check main's first line says `MCP socket listening at …/.bay-wt/NAME/bay-mcp.sock` before you
+probe. Probes find the dev renderer at `http://localhost:<port>/` (`cdp.mjs` also matches the dev
+server's root, not only `index.html`). Test the cold path too: `rm -rf node_modules/.vite` first.
+
 ### 2.11 Agent quality (the reason the format exists)
 
 With the in-app agent (costs tokens), give the same five briefs twice — once asking for HTML
@@ -222,9 +243,9 @@ for p in brf mcp templates compositions composition-scale preview-frame; do node
 PROBE_TIMEOUT_MS=400000 node test/app/export-vs-preview.mjs; echo "export-vs-preview $?"
 ```
 
-Known: `preview-frame.mjs` fails its size check on a **vertical** project (it hard-codes a
-640×360 landscape result — a fixture assumption, not a regression); its content checks must
-still pass. `export-vs-preview.mjs` needs the longer watchdog when the video decoder is busy.
+`preview-frame.mjs` derives its size check from the canvas (it used to hard-code 640×360 and
+fail on every vertical project); `CANVAS=vertical-1080` runs it on a vertical canvas and the
+restore puts the project's own back. `export-vs-preview.mjs` needs the longer watchdog when the video decoder is busy.
 
 ---
 
@@ -234,16 +255,16 @@ still pass. `export-vs-preview.mjs` needs the longer watchdog when the video dec
 |---|---|---|
 | 0 gates | | |
 | 1 automated + `brf.mjs` | | |
-| 2.1 export of a code module | | |
+| 2.1 export of a code module | ✅ | `test/app/brf-export.mjs` against the packaged build (2026-09-23, 1920×1080 @ 30): export finished, `ffprobe -count_frames` 120 = 4 s × 30; all 120 frames of the file match `renderFrame` (worst grid cell 1.8 pts, tol 4; lit share within 0.03 pts); 0.1/1.0/3.0 s: preview 0.20/1.98/1.96 % lit, file 0.20/1.97/1.96 %; no frame missing the graphic; the 3.0 s frame read by eye: **3,200**. Override `value 3200→7`: oracle moves 19.6 pts at 3.0 s, file matches the override (worst cell 0.6). Control `VERIFY_PROBE=1` (settle returns at once): frames 0 and 1 black in the file — caught; the three sampled frames alone all matched, so only the every-frame scan sees it. The exporter already waited; no fix needed there. **Reported since** (same day, isolated build, CDP 9237): `track_export` now answers `complete: false` with `incompleteFrames` for the `VERIFY_PROBE=1` export: `{frames: 2, ranges: [[0,1]], items: [{name: "Counter probe", frames: 2, ranges: [[0,1]]}], gradeIssues: []}`. Those are exactly the file's two black frames. The warning names them and says to export again. The normal export is the positive control: `complete: true`, no warning, every frame matching. |
 | 2.2 live playback | | |
 | 2.3 save / reopen / relaunch | | |
 | 2.4 undo / redo / Revert | | |
 | 2.5 import from disk | | |
 | 2.6 Inspector variables | | |
-| 2.7 sandbox, adversarial | | |
+| 2.7 sandbox, adversarial | **pass after fix** | 2026-09-23, worktree build, isolated profile. **Found open** in the real worker: string `setTimeout`/`setInterval` ran (global and via `WorkerGlobalScope.prototype`; would also have carried a generated `import()` past the source check); a `dispatchEvent`ed `MessageEvent` shaped like a host `load` replaced the probed module with an unprobed one; `new FontFace('x','url(https://…)')` + `self.fonts` issued a request only main's filter stopped; the `webkitRequestFileSystem*` storage API was present. **Fixed** in `brf-lockdown.ts`: timers wrapped (made in the target realm, `Reflect.apply` captured) to refuse non-functions; the host listener ignores untrusted events; `FontFace`, `fonts`, `webkit*FileSystem*` removed. **Shut already:** `Reflect.construct(Function)`, async/generator/async-generator constructors via prototypes, class methods, getters, bound functions, indirect eval, `Worker`/`SharedWorker` (Blob URL), `importScripts`, `navigator.sendBeacon`, WebSocket/EventSource/XHR/WebTransport, `postMessage`, `queueMicrotask`/`scheduler.postTask` with a string (TypeError). **Not doors:** WebAssembly (an instance calls only the imports the module hands it), `structuredClone` (cannot clone functions), `Atomics.wait` (no `SharedArrayBuffer`: not cross-origin isolated). `brf-sandbox.mjs` exit 0, and against the pre-fix build it failed at `shut: setTimeout with a string` (got `OPEN`). Outer wall: iframe fetch rejected, main logged `refused a network request from the editor: https://example.com/?bay-outer-wall`. |
 | 2.8 hostile and heavy | | |
-| 2.9 packaged app | | |
-| 2.10 dev mode | | |
+| 2.9 packaged app | ✅ after a fix | `pnpm bundle` → `release/mac-arm64/bay.app`, launched directly (own `--user-data-dir`, CDP 9231; renderer at `file://…/app.asar/out/renderer/index.html`): `brf.mjs` exit 0, 15 ok, `.brf 3.1 ms · HTML 91.8 ms`. Worker loads from inside `app.asar` over `file:` (allowed by `offline.ts`'s local schemes and by the CSP's `script-src 'self'`). **Broken on purpose** (worker renamed inside the asar header): before the fix `write_brf` never answered (CDP "Promise was collected", probe CANNOT MEASURE after 120 s) — `#fail` dropped waiters without resolving them; after it, `brf.mjs` exits 1 at the control with `The .brf crashed: the worker could not start …`. |
+| 2.10 dev mode | ✅ after a fix | 2026-09-23, electron-vite 4 / Vite 7.3.6, dev server `http://localhost:5173/`, own profile (`--user-data-dir` after `--`; the socket was under `~/.bay-wt/devx`) and CDP 9237. `brf.mjs` exit 0, 15 ok, `.brf 3.4 ms · HTML 95.9 ms`. **Network:** no `refused` line for the dev server or its HMR socket. Positive control: `brf-sandbox.mjs`'s CSP-bypassed fetch logged `[bay] refused a network request from the editor: https://example.com/?bay-outer-wall`, the only refused line. `offline.ts` needed no change. **HMR:** a line appended to `src/shared/brf.ts` → Vite `page reload …/src/shared/brf.ts` over the HMR socket (a marker set in the page was gone after it). It is a full reload, not a hot update: the module has no HMR boundary. Then `brf.mjs` again: exit 0, 15 ok. **Found and fixed:** with a cold `node_modules/.vite`, the first `write_brf` made Vite discover `sucrase`, which only the worker imports, and log `new dependencies optimized: sucrase … reloading`. That reloaded the editor in the middle of the call (probe: `Inspected target navigated or closed`), and any unsaved edits went with it. Reproduced twice. `optimizeDeps.include: ['sucrase']` in `electron.vite.config.ts`: cold cache again, `brf.mjs` exit 0, 15 ok, no reload, `sucrase.js` optimised at startup. Also seen: `window.__vite_plugin_react_preamble_installed__` is false in dev, because the CSP's `script-src 'self'` blocks plugin-react's inline preamble. React Fast Refresh was not exercised. Left alone, since the CSP is a product decision. |
 | 2.11 agent quality | | |
 | 2.12 regression sweep | | |
 

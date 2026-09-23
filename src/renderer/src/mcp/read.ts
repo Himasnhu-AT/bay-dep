@@ -30,6 +30,8 @@ import {
   type Marker
 } from '@shared/project'
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
+import { audioFinishReport } from './audioFinish'
+import { resolveGrade } from '@shared/grade'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -139,6 +141,7 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
   const { item, track } = resolveItem(String(args.itemId))
   const asset = findAsset(project(), item.assetId)
   const tl = timeline()
+  const soundFinish = audioFinishReport(item, project(), tl)
   return {
     timeUnit: 'frames',
     id: item.id,
@@ -169,6 +172,9 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // their identity values" — the second is a caller having set something that does nothing.
     ...(item.adjustments ? { adjustments: item.adjustments } : {}),
     ...(item.blendMode ? { blendMode: item.blendMode } : {}),
+    // Same absent-means-unset convention: a grade that exists is reported whole, with whether the
+    // compositor will actually run it, since an all-neutral grade is stored and changes nothing.
+    ...(item.grade ? { grade: item.grade, gradeActive: resolveGrade(item.grade) !== null } : {}),
     // `edit_item` accepts `crop` and `variables`, and this reported neither — so an agent could
     // set them and had no way to read them back. That breaks three things at once: it cannot
     // verify its own edit, it cannot make a relative change ("crop a little more"), and it
@@ -178,7 +184,15 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // nothing" is a statement about a caller having set something that does nothing.
     ...(item.crop && isCropped(item.crop) ? { crop: item.crop } : {}),
     ...(item.variables ? { variables: item.variables } : {}),
-    audio: { volume: item.volume, fadeInFrames: item.fadeInFrames, fadeOutFrames: item.fadeOutFrames },
+    audio: {
+      volume: item.volume,
+      fadeInFrames: item.fadeInFrames,
+      fadeOutFrames: item.fadeOutFrames,
+      // J/L offsets as they resolve now and the duck, with any clamp said in words — the same
+      // report edit_item returns, so a read and a write cannot describe one clip differently.
+      ...(soundFinish.report ?? {}),
+      ...(soundFinish.warnings.length > 0 ? { notes: soundFinish.warnings } : {})
+    },
     asset: asset
       ? {
           id: asset.id,

@@ -7,6 +7,7 @@ import {
   Type as TypeIcon,
   Video,
   type LucideIcon,
+  Palette,
   Sparkles
 } from 'lucide-react'
 import { US_PER_SECOND, type Asset, type AssetKind, type Item } from '@shared/project'
@@ -60,7 +61,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   gif: ImageIcon,
   text: TypeIcon,
   html: Code2,
-  brf: Sparkles
+  brf: Sparkles,
+  lut: Palette
 }
 
 /**

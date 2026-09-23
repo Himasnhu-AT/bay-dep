@@ -160,6 +160,12 @@ export interface TextLayer extends LayerBase {
    */
   split?: 'word' | 'char' | 'line'
   stagger?: number
+  /**
+   * Variable-font axes by tag — `{ wdth: 87, wght: 600 }`, or a font's own axis (`GRAD`, `XTRA`).
+   * Canvas has no `font-variation-settings`, so the painter draws the text in a face registered
+   * with these settings (`engine/brfFonts.ts`); an axis given here wins over `weight`.
+   */
+  variations?: Record<string, number>
 }
 
 export interface GroupLayer extends LayerBase {
@@ -215,12 +221,14 @@ const ALLOWED: Record<Layer['type'], Set<string>> = {
   rect: new Set([...COMMON, ...STYLE, 'w', 'h', 'radius']),
   ellipse: new Set([...COMMON, ...STYLE, 'w', 'h']),
   path: new Set([...COMMON, ...STYLE, 'd', 'draw']),
-  text: new Set([...COMMON, ...STYLE, 'text', 'font', 'size', 'weight', 'italic', 'align', 'w', 'lineHeight', 'tracking', 'split', 'stagger']),
+  text: new Set([...COMMON, ...STYLE, 'text', 'font', 'size', 'weight', 'italic', 'align', 'w', 'lineHeight', 'tracking', 'split', 'stagger', 'variations']),
   group: new Set([...COMMON, 'w', 'h', 'clip', 'layers'])
 }
 const NUMERIC = new Set(['rotate', 'scale', 'sx', 'sy', 'opacity', 'blur', 'draw'])
 const LENGTH = new Set(['x', 'y', 'w', 'h', 'radius', 'strokeWidth', 'size'])
 const COLOR = new Set(['fill', 'stroke'])
+/** An OpenType axis tag, as `variations` takes it. Letters and digits only: it is written into a CSS string. */
+const AXIS_TAG = /^[A-Za-z0-9]{4}$/
 /** Lengths that may not be keyed: they size a box that layout depends on. */
 const STATIC_LENGTH = new Set(['w'])
 
@@ -412,6 +420,17 @@ function checkLayer(
     if (layer.font !== undefined && typeof layer.font !== 'string') fault(`${at}.font`, 'must be a font family name')
     if (layer.lineHeight !== undefined && typeof layer.lineHeight !== 'number') fault(`${at}.lineHeight`, 'must be a multiple of the size, e.g. 1.2')
     if (layer.tracking !== undefined && typeof layer.tracking !== 'number') fault(`${at}.tracking`, 'must be pixels between letters')
+    if (layer.variations !== undefined) {
+      const v = layer.variations
+      if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+        fault(`${at}.variations`, 'must be an object of axis tag to number, e.g. { wdth: 87, wght: 600 }')
+      } else {
+        for (const [tag, value] of Object.entries(v)) {
+          if (!AXIS_TAG.test(tag)) fault(`${at}.variations.${tag}`, 'is not an axis tag: a tag is exactly 4 letters or digits, e.g. wdth, wght, opsz, slnt, ital, or a font\'s own like GRAD')
+          else if (typeof value !== 'number' || !Number.isFinite(value)) fault(`${at}.variations.${tag}`, 'must be a finite number — the axis value, e.g. wdth 87 or wght 600')
+        }
+      }
+    }
   }
   if (kind === 'group') {
     if (depth >= 8) {
@@ -685,6 +704,8 @@ export type DrawOp =
       size: number
       weight: number
       italic: boolean
+      /** Variable-font axes, sorted by tag; null when the layer sets none. */
+      variations: Record<string, number> | null
       fill?: string
       stroke?: string
       strokeWidth: number
@@ -703,6 +724,16 @@ export type DrawOp =
     })
   | { kind: 'clip'; matrix: Matrix; w: number; h: number }
   | { kind: 'unclip' }
+
+/** A layer's axes in tag order, so one set of settings has one spelling (and one face). */
+function sortedVariations(v: Record<string, number> | undefined): Record<string, number> | null {
+  if (!v) return null
+  const tags = Object.keys(v).sort()
+  if (tags.length === 0) return null
+  const out: Record<string, number> = {}
+  for (const tag of tags) out[tag] = v[tag]!
+  return out
+}
 
 export const DEFAULT_FONT = '-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif'
 
@@ -960,6 +991,7 @@ function emit(
         size,
         weight: layer.weight ?? 700,
         italic: layer.italic ?? false,
+        variations: sortedVariations(layer.variations),
         ...style({ fill: layer.fill ?? '#ffffff', ...(layer.stroke ? { stroke: layer.stroke } : {}), ...(layer.strokeWidth !== undefined ? { strokeWidth: layer.strokeWidth } : {}) }),
         align: layer.align ?? 'center',
         width: layer.w !== undefined ? toLength(layer.w, 'x', frame) : null,

@@ -75,6 +75,7 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.mediaFilmstrip, request) as Promise<string[]>,
     waveform: (assetId: string, path: string, buckets: number) =>
       ipcRenderer.invoke(IPC.mediaWaveform, assetId, path, buckets) as Promise<number[]>,
+    beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
     pathForFile: (file: File) => {

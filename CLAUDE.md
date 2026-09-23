@@ -194,12 +194,39 @@ target realm — made in the lockdown's own, `blocked.constructor` was a live `F
 another realm, which `brf-lockdown.test.ts` caught. The JSX factory is `__brf_h`, not `h`:
 `const h = height / 2` is ordinary code and shadowed it.
 
+**Blocking `Function` does not block code generation: the platform compiles strings too.**
+The adversarial pass (test.md §2.7, `test/app/brf-sandbox.mjs`) found string `setTimeout`/
+`setInterval` running in the locked worker, a `dispatchEvent`ed `MessageEvent` reaching the host
+listener (a module swapped itself for an unprobed one after `write_brf` accepted it), and
+`FontFace` fetching a URL. Timers now refuse non-functions (wrapper made in the target realm,
+`Reflect.apply` captured before user code), the listener answers only `isTrusted` events, and
+`FontFace`/`fonts` are gone. A fetch from the editor *document* tests its CSP, not main's filter;
+the probe uses CDP's CSP bypass in an iframe to reach main.
+
+**`.brf` text takes variable-font axes through registered faces** (`engine/brfFonts.ts`):
+canvas has no `font-variation-settings`, and `ctx.fontStretch` is keywords only, but a
+`FontFace` with a `variationSettings` descriptor draws with any axis — measured, Archivo wdth 62
+vs 125 is 27.5% vs 51.4% of the frame. Each (family, settings) is a face cloned from the family's
+`@font-face` rules or `local()` (full/PostScript names only). A loading face makes the item
+*pending*, so export and `preview_frame` wait on `variationFaces.settle` like any other source.
+
 A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
 undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
 anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main
 imports a `.brf` file as text and never runs it; `lib/brfImport.ts` probes it in the worker.
 Every example in `bay://guide/brf` and the worked-edits guide is compiled and run on every frame
 by `brf-code.test.ts`.
+
+**Beats are analysed in main, kept on the asset in source time, and mapped once**
+(`media/beat-analysis.ts`, `@shared/beats`, `detect_beats`). Spectral flux → autocorrelation picks
+a period family → the octave is chosen by what sits halfway between beats (broadband *and* kick
+band, because after log compression a quiet hat rises in as many bins as a kick) → Ellis's DP →
+bar phase from the kick band only when one position clearly wins → drop-outs as missing beats on
+the continued grid. `beatFramesForItem` is the one mapping onto the timeline; the tool's frames and
+the timeline's snapping (`lib/snap.ts`, which also snaps to markers now) both read it. Measured on
+a real score its eighths are *harder* than its weaker beats, so by onsets alone it is a 220 pulse;
+it reads 110 only because 220 is past the 215 search ceiling, and a pulse over 180 needs the kick
+band to agree. The octave is the fragile part; the tests pair every octave case with its opposite.
 
 **The preview's composition pool answers with the latest decoded frame, not nothing**
 (`CompositionPool({ live: true })`). A composition frame is a 40-80ms capture in main, and every frame
@@ -208,6 +235,29 @@ paused — they vanished during playback. Live, a miss shows the latest decoded 
 within a second, the newest queued capture is served first, stale ones are dropped, and three frames
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
+
+**A colour grade is a source transform inside the compositor, not a second renderer**
+(`item.grade`, `@shared/grade`, `engine/grade.ts`). `#drawSource` hands the element it was about to
+draw to one shared WebGL2 context, gets back a graded canvas of the same framing at the size it
+will be drawn, and draws that with the same alpha/blend/filter/rotation — so preview,
+`preview_frame` and export grade through one path, and grain/halation are native at output size.
+An identity grade resolves to `null` and skips the pass (the `'none'` rule). `.cube` LUTs are
+`kind: 'lut'` assets parsed by main (`@shared/cube`); the table lives on the asset. Halation is
+screened in RGB: in YUV it casts violet. A render target created while its texture unit was bound
+for reading is a WebGL feedback loop — the first halation draw of every new size failed until
+`target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
+
+**An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter
+waits for pending items for a bounded time and then writes the frame anyway. That frame is a wrong
+picture: a `.brf` or composition still missing, or a clip whose grade failed and was drawn
+ungraded. Each such frame is recorded from the draw that was written (`DrawStats.pendingNames`,
+`gradeIssues`). `describeIncomplete` turns the record into `IncompleteFrames` (`@shared/ipc`),
+which lists the frames and ranges, each item and grade issue, and one sentence with the
+better-hidden fault first. `track_export` reads it live from the exporter, not from main, which
+cannot know. It returns `complete: false`, `incompleteFrames` and a `warning`, and a clean `done`
+returns `complete: true`. The export form shows the same sentence. The frame count used to be a
+counter that nothing read. Every pending site goes through `notePending`: a branch that bumped
+`pending` and forgot the name arrived in parallel with the field.
 
 **Tool calls stream into the panel as the model writes them.** `content_block_start` for a
 `tool_use` shows the card at once, and each `input_json_delta` (keyed by block index, so the stream
@@ -685,6 +735,18 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
   resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
   independently.
+- **J/L cuts and ducking are in that same function, `itemAudioGainAt`** (`src/shared/audio-gain.ts`),
+  and the preview's clip gain now reads it too — before, the preview multiplied fade × transition
+  itself and so ignored the transition-wins rule above. A J/L item's sound plays from its own
+  `<audio>` stand-in for its whole audible span (no seam at the picture cut), and its picture
+  element is *claimed* silently, because an unclaimed media element plays to the speakers
+  unmixed. Ducking is keyed on the key track's clips being present, not on signal level: Web
+  Audio has no sidechain and ffmpeg's `sidechaincompress` has its own detector, so a level-driven
+  duck would be two answers. Loudness mastering (`main/export/master.ts`) is a closed loop on the
+  **encoded** file — gain, 4×-oversampled `alimiter` with `latency=1`, encode, `ebur128`, correct —
+  never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
+  peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
+  default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field

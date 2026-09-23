@@ -7,7 +7,7 @@ export const tool: ToolSpec = {
   name: 'edit_item',
   description:
     'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
-    'it sits on the canvas, its opacity, volume, fades or speed. Only the fields you pass ' +
+    'it sits on the canvas, its opacity, volume, fades, speed, look or colour grade. Only the fields you pass ' +
     'change. Moving an item onto occupied time on the same track is refused rather than ' +
     'silently overlapping — move the other item first, or use a different track. ' +
     'Returns the item complete after the edit. **That returned state is authoritative: you ' +
@@ -46,6 +46,32 @@ export const tool: ToolSpec = {
       speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
       fadeInFrames: { type: 'integer', minimum: 0 },
       fadeOutFrames: { type: 'integer', minimum: 0 },
+      audioLeadFrames: {
+        type: 'integer',
+        minimum: 0,
+        description:
+          'J-cut: start this clip\'s SOUND this many frames before its picture, reading source ' +
+          'from before its in-point — the next shot\'s sound arriving under the current one ' +
+          '(~0.5 s is typical). Clamped to the footage before the in-point, and ignored where ' +
+          'a transition already crosses that cut; the result says when. Fades apply to the ' +
+          'sound\'s own edges, so give a lead a few frames of fadeInFrames. 0 removes it.'
+      },
+      audioTrailFrames: {
+        type: 'integer',
+        minimum: 0,
+        description:
+          'L-cut: let this clip\'s SOUND run on this many frames after its picture ends, ' +
+          'reading source past its out-point. Same clamps as audioLeadFrames. 0 removes it.'
+      },
+      duck: {
+        description:
+          'Duck this clip under another track — music under dialogue: { keyTrackId, amountDb ' +
+          '(dB down, default 6), attackFrames (ramp down, ending as the key starts; default ' +
+          '0.25 s), releaseFrames (ramp up after it ends; default 0.5 s) }. Keyed on the key ' +
+          'track\'s clips being present, not on their loudness, so preview and export duck ' +
+          'identically; a pause inside a dialogue clip stays ducked. Fields merge with the ' +
+          'current duck; null removes it.'
+      },
       crop: {
         type: 'object',
         description:
@@ -84,6 +110,30 @@ export const tool: ToolSpec = {
           sepia: { type: 'number', minimum: 0, maximum: 1 },
           invert: { type: 'number', minimum: 0, maximum: 1 }
         }
+      },
+      // No `type`, like the text effect groups below: `null` must pass (it removes the grade), and
+      // the dispatcher's validator does not recurse into objects — `mergeGrade` checks every field
+      // and names the legal range in its refusal.
+      grade: {
+        description:
+          'A real colour grade, drawn by the GPU in preview, preview_frame and export alike. Fields ' +
+          'merge (setting saturation leaves the wheels alone); null removes the whole grade or any ' +
+          'one group. Applied in this order: temperature/tint → lift/gamma/gain → saturation → ' +
+          'curves → lut → halation → vignette → grain.\n' +
+          '- lift, gamma, gain: colour wheels as RGB offsets { r, g, b }. lift adds to shadows ' +
+          '(-1..1, ±0.03 is visible), gamma bends mids (-0.9..4, +0.1 brightens), gain multiplies ' +
+          '(-1..4, +0.1 is 10% brighter). Equal r/g/b is a brightness move; unequal is a colour cast.\n' +
+          '- temperature: Kelvin shift, -3000..3000; +200 is ~200 K warmer. tint: -1..1, + is magenta.\n' +
+          '- saturation: 0..4, 1 unchanged.\n' +
+          '- curves: { master, r, g, b }, each 1-16 [input, output] points in 0..1; (0,0) and (1,1) ' +
+          'are added if you leave the ends out. Channels apply first, then master (ffmpeg order).\n' +
+          '- lut: { assetId, intensity 0..1 } — import a .cube file with import_media first.\n' +
+          '- grain: { amount 0..1 (0.1-0.2 is fine 35mm), size 0.5..16 timeline px }. Animated per ' +
+          'frame and deterministic, so an export is reproducible.\n' +
+          '- halation: { amount 0..1, threshold 0..0.99 (keep ~0.85 so faces never glow), radius ' +
+          'timeline px, color hex (default warm #FF8C40) }. Screened in RGB.\n' +
+          '- vignette: { amount 0..1 }.\n' +
+          'Only for picture clips (video, image, gif, html, brf). inspect_item reports it back.'
       },
       blendMode: {
         type: 'string',
