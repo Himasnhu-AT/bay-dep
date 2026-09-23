@@ -49,10 +49,23 @@ export interface RenderFrameOptions {
    */
   pool?: MediaPool
   timeoutMs?: number
+  /**
+   * `png` by default, because a probe comparing stills wants them lossless. The agent surface
+   * asks for `jpeg`: a PNG of a video frame at 640px is several hundred kilobytes of base64,
+   * which a client counts as tokens, while a JPEG of the same picture answers the same question
+   * — "is the caption covering her face?" — at a tenth of that.
+   */
+  format?: 'png' | 'jpeg'
+  /**
+   * A line of text burned into the bottom-left corner after compositing — the timecode, when
+   * an agent asks for it. Drawn in image space, not timeline space, so it is the same size at
+   * any canvas resolution, and on a plate so it reads over any picture.
+   */
+  stamp?: string
 }
 
 export interface RenderedFrame {
-  /** `data:image/png;base64,…` — what the MCP result carries, with no re-encoding needed. */
+  /** `data:image/png;base64,…` (or jpeg) — what the MCP result carries, unre-encoded. */
   dataUrl: string
   width: number
   height: number
@@ -183,8 +196,24 @@ export function previewSize(
 }
 
 
+function drawStamp(ctx: CanvasRenderingContext2D, text: string, width: number, height: number): void {
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.filter = 'none'
+  const size = Math.max(10, Math.round(Math.min(width, height) * 0.045))
+  const pad = Math.round(size * 0.4)
+  ctx.font = `600 ${size}px ui-monospace, Menlo, monospace`
+  ctx.textBaseline = 'bottom'
+  const measured = ctx.measureText(text).width
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.72)'
+  ctx.fillRect(0, height - size - pad * 2, measured + pad * 2, size + pad * 2)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.fillText(text, pad, height - pad)
+}
+
 /**
- * Renders one frame and returns it as a PNG data URL.
+ * Renders one frame and returns it as a PNG (or JPEG) data URL.
  *
  * Retries while anything is `pending` rather than returning early: a first attempt often
  * finds an element that has only just been created, and `onReady` fires when it decodes. The
@@ -267,8 +296,11 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       })
     }
 
+    if (options.stamp) drawStamp(ctx, options.stamp, width, height)
+
     return {
-      dataUrl: canvas.toDataURL('image/png'),
+      dataUrl:
+        options.format === 'jpeg' ? canvas.toDataURL('image/jpeg', 0.85) : canvas.toDataURL('image/png'),
       width,
       height,
       ...stats,

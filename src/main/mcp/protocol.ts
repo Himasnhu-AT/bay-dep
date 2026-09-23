@@ -39,7 +39,18 @@ export interface ToolOutcome {
   ok: boolean
   /** Rendered into MCP's content array. A string for text, anything else is JSON-stringified. */
   value: unknown
+  /**
+   * Content already in MCP's shape, passed through untouched. Only the proxy sets this: it is
+   * relaying an answer bay already rendered, and re-rendering it would flatten an image block
+   * back into text — which is exactly how `preview_frame` came to reach the agent as half a
+   * megabyte of base64 it could not look at.
+   */
+  content?: McpContent[]
 }
+
+export type McpContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
 
 export type RunTool = (name: string, args: Record<string, unknown>) => Promise<ToolOutcome>
 
@@ -62,6 +73,36 @@ export function toolManifest(): Record<string, unknown>[] {
 function textContent(value: unknown): { type: 'text'; text: string }[] {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
   return [{ type: 'text', text: text ?? '' }]
+}
+
+const DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,(.*)$/s
+
+/**
+ * A tool's value as MCP content, with any image lifted out into an image block.
+ *
+ * An image inside a JSON text block is not an image to a client — it is text, and a very large
+ * amount of it. The agent in the panel said so plainly: *"both previews came back too large… I
+ * haven't actually seen the picture."* So every top-level field holding a `data:image/…` URL is
+ * moved into its own `image` block and replaced, in the JSON, with a pointer to it. Top-level
+ * only, because that is where the one tool that returns a picture puts it; a deeper search
+ * would be a guess about shapes nobody produces.
+ */
+export function toContent(value: unknown): McpContent[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return textContent(value)
+  }
+  const images: McpContent[] = []
+  const rest: Record<string, unknown> = {}
+  for (const [key, field] of Object.entries(value as Record<string, unknown>)) {
+    const match = typeof field === 'string' ? DATA_URL.exec(field) : null
+    if (match) {
+      images.push({ type: 'image', mimeType: match[1]!, data: match[2]! })
+      rest[key] = `(attached as image ${images.length})`
+    } else {
+      rest[key] = field
+    }
+  }
+  return images.length === 0 ? textContent(value) : [...textContent(rest), ...images]
 }
 
 /**
@@ -131,7 +172,10 @@ export async function handleRequest(
           : {}
 
       const outcome = await runTool(params.name, args)
-      return success(id, { content: textContent(outcome.value), isError: !outcome.ok })
+      return success(id, {
+        content: outcome.content ?? toContent(outcome.value),
+        isError: !outcome.ok
+      })
     }
 
     case 'resources/list':

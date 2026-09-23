@@ -33,7 +33,7 @@ import {
   isNotification,
   parseLine
 } from './jsonrpc'
-import { PROTOCOL_VERSION, handleRequest, toolManifest, type RunTool } from './protocol'
+import { PROTOCOL_VERSION, handleRequest, toContent, toolManifest, type RunTool } from './protocol'
 
 const neverCalled: RunTool = async () => {
   throw new Error('runTool must not be called for this request')
@@ -308,4 +308,41 @@ test('a string result is passed through as text, not re-encoded as JSON', async 
   const answer = await handleRequest(request('tools/call', { name: 'set_playhead' }), stringy)
   const text = (answer as { result: { content: { text: string }[] } }).result.content[0]!.text
   assert.equal(text, 'Playhead moved to frame 120.')
+})
+
+test('an image in a result becomes an image block, not text', () => {
+  const content = toContent({ frame: 3, image: 'data:image/jpeg;base64,/9j/AAAA', canvas: { width: 1 } })
+  assert.equal(content.length, 2)
+  assert.deepEqual(content[1], { type: 'image', mimeType: 'image/jpeg', data: '/9j/AAAA' })
+  const json = JSON.parse((content[0] as { text: string }).text) as Record<string, unknown>
+  assert.equal(json['image'], '(attached as image 1)')
+  assert.equal(json['frame'], 3)
+  assert.deepEqual(json['canvas'], { width: 1 })
+})
+
+test('text that merely mentions a data URL is left alone', () => {
+  // Positive control for the lift: only a field that IS a data URL moves. A caption quoting one,
+  // or a non-image data URL, stays text.
+  for (const value of [
+    { note: 'see data:image/png;base64,AAAA for details' },
+    { file: 'data:text/plain;base64,AAAA' },
+    'data:image/png;base64,AAAA',
+    [1, 2]
+  ]) {
+    const content = toContent(value)
+    assert.equal(content.length, 1, JSON.stringify(value))
+    assert.equal(content[0]!.type, 'text')
+  }
+})
+
+test('pre-built content from the proxy is passed through untouched', async () => {
+  const prebuilt = [
+    { type: 'text' as const, text: '{}' },
+    { type: 'image' as const, data: 'AAAA', mimeType: 'image/png' }
+  ]
+  const answer = (await handleRequest(
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'preview_frame', arguments: {} } },
+    async () => ({ ok: true, value: 'ignored', content: prebuilt })
+  )) as { result: { content: unknown[] } }
+  assert.deepEqual(answer.result.content, prebuilt)
 })

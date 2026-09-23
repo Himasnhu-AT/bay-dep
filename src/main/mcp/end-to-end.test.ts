@@ -209,6 +209,37 @@ test('a tool call crosses stdio, the socket, and comes back', async () => {
   }
 })
 
+test('an image a tool returns reaches the client as an image block, whole', async () => {
+  // The proxy used to keep content[0].text and re-wrap it. Every test above passed through
+  // that, because every stub returned one text block — and preview_frame, the one tool that
+  // returns a picture, reached the agent as a wall of base64 it could not look at.
+  const socketPath = scratchSocket()
+  const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const server = await startStubApp(socketPath, async () => ({
+    ok: true,
+    value: { frame: 12, image: `data:image/png;base64,${pixel}` }
+  }))
+  const proxy = startProxy(socketPath)
+  try {
+    proxy.send({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'preview_frame' } })
+    const answer = (await proxy.next()) as {
+      result: { content: { type: string; text?: string; data?: string; mimeType?: string }[] }
+    }
+    const [text, image] = answer.result.content
+    assert.equal(answer.result.content.length, 2, JSON.stringify(answer.result.content).slice(0, 300))
+    assert.equal(image?.type, 'image')
+    assert.equal(image?.mimeType, 'image/png')
+    assert.equal(image?.data, pixel)
+    // And the JSON beside it no longer carries the bytes.
+    assert.equal(text?.type, 'text')
+    assert.doesNotMatch(text?.text ?? '', /base64/)
+    assert.match(text?.text ?? '', /"frame": 12/)
+  } finally {
+    proxy.stop()
+    server.close()
+  }
+})
+
 test('a tool failure arrives as isError, not as a dead connection', async () => {
   const socketPath = scratchSocket()
   const server = await startStubApp(socketPath, refuse)

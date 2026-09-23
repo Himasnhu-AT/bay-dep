@@ -14,6 +14,7 @@
  */
 
 import { MIN_FONT_SIZE, renderFrame } from '@/engine'
+import { formatTimecode } from '@shared/project'
 import { fail, project, timeline } from './helpers'
 import { frameOrPlayhead } from './read'
 
@@ -27,10 +28,18 @@ const MAX_EDGE = 640
 export async function previewFrame(args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const tl = timeline()
   const frame = frameOrPlayhead(args)
+  const timecode = formatTimecode(frame, tl.fps, true)
 
   let still
   try {
-    still = await renderFrame({ project: project(), timelineId: tl.id, frame, maxSize: MAX_EDGE })
+    still = await renderFrame({
+      project: project(),
+      timelineId: tl.id,
+      frame,
+      maxSize: MAX_EDGE,
+      format: 'jpeg',
+      ...(args['includeTimecode'] === true ? { stamp: `${timecode}  ·  frame ${frame}` } : {})
+    })
   } catch (error) {
     fail(`Frame ${frame} could not be rendered: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -54,6 +63,9 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
   })
   return {
     frame,
+    // As text always, and in the picture only on request: a burned-in stamp covers a corner of
+    // the frame, which is exactly where a lower third or a logo might be the thing being checked.
+    timecode,
     width: still.width,
     height: still.height,
     // Layout numbers are in canvas pixels and the image is not, so both are reported

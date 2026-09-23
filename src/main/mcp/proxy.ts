@@ -27,7 +27,7 @@ import { spawn } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { LineBuffer, encode, failure, parseLine, RPC_INTERNAL_ERROR } from './jsonrpc'
-import { handleRequest, type ToolOutcome } from './protocol'
+import { handleRequest, type McpContent, type ToolOutcome } from './protocol'
 import { resourceBody } from './resources'
 
 /** How long to wait for a launched bay to open its socket before giving up. */
@@ -166,12 +166,16 @@ export async function runProxy(options: ProxyOptions): Promise<void> {
       socket,
       encode({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: tool, arguments: args } }),
       id
-    )) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } } | null
+    )) as { result?: { content?: unknown; isError?: boolean }; error?: { message?: string } } | null
 
     if (!reply) return { ok: false, value: `bay closed the connection while running "${tool}".` }
     if (reply.error) return { ok: false, value: reply.error.message ?? 'bay reported an error.' }
-    const content = reply.result?.content?.[0]?.text ?? ''
-    return { ok: reply.result?.isError !== true, value: content }
+    // Relayed whole. This used to keep `content[0].text` and re-wrap it, which silently dropped
+    // every block after the first — the image a `preview_frame` exists to return.
+    const content = Array.isArray(reply.result?.content)
+      ? (reply.result.content as McpContent[])
+      : []
+    return { ok: reply.result?.isError !== true, value: '', content }
   }
 
   process.stdin.on('data', (chunk: string) => {
