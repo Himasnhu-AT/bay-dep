@@ -12,6 +12,13 @@ it runs, and which part of the source it reads. One asset backs many items, so t
 a clip never touches the media behind it. A **track** stacks items: later video tracks draw over
 earlier ones, and audio tracks mix in parallel.
 
+That split decides which tool changes what. `edit_item` changes one placement: its timing,
+position, look, and text styling. `edit_asset` changes the asset, and so every placement at once —
+which is only two things: its name, and for a text asset the words it draws. Fixing a typo in a
+title with `edit_asset` fixes it everywhere that title appears; the result's `usedBy` lists every
+item the change reached. Duration, size and frame rate were measured from the file and are not
+settable at all.
+
 ## Time is frames. Always.
 
 Every time you give a tool is a **frame index at the timeline's own rate**, never seconds. A

@@ -139,7 +139,13 @@ export interface EditorActions {
   // assets -------------------------------------------------------------------
   addAssets(assets: Asset[]): void
   removeAsset(assetId: string): void
-  renameAsset(assetId: string, name: string): void
+  /**
+   * Change what an asset *is*, for every item that places it: its name, and for a text asset
+   * the words it draws. An undoable edit, unlike `patchAsset`, which exists for poster and
+   * waveform arrivals that are not edits at all. `text` on a non-text asset is ignored here and
+   * refused by the tool, which can say why.
+   */
+  editAsset(assetId: string, patch: { name?: string; text?: string }): void
   patchAsset(assetId: string, patch: Partial<Asset>): void
 
   // items --------------------------------------------------------------------
@@ -610,10 +616,12 @@ export const useEditor = create<EditorStore>((set, get) => {
       })
     },
 
-    renameAsset(assetId, name) {
+    editAsset(assetId, patch) {
       edit((project) => {
         const asset = findAsset(project, assetId)
-        if (asset) asset.name = name
+        if (!asset) return
+        if (patch.name !== undefined) asset.name = patch.name
+        if (patch.text !== undefined && asset.kind === 'text') asset.text = patch.text
       })
     },
 

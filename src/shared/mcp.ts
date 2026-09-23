@@ -100,8 +100,7 @@ export const TOOLS: ToolSpec[] = [
       'The project as it stands: name, canvas size and frame rate, every track, and every ' +
       'item with its id, position and duration in frames, and every marker. Start here. ' +
       'Everything else takes ids that come from this output, and the frame rate here is what ' +
-      'every other time in ' +
-      'this surface is measured in. ' +
+      'every other time in this surface is measured in. ' +
       'Call it to **orient**, not to confirm — the write tools return the item they changed, ' +
       'and that answer is authoritative. Measured on a 200-clip timeline, a turn that re-reads ' +
       'after every edit spends 99% of its bytes re-reading a project it changed by 263 of them.',
@@ -325,6 +324,31 @@ export const TOOLS: ToolSpec[] = [
         assetId: { type: 'string', description: 'Asset id from browse_assets or import_media.' },
         atFrame: frames('Where it starts. Defaults to the playhead.'),
         trackId: { type: 'string', description: 'Optional. Omit to let bay choose a free track.' }
+      },
+      required: ['assetId']
+    }
+  },
+  {
+    name: 'edit_asset',
+    description:
+      'Change an asset itself — and so every clip placing it at once. Two things are asset-level: ' +
+      'its name (how it reads in the media pool and on its clips), and for a text asset the ' +
+      'words it draws. Reach for it to fix a typo in a title everywhere it appears, or to give ' +
+      'an import a useful name. Anything about one placement — timing, position, look, text ' +
+      'styling — is edit_item. Duration, size and frame rate are measured from the file and ' +
+      'cannot be set. The result lists usedBy: every item the change reached, so check it if ' +
+      'you meant to change only one; to reword a single title, place a new text asset instead.',
+    category: 'write',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assetId: { type: 'string', description: 'Asset id from browse_assets or read_project.' },
+        name: { type: 'string', description: 'The new display name.' },
+        text: {
+          type: 'string',
+          description: 'Text assets only: the words to draw. Line breaks are kept.'
+        }
       },
       required: ['assetId']
     }

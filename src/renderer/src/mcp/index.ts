@@ -38,6 +38,7 @@ import { validateArgs } from '@shared/validate'
 import { proposeEdit } from './proposals'
 import { trimItem } from './trim'
 import { addMarker, removeMarker } from './markers'
+import { editAsset } from './assets'
 
 type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
 
@@ -52,6 +53,7 @@ const HANDLERS: Record<string, Handler> = {
   read_composition: (args) => readComposition(args),
   add_template: (args) => addTemplate(args),
   place_asset: (args) => placeAsset(args),
+  edit_asset: (args) => editAsset(args),
   edit_item: (args) => editItem(args),
   trim_item: (args) => trimItem(args),
   split_at: (args) => splitAt(args),
