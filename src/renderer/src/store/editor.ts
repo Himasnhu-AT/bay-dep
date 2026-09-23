@@ -877,11 +877,12 @@ export const useEditor = create<EditorStore>((set, get) => {
       const holder: { value: RippleDeleteResult | null } = { value: null }
       // One undo step: the removal and every shift it caused are one action to the user, and
       // reversing half of it would leave the tracks out of sync — the exact state the
-      // operation exists to avoid.
-      get().transact(() => {
-        editTimeline((tl) => {
-          holder.value = rippleDelete(tl, start!, end!, () => newId('itm'))
-        })
+      // operation exists to avoid. It is one step by construction, because the whole ripple
+      // runs inside this single `editTimeline`. There was a `transact` around it; wrapping one
+      // `edit()` in a transaction changes nothing, and removing it survived the undo-step gate
+      // (`mcp/one-undo-step.test.ts`), which is what fails if this ever becomes two edits.
+      editTimeline((tl) => {
+        holder.value = rippleDelete(tl, start!, end!, () => newId('itm'))
       })
 
       const removed = holder.value
