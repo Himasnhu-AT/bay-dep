@@ -149,6 +149,16 @@ const body = async () => {
   }
   check('preview', 'the audio context is running', withLead.state === 'running', withLead.state)
   const inRange = (rows, lo, hi) => rows.filter((r) => r.frame >= lo && r.frame <= hi)
+  // A sweep can advance and still stall short of a window a check reads (measured: one reached
+  // frame 106 of 146), and an empty window scores as NaN or ×Infinity — a FAIL that is really
+  // the instrument. So every window read below must hold samples, or the run cannot measure.
+  for (const run of [withLead, without]) {
+    for (const [lo, hi] of [[40, 55], [64, 86], [96, 140]]) {
+      if (inRange(run.samples, lo, hi).length < 3) {
+        throw new PreconditionError('playback did not reach every measured window of the J-cut sweep', `${span(run)}; frames ${lo}–${hi} unsampled — is the window occluded or throttled?`)
+      }
+    }
+  }
   const leadWith = inRange(withLead.samples, 64, 86)
   const leadWithout = inRange(without.samples, 64, 86)
   const early = inRange(withLead.samples, 40, 55)
@@ -175,6 +185,15 @@ const body = async () => {
   ]
   const ducked = await sweep(duck(true), 10, 5200, ['pm', 'pd'])
   const flat = await sweep(duck(false), 10, 5200, ['pm', 'pd'])
+  // Every window measured below must hold samples, or a stalled sweep reads as NaN dB — a FAIL
+  // that is really the instrument, the same stall the J-cut sweeps above refuse to score.
+  for (const run of [ducked, flat]) {
+    for (const [lo, hi] of [[20, 48], [72, 110], [135, 160]]) {
+      if (inRange(run.samples, lo, hi).length < 3) {
+        throw new PreconditionError('playback did not reach every measured window of the duck sweep', `${span(run)}; frames ${lo}–${hi} unsampled — is the window occluded or throttled?`)
+      }
+    }
+  }
   const level = (run, lo, hi) => median(inRange(run.samples, lo, hi).map((r) => r.pm))
   const duckDb = db(level(ducked, 72, 110) / level(ducked, 20, 48))
   const flatDb = db(level(flat, 72, 110) / level(flat, 20, 48))
