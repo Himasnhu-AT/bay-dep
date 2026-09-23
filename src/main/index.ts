@@ -18,6 +18,7 @@ import { cacheDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
+import { isOpenableExternally } from './external'
 import { describeSocket } from './mcp/socket-server'
 import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
@@ -109,9 +110,11 @@ function createWindow(): BrowserWindow {
   window.on('resize', rememberBounds)
   window.on('move', rememberBounds)
 
-  // An external link in an editor is always a mistake in-window; it belongs in the browser.
+  // An external link in an editor is always a mistake in-window; it belongs in the browser —
+  // if it is a web page at all (see `isOpenableExternally`).
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (isOpenableExternally(url)) void shell.openExternal(url)
+    else console.warn(`[bay] not opening ${url.slice(0, 80)}: only https links leave the app`)
     return { action: 'deny' }
   })
 
