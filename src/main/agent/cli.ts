@@ -72,6 +72,28 @@ export function killTree(
 }
 
 /**
+ * The environment for Claude Code's process, for both runtimes.
+ *
+ * `process.env` minus `ELECTRON_RUN_AS_NODE` — set, it would leak into anything Claude Code
+ * spawns that happens to be Electron — deleted rather than set to `undefined`, because the SDK's
+ * `env` replaces the child's environment and must not depend on how it copies one.
+ *
+ * Plus `CLAUDE_CODE_DISABLE_CLAUDE_MDS`. `--setting-sources project` loads the workspace's
+ * skills, but Claude Code also reads every CLAUDE.md in the folders *above* the working
+ * directory — measured: a marker in the workspace's parent reached the model, and a user's
+ * `~/CLAUDE.md` written for their own repositories would have steered bay's video edits. With
+ * this set the marker did not arrive and a project skill still loaded.
+ */
+export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
+  }
+  env['CLAUDE_CODE_DISABLE_CLAUDE_MDS'] = '1'
+  return env
+}
+
+/**
  * How long a turn may run before it is abandoned. A stuck turn must not be a stuck panel.
  *
  * Derived from the catalog rather than written down: it has to outlast the slowest single tool
@@ -224,7 +246,7 @@ export class CliAgentRuntime implements HostedAgentRuntime {
     const args = cliArgs(this.#options, this.id, this.#spawned)
     const child = spawn(this.#options.binary ?? 'claude', args, {
       cwd: this.#options.cwd,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined } as NodeJS.ProcessEnv,
+      env: childEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
       // Its own process group, so `killTree` reaches the proxy it spawns.
       detached: process.platform !== 'win32'

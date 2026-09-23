@@ -58,8 +58,10 @@ export function pinLabel(pin: Pin, fps: number): string {
  */
 export function composeMessage(text: string, pins: readonly Pin[], fps: number): string {
   if (pins.length === 0) return text
-  // A skill must stay first: the CLI expands `/skill` only at the very start of a message, so
-  // the pinned context goes after it, as part of what the skill is asked to work on.
+  // A leading skill stays first: the CLI expands a `/skill` at the very start of a message itself,
+  // before the model runs, so keeping it there saves the agent a Skill call (skills named later in
+  // the message are loaded by the agent). The pinned context goes after it, as part of what the
+  // skill is asked to work on.
   const skill = leadingSkill(text)
   if (skill) return `/${skill.skill.slug} ${composeMessage(skill.rest, pins, fps)}`
   const tc = (frame: number): string => formatTimecode(frame, fps, true)

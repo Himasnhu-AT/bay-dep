@@ -116,9 +116,15 @@ something saves, and nothing a probe does should.
 - `--setting-sources ''` does not stop MCP servers loading; only `--mcp-config` plus
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
-- `--tools ListMcpResourcesTool,ReadMcpResourceTool` makes every other built-in *absent* — the
-  session's tool list is bay's 30 plus those two, and a request to run `id` had nothing to run
-  it with. MCP tools are not built-ins, so bay's are unaffected.
+- `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
+  the session's tool list is bay's 31 plus those three, and a request to run `id` had nothing to
+  run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
+  `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
+  bundled skill (`cli.test.ts` pins both).
+- `--setting-sources project` does not stop Claude Code reading every CLAUDE.md in the folders
+  *above* the working directory: a marker in the workspace's parent reached the model. Only
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` (set by `childEnv` in `agent/cli.ts`, for both runtimes)
+  kept it out, and a project skill still loaded with it set.
 - `--restricted` also switches off project skills (the skill was simply missing from the
   session), which is why it went. The deny list it was paired with had gone stale: it named
   `Task` after the tool became `Agent`, and never named `Monitor`, which runs commands. A list
@@ -127,9 +133,33 @@ something saves, and nothing a probe does should.
 **bay's skills are real Claude Code skills.** `src/shared/skills.ts` defines them; main writes
 each as `.claude/skills/<slug>/SKILL.md` in the agent's working directory on every start, and the
 CLI loads them with `--setting-sources project` from that directory (nothing else is there, so
-the user's own skills and CLAUDE.md stay out). A `/skill` typed at the very start of a message is
-expanded by the CLI even though the agent has no `Skill` tool, so skills are user-invoked only;
-the composer therefore always keeps `/skill` first, and puts pinned context after it.
+the user's own skills stay out; their CLAUDE.md files stay out by the switch above). The CLI
+itself expands only a `/skill` at the very start of a message, so the agent has the `Skill` tool:
+a `/name` anywhere in the message, several at once, is loaded by the model, and the system prompt
+(`src/main/agent/prompt.ts`) tells it to load only bay's skills the user named. Skills are still
+user-invoked.
+
+**The in-app agent reaches files only through `src/main/mcp/policy.ts`.** It has no filesystem
+tools, so a path argument is its only way to a file, and text it reads (a transcript, an asset
+name) can carry a prompt injection. It connects on its own socket, `bay-agent.sock`, so main knows
+the caller by the connection rather than by anything a call claims; from there, no `@file`
+references, no hidden files or folders, only paths under home or temp, and a composition may only
+overwrite a composition. Terminal clients keep `@file` — they already have the filesystem — and
+nobody's export may overwrite a file that is not media.
+
+**Compositions are confined to their own folder** (`src/main/html/sandbox.ts`). The composition
+partition cancels every request but `data:`, `blob:`, `about:` and `file:` inside the composition's
+folder, resolved through symlinks; the window is sandboxed (hence CommonJS `.cjs` preloads), cannot
+navigate or open windows, and gets no permissions. Before this, a shared project's composition
+could read `~/.ssh` and post it anywhere. The contract already told authors remote resources were
+blocked; now they are.
+
+**bay passes ffmpeg no `-protocol_whitelist`, on purpose.** It was proposed, and measured against
+the shipped ffmpeg it changed nothing any specimen could observe: a local playlist inherits
+`file,crypto,data`, HLS and DASH under a video's name are not detected, concat calls a URL unsafe.
+`src/main/media/local-only.test.ts` pins that property with a direct fetch as its positive control,
+so an ffmpeg upgrade that loosens it fails the suite — a test of the property instead of an
+unfalsifiable flag.
 
 **A navigation can start and never commit.** bay's `will-navigate` guard cancels every
 renderer-initiated navigation, so `did-start-navigation` fires for a `location.reload()` that
@@ -163,7 +193,12 @@ here uses, which then conflicted with every branch that touched it.
 
 **The in-app agent edits directly; review is a diff, not a gate.** Every turn that changes the
 project ends with a Changes card (`describeChanges` in `src/shared/diff.ts`, compared by id) and a
-Revert that restores the state before that turn as one undoable step. "Ask before editing" in
+Revert that restores the state before that turn as one undoable step. A turn's checkpoint also
+holds the compositions it rewrote, so Revert writes those back. Cards expire when the project id
+changes — a checkpoint of project A must never be restored into B's window, where ⌘S would write
+it over B — and after 20 turns. Edits the user makes during a turn are marked on the card
+(`asAgent` wraps tool calls; anything outside one is the user's), because a whole-project revert
+takes them too. "Ask before editing" in
 Settings turns the old gate back on: every write is refused until the user approves a
 `propose_edit` plan, the approval is delivered as the model's next turn naming each call byte for
 byte, and each approved call runs once. Outside a session (a terminal client on the socket)

@@ -97,9 +97,9 @@ test("bay's own system prompt and workspace are the ones in force", () => {
   assert.equal(options.includePartialMessages, true, 'without this there is no streaming text')
 })
 
-test('the child environment drops ELECTRON_RUN_AS_NODE and keeps the rest', () => {
+test('the child environment drops ELECTRON_RUN_AS_NODE, keeps the rest, and turns off CLAUDE.md discovery', () => {
   const env = childEnv({ PATH: '/usr/bin', HOME: '/Users/x', ELECTRON_RUN_AS_NODE: '1' })
-  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/Users/x' })
+  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/Users/x', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' })
   // Positive control: a real environment keeps PATH, or the child cannot find anything.
   assert.ok('PATH' in childEnv())
 })

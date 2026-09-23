@@ -53,7 +53,8 @@ import {
   bayMcpServer,
   BUILT_IN_TOOLS,
   TURN_TIMEOUT_MS,
-  type CliOptions
+  type CliOptions,
+  childEnv
 } from './cli'
 import type { HostedAgentRuntime } from './runtime'
 import { toAgentEvents } from './stream'
@@ -74,21 +75,8 @@ export interface SdkOptions extends Omit<CliOptions, 'binary'> {
   turnTimeoutMs?: number
 }
 
-/**
- * The environment for Claude Code's process.
- *
- * The SDK's `env` *replaces* the child's environment rather than merging, so this starts from
- * `process.env` exactly as the CLI runtime's spawn does, minus `ELECTRON_RUN_AS_NODE`: set,
- * it would leak into anything Claude Code spawns that happens to be Electron. Deleted rather
- * than set to `undefined`, so the result does not depend on how the SDK copies it.
- */
-export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(base)) {
-    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
-  }
-  return env
-}
+/** The same environment the CLI runtime spawns with — see `childEnv` in `./cli`. */
+export { childEnv }
 
 /** The options one turn runs with. Pure, so the sandbox is pinned by tests. */
 export function sdkOptions(
