@@ -61,6 +61,8 @@ declare global {
       /** A fresh pool plus the awaited-seek step: the export path's first frame, in isolation. */
       MediaPool: typeof MediaPool
       awaitSources: typeof awaitSources
+      /** So a probe can time the draw alone — the grade pass's cost — without the awaits around it. */
+      Compositor: typeof Compositor
     }
   }
 }
@@ -169,7 +171,7 @@ class Engine {
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle && probeSurfaceEnabled()) {
-      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources }
+      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources, Compositor }
     }
     return () => this.detach()
   }

@@ -209,6 +209,17 @@ within a second, the newest queued capture is served first, stale ones are dropp
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
 
+**A colour grade is a source transform inside the compositor, not a second renderer**
+(`item.grade`, `@shared/grade`, `engine/grade.ts`). `#drawSource` hands the element it was about to
+draw to one shared WebGL2 context, gets back a graded canvas of the same framing at the size it
+will be drawn, and draws that with the same alpha/blend/filter/rotation — so preview,
+`preview_frame` and export grade through one path, and grain/halation are native at output size.
+An identity grade resolves to `null` and skips the pass (the `'none'` rule). `.cube` LUTs are
+`kind: 'lut'` assets parsed by main (`@shared/cube`); the table lives on the asset. Halation is
+screened in RGB: in YUV it casts violet. A render target created while its texture unit was bound
+for reading is a WebGL feedback loop — the first halation draw of every new size failed until
+`target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
+
 **Tool calls stream into the panel as the model writes them.** `content_block_start` for a
 `tool_use` shows the card at once, and each `input_json_delta` (keyed by block index, so the stream
 mapping keeps per-run state) appends to it; the card shows what is being written and the end of it —

@@ -7,7 +7,7 @@ export const tool: ToolSpec = {
   name: 'edit_item',
   description:
     'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
-    'it sits on the canvas, its opacity, volume, fades or speed. Only the fields you pass ' +
+    'it sits on the canvas, its opacity, volume, fades, speed, look or colour grade. Only the fields you pass ' +
     'change. Moving an item onto occupied time on the same track is refused rather than ' +
     'silently overlapping — move the other item first, or use a different track. ' +
     'Returns the item complete after the edit. **That returned state is authoritative: you ' +
@@ -84,6 +84,30 @@ export const tool: ToolSpec = {
           sepia: { type: 'number', minimum: 0, maximum: 1 },
           invert: { type: 'number', minimum: 0, maximum: 1 }
         }
+      },
+      // No `type`, like the text effect groups below: `null` must pass (it removes the grade), and
+      // the dispatcher's validator does not recurse into objects — `mergeGrade` checks every field
+      // and names the legal range in its refusal.
+      grade: {
+        description:
+          'A real colour grade, drawn by the GPU in preview, preview_frame and export alike. Fields ' +
+          'merge (setting saturation leaves the wheels alone); null removes the whole grade or any ' +
+          'one group. Applied in this order: temperature/tint → lift/gamma/gain → saturation → ' +
+          'curves → lut → halation → vignette → grain.\n' +
+          '- lift, gamma, gain: colour wheels as RGB offsets { r, g, b }. lift adds to shadows ' +
+          '(-1..1, ±0.03 is visible), gamma bends mids (-0.9..4, +0.1 brightens), gain multiplies ' +
+          '(-1..4, +0.1 is 10% brighter). Equal r/g/b is a brightness move; unequal is a colour cast.\n' +
+          '- temperature: Kelvin shift, -3000..3000; +200 is ~200 K warmer. tint: -1..1, + is magenta.\n' +
+          '- saturation: 0..4, 1 unchanged.\n' +
+          '- curves: { master, r, g, b }, each 1-16 [input, output] points in 0..1; (0,0) and (1,1) ' +
+          'are added if you leave the ends out. Channels apply first, then master (ffmpeg order).\n' +
+          '- lut: { assetId, intensity 0..1 } — import a .cube file with import_media first.\n' +
+          '- grain: { amount 0..1 (0.1-0.2 is fine 35mm), size 0.5..16 timeline px }. Animated per ' +
+          'frame and deterministic, so an export is reproducible.\n' +
+          '- halation: { amount 0..1, threshold 0..0.99 (keep ~0.85 so faces never glow), radius ' +
+          'timeline px, color hex (default warm #FF8C40) }. Screened in RGB.\n' +
+          '- vignette: { amount 0..1 }.\n' +
+          'Only for picture clips (video, image, gif, html, brf). inspect_item reports it back.'
       },
       blendMode: {
         type: 'string',

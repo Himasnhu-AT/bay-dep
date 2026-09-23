@@ -33,6 +33,8 @@ import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { AdjustmentsSection } from './AdjustmentsSection'
+import { GradeSection } from './GradeSection'
+import { isGradeableKind } from '@shared/grade'
 import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
 
@@ -488,6 +490,14 @@ export function Inspector(): ReactNode {
           <AdjustmentsSection
             items={selected.filter((item) => findAsset(project, item.assetId)?.hasVideo !== false)}
             timeline={timeline}
+          />
+        )}
+
+        {/* The grade runs only on picture sources — not text, which draws its own glyphs. */}
+        {selected.some((item) => isGradeableKind(findAsset(project, item.assetId)?.kind)) && (
+          <GradeSection
+            items={selected.filter((item) => isGradeableKind(findAsset(project, item.assetId)?.kind))}
+            luts={project.assets.filter((asset) => asset.kind === 'lut' && !asset.error)}
           />
         )}
 

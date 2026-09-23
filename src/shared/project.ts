@@ -15,8 +15,13 @@
 
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
+import type { Grade, LutData } from './grade'
 
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf'
+/**
+ * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
+ * timeline — a clip's `grade.lut` refers to it by id.
+ */
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -88,6 +93,12 @@ export interface Asset {
    * duration, size and vars are derived from it into the fields above when it is written.
    */
   brfCode?: string
+  /**
+   * For `kind: 'lut'` — the parsed `.cube` table (`@shared/grade`). Main parses it at import and
+   * the table lives in the project, so the renderer never reads the file and a moved `.cube` does
+   * not change a graded clip.
+   */
+  lut?: LutData
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
@@ -341,6 +352,12 @@ export interface Item {
   adjustments?: Adjustments
   /** How this clip combines with what is beneath it. Absent means `normal`. */
   blendMode?: BlendMode
+  /**
+   * A colour grade drawn by the compositor's WebGL pass (`@shared/grade`): wheels, white balance,
+   * curves, a LUT, halation, vignette and grain. Absent, or all identity, skips the pass entirely.
+   * Applied before `adjustments`, which remain a CSS filter over the graded picture.
+   */
+  grade?: Grade
   /**
    * Edges cut off this clip's source. Absent means none, which is the fast path.
    *

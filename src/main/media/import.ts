@@ -8,7 +8,7 @@
  */
 
 import { resolve } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { BrowserWindow, dialog } from 'electron'
 import type { ImportedAsset } from '@shared/ipc'
 import type { Asset } from '@shared/project'
@@ -22,8 +22,11 @@ import {
   AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  LUT_EXTENSIONS,
   assetFrom,
-  failedAsset
+  failedAsset,
+  isLutPath,
+  lutAssetFrom
 } from './asset-mint'
 
 /**
@@ -93,7 +96,9 @@ export async function importPaths(paths: readonly string[]): Promise<ImportedAss
       // than in a second importer keeps deduplication and path registration in one place: two
       // import paths with separate ideas of "already imported" is how one file lands in the
       // pool twice under different ids.
-      asset = isBrfPath(path)
+      asset = isLutPath(path)
+        ? await lutAsset(path)
+        : isBrfPath(path)
         ? await brfAsset(path)
         : isCompositionPath(path)
           ? await compositionAsset(path)
@@ -122,13 +127,15 @@ export async function importDialog(window: BrowserWindow | null): Promise<Import
           ...IMAGE_EXTENSIONS,
           'gif',
           ...COMPOSITION_EXTENSIONS,
-          'brf'
+          'brf',
+          ...LUT_EXTENSIONS
         ]
       },
       { name: 'Video', extensions: VIDEO_EXTENSIONS },
       { name: 'Audio', extensions: AUDIO_EXTENSIONS },
       { name: 'Images', extensions: [...IMAGE_EXTENSIONS, 'gif'] },
       { name: 'Compositions', extensions: [...COMPOSITION_EXTENSIONS, 'brf'] },
+      { name: 'Colour LUTs', extensions: LUT_EXTENSIONS },
       { name: 'All files', extensions: ['*'] }
     ]
   }
@@ -154,4 +161,19 @@ async function brfAsset(path: string): Promise<Asset> {
   const base = failedAsset(path, '')
   delete base.error
   return { ...base, kind: 'brf', brfCode: source, hasVideo: true }
+}
+
+/** A `.cube` LUT: read and parsed here, so the renderer receives only the table. */
+async function lutAsset(path: string): Promise<Asset> {
+  let text: string
+  try {
+    // A 65-point cube is ~20 MB of text; anything much larger is not a LUT.
+    if ((await stat(path)).size > 64 * 1024 * 1024) {
+      return { ...failedAsset(path, 'is too large to be a .cube LUT'), kind: 'lut' }
+    }
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    return { ...failedAsset(path, `could not be read: ${messageOf(error)}`), kind: 'lut' }
+  }
+  return lutAssetFrom(path, text)
 }

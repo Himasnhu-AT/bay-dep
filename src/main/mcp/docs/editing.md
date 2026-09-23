@@ -188,6 +188,33 @@ Two things the result will warn you about, because neither is visible from the n
 every adjustment to its identity value (it is stored and changes nothing), and a blend mode on
 the lowest video track (there is nothing beneath it, so every mode looks the same).
 
+## Colour grade
+
+`adjustments` are CSS filters; a real grade is `edit_item { grade }`, drawn by the GPU through the
+same compositor as preview, `preview_frame` and export — what `preview_frame` shows is what the
+file gets. It runs in a fixed order: temperature/tint → lift/gamma/gain → saturation → curves →
+LUT → halation → vignette → grain. Fields merge; `null` removes the grade or any one group.
+
+    edit_item { itemId, grade: {
+      lift: { r: 0.01, g: 0.015, b: 0.03 },          # teal shadows: small numbers, ±0.03 is visible
+      gain: { r: 0.02, g: -0.008, b: -0.012 },       # amber highlights
+      temperature: 200, saturation: 0.95,             # ~200 K warmer
+      curves: { master: [[0, 0.04], [0.8, 0.795], [1, 0.965]] },   # lifted blacks, soft shoulder
+      halation: { amount: 0.18, threshold: 0.86, radius: 10 },     # warm glow on practicals only
+      grain: { amount: 0.12, size: 1 }, vignette: { amount: 0.2 } } }
+
+- **Curves** are ffmpeg's: per channel, then master, points `[input, output]` in 0..1. Leave out an
+  end and `(0,0)`/`(1,1)` are supplied. An ffmpeg `curves=r='0/0.036 0.25/0.25'` ports as
+  `r: [[0, 0.036], [0.25, 0.25]]`.
+- **LUTs**: `import_media` a `.cube` file — it comes back `kind: "lut"`, not placeable — then
+  `grade: { lut: { assetId, intensity } }`. A malformed file imports with `error` naming the line.
+- **Halation** is screened in RGB and tinted warm (`color`, default `#FF8C40`); keep `threshold`
+  around 0.85 so skin and mid-tones never glow. **Grain** is animated per frame and deterministic,
+  drawn at output resolution. Both are measured in timeline pixels.
+- Grades apply to picture clips only (video, image, gif, html, brf) — text is refused. An all-neutral
+  grade is stored, warned about, and costs nothing. `inspect_item` reports `grade` and `gradeActive`;
+  `preview_frame` reports `gradeWarnings` if a grade could not run (a missing LUT asset, no WebGL2).
+
 ## HTML compositions
 
 bay renders HyperFrames compositions as clips. Write an HTML file whose root carries
