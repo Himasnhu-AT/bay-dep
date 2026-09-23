@@ -163,6 +163,25 @@ measurement standing beside an unverified premise, lending it authority it had n
 number checked and one assumed reads exactly like two things checked.
 
 
+## A busy video decoder fails the timing probes, and it is not bay
+
+`transition-audio` (does the incoming clip sound?) and `export-vs-preview` (does the file match the
+preview?) both depend on how fast a video seeks, and seeking goes through the Mac's shared
+hardware decoder, not bay's. When something else holds it — Photos' `mediaanalysisd` scanning a
+library, another editor, a Wine app — a seek that takes 150 ms takes 3–8 s, the incoming clip is
+still seeking when the cross-fade happens, and the oracle's renders outlive the watchdog. It
+reproduced on a fresh launch, on the pre-audit build and on Electron 40 alike, which is what
+ruled bay out. Measure the decoder before diagnosing bay:
+
+    FF=$(ls node_modules/.pnpm/ffmpeg-ffprobe-static*/node_modules/ffmpeg-ffprobe-static/ffmpeg | head -1)
+    time $FF -v error -hwaccel videotoolbox -ss 24.9 -i assets/podcast-cut/output/goodall-transcript-cut.mp4 -frames:v 1 -f null -
+    time $FF -v error                       -ss 24.9 -i assets/podcast-cut/output/goodall-transcript-cut.mp4 -frames:v 1 -f null -
+
+Measured when both probes failed: 6,076 ms with the hardware decoder, 87 ms without. If the first is
+seconds, the probes are measuring the machine. `PROBE_TIMEOUT_MS` raises every probe's watchdog
+(`cdp.mjs`), which separates "slow here" from "hung" for the export check; it cannot make a
+cross-fade audible while the decoder is elsewhere.
+
 ## The standing rule
 
 A probe is subject to the same discipline as a test: **it must be shown capable of detecting the

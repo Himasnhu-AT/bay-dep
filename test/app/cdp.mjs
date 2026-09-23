@@ -478,7 +478,15 @@ export async function requirePrecondition(evaluate, label, expression, { timeout
  * The restore runs in a `finally`, before the exit, whatever the outcome. A restore that
  * fails turns a pass into exit 2 — a green run has to mean the user's app was left as found.
  */
-export async function runProbe(body, { timeoutMs = 120_000 } = {}) {
+/**
+ * `PROBE_TIMEOUT_MS` raises every probe's watchdog. On a machine whose video decoder is busy with
+ * something else (Photos' mediaanalysisd, another editor) a seek takes seconds instead of
+ * milliseconds, and a probe that renders or plays media then runs out of time without anything
+ * being broken — "too slow here" and "hung" are otherwise the same exit 2.
+ */
+const WATCHDOG_MS = Number(process.env.PROBE_TIMEOUT_MS) || 120_000
+
+export async function runProbe(body, { timeoutMs = WATCHDOG_MS } = {}) {
   // The watchdog is not belt and braces; it is the difference between a verdict and exit 13.
   // A body whose promise never settles lets the event loop empty, and Node then reports
   // "unsettled top-level await" with a status no caller interprets and a message naming the
