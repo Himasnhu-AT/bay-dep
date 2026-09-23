@@ -278,6 +278,12 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       // Bounded by the same timeout as the media wait, so a composition that never renders
       // still costs a reported-incomplete frame rather than a call that does not return.
       await compositions.settle(timeoutMs)
+      // What settled may be all that was missing. Waiting for the *next* readiness event after
+      // it did waited out the whole timeout — nothing else was coming — and cost every frame with
+      // a composition ~5s in `preview_frame`. Look again first.
+      await awaitSources(pool, project, timeline, frame, timeoutMs)
+      stats = compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
+      if (stats.pending === 0) break
       // Something was still decoding. `onReady` fires on `loadeddata` and `seeked`, so this
       // waits for the next actual change rather than sleeping a guessed interval.
       //
