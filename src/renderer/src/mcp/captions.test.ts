@@ -98,6 +98,9 @@ test('repeated lines share one text asset, and every caption draws its own words
     top.items.map((i) => assets.find((a) => a.id === i.assetId)?.text),
     ['First line.', '[music]', '[music]']
   )
+  // Marked as caption lines, so the Media panel leaves them out while they are placed — and so
+  // still after someone renames one, which the name-based fallback would not survive.
+  assert.ok(assets.every((a) => a.caption === true))
 })
 
 test('SRT times land on the timeline rate, through the model conversion', () => {

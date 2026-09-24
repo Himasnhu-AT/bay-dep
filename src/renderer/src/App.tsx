@@ -204,9 +204,9 @@ export function App(): ReactNode {
     const saved = await call('Save as', (api) => api.project.saveAs(useEditor.getState().project))
     setSaving(false)
     if (!saved) return
-    markSaved()
-    notify(`Saved to ${saved.filePath}`)
-  }, [notify, markSaved])
+    useEditor.getState().markSavedAs(saved.filePath, saved.name)
+    notify(`Saved as “${saved.name}” — ${saved.filePath}`)
+  }, [notify])
 
   const onImport = useCallback(async (): Promise<void> => {
     const picked = await call('Import', (api) => api.media.importDialog())

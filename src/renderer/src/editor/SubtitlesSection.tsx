@@ -5,7 +5,7 @@ import { SUBTITLE_STYLES, type SubtitleStyle, type SubtitleStyleId } from '@shar
 import { Button, ColorField, Field, Section, SectionReset, Select, SliderField } from '@/components'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
-import { hasModelFor, SUBTITLE_LANGUAGES, subtitleArgs } from '@/lib/subtitleOptions'
+import { describeSubtitleStyle, hasModelFor, SUBTITLE_LANGUAGES, subtitleArgs } from '@/lib/subtitleOptions'
 import { addSubtitles } from '@/mcp/subtitles'
 import { runUserTool } from '@/lib/userTool'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -43,47 +43,52 @@ function wordStyle(style: SubtitleStyle, state: 'said' | 'now' | 'later'): CSSPr
   }
 }
 
-function lineStyle(id: SubtitleStyleId): CSSProperties {
+/** The design's line at `size` × its base size — font size, not `zoom`, so the line still wraps inside the card. */
+function lineStyle(id: SubtitleStyleId, size: number): CSSProperties {
   switch (id) {
     case 'spotlight':
-      return { fontWeight: 800, fontSize: 13, textShadow: '0 1px 6px rgba(0,0,0,.6)' }
+      return { fontWeight: 800, fontSize: 13 * size, textShadow: '0 1px 6px rgba(0,0,0,.6)' }
     case 'punch':
       return {
         fontFamily: "'Arial Black', 'Helvetica Neue', Arial, sans-serif",
         fontWeight: 900,
-        fontSize: 13,
+        fontSize: 13 * size,
         textTransform: 'uppercase',
         WebkitTextStroke: '3px #000',
         paintOrder: 'stroke fill'
       }
     case 'boxed':
-      return { fontWeight: 700, fontSize: 12, background: 'rgba(12,12,14,.85)', borderRadius: 6, padding: '3px 5px' }
+      return { fontWeight: 700, fontSize: 12 * size, background: 'rgba(12,12,14,.85)', borderRadius: 6, padding: '3px 5px' }
     case 'clean':
-      return { fontWeight: 600, fontSize: 11.5, textShadow: '0 1px 4px rgba(0,0,0,.6)' }
+      return { fontWeight: 600, fontSize: 11.5 * size, textShadow: '0 1px 4px rgba(0,0,0,.6)' }
     case 'reveal':
-      return { fontWeight: 750, fontSize: 13, textShadow: '0 1px 6px rgba(0,0,0,.6)' }
+      return { fontWeight: 750, fontSize: 13 * size, textShadow: '0 1px 6px rgba(0,0,0,.6)' }
   }
 }
 
-function StylePreview({ style, scale = 1 }: { style: SubtitleStyle; scale?: number }): ReactNode {
+function StylePreview({ style, scale = 1, bottom }: { style: SubtitleStyle; scale?: number; bottom: number }): ReactNode {
   // Punch shows two words at a time, like the design; the rest show the phrase.
   const words = style.id === 'punch' ? SAMPLE.slice(2, 4) : SAMPLE
   const spoken = style.id === 'punch' ? 0 : SPOKEN
+  // Roughly the size the design will draw at; the card is too small to show 2× honestly.
+  const size = Math.min(1.4, Math.max(0.6, scale))
   return (
     <div
       aria-hidden="true"
-      className="relative flex h-20 items-end justify-center overflow-hidden rounded-sm pb-2.5"
+      className="relative h-20 overflow-hidden rounded-sm"
       // A stand-in for footage: a dim, warm gradient, so the text reads the way it will over video.
       style={{ background: 'linear-gradient(160deg, #5b4a42 0%, #2c2623 55%, #151312 100%)' }}
     >
+      {/* Placed as the design places its band: `bottom` percent up the frame, inset from the
+          sides, wrapping rather than running off the card. Held inside the card at the top, so a
+          high setting still shows the line rather than cropping it away. */}
       <span
-        className="text-white"
+        className="absolute inset-x-1.5 block text-center text-balance text-white"
         style={{
-          ...lineStyle(style.id),
+          ...lineStyle(style.id, size),
+          bottom: `clamp(4px, ${bottom}%, calc(100% - 2.8em))`,
           lineHeight: 1.2,
-          letterSpacing: '-0.01em',
-          // Roughly the size the design will draw at; the card is too small to show 2× honestly.
-          zoom: Math.min(1.4, Math.max(0.6, scale))
+          letterSpacing: '-0.01em'
         }}
       >
         {words.map((word, i) => (
@@ -210,19 +215,19 @@ export function SubtitlesSection(): ReactNode {
             type="button"
             role="radio"
             aria-checked={chosen === option.id}
-            title={option.description}
+            title={describeSubtitleStyle(option, accent)}
             onClick={() => setChosen(option.id)}
             className={cn(
               't-press flex flex-col gap-1 rounded-md border p-1 text-left active:scale-[0.96]',
               chosen === option.id ? 'border-accent bg-accent/10' : 'border-line hover:border-line-strong'
             )}
           >
-            <StylePreview style={accent ? { ...option, accent } : option} scale={scale} />
+            <StylePreview style={accent ? { ...option, accent } : option} scale={scale} bottom={bottom ?? option.bottom} />
             <span className="px-0.5 text-[11px] font-medium text-ink-0">{option.name}</span>
           </button>
         ))}
       </div>
-      <p className="mt-2 min-h-8 text-[11px] leading-snug text-pretty text-ink-2">{style.description}</p>
+      <p className="mt-2 min-h-8 text-[11px] leading-snug text-pretty text-ink-2">{describeSubtitleStyle(style, accent)}</p>
       <Section
         title="Design options"
         collapsible

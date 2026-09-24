@@ -48,20 +48,33 @@ export function canRelink(asset: Asset): boolean {
 /**
  * Where each missing sibling of a located asset would be, if its folder moved as a whole: same
  * file name, in the folder the located file was found in. Excludes the located asset itself.
+ *
+ * A candidate path that is already claimed is skipped: the file the person just chose (they may
+ * have picked `vertical.mp4` for `clipA.mp4`, and the sibling pass would then relink the missing
+ * `vertical.mp4` onto the same file), a path another asset in the project already holds, or one an
+ * earlier candidate took. Two assets relinked onto one file become one asset — `applyRelinks`
+ * retires the second — so a sibling guess must never do that; only an explicit pick may.
  */
 export function siblingCandidates(
   missing: readonly Asset[],
-  located: { assetId: string; oldPath: string; newPath: string }
+  located: { assetId: string; oldPath: string; newPath: string },
+  /** Paths held by assets in the project now; the located asset's new path is always claimed. */
+  held: readonly (string | null)[] = []
 ): { assetId: string; path: string }[] {
   const oldDir = dirnameOf(located.oldPath)
   const newDir = dirnameOf(located.newPath)
   if (oldDir === newDir) return []
   const sep = separatorOf(located.newPath)
+  const claimed = new Set<string>([located.newPath])
+  for (const path of held) if (path) claimed.add(path)
   const out: { assetId: string; path: string }[] = []
   for (const asset of missing) {
     if (asset.id === located.assetId || !asset.path || !canRelink(asset)) continue
     if (dirnameOf(asset.path) !== oldDir) continue
-    out.push({ assetId: asset.id, path: `${newDir}${sep}${basenameOf(asset.path)}` })
+    const path = `${newDir}${sep}${basenameOf(asset.path)}`
+    if (claimed.has(path)) continue
+    claimed.add(path)
+    out.push({ assetId: asset.id, path })
   }
   return out
 }

@@ -149,7 +149,7 @@ const api: BayApi = {
     save: (project: Project) =>
       ipcRenderer.invoke(IPC.projectSave, project) as Promise<{ filePath: string }>,
     saveAs: (project: Project) =>
-      ipcRenderer.invoke(IPC.projectSaveAs, project) as Promise<{ filePath: string } | null>,
+      ipcRenderer.invoke(IPC.projectSaveAs, project) as Promise<{ filePath: string; name: string } | null>,
     open: () => ipcRenderer.invoke(IPC.projectOpen) as Promise<Project | null>,
     openPath: (filePath: string) =>
       ipcRenderer.invoke(IPC.projectOpenPath, filePath) as Promise<Project>,

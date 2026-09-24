@@ -7,6 +7,9 @@
  */
 
 import { allItems, type Asset, type AssetKind, type Project } from './project'
+import { hasSteadyBeat } from './beats'
+import { captionAssetName } from './captions'
+import type { ImportedAsset } from './ipc'
 
 /** What the kind filter offers. `gif` reads as an image and `html` as a composition. */
 export type MediaKindGroup = 'video' | 'audio' | 'image' | 'text' | 'composition' | 'brf' | 'font' | 'lut'
@@ -147,7 +150,40 @@ export function assetFacts(asset: Asset, bytes?: number | null): string[] {
   if (asset.fps && asset.kind === 'video') facts.push(formatFps(asset.fps))
   if (asset.kind === 'video') facts.push(asset.hasAudio ? 'with sound' : 'no sound')
   if (asset.kind === 'font' && asset.font) facts.push(asset.font.family)
-  if (asset.beats) facts.push(`${Math.round(asset.beats.bpm)} BPM`)
+  if (asset.beats) facts.push(hasSteadyBeat(asset.beats) ? `${Math.round(asset.beats.bpm)} BPM` : 'No steady beat')
   if (typeof bytes === 'number') facts.push(formatFileSize(bytes))
   return facts
+}
+
+/**
+ * An import's entries with `reused` meaning what the toast says it means: the asset is already in
+ * *this* project. Main's `reused` is its session-wide cache of paths it has probed, so a file
+ * imported into project A and then into a fresh project B came back `reused` and B's toast said
+ * "Reused 1 already in the project" for a file B had never had. The store's `addAssets` skips an
+ * asset whose id the project holds, so the same test decides both what is added and what is said.
+ */
+export function reusedInProject(imported: readonly ImportedAsset[], assets: readonly Pick<Asset, 'id'>[]): ImportedAsset[] {
+  const held = new Set(assets.map((asset) => asset.id))
+  return imported.map((entry) => ({ ...entry, reused: held.has(entry.asset.id) }))
+}
+
+/**
+ * Whether an asset is a caption's line rather than media someone imported: marked by
+ * `add_captions`, or — in a project from before the mark — a text asset still carrying the name
+ * `add_captions` gave it for its own words.
+ */
+export function isCaptionAsset(asset: Asset): boolean {
+  if (asset.kind !== 'text') return false
+  return asset.caption === true || (asset.text !== undefined && asset.name === captionAssetName(asset.text))
+}
+
+/**
+ * The assets the Media panel shows. Captions are text clips on a Captions track, and every
+ * distinct line is its own text asset (that is how `add_captions` lets one edit reword every copy
+ * of a line) — so a 3-cue SRT added three "Caption: …" cards and a real subtitle file hundreds,
+ * burying the footage. A caption line in use is left out: it is found and edited on its track. An
+ * unused one stays, so a caption track deleted by hand leaves nothing invisible behind.
+ */
+export function mediaPoolAssets(assets: readonly Asset[], uses: ReadonlyMap<string, number>): Asset[] {
+  return assets.filter((asset) => !(isCaptionAsset(asset) && (uses.get(asset.id) ?? 0) > 0))
 }

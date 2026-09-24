@@ -22,7 +22,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { MenuCommand } from '@shared/ipc'
 import { COMMANDS } from '@shared/commands'
-import { menuLeaves, menuTemplate, STATE_ITEM_IDS } from './menu'
+import { menuCommandTarget, menuLeaves, menuTemplate, STATE_ITEM_IDS } from './menu'
 
 function build(overrides: Partial<Parameters<typeof menuTemplate>[0]> = {}) {
   const sent: MenuCommand[] = []
@@ -396,4 +396,24 @@ test('the menu is the same shape whatever the app is called', () => {
   // menu bar saying something else.
   const { template } = build({ appName: 'Hearth' })
   assert.equal(template[0]?.label, 'Hearth')
+})
+
+test('a menu command goes to an editor window, never a composition render window', () => {
+  // The verification run's order: the hidden render window came back first from getAllWindows.
+  const render = { id: 5, kind: 'render' }
+  const editor = { id: 1, kind: 'editor' }
+  const other = { id: 2, kind: 'editor' }
+  // Nothing focused (the app in the background): the editor, not the render window listed first.
+  assert.equal(menuCommandTarget(null, [editor], null), editor)
+  // The render window focused is still not a target.
+  assert.equal(menuCommandTarget(render, [editor], null), editor)
+  // Positive control: a focused editor wins over the one focused before it.
+  assert.equal(menuCommandTarget(other, [editor, other], editor), other)
+  // Unfocused with two editors: the one the user was last in.
+  assert.equal(menuCommandTarget(null, [editor, other], other), other)
+  assert.equal(menuCommandTarget(render, [editor, other], other), other)
+  // A last-focused editor that has since closed is not remembered into a target.
+  assert.equal(menuCommandTarget(null, [editor], other), editor)
+  // No editor at all is nowhere to send, not the render window.
+  assert.equal(menuCommandTarget(render, [], null), null)
 })

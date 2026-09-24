@@ -7,6 +7,7 @@ import {
   MEDIA_KIND_GROUPS,
   MEDIA_SORTS,
   sortAssets,
+  mediaPoolAssets,
   usageCounts,
   type MediaKindFilter,
   type MediaSort
@@ -87,8 +88,12 @@ interface Ask {
  * rename, reveal, relink, detect beats, transcribe, edit its code, remove.
  */
 export function MediaPanel(): ReactNode {
-  const assets = useEditor((state) => state.project.assets)
+  const projectAssets = useEditor((state) => state.project.assets)
   const timelines = useEditor((state) => state.project.timelines)
+  const uses = useMemo(() => usageCounts({ timelines }), [timelines])
+  // Placed caption lines are not media; they live on their Captions track (`mediaPoolAssets`).
+  const assets = useMemo(() => mediaPoolAssets(projectAssets, uses), [projectAssets, uses])
+  const captionLines = projectAssets.length - assets.length
   const addAssets = useEditor((state) => state.addAssets)
   const notify = useEditor((state) => state.notify)
 
@@ -107,7 +112,6 @@ export function MediaPanel(): ReactNode {
   const [ask, setAsk] = useState<Ask | null>(null)
 
   const files = useFileStatus(assets)
-  const uses = useMemo(() => usageCounts({ timelines }), [timelines])
   const shown = useMemo(() => sortAssets(filterAssets(assets, { query, kind }), sort), [assets, query, kind, sort])
   const missingAssets = useMemo(() => assets.filter((asset) => files.missing.has(asset.id)), [assets, files.missing])
   const selected = assets.find((asset) => asset.id === selectedId)
@@ -199,8 +203,14 @@ export function MediaPanel(): ReactNode {
     const entries: MenuEntry[] = []
     if (placeable(asset)) {
       entries.push(
-        { label: 'Add at Playhead', shortcut: 'Enter', onSelect: () => place(asset) },
-        { label: 'Append to End', onSelect: () => place(asset, 'end') },
+        // A clip of a missing file places a picture of nothing; say what to do first, the way
+        // Transcript… says "(place it first)".
+        missing
+          ? { label: 'Add at Playhead (locate the file first)', disabled: true, onSelect: () => undefined }
+          : { label: 'Add at Playhead', shortcut: 'Enter', onSelect: () => place(asset) },
+        missing
+          ? { label: 'Append to End (locate the file first)', disabled: true, onSelect: () => undefined }
+          : { label: 'Append to End', onSelect: () => place(asset, 'end') },
         { kind: 'separator' }
       )
     }
@@ -432,6 +442,9 @@ export function MediaPanel(): ReactNode {
             )}
             <p className="mt-3 text-[10px] leading-relaxed text-ink-2">
               {filtered ? `Showing ${shown.length} of ${assets.length}. ` : ''}
+              {captionLines > 0
+                ? `${captionLines} caption line${captionLines === 1 ? ' is' : 's are'} on the timeline's Captions track, not here. `
+                : ''}
               Click to preview, double-click or Enter to add at the playhead, or drag onto a track.
               Right-click for more.
             </p>

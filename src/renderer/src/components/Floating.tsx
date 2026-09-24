@@ -12,6 +12,7 @@ import {
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 import { placeFloating, type FloatingAlign, type FloatingSide, type Placement } from './placement'
+import { claimFloating } from './floatingStack'
 
 /** What a floating surface hangs from: a trigger element, or a point (a right-click). */
 export type Anchor = HTMLElement | { x: number; y: number }
@@ -86,6 +87,9 @@ export function FloatingSurface(props: FloatingSurfaceProps): ReactNode {
     [anchor]
   )
   if (props.dismissRef) props.dismissRef.current = dismiss
+
+  // Open surfaces are counted, so a tooltip outside this one stays hidden while it is open.
+  useEffect(() => (open ? claimFloating() : undefined), [open])
 
   // Where focus was when it opened — once per opening, before anything moves it inside.
   useLayoutEffect(() => {

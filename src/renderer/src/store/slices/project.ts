@@ -16,6 +16,7 @@ type Actions = Pick<
   | 'undo'
   | 'redo'
   | 'markSaved'
+  | 'markSavedAs'
   | 'transact'
   | 'beginGesture'
   | 'endGesture'
@@ -100,6 +101,13 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
     },
 
     markSaved() {
+      history.saved = get().project
+      set({ dirty: false })
+    },
+
+    markSavedAs(filePath, name) {
+      const moved = <T extends { filePath?: string | null; name: string }>(project: T): T => ({ ...project, filePath, name })
+      set((state) => ({ project: moved(state.project), past: state.past.map(moved), future: state.future.map(moved) }))
       history.saved = get().project
       set({ dirty: false })
     },

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronRight, LayoutTemplate, Plus, RotateCcw } from 'lucide-react'
 import type { CompositionVariableValue } from '@shared/composition'
+import { formatTimecode } from '@shared/timecode'
 import { TEMPLATES, type TemplateSpec } from '@shared/templates'
 import { Button, Panel, ScrollArea } from '@/components'
 import { addTemplate } from '@/mcp/templates'
@@ -107,7 +108,9 @@ function TemplateRow({
       const result = await addTemplate({ templateId: spec.id, variables: values })
       // Selected and scrolled into view, so the toast names a clip the user can already see.
       if (typeof result.itemId === 'string') revealItem(result.itemId)
-      notify(`${spec.name} added at frame ${String(result.from)} on ${String(result.trackName)}.`)
+      const fps = selectTimeline(useEditor.getState())?.fps ?? 30
+      const at = typeof result.from === 'number' ? formatTimecode(result.from, fps) : String(result.from)
+      notify(`${spec.name} added at ${at} on ${String(result.trackName)}. ⌘Z to undo.`)
     } catch (error) {
       // `addTemplate` fails with a message written to be acted on — the same one an agent gets.
       notify(error instanceof Error ? error.message : String(error), 'error')

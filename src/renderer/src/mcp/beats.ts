@@ -9,7 +9,7 @@
  * edit anyone made, and an undo that forgot it would only cost a cached re-read.
  */
 
-import { BEAT_ANALYSIS_VERSION, beatFramesForItem, timelineFrameAt, type BeatGrid } from '@shared/beats'
+import { BEAT_ANALYSIS_VERSION, beatFramesForItem, hasSteadyBeat, timelineFrameAt, type BeatGrid } from '@shared/beats'
 import { effectiveSpeed, findAsset, type Asset, type Item } from '@shared/project'
 import { bay } from '@/lib/bay'
 import { fail, project, resolveAsset, resolveItem, store, timeline, ToolError, type Handlers } from './helpers'
@@ -82,14 +82,15 @@ export async function detectBeats(args: Record<string, unknown>): Promise<Record
   const beatsPerBar = typeof args['beatsPerBar'] === 'number' ? Math.round(args['beatsPerBar']) : 4
 
   const grid = await gridFor(asset, beatsPerBar)
+  const steady = hasSteadyBeat(grid)
   const base = {
     asset: asset.name,
     bpm: grid.bpm,
     confidence: grid.confidence,
+    steady,
     beatsPerBar: grid.beatsPerBar,
     downbeatConfidence: grid.downbeatConfidence
   }
-  const steady = grid.confidence >= 0.3 && grid.beatsUs.length > 0
 
   if (found) {
     const fps = timeline().fps

@@ -532,7 +532,8 @@ export interface BayApi {
     /** The project to show at launch: the last one opened, or a fresh empty one. */
     initial(): Promise<Project>
     save(project: Project): Promise<{ filePath: string }>
-    saveAs(project: Project): Promise<{ filePath: string } | null>
+    /** The file written, and the name the project took from it. */
+    saveAs(project: Project): Promise<{ filePath: string; name: string } | null>
     open(): Promise<Project | null>
     openPath(filePath: string): Promise<Project>
     recent(): Promise<RecentProject[]>

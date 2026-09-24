@@ -34,7 +34,7 @@ export function editAsset(args: Record<string, unknown>): Record<string, unknown
   const patch: { name?: string; text?: string } = {}
   if (args.name !== undefined) {
     const name = String(args.name).trim()
-    if (name === '') fail('name is empty. An asset needs a name to be found in the media pool.')
+    if (name === '') fail('The name is empty. An asset needs a name to be found in the media pool.')
     patch.name = name
   }
   if (args.text !== undefined) {
