@@ -159,6 +159,18 @@ test('an asset without a clip comes back in the file’s seconds, with SRT', asy
   assert.deepEqual(value.segments, SEGMENTS)
   assert.match(value.srt, /Inside the clip\./)
   assert.equal(sent.at(-1)?.language, 'de', 'the language is passed through')
+  assert.deepEqual((result.value as { findings: unknown }).findings, [], 'a transcript with words has no findings')
+})
+
+test('a transcription that heard nothing carries a blocking finding, not just zero lines', async () => {
+  seed()
+  answer = { ok: true, segments: [], model: 'ggml-base.en.bin', language: 'en' }
+  const result = await run({ assetId: 'interview', language: 'fr' })
+  assert.ok(result.ok, result.ok ? '' : result.error)
+  const findings = (result.value as { findings: { severity: string; message: string }[] }).findings
+  assert.equal(findings.length, 1)
+  assert.equal(findings[0]!.severity, 'blocking')
+  assert.match(findings[0]!.message, /No speech/)
 })
 
 test('with neither itemId nor assetId, the refusal says which to pass and where to find them', async () => {

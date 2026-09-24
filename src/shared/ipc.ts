@@ -19,10 +19,19 @@ import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
+import type { Finding } from './findings'
 
 // ---------------------------------------------------------------------------
 // Media
 // ---------------------------------------------------------------------------
+
+/** One scene boundary in a source file: the first frame of the new shot. */
+export interface SceneCut {
+  /** Source microseconds from the file's start. */
+  us: number
+  /** scdet's score for the change, 0–100. Higher is a harder cut. */
+  score: number
+}
 
 /** What ffprobe told us about a file, before it becomes an Asset. */
 export interface ProbeResult {
@@ -185,6 +194,12 @@ export interface ExportProgress {
   error?: string
   /** On `done`, when the request asked for mastering: what the delivered file measures. */
   loudness?: LoudnessReport
+  /**
+   * On `done`: what reading the delivered file back found wrong with it (`@shared/findings`) —
+   * no audio stream under a timeline with sound, a length off the range by more than 2%, an
+   * empty or unreadable file. Empty when the file checks out; absent for a PNG sequence.
+   */
+  findings?: Finding[]
   /**
    * Frames written with something still not drawn. Set by the renderer, which composites the
    * frames — main encodes whatever it is handed and cannot know. Absent when every frame was
@@ -393,6 +408,12 @@ export interface BayApi {
      * by content. Times are in source microseconds. `ok: false` carries ffmpeg's own words.
      */
     beats(path: string, options?: { beatsPerBar?: number }): Promise<{ ok: true; grid: BeatGrid } | { ok: false; error: string }>
+    /**
+     * Scene cuts in a video file, found by ffmpeg's `scdet` on this machine (`media/scene-cuts.ts`).
+     * Times are source microseconds from the file's start, with scdet's score (0–100) for each.
+     * `threshold` is scdet's own (default 10): lower finds softer cuts and more false ones.
+     */
+    cuts(path: string, options?: { threshold?: number }): Promise<{ ok: true; cuts: SceneCut[] } | { ok: false; error: string }>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
     /**
@@ -728,6 +749,7 @@ export const IPC = {
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
   mediaBeats: 'media:beats',
+  mediaCuts: 'media:cuts',
   mediaReveal: 'media:reveal',
   mediaStat: 'media:stat',
   mediaLocate: 'media:locate',

@@ -78,6 +78,7 @@ const api: BayApi = {
     waveform: (assetId: string, path: string, buckets: number) =>
       ipcRenderer.invoke(IPC.mediaWaveform, assetId, path, buckets) as Promise<number[]>,
     beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
+    cuts: (path: string, options?: { threshold?: number }) => ipcRenderer.invoke(IPC.mediaCuts, path, options),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
     stat: (paths: string[]) => ipcRenderer.invoke(IPC.mediaStat, paths) as Promise<(number | null)[]>,

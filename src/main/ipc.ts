@@ -37,6 +37,7 @@ import {
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { detectBeats } from './media/beats'
+import { detectSceneCuts } from './media/scene-cuts'
 import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
@@ -83,6 +84,7 @@ interface ChannelApi {
   mediaFilmstrip: BayApi['media']['filmstrip']
   mediaWaveform: BayApi['media']['waveform']
   mediaBeats: BayApi['media']['beats']
+  mediaCuts: BayApi['media']['cuts']
   mediaReveal: BayApi['media']['revealInFolder']
   mediaStat: BayApi['media']['stat']
   mediaLocate: BayApi['media']['locate']
@@ -261,6 +263,14 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaBeats: async (_event, path, options) => {
     try {
       return { ok: true as const, grid: await detectBeats(path, options ?? {}) }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  mediaCuts: async (_event, path, options) => {
+    try {
+      const threshold = typeof options?.threshold === 'number' && Number.isFinite(options.threshold) ? options.threshold : undefined
+      return { ok: true as const, cuts: await detectSceneCuts(String(path), threshold) }
     } catch (error) {
       return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
     }
