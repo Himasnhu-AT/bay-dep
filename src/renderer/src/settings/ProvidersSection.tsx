@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn'
 import { Row, Section } from './parts'
 
 /**
- * Keys for AI image and video generation (`generate_image`, `generate_video`).
+ * Keys for AI image, video and speech generation (`generate_image`, `generate_video`, `generate_speech`).
  *
  * A key goes to main and does not come back: this page only ever learns whether one is set, and
  * whether it could be kept in the keychain. The inputs clear once a key is saved. bay contacts a
@@ -30,7 +30,7 @@ export function ProvidersSection(): ReactNode {
   return (
     <Section
       title="Providers"
-      description="Keys for generating pictures and clips with AI. bay sends a prompt (and a reference picture, when one is chosen) to the provider only when the agent generates something, and the provider bills your account."
+      description="Keys for generating pictures, clips and voiceovers with AI. bay sends a prompt or the words to be spoken (and a reference picture, when one is chosen) to the provider only when the agent generates something, and the provider bills your account."
     >
       {GENERATION_PROVIDERS.map((provider) => (
         <ProviderRow key={provider} provider={provider} status={keys?.find((k) => k.provider === provider) ?? null} onChange={setKeys} />

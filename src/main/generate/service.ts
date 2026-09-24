@@ -29,6 +29,7 @@ import { GenerationJobs } from './jobs'
 import { KeyRing } from './keys'
 import { kling } from './kling'
 import { openaiImage } from './openai-image'
+import { elevenlabsSpeech, geminiSpeech, openaiSpeech, withSpeech } from './speech-adapters'
 import { veo } from './veo'
 
 const cipher: Cipher = {
@@ -70,7 +71,12 @@ function table(): GenerationJobs {
     jobs = new GenerationJobs({
       file: join(app.getPath('userData'), 'generation-jobs.json'),
       outDir: generatedDir(),
-      adapters: { openai: openaiImage, gemini: adapterFor(geminiImage, veo), kling },
+      adapters: {
+        openai: withSpeech(openaiImage, openaiSpeech),
+        gemini: withSpeech(adapterFor(geminiImage, veo), geminiSpeech),
+        kling,
+        elevenlabs: withSpeech(null, elevenlabsSpeech)
+      },
       http: (provider) => providerHttp(nodeFetch, policyFor(provider), PROVIDERS[provider].label),
       baseUrl: (provider) => `https://${PROVIDERS[provider].apiHosts[0]}`,
       credentials: (provider) => ring().get(provider),

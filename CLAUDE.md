@@ -911,19 +911,23 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
   shipped bay contacts nothing and Settings › About says "Updates: releasing soon".
   `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
-  **AI generation** (`src/main/generate/`, `@shared/generation`, `generate_image`/`generate_video`/
-  `track_generation`), and only with a key the user set in Settings › Providers (sealed by
+  **AI generation** (`src/main/generate/`, `@shared/generation`, `@shared/speech`, `generate_image`/
+  `generate_video`/`generate_speech`/`track_generation`), and only with a key the user set in Settings › Providers (sealed by
   `safeStorage`, memory-only without a keychain, never returned to the renderer), only when a
   generation tool starts a job or a job still running at the last quit is resumed. Hosts, per
   provider, enforced by `providerHttp` on every hop of a redirect (manual follow; credentials
   only to the API host): `api.openai.com`; `generativelanguage.googleapis.com` (Gemini images and
   Veo), with Veo downloads allowed to redirect to `*.googleusercontent.com` and
   `storage.googleapis.com`; `api-singapore.klingai.com`, with results from `*.klingai.com` and
-  `*.kling.ai`. What is sent is the prompt, the options and the one reference picture a call
-  names (only a file already admitted to `bay://`). The job row is persisted *before* the request
+  `*.kling.ai`; `api.elevenlabs.io` (speech only, answered in the response body — no download
+  hosts). Speech on OpenAI (`/v1/audio/speech`) and Gemini (`/v1beta/interactions`) uses the hosts
+  above. What is sent is the prompt (for speech, the words to be spoken with the voice and style),
+  the options and the one reference picture a call names (only a file already admitted to
+  `bay://`); no audio ever leaves the machine. `estimate_speech` is local arithmetic
+  (`@shared/speech-duration`) and contacts nothing. The job row is persisted *before* the request
   is sent, so a restart resumes polling instead of paying twice; results land content-addressed
-  in `<userData>/generated`, are ffprobed, and a file with no picture is a blocking finding that
-  is never imported. The redirect hosts for Veo and Kling downloads are from the providers' docs,
+  in `<userData>/generated`, are ffprobed, and a file with no picture (for speech: no audio stream, or no length) is a
+  blocking finding that is never imported. The redirect hosts for Veo and Kling downloads are from the providers' docs,
   not observed — the tests use a local stub and never a live API.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.

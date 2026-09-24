@@ -185,7 +185,8 @@ export function AboutSection(): ReactNode {
       <p className="text-[11px] text-pretty text-ink-2">
         Your projects, media and audio stay on this Mac. bay goes online only to check your sign-in, to
         download a transcription model when you ask for one, to look for updates, and — with a key you set
-        in Providers — to send a generation prompt (and any reference picture it names) to that provider.
+        in Providers — to send a generation prompt or a voiceover script (and any reference picture it
+        names) to that provider.
       </p>
     </Section>
   )
