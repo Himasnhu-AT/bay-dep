@@ -58,3 +58,13 @@ export function subtitleArgs(choices: SubtitleChoices): Record<string, unknown> 
 export function hasModelFor(files: readonly string[], language: string): boolean {
   return files.some((file) => /^ggml-.+\.bin$/.test(file) && (language === 'en' || !file.includes('.en.')))
 }
+
+/**
+ * The design's one-line description as the picker shows it: naming the colour only while it is
+ * the design's own. Once another highlight is chosen, "lit in sky blue" would describe a picture
+ * the user is not getting.
+ */
+export function describeSubtitleStyle(style: SubtitleStyle, accent: string | null): string {
+  if (!style.accentName || accent === null || accent.toUpperCase() === style.accent.toUpperCase()) return style.description
+  return style.description.replace(style.accentName, 'the highlight colour you picked')
+}

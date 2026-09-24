@@ -255,6 +255,7 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
             posterPath: null,
             waveformPath: null,
             text: cue.text,
+            caption: true,
             createdAt: now
           }
           assets.set(cue.text, asset)

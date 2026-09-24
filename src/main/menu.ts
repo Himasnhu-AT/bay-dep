@@ -100,6 +100,21 @@ const APP_MENU_IDS = new Set(['app.settings'])
 
 const SEP: MenuItemConstructorOptions = { type: 'separator' }
 
+/**
+ * The window a menu command goes to: an **editor** window, never a composition's render window.
+ *
+ * Placing a template or subtitles opens hidden render windows, and `getAllWindows()` listed one
+ * before the editor — so with no window focused, File › New Project was sent to a composition
+ * page that has no command handler and nothing happened. The focused window wins only if it is
+ * an editor; otherwise the editor focused last, then any editor. A render window is never a
+ * candidate, even when it is the one focused. Generic so the rule is testable without Electron.
+ */
+export function menuCommandTarget<W>(focused: W | null, editors: readonly W[], lastFocusedEditor: W | null): W | null {
+  if (focused !== null && editors.includes(focused)) return focused
+  if (lastFocusedEditor !== null && editors.includes(lastFocusedEditor)) return lastFocusedEditor
+  return editors[0] ?? null
+}
+
 export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[] {
   const { appName, onCommand, includeDevTools, isMac, recents, onClearRecents } = options
 

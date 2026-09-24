@@ -218,7 +218,8 @@ test('slip and speed change what plays, not where the animation is', async () =>
   await call('trim_item', { itemId: a, mode: 'slip', deltaFrames: -30 })
   assert.deepEqual(current(a)!.keyframes, keys)
   await call('edit_item', { itemId: a, speed: 2 })
-  assert.equal(current(a)!.durationInFrames, 150)
+  // Speed keeps the footage, so the clip halves (`@shared/speed`); its keys stay item-relative.
+  assert.equal(current(a)!.durationInFrames, 75)
   assert.deepEqual(current(a)!.keyframes, keys)
 })
 

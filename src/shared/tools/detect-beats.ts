@@ -16,7 +16,8 @@ export const tool: ToolSpec = {
     'call places them all, one undo step). Once a file is analysed, dragging and trimming clips ' +
     'in the timeline snaps to its beats. downbeats is empty when no beat of the bar is clearly ' +
     'accented — then count bars from a beat you choose rather than inventing one. Low confidence ' +
-    '(under ~0.3) means the music has no steady beat; say so rather than cutting to it.',
+    '(under ~0.3, and then `steady: false`) means the music has no steady beat; say so rather than ' +
+    'cutting to it — the timeline does not snap to such a grid either.',
   category: 'read',
   readOnly: true,
   timeoutMs: 5 * 60_000,

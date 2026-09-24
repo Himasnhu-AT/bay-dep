@@ -49,6 +49,37 @@ test('one located file finds its missing siblings from the same original folder,
   assert.deepEqual(found, [{ assetId: 'b', path: '/New/Shoot/b.mov' }])
 })
 
+test('a sibling is never relinked onto a file already claimed — the one just chosen, or one the project holds', () => {
+  // The verification run: clipA located as the moved vertical.mp4, and the sibling pass then
+  // pointed the missing vertical.mp4 at the same file, so applyRelinks merged the two assets.
+  const clipA = asset('clipA')
+  const vertical = asset('vertical')
+  const other = asset('other')
+  const located = { assetId: 'clipA', oldPath: '/Old/Shoot/clipA.mov', newPath: '/New/Shoot/vertical.mov' }
+  const found = siblingCandidates([clipA, vertical, other], located, [clipA.path, vertical.path, other.path])
+  assert.deepEqual(found, [{ assetId: 'other', path: '/New/Shoot/other.mov' }])
+
+  // And the merge it prevents, end to end: with the sibling included, one asset is spliced out.
+  const project = { assets: [clipA, vertical], timelines: [] } as unknown as Project
+  const moved = { ...asset('moved'), path: '/New/Shoot/vertical.mov' }
+  applyRelinks(project, [
+    { assetId: 'clipA', replacement: moved },
+    ...found.filter((c) => c.assetId === 'vertical').map(() => ({ assetId: 'vertical', replacement: moved }))
+  ])
+  assert.equal(project.assets.length, 2, 'both assets are still in the project')
+
+  // A path another asset in the project already holds is claimed too.
+  const imported = asset('imported', { path: '/New/Shoot/other.mov' })
+  assert.deepEqual(
+    siblingCandidates([clipA, other], { ...located, newPath: '/New/Shoot/clipA.mov' }, [clipA.path, other.path, imported.path]),
+    []
+  )
+  // Positive control: unclaimed, the same sibling is found.
+  assert.deepEqual(siblingCandidates([clipA, other], { ...located, newPath: '/New/Shoot/clipA.mov' }, [clipA.path, other.path]), [
+    { assetId: 'other', path: '/New/Shoot/other.mov' }
+  ])
+})
+
 test('a file found in its own folder has no siblings to look for', () => {
   const found = siblingCandidates([asset('a'), asset('b')], {
     assetId: 'a',

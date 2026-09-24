@@ -496,6 +496,8 @@ const STORE_CASES: Record<string, StoreCase> = {
   moveItem: { delta: 1, run: (f) => state().moveItem(f.a, 200, f.v3) },
   trimItem: { delta: 1, run: (f) => state().trimItem(f.a, 'start', 10) },
   patchItem: { delta: 1, run: (f) => state().patchItem(f.a, { volume: 0.5, fadeInFrames: 4 }) },
+  // A clip, its linked sound and the rippled clips after it: one step.
+  setClipSpeed: { delta: 1, run: (f) => { state().setClipSpeed(f.a, 0.5, { ripple: true }) } },
   detachAudio: { delta: 1, run: (f) => { state().detachAudio([f.a, f.b, f.c]) } },
   reattachAudio: {
     delta: 1,
@@ -575,6 +577,8 @@ const STORE_CASES: Record<string, StoreCase> = {
   notify: { delta: 0, run: () => state().notify('hello') },
   dismissToast: { delta: 0, run: () => state().dismissToast() },
   markSaved: { delta: 0, run: () => state().markSaved() },
+  // Save As moves the document to a new file; the history is rewritten to match, not grown.
+  markSavedAs: { delta: 0, run: () => state().markSavedAs('/tmp/Saved As.bay', 'Saved As') },
   startAgentSession: { delta: 0, run: () => state().startAgentSession() },
   endAgentSession: { delta: 0, run: () => state().endAgentSession() },
   logUserMessage: { delta: 0, run: () => state().logUserMessage('cut it') },

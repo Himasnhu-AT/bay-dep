@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { parseWhisperJson, type TranscriptSegment } from '@shared/transcribe'
 import {
+  cancelledDownloadError,
   defaultWhisperModel,
   findWhisperModel,
   whisperFileName,
@@ -197,7 +198,7 @@ export function downloadWhisperModel(
       const cancelled = controller.signal.aborted
       const message = error instanceof Error ? error.message : String(error)
       emit({ ...base, state: cancelled ? 'cancelled' : 'failed', receivedBytes: lastDownload?.receivedBytes ?? 0, ...(cancelled ? {} : { error: message }) })
-      throw new Error(cancelled ? `The download of ${spec.label} was cancelled.` : `Downloading ${spec.label} failed: ${message}`)
+      throw new Error(cancelled ? cancelledDownloadError(spec.label) : `Downloading ${spec.label} failed: ${message}`)
     }
   ).finally(() => {
     running = null

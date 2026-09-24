@@ -75,3 +75,51 @@ export function displayFolder(filePath: string, home: string): string {
   if (root && (folder === root || folder.startsWith(root + sep))) return `~${folder.slice(root.length)}`
   return folder
 }
+
+/**
+ * The name a project takes from the file it is saved as: the file name without `.bay`, as the
+ * Save panel implies and as `create` and `rename` already keep them. Save As used to keep the old
+ * name, so home showed two identical cards for two files. A name that is empty without its
+ * extension keeps the one the project had.
+ */
+export function nameFromPath(filePath: string, fallback: string): string {
+  const file = basename(filePath)
+  const suffix = `.${PROJECT_EXTENSION}`
+  const stem = file.toLowerCase().endsWith(suffix) ? file.slice(0, -suffix.length) : file
+  return stem.trim() === '' ? fallback : stem
+}
+
+/**
+ * The recents list with one row per real file. Rows were keyed by the path as given, so a file
+ * opened as `/tmp/x.bay` and as `/private/tmp/x.bay` (or through a symlinked folder, as Dropbox
+ * does) was listed twice. `canonical` is `realpath` with a fallback to the path itself. The
+ * newest row of each file is kept, under its real path; `forget` lists every row key to delete
+ * and `rekey` the kept rows that must be written again under their real path. Rows arrive
+ * newest first, as the database lists them.
+ */
+export function canonicalRecents<T extends { filePath: string }>(
+  rows: readonly T[],
+  canonical: (path: string) => string
+): { rows: T[]; forget: string[]; rekey: T[] } {
+  const seen = new Set<string>()
+  const out: T[] = []
+  const forget: string[] = []
+  const rekey: T[] = []
+  for (const row of rows) {
+    const real = canonical(row.filePath)
+    if (seen.has(real)) {
+      forget.push(row.filePath)
+      continue
+    }
+    seen.add(real)
+    if (real === row.filePath) {
+      out.push(row)
+      continue
+    }
+    const moved = { ...row, filePath: real }
+    forget.push(row.filePath)
+    rekey.push(moved)
+    out.push(moved)
+  }
+  return { rows: out, forget, rekey }
+}

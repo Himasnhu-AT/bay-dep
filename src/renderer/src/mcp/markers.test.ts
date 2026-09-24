@@ -63,7 +63,8 @@ test('a marker added is a marker read_project returns, in frame order', () => {
   assert.deepEqual(
     listed.map((m) => [m.frame, m.label]),
     [
-      [12, 'Marker 2'],
+      // The lowest unused "Marker N" — the first marker is named, so this one is Marker 1.
+      [12, 'Marker 1'],
       [90, 'the laugh']
     ]
   )

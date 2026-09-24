@@ -209,3 +209,21 @@ test('a gesture that changed nothing pushes nothing, and history records again a
   useEditor.getState().endGesture()
   assert.equal(past(), before + 2, 'the next drag is still one step')
 })
+
+test('after Save As the document belongs to the new file, even across an undo', () => {
+  const { itemIds } = load()
+  useEditor.getState().patchItem(itemIds[0]!, { from: 5 })
+  const pastBefore = past()
+  useEditor.getState().markSavedAs('/Movies/bay/Saved As Copy.bay', 'Saved As Copy')
+  const after = useEditor.getState()
+  assert.equal(after.project.filePath, '/Movies/bay/Saved As Copy.bay')
+  assert.equal(after.project.name, 'Saved As Copy')
+  assert.equal(after.dirty, false)
+  assert.equal(past(), pastBefore, 'Save As is not an undo step')
+  // An undo must not hand back the old file: ⌘S would then write over the original.
+  useEditor.getState().undo()
+  assert.equal(useEditor.getState().project.filePath, '/Movies/bay/Saved As Copy.bay')
+  assert.equal(useEditor.getState().project.name, 'Saved As Copy')
+  // Positive control: the undo did undo the edit.
+  assert.equal(useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items).find((i) => i.id === itemIds[0])?.from, 0)
+})

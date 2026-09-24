@@ -94,6 +94,21 @@ export function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1e6)} MB`
 }
 
+/**
+ * The error a download the user cancelled ends with. Main throws it; a panel that asked for the
+ * download (or for a transcription that started one) reads it with `isCancelledDownloadError` to
+ * say "Download cancelled" plainly rather than as a failure — a cancel the user asked for is not
+ * an error. One sentence, built in one place, so the two cannot drift.
+ */
+export function cancelledDownloadError(label: string): string {
+  return `The download of ${label} was cancelled.`
+}
+
+/** Whether `message` (possibly wrapped by the transcription that started it) is a cancelled download. */
+export function isCancelledDownloadError(message: string): boolean {
+  return /The download of .+ was cancelled\./.test(message)
+}
+
 /** The line the status bar shows for a download — the sentence `WhisperDownload` was written from. */
 export function downloadSentence(download: WhisperDownload): string {
   const label = findWhisperModel(download.modelId)?.label ?? download.modelId

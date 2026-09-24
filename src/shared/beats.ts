@@ -41,6 +41,20 @@ export interface BeatGrid {
   dropouts: BeatDropout[]
 }
 
+/** Under this confidence a grid is a guess, not a beat: see `hasSteadyBeat`. */
+export const STEADY_BEAT_CONFIDENCE = 0.3
+
+/**
+ * Whether a stored grid describes a beat anyone should cut or snap to. A failed analysis still
+ * answers with a tempo and a grid (a sine tone came back as 178 BPM at confidence 0), and that
+ * grid is kept on the asset so asking again does not re-analyse — but it is not a beat. The
+ * tool's `next`, the media card's tempo and the timeline's snapping all ask here, so they cannot
+ * disagree about which grids count.
+ */
+export function hasSteadyBeat(grid: BeatGrid | undefined | null): grid is BeatGrid {
+  return !!grid && grid.confidence >= STEADY_BEAT_CONFIDENCE && grid.beatsUs.length > 0
+}
+
 /**
  * The timeline frame at which `item` plays source time `us`, or null when the item does not
  * play that moment (it is before the in-point or past the out-point). The inverse of
@@ -87,11 +101,11 @@ export function beatFramesForItem(grid: BeatGrid, item: Item, fps: number): Item
 
 /**
  * Every beat on the timeline that a drag should snap to: the beats of each placed item whose
- * asset has a grid, skipping `ignore` (the items being dragged — their own beats move with
+ * asset has a steady grid, skipping `ignore` (the items being dragged — their own beats move with
  * them). Sorted and without repeats.
  */
 export function beatSnapFrames(project: Project, timeline: Timeline, ignore: ReadonlySet<string>): Frames[] {
-  const grids = new Map(project.assets.filter((a) => a.beats).map((a) => [a.id, a.beats!]))
+  const grids = new Map(project.assets.filter((a) => hasSteadyBeat(a.beats)).map((a) => [a.id, a.beats!]))
   if (grids.size === 0) return []
   const frames = new Set<Frames>()
   for (const track of timeline.tracks) {

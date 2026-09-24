@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { beatFramesForItem, beatSnapFrames, timelineFrameAt, type BeatGrid } from './beats'
+import { beatFramesForItem, beatSnapFrames, hasSteadyBeat, STEADY_BEAT_CONFIDENCE, timelineFrameAt, type BeatGrid } from './beats'
 import { sourceTimeAt, type Asset, type Item, type Project, type Timeline } from './project'
 
 function item(partial: Partial<Item> & Pick<Item, 'id' | 'from' | 'durationInFrames'>): Item {
@@ -86,4 +86,29 @@ test('beatSnapFrames: every placed clip of an analysed file, except the ones bei
   // Positive control's pair: a file nobody analysed contributes nothing.
   const bare = project([a, b], undefined)
   assert.deepEqual(beatSnapFrames(bare.project, bare.timeline, new Set()), [])
+})
+
+/**
+ * The shape the verification run stored for a 1 kHz sine: a tempo and twelve beats at
+ * confidence 0. Detection "answered", so the grid was kept — and before `hasSteadyBeat` its
+ * beats became snap targets and its 178 BPM the card's tempo.
+ */
+function sineGrid(): BeatGrid {
+  return { ...grid120(12), bpm: 178.4, confidence: 0, downbeatsUs: [], downbeatConfidence: 0, dropouts: [] }
+}
+
+test('a failed detection (confidence 0) is not a beat: nothing snaps to it', () => {
+  const a = item({ id: 'a', from: 0, durationInFrames: 60 })
+  const failed = project([a], sineGrid())
+  // The specimen does have beats inside the clip, so an empty answer is the gate, not the mapping.
+  assert.ok(beatFramesForItem(sineGrid(), a, 30).beats.length > 0)
+  assert.equal(hasSteadyBeat(sineGrid()), false)
+  assert.deepEqual(beatSnapFrames(failed.project, failed.timeline, new Set()), [])
+  // Positive control: the same clip with a confident grid snaps.
+  const steady = project([a], grid120())
+  assert.equal(hasSteadyBeat(grid120()), true)
+  assert.deepEqual(beatSnapFrames(steady.project, steady.timeline, new Set()), [15, 30, 45])
+  // The threshold is inclusive, and a confident grid with no beats is still no beat.
+  assert.equal(hasSteadyBeat({ ...grid120(), confidence: STEADY_BEAT_CONFIDENCE }), true)
+  assert.equal(hasSteadyBeat({ ...grid120(), beatsUs: [] }), false)
 })
