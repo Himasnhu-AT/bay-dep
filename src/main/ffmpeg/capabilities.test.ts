@@ -124,7 +124,7 @@ function filtersTheCodeWrites(): Set<string> {
   const graphs: string[] = []
   for (const items of [
     [clip('a', 0, 60)],
-    [clip('a', 0, 60, { fadeInFrames: 10 }), clip('b', 90, 60, { speed: 2, volume: 0.5 })]
+    [clip('a', 0, 60, { fadeInFrames: 10 }), clip('b', 90, 60, { speed: 2, volume: 0.5, pan: -0.5 })]
   ]) {
     const t = timeline(items)
     const project: Project = { id: 'p', name: 'p', version: 1, assets: [tone], timelines: [t], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0 }
@@ -141,8 +141,9 @@ function filtersTheCodeWrites(): Set<string> {
   }
   const names = new Set(graphs.flatMap(filterNames))
   // Graphs written inline where this suite cannot reach them without Electron: the loudness meter
-  // (master.ts `measureLoudness`) and the thumbnail/filmstrip scaler (media/thumbnails.ts).
-  for (const inline of ['ebur128', 'fps', 'scale']) names.add(inline)
+  // (master.ts `measureLoudness`), the thumbnail/filmstrip scaler (media/thumbnails.ts), and the
+  // freeze-frame grab's `trim` (media/freeze-frame.ts, whose own test renders through it).
+  for (const inline of ['ebur128', 'fps', 'scale', 'trim']) names.add(inline)
   return names
 }
 
@@ -165,7 +166,7 @@ test('every encoder and filter bay asks for is in the ffmpeg it ships', { skip: 
   const wanted = filtersTheCodeWrites()
   // Every name here comes from a parsed graph, none from the inline list: proof the parse ran.
   assert.ok(
-    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat'].every((f) => wanted.has(f)),
+    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat', 'pan'].every((f) => wanted.has(f)),
     `the graphs must parse: ${[...wanted].join(' ')}`
   )
   const missing = [

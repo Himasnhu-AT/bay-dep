@@ -3,7 +3,11 @@
  *
  * The graph, per item, is:
  *
- *   element -> MediaElementAudioSourceNode -> item gain -> track gain -> analyser -> master
+ *   element -> MediaElementAudioSourceNode -> item gain -> pan -> track gain -> analyser -> master
+ *
+ * The item gain node is held at two channels (a mono source is up-mixed L = R there, as the
+ * speakers would), and the pan is a gain per channel — splitter, two gains, merger — set from
+ * `panGains`, the law export's `pan` filter is written from.
  *
  * Two placements in that chain are deliberate:
  *
@@ -39,7 +43,7 @@ import {
   playableTimeline
 } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
-import { audibleSpan, itemAudioGainAt, resolveAudioOffsets, transitionOfItemAt } from '@shared/audio-gain'
+import { audibleSpan, itemAudioGainAt, panGains, resolveAudioOffsets, transitionOfItemAt } from '@shared/audio-gain'
 import { linkedPartners, soundAlignedWithPicture } from '@shared/links'
 import {
   scheduleCompositionSounds,
@@ -88,6 +92,8 @@ export interface AudioRouting {
    * both. `transitionGain` above is one factor of it, kept for the routing tests that pin it.
    */
   gain: number
+  /** The item's per-channel pan gains — `panGains(item.pan)`, what export's `pan` filter writes. */
+  pan: { left: number; right: number }
   /**
    * Set when the item's sound is *detached* from its picture — a J/L cut, whose sound runs
    * before or after the frames its picture is drawn on. It then plays from its own `<audio>`
@@ -150,6 +156,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
         slot: slots.get(item.id) ?? 0,
         transitionGain,
         gain,
+        pan: panGains(item.pan),
         metered: true,
         audible: trackAudible(timeline.tracks, track)
       })
@@ -164,6 +171,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
       slot: 0,
       transitionGain,
       gain,
+      pan: panGains(item.pan),
       detached: {
         mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
         claim: drawn !== undefined && asset.hasVideo ? { asset, slot: drawn } : null
@@ -238,7 +246,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
       // element is claimed silently so its sound cannot reach the speakers unmixed.
       const picture = sharedPicture(timeline, item, pictureSlots)
       if (picture !== null && !isDetached(project, timeline, item)) {
-        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, metered: true, audible: trackAudible(timeline.tracks, track) })
+        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, pan: panGains(item.pan), metered: true, audible: trackAudible(timeline.tracks, track) })
         continue
       }
       const standIn = detachedAsset(asset, item)
@@ -250,6 +258,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
         slot: 0,
         transitionGain,
         gain,
+        pan: panGains(item.pan),
         detached: {
           mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
           claim: partner ? { asset, slot: pictureSlots.get(partner.id) ?? 0 } : null
@@ -262,7 +271,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
 
     const slot = audioSlotsUsed.get(asset.id) ?? 0
     audioSlotsUsed.set(asset.id, slot + 1)
-    out.push({ item, track, asset, slot, transitionGain, gain, metered: true, audible: trackAudible(timeline.tracks, track) })
+    out.push({ item, track, asset, slot, transitionGain, gain, pan: panGains(item.pan), metered: true, audible: trackAudible(timeline.tracks, track) })
   }
 
   return out
@@ -345,6 +354,8 @@ export interface SoundRouting {
   entry: ScheduledSound
   /** The item's gain at this frame times the sound's own `data-volume`. */
   gain: number
+  /** The composition clip's pan: its declared sounds are its sound. */
+  pan: { left: number; right: number }
   /** Where in the sound file playback should be at this frame. */
   mediaSeconds: number
   /** As for clips: `muted` governs sound, and a muted track still meters. */
@@ -413,6 +424,7 @@ export function compositionSoundsAt(
           asset: soundAsset(item, entry),
           entry,
           gain: itemAudioGainAt(project, timeline, item, frame) * entry.sound.volume,
+          pan: panGains(item.pan),
           mediaSeconds,
           audible: trackAudible(timeline.tracks, track)
         })
@@ -447,6 +459,11 @@ interface MeterNodes {
 interface SourceNodes {
   source: MediaElementAudioSourceNode
   gain: GainNode
+  /** The pan: one gain per channel between a splitter and a merger. */
+  left: GainNode
+  right: GainNode
+  /** What is routed into a track — the pan's merger. Disconnecting it unroutes the source. */
+  output: AudioNode
   /** The track this asset's sound is currently routed into, or null when idle. */
   trackId: string | null
 }
@@ -628,6 +645,7 @@ export class AudioEngine {
         // The shared gain — volume, fades, transition, J/L offsets, duck — the same function
         // export's envelope is sampled from, so the two cannot be re-decided apart.
         source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 2)
+        this.#setPan(source, routed.pan)
 
         if (routed.detached) {
           if (element instanceof HTMLAudioElement) {
@@ -651,6 +669,7 @@ export class AudioEngine {
         active.add(key)
         this.#route(source, nodes, routed.track.id)
         source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 8)
+        this.#setPan(source, routed.pan)
         this.#position(element, routed.entry.speed, routed.mediaSeconds, fps, playing)
       }
     }
@@ -698,6 +717,7 @@ export class AudioEngine {
     }
     this.#tracks.clear()
     for (const source of this.#sources.values()) {
+      source.output.disconnect()
       source.gain.disconnect()
       source.source.disconnect()
     }
@@ -749,8 +769,23 @@ export class AudioEngine {
     try {
       const source = context.createMediaElementSource(element)
       const gain = context.createGain()
+      // Two channels from here on, so the pan has a left and a right to weigh: a mono source is
+      // up-mixed to two identical channels ('speakers'), which is what the destination did to
+      // it before this node was here — an unpanned mono clip sounds exactly as it did.
+      gain.channelCount = 2
+      gain.channelCountMode = 'explicit'
+      gain.channelInterpretation = 'speakers'
+      const splitter = context.createChannelSplitter(2)
+      const left = context.createGain()
+      const right = context.createGain()
+      const merger = context.createChannelMerger(2)
       source.connect(gain)
-      const nodes: SourceNodes = { source, gain, trackId: null }
+      gain.connect(splitter)
+      splitter.connect(left, 0)
+      splitter.connect(right, 1)
+      left.connect(merger, 0, 0)
+      right.connect(merger, 0, 1)
+      const nodes: SourceNodes = { source, gain, left, right, output: merger, trackId: null }
       this.#sources.set(key, nodes)
       return nodes
     } catch {
@@ -762,8 +797,8 @@ export class AudioEngine {
 
   #route(source: SourceNodes, track: TrackNodes, trackId: string): void {
     if (source.trackId === trackId) return
-    if (source.trackId !== null) source.gain.disconnect()
-    source.gain.connect(track.gain)
+    if (source.trackId !== null) source.output.disconnect()
+    source.output.connect(track.gain)
     source.trackId = trackId
   }
 
@@ -828,6 +863,12 @@ export class AudioEngine {
     }
   }
 
+  /** The pan law's two channel gains, from the routing (`panGains`). */
+  #setPan(source: SourceNodes, pan: { left: number; right: number }): void {
+    source.left.gain.value = clamp(finite(pan.left, 1), 0, 2)
+    source.right.gain.value = clamp(finite(pan.right, 1), 0, 2)
+  }
+
   /**
    * Drops the nodes of deleted tracks. Without this, `levels()` goes on reporting a meter
    * for a track the user removed — and the UI, which keys off that record, draws it.
@@ -847,7 +888,7 @@ export class AudioEngine {
       if (active.has(assetId)) continue
       source.gain.gain.value = 0
       if (source.trackId !== null) {
-        source.gain.disconnect()
+        source.output.disconnect()
         source.trackId = null
       }
     }
@@ -865,6 +906,7 @@ export class AudioEngine {
     const key = sourceKey(entry.assetId, entry.slot)
     const source = this.#sources.get(key)
     if (!source) return
+    source.output.disconnect()
     source.gain.disconnect()
     source.source.disconnect()
     this.#sources.delete(key)

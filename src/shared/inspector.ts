@@ -128,6 +128,17 @@ export function formatDb(db: number): string {
   return `${rounded > 0 ? '+' : '-'}${text}dB`
 }
 
+/**
+ * A pan readout: `C` at centre, else the side and how far, in percent — `L 50`, `R 100`. Rounded
+ * to whole percent, and anything that rounds to 0 reads `C`, so the readout never says `L 0`.
+ */
+export function formatPan(pan: number | undefined | null): string {
+  const p = typeof pan === 'number' && Number.isFinite(pan) ? Math.max(-1, Math.min(1, pan)) : 0
+  const percent = Math.round(Math.abs(p) * 100)
+  if (percent === 0) return 'C'
+  return `${p < 0 ? 'L' : 'R'} ${percent}`
+}
+
 // ---------------------------------------------------------------------------
 // Editing one key of a property's list
 // ---------------------------------------------------------------------------

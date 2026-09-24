@@ -7,7 +7,7 @@ export const tool: ToolSpec = {
   name: 'edit_item',
   description:
     'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
-    'it sits on the canvas, its opacity, volume, fades, speed, look, colour grade or keyframe animation. Only the fields you pass ' +
+    'it sits on the canvas, its opacity, volume, pan, fades, speed, look, colour grade or keyframe animation. Only the fields you pass ' +
     'change. Moving an item onto occupied time on the same track is refused rather than ' +
     'silently overlapping — move the other item first, or use a different track. ' +
     'Returns the item complete after the edit. **That returned state is authoritative: you ' +
@@ -99,6 +99,17 @@ export const tool: ToolSpec = {
         description:
           'L-cut: let this clip\'s SOUND run on this many frames after its picture ends, ' +
           'reading source past its out-point. Same clamps as audioLeadFrames. 0 removes it.'
+      },
+      pan: {
+        type: 'number',
+        minimum: -1,
+        maximum: 1,
+        description:
+          'Stereo position of this clip\'s sound: -1 hard left, 0 centre (unchanged), 1 hard right. ' +
+          'Constant power with centre at unity: hard left is +3 dB on the left channel and ' +
+          'silence on the right, so a mono voice keeps its loudness as it moves. A stereo source ' +
+          'pans as a balance (the far side is turned down, not moved across). Static — not keyable. ' +
+          'inspect_item reports it when it is not centre. 0 removes it.'
       },
       duck: {
         description:

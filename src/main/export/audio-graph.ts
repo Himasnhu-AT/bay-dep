@@ -11,7 +11,7 @@
 import type { Item, Project, Timeline } from '@shared/project'
 import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceTimeAt, trackAudible } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
-import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
+import { audibleSpan, itemAudioGainAt, panGains } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
 import { scheduleCompositionSounds, type ScheduledSound } from '@shared/composition-audio'
 
@@ -46,6 +46,17 @@ function atempoChain(speed: number): string[] {
   }
   if (Math.abs(remaining - 1) > 1e-6) stages.push(`atempo=${remaining.toFixed(6)}`)
   return stages
+}
+
+/**
+ * The `pan` filter that puts `item.pan` on a stereo stream, or null at centre (no filter at all).
+ * Its two coefficients are `panGains` — the function the preview's channel gains are set from —
+ * written with `=`, which ffmpeg applies as given; `<` would renormalise them.
+ */
+export function panFilter(pan: number | undefined): string | null {
+  const { left, right } = panGains(pan)
+  if (left === 1 && right === 1) return null
+  return `pan=stereo|c0=${left.toFixed(6)}*c0|c1=${right.toFixed(6)}*c1`
 }
 
 function seconds(value: number): string {
@@ -117,6 +128,8 @@ export interface GainPoint {
 
 interface SoundCandidate {
   entry: ScheduledSound
+  /** The composition's clip — whose pan the sound takes. */
+  item: Item
   /** Timeline seconds heard inside the export range. */
   startSeconds: number
   endSeconds: number
@@ -232,7 +245,7 @@ function soundCandidates(
         // Silent throughout — a zero volume, or a stretch wholly inside a dip — costs a decode
         // and contributes nothing.
         if (envelope.every((point) => point.gain <= 0)) continue
-        out.push({ entry, startSeconds, endSeconds, envelope })
+        out.push({ entry, item, startSeconds, endSeconds, envelope })
       }
     }
   }
@@ -303,6 +316,10 @@ export function buildAudioGraph(
     const constant = envelope.every((point) => point.gain === first)
     if (!constant) steps.push(`volume='${volumeExpression(envelope)}':eval=frame`)
     else if (first !== 1) steps.push(`volume=${first.toFixed(6)}`)
+    // After the COMMON_FORMAT up-mix, so a mono source pans as two identical channels — as in the
+    // preview, whose channel gains follow a two-channel up-mix of the same kind.
+    const pan = panFilter(item.pan)
+    if (pan) steps.push(pan)
 
     const label = `a${index}`
     inputs.push(candidate.path)
@@ -331,6 +348,9 @@ export function buildAudioGraph(
         ? `volume=${(candidate.envelope[0]?.gain ?? 0).toFixed(6)}`
         : `volume='${volumeExpression(candidate.envelope)}':eval=frame`
     )
+    // A composition's sounds are the item's sound: they pan with it, as they do in the preview.
+    const pan = panFilter(candidate.item.pan)
+    if (pan) steps.push(pan)
 
     const label = `a${index}`
     inputs.push(entry.sound.path)

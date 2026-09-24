@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import type { Item, Project, Timeline } from '@shared/project'
 import { resolveAudioOffsets, MAX_DUCK_DB } from '@shared/audio-gain'
-import { commonValue, dbToGain, formatDb, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
 import { Field, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
 import { useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
@@ -10,10 +10,10 @@ import { Keyed } from './KeyframeControls'
 import { timecodeField } from './timecodeField'
 
 /**
- * A clip's sound: level in dB (keyable), the J/L cut, and ducking under another track.
+ * A clip's sound: level in dB (keyable), pan, the J/L cut, and ducking under another track.
  *
  * Level goes through the inspector's own volume path (which keys the playhead when volume is
- * animated); J/L and duck go through `edit_item`'s executor, so they are validated and stored
+ * animated); pan, J/L and duck go through `edit_item`'s executor, so they are validated and stored
  * exactly as the agent's calls are, and `inspect_item` reads back what was typed here.
  */
 export function AudioSection({
@@ -41,6 +41,7 @@ export function AudioSection({
   const tc = timecodeField(fps)
   const ids = items.map((item) => item.id)
 
+  const pan = commonValue(items.map((item) => (Number.isFinite(item.pan) ? (item.pan as number) : 0)))
   const lead = commonValue(items.map((item) => item.audioLeadFrames ?? 0))
   const trail = commonValue(items.map((item) => item.audioTrailFrames ?? 0))
   const ducked = items.filter((item) => item.duck)
@@ -58,7 +59,7 @@ export function AudioSection({
 
   const clamped = items.length === 1 ? resolveAudioOffsets(project, timeline, first).clamped : []
   const touched =
-    items.some((item) => item.audioLeadFrames || item.audioTrailFrames || item.duck) ||
+    items.some((item) => item.audioLeadFrames || item.audioTrailFrames || item.duck || item.pan) ||
     volume.mixed ||
     volume.value !== 1
 
@@ -66,7 +67,7 @@ export function AudioSection({
     // One undo step for the whole reset: nested transactions join this one.
     useEditor.getState().transact(() => {
       onVolume(1)
-      editItems(ids, () => ({ audioLeadFrames: 0, audioTrailFrames: 0, duck: null }))
+      editItems(ids, () => ({ pan: 0, audioLeadFrames: 0, audioTrailFrames: 0, duck: null }))
     })
   }
 
@@ -79,7 +80,7 @@ export function AudioSection({
       actions={
         <span className="flex items-center gap-0.5">
           {navigation}
-          <SectionReset show={touched} label="Reset volume, J/L cut and ducking" onReset={reset} />
+          <SectionReset show={touched} label="Reset volume, pan, J/L cut and ducking" onReset={reset} />
         </span>
       }
     >
@@ -96,6 +97,26 @@ export function AudioSection({
           onCommit={(next) => onVolume(dbToGain(next))}
         />
       </Keyed>
+      {/* Double-click anywhere on the row centres it, as on a mixer's pan knob. Static, not keyed. */}
+      <div
+        className="mt-1.5"
+        onDoubleClick={() => {
+          if (pan.mixed || pan.value !== 0) editItems(ids, () => ({ pan: 0 }))
+        }}
+      >
+        <SliderField
+          label="Pan"
+          ariaLabel="Pan, left to right. Double-click to centre"
+          min={-1}
+          max={1}
+          step={0.01}
+          origin={0}
+          value={pan.value ?? 0}
+          mixed={pan.mixed}
+          format={formatPan}
+          onCommit={(next) => editItems(ids, () => ({ pan: next }))}
+        />
+      </div>
 
       <h4 className="mt-3 mb-1.5 text-[11px] text-ink-1">J/L cut</h4>
       <div className="space-y-1.5">

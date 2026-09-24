@@ -9,6 +9,7 @@
  */
 
 import { findAsset, formatTimecode, type Item, type Project, type Timeline } from './project'
+import { formatPan as panLabel } from './inspector'
 
 export interface ChangeLine {
   kind: 'added' | 'removed' | 'changed'
@@ -108,6 +109,7 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       if (o.fadeInFrames !== item.fadeInFrames) out.push({ kind: 'changed', text: `Fade in on ${name}: ${o.fadeInFrames} → ${item.fadeInFrames} frames` })
       if (o.fadeOutFrames !== item.fadeOutFrames) out.push({ kind: 'changed', text: `Fade out on ${name}: ${o.fadeOutFrames} → ${item.fadeOutFrames} frames` })
       if (o.volume !== item.volume) out.push({ kind: 'changed', text: `Volume of ${name}: ${Math.round(o.volume * 100)}% → ${Math.round(item.volume * 100)}%` })
+      if ((o.pan ?? 0) !== (item.pan ?? 0)) out.push({ kind: 'changed', text: `Pan of ${name}: ${panLabel(o.pan)} → ${panLabel(item.pan)}` })
       if (o.speed !== item.speed) out.push({ kind: 'changed', text: `Speed of ${name}: ${o.speed}× → ${item.speed}×` })
       if (!same(o.layout, item.layout)) out.push({ kind: 'changed', text: `Repositioned ${name}` })
       if (!same(o.crop, item.crop)) out.push({ kind: 'changed', text: `Cropped ${name}` })
