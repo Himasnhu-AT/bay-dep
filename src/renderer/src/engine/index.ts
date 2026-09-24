@@ -27,7 +27,8 @@ export {
   anchorFor,
   fontIsAvailable,
   FONT_PROBE_STRING,
-  MIN_FONT_SIZE
+  MIN_FONT_SIZE,
+  resolvedTextStyle
 } from './text'
 export type { TextFit, LaidOutText, TextBox } from './text'
 export type { ExporterOptions, ExportOutcome, ExportProgressReport } from './exporter'

@@ -19,10 +19,28 @@
  * the difference. The draw has to say so, the way missing media says `pending`.
  */
 
-import type { TextStyle } from '@shared/project'
+import { defaultTextStyle, type Item, type TextStyle } from '@shared/project'
 
 /** Below this, type is not small — it is a smudge. Shrinking further is worse than saying no. */
 export const MIN_FONT_SIZE = 8
+
+/**
+ * The style a text item is drawn with — the one answer the compositor, the inspector and the
+ * fit hint all read.
+ *
+ * `item.text` absent means exactly the look that shipped before `TextStyle` existed: a size
+ * derived from the box (40% of its height) rather than chosen. Keeping that as the fallback is
+ * what makes the field optional without changing any project already on disk. It lived only in
+ * the compositor once, while the inspector showed `defaultTextStyle()`'s 96 px for the same item:
+ * a new title drew at 432 px on a 1080 canvas under a panel saying 96, and the first style edit
+ * snapped it to 96. New titles now get an explicit style at placement; this keeps older ones
+ * honest.
+ */
+export function resolvedTextStyle(item: Pick<Item, 'text' | 'layout'>): TextStyle {
+  if (item.text) return item.text
+  const height = Number.isFinite(item.layout.height) ? item.layout.height : 0
+  return { ...defaultTextStyle(Math.max(MIN_FONT_SIZE, Math.round(height * 0.4))), lineHeight: 1.2 }
+}
 
 /** How the text of one item ended up being drawn. */
 export interface TextFit {

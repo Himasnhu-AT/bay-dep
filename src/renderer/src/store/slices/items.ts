@@ -3,7 +3,7 @@
  */
 
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
-import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
+import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyRelinks } from '@shared/relink'
 import { cloneKeyframes, shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
@@ -163,7 +163,12 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
           volume: 1,
           fadeInFrames: 0,
           fadeOutFrames: 0,
-          speed: 1
+          speed: 1,
+          // A title gets an explicit style, so what the Type section shows is what draws. Left
+          // unset, it fell back to the pre-TextStyle look (40% of the box: 432 px on 1080)
+          // while the panel said 96. This is the one placement path — the Text panel, "Add text
+          // here" and `place_asset` all arrive here — so every new title is the same item.
+          ...(asset.kind === 'text' ? { text: defaultTextStyle() } : {})
         }
         track.items.push(item)
         track.items.sort((a, b) => a.from - b.from)

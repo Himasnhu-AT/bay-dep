@@ -4,6 +4,7 @@ import {
   FONT_PROBE_STRING,
   layoutText,
   MIN_FONT_SIZE,
+  resolvedTextStyle,
   type LaidOutText
 } from '@/engine'
 import { defaultTextStyle, type Asset, type Item } from '@shared/project'
@@ -43,9 +44,10 @@ export function useTextFit(
   const [report, setReport] = useState<TextFitReport | null>(null)
 
   const text = asset?.kind === 'text' ? (asset.text ?? '') : null
-  const style = item?.text ?? defaultTextStyle()
+  // The compositor's own resolver, so an unstyled title is judged at the size it is drawn.
+  const style = item ? resolvedTextStyle(item) : defaultTextStyle()
   // Serialised so the effect re-runs on a value change rather than on every render — the
-  // style object is rebuilt by `defaultTextStyle()` each time when the item has none.
+  // style object is rebuilt each time when the item has none.
   const key = JSON.stringify([text, style, box.width, box.height])
 
   useEffect(() => {

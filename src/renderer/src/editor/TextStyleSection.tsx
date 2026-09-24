@@ -12,6 +12,7 @@ import {
   Plus
 } from 'lucide-react'
 import { defaultTextStyle, type Asset, type Item, type TextStyle } from '@shared/project'
+import { resolvedTextStyle } from '@/engine/text'
 import {
   ColorField,
   Field,
@@ -107,7 +108,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   })
 
   if (!first) return null
-  const style = first.text ?? defaultTextStyle()
+  // What the compositor draws, so an unstyled title shows the size it actually has.
+  const style = resolvedTextStyle(first)
   // The project's own fonts first: they are the ones that travel with it. A family's value is
   // the quoted name with a generic fallback behind it, the shape every other entry has.
   const families = [
@@ -121,7 +123,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   const set = (patch: Partial<TextStyle>): void => {
     transact(() => {
       for (const item of items) {
-        patchItem(item.id, { text: { ...(item.text ?? defaultTextStyle()), ...patch } })
+        patchItem(item.id, { text: { ...resolvedTextStyle(item), ...patch } })
       }
     })
   }

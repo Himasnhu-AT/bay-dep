@@ -13,7 +13,6 @@
  */
 
 import {
-  defaultTextStyle,
   fadeGainAt,
   findAsset,
   itemsAtFrame,
@@ -46,7 +45,7 @@ import {
   fontIsAvailable,
   FONT_PROBE_STRING,
   layoutText,
-  MIN_FONT_SIZE,
+  resolvedTextStyle,
   type TextFit,
   type TextBox
 } from './text'
@@ -650,13 +649,8 @@ export class Compositor {
     if (!text) return null
     const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
 
-    // `undefined` means exactly the look that shipped before TextStyle existed: a size derived
-    // from the box rather than chosen. Keeping that as the default is what makes the field
-    // optional in the model without changing any project already on disk.
-    const style = item.text ?? {
-      ...defaultTextStyle(Math.max(MIN_FONT_SIZE, Math.round(box.height * 0.4))),
-      lineHeight: 1.2
-    }
+    // One resolver for the unstyled fallback, shared with the inspector and the fit hint.
+    const style = resolvedTextStyle(item)
 
     const fontString = (size: number, family: string): string =>
       `${style.italic ? 'italic ' : ''}${style.fontWeight} ${size}px ${family}`
