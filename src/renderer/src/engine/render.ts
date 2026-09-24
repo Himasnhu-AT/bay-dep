@@ -15,15 +15,12 @@
  * assets were still loading instead of returning a picture of nothing.
  */
 
-import {
-  findAsset,
-  findTimeline,
-  itemsAtFrame,
-  type Asset,
-  type Project,
-  type Timeline
-} from '@shared/project'
+import { brfRuntime } from './brfCode'
+import { variationFaces } from './brfFonts'
+import { importedFonts } from './importedFonts'
+import { findAsset, findTimeline, type Project, type Timeline } from '@shared/project'
 import { Compositor, elementSlots, itemsToDraw, type DrawStats } from './compositor'
+import { CompositionPool } from './compositionPool'
 import type { TextFit } from './text'
 import { MediaPool } from './mediaPool'
 import { sourceSecondsAt } from './sync'
@@ -55,10 +52,23 @@ export interface RenderFrameOptions {
    */
   pool?: MediaPool
   timeoutMs?: number
+  /**
+   * `png` by default, because a probe comparing stills wants them lossless. The agent surface
+   * asks for `jpeg`: a PNG of a video frame at 640px is several hundred kilobytes of base64,
+   * which a client counts as tokens, while a JPEG of the same picture answers the same question
+   * — "is the caption covering her face?" — at a tenth of that.
+   */
+  format?: 'png' | 'jpeg'
+  /**
+   * A line of text burned into the bottom-left corner after compositing — the timecode, when
+   * an agent asks for it. Drawn in image space, not timeline space, so it is the same size at
+   * any canvas resolution, and on a plate so it reads over any picture.
+   */
+  stamp?: string
 }
 
 export interface RenderedFrame {
-  /** `data:image/png;base64,…` — what the MCP result carries, with no re-encoding needed. */
+  /** `data:image/png;base64,…` (or jpeg) — what the MCP result carries, unre-encoded. */
   dataUrl: string
   width: number
   height: number
@@ -188,26 +198,25 @@ export function previewSize(
   return { width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) }
 }
 
-function unresolvedNames(project: Project, timeline: Timeline, frame: number, pool: MediaPool): string[] {
-  const names: string[] = []
-  for (const item of itemsAtFrame(timeline, frame, 'video')) {
-    const asset: Asset | undefined = findAsset(project, item.assetId)
-    if (!asset) {
-      names.push('a missing asset')
-      continue
-    }
-    if (asset.kind === 'text') continue
-    if (asset.error) {
-      names.push(`${asset.name} (${asset.error})`)
-      continue
-    }
-    if (!pool.readiness(asset.id).hasPicture) names.push(asset.name)
-  }
-  return [...new Set(names)]
+
+function drawStamp(ctx: CanvasRenderingContext2D, text: string, width: number, height: number): void {
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.filter = 'none'
+  const size = Math.max(10, Math.round(Math.min(width, height) * 0.045))
+  const pad = Math.round(size * 0.4)
+  ctx.font = `600 ${size}px ui-monospace, Menlo, monospace`
+  ctx.textBaseline = 'bottom'
+  const measured = ctx.measureText(text).width
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.72)'
+  ctx.fillRect(0, height - size - pad * 2, measured + pad * 2, size + pad * 2)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.fillText(text, pad, height - pad)
 }
 
 /**
- * Renders one frame and returns it as a PNG data URL.
+ * Renders one frame and returns it as a PNG (or JPEG) data URL.
  *
  * Retries while anything is `pending` rather than returning early: a first attempt often
  * finds an element that has only just been created, and `onReady` fires when it decodes. The
@@ -227,7 +236,8 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
   const timeoutMs = options.timeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS
   const ownsPool = options.pool === undefined
   const pool = options.pool ?? new MediaPool({ maxVideoElements: 8 })
-  const compositor = new Compositor(pool)
+  const compositions = new CompositionPool()
+  const compositor = new Compositor(pool, compositions)
 
   const { width, height } = previewSize(
     timeline.width,
@@ -253,33 +263,59 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       0
     )
 
-    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
+    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      await awaitSources(pool, project, timeline, frame, timeoutMs)
+      stats = compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
+      if (stats.pending === 0) break
+
+      // A pending *composition* is not a decode in progress — it is a render this draw has
+      // just asked for, and it arrives whether or not anything else happens. `settle` is the
+      // wait built for exactly that, and the exporter has always called it; the preview never
+      // did, which made `preview_frame` unable to converge on any frame carrying two
+      // compositions. The cache is constructed per call and disposed below, so nothing carries
+      // over between calls either: asking again could not accumulate what the last call had
+      // fetched, and `MAX_CONCURRENT_REQUESTS` silently drops the third request of a draw. The
+      // symptom was a frame that alternated which composition it reported missing, forever.
+      //
+      // Bounded by the same timeout as the media wait, so a composition that never renders
+      // still costs a reported-incomplete frame rather than a call that does not return.
+      await Promise.all([compositions.settle(timeoutMs), brfRuntime.settle(timeoutMs), variationFaces.settle(timeoutMs), importedFonts.settle(timeoutMs)])
+      // What settled may be all that was missing. Waiting for the *next* readiness event after
+      // it did waited out the whole timeout — nothing else was coming — and cost every frame with
+      // a composition or a .brf module ~5s in `preview_frame`. Look again first.
       await awaitSources(pool, project, timeline, frame, timeoutMs)
       stats = compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
       if (stats.pending === 0) break
       // Something was still decoding. `onReady` fires on `loadeddata` and `seeked`, so this
       // waits for the next actual change rather than sleeping a guessed interval.
+      //
+      // Both pools, because a composition is pending for a different reason than a video: its
+      // first frame is not requested until the first draw asks for it, so a render that only
+      // waited on media returned a picture with the composition missing — correctly warned
+      // about, and still the wrong picture. Whichever settles first wakes the retry.
       await new Promise<void>((resolve) => {
-        const off = pool.onReady(() => {
-          off()
+        const offs = [pool.onReady(finish), compositions.onReady(finish), brfRuntime.onReady(finish), variationFaces.onReady(finish), importedFonts.onReady(finish)]
+        const timer = setTimeout(finish, timeoutMs)
+        function finish(): void {
+          clearTimeout(timer)
+          for (const off of offs) off()
           resolve()
-        })
-        setTimeout(() => {
-          off()
-          resolve()
-        }, timeoutMs)
+        }
       })
     }
 
+    if (options.stamp) drawStamp(ctx, options.stamp, width, height)
+
     return {
-      dataUrl: canvas.toDataURL('image/png'),
+      dataUrl:
+        options.format === 'jpeg' ? canvas.toDataURL('image/jpeg', 0.85) : canvas.toDataURL('image/png'),
       width,
       height,
       ...stats,
-      unresolved: stats.pending > 0 || stats.placeholders > 0
-        ? unresolvedNames(project, timeline, frame, pool)
-        : []
+      // Straight from the compositor. This used to be reconstructed here by re-deriving which
+      // assets looked unready, and it was wrong both times it was written.
+      unresolved: [...new Set(stats.unresolvedNames)]
     }
   } finally {
     // A 4K-project canvas is 33MB that GC is in no hurry about.
@@ -287,5 +323,8 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
     canvas.height = 0
     compositor.reset()
     if (ownsPool) pool.dispose()
+    // Unconditional: the composition pool is always this call's own, and every asset it
+    // touched left an offscreen window open in main.
+    compositions.dispose()
   }
 }

@@ -1,17 +1,23 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Music2, Video } from 'lucide-react'
-import { allItems, findAsset, itemEnd, type Item, type Track } from '@shared/project'
+import { allItems, findAsset, itemEnd, type Item, type Marker, type Track } from '@shared/project'
+import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
+import { linkedPartners, withLinked } from '@shared/links'
 import { IconButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
 import { junctionsForTrack } from '@/lib/junctions'
+import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
 import { JunctionMarkers } from './JunctionMarkers'
 import { TransitionDialog } from './TransitionDialog'
 import { TimelineRuler } from './TimelineRuler'
 import { TrackHeader } from './TrackHeader'
+
+/** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
+const NO_MARKERS: readonly Marker[] = []
 
 const HEADER_WIDTH = 148
 const RULER_HEIGHT = 26
@@ -41,6 +47,25 @@ interface TrimGesture {
   durationInFrames: number
 }
 
+/**
+ * A slip, slide or roll in progress — Alt on a clip (slip), Alt+Shift on a clip (slide), Alt on
+ * a trim handle (roll that cut).
+ *
+ * The legal range is asked for once, at pointer-down, and the drag is clamped to it: a gesture
+ * that ran past the handles and was refused on release would read as the editor ignoring the
+ * drag. The preview is the planner's own output, so what is drawn during the drag is exactly
+ * what the store will commit on release.
+ */
+interface TrimModeGesture {
+  itemId: string
+  mode: TrimMode
+  edge?: 'start' | 'end'
+  range: { min: number; max: number }
+  deltaFrames: number
+  /** Every item the plan changes, keyed by id, as it will be after the edit. */
+  preview: Map<string, TrimChange>
+}
+
 function trackHeight(track: Track): number {
   return track.kind === 'video' ? VIDEO_TRACK_HEIGHT : AUDIO_TRACK_HEIGHT
 }
@@ -62,10 +87,14 @@ export function Timeline(): ReactNode {
   const [view, setView] = useState({ left: 0, width: 0 })
   const [move, setMove] = useState<MoveGesture | null>(null)
   const [trim, setTrim] = useState<TrimGesture | null>(null)
+  const [trimMode, setTrimMode] = useState<TrimModeGesture | null>(null)
   // The junction under edit. Local because a cut is not a selectable object in the store —
   // `selection` holds item ids — and inventing a second kind of selection there to carry a
   // transient dialog would be a worse trade than holding it here.
   const [junctionKey, setJunctionKey] = useState<string | null>(null)
+  // The clip menu (right-click), at the pointer, relative to the timeline panel.
+  const [menu, setMenu] = useState<{ itemId: string; x: number; y: number } | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const fps = timeline?.fps ?? 30
   const tracks = timeline?.tracks ?? []
@@ -96,28 +125,12 @@ export function Timeline(): ReactNode {
     [pixelsPerFrame]
   )
 
-  /** Snaps to the origin, the playhead, and every other clip's two edges. */
+  /** Snaps to the origin, the playhead, every other clip's two edges, markers and beats (`lib/snap`). */
   const snap = useCallback(
     (frame: number, ignore: Set<string>): number => {
       if (!timeline) return Math.round(frame)
-      const tolerance = SNAP_PX / pixelsPerFrame
-      let best = Math.round(frame)
-      let bestDistance = tolerance
-      const consider = (candidate: number): void => {
-        const distance = Math.abs(candidate - frame)
-        if (distance < bestDistance) {
-          bestDistance = distance
-          best = candidate
-        }
-      }
-      consider(0)
-      consider(useEditor.getState().playhead)
-      for (const item of allItems(timeline)) {
-        if (ignore.has(item.id)) continue
-        consider(item.from)
-        consider(itemEnd(item))
-      }
-      return Math.max(0, Math.round(best))
+      const state = useEditor.getState()
+      return snapFrame(frame, snapTargets(state.project, timeline, state.playhead, ignore), SNAP_PX / pixelsPerFrame)
     },
     [timeline, pixelsPerFrame]
   )
@@ -253,13 +266,25 @@ export function Timeline(): ReactNode {
       // Moving right, the rightmost clip must vacate its space first — otherwise the one
       // behind it collides with a clip that is itself about to move out of the way.
       moving.sort((a, b) => (current.deltaFrames > 0 ? b.from - a.from : a.from - b.from))
-      for (const item of moving) {
-        store.moveItem(
-          item.id,
-          item.from + current.deltaFrames,
-          item.id === current.itemIds[0] ? current.targetTrackId : undefined
-        )
-      }
+      // One drag is one undo step. Without the transaction a four-clip drag pushes four
+      // entries and a single Cmd+Z moves one clip back, leaving the selection spread across
+      // two positions — a state nobody dragged to. The ordering above makes the intermediate
+      // states legal, which is why the group can be built from single moves at all.
+      // A linked clip moves its partners itself (`moveItem`), so a partner that is also selected
+      // — clicking a linked clip selects the group — is not moved a second time.
+      const moved = new Set<string>()
+      store.transact(() => {
+        for (const item of moving) {
+          if (moved.has(item.id)) continue
+          store.moveItem(
+            item.id,
+            item.from + current.deltaFrames,
+            item.id === current.itemIds[0] ? current.targetTrackId : undefined
+          )
+          moved.add(item.id)
+          for (const partner of linkedPartners(timeline, item.id)) moved.add(partner.id)
+        }
+      })
     },
     onClick: () => setMove(null)
   })
@@ -296,16 +321,95 @@ export function Timeline(): ReactNode {
     onClick: () => setTrim(null)
   })
 
+  const beginTrimMode = useDrag({
+    onMove: (state) => {
+      if (!timeline) return
+      setTrimMode((current) => {
+        if (!current) return current
+        // A slip drags the *footage*: pulling right reveals what came before, the way the
+        // picture moves under a fixed window. Slide and roll drag the clip or the cut itself.
+        const raw = Math.round(state.dx / pixelsPerFrame) * (current.mode === 'slip' ? -1 : 1)
+        const deltaFrames = Math.max(current.range.min, Math.min(current.range.max, raw))
+        if (deltaFrames === current.deltaFrames) return current
+        const plan =
+          deltaFrames === 0
+            ? null
+            : planTrim(useEditor.getState().project, timeline, {
+                itemId: current.itemId,
+                mode: current.mode,
+                deltaFrames,
+                ...(current.edge ? { edge: current.edge } : {})
+              })
+        const preview = new Map<string, TrimChange>()
+        if (plan?.ok) for (const change of plan.changes) preview.set(change.itemId, change)
+        return { ...current, deltaFrames, preview }
+      })
+    },
+    onEnd: () => {
+      const current = trimMode
+      setTrimMode(null)
+      if (!current || current.deltaFrames === 0) return
+      const store = useEditor.getState()
+      const result = store.trimEdit({
+        itemId: current.itemId,
+        mode: current.mode,
+        deltaFrames: current.deltaFrames,
+        ...(current.edge ? { edge: current.edge } : {})
+      })
+      // Only reachable if the project changed under the drag; say why rather than dropping it.
+      if (!result.ok) store.notify(result.error, 'error')
+    },
+    onClick: () => setTrimMode(null)
+  })
+
+  /**
+   * Starts a slip, slide or roll if the pointer-down asked for one. Returns false when the
+   * modifiers do not, so the caller falls through to an ordinary move or trim.
+   */
+  const startTrimMode = useCallback(
+    (event: React.PointerEvent, item: Item, mode: TrimMode, edge?: 'start' | 'end'): boolean => {
+      if (!timeline) return false
+      const store = useEditor.getState()
+      // A zero delta is refused with the legal range attached, which is exactly the question
+      // "how far can this go" — one planner, asked before the drag instead of after it.
+      const probe = planTrim(store.project, timeline, {
+        itemId: item.id,
+        mode,
+        deltaFrames: 0,
+        ...(edge ? { edge } : {})
+      })
+      if (probe.ok || !probe.range) {
+        if (!probe.ok) store.notify(probe.error, 'error')
+        return true
+      }
+      store.select([item.id])
+      setTrimMode({ itemId: item.id, mode, edge, range: probe.range, deltaFrames: 0, preview: new Map() })
+      beginTrimMode(event)
+      return true
+    },
+    [timeline, beginTrimMode]
+  )
+
   const onClipPointerDown = useCallback(
     (event: React.PointerEvent, item: Item): void => {
       const store = useEditor.getState()
+      // Alt is the trim-mode modifier: alone it slips the footage inside the clip, with Shift it
+      // slides the clip between its neighbours. Checked before the Shift-click branch below, so
+      // Alt+Shift is a slide rather than a selection toggle.
+      if (event.altKey) {
+        startTrimMode(event, item, event.shiftKey ? 'slide' : 'slip')
+        return
+      }
       // Shift-click edits the selection and nothing else — dragging a shift-click would
       // move whatever was already selected, which is never what the gesture meant.
       if (event.shiftKey) {
         store.select([item.id], true)
         return
       }
-      if (!store.selection.includes(item.id)) store.select([item.id])
+      // Linked selection: a picture and its detached sound select, and so drag, together.
+      if (!store.selection.includes(item.id)) {
+        store.select(timeline ? withLinked(timeline, [item.id]) : [item.id])
+      }
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
       const selected = useEditor.getState().selection
@@ -319,19 +423,82 @@ export function Timeline(): ReactNode {
       })
       beginMove(event)
     },
-    [tracks, beginMove]
+    [timeline, tracks, beginMove, startTrimMode]
   )
 
   const onTrimPointerDown = useCallback(
     (event: React.PointerEvent, item: Item, edge: 'start' | 'end'): void => {
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
+      // Alt on a handle rolls the cut at that edge instead of trimming one side of it.
+      if (event.altKey) {
+        startTrimMode(event, item, 'roll', edge)
+        return
+      }
       useEditor.getState().select([item.id])
       setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames })
       beginTrim(event)
     },
-    [tracks, beginTrim]
+    [tracks, beginTrim, startTrimMode]
   )
+
+  // -- clip menu --------------------------------------------------------------
+
+  const onClipContextMenu = useCallback((event: React.MouseEvent, item: Item): void => {
+    event.preventDefault()
+    const panel = panelRef.current?.getBoundingClientRect()
+    const store = useEditor.getState()
+    const current = selectTimeline(store)
+    if (!store.selection.includes(item.id)) {
+      store.select(current ? withLinked(current, [item.id]) : [item.id])
+    }
+    setMenu({ itemId: item.id, x: event.clientX - (panel?.left ?? 0), y: event.clientY - (panel?.top ?? 0) })
+  }, [])
+
+  useEffect(() => {
+    if (!menu) return
+    const close = (event: Event): void => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return
+      if (event.target instanceof Node && panelRef.current?.querySelector('[data-clip-menu]')?.contains(event.target)) return
+      setMenu(null)
+    }
+    window.addEventListener('pointerdown', close, true)
+    window.addEventListener('keydown', close, true)
+    return () => {
+      window.removeEventListener('pointerdown', close, true)
+      window.removeEventListener('keydown', close, true)
+    }
+  }, [menu])
+
+  const menuItem = menu && timeline ? allItems(timeline).find((item) => item.id === menu.itemId) : undefined
+  const menuTrack = menuItem ? tracks.find((track) => track.id === menuItem.trackId) : undefined
+  const menuAsset = menuItem ? findAsset(project, menuItem.assetId) : undefined
+  const menuLinked = menuItem && timeline ? linkedPartners(timeline, menuItem.id).length > 0 : false
+  const canDetach = Boolean(
+    menuItem &&
+      menuTrack?.kind === 'video' &&
+      !menuItem.audioDetached &&
+      menuAsset?.hasVideo &&
+      menuAsset.hasAudio &&
+      !menuAsset.error
+  )
+  const canReattach = Boolean(
+    menuItem && (menuItem.audioDetached || (timeline && linkedPartners(timeline, menuItem.id).some((p) => p.audioDetached)))
+  )
+
+  const runMenu = (action: 'detach' | 'unlink' | 'reattach'): void => {
+    const target = menu?.itemId
+    setMenu(null)
+    if (!target) return
+    const store = useEditor.getState()
+    if (action === 'unlink') {
+      store.unlinkItems([target])
+      return
+    }
+    const refused =
+      action === 'detach' ? store.detachAudio([target]).refused : store.reattachAudio([target]).refused
+    if (refused.length > 0) store.notify(refused.map((r) => r.reason).join('. ') + '.', 'error')
+  }
 
   // -- render ---------------------------------------------------------------
 
@@ -350,7 +517,7 @@ export function Timeline(): ReactNode {
   const nothingPlaced = tracks.every((track) => track.items.length === 0)
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1">
+    <div ref={panelRef} className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1">
       <div ref={scrollRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-auto">
         <div className="relative" style={{ width: HEADER_WIDTH + contentWidth, minHeight: '100%' }}>
           <div className="sticky top-0 z-[35] flex">
@@ -367,6 +534,7 @@ export function Timeline(): ReactNode {
               pixelsPerFrame={pixelsPerFrame}
               contentWidth={contentWidth}
               durationFrames={duration}
+              markers={timeline?.markers ?? NO_MARKERS}
               viewStart={viewStart}
               viewEnd={viewEnd}
               innerRef={rulerRef}
@@ -420,8 +588,21 @@ export function Timeline(): ReactNode {
                   )}
                   style={{ width: contentWidth, height }}
                 >
-                  {track.items.map((item) => {
-                    const trimming = trim?.itemId === item.id
+                  {track.items.map((original) => {
+                    const trimming = trim?.itemId === original.id
+                    // During a slip, slide or roll, draw the item as the plan will leave it —
+                    // including its read point, so a slipped filmstrip visibly moves.
+                    const planned = trimMode?.preview.get(original.id)
+                    const item: Item = planned
+                      ? {
+                          ...original,
+                          from: planned.from,
+                          durationInFrames: planned.durationInFrames,
+                          sourceStartUs: planned.sourceStartUs,
+                          fadeInFrames: planned.fadeInFrames,
+                          fadeOutFrames: planned.fadeOutFrames
+                        }
+                      : original
                     return (
                       <Clip
                         key={item.id}
@@ -432,11 +613,13 @@ export function Timeline(): ReactNode {
                         height={height}
                         selected={selection.includes(item.id)}
                         locked={track.locked}
+                        trackKind={track.kind}
                         previewFrom={trimming ? trim.from : item.from}
                         previewDuration={trimming ? trim.durationInFrames : item.durationInFrames}
-                        dragging={movingIds?.has(item.id) ?? false}
+                        dragging={(movingIds?.has(item.id) ?? false) || trimMode?.itemId === item.id}
                         onPointerDownBody={onClipPointerDown}
                         onPointerDownTrim={onTrimPointerDown}
+                        onContextMenu={onClipContextMenu}
                       />
                     )
                   })}
@@ -519,6 +702,21 @@ export function Timeline(): ReactNode {
         </div>
       </div>
 
+      {/* What the drag will do, in the units the result will be reported in. The range is
+          shown because the drag stops at it, and a drag that stops for no visible reason reads
+          as the editor sticking. */}
+      {trimMode && (
+        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
+          {trimMode.mode === 'slip' ? 'Slip' : trimMode.mode === 'slide' ? 'Slide' : 'Roll'}{' '}
+          {trimMode.deltaFrames > 0 ? '+' : ''}
+          {trimMode.deltaFrames} frames
+          <span className="ml-2 text-ink-2">
+            {Number.isFinite(trimMode.range.min) ? trimMode.range.min : '−∞'} to{' '}
+            {Number.isFinite(trimMode.range.max) ? `+${trimMode.range.max}` : '+∞'}
+          </span>
+        </div>
+      )}
+
       {/* Centred on the *lanes*, not on the panel — otherwise it lands over the add-track
           row and reads as a label for it. `cursor` is where the last lane ends. */}
       {nothingPlaced && (
@@ -529,6 +727,44 @@ export function Timeline(): ReactNode {
           <p className="rounded-sm border border-line bg-surface-1/90 px-3 py-1.5 text-[11px] text-ink-2">
             Drag media here, or click a clip in the media pool to place it at the playhead.
           </p>
+        </div>
+      )}
+
+      {menu && menuItem && (
+        <div
+          data-clip-menu
+          role="menu"
+          aria-label="Clip"
+          className="absolute z-[60] min-w-44 rounded-sm border border-line bg-surface-2 py-1 text-[12px] text-ink-0 shadow-pop"
+          style={{ left: menu.x, top: menu.y }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canDetach}
+            onClick={() => runMenu('detach')}
+            className="block w-full px-3 py-1 text-left hover:bg-surface-3 disabled:text-ink-3 disabled:hover:bg-transparent"
+          >
+            Detach audio
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!menuLinked}
+            onClick={() => runMenu('unlink')}
+            className="block w-full px-3 py-1 text-left hover:bg-surface-3 disabled:text-ink-3 disabled:hover:bg-transparent"
+          >
+            Unlink
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canReattach}
+            onClick={() => runMenu('reattach')}
+            className="block w-full px-3 py-1 text-left hover:bg-surface-3 disabled:text-ink-3 disabled:hover:bg-transparent"
+          >
+            Reattach audio
+          </button>
         </div>
       )}
 

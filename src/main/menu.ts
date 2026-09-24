@@ -42,6 +42,8 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
           submenu: [
             { role: 'about' },
             { type: 'separator' },
+            { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send({ type: 'open-settings' }) },
+            { type: 'separator' },
             { role: 'services' },
             { type: 'separator' },
             { role: 'hide' },
@@ -65,6 +67,13 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
       { label: 'Import Media…', accelerator: 'CmdOrCtrl+I', click: send({ type: 'import' }) },
       { label: 'Export…', accelerator: 'CmdOrCtrl+E', click: send({ type: 'export' }) },
       { type: 'separator' },
+      // On macOS, Settings lives in the app menu, where every Mac app keeps it.
+      ...(isMac
+        ? []
+        : ([
+            { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send({ type: 'open-settings' }) },
+            { type: 'separator' }
+          ] as MenuItemConstructorOptions[])),
       isMac ? { role: 'close' } : { role: 'quit' }
     ]
   }
@@ -91,6 +100,12 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
       { role: 'zoomOut' },
       { type: 'separator' },
       { role: 'togglefullscreen' },
+      { type: 'separator' },
+      {
+        label: 'Toggle Debug Mode',
+        accelerator: 'CmdOrCtrl+Alt+D',
+        click: send({ type: 'toggle-debug' })
+      },
       ...(includeDevTools
         ? ([{ type: 'separator' }, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[])
         : [])

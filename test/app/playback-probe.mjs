@@ -1,24 +1,35 @@
 /**
  * Drives the built app over CDP and measures real playback.
  *
+ * **Report, no verdict.** It prints what it measured and exits 0 whenever it could measure;
+ * nothing here is compared with an expectation, so a green exit says the numbers exist, not that
+ * they are good. Read them. Exit 2 means it could not measure.
+ *
  * Everything this engine has reported so far came from a fake clock. This asks the only
  * question that harness cannot: with a real decoder feeding a real display, how many
  * pictures a second actually reach the canvas, and do they differ from one another.
  */
-import { attach } from './cdp.mjs'
-const CLIP = '/Users/himanshu/codes/synthai/vii/assets/podcast-cut/output/goodall-transcript-cut.mp4'
+import { attach, runProbe } from './cdp.mjs'
+const CLIP = new URL('../../assets/podcast-cut/output/goodall-transcript-cut.mp4', import.meta.url).pathname
 const SECONDS = 6
 const MINIMISE_AT = Number(process.env.MINIMISE_AT ?? 0)
 
-const { send: cdpSend, evaluate, close: cdpClose } = await attach()
+const { evaluate, close } = await attach()
 const ev = evaluate
 
-
-  const setup = await ev(`(async () => {
-    const { store } = window.bayEngine
+await runProbe(async () => {
+  // The awaited import and the placement are two evaluates on purpose. CDP intermittently
+  // answered this one with "Promise was collected", and `evaluate` retries that once — which
+  // re-runs the expression, so it must be safe to repeat. `importPaths` dedupes by path, so it
+  // is; placing a clip is not, so it happens synchronously in the next call.
+  const asset = await ev(`(async () => {
     const imported = await window.bay.media.importPaths([${JSON.stringify(CLIP)}])
     if (!imported.length) throw new Error('import returned nothing')
-    const asset = imported[0].asset
+    return imported[0].asset
+  })()`, 60_000)
+  const setup = await ev(`(() => {
+    const { store } = window.bayEngine
+    const asset = ${JSON.stringify(asset)}
     store.getState().addAssets([asset])
     const itemId = store.getState().placeAsset(asset.id, 0)
     const state = store.getState()
@@ -110,5 +121,8 @@ const ev = evaluate
     return { before, after, elapsed, samples, refresh: window.screen && screen.refreshRate || null }
   })()`)
 
-console.log('RESULT', JSON.stringify(run))
-cdpClose()
+  console.log('RESULT', JSON.stringify(run))
+  console.log('\nREPORT ONLY: no verdict — read the numbers above.')
+  close()
+  return true
+}, { timeoutMs: 90_000 })

@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Script, story structure and narration for a 60-second explainer
 
 Round 2. Everything below is measured against `wicks-v2.mp4` and its project JSON

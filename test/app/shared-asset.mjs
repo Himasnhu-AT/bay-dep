@@ -24,9 +24,9 @@
  *    10 in 10 — decode timing moves it. Asserting "the picture is there and the element
  *    settled" is deterministic with the fix and fails often without it; asserting blankness
  *    would be pinning a race.
- * 3. **It never reloads between building and measuring.** `attach()` reloads, and
- *    `project.initial()` then restores the profile's own project — so the second item
- *    vanishes before it can be seen. That is why the failing state looked like a one-item
+ * 3. **It never reloads between building and measuring.** `attach()` used to reload every
+ *    time (it now does so only when the probe handle is missing), and a reload restores the
+ *    profile's own project — so the second item vanished before it could be seen. That is why the failing state looked like a one-item
  *    timeline to three people. The timeline state is read in the *same* evaluate as the
  *    pixels.
  *
@@ -37,7 +37,7 @@ import { attach, CANVAS_PROFILE, requirePrecondition, runProbe } from './cdp.mjs
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
 const TRIALS = Number(process.env.TRIALS ?? 10)
-const { evaluate, close } = await attach()
+const { evaluate, close, patch } = await attach()
 
 await runProbe(async () => {
   // Import once. `importPaths` dedupes by path, so both items get the same asset id —
@@ -83,9 +83,10 @@ await runProbe(async () => {
     const items = tl.tracks.flatMap(t => t.items)
     // Every element the pool holds for this one asset. There is more than one now: an asset
     // drawn twice in a frame gets an element per item, which is what lets a transition show
-    // two source times at once.
+    // two source times at once. Slots past 1 may hold idle elements from earlier draws — the
+    // pool keeps up to 12 and evicts least-recently-used — so they are listed, not judged.
     const elements = []
-    for (let slot = 0; slot < 4; slot++) {
+    for (let slot = 0; slot < 12; slot++) {
       const e = engine.pool.peek(${JSON.stringify(asset.id)}, slot)
       if (e && e.element) elements.push({ slot, readyState: e.element.readyState,
         seeking: e.element.seeking, currentTime: +e.element.currentTime.toFixed(3) })
@@ -102,12 +103,10 @@ await runProbe(async () => {
   if (process.env.VERIFY_PROBE === '1') {
     // Break the DRAW, not the setup. Making the two source times agree would remove the
     // condition and pass — the tautology this self-check exists to avoid.
-    await evaluate(`(() => {
-      const proto = CanvasRenderingContext2D.prototype
-      if (!proto.__bayRealDrawImage) proto.__bayRealDrawImage = proto.drawImage
-      proto.drawImage = function () { /* no-op: a compositor that draws nothing */ }
-      return true
-    })()`)
+    // Through `patch()`, so `runProbe` restores the real `drawImage`; this used to leave the
+    // user's editor drawing nothing at all until a reload.
+    await patch('CanvasRenderingContext2D.prototype', 'drawImage',
+      '() => function () { /* no-op: a compositor that draws nothing */ }')
   }
 
   const results = []
@@ -127,12 +126,17 @@ await runProbe(async () => {
     // is that both are ready and on *different* times: slot 0 for the lower item (20s), slot
     // 1 for the upper (0s). One element settled on either time is now a failure — it means
     // one of the two items is showing the other's frame.
+    //
+    // Only the two slots the compositor binds this frame are judged (it hands out slots in draw
+    // order, so the lower item holds 0 and the upper 1). This used to require that the pool held
+    // *exactly* two elements for the asset, which failed whenever an earlier draw had left an
+    // idle one in slot 2 — correct pool behaviour, reported as a fault.
     const bySlot = new Map(seen.elements.map((e) => [e.slot, e]))
     const lower = bySlot.get(0)
     const upper = bySlot.get(1)
     const ready = (e) => e !== undefined && !e.seeking && e.readyState >= 2
     const settled =
-      seen.elements.length === 2 && ready(lower) && ready(upper) &&
+      ready(lower) && ready(upper) &&
       Math.abs(lower.currentTime - 20) < 0.5 && Math.abs(upper.currentTime - 0) < 0.5
     const drew = seen.profile.lit > 0
     results.push({ trial, drew, settled, lit: seen.profile.lit, el: seen.elements,
@@ -182,10 +186,17 @@ await runProbe(async () => {
     close()
     return false
   }
-  console.log(drewAll && settledAll
-    ? '\nPASS  two items sharing one asset both draw, each from its own element and source time'
-    : '\nFAIL  seek thrash: the two items fight over the shared element, so the draw that'
-      + '\n      mattered found it mid-seek and every item reported pending')
+  // Name what the evidence shows, not the bug this probe was first written for. "Seek thrash"
+  // was the old mechanism — one element, two writers — and the pool no longer shares one.
+  if (!drewAll) {
+    console.log('\nFAIL  a trial drew nothing: both items reported pending or placeholder, so the'
+      + '\n      canvas stayed bare (see lit/el per trial above)')
+  } else if (!settledAll) {
+    console.log('\nFAIL  the elements in slots 0 and 1 did not each settle on their own item\'s time'
+      + '\n      (lower 20s, upper 0s): one item is showing the other\'s frame, or a seek never finished')
+  } else {
+    console.log('\nPASS  two items sharing one asset both draw, each from its own element and source time')
+  }
   close()
   return drewAll && settledAll
 })

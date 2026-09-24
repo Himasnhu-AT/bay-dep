@@ -20,8 +20,21 @@
  * fields that matter.
  */
 
-import { allItems, findAsset, itemEnd, timelineDuration, type Item } from '@shared/project'
-import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline } from './helpers'
+import {
+  allItems,
+  findAsset,
+  isCropped,
+  itemEnd,
+  timelineDuration,
+  type Item,
+  type Marker
+} from '@shared/project'
+import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
+import { audioFinishReport } from './audioFinish'
+import { resolveGrade } from '@shared/grade'
+import { describeKeyframes } from '@shared/keyframes'
+import { linkedPartners } from '@shared/links'
+import { describeFont, importedFonts } from '@shared/fonts'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -33,7 +46,21 @@ function describeItem(item: Item): Record<string, unknown> {
     // The one thing that stays on the item rather than moving to the lookup. A missing
     // asset is rare, so it costs nothing here, and it is a correctness signal an agent
     // scanning items must not have to resolve an id to notice.
-    ...(findAsset(project(), item.assetId) ? {} : { assetMissing: true })
+    ...(findAsset(project(), item.assetId) ? {} : { assetMissing: true }),
+    // A linked pair is one clip to move, trim and delete, so a scan of the timeline must show it
+    // without an inspect per item.
+    ...(item.linkId ? { linkedItemIds: linkedPartners(timeline(), item.id).map((p) => p.id) } : {}),
+    ...(item.audioDetached ? { audioDetached: true } : {})
+  }
+}
+
+/** One marker as every tool result reports it. */
+export function describeMarker(marker: Marker): Record<string, unknown> {
+  return {
+    id: marker.id,
+    frame: marker.frame,
+    label: marker.label,
+    ...(marker.color ? { color: marker.color } : {})
   }
 }
 
@@ -82,6 +109,16 @@ export function readProject(): Record<string, unknown> {
       hidden: track.hidden,
       items: track.items.map(describeItem)
     })),
+    // Always present, empty or not: an agent that has to test for the key before reading it
+    // will eventually forget, and "no markers" is an answer worth stating.
+    markers: [...(tl.markers ?? [])].sort((a, b) => a.frame - b.frame).map(describeMarker),
+    // The typefaces the project brings, by family — what text, .brf and compositions may name.
+    // Always present, like markers: "no imported fonts" is an answer worth stating.
+    fonts: importedFonts(state.project.assets).map((asset) => ({
+      assetId: asset.id,
+      family: asset.font.family,
+      ...(asset.font.axes.length > 0 ? { axes: asset.font.axes.map((a) => `${a.tag} ${a.min}–${a.max}`) } : {})
+    })),
     assetCount: state.project.assets.length
   }
 }
@@ -109,7 +146,13 @@ export function browseAssets(): Record<string, unknown> {
       height: asset.height,
       hasVideo: asset.hasVideo,
       hasAudio: asset.hasAudio,
-      ...(asset.error ? { error: asset.error, placeable: false } : { placeable: true })
+      ...(asset.error
+        ? { error: asset.error, placeable: false }
+        : asset.kind === 'font'
+          ? { placeable: false, font: describeFont(asset) }
+          : asset.kind === 'lut'
+            ? { placeable: false }
+            : { placeable: true })
     }))
   }
 }
@@ -118,6 +161,9 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
   const { item, track } = resolveItem(String(args.itemId))
   const asset = findAsset(project(), item.assetId)
   const tl = timeline()
+  const soundFinish = audioFinishReport(item, project(), tl)
+  const partners = linkedPartners(tl, item.id)
+  const pictureOf = partners.find((p) => p.audioDetached)
   return {
     timeUnit: 'frames',
     id: item.id,
@@ -148,7 +194,45 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // their identity values" — the second is a caller having set something that does nothing.
     ...(item.adjustments ? { adjustments: item.adjustments } : {}),
     ...(item.blendMode ? { blendMode: item.blendMode } : {}),
-    audio: { volume: item.volume, fadeInFrames: item.fadeInFrames, fadeOutFrames: item.fadeOutFrames },
+    // Same absent-means-unset convention: a grade that exists is reported whole, with whether the
+    // compositor will actually run it, since an all-neutral grade is stored and changes nothing.
+    ...(item.grade ? { grade: item.grade, gradeActive: resolveGrade(item.grade) !== null } : {}),
+    // `edit_item` accepts `crop` and `variables`, and this reported neither — so an agent could
+    // set them and had no way to read them back. That breaks three things at once: it cannot
+    // verify its own edit, it cannot make a relative change ("crop a little more"), and it
+    // cannot see what the *user* changed — which is what this tool's own description tells it
+    // to do before editing anything it did not just create. Same absent-means-unset convention
+    // as `adjustments` above: an all-zero crop is reported as no crop, because "cropped by
+    // nothing" is a statement about a caller having set something that does nothing.
+    ...(item.crop && isCropped(item.crop) ? { crop: item.crop } : {}),
+    ...(item.variables ? { variables: item.variables } : {}),
+    // Keys as stored (item-relative frames) and what they do in timeline frames. Absent means no
+    // property is animated; where one is, its static field above is not what draws.
+    ...(item.keyframes
+      ? { keyframes: item.keyframes, animation: describeKeyframes(item) }
+      : {}),
+    // What this clip moves, trims, splits and deletes with (see detach_audio).
+    ...(partners.length > 0 ? { link: { linkedItemIds: partners.map((p) => p.id) } } : {}),
+    audio: item.audioDetached
+      ? {
+          detached: true,
+          soundItemIds: partners.filter((p) => !p.audioDetached && p.assetId === item.assetId).map((p) => p.id),
+          note:
+            'This clip plays no sound of its own: it was detached. Its fades fade only the picture; ' +
+            'level, fades and duck of the sound are on ' +
+            (partners.length > 0 ? partners.map((p) => p.id).join(', ') : 'an audio item that is no longer linked') +
+            '. detach_audio { action: "reattach" } gives it back.'
+        }
+      : {
+      ...(pictureOf ? { detachedFrom: pictureOf.id } : {}),
+      volume: item.volume,
+      fadeInFrames: item.fadeInFrames,
+      fadeOutFrames: item.fadeOutFrames,
+      // J/L offsets as they resolve now and the duck, with any clamp said in words — the same
+      // report edit_item returns, so a read and a write cannot describe one clip differently.
+      ...(soundFinish.report ?? {}),
+      ...(soundFinish.warnings.length > 0 ? { notes: soundFinish.warnings } : {})
+        },
     asset: asset
       ? {
           id: asset.id,
@@ -159,6 +243,12 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
           width: asset.width,
           height: asset.height,
           hasAudio: asset.hasAudio,
+          // What an html asset's composition *declares* it can be given. Without it an agent
+          // holding a composition item knows `variables` is an accepted argument and cannot
+          // know a single id to put in it, so the field is unusable without reading the file.
+          ...(asset.compositionVariables?.length
+            ? { compositionVariables: asset.compositionVariables }
+            : {}),
           ...(asset.error ? { error: asset.error } : {})
         }
       : { id: item.assetId, missing: true }
@@ -182,4 +272,10 @@ export function frameOrPlayhead(args: Record<string, unknown>): number {
 /** Items crossing `frame`, used to explain a split that had nothing to cut. */
 export function itemsCrossing(frame: number): Item[] {
   return allItems(timeline()).filter((item) => frame > item.from && frame < itemEnd(item))
+}
+
+export const handlers: Handlers = {
+  read_project: () => readProject(),
+  browse_assets: () => browseAssets(),
+  inspect_item: (args) => inspectItem(args),
 }

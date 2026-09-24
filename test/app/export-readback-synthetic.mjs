@@ -18,6 +18,9 @@
  * on other hardware. A pass/fail would turn "re-measure on that machine" into "argue with a
  * number someone chose", and this is exactly the measurement a future reader needs to repeat
  * rather than trust.
+ *
+ * **Report, no verdict.** Exits 0 whenever it could measure and 2 when it could not; nothing is
+ * compared with an expectation, so a green exit says the numbers exist, not that they are good.
  */
 
 import { attach, runProbe } from './cdp.mjs'

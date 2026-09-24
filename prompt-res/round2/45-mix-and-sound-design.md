@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # The mix, and the mechanism
 
 Audio doctrine for `bay`, round 2. Scope: **why bay's audio is bad for structural rather than

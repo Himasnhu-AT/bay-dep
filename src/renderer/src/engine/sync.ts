@@ -6,7 +6,7 @@
  * place to fix it.
  */
 
-import { itemEnd, sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/project'
+import { sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/project'
 
 /**
  * How far a media element may run from where the timeline says it should be before we
@@ -16,6 +16,23 @@ import { itemEnd, sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@sh
  * click and starts being audible as a slip.
  */
 export const DRIFT_TOLERANCE_SECONDS = 0.08
+
+/**
+ * How far ahead of the playhead live playback puts the next clip's element in place. A seek to a
+ * trimmed in-point decodes from the keyframe before it — up to 20 frames on the reporter's takes,
+ * seconds on long-GOP footage — so this is generous; each clip costs one paused, seeked decoder.
+ */
+export const PREROLL_SECONDS = 1
+
+/**
+ * How long a seek in flight is left alone during playback before it is assumed lost and asked
+ * again. Longer than {@link STALE_SEEK_MS} because a playing element's seek is not a scrub that a
+ * newer one supersedes: restarting it only restarts the decode from the keyframe.
+ */
+export const PLAYBACK_SEEK_PATIENCE_MS = 2000
+
+/** The most a playback seek is aimed ahead of the clock to cover its own latency. */
+export const MAX_SEEK_LEAD_MS = 1000
 
 /** How long a seek may be outstanding before we assume it was dropped and re-issue it. */
 export const STALE_SEEK_MS = 400
@@ -35,6 +52,22 @@ export function finite(value: number, fallback: number): number {
 }
 
 /**
+ * How far past the computed source time a media element is asked to seek.
+ *
+ * Source time is whole microseconds, so a frame-exact in-point at 24 fps cannot be stored
+ * exactly: frame 68 is 2.8333333 s, stored as 2 833 333 µs, and a timeline frame's offset is
+ * rounded again. The sum lands up to a microsecond *before* the source frame's timestamp, and a
+ * video element shows the frame whose timestamp is at or before `currentTime` — so the clip
+ * showed the previous source frame on every timeline frame where the roundings fell short, and
+ * the right one where they did not: a one-frame judder through the whole clip (measured on a
+ * 24 fps take placed at 2.833333 s: timeline frames alternated between source 94 and 95 where 95
+ * was asked). Half a millisecond is far larger than any rounding here and far smaller than a
+ * frame at any rate a source has (4.2 ms at 240 fps), and inaudible where the audio engine
+ * seeks by the same number.
+ */
+export const FRAME_EDGE_SECONDS = 0.0005
+
+/**
  * Where in the source, in seconds, `item` should be reading at timeline `frame`.
  *
  * Clamped inside the asset: a clip trimmed past the end of its source, or one whose
@@ -43,7 +76,7 @@ export function finite(value: number, fallback: number): number {
  * frozen picture rather than as the out-of-range request it is.
  */
 export function sourceSecondsAt(item: Item, asset: Asset, frame: number, fps: number): number {
-  const raw = sourceTimeAt(item, frame, fps) / US_PER_SECOND
+  const raw = sourceTimeAt(item, frame, fps) / US_PER_SECOND + FRAME_EDGE_SECONDS
   if (asset.durationUs <= 0) return Math.max(0, raw)
   // Half a frame short of the end: asking for exactly the duration seeks past the last
   // decodable frame on some containers and lands on nothing.
@@ -51,10 +84,6 @@ export function sourceSecondsAt(item: Item, asset: Asset, frame: number, fps: nu
   return clamp(raw, 0, last)
 }
 
-/** True when `frame` falls inside `item`. Local so a muted track can still be inspected. */
-export function itemCoversFrame(item: Item, frame: number): boolean {
-  return frame >= item.from && frame < itemEnd(item)
-}
 
 /**
  * The playback rates a media element will actually honour. Outside this it silently mutes.

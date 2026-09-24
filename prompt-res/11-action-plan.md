@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Action plan — what to build, in what order
 
 Derived from [`10-capability-map-bay-vs-ideal.md`](10-capability-map-bay-vs-ideal.md). Ordered

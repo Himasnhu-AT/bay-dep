@@ -1,15 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Type as TypeIcon } from 'lucide-react'
-import type { Asset } from '@shared/project'
+import { textAssetName, type Asset } from '@shared/project'
 import { Button, Panel, ScrollArea } from '@/components'
 import { newId, useEditor } from '@/store/editor'
-
-/** The first line, trimmed, is the name the media pool and the timeline clip will show. */
-function nameFor(text: string): string {
-  const firstLine = text.split('\n')[0]?.trim() ?? ''
-  if (!firstLine) return 'Text'
-  return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine
-}
+import { SubtitlesSection } from './SubtitlesSection'
 
 export function TextPanel(): ReactNode {
   const addAssets = useEditor((state) => state.addAssets)
@@ -24,7 +18,7 @@ export function TextPanel(): ReactNode {
     const asset: Asset = {
       id: newId('ast'),
       kind: 'text',
-      name: nameFor(text),
+      name: textAssetName(text),
       path: null,
       durationUs: 0,
       width: null,
@@ -45,6 +39,7 @@ export function TextPanel(): ReactNode {
   return (
     <Panel title="Text" className="h-full" bodyClassName="flex flex-col">
       <ScrollArea className="flex-1 p-3">
+        <SubtitlesSection />
         <label htmlFor="text-draft" className="mb-1.5 block text-[11px] text-ink-1">
           Title text
         </label>

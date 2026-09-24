@@ -10,7 +10,7 @@
  * passes trivially against a tool that refuses everything.
  */
 
-import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
 const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 const { evaluate, close } = await attach()
@@ -19,7 +19,7 @@ let checks = 0
 const check = (label, actual, expected) => {
   checks++
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) throw new Error(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
+  if (!ok) throw new ProbeFailure(`${label}\n  got:      ${JSON.stringify(actual)}\n  expected: ${expected}`)
   console.log(`  ok  ${label}`)
 }
 
@@ -42,9 +42,29 @@ const mcp = async (tool, args = {}) => {
 const imported = await mcp('import_media', { paths: [CLIP] })
 const asset = imported.assets[0]
 const assetId = asset.id
-const placed = await mcp('place_asset', { assetId, atFrame: 0 })
+
+// Where the clip goes is derived, never assumed. This placed at frame 0 with no track and
+// relied on that landing on the lowest video track — true only on an empty timeline; on one
+// where frame 0 of V1 is taken, `place_asset` opens a higher track, and the blend-mode check
+// below then accuses a correct warning of being missing. So: the lowest video track (the
+// first in the list — later tracks paint on top), at the first frame past everything on it.
+const activeTimeline = `(() => { const s = window.bayEngine.store.getState()
+  return s.project.timelines.find((t) => t.id === s.project.activeTimelineId) })()`
+const lowest = await evaluate(`(() => {
+  const v = ${activeTimeline}.tracks.find((t) => t.kind === 'video')
+  return v ? { id: v.id, locked: v.locked, end: v.items.reduce((e, i) => Math.max(e, i.from + i.durationInFrames), 0) } : null
+})()`)
+if (!lowest) throw new PreconditionError('the active timeline has no video track to place on')
+if (lowest.locked) throw new PreconditionError('the lowest video track is locked', 'a probe must not unlock the user\'s track')
+const start = lowest.end
+const placed = await mcp('place_asset', { assetId, atFrame: start, trackId: lowest.id })
 const itemId = placed.itemId
 await mcp('edit_item', { itemId, durationInFrames: 120 })
+const where = await evaluate(`(() => {
+  const i = ${activeTimeline}.tracks.flatMap((t) => t.items).find((x) => x.id === ${JSON.stringify(itemId)})
+  return { from: i.from, trackId: i.trackId }
+})()`)
+check('the clip landed where it was asked, on the lowest video track', where, (w) => w.from === start && w.trackId === lowest.id)
 
 // -- seconds in, seconds out -----------------------------------------------
 const moved = await mcp('edit_item', { itemId, sourceStartSeconds: 10 })
@@ -60,7 +80,7 @@ check(
 // -- it must not move the clip --------------------------------------------
 // The whole point of the field is that only *what plays* changes. A clip that jumps when it is
 // retimed reads as a timeline bug rather than a unit one, which is the expensive confusion.
-check('the clip did not move on the timeline', moved.from, 0)
+check('the clip did not move on the timeline', moved.from, start)
 check('and kept its length', moved.durationInFrames, 120)
 
 // -- refusing past the end, beside a legal call that must still work ------
@@ -108,7 +128,7 @@ const inRange = await raw('edit_item', { itemId, adjustments: { grayscale: 0.5 }
 check('POSITIVE CONTROL: the same field in range is accepted', inRange.ok, true)
 
 // Identity adjustments are stored and change nothing — invisible unless something says so.
-const fresh = await mcp('place_asset', { assetId, atFrame: 400 })
+const fresh = await mcp('place_asset', { assetId, atFrame: start + 200, trackId: lowest.id })
 const identity = await mcp('edit_item', { itemId: fresh.itemId, adjustments: { brightness: 1 } })
 check('adjustments that amount to the identity are called out', identity.warnings, (w) =>
   Array.isArray(w) && w.some((line) => /nothing will look different/.test(line))
@@ -123,10 +143,9 @@ check('and a mode on the lowest video track is called out as inapplicable', bott
 )
 await mcp('add_track', { kind: 'video' })
 const upperTrack = await evaluate(
-  `(() => { const tl = window.bayEngine.store.getState().project.timelines[0]
-            const v = tl.tracks.filter((t) => t.kind === 'video'); return v[v.length - 1].id })()`
+  `(() => { const v = ${activeTimeline}.tracks.filter((t) => t.kind === 'video'); return v[v.length - 1].id })()`
 )
-const above = await mcp('place_asset', { assetId, atFrame: 0, trackId: upperTrack })
+const above = await mcp('place_asset', { assetId, atFrame: start, trackId: upperTrack })
 const upper = await mcp('edit_item', { itemId: above.itemId, blendMode: 'multiply' })
 check('POSITIVE CONTROL: the same mode higher up draws no such warning', upper.warnings, (w) =>
   w === undefined || !w.some((line) => /lowest video track/.test(line))
@@ -141,8 +160,7 @@ check('and the refusal lists the modes', badMode.error, (e) => /multiply/.test(e
 // to span its whole source — the eighth time a hardcoded fixture position in this project has
 // accused working code. Ask where the track actually ends.
 const trackEnd = await evaluate(`(() => {
-  const tl = window.bayEngine.store.getState().project.timelines[0]
-  const track = tl.tracks.find((t) => t.id === ${JSON.stringify(upperTrack)})
+  const track = ${activeTimeline}.tracks.find((t) => t.id === ${JSON.stringify(upperTrack)})
   return track.items.reduce((end, i) => Math.max(end, i.from + i.durationInFrames), 0)
 })()`)
 const cut = trackEnd + 60

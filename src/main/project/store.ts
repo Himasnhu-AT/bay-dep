@@ -5,21 +5,25 @@
  * is tested directly. What is left here is the part that genuinely needs an app.
  */
 
-import { BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, dialog, shell } from 'electron'
+import { readdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { posterFor, uniqueProjectName } from './library'
+import { thumbnailFile } from '../media/thumbnails'
 import type { RecentProject } from '@shared/ipc'
 import type { Project } from '@shared/project'
-import { appDbPath, autosaveDir } from '../paths'
+import { appDbPath, autosaveDir, projectsDir } from '../paths'
 import {
   WINDOW_BOUNDS_KEY,
   parseBounds,
   serialiseBounds,
   type Bounds
 } from '../window-state'
-import { allowPaths } from '../protocol'
 import { adoptAssets } from '../media/import'
 import { describeStorage, openDatabase, type AppDatabase } from './db'
 import {
   EXTENSION,
+  freshProject,
   LAST_PROJECT_KEY,
   autosavePathFor,
   exists,
@@ -121,6 +125,31 @@ function rememberRecent(project: Project): void {
     updatedAt: project.updatedAt
   })
   db.setState(LAST_PROJECT_KEY, project.filePath)
+  // The thumbnail follows, off the critical path: reading a poster must never slow a save or an
+  // open, and a project with no readable poster is still a project in the list. The row is
+  // written again with the poster; `COALESCE` in the upsert keeps an older one if this finds
+  // none.
+  const filePath = project.filePath
+  void posterFor(project, (path) => readFile(path), async (asset) =>
+    asset.path && (asset.kind === 'video' || asset.kind === 'image')
+      ? thumbnailFile({
+          assetId: asset.id,
+          path: asset.path,
+          // A second in, or the middle of anything shorter: frame zero is black too often.
+          atUs: Math.min(1_000_000, Math.round(asset.durationUs / 2)),
+          size: 480
+        })
+      : null
+  ).then((poster) => {
+    if (!poster) return
+    database()?.rememberRecent({
+      filePath,
+      id: project.id,
+      name: project.name,
+      updatedAt: project.updatedAt,
+      poster
+    })
+  })
 }
 
 export async function recent(): Promise<RecentProject[]> {
@@ -147,9 +176,40 @@ export async function recent(): Promise<RecentProject[]> {
  * probe fine and then fail to play, because `bay://` would refuse every one of them.
  */
 function admitAssets(project: Project): Project {
+  // Not every path a document names: `adoptAssets` admits only what `admissibleFromProject`
+  // allows (plus bay's own font copies), and is the one place that decides.
   adoptAssets(project.assets)
-  allowPaths(project.assets.map((asset) => asset.path))
   return project
+}
+
+export async function launchRequest(): Promise<Project | null> {
+  const requested = takePendingOpen()
+  if (!requested) return null
+  try {
+    return await openPath(requested)
+  } catch {
+    // A .bay that will not open falls back to the projects screen, where the user can pick
+    // another — never to an error screen at launch.
+    return null
+  }
+}
+
+export async function create(): Promise<Project> {
+  const dir = projectsDir()
+  const taken = (await readdir(dir).catch(() => [] as string[]))
+    .filter((name) => name.toLowerCase().endsWith(`.${EXTENSION}`))
+    .map((name) => name.slice(0, -(EXTENSION.length + 1)))
+  const name = uniqueProjectName(taken)
+  const fresh: Project = { ...freshProject(), name }
+  return admitAssets(await persist(fresh, join(dir, `${name}.${EXTENSION}`)))
+}
+
+export function forget(filePath: string): void {
+  database()?.forgetRecent(filePath)
+}
+
+export function reveal(filePath: string): void {
+  shell.showItemInFolder(filePath)
 }
 
 export async function initial(): Promise<Project> {
@@ -191,7 +251,9 @@ async function chooseSavePath(
 async function persist(project: Project, filePath: string): Promise<Project> {
   const written = await writeProjectFile(project, filePath)
   rememberRecent(written)
-  allowPaths(written.assets.map((asset) => asset.path))
+  // Through the same gate as opening: a project opened with a refused path and then saved must not
+  // admit that path on the way out. What the user imported this session was admitted at import.
+  adoptAssets(written.assets)
   return written
 }
 

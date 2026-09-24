@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Round 3 — the critique: bay vs "best AI video editor in the world"
 
 **Date:** 2026-08-15. **Inputs:** the code on the current branch, every internal doc through

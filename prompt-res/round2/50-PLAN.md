@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 50 — THE PLAN
 
 Round 2 synthesis. Inputs: 21 research/diagnosis files (`20`–`45`), four adversarial reviews,

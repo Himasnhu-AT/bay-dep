@@ -31,7 +31,7 @@ export const product: Product = {
   kind: "A video editor for the Mac",
   status: "In development",
   description:
-    "Bay is a native Mac video editor written in Rust. The engine that draws the timeline also runs headless, so an agent can assemble a cut and render an MP4 with no window open.",
+    "Bay is a video editor for the Mac. The timeline you cut on is the one an agent edits over the Model Context Protocol, and every change it makes lands on your undo stack.",
   domain: "bay.everholt.com",
   email: "hello@everholt.com",
   year: 2026,

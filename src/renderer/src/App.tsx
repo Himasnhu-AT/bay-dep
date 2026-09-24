@@ -1,21 +1,48 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { completeBrfImports } from '@/lib/brfImport'
 import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
-import { useDrag } from '@/lib/useDrag'
 import { useKeyboard } from '@/lib/useKeyboard'
 import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
 import { Inspector } from '@/editor/Inspector'
-import { LeftRail } from '@/editor/LeftRail'
+import { LeftRail, SidePanel } from '@/editor/LeftRail'
+import { ProjectsHome } from '@/home/ProjectsHome'
+import { SettingsDialog } from '@/settings/SettingsDialog'
+import { Button, Modal } from '@/components'
+import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
+import type { RefObject } from 'react'
+import type { Project } from '@shared/project'
+import type { RegionId } from '@/store/editor'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Preview } from '@/editor/Preview'
 import { StatusBar } from '@/editor/StatusBar'
 import { Timeline } from '@/editor/Timeline'
 import { TopBar } from '@/editor/TopBar'
 import { Transport } from '@/editor/Transport'
 
-const MIN_TIMELINE_HEIGHT = 150
-const MIN_STAGE_HEIGHT = 220
+/**
+ * Where a panel layout the user dragged into is remembered. `localStorage`, wrapped so that a
+ * profile where storage throws (private mode, a locked-down profile) falls back to the defaults
+ * instead of taking the editor down: a remembered layout is a convenience, never a requirement.
+ */
+const layoutStorage = {
+  getItem(key: string): string | null {
+    try {
+      return localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  },
+  setItem(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // Not remembered this time; the layout still works.
+    }
+  }
+}
 
 /**
  * Electron 32 removed `File.path`, so a file out of a `DataTransfer` no longer names
@@ -45,21 +72,107 @@ export function App(): ReactNode {
   const [exportOpen, setExportOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dropping, setDropping] = useState(false)
-  const [timelineHeight, setTimelineHeight] = useState(260)
-  const splitRef = useRef<HTMLDivElement>(null)
-  const dragStartHeight = useRef(260)
+  // One remembered layout per group. Keys are pinned by these ids: renaming one resets that
+  // group to its defaults for everyone, which costs a drag, not data.
+  const mainLayout = useDefaultLayout({ id: 'bay.layout.main', storage: layoutStorage })
+  const workLayout = useDefaultLayout({ id: 'bay.layout.work', storage: layoutStorage })
+  const stageLayout = useDefaultLayout({ id: 'bay.layout.stage', storage: layoutStorage })
+
+  // -- hiding regions ----------------------------------------------------------
+  //
+  // The store says which regions are hidden; the panels are made to agree with it. Collapsing
+  // rather than unmounting keeps the panel's last size, so showing it again puts it back where
+  // it was. And the sync runs the other way too: a panel dragged shut against its edge
+  // collapses, and its button must then read as "hidden" rather than disagree with the screen.
+  const sideRef = usePanelRef()
+  const inspectorRef = usePanelRef()
+  const timelineRef = usePanelRef()
+  const hiddenRegions = useEditor((state) => state.hiddenRegions)
+  const setRegionHidden = useEditor((state) => state.setRegionHidden)
+
+  // The width a region had when it was hidden, so showing it restores exactly that. The library's
+  // own `expand()` restored the inspector to its minimum (236px came back as 220px) when the
+  // side panel was wide, because it re-solves the whole group; an explicit resize does not.
+  const sizeBeforeHide = useRef<Partial<Record<RegionId, number>>>({})
+  useEffect(() => {
+    const refs: [RegionId, RefObject<PanelImperativeHandle | null>][] = [
+      ['side', sideRef],
+      ['inspector', inspectorRef],
+      ['timeline', timelineRef]
+    ]
+    for (const [region, ref] of refs) {
+      const panel = ref.current
+      if (!panel) continue
+      if (hiddenRegions[region] && !panel.isCollapsed()) {
+        sizeBeforeHide.current[region] = panel.getSize().inPixels
+        panel.collapse()
+      }
+      if (!hiddenRegions[region] && panel.isCollapsed()) {
+        panel.expand()
+        const before = sizeBeforeHide.current[region]
+        if (before) panel.resize(`${Math.round(before)}px`)
+      }
+    }
+  }, [hiddenRegions, sideRef, inspectorRef, timelineRef])
+
+  const followCollapse =
+    (region: RegionId, ref: RefObject<PanelImperativeHandle | null>) => (): void => {
+      const collapsed = ref.current?.isCollapsed()
+      if (collapsed !== undefined) setRegionHidden(region, collapsed)
+    }
 
   // -- the project the window opens with ------------------------------------
 
+  // Launch lands on the projects screen, unless the OS asked for a particular file — a `.bay`
+  // double-clicked in Finder — in which case the user already chose, and it opens directly.
+  const screen = useEditor((state) => state.screen)
+  const enterProject = useEditor((state) => state.enterProject)
+  const showHome = useEditor((state) => state.showHome)
   useEffect(() => {
     let live = true
-    void call('Opening the last project', (api) => api.project.initial()).then((project) => {
-      if (live && project) setProject(project)
-    })
+    void call('Opening the requested project', (api) => api.project.launchRequest()).then(
+      (project) => {
+        if (live && project) enterProject(project)
+      }
+    )
     return () => {
       live = false
     }
-  }, [setProject])
+  }, [enterProject])
+
+  // -- leaving a project -------------------------------------------------------
+  //
+  // Unsaved work is asked about, never dropped and never saved behind the user's back: going
+  // home is not a request to write their file. The agent is stopped either way — its
+  // conversation was about the project being left.
+  const [confirmingHome, setConfirmingHome] = useState(false)
+  const leaveToHome = useCallback((): void => {
+    setConfirmingHome(false)
+    void bay()?.agent.dispose()
+    showHome()
+  }, [showHome])
+  const requestHome = useCallback((): void => {
+    if (useEditor.getState().dirty) setConfirmingHome(true)
+    else leaveToHome()
+  }, [leaveToHome])
+
+  /**
+   * Opening another project from the menu is leaving this one, exactly as going home is: the
+   * agent's conversation, its session and its change cards were all about the project being
+   * left. (The store also expires the cards on any change of project id — this is the part only
+   * a user-initiated switch should do: stopping the agent.)
+   */
+  const switchProject = useCallback(
+    (project: Project): void => {
+      void bay()?.agent.dispose()
+      const state = useEditor.getState()
+      state.endAgentSession()
+      state.clearAgentLog()
+      state.clearAgentPins()
+      setProject(project)
+    },
+    [setProject]
+  )
 
   const onSave = useCallback(async (): Promise<void> => {
     setSaving(true)
@@ -80,8 +193,9 @@ export function App(): ReactNode {
   }, [notify, markSaved])
 
   const onImport = useCallback(async (): Promise<void> => {
-    const imported = await call('Import', (api) => api.media.importDialog())
-    if (!imported || imported.length === 0) return
+    const picked = await call('Import', (api) => api.media.importDialog())
+    if (!picked || picked.length === 0) return
+    const imported = await completeBrfImports(picked)
     addAssets(imported.map((entry) => entry.asset))
     const message = importMessage(imported)
     notify(message.text, message.kind)
@@ -113,23 +227,29 @@ export function App(): ReactNode {
         case 'export':
           setExportOpen(true)
           break
+        case 'toggle-debug':
+          useEditor.getState().toggleDebugMode()
+          break
+        case 'open-settings':
+          useEditor.getState().setSettingsOpen(true)
+          break
         case 'open':
           void call('Open project', (client) => client.project.open()).then((project) => {
             // Null is either a failed call, already reported, or the user cancelling the
             // picker. Neither should replace what they are working on.
-            if (project) setProject(project)
+            if (project) switchProject(project)
           })
           break
         case 'open-path':
           void call('Open project', (client) =>
             client.project.openPath(command.path)
           ).then((project) => {
-            if (project) setProject(project)
+            if (project) switchProject(project)
           })
           break
       }
     })
-  }, [onSave, onSaveAs, onImport, setProject])
+  }, [onSave, onSaveAs, onImport, switchProject])
 
   /**
    * The agent surface. Registered here because the executor reaches the store directly and
@@ -137,6 +257,31 @@ export function App(): ReactNode {
    * outlives every panel.
    */
   useEffect(() => registerMcpExecutor(), [])
+
+  /**
+   * The agent's events, subscribed here for the same reason.
+   *
+   * This lived in `AgentPanel` first, and that was wrong in a way only running it showed: the
+   * panel unmounts whenever the user looks at Media or Effects, taking the only listener with
+   * it, so a turn running in the background lost every event until they switched back. The
+   * conversation is store state and outlives the view of it; the subscription has to outlive
+   * the view too.
+   */
+  useEffect(() => {
+    const api = bay()
+    if (!api) return
+    return api.agent.onEvent((event) => useEditor.getState().applyAgentEvent(event))
+  }, [])
+
+  /**
+   * Whisper model downloads, for the same reason: one may start from a transcription while
+   * Settings is closed, and the status bar and Settings both show it.
+   */
+  useEffect(() => {
+    const api = bay()
+    if (!api) return
+    return api.whisper.onDownload((download) => useEditor.getState().setWhisperDownload(download))
+  }, [])
 
   useKeyboard({
     onSave: () => void onSave(),
@@ -151,8 +296,9 @@ export function App(): ReactNode {
       if (paths.length === 0) return
       // Going through `importPaths` is not optional: it is what adds these paths to the
       // `bay://` allowlist, and a path that skips it reads back as a 403 on playback.
-      const imported = await call('Import', (api) => api.media.importPaths(paths))
-      if (!imported) return
+      const arrived = await call('Import', (api) => api.media.importPaths(paths))
+      if (!arrived) return
+      const imported = await completeBrfImports(arrived)
       addAssets(imported.map((entry) => entry.asset))
       const message = importMessage(imported)
       notify(message.text, message.kind)
@@ -196,79 +342,150 @@ export function App(): ReactNode {
     }
   }, [importPaths, notify])
 
-  // -- the stage / timeline splitter ----------------------------------------
-
-  const onSplitPointerDown = useDrag({
-    onStart: () => {
-      dragStartHeight.current = timelineHeight
-      document.body.style.cursor = 'ns-resize'
-    },
-    onMove: (state) => {
-      const available = splitRef.current?.parentElement?.clientHeight ?? 600
-      const next = dragStartHeight.current - state.dy
-      setTimelineHeight(
-        Math.max(MIN_TIMELINE_HEIGHT, Math.min(next, available - MIN_STAGE_HEIGHT))
-      )
-    },
-    onEnd: () => {
-      document.body.style.cursor = ''
-    },
-    onClick: () => {
-      document.body.style.cursor = ''
-    }
-  })
+  // After every hook, so switching screens never changes the order React sees them in.
+  if (screen === 'home') {
+    return (
+      <>
+        <ProjectsHome />
+        <SettingsDialog />
+      </>
+    )
+  }
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-surface-0 text-ink-0">
-      <TopBar onExport={() => setExportOpen(true)} onSave={() => void onSave()} saving={saving} />
+      <TopBar
+        onHome={requestHome}
+        onExport={() => setExportOpen(true)}
+        onSave={() => void onSave()}
+        saving={saving}
+      />
 
+      {/* Every boundary between regions is a separator that can be dragged or moved with the
+          arrow keys, and the layout is remembered. The rail is outside the groups: it is a
+          fixed strip of buttons, and resizing it would only make the buttons harder to hit. */}
       <div className="flex min-h-0 flex-1">
         <LeftRail />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <Preview />
-              <Transport />
-            </div>
-            <div className="w-[268px] shrink-0 border-l border-line">
-              <Inspector />
-            </div>
-          </div>
+        <ResizablePanelGroup
+          id="bay.layout.main"
+          orientation="horizontal"
+          defaultLayout={mainLayout.defaultLayout}
+          onLayoutChanged={mainLayout.onLayoutChanged}
+        >
+          <ResizablePanel
+            id="side"
+            defaultSize="300px"
+            minSize="220px"
+            maxSize="55%"
+            // Pixel-stable: resizing the window, or any panel beside it, goes to the preview —
+            // the one region that is meant to take whatever space is left.
+            groupResizeBehavior="preserve-pixel-size"
+            collapsible
+            collapsedSize="0px"
+            panelRef={sideRef}
+            onResize={followCollapse('side', sideRef)}
+          >
+            <SidePanel />
+          </ResizablePanel>
+          <ResizableHandle aria-label="Resize side panel" />
 
-          {/* A separator that only responds to a pointer is unreachable for anyone
-              driving the app from the keyboard, and it is the one control here that
-              decides how much of the window the timeline gets. */}
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize timeline"
-            aria-valuenow={Math.round(timelineHeight)}
-            tabIndex={0}
-            ref={splitRef}
-            onPointerDown={onSplitPointerDown}
-            onKeyDown={(event) => {
-              const step = event.shiftKey ? 48 : 12
-              if (event.key === 'ArrowUp') {
-                event.preventDefault()
-                setTimelineHeight((height) => height + step)
-              } else if (event.key === 'ArrowDown') {
-                event.preventDefault()
-                setTimelineHeight((height) => Math.max(MIN_TIMELINE_HEIGHT, height - step))
-              }
-            }}
-            className="t-fast h-1 shrink-0 cursor-ns-resize bg-transparent hover:bg-accent/60 focus-visible:bg-accent"
-          />
-
-          <div className="flex min-h-0 flex-col" style={{ height: timelineHeight }}>
-            <Timeline />
-          </div>
-        </div>
+          <ResizablePanel id="work" minSize="45%">
+            <ResizablePanelGroup
+              id="bay.layout.work"
+              orientation="vertical"
+              defaultLayout={workLayout.defaultLayout}
+              onLayoutChanged={workLayout.onLayoutChanged}
+            >
+              <ResizablePanel id="stage" minSize="220px">
+                <ResizablePanelGroup
+                  id="bay.layout.stage"
+                  orientation="horizontal"
+                  defaultLayout={stageLayout.defaultLayout}
+                  onLayoutChanged={stageLayout.onLayoutChanged}
+                >
+                  <ResizablePanel id="viewer" minSize="320px">
+                    <div className="flex h-full min-h-0 min-w-0 flex-col">
+                      <Preview />
+                      <Transport />
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle aria-label="Resize inspector" />
+                  <ResizablePanel
+                    id="inspector"
+                    defaultSize="268px"
+                    minSize="220px"
+                    maxSize="45%"
+                    groupResizeBehavior="preserve-pixel-size"
+                    collapsible
+                    collapsedSize="0px"
+                    panelRef={inspectorRef}
+                    onResize={followCollapse('inspector', inspectorRef)}
+                  >
+                    <Inspector />
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              </ResizablePanel>
+              <ResizableHandle aria-label="Resize timeline" />
+              <ResizablePanel
+                id="timeline"
+                defaultSize="260px"
+                minSize="150px"
+                groupResizeBehavior="preserve-pixel-size"
+                collapsible
+                collapsedSize="0px"
+                panelRef={timelineRef}
+                onResize={followCollapse('timeline', timelineRef)}
+              >
+                <div className="flex h-full min-h-0 flex-col">
+                  <Timeline />
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       <StatusBar />
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <SettingsDialog />
+
+      <Modal
+        open={confirmingHome}
+        title="Save changes before leaving?"
+        onClose={() => setConfirmingHome(false)}
+        width={380}
+        footer={
+          // macOS order: the destructive choice apart on the left, Cancel beside the default.
+          // "Don't save" throws work away, so it reads as the one that does.
+          <>
+            <Button variant="subtle" onClick={leaveToHome} className="mr-auto text-danger">
+              Don't save
+            </Button>
+            <Button variant="subtle" onClick={() => setConfirmingHome(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                void (async () => {
+                  await onSave()
+                  // Only leave once it actually saved: a cancelled Save dialog keeps the user here.
+                  if (!useEditor.getState().dirty) leaveToHome()
+                })()
+              }}
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <p className="px-4 py-3 text-[12px] leading-relaxed text-pretty text-ink-1">
+          “{useEditor.getState().project.name}” has changes that are not saved. Save them before
+          going to your projects, or leave without them.
+        </p>
+      </Modal>
 
       {/* A drop target you cannot see is a drop target you do not use. */}
       <div

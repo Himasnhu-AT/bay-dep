@@ -7,7 +7,7 @@ import {
   type Item,
   type Timeline
 } from '@shared/project'
-import { Button, Section, Select, Slider } from '@/components'
+import { Button, Section, Select, SliderField } from '@/components'
 import { adjustmentFilter, NO_FILTER } from '../engine/looks'
 import { useEditor } from '@/store/editor'
 
@@ -63,6 +63,16 @@ const BLEND_MODES: { value: BlendMode; label: string }[] = [
   { value: 'luminosity', label: 'Luminosity' }
 ]
 
+/**
+ * The readout beside a slider: the number the model stores, then the control's unit. Whole-unit
+ * steps show no decimals; multipliers show two, which is the precision the step can reach.
+ */
+function formatAdjustment(value: number, control: Control): string {
+  if (!Number.isFinite(value)) return '—'
+  const decimals = control.step >= 1 ? 0 : control.step >= 0.1 ? 1 : 2
+  return `${value.toFixed(decimals)}${control.unit ?? ''}`
+}
+
 /** NaN never equals itself, so a plain `===` reports one clip as "Mixed" against itself. */
 function same(a: number, b: number): boolean {
   return a === b || (Number.isNaN(a) && Number.isNaN(b))
@@ -87,6 +97,9 @@ export function AdjustmentsSection({
   timeline: Timeline
 }): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
+  // One slider commit is one undo step across the whole selection — see the note in
+  // `Inspector.tsx`. A per-item `patchItem` loop without this is one entry per clip.
+  const transact = useEditor((state) => state.transact)
   const first = items[0]
   if (!first) return null
 
@@ -100,15 +113,19 @@ export function AdjustmentsSection({
   // one clip is already blurred must not have the others inherit its blur because they happened
   // to be edited together.
   const set = (key: keyof Adjustments, value: number): void => {
-    for (const item of items) {
-      patchItem(item.id, {
-        adjustments: { ...defaultAdjustments(), ...item.adjustments, [key]: value }
-      })
-    }
+    transact(() => {
+      for (const item of items) {
+        patchItem(item.id, {
+          adjustments: { ...defaultAdjustments(), ...item.adjustments, [key]: value }
+        })
+      }
+    })
   }
 
   const reset = (): void => {
-    for (const item of items) patchItem(item.id, { adjustments: defaultAdjustments() })
+    transact(() => {
+      for (const item of items) patchItem(item.id, { adjustments: defaultAdjustments() })
+    })
   }
 
   const built = adjustmentFilter(first.adjustments)
@@ -137,17 +154,19 @@ export function AdjustmentsSection({
           ) : undefined
         }
       >
-        <div className="space-y-2">
+        <div className="space-y-0.5">
           {CONTROLS.map((control) => {
             const { value, mixed } = read(control.key)
             return (
-              <Slider
+              <SliderField
                 key={control.key}
                 label={control.label}
                 value={mixed ? control.min : value}
+                mixed={mixed}
                 min={control.min}
                 max={control.max}
                 step={control.step}
+                format={(v) => formatAdjustment(v, control)}
                 onCommit={(next) => set(control.key, next)}
               />
             )
@@ -168,7 +187,9 @@ export function AdjustmentsSection({
           value={blendValue}
           options={BLEND_MODES}
           onChange={(mode) => {
-            for (const item of items) patchItem(item.id, { blendMode: mode })
+            transact(() => {
+              for (const item of items) patchItem(item.id, { blendMode: mode })
+            })
           }}
           disabled={onBottom}
         />

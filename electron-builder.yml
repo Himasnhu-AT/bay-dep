@@ -4,42 +4,83 @@ copyright: Freeholt
 
 directories:
   buildResources: build
-  output: dist
+  # Not `dist`: every JS toolchain treats that as its own build output (see CLAUDE.md on the
+  # retired `dist` script). These are packaged apps, so they go where the name says.
+  output: release
+
+# Electron's fuses, flipped in the packaged binary. `runAsNode` stays on: the MCP proxy runs this
+# binary as Node (ELECTRON_RUN_AS_NODE) — turning it off would break every agent connection.
+# Inspect arguments go off, so a local process cannot attach a debugger to the signed app and
+# borrow its permissions. The probes' --remote-debugging-port is a Chromium switch, not this one,
+# and development runs the unfused binary in node_modules anyway.
+electronFuses:
+  runAsNode: true
+  enableNodeCliInspectArguments: false
+  # Flipping a fuse rewrites the binary, and on Apple silicon macOS SIGKILLs a binary whose
+  # signature no longer matches — measured: the unsigned bundle died with 137 on launch. An
+  # unsigned build (identity: null) is never re-signed afterwards, so re-sign it ad hoc here.
+  # A signed release is signed after the fuses anyway; this changes nothing for it.
+  resetAdHocDarwinSignature: true
 
 files:
   - out/**
   - package.json
   - '!**/*.map'
 
-# The ffmpeg binaries cannot live inside the asar archive: the OS cannot spawn a file that is
-# not on disk. This works in development and fails only in a packaged build, which is the worst
-# kind of packaging bug to find late.
-#
-# The database used to need the same treatment and no longer does — it is `node:sqlite`, built
-# into the runtime, so there is no native module here to unpack, rebuild, or keep in step with
-# Electron's ABI.
-asarUnpack:
-  - node_modules/ffmpeg-ffprobe-static/**
+# bay's own LGPL ffmpeg (script/build-ffmpeg.sh → vendor/ffmpeg/<platform>-<arch>/) goes to
+# Contents/Resources/ffmpeg/ as plain files: the OS cannot spawn a file inside the asar archive,
+# and `vendoredTools()` in src/main/ffmpeg/vendor.ts looks there first. The licences and the
+# BUILDINFO (version, configure line, source hashes) travel with the binaries, which is what the
+# LGPL asks of anyone shipping them. `beforePack` refuses to package when the binaries for the
+# platform/arch being packed are missing or are not the ones BUILDINFO records.
+beforePack: script/check-ffmpeg-vendor.cjs
+extraResources:
+  - from: vendor/ffmpeg/${platform}-${arch}
+    to: ffmpeg
+    filter: [ffmpeg, ffprobe, ffmpeg.exe, ffprobe.exe, BUILDINFO]
+  - from: vendor/ffmpeg/LICENSES
+    to: ffmpeg/LICENSES
+  - from: vendor/ffmpeg/README.md
+    to: ffmpeg/README.md
+  # The notice and the written source offer for the above, next to the files they describe.
+  - from: NOTICE
+    to: NOTICE
 
-# bay is offline software. No update feed is configured, and none should be: an editor that
-# phones a server on launch is exactly what this is not.
+# The database used to need unpacking and no longer does — it is `node:sqlite`, built into the
+# runtime, so there is no native module here to unpack, rebuild, or keep in step with Electron's
+# ABI.
+asarUnpack:
+  # The Agent SDK's Claude Code binary (`BAY_AGENT_RUNTIME=sdk`) cannot be spawned from inside the
+  # asar archive either; it ships in a per-platform optional dependency. `bundledExecutable()`
+  # in src/main/agent/sdk.ts rewrites the resolved `app.asar/…` path to `app.asar.unpacked/…`, and finds nothing unless
+  # this entry put the file there.
+  - node_modules/@anthropic-ai/claude-agent-sdk-*/**
+
+# No electron-builder publish provider. The in-app updater's feed is `UPDATE_FEED` in
+# src/shared/update-feed.ts (a generic https folder, unset until there is somewhere to publish),
+# and script/release-signed writes the files that go there: the notarized zip and
+# latest-mac.yml. electron-builder never uploads anything.
 publish: null
 
 mac:
   icon: build/icon.icns
   category: public.app-category.video
+  # arm64 only: pnpm installs only the host's claude-agent-sdk-darwin-* package, so an x64 build
+  # made on Apple silicon would ship no `claude` at all (vendor/ffmpeg has both arches).
+  # script/release-signed refuses any Mach-O in the bundle that lacks the target arch.
   target:
     - target: dmg
-      arch: [arm64, x64]
+      arch: [arm64]
   darkModeSupport: true
-  # Signing is deliberately off: it needs the user's Developer ID certificate and an Apple ID
-  # for notarisation, neither of which is ours to set up or to guess at. `identity: null` makes
-  # that explicit — without it electron-builder hunts the keychain and silently picks whatever
-  # it finds, so a build's signature would depend on which machine ran it.
+  # Signing is off here. `identity: null` makes that explicit: without it electron-builder hunts
+  # the keychain and silently picks whatever it finds, so a build's signature would depend on
+  # which machine ran it. `pnpm release` is the unsigned build.
   #
-  # To turn it on later: set `identity` to the Developer ID Application name, drop this line,
-  # keep `hardenedRuntime: true`, and add notarisation with an Apple ID and app-specific
-  # password. The entitlements file is already written for a signed hardened-runtime build.
+  # `pnpm release:signed` (script/release-signed) is the one place signing is turned on, with
+  # the identity and notary profile named in .bay-release. It signs every Mach-O (app.asar.unpacked
+  # included) with the hardened runtime, notarizes with `notarytool --keychain-profile`, staples,
+  # and verifies with codesign, stapler and spctl. The entitlements are the measured minimum
+  # (see build/entitlements.mac.plist).
   identity: null
   hardenedRuntime: true
   gatekeeperAssess: false

@@ -25,7 +25,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Project } from '@shared/project'
-import { PROJECT_VERSION } from '@shared/project'
+import { PROJECT_VERSION, type Marker } from '@shared/project'
+import { V1_ON_DISK } from '@shared/project-fixtures'
 import { openDatabase } from './db'
 import {
   LAST_PROJECT_KEY,
@@ -163,81 +164,9 @@ test('a saved project is readable JSON on disk, not an opaque blob', async () =>
   assert.ok(Array.isArray(parsed.timelines))
 })
 
-/**
- * A version-1 `.bay` file, written out as a literal.
- *
- * The round-trip test below cannot hold the format still: it writes and reads through the
- * same code, so renaming `durationInFrames` to `duration` would move both sides together and
- * still pass — while every project already on a user's disk stopped loading. This fixture is
- * the fixed point. Every key here is a promise made to files that already exist.
- */
-const V1_ON_DISK = `{
-  "id": "prj_fixed",
-  "name": "Fixture",
-  "version": 1,
-  "assets": [
-    {
-      "id": "asset_1",
-      "kind": "video",
-      "name": "goodall.mp4",
-      "path": "/footage/goodall.mp4",
-      "durationUs": 67833333,
-      "width": 1080,
-      "height": 1920,
-      "fps": 30,
-      "hasAudio": true,
-      "hasVideo": true,
-      "posterPath": null,
-      "waveformPath": null,
-      "createdAt": 1700000000000
-    }
-  ],
-  "timelines": [
-    {
-      "id": "tl_1",
-      "name": "Timeline 1",
-      "fps": 30,
-      "width": 1080,
-      "height": 1920,
-      "background": "#000000",
-      "tracks": [
-        {
-          "id": "trk_v1",
-          "kind": "video",
-          "name": "V1",
-          "locked": false,
-          "muted": false,
-          "hidden": false,
-          "items": [
-            {
-              "id": "item_1",
-              "assetId": "asset_1",
-              "trackId": "trk_v1",
-              "from": 0,
-              "durationInFrames": 150,
-              "sourceStartUs": 20000000,
-              "layout": {
-                "left": 0,
-                "top": 0,
-                "width": 1080,
-                "height": 1920,
-                "opacity": 1,
-                "rotation": 0
-              },
-              "volume": 1,
-              "fadeInFrames": 15,
-              "fadeOutFrames": 15,
-              "speed": 1
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "activeTimelineId": "tl_1",
-  "createdAt": 1700000000000,
-  "updatedAt": 1700000000001
-}`
+// The version-1 document on disk lives in `@shared/project-fixtures`, spelled out key by key,
+// because the renderer checks today's writer against the same literal. See that file for why it
+// is a string rather than an object typed as `Project`.
 
 test('a .bay file already on disk still loads, field for field', async () => {
   const dir = scratch()
@@ -266,6 +195,47 @@ test('a .bay file already on disk still loads, field for field', async () => {
   assert.equal(item?.speed, 1)
   assert.equal(item?.layout.opacity, 1)
   assert.equal(item?.layout.height, 1920)
+})
+
+test('a version-1 file without markers loads with none, rather than being refused', async () => {
+  // Markers were added after files like the fixture above were written. The fixture has no
+  // "markers" key at all, and must still load — the field is optional for exactly this reason.
+  assert.equal(V1_ON_DISK.includes('"markers"'), false, 'the fixture must predate markers')
+  const dir = scratch()
+  const target = join(dir, 'no-markers.bay')
+  writeFileSync(target, V1_ON_DISK, 'utf8')
+  const project = await readProjectFile(target)
+  assert.equal(project.timelines[0]?.markers, undefined)
+})
+
+test('markers on disk load field for field — these key names are a promise to saved files', async () => {
+  // Two halves, and both are needed. The file is a literal, so the bytes on disk cannot move
+  // with the code. The reads below go through the typed `Marker` properties, so renaming
+  // `label` or `frame` in the model fails `pnpm typecheck` on this file — a raw `deepEqual`
+  // would compare the parsed JSON to itself and pass straight through the rename that orphans
+  // every marker already saved.
+  const withMarkers = V1_ON_DISK.replace(
+    '"tracks": [',
+    '"markers": [\n' +
+      '        { "id": "mk_1", "frame": 90, "label": "the laugh", "color": "#F5A524" },\n' +
+      '        { "id": "mk_2", "frame": 12, "label": "cold open" }\n' +
+      '      ],\n' +
+      '      "tracks": ['
+  )
+  assert.notEqual(withMarkers, V1_ON_DISK, 'the markers must actually have been spliced in')
+  const dir = scratch()
+  const target = join(dir, 'markers.bay')
+  writeFileSync(target, withMarkers, 'utf8')
+
+  const markers: Marker[] | undefined = (await readProjectFile(target)).timelines[0]?.markers
+  assert.equal(markers?.length, 2)
+  const [first, second] = markers ?? []
+  assert.equal(first?.id, 'mk_1')
+  assert.equal(first?.frame, 90)
+  assert.equal(first?.label, 'the laugh')
+  assert.equal(first?.color, '#F5A524')
+  assert.equal(second?.label, 'cold open')
+  assert.equal(second?.color, undefined, 'colour is optional')
 })
 
 test('what bay writes today is still loadable by the version-1 reader', async () => {

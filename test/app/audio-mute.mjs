@@ -18,10 +18,10 @@
  * `hidden` governs picture, `muted` governs sound, on tracks of either kind.
  */
 
-import { attach, CANVAS_PROFILE, CANVAS_READY, requirePrecondition, runProbe } from './cdp.mjs'
+import { attach, CANVAS_PROFILE, CANVAS_READY, PreconditionError, requirePrecondition, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
-const { evaluate, close } = await attach()
+const { evaluate, close, patch: patchMethod } = await attach()
 
 await runProbe(async () => {
 
@@ -40,13 +40,14 @@ await requirePrecondition(evaluate, ...CANVAS_READY.sized)
 await evaluate(`window.bayEngine.store.getState().setPlaying(true); true`)
 await new Promise((r) => setTimeout(r, 1500))
 
-await evaluate(`(() => {
-  window.__an = { connects: 0, disconnects: 0 }
-  const C = AnalyserNode.prototype.connect, D = AnalyserNode.prototype.disconnect
-  AnalyserNode.prototype.connect = function (...a) { window.__an.connects++; return C.apply(this, a) }
-  AnalyserNode.prototype.disconnect = function (...a) { window.__an.disconnects++; return D.apply(this, a) }
-  return true
-})()`)
+// Through attach()'s `patch` (here `patchMethod`; `patch` below edits tracks), so the real
+// methods are back after the run — including a run that fails
+// or is interrupted. The counters themselves live on `window` and are harmless once unhooked.
+await evaluate(`(() => { window.__an = { connects: 0, disconnects: 0 }; return true })()`)
+await patchMethod('AnalyserNode.prototype', 'connect',
+  '(original) => function (...a) { window.__an.connects++; return original.apply(this, a) }')
+await patchMethod('AnalyserNode.prototype', 'disconnect',
+  '(original) => function (...a) { window.__an.disconnects++; return original.apply(this, a) }')
 
 const calls = () => evaluate('JSON.stringify(window.__an)').then(JSON.parse)
 const peak = () => evaluate(`(() => {
@@ -79,6 +80,23 @@ const patch = (field, value) => evaluate(`(() => {
 const flags = () => evaluate(`(() => { const t = ${videoTrack}
   return JSON.stringify({ muted: t.muted, hidden: t.hidden }) })()`).then(JSON.parse)
 
+/**
+ * How many analysers muting should disconnect — derived, not assumed.
+ *
+ * This asserted exactly one while `patch` above mutes *every* video track carrying items, so it
+ * failed on any timeline with two of them while mute worked perfectly: the probe counted one
+ * disconnect per muted track and expected one in total. Each track has its own analyser (the
+ * engine keys `levels()` by track), and a track only has one once something on it has sounded,
+ * so the expectation is the muted tracks that are metering right now.
+ */
+const metered = await evaluate(`(() => {
+  const lv = window.bayEngine.engine.levels()
+  return (${videoTracks}).filter((t) => t.id in lv).length
+})()`)
+if (metered === 0) {
+  throw new PreconditionError('no video track carrying items has an analyser yet', 'nothing is sounding, so mute has nothing to disconnect')
+}
+
 const before = await calls()
 const peakBefore = await peak()
 
@@ -102,14 +120,15 @@ const rowsHidden = (await evaluate(CANVAS_PROFILE)).rowExtent
 const afterHide = await calls()
 const peakHidden = await peak()
 
-const mutedDisconnected = afterMute.disconnects === before.disconnects + 1
-const unmutedReconnected = afterUnmute.connects === afterMute.connects + 1
+const mutedDisconnected = afterMute.disconnects === before.disconnects + metered
+const unmutedReconnected = afterUnmute.connects === afterMute.connects + metered
 const hideDidNotTouchAudio = afterHide.disconnects === afterUnmute.disconnects
 const hideRemovedPicture = rowsVisible[0] >= 0 && rowsHidden[0] === -1
 
 console.log('peak while audible ', peakBefore)
 console.log('peak while MUTED   ', peakMuted, '<- stays fed on purpose; not a mute indicator')
 console.log('track flags muted  ', JSON.stringify(flagsMuted))
+console.log('tracks muted       ', metered, 'metered video track(s), so', metered, 'disconnect(s) expected')
 console.log('analyser calls     ', JSON.stringify({ before, afterMute, afterUnmute, afterHide }))
 console.log('picture rows       ', JSON.stringify(rowsVisible), '->', JSON.stringify(rowsHidden), 'after hide')
 console.log('peak while HIDDEN  ', peakHidden, '<- audio continues; hide is picture-only')
@@ -120,6 +139,9 @@ console.log(hideRemovedPicture ? 'PASS hide removes the picture' : 'FAIL hide le
 console.log(hideDidNotTouchAudio ? 'PASS hide leaves the audio connection alone' : 'FAIL hide changed the audio connection')
 
 const ok = mutedDisconnected && unmutedReconnected && hideRemovedPicture && hideDidNotTouchAudio
+// Playback was started above; stop it here as well as in the restore, so the picture and
+// sound stop the moment the verdict is in.
+await evaluate(`(() => { window.bayEngine.store.getState().setPlaying(false); return true })()`)
 close()
 
 if (process.env.VERIFY_PROBE === '1') {

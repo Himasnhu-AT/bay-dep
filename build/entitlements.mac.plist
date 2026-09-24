@@ -2,20 +2,30 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Chromium's JavaScript engine. -->
+  <!-- The only exception to the hardened runtime bay asks for, and the one it measurably needs:
+       V8 (the app, its helpers, the MCP proxy under ELECTRON_RUN_AS_NODE) and the Agent SDK's
+       `claude` (JavaScriptCore) both generate code into MAP_JIT pages.
+
+       electron-builder signs the app with this file and every other Mach-O in the bundle —
+       helpers, frameworks, and whatever sits in app.asar.unpacked (ffmpeg, ffprobe, claude) —
+       with the same file, as `entitlementsInherit`.
+
+       Measured with a Developer ID build signed with this file alone (script/release-signed
+       verifies it on every release): the app launches, WebGL2 compiles and draws, WebGPU gives
+       an adapter, the .brf worker compiles and runs a module from app.asar, the MCP proxy runs,
+       ffmpeg encodes, and the re-signed `claude` answers a real prompt.
+
+       What was here before, and why it went:
+       - allow-unsigned-executable-memory: nothing above needed it. It is the older, broader
+         form of allow-jit (writable+executable memory without MAP_JIT).
+       - disable-library-validation: its comment said ffmpeg needed it. Library validation
+         applies to libraries loaded INTO a process, not to executables it spawns, and ffmpeg
+         links only system libraries (otool -L). Nothing bay ships loads a foreign dylib.
+       - allow-dyld-environment-variables: nothing sets DYLD_*.
+       - files.user-selected.read-write: an App Sandbox entitlement; bay is not sandboxed, so it
+         granted nothing.
+       Add one back only with the failure it fixes, measured in a signed build. -->
   <key>com.apple.security.cs.allow-jit</key>
-  <true/>
-  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-  <true/>
-  <!-- ffmpeg and ffprobe are separately signed binaries bay spawns; without this the
-       hardened runtime refuses to load them and every media feature dies in production
-       while working in development. -->
-  <key>com.apple.security.cs.disable-library-validation</key>
-  <true/>
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-  <true/>
-  <!-- The user picks their own footage, wherever it lives. -->
-  <key>com.apple.security.files.user-selected.read-write</key>
   <true/>
 </dict>
 </plist>

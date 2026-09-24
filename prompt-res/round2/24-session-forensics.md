@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 24 — Session forensics: how the agent actually made wicks-v2
 
 Source: `~/.claude/projects/-Users-himanshu-codes-synthai-vii/1ba87d60-0650-45bf-bb99-340627b516a2.jsonl`

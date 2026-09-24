@@ -1,83 +1,100 @@
 @import "tailwindcss";
 
 @theme {
-  /* Palette. Paper and ink first, brass for the one accent per screen. */
-  --color-paper: #f5f1e8;
-  --color-ink: #16130d;
-  --color-ink-soft: #4a4438;
-  --color-muted: #6f6857;
-  /* Brass carries the accent at display sizes; brass-deep is the same hue taken
-     dark enough to pass WCAG AA as small text. See DESIGN.md. */
-  --color-brass: #9a7b3f;
-  --color-brass-deep: #806331;
-  --color-line: #d9d1bf;
+  /* Two grounds. Paper is where you read; night is where the app is shown.
+     One accent, the app's own orange, on both. See DESIGN.md, "Surfaces". */
+  --color-paper: #f3f2ee;
+  --color-paper-raised: #fbfaf8;
+  --color-ink: #151513;
+  --color-ink-soft: #45443f;
+  --color-muted: #6a6962;
+  --color-line: #dddbd4;
 
-  /* The plate. These are not new brand colours; they are the app's own theme,
-     copied value for value from rust/crates/bay-ui/src/theme.rs so the plate is
-     a re-creation rather than an interpretation. If the app's theme changes,
-     these change with it. Measured against app-panel: text 14.6:1, muted 5.3:1,
-     accent 5.7:1, all passing AA. See DESIGN.md. */
-  --color-app-bg: #0f0f14;
-  --color-app-panel: #16161d;
-  --color-app-panel-alt: #1d1d26;
-  --color-app-lane: #121218;
-  --color-app-border: #2a2a36;
-  --color-app-text: #e7e7ee;
-  --color-app-muted: #8a8a9a;
-  --color-app-accent: #5b8cff;
-  --color-app-selected: #2d3a66;
-  --color-app-selected-border: #8fb0ff;
+  /* The accent is the app's accent, value for value (--color-app-accent below).
+     On night it passes AA at any size (6.2:1). On paper it is a fill, never
+     text: accent-ink is the same hue dark enough for text on paper (5.0:1). */
+  --color-accent: #d9773f;
+  --color-accent-hover: #e5874f;
+  --color-accent-ink: #a4501c;
 
-  /* Clip fill per element kind, from theme.rs `element_color`. Named `elem-`
-     and not `clip-`: `--color-clip-text` would generate `bg-clip-text`, which
-     collides with Tailwind's own background-clip utility and silently wins,
-     leaving every Text clip unfilled. */
-  --color-elem-video: #33628f;
-  --color-elem-image: #7a4f95;
-  --color-elem-text: #8f6a33;
-  --color-elem-audio: #2f8f63;
-  --color-elem-shape: #444455;
+  /* Night sits one step below the app's own ground (app-surface-0, #121212),
+     so the window reads as a window set on it rather than dissolving into it. */
+  --color-night: #0b0b0b;
+  --color-night-line: #262626;
+  --color-on-night: #ededed;
+  --color-on-night-soft: #a1a1a1;
+  --color-on-night-muted: #8a8a8a;
 
-  /* The reel being built inside the plate carries its own measured ground and
-     track, from docs/native/reel-recipe.md. The track is used at full opacity:
-     the recipe measured #606070 at 3.12:1 and recorded that alpha defeats the
-     measurement, so a faded track would reproduce the exact defect it warns
-     about and leave the bars with no denominator. */
-  --color-reel-ground: #0e0e12;
-  --color-reel-track: #606070;
+  /* The plate. These are not new brand colours; they are the app's own dark
+     theme, copied value for value from the `@theme static` block in
+     ../src/renderer/src/styles.css, each under the app's own name with an
+     `app-` prefix. If the app's theme changes, these change with it, and the
+     repository's `pnpm test` fails until they do (src/shared/website-plate
+     .test.ts compares the two files). Contrast is measured in DESIGN.md. */
+  --color-app-surface-0: #121212;
+  --color-app-surface-1: #181818;
+  --color-app-surface-2: #212121;
+  --color-app-surface-3: #2a2a2a;
+  --color-app-surface-4: #333333;
+  --color-app-ink-0: #ededed;
+  --color-app-ink-1: #a1a1a1;
+  --color-app-ink-2: #8a8a8a;
+  --color-app-ink-3: #4a4a4a;
+  --color-app-line: #262626;
+  --color-app-line-strong: #333333;
+  --color-app-accent: #d9773f;
+  --color-app-playhead: #f5f5f5;
+  --color-app-success: #3dba7e;
+  --color-app-on-media: #e8eaed;
+  --color-app-clip-video: #2c3a4a;
+  --color-app-clip-video-edge: #3d5166;
+  --color-app-clip-audio: #25382f;
+  --color-app-clip-audio-edge: #356047;
+  --color-app-waveform: #5fd39a;
 
+  /* One family, the one the app draws its interface in, with its optical
+     sizes: the display cut arrives by itself as the size grows. */
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
-  --font-serif: var(--font-fraunces), Georgia, serif;
-  /* The plate renders in the system UI face, because that is what the app is
-     drawn in on the machine. It is deliberately not the site's face. */
-  --font-app: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-    sans-serif;
+  /* The plate is set in the app's own faces. The app draws its interface in
+     Inter, which the site already carries; its monospace is JetBrains Mono,
+     which the site does not load, so the plate falls through to the app's own
+     fallback, the system monospace, rather than fetch a font for a few labels. */
+  --font-app: var(--font-inter), ui-sans-serif, -apple-system, sans-serif;
+  --font-app-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
 
-  /* Type scale. Every size on the site is one of these six. */
-  --text-eyebrow: 11px;
+  /* Type scale. Every size on the site is one of these, plus Tailwind's
+     text-base for body and text-xs/text-sm for captions and controls.
+     Tracking tightens as the size grows; weight does the emphasis. */
+  --text-eyebrow: 13px;
   --text-eyebrow--line-height: 1.4;
-  --text-eyebrow--letter-spacing: 0.28em;
 
-  --text-display: clamp(44px, 7.4vw, 92px);
-  --text-display--line-height: 1.02;
-  --text-display--letter-spacing: -0.015em;
+  --text-display: clamp(44px, 6.6vw, 96px);
+  --text-display--line-height: 1;
+  --text-display--letter-spacing: -0.04em;
 
-  --text-title: clamp(40px, 6vw, 72px);
+  --text-title: clamp(38px, 5.4vw, 68px);
   --text-title--line-height: 1.04;
-  --text-title--letter-spacing: -0.015em;
+  --text-title--letter-spacing: -0.035em;
 
-  --text-lead: clamp(18px, 2.1vw, 23px);
-  --text-lead--line-height: 1.5;
+  --text-headline: clamp(28px, 3.4vw, 44px);
+  --text-headline--line-height: 1.1;
+  --text-headline--letter-spacing: -0.025em;
 
-  --text-quote: clamp(20px, 2.6vw, 28px);
-  --text-quote--line-height: 1.4;
+  --text-quote: clamp(24px, 3vw, 36px);
+  --text-quote--line-height: 1.2;
+  --text-quote--letter-spacing: -0.02em;
 
-  --text-section: 26px;
-  --text-section--line-height: 1.25;
-  --text-section--letter-spacing: 0.01em;
+  --text-lead: clamp(18px, 1.9vw, 22px);
+  --text-lead--line-height: 1.45;
+  --text-lead--letter-spacing: -0.012em;
 
-  /* The page is 1080px wide with 32px gutters, everywhere. */
+  --text-section: 21px;
+  --text-section--line-height: 1.3;
+  --text-section--letter-spacing: -0.012em;
+
+  /* The reading column: 1080px, with 20px gutters on a phone and 32px above. */
   --container-page: 1080px;
 
   /* Confident arrival, no bounce. Everything on the site uses this curve. */
@@ -92,18 +109,45 @@ body {
   background: var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-optical-sizing: auto;
   line-height: 1.6;
   text-rendering: optimizeLegibility;
+  /* The seam's paper runs a viewport wide; nothing may scroll sideways. */
+  overflow-x: clip;
 }
 
 ::selection {
-  background: var(--color-brass);
-  color: var(--color-paper);
+  background: var(--color-accent);
+  color: var(--color-night);
 }
 
 :focus-visible {
-  outline: 1px solid var(--color-brass);
+  outline: 2px solid var(--color-accent);
   outline-offset: 3px;
+}
+
+/*
+ * The seam: where night meets paper on the home page. It runs through the
+ * middle of a figure rather than between two blocks, so the picture belongs to
+ * both grounds and the change of ground reads as placed. A hard stop, never a
+ * gradient. The paper is a pseudo-element under the figure's frame, running a
+ * viewport wide and down past the section, which clips it.
+ */
+.seam {
+  position: relative;
+  isolation: isolate;
+}
+
+.seam::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  bottom: -100vh;
+  left: 50%;
+  width: 100vw;
+  translate: -50% 0;
+  background: var(--color-paper);
 }
 
 /*
@@ -120,21 +164,18 @@ body {
     transform: translateY(14px);
     transition:
       opacity 0.7s var(--ease-paper),
-      transform 0.7s var(--ease-paper),
-      filter 0.7s var(--ease-paper);
+      transform 0.7s var(--ease-paper);
   }
 
-  /* The home headline resolves out of a blur, like ink settling into paper. */
+  /* The home headline: a longer rise, the one focal arrival on the site. */
   [data-reveal="settle"] {
-    transform: translateY(20px);
-    filter: blur(5px);
-    transition-duration: 0.9s;
+    transform: translateY(24px);
+    transition-duration: 1s;
   }
 
   [data-reveal][data-shown] {
     opacity: 1;
     transform: none;
-    filter: none;
   }
 
   /* A rule is drawn, not faded, and lands just after its content. */
@@ -150,32 +191,160 @@ body {
   }
 }
 
-/* The scroll cue in the hero. It falls and resets, the way your eye does when
-   it drops down a page. Slow enough to read as an invitation. */
-@keyframes nudge {
-  0%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.55;
-  }
-  50% {
-    transform: translateY(5px);
-    opacity: 1;
+/*
+ * Depth. Leaves of one page lifting at different rates as you turn past them.
+ * See DESIGN.md, "Depth".
+ *
+ * Scroll-linked, and entirely CSS: a scroll-driven animation of `translate`
+ * (and, for the hero, `opacity`) runs on the compositor, so scrolling never
+ * wakes a script or lays the page out again. Browsers without scroll-driven
+ * animations get the same curves from DepthFallback. Motion only: with
+ * `prefers-reduced-motion: reduce` none of this applies, and the page is flat.
+ *
+ * peel   the hero. Each line rises faster than the page by --depth of the
+ *        scroll over the first screen, so the lines separate as they leave,
+ *        and fades toward --fade.
+ * enter  a figure arriving: it starts --enter below its place and settles as
+ *        its [data-depth-root] finishes entering, so it reads as set deeper
+ *        than the paper around it.
+ * lift   the hero picture, growing from --lift (0.92) to full size over the
+ *        first 70vh of scroll, so the frame comes forward as the words leave.
+ *
+ * Nothing here starts hidden: every from-state is visible and a few pixels
+ * off its place, so no content depends on a timeline ever advancing.
+ */
+@keyframes depth-peel {
+  to {
+    translate: 0 calc(var(--depth, 0) * -100vh);
+    opacity: var(--fade, 1);
   }
 }
 
-@media (scripting: enabled) {
-  [data-nudge] {
-    animation: nudge 2.1s var(--ease-paper) infinite;
+@keyframes depth-enter {
+  from {
+    translate: 0 var(--enter, 6vh);
+  }
+  to {
+    translate: 0 0;
+  }
+}
+
+@keyframes depth-lift {
+  from {
+    scale: var(--lift, 0.92);
+  }
+  to {
+    scale: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    [data-depth] {
+      will-change: translate;
+    }
+
+    [data-depth="lift"] {
+      will-change: scale;
+    }
+
+    [data-depth="peel"] {
+      animation: depth-peel linear both;
+      animation-timeline: scroll(root block);
+      animation-range: 0 100vh;
+    }
+
+    [data-depth-root] {
+      view-timeline: --depth-root block;
+    }
+
+    [data-depth="enter"] {
+      animation: depth-enter linear both;
+      animation-timeline: --depth-root;
+      animation-range: entry 0% entry 100%;
+    }
+
+    [data-depth="lift"] {
+      animation: depth-lift linear both;
+      animation-timeline: scroll(root block);
+      animation-range: 0 70vh;
+    }
+  }
+}
+
+/*
+ * The plate. See DESIGN.md, "The plate", under Motion.
+ *
+ * Four arrivals, each played once when its element first appears as a step
+ * lands, and each a transform or an opacity so the compositor runs it:
+ *
+ * plate-in    an entry in the agent panel, a track, an inspector section:
+ *             6px up out of nothing, the site's arrival at the app's scale.
+ * plate-land  a clip set down on its lane: 8px of fall, faster than plate-in,
+ *             because it is placed rather than written.
+ * plate-key   a keyframe diamond, grown from its point.
+ * plate-wave  a waveform opening out from its centre line once the clip is down.
+ *
+ * And one continuous motion, the playhead, which is the only thing tied to
+ * the scroll position rather than to the step: its keyframes are written from
+ * the sequence (playheadKeyframes in src/lib/sequence.ts) into the page, and
+ * run on the pinned section's view timeline, the one [data-depth-root] names.
+ * Where scroll timelines are missing, ScrollSequence moves it from the same
+ * curve in its rAF-throttled scroll handler.
+ */
+@keyframes plate-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+@keyframes plate-land {
+  from {
+    opacity: 0;
+    translate: 0 -8px;
+  }
+}
+
+@keyframes plate-key {
+  from {
+    scale: 0;
+  }
+}
+
+@keyframes plate-wave {
+  from {
+    scale: 1 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .plate-in {
+    animation: plate-in 0.45s var(--ease-paper) both;
+  }
+
+  .plate-land {
+    animation: plate-land 0.35s var(--ease-paper) both;
+  }
+
+  .plate-key {
+    animation: plate-key 0.4s var(--ease-paper) both;
+  }
+
+  .plate-wave {
+    animation: plate-wave 0.7s var(--ease-paper) 0.15s both;
+  }
+
+  @supports (animation-timeline: view()) {
+    .plate-playhead {
+      animation: plate-playhead linear both;
+      animation-timeline: --depth-root;
+      animation-range: contain 0% contain 100%;
+    }
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-nudge] {
-    animation: none;
-    opacity: 1;
-  }
-
   html {
     scroll-behavior: auto;
   }
@@ -185,7 +354,6 @@ body {
   [data-rule] {
     opacity: 1;
     transform: none;
-    filter: none;
     transition: none;
   }
 }

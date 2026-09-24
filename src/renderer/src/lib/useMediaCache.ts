@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Asset } from '@shared/project'
 import { bay } from './bay'
+import { canMakeFilmstrip, canMakePoster } from './mediaKinds'
 
 /**
  * Posters, filmstrips and waveforms are expensive to make and identical every time they
@@ -34,8 +35,8 @@ export function usePoster(asset: Asset | undefined, size = 160): string | null {
   const [url, setUrl] = useState<string | null>(() => posters.get(key) ?? null)
 
   useEffect(() => {
-    if (!asset || !asset.path || asset.error) return
-    if (asset.kind === 'audio') return
+    // Compositions, .brf graphics, LUTs and sound have no picture ffmpeg can take; the tile shows its icon.
+    if (!asset || !canMakePoster(asset)) return
     const cached = posters.get(key)
     if (cached !== undefined) {
       setUrl(cached)
@@ -76,7 +77,7 @@ export function useFilmstrip(
   const [frames, setFrames] = useState<string[]>(() => filmstrips.get(key) ?? [])
 
   useEffect(() => {
-    if (!enabled || !asset || !asset.path || !asset.hasVideo || asset.error) return
+    if (!enabled || !asset || !canMakeFilmstrip(asset)) return
     const cached = filmstrips.get(key)
     if (cached) {
       setFrames(cached)

@@ -13,47 +13,15 @@
  */
 
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
-import { findTool, TOOLS } from '@shared/mcp'
+import { dryRunRequest, findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
-import { ToolError } from './helpers'
-import { browseAssets, inspectItem, readProject } from './read'
-import { exportTimeline, trackExport } from './exports'
-import {
-  addTrack,
-  deleteItems,
-  editItem,
-  importMedia,
-  placeAsset,
-  removeRange,
-  setPlayhead,
-  splitAt,
-  undo
-} from './write'
-import { previewFrame } from './preview'
-import { addTransition, removeTransition } from './transitions'
-import { validateArgs } from './validate'
+import { checkApproval } from '@shared/agent'
+import { store, ToolError } from './helpers'
+import { HANDLERS } from './registry'
+import { asAgent, setAgentFileWriter } from '@/store/editor'
+import { validateArgs } from '@shared/validate'
+import { AsyncDryRunError, dryRun } from '@/store/dry-run'
 
-type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
-
-const HANDLERS: Record<string, Handler> = {
-  read_project: () => readProject(),
-  browse_assets: () => browseAssets(),
-  inspect_item: (args) => inspectItem(args),
-  preview_frame: (args) => previewFrame(args),
-  import_media: (args) => importMedia(args),
-  place_asset: (args) => placeAsset(args),
-  edit_item: (args) => editItem(args),
-  split_at: (args) => splitAt(args),
-  delete_items: (args) => deleteItems(args),
-  remove_range: (args) => removeRange(args),
-  add_track: (args) => addTrack(args),
-  add_transition: (args) => addTransition(args),
-  remove_transition: (args) => removeTransition(args),
-  set_playhead: (args) => setPlayhead(args),
-  undo: () => undo(),
-  export_timeline: (args) => exportTimeline(args),
-  track_export: (args) => trackExport(args)
-}
 
 /**
  * Every tool in the catalog has a handler, and every handler is in the catalog.
@@ -115,15 +83,74 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
     }
   }
 
+  // No project open: the projects screen is showing and the store holds a placeholder nobody
+  // chose. Acting on it would edit something invisible that disappears when the user opens a
+  // real project — so refuse, and say exactly how to get to one.
+  if (store().screen !== 'editor' && tool.name !== 'list_projects' && tool.name !== 'open_project') {
+    return {
+      id: call.id,
+      ok: false,
+      error:
+        `No project is open in bay — it is showing the projects screen. Call list_projects, then ` +
+        `open_project with a filePath from it (or ask the user which project to open), and then ` +
+        `${call.tool}.`
+    }
+  }
+
   const args = call.args ?? {}
+
+  // `validateOnly` is read before validation, because on a tool that cannot dry-run the
+  // validator would only say "no such argument" — true, and useless. The refusal names why
+  // (a file written, a job started) and which tools can.
+  const request = dryRunRequest(tool, args)
+  if (request.mode === 'refused') return { id: call.id, ok: false, error: request.error }
+
   const invalid = validateArgs(tool, args)
   if (invalid) return { id: call.id, ok: false, error: invalid }
 
+  // The approval gate, and it sits here rather than in each write tool for the same reason the
+  // catalog does: thirty handlers is thirty places to forget, and the one that forgot would be
+  // the one nobody noticed. `null` means no in-app agent session is driving — bay answering
+  // the socket, where the person is in a terminal watching every call — and then nothing is
+  // gated at all.
+  //
+  // Checked *before* the handler and consumed *after* it succeeds. A call that threw changed
+  // nothing, so spending the approval on it would block the retry its own error message asks
+  // for; `edit()` returning unchanged when a mutator declines is what makes that safe to
+  // assume rather than hope.
+  //
+  // A dry run reaches the gate with its flag still on, because the flag is what the gate reads
+  // to let it through unapproved; an ordinary call reaches it with `validateOnly: false`
+  // removed, so an approval proposed without the flag still matches.
+  const verdict = checkApproval(
+    tool.name,
+    request.mode === 'dry' ? args : request.args,
+    store().agentGate
+  )
+  if (!verdict.allowed) {
+    return { id: call.id, ok: false, error: verdict.refusal ?? 'That edit is not approved.' }
+  }
+
   try {
-    const value = await handler(args)
+    if (request.mode === 'dry') {
+      // The real handler against the real store, then everything put back — see `dryRun`. No
+      // approval is consumed: the gate named none, and nothing was done to spend one on.
+      const wouldReturn = dryRun(() => handler(request.args))
+      return { id: call.id, ok: true, value: { validateOnly: true, wouldReturn } }
+    }
+    // Edits made inside a tool call are the agent's; anything else during a turn is the user's,
+    // which the turn's change card has to own up to (see `asAgent`).
+    const value = await asAgent(() => handler(request.args))
+    if (verdict.index !== undefined) store().consumeApproval(verdict.index)
     return { id: call.id, ok: true, value }
   } catch (error) {
-    if (error instanceof ToolError) return { id: call.id, ok: false, error: error.message }
+    if (error instanceof ToolError) {
+      // A dry run's refusal is the same refusal the real call would get — that is its answer —
+      // but it says so, so the agent does not wonder whether a half-edit landed.
+      const suffix = request.mode === 'dry' ? ' (validateOnly: nothing was changed.)' : ''
+      return { id: call.id, ok: false, error: error.message + suffix }
+    }
+    if (error instanceof AsyncDryRunError) return { id: call.id, ok: false, error: error.message }
     // An unexpected throw is a bug here, not a mistake by the agent. Say so, so it stops
     // rewriting its arguments against something that was never going to work.
     const message = error instanceof Error ? error.message : String(error)
@@ -168,8 +195,16 @@ export function registerMcpExecutor(): () => void {
     ;(window as Window & { bayMcp?: unknown }).bayMcp = { execute: executeToolCall, tools: TOOLS }
   }
   const api = bay()
+  // Reverting an agent turn that rewrote a composition puts the file back through here.
+  if (api) setAgentFileWriter((path, contents) => api.composition.write(path, contents))
   // `mcp` arrives with the transport; a build whose preload predates it still runs, it just
   // has no agent surface.
-  if (!api?.mcp) return () => {}
-  return api.mcp.onToolCall(executeToolCall)
+  if (!api?.mcp) {
+    return () => setAgentFileWriter(null)
+  }
+  const off = api.mcp.onToolCall(executeToolCall)
+  return () => {
+    off()
+    setAgentFileWriter(null)
+  }
 }

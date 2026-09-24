@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 34 — Human psychology: attention, comprehension, retention, and the first three seconds
 
 Round 2. Round 1 wrote `04-story-and-psychology.md` (hooks, structure, arc, rhythm) as **advice**.

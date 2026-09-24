@@ -19,10 +19,15 @@
  * Transport: this engine drives `<audio>` elements. `<video>` elements belong to the
  * compositor, because their picture is what schedules them, and it corrects their drift
  * against the same {@link DRIFT_TOLERANCE_SECONDS} — see compositor.ts.
+ *
+ * **HTML compositions** have no media element of their own — their picture is captured from a
+ * hidden page — so their sound comes from what they *declare*: each `<audio id src data-start>`
+ * becomes a stand-in audio asset with its own `<audio>` element, routed into the clip's track
+ * exactly like a clip's sound, positioned by the shared schedule in `@shared/composition-audio`
+ * and scaled by `itemAudioGainAt` — the same two functions export mixes with.
  */
 
 import {
-  fadeGainAt,
   findAsset,
   itemEnd,
   type Asset,
@@ -31,6 +36,15 @@ import {
   type Timeline,
   type Track
 } from '@shared/project'
+import type { CompositionSound } from '@shared/composition'
+import { audibleSpan, itemAudioGainAt, resolveAudioOffsets, transitionOfItemAt } from '@shared/audio-gain'
+import { linkedPartners, soundAlignedWithPicture } from '@shared/links'
+import {
+  scheduleCompositionSounds,
+  soundSecondsAt,
+  type ScheduledSound
+} from '@shared/composition-audio'
+import { inspectedSounds, type SoundLookup } from './compositionSounds'
 import { MediaPool, type MediaEntry } from './mediaPool'
 import { elementSlots, itemsToDraw } from './compositor'
 import { transitionAudioGains } from './transitions'
@@ -67,6 +81,24 @@ export interface AudioRouting {
    */
   transitionGain: number
   /**
+   * The item's whole gain at this frame — `itemAudioGainAt`, the function export's envelope is
+   * sampled from, so volume, fades, transitions, J/L offsets and ducking are decided once for
+   * both. `transitionGain` above is one factor of it, kept for the routing tests that pin it.
+   */
+  gain: number
+  /**
+   * Set when the item's sound is *detached* from its picture — a J/L cut, whose sound runs
+   * before or after the frames its picture is drawn on. It then plays from its own `<audio>`
+   * element (`asset` is a stand-in over the same file), positioned at `mediaSeconds`, for the
+   * whole of its audible span: switching from a stand-in to the video element at the picture
+   * cut would put a seam in the sound exactly where a J-cut is meant to hide one.
+   *
+   * `claim` names the picture's own element when the picture is drawn this frame. Its sound must
+   * be *owned* by the graph and left silent, because a media element no source node has claimed
+   * plays straight to the speakers — a second, unmixed copy of the same sound.
+   */
+  detached?: { mediaSeconds: number; claim: { asset: Asset; slot: number } | null }
+  /**
    * True when this item reaches its track's analyser — i.e. the meter shows it. Mute does
    * not switch this off: the meter must keep showing what is on a muted track, or it is
    * lying about the material.
@@ -92,23 +124,48 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
   const out: AudioRouting[] = []
   // The same list and the same slot assignment the compositor draws from, so a source node is
   // always bound to the element its picture comes from.
-  const { items: drawing, active } = itemsToDraw(project, timeline, frame)
+  const { items: drawing, active } = itemsToDraw(project, timeline, frame, 'sound')
   const slots = elementSlots(drawing)
+  // What the compositor actually draws this frame — the elements a detached sound may share.
+  const pictureSlots = elementSlots(itemsToDraw(project, timeline, frame, 'picture').items)
   const gains = active
     ? transitionAudioGains(active.resolved.transition.kind, active.progress)
     : null
+
+  const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
 
   const push = (item: Item, track: Track, transitionGain: number): void => {
     const asset = findAsset(project, item.assetId)
     // An asset that failed to probe has no decodable audio; ffmpeg refuses to open it, and on
     // the export side one bad input fails the whole mix.
     if (!asset || asset.error || !asset.hasAudio) return
+    const gain = itemAudioGainAt(project, timeline, item, frame)
+    if (!isDetached(project, timeline, item)) {
+      out.push({
+        item,
+        track,
+        asset,
+        slot: slots.get(item.id) ?? 0,
+        transitionGain,
+        gain,
+        metered: true,
+        audible: !track.muted
+      })
+      return
+    }
+    const standIn = detachedAsset(asset, item)
+    const drawn = slots.get(item.id)
     out.push({
       item,
       track,
-      asset,
-      slot: slots.get(item.id) ?? 0,
+      asset: standIn,
+      slot: 0,
       transitionGain,
+      gain,
+      detached: {
+        mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
+        claim: drawn !== undefined && asset.hasVideo ? { asset, slot: drawn } : null
+      },
       metered: true,
       audible: !track.muted
     })
@@ -117,14 +174,29 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
   const trackOf = (item: Item): Track | undefined =>
     timeline.tracks.find((t) => t.items.some((i) => i.id === item.id))
 
+  // Items on audio tracks sound over their whole audible span — J/L offsets and the handles of
+  // every transition of their own — and are routed after the picture tracks' clips, below.
+  const onAudioTracks: { item: Item; track: Track }[] = []
+
   for (const track of timeline.tracks) {
     for (const item of track.items) {
+      // A picture whose sound was detached plays none of its own; its linked audio item does.
+      if (item.audioDetached) continue
+      if (track.kind === 'audio') {
+        const span = audibleSpan(project, timeline, item)
+        if (frame >= span.firstFrame && frame < span.endFrame) onAudioTracks.push({ item, track })
+        continue
+      }
       // A transition's two clips are handled below: inside the window only one of them
       // contains the frame, and both must sound.
       if (active && (item.id === active.resolved.from.id || item.id === active.resolved.to.id)) {
         continue
       }
-      if (frame < item.from || frame >= itemEnd(item)) continue
+      // A J/L cut sounds outside its picture's frames, over its audible span.
+      if (isDetached(project, timeline, item)) {
+        const span = audibleSpan(project, timeline, item)
+        if (frame < span.firstFrame || frame >= span.endFrame) continue
+      } else if (frame < item.from || frame >= itemEnd(item)) continue
       push(item, track, 1)
     }
   }
@@ -132,10 +204,219 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
   if (active && gains) {
     const fromTrack = trackOf(active.resolved.from)
     const toTrack = trackOf(active.resolved.to)
-    if (fromTrack) push(active.resolved.from, fromTrack, gains.from)
-    if (toTrack) push(active.resolved.to, toTrack, gains.to)
+    if (fromTrack?.kind === 'video' && !active.resolved.from.audioDetached) {
+      push(active.resolved.from, fromTrack, gains.from)
+    }
+    if (toTrack?.kind === 'video' && !active.resolved.to.audioDetached) {
+      push(active.resolved.to, toTrack, gains.to)
+    }
   }
 
+  // Audio-track clips. Two clips of one audio file sounding at once — the halves of a split clip
+  // cross-fading — need an element each, earliest first on slot 0, which is the slot the outgoing
+  // one was already playing on.
+  onAudioTracks.sort((a, b) => a.item.from - b.item.from)
+  const audioSlotsUsed = new Map<string, number>()
+  for (const { item, track } of onAudioTracks) {
+    const asset = findAsset(project, item.assetId)
+    if (!asset || asset.error || !asset.hasAudio) continue
+    const transition = transitionOfItemAt(project, timeline, item, frame)
+    const transitionGain = transition
+      ? transitionAudioGains(transition.resolved.transition.kind, transition.progress)[
+          transition.resolved.from.id === item.id ? 'from' : 'to'
+        ]
+      : 1
+    const gain = itemAudioGainAt(project, timeline, item, frame)
+
+    if (asset.hasVideo) {
+      // A video file's sound on an audio track: the detached sound of a clip. Where it plays
+      // exactly what its linked picture is showing, it shares the element the compositor is
+      // already decoding for that picture — one decode for the clip, as before the detach.
+      // Anywhere else it has an `<audio>` element of its own, and a drawn linked picture's
+      // element is claimed silently so its sound cannot reach the speakers unmixed.
+      const picture = sharedPicture(timeline, item, pictureSlots)
+      if (picture !== null && !isDetached(project, timeline, item)) {
+        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, metered: true, audible: !track.muted })
+        continue
+      }
+      const standIn = detachedAsset(asset, item)
+      const partner = linkedPartners(timeline, item.id).find((p) => pictureSlots.has(p.id) && p.assetId === asset.id)
+      out.push({
+        item,
+        track,
+        asset: standIn,
+        slot: 0,
+        transitionGain,
+        gain,
+        detached: {
+          mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
+          claim: partner ? { asset, slot: pictureSlots.get(partner.id) ?? 0 } : null
+        },
+        metered: true,
+        audible: !track.muted
+      })
+      continue
+    }
+
+    const slot = audioSlotsUsed.get(asset.id) ?? 0
+    audioSlotsUsed.set(asset.id, slot + 1)
+    out.push({ item, track, asset, slot, transitionGain, gain, metered: true, audible: !track.muted })
+  }
+
+  return out
+}
+
+/**
+ * The drawn picture element a detached sound can play from: its linked picture, drawn this frame,
+ * showing exactly the source this sound plays (`soundAlignedWithPicture`). Null otherwise.
+ */
+function sharedPicture(
+  timeline: Timeline,
+  item: Item,
+  pictureSlots: ReadonlyMap<string, number>
+): { picture: Item; slot: number } | null {
+  for (const partner of linkedPartners(timeline, item.id)) {
+    const slot = pictureSlots.get(partner.id)
+    if (slot === undefined || !soundAlignedWithPicture(item, partner)) continue
+    return { picture: partner, slot }
+  }
+  return null
+}
+
+/**
+ * Picture elements drawn at `frame` whose own sound must not be heard: clips whose audio was
+ * detached. Each is claimed by a source node that is never routed, because a media element no
+ * source node has claimed plays straight to the speakers. Where a linked audio item shares the
+ * element this frame, its routing marks the node active and the claim changes nothing.
+ */
+export function silentPictureClaimsAt(
+  project: Project,
+  timeline: Timeline,
+  frame: number
+): { asset: Asset; slot: number }[] {
+  const drawing = itemsToDraw(project, timeline, frame, 'picture').items
+  const slots = elementSlots(drawing)
+  const out: { asset: Asset; slot: number }[] = []
+  for (const item of drawing) {
+    if (!item.audioDetached) continue
+    const asset = findAsset(project, item.assetId)
+    if (!asset || asset.error || !asset.hasAudio || !asset.hasVideo) continue
+    out.push({ asset, slot: slots.get(item.id) ?? 0 })
+  }
+  return out
+}
+
+/** True when `item` has a J/L offset that survives clamping, so its sound leaves its picture. */
+function isDetached(project: Project, timeline: Timeline, item: Item): boolean {
+  if (!item.audioLeadFrames && !item.audioTrailFrames) return false
+  const offsets = resolveAudioOffsets(project, timeline, item)
+  return offsets.leadFrames > 0 || offsets.trailFrames > 0
+}
+
+/**
+ * The stand-in a detached item's sound plays from: the same file as an audio-only asset, keyed
+ * per *item*, so the pool gives it an `<audio>` element of its own that no picture ever seeks.
+ * Its duration is the source's, so `sourceSecondsAt` clamps to the same end.
+ */
+function detachedAsset(asset: Asset, item: Item): Asset {
+  return {
+    ...asset,
+    id: `${asset.id}~detached~${item.id}`,
+    kind: 'audio',
+    hasVideo: false,
+    width: null,
+    height: null
+  }
+}
+
+/** One declared composition sound heard at a frame, and how to play it. */
+export interface SoundRouting {
+  item: Item
+  track: Track
+  /**
+   * A stand-in asset for the sound file, so the media pool holds its element the way it holds
+   * any clip's — and evicts it, and retires it when idle, by the same rules. Its id is per
+   * *item*, not per composition: two placements of one composition overlapping in time are two
+   * sounds at two positions, and one element cannot be in two places.
+   */
+  asset: Asset
+  entry: ScheduledSound
+  /** The item's gain at this frame times the sound's own `data-volume`. */
+  gain: number
+  /** Where in the sound file playback should be at this frame. */
+  mediaSeconds: number
+  /** As for clips: `muted` governs sound, and a muted track still meters. */
+  audible: boolean
+}
+
+/** The stand-in asset id for sound `index` of `item`. */
+function soundAssetId(item: Item, index: number): string {
+  return `${item.assetId}~sound~${item.id}~${index}`
+}
+
+function soundAsset(item: Item, entry: ScheduledSound): Asset {
+  return {
+    id: soundAssetId(item, entry.index),
+    kind: 'audio',
+    name: entry.sound.id,
+    path: entry.sound.path,
+    durationUs: 0,
+    width: null,
+    height: null,
+    fps: null,
+    hasAudio: true,
+    hasVideo: false,
+    posterPath: null,
+    waveformPath: null,
+    createdAt: 0
+  }
+}
+
+/**
+ * Every declared composition sound heard at `frame`.
+ *
+ * The same walk as {@link audioRoutingAt} — every track, `hidden` ignored, `muted` routed rather
+ * than skipped — over the items whose asset is a composition. `lookup` answers what each one
+ * declares; a composition it cannot answer for yet is silent this frame, not an error.
+ */
+export function compositionSoundsAt(
+  project: Project,
+  timeline: Timeline,
+  frame: number,
+  lookup: SoundLookup
+): SoundRouting[] {
+  const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
+  const out: SoundRouting[] = []
+  for (const track of timeline.tracks) {
+    for (const item of track.items) {
+      const asset = findAsset(project, item.assetId)
+      if (!asset || asset.kind !== 'html' || asset.error) continue
+      const span = audibleSpan(project, timeline, item)
+      if (frame < span.firstFrame || frame >= span.endFrame) continue
+      const declared: readonly CompositionSound[] | null = lookup(asset)
+      if (!declared || declared.length === 0) continue
+      const schedule = scheduleCompositionSounds(
+        item,
+        span,
+        asset.durationUs / 1_000_000,
+        declared,
+        fps
+      )
+      for (const entry of schedule) {
+        const mediaSeconds = soundSecondsAt(entry, frame / fps)
+        if (mediaSeconds === null) continue
+        out.push({
+          item,
+          track,
+          asset: soundAsset(item, entry),
+          entry,
+          gain: itemAudioGainAt(project, timeline, item, frame) * entry.sound.volume,
+          mediaSeconds,
+          audible: !track.muted
+        })
+      }
+    }
+  }
   return out
 }
 
@@ -173,12 +454,14 @@ export class AudioEngine {
   readonly #tracks = new Map<string, TrackNodes>()
   readonly #sources = new Map<string, SourceNodes>()
   readonly #releaseEvictListener: () => void
+  readonly #sounds: SoundLookup
   #context: AudioContext | null = null
   #master: GainNode | null = null
   #masterVolume = 1
 
-  constructor(pool: MediaPool) {
+  constructor(pool: MediaPool, sounds: SoundLookup = inspectedSounds()) {
     this.#pool = pool
+    this.#sounds = sounds
     // An evicted element takes its source node with it: a MediaElementAudioSourceNode is
     // bound to one element for life and cannot be re-pointed.
     this.#releaseEvictListener = pool.onEvict((entry) => this.#forget(entry))
@@ -236,10 +519,30 @@ export class AudioEngine {
     }
 
     {
+      // Detached pictures first: their elements are owned silently before anything routes, so a
+      // linked sound sharing one this frame finds the node already made.
+      for (const claim of silentPictureClaimsAt(project, timeline, frame)) {
+        const drawn = this.#pool.acquire(claim.asset, claim.slot).element
+        if (drawn instanceof HTMLVideoElement) {
+          this.#sourceNodes(context, sourceKey(claim.asset.id, claim.slot), drawn)
+        }
+      }
+
       for (const routed of audioRoutingAt(project, timeline, frame)) {
         const { item, track, asset } = routed
         const nodes = this.#tracks.get(track.id)
         if (!nodes) continue
+
+        // A detached (J/L) item's picture element is claimed silently first: owned by a source
+        // node that is never marked active, so `#silenceInactive` holds it at zero instead of
+        // letting the compositor's playback reach the speakers unmixed.
+        const claim = routed.detached?.claim
+        if (claim) {
+          const drawn = this.#pool.acquire(claim.asset, claim.slot).element
+          if (drawn instanceof HTMLVideoElement) {
+            this.#sourceNodes(context, sourceKey(claim.asset.id, claim.slot), drawn)
+          }
+        }
 
         const entry = this.#pool.acquire(asset, routed.slot)
         const element = entry.element
@@ -256,15 +559,33 @@ export class AudioEngine {
         active.add(key)
 
         this.#route(source, nodes, track.id)
-        // Three independent things multiply: the item's own volume, its fade envelope, and
-        // any transition cross-fade over it. Collapsing any two of them would make one
-        // unreachable while the other is set.
-        source.gain.gain.value =
-          clamp(finite(item.volume, 1), 0, 2) *
-          fadeGainAt(item, frame) *
-          clamp(finite(routed.transitionGain, 1), 0, 1)
+        // The shared gain — volume, fades, transition, J/L offsets, duck — the same function
+        // export's envelope is sampled from, so the two cannot be re-decided apart.
+        source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 2)
 
-        this.#drive(element, item, asset, frame, fps, playing)
+        if (routed.detached) {
+          if (element instanceof HTMLAudioElement) {
+            this.#position(element, item.speed, routed.detached.mediaSeconds, fps, playing)
+          }
+        } else {
+          this.#drive(element, item, asset, frame, fps, playing)
+        }
+      }
+
+      // Declared composition sounds, through the same nodes: an element, a source node keyed
+      // by the stand-in asset, the track's gain and analyser.
+      for (const routed of compositionSoundsAt(project, timeline, frame, this.#sounds)) {
+        const nodes = this.#tracks.get(routed.track.id)
+        if (!nodes) continue
+        const element = this.#pool.acquire(routed.asset).element
+        if (!(element instanceof HTMLAudioElement)) continue
+        const key = sourceKey(routed.asset.id, 0)
+        const source = this.#sourceNodes(context, key, element)
+        if (!source) continue
+        active.add(key)
+        this.#route(source, nodes, routed.track.id)
+        source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 8)
+        this.#position(element, routed.entry.speed, routed.mediaSeconds, fps, playing)
       }
     }
 
@@ -401,8 +722,29 @@ export class AudioEngine {
     playing: boolean
   ): void {
     if (!(element instanceof HTMLAudioElement)) return
+    this.#position(element, item.speed, sourceSecondsAt(item, asset, frame, fps), fps, playing)
+  }
 
-    element.playbackRate = playbackRateFor(item.speed)
+  /**
+   * The transport half of {@link #drive}, shared with composition sounds, whose position comes
+   * from their schedule rather than from `sourceSecondsAt`.
+   */
+  #position(
+    element: HTMLAudioElement,
+    speed: number,
+    expected: number,
+    fps: number,
+    playing: boolean
+  ): void {
+    // A declared sound with no data-duration is scheduled to the end of the composition, and
+    // the file may end first. Past its end there is nothing to play, and seeking there every
+    // frame would be a seek per picture that lands on silence.
+    if (Number.isFinite(element.duration) && expected >= element.duration) {
+      if (!element.paused) element.pause()
+      return
+    }
+
+    element.playbackRate = playbackRateFor(speed)
     if (playing && element.paused) void element.play().catch(() => {})
     if (!playing && !element.paused) element.pause()
 
@@ -410,7 +752,6 @@ export class AudioEngine {
     // Paused, the element is being positioned rather than corrected, so it is pinned to
     // the frame: a play from here has to start at the right sample, not 80ms into it.
     const tolerance = playing ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
-    const expected = sourceSecondsAt(item, asset, frame, fps)
     if (Math.abs(element.currentTime - expected) <= tolerance) return
     try {
       element.currentTime = expected

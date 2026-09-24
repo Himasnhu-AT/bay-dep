@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 31 — Typography for vertical video
 
 Round 2. Everything below was **measured on this machine** against bay's own text stack

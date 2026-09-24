@@ -1,6 +1,19 @@
 import { useState, type ReactNode } from 'react'
-import { FilmIcon, ImageIcon, Music2, Plus, Trash2, Type as TypeIcon } from 'lucide-react'
-import type { Asset } from '@shared/project'
+import { completeBrfImports } from '@/lib/brfImport'
+import {
+  AlertTriangle,
+  Code2,
+  FilmIcon,
+  ImageIcon,
+  Music2,
+  Plus,
+  Trash2,
+  Type as TypeIcon,
+  type LucideIcon,
+  Palette,
+  Sparkles
+} from 'lucide-react'
+import type { Asset, AssetKind } from '@shared/project'
 import { Button, EmptyState, IconButton, Panel, ScrollArea } from '@/components'
 import { call, formatSourceDuration, importMessage } from '@/lib/bay'
 import { cn } from '@/lib/cn'
@@ -10,12 +23,40 @@ import { useEditor } from '@/store/editor'
 /** The drag payload a media card writes and a timeline lane reads. */
 export const ASSET_DRAG_TYPE = 'application/x-bay-asset'
 
-const KIND_ICON = {
+/**
+ * Typed `Record<AssetKind, ...>` on purpose: an untyped literal lets a new asset kind index to
+ * `undefined`, React renders `<undefined />`, and the whole tree unmounts to a blank window
+ * with nothing in the console. That is not hypothetical — adding `html` did exactly that, and
+ * both typecheck and the test suite stayed green because neither can see a missing key in an
+ * object literal nobody declared exhaustive. The annotation turns the next one into a build
+ * error.
+ */
+const KIND_ICON: Record<AssetKind, LucideIcon> = {
   video: FilmIcon,
   audio: Music2,
   image: ImageIcon,
   gif: ImageIcon,
-  text: TypeIcon
+  text: TypeIcon,
+  html: Code2,
+  brf: Sparkles,
+  lut: Palette,
+  font: TypeIcon
+}
+
+/**
+ * The card's second line when there are no pixel dimensions to show. It was an em dash for
+ * every text clip, which is a line of the card spent saying nothing.
+ */
+const KIND_NOTE: Record<AssetKind, string> = {
+  video: 'Video',
+  audio: 'Audio only',
+  image: 'Image',
+  gif: 'Animated image',
+  text: 'Text clip',
+  html: 'HTML composition',
+  brf: 'Motion graphic',
+  lut: 'Colour LUT',
+  font: 'Font'
 }
 
 function AssetCard({ asset }: { asset: Asset }): ReactNode {
@@ -42,11 +83,18 @@ function AssetCard({ asset }: { asset: Asset }): ReactNode {
         className={cn(
           't-fast block w-full overflow-hidden rounded-sm border border-line bg-surface-2 text-left',
           broken
-            ? 'cursor-not-allowed opacity-50'
+            ? 'cursor-not-allowed border-danger/40'
             : 'hover:border-line-strong hover:bg-surface-3 focus-visible:border-accent'
         )}
       >
-        <div className="relative aspect-video w-full overflow-hidden bg-surface-0">
+        {/* A broken asset dims its picture, not its explanation: the whole card at 50% put
+            "Could not be read" at ~2:1 in grey, where it read as a caption, not an error. */}
+        <div
+          className={cn(
+            'relative aspect-video w-full overflow-hidden bg-surface-0',
+            broken && 'opacity-50'
+          )}
+        >
           {poster ? (
             <img
               src={poster}
@@ -67,31 +115,38 @@ function AssetCard({ asset }: { asset: Asset }): ReactNode {
             className={cn(
               'absolute top-1 left-1 rounded-xs px-1 text-[10px] leading-4 font-medium tracking-wide uppercase',
               asset.kind === 'audio'
-                ? 'bg-clip-audio text-ink-0'
+                ? 'bg-clip-audio text-on-media'
                 : asset.kind === 'video'
-                  ? 'bg-clip-video text-ink-0'
+                  ? 'bg-clip-video text-on-media'
                   : 'bg-surface-3 text-ink-1'
             )}
           >
             {asset.kind}
           </span>
           {asset.durationUs > 0 && (
-            <span className="absolute right-1 bottom-1 rounded-xs bg-black/70 px-1 text-[10px] leading-4 text-ink-0 tabular-nums">
+            <span className="absolute right-1 bottom-1 rounded-xs bg-black/70 px-1 text-[10px] leading-4 text-on-media tabular-nums">
               {formatSourceDuration(asset.durationUs)}
             </span>
           )}
         </div>
         <div className="px-1.5 py-1">
-          <p className="truncate text-[11px] text-ink-0">{asset.name}</p>
-          <p className="truncate text-[10px] text-ink-2">
-            {broken
-              ? 'Could not be read'
-              : asset.width && asset.height
+          <p className={cn('truncate text-[11px]', broken ? 'text-ink-1' : 'text-ink-0')}>
+            {asset.name}
+          </p>
+          {broken ? (
+            <p className="flex items-center gap-1 truncate text-[10px] text-danger">
+              <AlertTriangle aria-hidden="true" className="size-3 shrink-0" />
+              Could not be read
+            </p>
+          ) : (
+            <p className="truncate text-[10px] text-ink-2">
+              {asset.width && asset.height
                 ? `${asset.width}×${asset.height}`
                 : asset.kind === 'audio'
                   ? 'Audio only'
-                  : '—'}
-          </p>
+                  : KIND_NOTE[asset.kind]}
+            </p>
+          )}
         </div>
       </button>
 
@@ -117,11 +172,15 @@ export function MediaPanel(): ReactNode {
 
   const runImport = async (): Promise<void> => {
     setImporting(true)
-    const imported = await call('Import', (api) => api.media.importDialog())
-    setImporting(false)
+    const picked = await call('Import', (api) => api.media.importDialog())
     // Null is a failure, which `call` has already reported; an empty array is the user
     // dismissing the picker, which needs no comment at all.
-    if (!imported || imported.length === 0) return
+    if (!picked || picked.length === 0) {
+      setImporting(false)
+      return
+    }
+    const imported = await completeBrfImports(picked)
+    setImporting(false)
     addAssets(imported.map((entry) => entry.asset))
     const message = importMessage(imported)
     notify(message.text, message.kind)

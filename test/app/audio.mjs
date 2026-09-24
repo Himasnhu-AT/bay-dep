@@ -108,6 +108,6 @@ console.log(meterHonestWhenMuted ? `PASS  a muted track still meters (max peak $
 console.log(selfCheck ? `PASS  self-check: item volume 0 drives the meters to ${silenced.maxPeak}`
                       : `FAIL  self-check: meters still read ${silenced.maxPeak} at volume 0 - they are not measuring audio`)
 
-close()
+await close()
 const ok = running && heardSomething && meterHonestWhenMuted && selfCheck
 process.exit(ok ? 0 : 1)

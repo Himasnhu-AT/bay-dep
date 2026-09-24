@@ -17,19 +17,33 @@ import {
   fadeGainAt,
   findAsset,
   itemsAtFrame,
+  resolveTransition,
   transitionAtFrame,
   type Asset,
   type TransitionKind,
   type Item,
   type Project,
-  type Timeline
+  type Timeline,
+  isCropped,
+  cropSourceRect,
+  cropDestRect
 } from '@shared/project'
+import { animatedItemAt } from '@shared/keyframes'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
+import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
+import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
+import { brfRuntime } from './brfCode'
+import { importedFonts } from './importedFonts'
+import type { BrfDocument } from '@shared/brf'
+import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
+import { gradeSource, resolvedGradeOf } from './grade'
+import { grainSeed } from '@shared/grade'
 import {
   anchorFor,
   fontIsAvailable,
+  FONT_PROBE_STRING,
   layoutText,
   MIN_FONT_SIZE,
   type TextFit,
@@ -37,6 +51,9 @@ import {
 } from './text'
 import {
   DRIFT_TOLERANCE_SECONDS,
+  MAX_SEEK_LEAD_MS,
+  PLAYBACK_SEEK_PATIENCE_MS,
+  PREROLL_SECONDS,
   STALE_SEEK_MS,
   clamp,
   clamp01,
@@ -66,6 +83,24 @@ export interface DrawStats {
   /** Items drawn as a placeholder because their asset is missing or unreadable. */
   placeholders: number
   /**
+   * The names behind `pending` and `placeholders`.
+   *
+   * Reported by the compositor because **the code that tried to draw is the only thing that
+   * knows what it could not draw.** The caller used to reconstruct this list by asking the
+   * `MediaPool` whether each asset had a picture — which is false for every composition, since
+   * those come from the `CompositionPool`. So a frame with one pending item named two innocent
+   * composition files and never named the real one. Rebuilding the answer from a different
+   * source than the question is what made it wrong; a second attempt keyed by the timeline
+   * size instead of the scaled render size got it wrong again, differently.
+   */
+  unresolvedNames: string[]
+  /**
+   * The names behind `pending` alone — what this frame is still waiting for, as opposed to what
+   * it drew as a placeholder. The exporter reports these when it writes a frame without them, and
+   * `unresolvedNames` cannot tell it which is which.
+   */
+  pendingNames: string[]
+  /**
    * How each text item actually came out.
    *
    * Reported for the same reason `pending` is: the output looks plausible while being wrong.
@@ -89,11 +124,22 @@ export interface DrawStats {
     requestedFrames: number
     clampedBecause: string | null
   }
+  /**
+   * Clips whose grade could not be applied, and why — drawn ungraded rather than not at all.
+   * Absent when there is nothing to say. A grade that silently fails looks like a grade that was
+   * never set, which is the one outcome an agent reading `preview_frame` cannot tell from success.
+   */
+  gradeIssues?: string[]
 }
 
 interface SeekState {
   targetSeconds: number
   issuedAt: number
+  /**
+   * A playback seek whose landing has not been timed yet. Only those measure latency: a scrub or
+   * preroll seek may have landed long before anyone looks, and would read as a huge latency.
+   */
+  timing?: boolean
 }
 
 const PLACEHOLDER_FILL = '#232329'
@@ -102,6 +148,8 @@ const PLACEHOLDER_INK = '#8b8b96'
 
 export class Compositor {
   readonly #pool: MediaPool
+  /** Where `.brf` items are painted before they are drawn like any other source. */
+  readonly #brf = new BrfSurfaces()
   /**
    * Outstanding seeks, keyed by asset rather than by item. One element cannot be at two
    * source times at once, so two items sharing an asset in the same frame would otherwise
@@ -163,8 +211,15 @@ export class Compositor {
    * as the pixels, or the evidence destroys itself.
    */
   readonly #seeks = new Map<string, SeekState>()
+  /** How long each element's last playback seek took to land, in ms. See `#syncElement`. */
+  readonly #seekLatency = new Map<string, number>()
 
-  constructor(pool: MediaPool) {
+  readonly #compositions: CompositionPool | null
+  /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
+  #project: Project | null = null
+
+  constructor(pool: MediaPool, compositions?: CompositionPool) {
+    this.#compositions = compositions ?? null
     this.#pool = pool
   }
 
@@ -185,9 +240,14 @@ export class Compositor {
   ): DrawStats {
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
-    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [] }
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
 
     this.#pool.beginGeneration()
+    // The project's imported fonts registered before anything draws — every drawing path (the
+    // preview, `preview_frame`, export) comes through here, so none can draw text in a face the
+    // project has and the document does not. A no-op when the font set has not changed.
+    importedFonts.sync(project.assets)
+    this.#project = project
 
     const width = Math.max(1, finite(timeline.width, 1))
     const height = Math.max(1, finite(timeline.height, 1))
@@ -280,24 +340,77 @@ export class Compositor {
     })
   }
 
+  /**
+   * Puts the element of every clip about to come on screen at that clip's first source frame,
+   * paused, before the playhead reaches it. Live playback only — export and `preview_frame`
+   * wait for their sources instead, and never call this.
+   *
+   * Without it the incoming clip's element is wherever it was left (source 0 when new, the end of
+   * its last play when warm), so the draw at the cut issues the seek, finds the element mid-seek
+   * with nothing drawable, and paints the background: **one black picture at every cut**, cold
+   * and warm, graded or not — measured by `test/app/cut-playback.mjs` on the reporter's own takes,
+   * whose in-points sit up to 20 frames past their only keyframe. Prerolled, the draw at the cut
+   * finds the element already there and only has to press play.
+   *
+   * Call it after every consumer has acquired what this frame needs and before
+   * `MediaPool.retireIdle`: an element anything asked for this generation is in use — the picture
+   * of another clip, or a hidden track's sound, which the compositor never sees — and is left
+   * alone rather than paused and moved under its user. A same-asset jump cut is that case (one
+   * element, two source times); `PictureHold` covers it.
+   */
+  preroll(project: Project, timeline: Timeline, frame: number, options: { now?: number } = {}): void {
+    const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
+    const now = options.now ?? performance.now()
+    for (const target of prerollTargets(project, timeline, frame, Math.ceil(PREROLL_SECONDS * fps))) {
+      if (this.#pool.inUse(target.asset.id, target.slot)) continue
+      const entry = this.#pool.acquire(target.asset, target.slot)
+      const element = entry.element
+      if (!(element instanceof HTMLVideoElement)) continue
+      if (!element.paused) element.pause()
+      const seconds = sourceSecondsAt(target.item, target.asset, target.startFrame, fps)
+      // There, or on its way: `currentTime` reads a seek's target from the moment it is set.
+      if (Math.abs(element.currentTime - seconds) <= 0.5 / fps) continue
+      try {
+        element.currentTime = seconds
+        // Recorded where the draw will find it: a preroll seek still in flight when the clip
+        // starts is then waited for, not restarted (`#syncElement`'s patience).
+        this.#seeks.set(`${entry.assetId}#${entry.slot}`, { targetSeconds: seconds, issuedAt: now })
+      } catch {
+        // Before metadata a seek throws; the next frame asks again.
+      }
+    }
+  }
+
   /** Drops seek bookkeeping for assets no longer on screen. */
   reset(): void {
     this.#seeks.clear()
+    this.#seekLatency.clear()
+    this.#brf.reset()
   }
 
   // -- internals ------------------------------------------------------------
 
   #drawSource(
     ctx: RenderTarget,
-    element: HTMLVideoElement | HTMLImageElement,
+    // An ImageBitmap joins the two element types here because a composition frame arrives as
+    // pixels rather than as a loaded element. Everything below is geometry, alpha, look and
+    // rotation, none of which cares which of the three it was handed.
+    element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas,
     item: Item,
     frame: number,
-    alphaMul = 1
+    alphaMul = 1,
+    stats?: DrawStats
   ): void {
     const box = layoutBox(item)
     if (!box) return
     const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
     if (alpha <= 0) return
+
+    // Read before the rotation is applied, so the device scale is the preview's or the export's
+    // and nothing else.
+    const transform = ctx.getTransform()
+    const scaleX = Math.hypot(transform.a, transform.b) || 1
+    const scaleY = Math.hypot(transform.c, transform.d) || 1
 
     ctx.save()
     ctx.globalAlpha = alpha
@@ -307,12 +420,56 @@ export class Compositor {
     applyLook(ctx, item)
     applyRotation(ctx, item, box)
     try {
-      ctx.drawImage(element, box.left, box.top, box.width, box.height)
+      // The source's own pixel size, which each of the three element kinds spells
+      // differently — and `videoWidth`/`naturalWidth` are 0 until the first frame decodes,
+      // which is why a crop falls back to drawing uncropped rather than skipping: a clip that
+      // vanished for two frames while loading would read as a bug in the crop.
+      const sourceWidth = intrinsicWidth(element)
+      const sourceHeight = intrinsicHeight(element)
+      const cropped = isCropped(item.crop) ? cropSourceRect(item.crop, sourceWidth, sourceHeight) : null
+      const src = cropped ?? { sx: 0, sy: 0, sw: sourceWidth, sh: sourceHeight }
+      const dest = cropped
+        ? cropDestRect(item.crop, box)
+        : { dx: box.left, dy: box.top, dw: box.width, dh: box.height }
+
+      // The grade replaces the source with a graded picture of the same framing, at the size it
+      // will be drawn — everything else about the draw (alpha, blend, filter, rotation) is
+      // unchanged. An identity grade resolves to null and costs nothing.
+      const grade = resolvedGradeOf(item.grade)
+      if (grade && src.sw > 0 && src.sh > 0) {
+        const lutAsset = grade.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
+        const graded = gradeSource(grade, {
+          source: element,
+          ...src,
+          // Times the item's own zoom, which `applyRotation` applies after the device scale was
+          // read: a pushed-in clip is graded at the size it appears, not upscaled from its box.
+          width: Math.max(1, Math.round(Math.abs(dest.dw) * scaleX * zoomOf(item))),
+          height: Math.max(1, Math.round(Math.abs(dest.dh) * scaleY * zoomOf(item))),
+          boxWidth: Math.abs(dest.dw),
+          boxHeight: Math.abs(dest.dh),
+          frame,
+          seed: grainSeed(item.id),
+          lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
+        })
+        if (graded.ok) {
+          ctx.drawImage(graded.canvas, 0, 0, graded.width, graded.height, dest.dx, dest.dy, dest.dw, dest.dh)
+          if (graded.warning) noteGradeIssue(stats, `clip ${item.id}: ${graded.warning}`)
+          return
+        }
+        noteGradeIssue(stats, `clip ${item.id} was drawn ungraded: ${graded.error}`)
+      }
+
+      if (cropped) {
+        ctx.drawImage(element, src.sx, src.sy, src.sw, src.sh, dest.dx, dest.dy, dest.dw, dest.dh)
+      } else {
+        ctx.drawImage(element, box.left, box.top, box.width, box.height)
+      }
     } catch {
       // A frame can be pulled out from under us mid-draw (the element reloaded, the source
       // went away). One missing item must not abandon the rest of the frame.
+    } finally {
+      ctx.restore()
     }
-    ctx.restore()
   }
 
   /**
@@ -334,10 +491,17 @@ export class Compositor {
     stats: DrawStats,
     opts: { alphaMul?: number }
   ): void {
+    // Keyframes resolve here, once, into the layout every draw below reads — so a transition's
+    // two sides, text, .brf, compositions and placeholders all animate through one sampler, and
+    // an item with no keys is passed through as the same object.
+    item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {
       this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
       stats.placeholders += 1
+      stats.unresolvedNames.push(
+        asset ? `${asset.name} (${asset.error ?? 'unreadable'})` : 'a missing asset'
+      )
       return
     }
 
@@ -345,12 +509,100 @@ export class Compositor {
     if (entry.status === 'error') {
       this.#drawPlaceholder(ctx, item, asset.name)
       stats.placeholders += 1
+      stats.unresolvedNames.push(`${asset.name} (could not be decoded)`)
       return
     }
 
     if (asset.kind === 'text') {
+      // An imported face still loading: drawn now, the words would be in a fallback face, which
+      // looks deliberate. Incomplete, like a decoding video, and waited for the same way.
+      if (item.text && importedFonts.isLoading(item.text.fontFamily)) {
+        notePending(stats, asset.name)
+        return
+      }
       const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
       if (fit) stats.textFits.push(fit)
+      stats.drawn += 1
+      return
+    }
+
+    if (asset.kind === 'brf') {
+      // Painted here, from the document, at the size it will appear — no window, no capture,
+      // nothing to wait for — then drawn like any source so crop, looks and fades apply.
+      const box = layoutBox(item)
+      if (!box) return
+      const scale = Math.min(1, Math.abs(ctx.getTransform().a) || 1)
+      const seconds = secondsAt(asset, item, frame, fps)
+      const values = resolveVariables({ variables: asset.compositionVariables ?? [] }, item.variables)
+      let doc: BrfDocument
+      if (asset.brfCode !== undefined) {
+        // Code runs in a worker; its scene for this frame is cached, on its way, or failed.
+        const size = layoutSizeOf(asset, box)
+        const lastFrame = Math.max(0, Math.ceil((asset.durationUs / 1_000_000) * fps) - 1)
+        const scene = brfRuntime.scene(asset.brfCode, values, Math.min(lastFrame, Math.round(seconds * fps)), fps, size.width, size.height)
+        if ('pending' in scene) {
+          notePending(stats, asset.name)
+          return
+        }
+        if ('error' in scene) {
+          this.#drawPlaceholder(ctx, item, asset.name)
+          stats.placeholders += 1
+          stats.unresolvedNames.push(`${asset.name} (${scene.error})`)
+          return
+        }
+        doc = scene.doc
+      } else {
+        const entry = documentOf(asset)
+        if ('error' in entry) {
+          this.#drawPlaceholder(ctx, item, asset.name)
+          stats.placeholders += 1
+          stats.unresolvedNames.push(`${asset.name} (${entry.error})`)
+          return
+        }
+        doc = entry.doc
+      }
+      const painted = this.#brf.draw(doc, item, seconds, box, { width: box.width * scale, height: box.height * scale }, values)
+      if ('pending' in painted) {
+        // A variable-font face still loading (`brfFonts.ts`): incomplete, not empty.
+        notePending(stats, asset.name)
+        return
+      }
+      if ('error' in painted) {
+        this.#drawPlaceholder(ctx, item, asset.name)
+        stats.placeholders += 1
+        stats.unresolvedNames.push(`${asset.name} (${painted.error})`)
+        return
+      }
+      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats)
+      stats.drawn += 1
+      return
+    }
+
+    if (asset.kind === 'html') {
+      // A composition has no media element to sync — it is a page seeked in main and read
+      // back as pixels. The pool answers from cache or not at all, so a miss is counted as
+      // pending exactly like a video that has not decoded: the background shows through for
+      // the frame or two it takes, which reads as a load rather than as a glitch.
+      const box = layoutBox(item)
+      // Ask for the frame at the size it will actually be drawn, not at the size it occupies
+      // in timeline coordinates. A 640x360 preview of a 1920x1080 composition needs a 640x360
+      // picture; requesting the full frame allocates an 8MB ImageBitmap per cache entry to
+      // throw seven eighths of it away, and doing that continuously took the renderer down.
+      // The transform already carries the preview scale that `drawFrame` applied, so this is
+      // the exact factor between timeline units and device pixels — no second derivation to
+      // disagree with the first.
+      const scale = Math.min(1, Math.abs(ctx.getTransform().a) || 1)
+      const bitmap = box
+        ? (this.#compositions?.frameFor(asset, item, frame, fps, {
+            width: Math.max(1, Math.round(box.width * scale)),
+            height: Math.max(1, Math.round(box.height * scale))
+          }) ?? null)
+        : null
+      if (!bitmap) {
+        notePending(stats, asset.name)
+        return
+      }
+      this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul, stats)
       stats.drawn += 1
       return
     }
@@ -368,11 +620,11 @@ export class Compositor {
       // Nothing decoded yet. Drawing a placeholder here would flash a grey card for the one
       // or two frames a load takes, which reads as a glitch in the edit rather than as a
       // load; the background showing through for that long does not.
-      stats.pending += 1
+      notePending(stats, asset.name)
       return
     }
 
-    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul)
+    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul, stats)
     stats.drawn += 1
   }
 
@@ -421,7 +673,7 @@ export class Compositor {
       const laid = layoutText(text, style, box as TextBox, measure)
       const fontAvailable = fontIsAvailable(style.fontFamily, (family) => {
         ctx.font = fontString(laid.fontSize, family)
-        return ctx.measureText('MWQjgq@10 iIl').width
+        return ctx.measureText(FONT_PROBE_STRING).width
       })
 
       const fit: TextFit = {
@@ -535,6 +787,16 @@ export class Compositor {
    * the same target means the element restarts the seek before finishing it and never
    * arrives, so the outstanding target is remembered and only re-issued when the target
    * moves or the seek goes stale.
+   *
+   * **During playback the target always moves**, so "re-issue when it moves" was the same
+   * restart one step removed: past {@link DRIFT_TOLERANCE_SECONDS} of clock (two frames at 24
+   * fps) the seek was abandoned for a new one, and a seek slower than that never landed.
+   * Measured on a same-asset jump cut 74 frames past its only keyframe: a new `currentTime`
+   * every 83 ms, no `seeked` for 20 frames, the clip black for half a second. So in playback a
+   * seek in flight is left to land ({@link PLAYBACK_SEEK_PATIENCE_MS}), and the next one is
+   * aimed where the clock will be when it lands — ahead by how long this element's last seek
+   * took — rather than where it was when it was asked, which would land late by that much again
+   * and be corrected for ever.
    */
   #syncElement(
     entry: MediaEntry,
@@ -569,20 +831,37 @@ export class Compositor {
       element.pause()
     }
 
+    const pending = this.#seeks.get(seekKey)
+    if (pending && mode === 'playback') {
+      // Before the drift check, because `currentTime` reports a seek's *target* from the moment it
+      // is set: judged by drift, a seek in flight looks landed, its bookkeeping is dropped, and two
+      // frames later it looks late and is asked again — the restart this exists to prevent.
+      if (element.seeking && now - pending.issuedAt <= PLAYBACK_SEEK_PATIENCE_MS) return
+      if (pending.timing && !element.seeking) {
+        // Landed at most a frame ago, so this reads a little long. What the next seek leads by.
+        this.#seekLatency.set(seekKey, Math.min(now - pending.issuedAt, MAX_SEEK_LEAD_MS))
+        pending.timing = false
+      }
+    }
+
     const drift = Math.abs(element.currentTime - target)
     if (drift <= tolerance) {
       this.#seeks.delete(seekKey)
       return
     }
 
-    const pending = this.#seeks.get(seekKey)
     const sameTarget = pending !== undefined && Math.abs(pending.targetSeconds - target) <= tolerance
     const stale = pending !== undefined && now - pending.issuedAt > STALE_SEEK_MS
     if (sameTarget && !stale) return
 
+    // Rounded, not ceiled: the latency is read at the first draw after landing, so it is already up
+    // to a frame long, and a ceiling turned every fast (~25 ms) seek into a one-frame lead that
+    // opened the clip a source frame late.
+    const leadFrames = mode === 'playback' ? Math.round(((this.#seekLatency.get(seekKey) ?? 0) / 1000) * fps) : 0
+    const aim = leadFrames > 0 ? sourceSecondsAt(item, asset, frame + leadFrames, fps) : target
     try {
-      element.currentTime = target
-      this.#seeks.set(seekKey, { targetSeconds: target, issuedAt: now })
+      element.currentTime = aim
+      this.#seeks.set(seekKey, { targetSeconds: aim, issuedAt: now, timing: mode === 'playback' })
     } catch {
       // Seeking before metadata arrives throws; the next frame retries with metadata.
     }
@@ -652,18 +931,78 @@ export class Compositor {
  * Order is `from` then `to`, always. That is what makes `elementSlots` stable across the
  * window: a split clip transitioning into itself is one asset and two items, and an
  * assignment that flipped mid-window would swap what the two elements hold.
+ *
+ * `purpose` is which transition counts. The picture takes only one on a visible video track: a
+ * crossfade between two music clips is a transition too, and taking it here put the music on
+ * the draw list, where it waited for a picture it will never have and marked every frame of the
+ * window incomplete in export. The sound (`audioRoutingAt`) takes any, as it always has — it
+ * needs the pair to crossfade, and the pair's slots come after every picture item's, so the
+ * picture items keep the slots the compositor gave them.
  */
 export function itemsToDraw(
   project: Project,
   timeline: Timeline,
-  frame: number
+  frame: number,
+  purpose: 'picture' | 'sound' = 'picture'
 ): { items: Item[]; active: ReturnType<typeof transitionAtFrame> } {
-  const active = transitionAtFrame(project, timeline, frame)
+  const active = transitionAtFrame(project, timeline, frame, purpose === 'picture' ? 'video' : undefined)
   const present = itemsAtFrame(timeline, frame, 'video')
   if (!active) return { items: present, active }
   const pair = [active.resolved.from, active.resolved.to]
   const others = present.filter((item) => !pair.some((p) => p.id === item.id))
   return { items: [...others, ...pair], active }
+}
+
+/** A clip that is not drawn yet, the frame it first will be, and the element it will be drawn from. */
+export interface PrerollTarget {
+  item: Item
+  asset: Asset
+  /** The slot `elementSlots` will give it at `startFrame` — the element the draw will read. */
+  slot: number
+  startFrame: number
+}
+
+/**
+ * The video clips first drawn in `(frame, frame + lookahead]`, soonest first, one per element.
+ *
+ * "First drawn" is the clip's `from`, or earlier when it is the incoming side of a transition,
+ * whose window starts before the cut. The slot is taken from `itemsToDraw` at that frame, the
+ * same derivation the draw will use — prerolling a different element than the one drawn would
+ * look exactly like no preroll at all. Two clips wanting one element keep the sooner.
+ */
+export function prerollTargets(
+  project: Project,
+  timeline: Timeline,
+  frame: number,
+  lookaheadFrames: number
+): PrerollTarget[] {
+  const early = new Map<string, number>()
+  for (const transition of timeline.transitions ?? []) {
+    const resolved = resolveTransition(project, timeline, transition)
+    if (resolved) early.set(resolved.to.id, Math.min(resolved.firstFrame, resolved.to.from))
+  }
+  const candidates: Array<{ item: Item; asset: Asset; start: number }> = []
+  for (const track of timeline.tracks) {
+    if (track.kind !== 'video' || track.hidden) continue
+    for (const item of track.items) {
+      const start = early.get(item.id) ?? item.from
+      if (start <= frame || start > frame + lookaheadFrames) continue
+      const asset = findAsset(project, item.assetId)
+      if (!asset || asset.error || asset.kind !== 'video' || !asset.hasVideo) continue
+      candidates.push({ item, asset, start })
+    }
+  }
+  candidates.sort((a, b) => a.start - b.start)
+  const claimed = new Set<string>()
+  const out: PrerollTarget[] = []
+  for (const { item, asset, start } of candidates) {
+    const slot = elementSlots(itemsToDraw(project, timeline, start).items).get(item.id) ?? 0
+    const key = `${asset.id}#${slot}`
+    if (claimed.has(key)) continue
+    claimed.add(key)
+    out.push({ item, asset, slot, startFrame: start })
+  }
+  return out
 }
 
 export function elementSlots(drawing: Item[]): Map<string, number> {
@@ -725,15 +1064,67 @@ function applyLook(ctx: RenderTarget, item: Item): void {
   ctx.globalCompositeOperation = operation
 }
 
+/**
+ * One item this frame is still waiting for. The count, the combined list and the pending-only
+ * list move together here, because a pending site that bumped the count and forgot the name is
+ * exactly how an export would report "1 frame incomplete" without saying what was missing — the
+ * variable-font site arrived in a parallel branch after `pendingNames` and did just that.
+ */
+function notePending(stats: DrawStats, name: string): void {
+  stats.pending += 1
+  stats.unresolvedNames.push(name)
+  stats.pendingNames.push(name)
+}
+
+function noteGradeIssue(stats: DrawStats | undefined, message: string): void {
+  if (!stats) return
+  const issues = (stats.gradeIssues ??= [])
+  if (!issues.includes(message)) issues.push(message)
+}
+
+/**
+ * `layout.scale`: a zoom about the box's centre, 1 when absent or not a finite non-negative
+ * number (one NaN must not remove the clip).
+ */
+export function zoomOf(item: Item): number {
+  const scale = item.layout.scale
+  return scale === undefined || !Number.isFinite(scale) || scale < 0 ? 1 : scale
+}
+
+/** Rotation and zoom, both about the box's centre. Named for the rotation it did first. */
 function applyRotation(ctx: RenderTarget, item: Item, box: Box): void {
   const degrees = finite(item.layout.rotation, 0) % 360
-  if (degrees === 0) return
+  const zoom = zoomOf(item)
+  if (degrees === 0 && zoom === 1) return
   const centreX = box.left + box.width / 2
   const centreY = box.top + box.height / 2
   ctx.translate(centreX, centreY)
-  ctx.rotate((degrees * Math.PI) / 180)
+  if (degrees !== 0) ctx.rotate((degrees * Math.PI) / 180)
+  if (zoom !== 1) ctx.scale(zoom, zoom)
   ctx.translate(-centreX, -centreY)
 }
 
 /** Exported for the exporter, which needs the same clamping the compositor applies. */
 export { clamp, sourceSecondsAt }
+
+/**
+ * A source's own pixel width, whichever of the three kinds it is.
+ *
+ * Zero while a video or image is still loading, which callers must treat as "not yet known"
+ * rather than as an empty source.
+ */
+function intrinsicWidth(
+  element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas
+): number {
+  if (element instanceof HTMLVideoElement) return element.videoWidth
+  if (element instanceof HTMLImageElement) return element.naturalWidth
+  return element.width
+}
+
+function intrinsicHeight(
+  element: HTMLVideoElement | HTMLImageElement | ImageBitmap | OffscreenCanvas
+): number {
+  if (element instanceof HTMLVideoElement) return element.videoHeight
+  if (element instanceof HTMLImageElement) return element.naturalHeight
+  return element.height
+}

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <title>bay</title>
@@ -10,8 +10,14 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: bay:; media-src 'self' blob: bay:; font-src 'self' data:; connect-src 'self' bay:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: bay:; media-src 'self' blob: bay:; font-src 'self' data: bay:; connect-src 'self' bay:"
     />
+    <!--
+      Sets data-theme on <html> before first paint. Classic and synchronous on purpose: the
+      parser waits for it, so no frame is ever drawn in the wrong palette. See the file.
+      `vite-ignore` tells Vite this is deliberately not a module; it copies it from public/.
+    -->
+    <script vite-ignore src="./theme.js"></script>
   </head>
   <body class="bg-surface-0 text-ink-0 antialiased">
     <div id="root"></div>

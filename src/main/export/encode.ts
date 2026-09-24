@@ -27,12 +27,17 @@ import type {
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import type { Project, Timeline } from '@shared/project'
-import { findTimeline, timelineDuration } from '@shared/project'
+import { findAsset, findTimeline, timelineDuration } from '@shared/project'
 import { exportScratchDir } from '../paths'
-import { ffmpegBin, MediaToolError } from '../media/ffmpeg'
-import { buildAudioGraph } from './audio-graph'
+import { ffmpegBin, MediaToolError } from '../ffmpeg/ffmpeg'
+import { buildAudioGraph, type CompositionSounds } from './audio-graph'
+import { inspectComposition } from '../html/compositions'
+import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
 import { frameProblem, writeFrame } from './frame-pipe'
+import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } from './codec-args'
+import { masterAudio, verifyDelivered } from './master'
+import type { LoudnessReport } from '@shared/loudness'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
 
@@ -86,72 +91,8 @@ function messageOf(error: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Encoder arguments
-// ---------------------------------------------------------------------------
-
-const CRF: Record<'draft' | 'good' | 'best', { h264: number; vp9: number }> = {
-  draft: { h264: 28, vp9: 38 },
-  good: { h264: 20, vp9: 32 },
-  best: { h264: 16, vp9: 26 }
-}
-
-function videoCodecArgs(format: ExportFormat, quality: 'draft' | 'good' | 'best'): string[] {
-  const crf = CRF[quality]
-  switch (format) {
-    case 'webm':
-      return ['-c:v', 'libvpx-vp9', '-crf', String(crf.vp9), '-b:v', '0', '-row-mt', '1', '-pix_fmt', 'yuv420p']
-    case 'png-sequence':
-      return ['-c:v', 'png']
-    default:
-      return [
-        '-c:v',
-        'libx264',
-        '-preset',
-        quality === 'draft' ? 'veryfast' : 'medium',
-        '-crf',
-        String(crf.h264),
-        '-pix_fmt',
-        'yuv420p'
-      ]
-  }
-}
-
-function containerArgs(format: ExportFormat): string[] {
-  // faststart moves the index to the front so the file starts playing before it is fully
-  // downloaded — the difference between a shareable file and one that only works locally.
-  return format === 'mp4' || format === 'mov' ? ['-movflags', '+faststart'] : []
-}
-
-function audioCodecArgs(format: ExportFormat): string[] {
-  switch (format) {
-    case 'webm':
-      return ['-c:a', 'libopus', '-b:a', '128k']
-    case 'wav':
-      return ['-c:a', 'pcm_s16le']
-    case 'mp3':
-      return ['-c:a', 'libmp3lame', '-q:a', '2']
-    default:
-      return ['-c:a', 'aac', '-b:a', '192k']
-  }
-}
-
-function extensionFor(format: ExportFormat): string {
-  switch (format) {
-    case 'png-sequence':
-      return ''
-    default:
-      return format
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Running ffmpeg
 // ---------------------------------------------------------------------------
-
-function tailOf(text: string): string {
-  const trimmed = text.trimEnd()
-  return trimmed.length > 4096 ? trimmed.slice(-4096) : trimmed
-}
 
 /** Spawns ffmpeg and resolves on a clean exit, rejecting with stderr's tail otherwise. */
 function runFfmpeg(args: readonly string[]): Promise<void> {
@@ -199,7 +140,7 @@ function spawnVideoEncoder(job: Job, target: string): ChildProcessByStdio<Writab
     '-i',
     'pipe:0',
     '-an',
-    ...videoCodecArgs(format, quality),
+    ...videoCodecArgs(format, quality, { width: job.width, height: job.height, fps: job.fps }),
     '-r',
     String(job.fps),
     ...containerArgs(format),
@@ -383,8 +324,38 @@ export async function pushFrame(frame: ExportFrame): Promise<void> {
 // Finishing
 // ---------------------------------------------------------------------------
 
+/**
+ * What each HTML composition on the timeline declares, read from its file now.
+ *
+ * Read at export rather than trusted from the asset, because the picture is rendered from the
+ * live file too: a sound list captured at import would disagree with the frames after the
+ * first edit to the composition. `inspectComposition` lists only sounds whose files exist and
+ * decode, which is what keeps one missing whoosh from failing the whole mix.
+ */
+async function declaredSounds(job: Job): Promise<CompositionSounds> {
+  const out = new Map<string, readonly CompositionSound[]>()
+  const seen = new Set<string>()
+  for (const track of job.timeline.tracks) {
+    for (const item of track.items) {
+      if (seen.has(item.assetId)) continue
+      seen.add(item.assetId)
+      const asset = findAsset(job.project, item.assetId)
+      if (!asset || asset.kind !== 'html' || !asset.path || asset.error) continue
+      const { info } = await inspectComposition(asset.path)
+      if (info && info.audio.length > 0) out.set(asset.id, info.audio)
+    }
+  }
+  return out
+}
+
 async function buildAudioTrack(job: Job): Promise<string | null> {
-  const graph = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame)
+  const graph = buildAudioGraph(
+    job.project,
+    job.timeline,
+    job.fromFrame,
+    job.toFrame,
+    await declaredSounds(job)
+  )
   if (!graph) return null
   const target = join(exportScratchDir(), `${job.id}.audio.wav`)
   const duration = job.framesTotal / job.fps
@@ -410,6 +381,38 @@ async function buildAudioTrack(job: Job): Promise<string | null> {
   return target
 }
 
+/**
+ * Where a mastered track is encoded before the mux copies it in: a container that holds the
+ * export's own audio codec, so the stream the loop measured is byte for byte the one shipped.
+ */
+function masteredExtension(format: ExportFormat): string {
+  return format === 'webm' ? 'webm' : 'm4a'
+}
+
+/**
+ * The mix at `wavPath`, mastered to the job's loudness target and encoded with the export's
+ * codec at `target`. Deletes nothing; the caller owns both files.
+ */
+async function masterTrack(job: Job, wavPath: string, target: string): Promise<LoudnessReport> {
+  const loudness = job.request.loudness
+  if (!loudness) throw new Error('masterTrack called for a job that asked for no mastering.')
+  emit(job, {
+    progress: null,
+    framesDone: job.framesDone,
+    framesTotal: job.framesTotal,
+    stage: 'encoding',
+    message: 'Mastering audio loudness'
+  })
+  return masterAudio({
+    ffmpeg: ffmpegBin(),
+    input: wavPath,
+    output: target,
+    codecArgs: audioCodecArgs(job.request.format),
+    target: loudness,
+    outputArgs: AUDIO_ONLY.has(job.request.format) ? [] : ['-vn']
+  })
+}
+
 async function renderAudioOnly(job: Job): Promise<void> {
   try {
     emit(job, {
@@ -419,29 +422,49 @@ async function renderAudioOnly(job: Job): Promise<void> {
       stage: 'encoding',
       message: 'Mixing audio'
     })
-    const graph = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame)
-    if (!graph) throw new Error('This timeline has no audio to export.')
-    const duration = job.framesTotal / job.fps
-    const args: string[] = ['-nostdin', '-v', 'error']
-    for (const input of graph.inputs) args.push('-i', input)
-    args.push(
-      '-filter_complex',
-      graph.filter,
-      '-map',
-      `[${graph.outputLabel}]`,
-      '-t',
-      duration.toFixed(6),
-      ...audioCodecArgs(job.request.format),
-      '-y',
-      job.request.outputPath
+    const graph = buildAudioGraph(
+      job.project,
+      job.timeline,
+      job.fromFrame,
+      job.toFrame,
+      await declaredSounds(job)
     )
-    await runFfmpeg(args)
+    if (!graph) throw new Error('This timeline has no audio to export.')
+    let loudness: LoudnessReport | undefined
+    if (job.request.loudness) {
+      // Mix to PCM first, then master straight into the deliverable: for an audio-only format
+      // the loop's encoded file *is* the file, so what it measured is what ships.
+      const wav = await buildAudioTrack(job)
+      if (!wav) throw new Error('This timeline has no audio to export.')
+      try {
+        loudness = await masterTrack(job, wav, job.request.outputPath)
+      } finally {
+        await discard(wav)
+      }
+    } else {
+      const duration = job.framesTotal / job.fps
+      const args: string[] = ['-nostdin', '-v', 'error']
+      for (const input of graph.inputs) args.push('-i', input)
+      args.push(
+        '-filter_complex',
+        graph.filter,
+        '-map',
+        `[${graph.outputLabel}]`,
+        '-t',
+        duration.toFixed(6),
+        ...audioCodecArgs(job.request.format),
+        '-y',
+        job.request.outputPath
+      )
+      await runFfmpeg(args)
+    }
     emit(job, {
       progress: 1,
       framesDone: job.framesTotal,
       framesTotal: job.framesTotal,
       stage: 'done',
-      outputPath: job.request.outputPath
+      outputPath: job.request.outputPath,
+      ...(loudness ? { loudness, message: loudness.summary } : {})
     })
   } catch (error) {
     emit(job, {
@@ -514,8 +537,31 @@ export async function finish(jobId: string): Promise<void> {
 
     let audioPath: string | null = null
     let audioNote: string | undefined
+    let loudness: LoudnessReport | undefined
+    // True when `audioPath` is already encoded in the export's codec (mastered), so the mux
+    // copies it rather than encoding it a second time — a second encode would move the true
+    // peak the loop just verified.
+    let encoded = false
     try {
       audioPath = await buildAudioTrack(job)
+      if (audioPath && job.request.loudness) {
+        const wav = audioPath
+        const mastered = join(
+          exportScratchDir(),
+          `${job.id}.audio.master.${masteredExtension(job.request.format)}`
+        )
+        try {
+          loudness = await masterTrack(job, wav, mastered)
+          audioPath = mastered
+          encoded = true
+        } catch (error) {
+          await discard(mastered)
+          // The unmastered mix is still good; deliver it with the shortfall stated rather than
+          // lose the whole file — and never call it mastered.
+          audioNote = `Exported without loudness mastering — it failed: ${messageOf(error)}`
+        }
+        if (encoded) await discard(wav)
+      }
     } catch (error) {
       // The video is real and finished; refusing to deliver it would be worse than
       // delivering it with the shortfall stated. What is not allowed is calling this a
@@ -538,7 +584,7 @@ export async function finish(jobId: string): Promise<void> {
         '1:a:0',
         '-c:v',
         'copy',
-        ...audioCodecArgs(job.request.format),
+        ...(encoded ? ['-c:a', 'copy'] : audioCodecArgs(job.request.format)),
         '-shortest',
         ...containerArgs(job.request.format),
         '-y',
@@ -546,17 +592,20 @@ export async function finish(jobId: string): Promise<void> {
       ])
       await discard(audioPath)
       await discard(scratch)
+      if (loudness) loudness = await verifyDelivered(ffmpegBin(), job.request.outputPath, loudness)
     } else {
       await moveInto(scratch, job.request.outputPath)
     }
 
+    const message = [audioNote, loudness?.summary].filter(Boolean).join(' ')
     emit(job, {
       progress: 1,
       framesDone: job.framesDone,
       framesTotal: job.framesTotal,
       stage: 'done',
       outputPath: job.request.outputPath,
-      ...(audioNote ? { message: audioNote } : {})
+      ...(message ? { message } : {}),
+      ...(loudness ? { loudness } : {})
     })
   } catch (error) {
     job.failed = true

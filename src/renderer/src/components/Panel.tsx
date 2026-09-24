@@ -18,9 +18,9 @@ export function Panel({ title, actions, children, className, bodyClassName }: Pa
   return (
     <section className={cn('flex min-h-0 min-w-0 flex-col bg-surface-1', className)}>
       {(title || actions) && (
-        <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
+        <header className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
           {title && (
-            <h2 className="text-[11px] font-medium tracking-[0.06em] text-ink-2 uppercase">
+            <h2 className="text-[11px] font-semibold tracking-[0.08em] text-ink-0 uppercase">
               {title}
             </h2>
           )}
@@ -44,7 +44,7 @@ export function Section({ title, children, actions, className }: SectionProps): 
   return (
     <div className={cn('border-b border-line px-3 py-3 last:border-b-0', className)}>
       <div className="mb-2 flex h-4 items-center justify-between">
-        <h3 className="text-[10px] font-medium tracking-[0.08em] text-ink-2 uppercase">{title}</h3>
+        <h3 className="text-[10px] font-semibold tracking-[0.08em] text-ink-1 uppercase">{title}</h3>
         {actions}
       </div>
       {children}

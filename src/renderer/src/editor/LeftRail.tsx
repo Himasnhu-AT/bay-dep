@@ -1,59 +1,83 @@
 import type { ReactNode } from 'react'
-import { FolderOpen, Sparkles, Type as TypeIcon, Upload } from 'lucide-react'
+import { Bot, FolderOpen, LayoutTemplate, Sparkles, Type as TypeIcon, Upload } from 'lucide-react'
 import { IconButton } from '@/components'
 import { useEditor, type PanelId } from '@/store/editor'
+import { AgentPanel } from './AgentPanel'
 import { EffectsPanel } from './EffectsPanel'
 import { ExportPanel } from './ExportPanel'
 import { MediaPanel } from './MediaPanel'
+import { TemplatesPanel } from './TemplatesPanel'
 import { TextPanel } from './TextPanel'
 
 const PAGES: { id: PanelId; label: string; icon: ReactNode }[] = [
+  { id: 'agent', label: 'Agent', icon: <Bot className="size-4" /> },
   { id: 'media', label: 'Media', icon: <FolderOpen className="size-4" /> },
   { id: 'text', label: 'Text', icon: <TypeIcon className="size-4" /> },
+  { id: 'templates', label: 'Templates', icon: <LayoutTemplate className="size-4" /> },
   { id: 'effects', label: 'Effects', icon: <Sparkles className="size-4" /> },
   { id: 'export', label: 'Export', icon: <Upload className="size-4" /> }
 ]
 
 /**
- * A 44px icon strip beside a 216px panel. The strip is always visible so switching pages
- * never costs a trip through a menu, and the active page is marked with the accent bar
- * rather than a filled button — a filled tab in a column of four reads as a warning.
+ * The 44px icon strip. Always visible, so switching pages never costs a trip through a menu,
+ * and the active page is marked with the accent bar rather than a filled button — a filled tab
+ * in a column of six reads as a warning. The page it selects is `SidePanel`, which sits in a
+ * resizable panel beside it; the strip itself does not resize.
  */
 export function LeftRail(): ReactNode {
   const panel = useEditor((state) => state.panel)
   const setPanel = useEditor((state) => state.setPanel)
+  const sideHidden = useEditor((state) => state.hiddenRegions.side)
+  const setRegionHidden = useEditor((state) => state.setRegionHidden)
+
+  // The page already showing, clicked again, hides the panel — the gesture every editor with a
+  // rail uses. Any page clicked while it is hidden brings it back, on that page.
+  const choose = (id: PanelId): void => {
+    if (id === panel && !sideHidden) {
+      setRegionHidden('side', true)
+      return
+    }
+    setPanel(id)
+    setRegionHidden('side', false)
+  }
 
   return (
-    <div className="flex w-[260px] shrink-0 border-r border-line">
-      <nav
-        aria-label="Panels"
-        className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-line bg-surface-1 py-2"
-      >
-        {PAGES.map((page) => (
-          <div key={page.id} className="relative flex w-full justify-center">
-            {panel === page.id && (
-              <span
-                aria-hidden="true"
-                className="absolute top-1/2 left-0 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-accent"
-              />
-            )}
-            <IconButton
-              label={page.label}
-              tooltipSide="right"
-              icon={page.icon}
-              active={panel === page.id}
-              onClick={() => setPanel(page.id)}
+    <nav
+      aria-label="Panels"
+      className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-line bg-surface-1 py-2"
+    >
+      {PAGES.map((page) => (
+        <div key={page.id} className="relative flex w-full justify-center">
+          {panel === page.id && (
+            <span
+              aria-hidden="true"
+              className="absolute top-1/2 left-0 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-accent"
             />
-          </div>
-        ))}
-      </nav>
+          )}
+          <IconButton
+            label={page.label}
+            tooltipSide="right"
+            icon={page.icon}
+            active={panel === page.id && !sideHidden}
+            onClick={() => choose(page.id)}
+          />
+        </div>
+      ))}
+    </nav>
+  )
+}
 
-      <div className="min-w-0 flex-1">
-        {panel === 'media' && <MediaPanel />}
-        {panel === 'text' && <TextPanel />}
-        {panel === 'effects' && <EffectsPanel />}
-        {panel === 'export' && <ExportPanel />}
-      </div>
+/** Whichever page the rail has selected. */
+export function SidePanel(): ReactNode {
+  const panel = useEditor((state) => state.panel)
+  return (
+    <div className="h-full min-w-0">
+      {panel === 'agent' && <AgentPanel />}
+      {panel === 'media' && <MediaPanel />}
+      {panel === 'text' && <TextPanel />}
+      {panel === 'templates' && <TemplatesPanel />}
+      {panel === 'effects' && <EffectsPanel />}
+      {panel === 'export' && <ExportPanel />}
     </div>
   )
 }

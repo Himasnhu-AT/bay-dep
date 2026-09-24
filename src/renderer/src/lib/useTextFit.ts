@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { fontIsAvailable, layoutText, MIN_FONT_SIZE, type LaidOutText } from '@/engine'
+import {
+  fontIsAvailable,
+  FONT_PROBE_STRING,
+  layoutText,
+  MIN_FONT_SIZE,
+  type LaidOutText
+} from '@/engine'
 import { defaultTextStyle, type Asset, type Item } from '@shared/project'
 
 export interface TextFitReport {
@@ -63,7 +69,7 @@ export function useTextFit(
     const available = fontIsAvailable(style.fontFamily, (family) => {
       ctx.font = `${style.fontWeight} 72px ${family}`
       ctx.letterSpacing = '0px'
-      return ctx.measureText('MWQjgq@10 iIl').width
+      return ctx.measureText(FONT_PROBE_STRING).width
     })
 
     // Ordered by how well each fault hides, not by severity. A missing font is the one with

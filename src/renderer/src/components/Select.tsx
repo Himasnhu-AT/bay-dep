@@ -34,7 +34,9 @@ export function Select<T extends string>({
     <div
       className={cn(
         'relative flex h-7 items-center rounded-sm border border-line bg-surface-2 t-fast',
-        disabled ? 'opacity-40' : 'hover:border-line-strong focus-within:border-accent/70',
+        disabled
+          ? 'opacity-40'
+          : 'hover:border-line-strong focus-within:border-accent focus-within:ring-1 focus-within:ring-accent',
         className
       )}
     >

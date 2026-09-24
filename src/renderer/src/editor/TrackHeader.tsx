@@ -37,16 +37,14 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
   return (
     <div
       style={{ height }}
-      className="flex w-full flex-col justify-center gap-1 border-b border-line px-2 py-1"
+      // The kind's colour runs the full height of the header, and the name sits on a chip of the
+      // same colour — the track reads as V1 or A1 at a glance, before any of its text.
+      className={cn(
+        'flex w-full flex-col justify-center gap-1 border-b border-l-2 border-b-line px-2 py-1',
+        video ? 'border-l-clip-video-edge' : 'border-l-clip-audio-edge'
+      )}
     >
       <div className="flex items-center gap-1.5">
-        <span
-          aria-hidden="true"
-          className={cn(
-            'h-3 w-[3px] shrink-0 rounded-full',
-            video ? 'bg-clip-video-edge' : 'bg-clip-audio-edge'
-          )}
-        />
         {renaming ? (
           <input
             ref={inputRef}
@@ -71,14 +69,17 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
               setRenaming(true)
             }}
             title="Double-click to rename"
-            className="t-fast min-w-0 flex-1 truncate rounded-xs px-0.5 text-left text-[11px] font-medium text-ink-0 hover:bg-surface-3"
+            className={cn(
+              't-fast max-w-full min-w-0 truncate rounded-sm px-1.5 py-px text-left text-[11px] font-semibold text-on-media hover:brightness-125',
+              video ? 'bg-clip-video-edge' : 'bg-clip-audio-edge'
+            )}
           >
             {track.name}
           </button>
         )}
       </div>
 
-      <div className="flex items-center gap-0.5 pl-[9px]">
+      <div className="flex items-center gap-0.5">
         <IconButton
           size="xs"
           tooltipSide="right"
@@ -98,7 +99,7 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
           tracks directly rather than through `itemsAtFrame` and applies `!track.muted` to
           every kind.
         */}
-        {video && (
+        {video ? (
           <IconButton
             size="xs"
             tooltipSide="right"
@@ -107,6 +108,10 @@ export function TrackHeader({ track, height, removable }: TrackHeaderProps): Rea
             icon={track.hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
             onClick={() => patchTrack(track.id, { hidden: !track.hidden })}
           />
+        ) : (
+          // The eye's slot is kept empty rather than closed up, so mute and delete sit in the
+          // same column on every track and the eye reads as "absent here", not "moved".
+          <span aria-hidden="true" className="size-5 shrink-0" />
         )}
         <IconButton
           size="xs"

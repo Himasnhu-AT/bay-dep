@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 43 — Process prior art: `faceless-explainer` and `brag`
 
 Mined for **process architecture** — the workflow, its artifacts, and what enforces the order — not

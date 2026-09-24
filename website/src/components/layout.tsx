@@ -7,7 +7,7 @@ import { Reveal } from "@/components/Reveal";
  * product page inherits the theme instead of restating it. See DESIGN.md.
  */
 
-/** The 1080px column with 32px gutters. Nothing sits outside it. */
+/** The 1080px column, with 20px gutters on a phone and 32px above. */
 export function Wrap({
   children,
   className = "",
@@ -16,20 +16,76 @@ export function Wrap({
   className?: string;
 }) {
   return (
-    <div className={`mx-auto w-full max-w-page px-8 ${className}`}>
+    <div className={`mx-auto w-full max-w-page px-5 sm:px-8 ${className}`}>
       {children}
     </div>
   );
 }
 
-/** The small brass-free caps label that opens a page or a section. */
-export function Eyebrow({ children }: { children: ReactNode }) {
+/**
+ * The short label that opens a page: sentence case, in the accent, never caps.
+ * One per page, over the h1. A section is opened by its own `Headline`.
+ */
+export function Eyebrow({
+  children,
+  tone = "paper",
+}: {
+  children: ReactNode;
+  tone?: Tone;
+}) {
   return (
-    <p className="text-eyebrow font-medium text-muted uppercase">{children}</p>
+    <p
+      className={`text-eyebrow font-semibold ${tone === "night" ? "text-accent" : "text-accent-ink"}`}
+    >
+      {children}
+    </p>
   );
 }
 
-/** Top of a page: label, serif headline, serif lead. Used once per page. */
+/** Which ground a piece sits on. Paper is the default; night is the app's. */
+export type Tone = "paper" | "night";
+
+/**
+ * A section's heading: one sentence, set large, with its second clause in the
+ * secondary ink when it has one (`quiet`). This is how a section opens, rather
+ * than a caps label over a smaller title.
+ */
+export function Headline({
+  children,
+  quiet,
+  tone = "paper",
+  as: Tag = "h2",
+  className = "",
+}: {
+  children: ReactNode;
+  quiet?: ReactNode;
+  tone?: Tone;
+  as?: "h2" | "h3";
+  className?: string;
+}) {
+  const night = tone === "night";
+  return (
+    <Tag
+      className={`max-w-[26ch] text-headline font-semibold text-balance ${night ? "text-on-night" : "text-ink"} ${className}`}
+    >
+      {children}
+      {quiet ? (
+        <>
+          {" "}
+          <span className={night ? "text-on-night-muted" : "text-muted"}>
+            {quiet}
+          </span>
+        </>
+      ) : null}
+    </Tag>
+  );
+}
+
+/**
+ * Top of a page: label, headline, lead, on a band of night under the nav, so
+ * every page opens on the app's ground the way the home page does and turns to
+ * paper for the reading. Used once per page, outside the page's `Wrap`.
+ */
 export function PageHeader({
   eyebrow,
   title,
@@ -40,27 +96,37 @@ export function PageHeader({
   lead?: ReactNode;
 }) {
   return (
-    <div className="max-w-[64ch]">
-      <Reveal delay={0.05}>
-        <Eyebrow>{eyebrow}</Eyebrow>
-      </Reveal>
-      <Reveal delay={0.14}>
-        <h1 className="mt-[26px] font-serif text-title font-light">{title}</h1>
-      </Reveal>
-      {lead ? (
-        <Reveal delay={0.24}>
-          <p className="mt-[30px] max-w-[56ch] font-serif text-lead font-light text-ink-soft">
-            {lead}
-          </p>
-        </Reveal>
-      ) : null}
-    </div>
+    <header className="bg-night pt-16 pb-16 sm:pt-24 sm:pb-24">
+      <Wrap>
+        <div className="max-w-[64ch]">
+          <Reveal delay={0.05}>
+            <Eyebrow tone="night">{eyebrow}</Eyebrow>
+          </Reveal>
+          <Reveal delay={0.14}>
+            <h1 className="mt-4 text-title font-semibold text-balance text-on-night">
+              {title}
+            </h1>
+          </Reveal>
+          {lead ? (
+            <Reveal delay={0.24}>
+              <p className="mt-6 max-w-[56ch] text-lead text-on-night-soft">
+                {lead}
+              </p>
+            </Reveal>
+          ) : null}
+        </div>
+      </Wrap>
+    </header>
   );
 }
 
+const ACTION =
+  "group inline-flex h-12 items-center gap-2.5 rounded-full bg-accent px-6 text-[15px] font-semibold text-night transition-[background-color,scale] duration-200 ease-paper hover:bg-accent-hover active:scale-[0.98] disabled:cursor-default disabled:bg-line disabled:text-muted disabled:active:scale-100";
+
 /**
- * The site's only button. An outlined box that fills with ink on hover, with an
- * arrow that nudges. Use it for the one action a page is asking for.
+ * The site's only button: a pill in the accent, with night text on it (6.2:1),
+ * and an arrow that nudges. The same on paper and on night. Use it for the one
+ * action a screen is asking for.
  */
 export function ActionLink({
   href,
@@ -77,13 +143,13 @@ export function ActionLink({
       {children}
       <span
         aria-hidden
-        className="transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1.5"
+        className="transition-transform duration-200 ease-paper group-hover:translate-x-1"
       >
         &rarr;
       </span>
     </>
   );
-  const classes = `group inline-flex items-center gap-3 rounded-[1px] border border-ink px-[30px] py-[15px] text-[13px] font-medium tracking-[0.14em] text-ink uppercase transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-ink hover:text-paper ${className}`;
+  const classes = `${ACTION} ${className}`;
 
   return external ? (
     <a href={href} className={classes}>
@@ -93,6 +159,167 @@ export function ActionLink({
     <Link href={href} className={classes}>
       {content}
     </Link>
+  );
+}
+
+/**
+ * ActionLink's twin for an action that is not a navigation: sign in, send,
+ * approve. Same box, same fill on hover. `quiet` drops the box for a secondary
+ * action beside a primary one, so a screen still asks for one thing.
+ */
+export function ActionButton({
+  children,
+  onClick,
+  type = "button",
+  disabled = false,
+  quiet = false,
+  className = "",
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  type?: "button" | "submit";
+  disabled?: boolean;
+  quiet?: boolean;
+  className?: string;
+}) {
+  if (quiet) {
+    return (
+      <button
+        type={type}
+        onClick={onClick}
+        disabled={disabled}
+        className={`text-[15px] font-medium text-ink-soft underline decoration-ink-soft/40 underline-offset-4 transition-colors duration-200 hover:text-accent-ink hover:decoration-accent-ink disabled:text-muted ${className}`}
+      >
+        {children}
+      </button>
+    );
+  }
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`${ACTION} ${className}`}
+    >
+      {children}
+      <span
+        aria-hidden
+        className="transition-transform duration-200 ease-paper group-hover:translate-x-1 group-disabled:translate-x-0"
+      >
+        &rarr;
+      </span>
+    </button>
+  );
+}
+
+/**
+ * A text link in running copy or beside a button: underlined, in accent-ink on
+ * paper and accent on night. `arrow` adds the nudging arrow for a link that is
+ * the secondary action next to an ActionLink.
+ */
+export function TextLink({
+  href,
+  children,
+  tone = "paper",
+  arrow = false,
+  className = "",
+}: {
+  href: string;
+  children: ReactNode;
+  tone?: Tone;
+  arrow?: boolean;
+  className?: string;
+}) {
+  const classes = `group inline-flex items-baseline gap-1.5 font-medium transition-colors duration-200 ${
+    tone === "night"
+      ? "text-accent hover:text-on-night"
+      : "text-accent-ink hover:text-ink"
+  } ${className}`;
+  const content = (
+    <>
+      <span
+        className={`underline underline-offset-4 transition-colors duration-200 ${
+          tone === "night"
+            ? "decoration-accent/40 group-hover:decoration-on-night"
+            : "decoration-accent-ink/40 group-hover:decoration-ink"
+        }`}
+      >
+        {children}
+      </span>
+      {arrow ? (
+        <span
+          aria-hidden
+          className="transition-transform duration-200 ease-paper group-hover:translate-x-1"
+        >
+          &rarr;
+        </span>
+      ) : null}
+    </>
+  );
+  return href.startsWith("http") || href.startsWith("#") ? (
+    <a href={href} className={classes}>
+      {content}
+    </a>
+  ) : (
+    <Link href={href} className={classes}>
+      {content}
+    </Link>
+  );
+}
+
+/**
+ * A field to write in: a raised box with a 1px muted edge (4.9:1, because the
+ * edge is what says "type here"), 12px corners like every other surface, and
+ * the accent on focus. The label sits above it, never inside.
+ */
+export function Field({
+  label,
+  hint,
+  multiline = false,
+  id,
+  value,
+  onChange,
+  ...rest
+}: {
+  label: string;
+  hint?: ReactNode;
+  multiline?: boolean;
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  autoComplete?: string;
+  placeholder?: string;
+  maxLength?: number;
+  required?: boolean;
+}) {
+  const classes =
+    "mt-2 block w-full rounded-[12px] border border-muted bg-paper-raised px-4 py-3 text-base text-ink placeholder:text-muted transition-[border-color,box-shadow] duration-200 focus:border-accent-ink focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_28%,transparent)] focus:outline-none focus-visible:outline-none";
+  return (
+    <div>
+      <label htmlFor={id} className="text-sm font-medium text-ink-soft">
+        {label}
+      </label>
+      {multiline ? (
+        <textarea
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={3}
+          className={`${classes} resize-y`}
+          {...rest}
+        />
+      ) : (
+        <input
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={classes}
+          {...rest}
+        />
+      )}
+      {hint ? <p className="mt-2 text-sm text-muted">{hint}</p> : null}
+    </div>
   );
 }
 
@@ -109,9 +336,15 @@ export function Rule({ className = "" }: { className?: string }) {
 }
 
 /** A ruled stack of rows. The site's one list style. */
-export function RuledList({ children }: { children: ReactNode }) {
+export function RuledList({
+  children,
+  className = "mt-16",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="mt-[82px]">
+    <div className={className}>
       <Rule />
       {children}
     </div>
@@ -140,14 +373,14 @@ export function RuledRow({
   return (
     <Reveal
       delay={delay}
-      className={`relative grid grid-cols-1 items-baseline gap-2.5 py-9 sm:gap-10 sm:py-11 ${
-        wide ? "sm:grid-cols-[140px_1fr]" : "sm:grid-cols-[96px_1fr]"
+      className={`relative grid grid-cols-1 items-baseline gap-2 py-8 sm:gap-10 sm:py-10 ${
+        wide ? "sm:grid-cols-[160px_1fr]" : "sm:grid-cols-[120px_1fr]"
       }`}
     >
       <div>{aside}</div>
       <div>
-        <h2 className="mb-3 font-serif text-section font-normal">{title}</h2>
-        <div className="max-w-[60ch] text-base text-ink-soft">{children}</div>
+        <h3 className="mb-2.5 text-section font-semibold text-ink">{title}</h3>
+        <div className="max-w-[62ch] text-base text-ink-soft">{children}</div>
       </div>
       <span
         aria-hidden
@@ -159,14 +392,91 @@ export function RuledRow({
 }
 
 /**
+ * Two blocks side by side from `md`, stacked below it. For a pair that reads as
+ * a pair: the two ways in on /agents, the refusal and the honest status on the
+ * home page. `ruled` draws a rule across the top of the pair.
+ */
+export function Columns({
+  children,
+  ruled = false,
+  className = "",
+}: {
+  children: ReactNode;
+  ruled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`grid grid-cols-1 gap-14 md:grid-cols-2 md:gap-16 ${ruled ? "border-t border-line pt-14" : ""} ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A small titled block inside `Columns` or on its own: a `text-section` h2 and
+ * the body under it. The h2 is how a block opens; there is no label above it.
+ */
+export function Block({
+  title,
+  children,
+  delay = 0,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  delay?: number;
+}) {
+  return (
+    <Reveal delay={delay}>
+      <h2 className="text-section font-semibold text-ink">{title}</h2>
+      <div className="mt-3 max-w-[60ch] text-base text-ink-soft">{children}</div>
+    </Reveal>
+  );
+}
+
+/**
+ * Notes in two columns from `md`, each headed by the thing in the app it is
+ * about (a key, a button, a tool name) in the app's monospace and accent-ink,
+ * and ruled along its top. Exactly as many cells as notes; keep it even.
+ */
+export function MarkedGrid({
+  items,
+}: {
+  items: { mark: string; title: string; body: ReactNode }[];
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-x-16 md:grid-cols-2">
+      {items.map((item, i) => (
+        <Reveal
+          key={item.title}
+          delay={(i % 2) * 0.08}
+          className="relative py-8 sm:py-10"
+        >
+          <span
+            aria-hidden
+            data-rule
+            className="absolute inset-x-0 top-0 h-px bg-line"
+          />
+          <p className="font-app-mono text-[13px] text-accent-ink">{item.mark}</p>
+          <h3 className="mt-3 text-section font-semibold text-ink">{item.title}</h3>
+          <p className="mt-2.5 max-w-[60ch] text-base text-ink-soft">{item.body}</p>
+        </Reveal>
+      ))}
+    </div>
+  );
+}
+
+/**
  * A command you would actually type. The one place monospace appears on the
- * site, ruled down one edge rather than boxed in a shadow, so it reads as a
- * line from a terminal rather than a widget. Keep them to one line each.
+ * site, and one of the places night appears on a paper page: a terminal line
+ * is the machine's, so it is set on the machine's ground, in the app's own
+ * monospace fallback. Keep them to one command each.
  */
 export function Command({ children }: { children: ReactNode }) {
   return (
-    <div className="border-l border-brass bg-[#efe9dc] px-5 py-3.5 font-mono text-[13px] leading-relaxed text-ink-soft">
-      <span aria-hidden className="mr-3 text-muted select-none">
+    <div className="rounded-[12px] bg-night px-5 py-4 font-app-mono text-[13px] leading-relaxed wrap-anywhere text-on-night-soft">
+      <span aria-hidden className="mr-3 text-accent select-none">
         $
       </span>
       {children}
@@ -174,7 +484,7 @@ export function Command({ children }: { children: ReactNode }) {
   );
 }
 
-/** The italic serif line that closes a page. At most one per page. */
+/** The closing statement of a page, set large. At most one per page. */
 export function PullQuote({
   children,
   delay = 0,
@@ -183,8 +493,8 @@ export function PullQuote({
   delay?: number;
 }) {
   return (
-    <Reveal delay={delay} className="mt-20 max-w-[56ch]">
-      <p className="font-serif text-quote font-light text-ink italic">
+    <Reveal delay={delay} className="mt-24">
+      <p className="max-w-[24ch] text-quote font-semibold text-balance text-ink">
         {children}
       </p>
     </Reveal>

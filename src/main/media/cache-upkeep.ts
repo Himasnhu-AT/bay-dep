@@ -7,7 +7,7 @@
  * directories are.
  */
 
-import { peaksDir, thumbsDir } from '../paths'
+import { peaksDir, thumbsDir } from './cache-dirs'
 import { CACHE_BUDGET_BYTES, enforceCacheBudget, touchEntry } from './cache-budget'
 
 /**
@@ -21,7 +21,7 @@ import { CACHE_BUDGET_BYTES, enforceCacheBudget, touchEntry } from './cache-budg
  */
 const inUse = new Set<string>()
 
-export function markUsed(key: string): void {
+function markUsed(key: string): void {
   inUse.add(key)
 }
 

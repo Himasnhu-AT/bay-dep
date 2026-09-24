@@ -9,7 +9,15 @@
  */
 
 import type { Asset, Project } from './project'
+import type { AgentEntry, AgentEvent } from './agent'
+import type { TranscriptSegment } from './transcribe'
+import type { BeatGrid } from './beats'
+import type { WhisperDownload, WhisperStatus } from './whisper'
+import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
+import type { LoudnessReport, LoudnessTarget } from './loudness'
+import type { AccessStatus, ReferralResult } from './access'
+import type { UpdateStatus } from './update'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -52,6 +60,77 @@ export interface FilmstripRequest {
 }
 
 // ---------------------------------------------------------------------------
+// HTML compositions
+// ---------------------------------------------------------------------------
+
+/**
+ * One frame of a composition, asked for by time.
+ *
+ * `atUs` rather than a frame index because a composition has no frame rate of its own — it is
+ * a continuous timeline that can be sampled anywhere, and the timeline asking for it decides
+ * the rate. Sampling is what makes it legal to place one composition on a 24fps and a 60fps
+ * timeline at once.
+ *
+ * `width`/`height` are the size to rasterise at, not the composition's authored size. An
+ * offscreen 1920x1080 page costs the same to seek whether the preview needs 480px or the
+ * export needs the full frame, but it does not cost the same to read back — so the caller
+ * asks for what it will actually draw.
+ */
+export interface CompositionFrameRequest {
+  assetId: string
+  path: string
+  compositionId: string
+  atUs: number
+  width: number
+  height: number
+  /**
+   * The values this clip renders with — already resolved against the composition's declared
+   * defaults, so main applies them without needing to know what was declared.
+   *
+   * Part of the request rather than set once per window because two clips of one composition
+   * can carry different values, and they share a window.
+   */
+  variables?: Record<string, string | number | boolean>
+  /**
+   * The same values written as CSS custom properties, with declared units attached.
+   *
+   * Sent alongside rather than derived in main, because main has no access to the declarations
+   * and so cannot know that `inset` is a number measured in px. A number is one string in CSS
+   * and a different one in text, and only the renderer knows which is which.
+   */
+  cssVariables?: Record<string, string>
+  /**
+   * The project's imported fonts, as bay's copies of the files. A composition's sandbox cannot
+   * load `bay://`, so main inlines each as a `data:` `@font-face` in the window — only files in
+   * bay's fonts folder, whatever the request says. Absent: none.
+   */
+  fonts?: {
+    family: string
+    path: string
+    weight: string
+    stretch: string
+    style: string
+    format: 'truetype' | 'opentype' | 'woff' | 'woff2'
+  }[]
+}
+
+export interface CompositionFrame {
+  /** Raw RGBA, `width * height * 4` bytes. The renderer turns it into an ImageBitmap. */
+  data: ArrayBuffer
+  width: number
+  height: number
+  /**
+   * True when the page did not repaint for this seek, so these are the previous frame's
+   * pixels — and correctly so, because the composition is holding.
+   *
+   * Worth reporting rather than hiding: a caller filling a cache can store one entry for the
+   * run instead of N copies, and a probe measuring "does this composition animate" needs to
+   * tell a held frame from a fresh one. Identical pixels alone cannot say which it was.
+   */
+  held: boolean
+}
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
@@ -71,6 +150,12 @@ export interface ExportRequest {
   /** Inclusive frame range. Whole timeline when omitted. */
   fromFrame?: number
   toFrame?: number
+  /**
+   * Master the audio to this integrated loudness under this true-peak ceiling, verified on the
+   * encoded file (`main/export/master.ts`). Absent means no mastering — the file carries the
+   * level the preview played, which is the default on purpose.
+   */
+  loudness?: LoudnessTarget
 }
 
 export interface ExportProgress {
@@ -83,6 +168,40 @@ export interface ExportProgress {
   message?: string
   outputPath?: string
   error?: string
+  /** On `done`, when the request asked for mastering: what the delivered file measures. */
+  loudness?: LoudnessReport
+  /**
+   * Frames written with something still not drawn. Set by the renderer, which composites the
+   * frames — main encodes whatever it is handed and cannot know. Absent when every frame was
+   * complete.
+   */
+  incomplete?: IncompleteFrames
+}
+
+/**
+ * Frames an export wrote with the wrong picture, for one of two reasons:
+ *
+ * - **An item was still pending** — a `.brf` scene still in its worker, a composition frame not
+ *   yet captured, a video that never finished seeking. The frame is in the file with that item
+ *   missing: the background shows where it should be.
+ * - **A clip's grade failed** — the clip is in the file ungraded (or with part of its grade
+ *   skipped, such as a LUT whose asset is gone). This one hides better: an ungraded clip looks
+ *   like a clip nobody graded, so it comes first in the sentence.
+ *
+ * The file is kept (every other frame is right, and a re-export usually fixes a pending item),
+ * but the export is not reported as clean: `message` is the sentence the user and the agent read.
+ */
+export interface IncompleteFrames {
+  /** How many frames of the file are wrong in either way. */
+  frames: number
+  /** Those frames, as inclusive timeline-frame ranges: `[[0, 1], [15, 15]]`. */
+  ranges: [number, number][]
+  /** What was missing, by name, on how many frames and where. Most frames first. */
+  items: { name: string; frames: number; ranges: [number, number][] }[]
+  /** Each distinct grade failure (it names its clip), on how many frames and where. */
+  gradeIssues: { issue: string; frames: number; ranges: [number, number][] }[]
+  /** One paragraph naming the frames, what went wrong on them, and what to do about it. */
+  message: string
 }
 
 export interface ExportJob {
@@ -141,13 +260,36 @@ export type MenuCommand =
    * renderer's handler does not care which case it is.
    */
   | { type: 'open-path'; path: string }
+  /** View → Toggle Debug Mode: shows debug tools such as transcript export. */
+  | { type: 'toggle-debug' }
+  /** bay → Settings… (⌘,). */
+  | { type: 'open-settings' }
 
 // ---------------------------------------------------------------------------
 // The bridge
 // ---------------------------------------------------------------------------
 
+export type ProcessGroup = 'renderer' | 'gpu' | 'main' | 'other'
+
+/**
+ * What the debug HUD shows about the machine, sampled on request. Each line a person reads:
+ * "CPU 43% of one core (renderer 32 · gpu 8 · main 3)", "Memory 928 MB", "GPU 37% (whole Mac)" or
+ * "GPU not reported".
+ */
+export interface AppMetrics {
+  /** This app's processes by kind. CPU is percent of one core (as Activity Monitor shows it), so it can pass 100. */
+  groups: { group: ProcessGroup; count: number; cpu: number; memoryMB: number }[]
+  totals: { cpu: number; memoryMB: number }
+  /** The GPU for the whole machine (macOS, from IOAccelerator) — null when not reported. */
+  gpu: { utilization: number; renderer: number | null; tiler: number | null; memoryMB: number | null } | null
+  /** When it was sampled, ms since the epoch. */
+  at: number
+}
+
 export interface BayApi {
   app: {
+    /** Debug mode's HUD: CPU and memory per process kind, and GPU utilisation where the OS reports it. */
+    metrics(): Promise<AppMetrics>
     version(): Promise<string>
     platform(): Promise<NodeJS.Platform>
     /** Whether a usable ffmpeg/ffprobe pair was found. Everything media degrades without it. */
@@ -186,6 +328,22 @@ export interface BayApi {
   }
 
   media: {
+    /**
+     * Transcribe a media file on this machine with whisper.cpp. Lines come back in seconds from
+     * the start of the file. `ok: false` carries what to install or download, in words.
+     *
+     * `download` lets main fetch the default model when none is on this machine — the renderer
+     * passes the user's "Download models when needed" setting, so the network is reached only
+     * when they allowed it. `model` is the file chosen in Settings.
+     */
+    transcribe(
+      path: string,
+      language?: string,
+      options?: { download?: boolean; model?: string | null }
+    ): Promise<
+      | { ok: true; segments: TranscriptSegment[]; model: string; language: string }
+      | { ok: false; error: string }
+    >
     /** Opens the system file picker and probes everything the user chose. */
     importDialog(): Promise<ImportedAsset[]>
     /** Import specific paths — used by drag-and-drop onto the window. */
@@ -209,8 +367,125 @@ export interface BayApi {
     filmstrip(request: FilmstripRequest): Promise<string[]>
     /** Peak pairs, normalised 0..1, for drawing a waveform. */
     waveform(assetId: string, path: string, buckets: number): Promise<number[]>
+    /**
+     * Beat grid of a media file's audio, analysed on this machine (`media/beats.ts`) and cached
+     * by content. Times are in source microseconds. `ok: false` carries ffmpeg's own words.
+     */
+    beats(path: string, options?: { beatsPerBar?: number }): Promise<{ ok: true; grid: BeatGrid } | { ok: false; error: string }>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
+  }
+
+  /**
+   * Local transcription's moving parts, for Settings: whether whisper.cpp is installed, which
+   * models are on this machine, and the one download that may be running. Downloads report
+   * through `onDownload` — including ones a transcription started on its own.
+   */
+  whisper: {
+    status(preferredModel?: string | null): Promise<WhisperStatus>
+    /** Resolves when the file is on disk and verified. */
+    download(modelId: string): Promise<{ ok: true } | { ok: false; error: string }>
+    cancelDownload(): Promise<void>
+    /** Only models in bay's own folder; another app's are left alone. */
+    deleteModel(file: string): Promise<{ ok: boolean; error?: string }>
+    /** `brew install whisper-cpp`. Takes minutes on a cold Homebrew. */
+    installEngine(): Promise<{ ok: true } | { ok: false; error: string }>
+    onDownload(listener: (download: WhisperDownload) => void): () => void
+  }
+
+  /**
+   * HTML compositions — HyperFrames pages, rendered as a source of pictures.
+   *
+   * Lives in main rather than the renderer even though the renderer is itself a browser, for
+   * the reason every other filesystem-touching thing does: a composition is a path, and the
+   * renderer does not open paths. Main owns an offscreen window per composition, seeks its
+   * paused timeline, and hands back pixels.
+   */
+  /**
+   * The in-app agent.
+   *
+   * `start` is separate from `send` because starting is where a failure is legible — no binary,
+   * no socket — and a first message that silently did nothing would look like a model that
+   * ignored you. Events arrive through `onEvent` rather than as a return value: a turn produces
+   * many, over minutes, and the panel renders them as they land.
+   */
+  agent: {
+    /** Returns the runtime id, or a reason it could not start. */
+    start(): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    send(text: string): Promise<{ ok: boolean; error?: string }>
+    /** Abandon the running turn. Safe when nothing is running. */
+    stop(): Promise<void>
+    dispose(): Promise<void>
+    /** Every event from every turn, in order. Returns an unsubscribe function. */
+    onEvent(listener: (event: AgentEvent) => void): () => void
+    /**
+     * Debug mode: write the conversation to a new folder in Downloads — as markdown, as the
+     * panel's JSON, and Claude Code's own session file — and reveal it in Finder.
+     */
+    exportTranscript(
+      projectName: string,
+      log: AgentEntry[]
+    ): Promise<{ ok: true; folder: string } | { ok: false; error: string }>
+  }
+
+  composition: {
+    /**
+     * Read a composition's declared shape, and everything wrong with it.
+     *
+     * Returns faults even on success, because the ones that are not fatal are the ones that
+     * matter most: a blocked CDN renders as a still frame with nothing in any log.
+     */
+    inspect(
+      path: string,
+      includeHtml?: boolean
+    ): Promise<{
+      info: CompositionInfo | null
+      faults: CompositionFault[]
+      /** The document text, when asked for. Absent otherwise — it can be large. */
+      html?: string
+    }>
+    /**
+     * Write a composition to disk.
+     *
+     * Here rather than in the renderer because the renderer does not touch the filesystem, and
+     * here rather than in `media` because it is the only write bay performs on behalf of an
+     * agent — everything else an agent does lands in the project document, which is undoable
+     * and visible. A file on disk is neither, so this one refuses anything that is not a
+     * composition path rather than becoming a general-purpose file writer.
+     */
+    write(path: string, html: string): Promise<{ ok: true } | { ok: false; error: string }>
+    /**
+     * Size one of bay's shipped templates to a canvas and write it to disk, ready to import.
+     *
+     * Main chooses the path, which is why this is not `write`: the renderer has no directory to
+     * name, and a template is written where bay keeps them (`<userData>/templates`), under a
+     * name derived from template, size and content — so placing the same template twice at one
+     * size reuses one file and one asset, and values live on each clip. The width and height
+     * are the active timeline's; an unknown id or an impossible size is refused by name.
+     */
+    writeTemplate(
+      templateId: string,
+      width: number,
+      height: number
+    ): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    /**
+     * Write a composition bay generated — a clip's subtitles — where bay keeps its own
+     * (`<userData>/generated`), under a name from `name` and the content. Same document, same
+     * file: regenerating identical subtitles reuses one asset.
+     */
+    writeGenerated(name: string, html: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    /** Import a composition as an asset, probing it the way media is probed. */
+    import(paths: string[]): Promise<ImportedAsset[]>
+    /** One frame, at a time. Resolves null when the composition could not be opened. */
+    frameAt(request: CompositionFrameRequest): Promise<CompositionFrame | null>
+    /**
+     * Drop the offscreen window for this asset.
+     *
+     * Explicit rather than timed out, because a composition window is a whole renderer
+     * process: leaving one per asset alive after the user removed the clip is the difference
+     * between an editor and a memory leak with a timeline attached.
+     */
+    release(assetId: string): Promise<void>
   }
 
   project: {
@@ -223,6 +498,21 @@ export interface BayApi {
     recent(): Promise<RecentProject[]>
     /** Fire-and-forget autosave. Resolves once written. */
     autosave(project: Project): Promise<void>
+    /**
+     * The project the OS asked bay to open at launch — a `.bay` double-clicked in Finder — or
+     * null. The projects screen is skipped for it: the user already said which one they wanted.
+     */
+    launchRequest(): Promise<Project | null>
+    /**
+     * A new, empty project, already written to disk in the projects folder under a name that
+     * does not collide, and already in the recents list. No dialog: creating a project should
+     * not start with a question.
+     */
+    create(): Promise<Project>
+    /** Take one project off the recents list. The file itself is not touched. */
+    forget(filePath: string): Promise<void>
+    /** Show the project file in Finder. */
+    reveal(filePath: string): Promise<void>
   }
 
   export: {
@@ -252,6 +542,47 @@ export interface BayApi {
     onToolCall(handler: (call: McpToolCall) => Promise<McpToolResult>): () => void
   }
 
+  /**
+   * Who may use bay (`src/shared/access.ts`). Main decides and enforces; this is how the access
+   * screen asks and listens. Every other channel refuses while the status is not `entitled`.
+   */
+  access: {
+    status(): Promise<AccessStatus>
+    /** Opens the system browser on the sign-in page; resolves with `waiting`. */
+    signIn(): Promise<AccessStatus>
+    cancelSignIn(): Promise<AccessStatus>
+    /** Forgets the stored sign-in on this Mac. */
+    signOut(): Promise<AccessStatus>
+    /** Verify now, instead of waiting for the next scheduled check. */
+    recheck(): Promise<AccessStatus>
+    /** Opens the website's waitlist in the browser. */
+    requestAccess(): Promise<void>
+    /** Grant `email` access as a referral from this account (entitled only). */
+    refer(email: string): Promise<ReferralResult>
+    /** Every status change, pushed. Returns an unsubscribe function. */
+    onChange(listener: (status: AccessStatus) => void): () => void
+  }
+
+  /**
+   * In-app updates (`src/main/update/updater.ts`, `src/shared/update.ts`). Main checks and
+   * downloads. The renderer shows the status and decides when it is safe to restart. All of
+   * these work while bay is locked.
+   */
+  update: {
+    status(): Promise<UpdateStatus>
+    /** Check now. Background checks run at launch and every six hours. */
+    check(): Promise<UpdateStatus>
+    /** Download the available update. Nothing downloads without this call. */
+    download(): Promise<UpdateStatus>
+    /**
+     * Quit and relaunch into the downloaded update. Call only after the open project is saved
+     * or autosaved (`restartPlan`).
+     */
+    install(): Promise<UpdateStatus>
+    /** Every status change, pushed. Returns an unsubscribe function. */
+    onChange(listener: (status: UpdateStatus) => void): () => void
+  }
+
   window: {
     minimise(): Promise<void>
     toggleMaximise(): Promise<void>
@@ -273,19 +604,52 @@ export const IPC = {
   appStorageReady: 'app:storage-ready',
   appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
+  appMetrics: 'app:metrics',
+
+  /** renderer -> main: start, drive and stop the in-app agent. */
+  agentStart: 'agent:start',
+  agentSend: 'agent:send',
+  agentStop: 'agent:stop',
+  agentDispose: 'agent:dispose',
+  agentExportTranscript: 'agent:export-transcript',
+  /** main -> renderer: one `AgentEvent`, pushed as it happens. */
+  agentEvent: 'agent:event',
 
   /** main -> renderer: one tool call, carrying its own id. */
   mcpToolCall: 'mcp:tool-call',
   /** renderer -> main: the answer, carrying the same id. */
   mcpToolResult: 'mcp:tool-result',
+  /**
+   * renderer -> main: the executor is (true) or is no longer (false) listening. Main holds a
+   * call until this arrives, because a call pushed into a page that has not mounted is lost.
+   */
+  mcpExecutorReady: 'mcp:executor-ready',
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
+  mediaTranscribe: 'media:transcribe',
+
+  whisperStatus: 'whisper:status',
+  whisperDownload: 'whisper:download',
+  whisperCancel: 'whisper:cancel',
+  whisperDelete: 'whisper:delete',
+  whisperInstall: 'whisper:install',
+  /** main -> renderer: one `WhisperDownload`, pushed as it changes. */
+  whisperProgress: 'whisper:progress',
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
+  mediaBeats: 'media:beats',
   mediaReveal: 'media:reveal',
+
+  compositionInspect: 'composition:inspect',
+  compositionWrite: 'composition:write',
+  compositionWriteTemplate: 'composition:write-template',
+  compositionWriteGenerated: 'composition:write-generated',
+  compositionImport: 'composition:import',
+  compositionFrameAt: 'composition:frame-at',
+  compositionRelease: 'composition:release',
 
   projectInitial: 'project:initial',
   projectSave: 'project:save',
@@ -294,6 +658,10 @@ export const IPC = {
   projectOpenPath: 'project:open-path',
   projectRecent: 'project:recent',
   projectAutosave: 'project:autosave',
+  projectLaunchRequest: 'project:launch-request',
+  projectCreate: 'project:create',
+  projectForget: 'project:forget',
+  projectReveal: 'project:reveal',
 
   exportStart: 'export:start',
   exportPushFrame: 'export:push-frame',
@@ -301,6 +669,23 @@ export const IPC = {
   exportCancel: 'export:cancel',
   exportChoosePath: 'export:choose-path',
   exportProgress: 'export:progress',
+
+  accessStatus: 'access:status',
+  accessSignIn: 'access:sign-in',
+  accessCancelSignIn: 'access:cancel-sign-in',
+  accessSignOut: 'access:sign-out',
+  accessRecheck: 'access:recheck',
+  accessRequestAccess: 'access:request-access',
+  accessRefer: 'access:refer',
+  /** main -> renderer: the new `AccessStatus`, whenever it changes. */
+  accessChanged: 'access:changed',
+
+  updateStatus: 'update:status',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  /** main -> renderer: the new `UpdateStatus`, whenever it changes. */
+  updateChanged: 'update:changed',
 
   windowMinimise: 'window:minimise',
   windowToggleMaximise: 'window:toggle-maximise',

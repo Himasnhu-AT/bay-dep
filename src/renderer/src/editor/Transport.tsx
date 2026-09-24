@@ -43,7 +43,7 @@ export function Transport(): ReactNode {
   const empty = duration === 0
 
   return (
-    <div className="flex h-9 shrink-0 items-center gap-2 border-y border-line bg-surface-1 px-2">
+    <div className="@container flex h-9 shrink-0 items-center gap-2 border-y border-line bg-surface-1 px-2">
       <div className="flex items-center gap-0.5">
         <IconButton
           label="Go to start"
@@ -109,7 +109,11 @@ export function Transport(): ReactNode {
         <span className="text-[11px] text-ink-2">{formatTimecode(duration, fps, true)}</span>
       </div>
 
-      <div className="flex w-[168px] items-center gap-1">
+      {/* In a 1024px window the row runs out of room, and flex squeezed this group first,
+          leaving the zoom slider as a bare thumb with no track — a control that looked broken.
+          Below 28rem of row the slider goes and the two buttons (and −/+) remain; above it the
+          group keeps its width. */}
+      <div className="flex shrink-0 items-center gap-1 @md:w-[168px]">
         <IconButton
           label="Zoom out"
           shortcut="−"
@@ -125,7 +129,7 @@ export function Transport(): ReactNode {
           value={ppfToSlider(pixelsPerFrame)}
           onInput={(value) => setPixelsPerFrame(sliderToPpf(value))}
           onCommit={(value) => setPixelsPerFrame(sliderToPpf(value))}
-          className="flex-1"
+          className="hidden flex-1 @md:flex"
         />
         <IconButton
           label="Zoom in"

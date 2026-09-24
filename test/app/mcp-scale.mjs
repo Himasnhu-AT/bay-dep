@@ -14,6 +14,9 @@
  * The fixture is built through the store rather than through the tools: 200 `place_asset`
  * calls would measure the tools' throughput, which is not the question, and would take
  * minutes. Everything *measured* goes through the real dispatcher.
+ *
+ * **Report, no verdict.** Exits 0 whenever it could measure and 2 when it could not; nothing is
+ * compared with an expectation, so a green exit says the numbers exist, not that they are good.
  */
 
 import { attach, PreconditionError, runProbe } from './cdp.mjs'
@@ -169,6 +172,7 @@ console.log(JSON.stringify({ timeline: sample.timeline, tracks: [firstTrack] }, 
 console.log(`\n        tracks: ${sample.tracks.length}, items: ${sample.tracks.reduce((n, t) => n + t.items.length, 0)}`)
 console.log(`        items per track: ${sample.tracks.map((t) => t.items.length).join(', ')}`)
 
+console.log('\nREPORT ONLY: no verdict — read the sizes above.')
 close()
 return true
 

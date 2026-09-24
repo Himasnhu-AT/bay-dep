@@ -22,7 +22,7 @@
 import { chmod, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { LineBuffer, RPC_INTERNAL_ERROR, encode, failure, parseLine } from './jsonrpc'
-import { handleRequest, type RunTool } from './protocol'
+import { handleRequest, type RunTool, type ReadResource } from './protocol'
 
 export interface SocketStatus {
   ready: boolean
@@ -45,7 +45,7 @@ export interface RunningSocket {
   close(): Promise<void>
 }
 
-function attach(socket: Socket, runTool: RunTool): void {
+function attach(socket: Socket, runTool: RunTool, readResource: ReadResource): void {
   const buffer = new LineBuffer()
   socket.setEncoding('utf8')
 
@@ -57,7 +57,7 @@ function attach(socket: Socket, runTool: RunTool): void {
         socket.write(encode(parsed.error))
         continue
       }
-      void handleRequest(parsed.request!, runTool)
+      void handleRequest(parsed.request!, runTool, readResource)
         .then((answer) => {
           if (answer && !socket.destroyed) socket.write(encode(answer))
         })
@@ -86,7 +86,15 @@ function attach(socket: Socket, runTool: RunTool): void {
  */
 export async function startSocketServer(
   resolvePath: () => string,
-  runTool: RunTool
+  runTool: RunTool,
+  /**
+   * Reads a guide's body. Injected rather than imported, because the bodies are inlined by
+   * Vite's `?raw` and only Vite resolves that — importing them anywhere in this module's
+   * graph makes it unloadable under plain Node, which is what `pnpm test` runs. That is not
+   * hypothetical: doing it took all 28 tests in this directory out in one go, and they
+   * reported as three failed *files* rather than as a missing feature.
+   */
+  readResource: ReadResource = () => null
 ): Promise<RunningSocket> {
   const degraded = (error: string): RunningSocket => ({
     status: { ready: false, path: null, error },
@@ -112,7 +120,7 @@ export async function startSocketServer(
   try {
     server = createServer((socket) => {
       connections += 1
-      attach(socket, runTool)
+      attach(socket, runTool, readResource)
     })
   } catch (error) {
     return degraded(error instanceof Error ? error.message : String(error))
@@ -151,16 +159,10 @@ export function describeSocket(status: SocketStatus): string | null {
   )
 }
 
-/**
- * The three states the UI has to tell apart, as one line.
- *
- * `waiting` and `failed` look identical from outside — nothing is happening either way — and
- * conflating them is how a subsystem that never worked survives as one nobody used. So the
- * wording is deliberately different in kind: a failure names a reason, waiting names the
- * socket path, because the path is what a user needs in order to configure a client.
+/*
+ * The sentence for those three states used to live here, and that is why nobody ever read it:
+ * the only process that can render it is the renderer, which may not import from `src/main`.
+ * It is `summariseAgentSurface` in `@shared/mcp` now, beside the tool catalog, and
+ * `StatusBar.tsx` calls it. `SocketStatus.path` is `socketPath` across the bridge, which is
+ * the other half of why the two ends never met.
  */
-export function summariseAgentSurface(status: SocketStatus, connections: number): string {
-  if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
-  if (connections === 0) return `Agent control ready — no agent has connected yet (${status.path})`
-  return `Agent control ready — ${connections} connection${connections === 1 ? '' : 's'} this session`
-}

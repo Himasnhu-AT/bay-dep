@@ -182,6 +182,12 @@ export function anchorFor(
  *
  * Mixed widths and shapes on purpose: a string of `iiii` measures nearly the same in many
  * families and would report a substitution as a match.
+ *
+ * **Both detectors must measure this same string, which is why it is a constant.** It was
+ * declared here and then hardcoded at both call sites — the compositor's and `useTextFit`'s —
+ * leaving one value in three places with the named authority as the copy nobody read. Two
+ * detectors that disagree about the string disagree about whether a font substituted, and a
+ * substituted font is the fault with no visual cue at all: it draws, and it looks deliberate.
  */
 export const FONT_PROBE_STRING = 'MWQjgq@10 iIl'
 

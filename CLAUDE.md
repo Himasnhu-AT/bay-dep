@@ -66,7 +66,348 @@ pnpm typecheck        # tsc over both projects; the renderer and node halves are
 pnpm test             # the whole suite, on node:test — no test framework in the tree
 pnpm bundle           # unpacked app bundle, for checking real app identity
 pnpm release          # packaged artifact via electron-builder (unsigned; see below)
+pnpm release:signed   # sign + notarize + staple → DMG, update zip, latest-mac.yml (.bay-release; README "Releasing")
+./run.sh              # build, then run exactly ONE instance with CDP on 9222 (--no-build, --stop)
 ```
+
+Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app agent on the Agent
+SDK instead of the `claude` CLI (default); `BAY_MCP_MODE=gateway` makes the proxy list three tools
+(`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
+invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
+
+## Running and testing the app
+
+**Probes of main-process code need a restart, not just a build.** `electron .` runs whatever is
+in `out/`, and a running instance keeps the main bundle it started with — `pnpm build` alone
+changes nothing in a process that is already up. `./run.sh` rebuilds *and* replaces the one
+instance; use it, and read its first line, because a failed typecheck ends it before anything
+launches and a probe run against no app reports `CANNOT MEASURE`, which is not a result.
+
+**To test the running app, use `agent-browser` — and read [`docs/testing.md`](docs/testing.md)
+first.** It is the testing guide: the four gates and what each one proves, how to connect, drive,
+read state and clean up, the traps, and recipes. The rules that have already cost the most:
+
+- **Always `agent-browser --session bay …`.** The default session is shared by every process on
+  the machine; another agent's `open <url>` once navigated bay's editor to a different website
+  through it, and every tool call then timed out. Check `agent-browser --session bay tab` shows
+  bay's `index.html` before trusting anything.
+- **It follows new targets.** Placing an HTML composition opens a hidden render window and
+  agent-browser switches to it — a blank 3840×2160 screenshot. `tab t1` goes back.
+- **It cannot hold a modifier through a drag** (Alt-drag trims): dispatch `PointerEvent`s with
+  `altKey: true` from `eval`, and say that is what you tested.
+- **`record` does not work on Electron.** Sample transient things in the page, with a positive
+  control proving the sampler can see a change.
+
+**A probe that reloads the page makes the window flash, and that was the "flicker".** The report
+was "the screen flickers every time the agent count goes up". It was not the count (a text node
+updated by a 10-second poll) and not tool calls: a marker set in the page survived a socket tool
+call and an agent-browser connect, and did not survive `test/app/cdp.mjs`'s `attach()`, which
+reloaded the editor on every probe run to set the debug flag. The probes also connect, so the
+count moved with them. `attach()` now reloads only when the debug handle is missing. When a
+symptom correlates with a counter, find what else moves the counter.
+
+A value read through a store snapshot taken *before* an action is the old value:
+`const s = getState(); s.undo(); s.project` reports the state before the undo. Re-read.
+
+**Undo what a probe did, and do not save.** `test/app/mcp.mjs` calls every tool and leaves
+~28 edits in the open project; unwinding `past` restores it. The fixture on disk only changes if
+something saves, and nothing a probe does should.
+
+**The in-app agent's sandbox is `--tools`, not a deny list.** Measured, each one:
+- `--setting-sources ''` does not stop MCP servers loading; only `--mcp-config` plus
+  `--strict-mcp-config` isolates the agent to bay's tools.
+- An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
+- `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
+  the session's tool list is bay's catalog (33 tools as of this writing) plus those three, and a request to run `id` had nothing to
+  run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
+  `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
+  bundled skill (`cli.test.ts` pins both).
+- `--setting-sources project` does not stop Claude Code reading every CLAUDE.md in the folders
+  *above* the working directory: a marker in the workspace's parent reached the model. Only
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` (set by `childEnv` in `agent/cli.ts`, for both runtimes)
+  kept it out, and a project skill still loaded with it set.
+- `--restricted` also switches off project skills (the skill was simply missing from the
+  session), which is why it went. The deny list it was paired with had gone stale: it named
+  `Task` after the tool became `Agent`, and never named `Monitor`, which runs commands. A list
+  of what is *allowed* cannot miss a tool the CLI adds later; a list of what is denied can.
+
+**bay's skills are real Claude Code skills.** `src/shared/skills.ts` defines them; main writes
+each as `.claude/skills/<slug>/SKILL.md` in the agent's working directory on every start, and the
+CLI loads them with `--setting-sources project` from that directory (nothing else is there, so
+the user's own skills stay out; their CLAUDE.md files stay out by the switch above). The CLI
+itself expands only a `/skill` at the very start of a message, so the agent has the `Skill` tool:
+a `/name` anywhere in the message, several at once, is loaded by the model, and the system prompt
+(`src/main/agent/prompt.ts`) tells it to load only bay's skills the user named. Skills are still
+user-invoked.
+
+**The in-app agent reaches files only through `src/main/mcp/policy.ts`.** It has no filesystem
+tools, so a path argument is its only way to a file, and text it reads (a transcript, an asset
+name) can carry a prompt injection. It connects on its own socket, `bay-agent.sock`, so main knows
+the caller by the connection rather than by anything a call claims; from there, no `@file`
+references, no hidden files or folders, only paths under home or temp, and a composition may only
+overwrite a composition. Terminal clients keep `@file` — they already have the filesystem — and
+nobody's export may overwrite a file that is not media.
+
+**Compositions are confined to their own folder** (`src/main/html/sandbox.ts`). The composition
+partition cancels every request but `data:`, `blob:`, `about:` and `file:` inside the composition's
+folder, resolved through symlinks; the window is sandboxed (hence CommonJS `.cjs` preloads), cannot
+navigate or open windows, and gets no permissions. Before this, a shared project's composition
+could read `~/.ssh` and post it anywhere. The contract already told authors remote resources were
+blocked; now they are.
+
+**bay ships its own ffmpeg, built from pinned source as LGPL-2.1** (`script/build-ffmpeg.sh` →
+`vendor/ffmpeg/<platform>-<arch>/`, found by `src/main/ffmpeg/vendor.ts`; `vendor/ffmpeg/README.md`
+has the why). The npm build it replaced was `--enable-gpl --enable-nonfree` — not redistributable —
+and 2.5 years stale. So: **no libx264** (H.264 is `h264_videotoolbox`, quality mapped by measurement
+in `codec-args.ts`), **no vid.stab** (use `deshake`), no font stack (`drawtext`/`subtitles` are not
+there; bay draws its own text). The binaries are gitignored — run the script once per machine
+(~5 min); tests that need them skip loudly without them, and `pnpm release` refuses to package
+without the binaries BUILDINFO records. `src/main/ffmpeg/capabilities.test.ts` asks the binary for
+every encoder and filter the code's own argument builders write, so adding a filter the build lacks
+fails `pnpm test` by name. Add it to the script's configure line (and its `REQUIRED_*`), not a
+fallback.
+
+**bay passes ffmpeg no `-protocol_whitelist`, on purpose.** With the old npm build it changed
+nothing any specimen could observe; bay's own build is `--disable-network` with only `file` and
+`pipe`, so there is no network code to whitelist. `src/main/media/local-only.test.ts` pins both the
+protocol list and that no URL or local playlist makes a request (Node reaching the same server is
+the positive control); pointed at the old 6.1.1 build, both fail.
+
+**Subtitles are compositions, one per clip, in a chosen design** (`src/shared/subtitles.ts`,
+`add_subtitles`). A text item can show a line; it cannot light the word being spoken, which is what
+short-form subtitles are. whisper runs with `-ojf` so every token has a time, tokens are merged
+into words, the words the clip plays are mapped onto it (`segmentsToWords`, the same mapping as the
+cues), and the words are baked into a composition whose `time(t)` draws the group on screen with the
+spoken word marked. Main writes it content-addressed under `<userData>/generated`; the store places
+it over the clip on a "Subtitles" track and replaces subtitles already there, so choosing another
+design swaps rather than stacks. The documents are checked by bay's own composition reader and their
+script is run against a DOM stand-in in the tests — which word is lit at a given second is the
+behaviour, not the markup.
+
+**Motion graphics are `.brf` modules: JSX the agent writes like React/Remotion, drawn natively**
+(`src/shared/brf-code.ts`, `write_brf`). A module's default export returns
+`<scene duration>` of `<rect>/<ellipse>/<path>/<text>/<group>`; it may import from `'bay'` or
+`'remotion'` (`interpolate`, `spring`, `useCurrentFrame`, `<Sequence>`, `Easing`) and nothing
+else. Each frame resolves to a JSON scene (`src/shared/brf.ts`) that `engine/brf.ts` paints
+straight onto the compositor's canvas — no window, no capture, the same path in preview,
+`preview_frame` and export. HTML compositions stay for what needs a web page. Why not
+Remotion/HyperFrames-style HTML: everything DOM renders by screenshotting Chrome, the cost this
+removes. Why code rather than JSON: models write React-shaped code fluently, and raw animation
+JSON is what they fail at (~13% for GPT-5 writing Lottie, OmniLottie, CVPR 2026).
+
+**The code runs in a worker, and a worker does not inherit the page's CSP — measured.** Inside a
+same-origin worker `new Function` ran and `fetch` to a remote origin *reached the network*. So:
+one worker per module (no bridge to main, killable after 3s), `lockdown` before any user code
+(network/storage/`importScripts` removed on the global *and its prototype chain*, every function
+constructor and `eval` blocked, the message channel sealed), `import()` refused at load, and
+**main cancels every remote request from the editor's session** (`src/main/offline.ts`) so the
+lockdown is not the only wall. The lockdown's stand-in for `Function` must be made in the
+target realm — made in the lockdown's own, `blocked.constructor` was a live `Function` from
+another realm, which `brf-lockdown.test.ts` caught. The JSX factory is `__brf_h`, not `h`:
+`const h = height / 2` is ordinary code and shadowed it.
+
+**Blocking `Function` does not block code generation: the platform compiles strings too.**
+The adversarial pass (test.md §2.7, `test/app/brf-sandbox.mjs`) found string `setTimeout`/
+`setInterval` running in the locked worker, a `dispatchEvent`ed `MessageEvent` reaching the host
+listener (a module swapped itself for an unprobed one after `write_brf` accepted it), and
+`FontFace` fetching a URL. Timers now refuse non-functions (wrapper made in the target realm,
+`Reflect.apply` captured before user code), the listener answers only `isTrusted` events, and
+`FontFace`/`fonts` are gone. A fetch from the editor *document* tests its CSP, not main's filter;
+the probe uses CDP's CSP bypass in an iframe to reach main.
+
+**`.brf` text takes variable-font axes through registered faces** (`engine/brfFonts.ts`):
+canvas has no `font-variation-settings`, and `ctx.fontStretch` is keywords only, but a
+`FontFace` with a `variationSettings` descriptor draws with any axis — measured, Archivo wdth 62
+vs 125 is 27.5% vs 51.4% of the frame. Each (family, settings) is a face cloned from the family's
+`@font-face` rules or `local()` (full/PostScript names only). A loading face makes the item
+*pending*, so export and `preview_frame` wait on `variationFaces.settle` like any other source.
+
+**Fonts are assets, not machine state** (`kind: 'font'`, `@shared/fonts`, `media/font-file.ts`,
+`engine/importedFonts.ts`). Main reads the file's own tables (name ID 16 before ID 1: a variable
+font's ID 1 is its default instance, "Archivo SemiBold") and copies it, content-addressed, into
+`<userData>/fonts`, admitted to `bay://` like any asset path. The compositor registers each as a
+`FontFace` with the axis ranges as descriptors (a single weight would clamp every other one), a
+loading face makes text *pending*, `brfFonts` clones variation faces from the imported source, and
+composition windows get the same bytes as a `data:` `@font-face` — only files from that folder,
+with descriptors checked, since a `.bay` may be someone else's.
+
+**Detached audio is a linked item, and the picture's element is shared where it can be**
+(`@shared/links`, `detach_audio`). The picture gets `audioDetached`, the sound an audio-track item
+with the same asset/in/span; items sharing a `linkId` and overlapping in time move, trim, slip,
+split and delete together. Links are re-derived from overlap after every `edit()`
+(`normaliseLinks`), so a split or `remove_range` of a pair yields two pairs without either knowing
+links exist. Preview: an aligned sound plays through the picture's own element (one decode);
+anything else gets an `<audio>` stand-in with the picture element claimed silently. Export skips
+the detached picture as an input. Gain lookups ask for the item's *own* transition
+(`transitionOfItemAt`), because a picture dissolve and its copied audio cross-fade share frames.
+
+A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
+undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
+anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main
+imports a `.brf` file as text and never runs it; `lib/brfImport.ts` probes it in the worker.
+Every example in `bay://guide/brf` and the worked-edits guide is compiled and run on every frame
+by `brf-code.test.ts`.
+
+**Beats are analysed in main, kept on the asset in source time, and mapped once**
+(`media/beat-analysis.ts`, `@shared/beats`, `detect_beats`). Spectral flux → autocorrelation picks
+a period family → the octave is chosen by what sits halfway between beats (broadband *and* kick
+band, because after log compression a quiet hat rises in as many bins as a kick) → Ellis's DP →
+bar phase from the kick band only when one position clearly wins → drop-outs as missing beats on
+the continued grid. `beatFramesForItem` is the one mapping onto the timeline; the tool's frames and
+the timeline's snapping (`lib/snap.ts`, which also snaps to markers now) both read it. Measured on
+a real score its eighths are *harder* than its weaker beats, so by onsets alone it is a 220 pulse;
+it reads 110 only because 220 is past the 215 search ceiling, and a pulse over 180 needs the kick
+band to agree. The octave is the fragile part; the tests pair every octave case with its opposite.
+
+**The preview's composition pool answers with the latest decoded frame, not nothing**
+(`CompositionPool({ live: true })`). A composition frame is a 40-80ms capture in main, and every frame
+of a playing composition is a new moment, so an exact-or-nothing pool drew compositions only while
+paused — they vanished during playback. Live, a miss shows the latest decoded frame of that clip
+within a second, the newest queued capture is served first, stale ones are dropped, and three frames
+ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
+answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
+
+**A media load that failed is retried under a new URL, with CORS** (`mediaRetry.ts`). Chromium
+remembers a failed load per URL and CORS mode. A `bay://` path refused before it was allowlisted
+kept failing after the allowlist, even on a fresh element. Meanwhile `fetch` of that URL answered
+200. So the same-URL retry could never work, and dropping CORS "worked" only by changing the key,
+into a load that plays silence. `test/app/audio-soak.mjs` reproduces the race: before the fix,
+every forced iteration was silent; after it, none were.
+
+**A GUI probe must never send a global keystroke or trust Accessibility for window presence**
+(`test/app/menu.mjs`, `test/app/README.md`). Accessibility lists only the active Space. With
+another app full screen, bay has "0 windows". `key code 53` lands in whatever app is in front,
+and it once landed in the user's chat app while they were typing. Use the window server's list
+(`CGWindowListCopyWindowInfo`), and send a key only after re-checking `frontmost` in the same
+script.
+
+**A cut during playback is prepared before the playhead reaches it** (`Compositor.preroll`,
+`engine/pictureHold.ts`, `test/app/cut-playback.mjs`). Every cut played one black picture, cold
+and warm, graded or not: the incoming clip's element was first told where to be by the draw *at*
+the cut, and a seeking element has nothing to draw. Now the engine, after both consumers have
+acquired their elements, seeks the next second's clips paused to their first frame (never an
+element anything used this frame — a hidden track's sound is invisible to the compositor). A
+same-asset jump cut cannot be prerolled (one element, two times), so live playback puts the last
+complete picture back over an incomplete one for at most a second; export, `preview_frame` and a
+paused preview never hold. And a playback seek in flight is left to land: `currentTime` reads a
+seek's *target* the moment it is set, so judged by drift a slow seek looked landed, lost its
+bookkeeping and was restarted every two frames — measured as a jump cut black for half a second.
+
+**A colour grade is a source transform inside the compositor, not a second renderer**
+(`item.grade`, `@shared/grade`, `engine/grade.ts`). `#drawSource` hands the element it was about to
+draw to one shared WebGL2 context, gets back a graded canvas of the same framing at the size it
+will be drawn, and draws that with the same alpha/blend/filter/rotation — so preview,
+`preview_frame` and export grade through one path, and grain/halation are native at output size.
+An identity grade resolves to `null` and skips the pass (the `'none'` rule). `.cube` LUTs are
+`kind: 'lut'` assets parsed by main (`@shared/cube`); the table lives on the asset. Halation is
+screened in RGB: in YUV it casts violet. A render target created while its texture unit was bound
+for reading is a WebGL feedback loop — the first halation draw of every new size failed until
+`target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
+
+**An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter
+waits for pending items for a bounded time and then writes the frame anyway. That frame is a wrong
+picture: a `.brf` or composition still missing, or a clip whose grade failed and was drawn
+ungraded. Each such frame is recorded from the draw that was written (`DrawStats.pendingNames`,
+`gradeIssues`). `describeIncomplete` turns the record into `IncompleteFrames` (`@shared/ipc`),
+which lists the frames and ranges, each item and grade issue, and one sentence with the
+better-hidden fault first. `track_export` reads it live from the exporter, not from main, which
+cannot know. It returns `complete: false`, `incompleteFrames` and a `warning`, and a clean `done`
+returns `complete: true`. The export form shows the same sentence. The frame count used to be a
+counter that nothing read. Every pending site goes through `notePending`: a branch that bumped
+`pending` and forgot the name arrived in parallel with the field.
+
+**Tool calls stream into the panel as the model writes them.** `content_block_start` for a
+`tool_use` shows the card at once, and each `input_json_delta` (keyed by block index, so the stream
+mapping keeps per-run state) appends to it; the card shows what is being written and the end of it —
+a composition's HTML as it arrives. Before this a large `write_composition` was minutes of
+"Working…" with nothing on screen.
+
+**A navigation can start and never commit.** bay's `will-navigate` guard cancels every
+renderer-initiated navigation, so `did-start-navigation` fires for a `location.reload()` that
+never happens. State keyed on navigation *start* (executor readiness was) is then wrong for good;
+key it on `did-navigate`, the commit. `test/app/mcp-during-reload.mjs` holds both cases.
+
+**A probe of the preview is not a probe of the export, however alike the names.** Export's clip
+audio applied no transition gain for as long as it existed — every dissolve a hard cut in the
+file — while `test/app/transition-audio.mjs` passed, because it meters the preview's analysers and
+the preview was right. CLAUDE.md even said export sampled the shared curve. It took unrelated
+work reading `audio-graph.ts` to see it. `src/main/export/audio-render.test.ts` now renders a
+dissolve through the real ffmpeg and measures it. When a check covers one of two paths, say which.
+
+**A race you cannot reproduce is not a race you have disproved.** The executor-readiness wait
+changed no outcome in a whole session of trying — cold launch and a 0–160ms reload sweep both
+answered with it removed. Then the final regression run lost a call at the 0ms offset: sent to a
+page that *was* listening, torn down by the reload before it answered, 30s of silence for the
+agent. That is a different fault from the one the wait guards, which is the second lesson — a
+guard that is correct can still be guarding the wrong gap. Stranded calls are now resent if they
+are reads and failed at once if they are writes (`strandedCall`); the decision is unit-tested,
+the rescue itself has not yet been caught firing, and the commit says so.
+
+**Worktree agents start from `main`, not from your branch.** Every one spawned this way came up
+on an old commit without the files its task named. Tell it to `git merge --ff-only <branch>`
+first. Tools no longer share a hand-edited list: a tool is a file in `src/shared/tools/` and an
+entry in its executor module's `handlers`, and the two indexes are generated (`pnpm gen:tools`).
+Two branches that each add a tool conflict only in those generated files, and regenerating
+after the merge resolves it.
+
+**There is no Prettier config, so do not run Prettier.** `npx prettier --write` falls back to
+its defaults — double quotes and semicolons — and rewrote a whole file into a style nothing else
+here uses, which then conflicted with every branch that touched it.
+
+**The in-app agent edits directly; review is a diff, not a gate.** Every turn that changes the
+project ends with a Changes card (`describeChanges` in `src/shared/diff.ts`, compared by id) and a
+Revert that restores the state before that turn as one undoable step. A turn's checkpoint also
+holds the compositions it rewrote, so Revert writes those back. Cards expire when the project id
+changes — a checkpoint of project A must never be restored into B's window, where ⌘S would write
+it over B — and after 20 turns. Edits the user makes during a turn are marked on the card
+(`asAgent` wraps tool calls; anything outside one is the user's), because a whole-project revert
+takes them too. "Ask before editing" in
+Settings turns the old gate back on: every write is refused until the user approves a
+`propose_edit` plan, the approval is delivered as the model's next turn naming each call byte for
+byte, and each approved call runs once. Outside a session (a terminal client on the socket)
+nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, because it changes
+nothing.
+
+**bay is invite-only, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A Mac
+is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST to a
+127.0.0.1 loopback server that checks Origin and `state`) was verified against `access/{email}` in
+Firestore. Until then `ipc.ts` refuses every channel outside `OPEN_WHILE_LOCKED` and both sockets
+answer tool calls with the unlock instructions (`auth/gate.ts`); the access screen is only UI.
+Offline it keeps working for 14 days from the last successful check; a 404 on the access doc, an
+unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
+bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
+`safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
+
+**Releases are signed by `script/release-signed`, and every Mach-O is checked by content, not by
+name** (`pnpm release:signed`, `.bay-release`). electron-builder signs. The script then walks
+the whole bundle, including `Contents/Resources` (ffmpeg and ffprobe in `Resources/ffmpeg/`, and
+`claude` in `app.asar.unpacked`), which `codesign --deep` skips. It refuses any binary without
+the Developer ID, the hardened runtime, a secure timestamp or the arm64 slice, so moving or
+swapping a binary needs no signing change. It notarizes the app, then the DMG, and fails on any
+issue in Apple's log. The only entitlement is `allow-jit`, measured in a signed build. The four
+that were there before had comments no one had tested. `disable-library-validation` claimed
+ffmpeg needed it, but library validation governs dylibs loaded into a process, not executables
+it spawns. Builds are arm64 only, because pnpm installs only this Mac's `claude-agent-sdk-darwin-*`.
+
+**An update restarts bay with no arguments.** Squirrel relaunches the bundle as Finder would:
+no `--user-data-dir`, and no environment. A test update from an isolated profile therefore
+relaunches onto the default profile, which is the real user's. Test updates only with builds
+made with `--app-name bay-reltest`, which keep their data under that name (`main/app-name.ts`).
+That did not work at first. Main's `setName('bay')` overrode the stamped name, and the first
+test build opened the real profile. It was checked in a bare Electron app, never in bay. Now
+check a test build's socket log line before anything else, and run its first launch with
+`CFFIXED_USER_HOME` pointed at a scratch folder, so a wrong name lands there. The renderer decides
+when a restart is safe (`restartPlan`/`runRestart` in `@shared/update`): it saves first, or
+writes the autosave sidecar while locked, and installs only if that succeeded. The update
+channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
+cannot sign in gets fixed.
+
+**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
+email directly on the website's `/admin`; an entitled user refers one from inside bay
+(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
+(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
+`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
+site says "Releasing soon" and points at the waitlist.
 
 ## graft — read the graph before you grep
 
@@ -423,8 +764,9 @@ nothing, and concluded the whole ripple family was missing — while `delete_ite
 `ripple` flag for weeks. The verb was a parameter, not a function name. Two habits fix it: grep the
 *catalog* and the store's action list rather than a vocabulary you brought with you, and check the
 counts move when you think you have added something new. A `git grep` for a name you invented tests
-your naming, not the codebase. (This is also what `graft` is for — `graft skeleton` on the store or
-`src/shared/mcp.ts` lists what is actually there, with no guessing at spelling.)
+your naming, not the codebase. (This is also what `graft` is for — `graft skeleton` on
+`src/renderer/src/store/types.ts` (every store action) or `src/shared/tools/index.ts` (every tool)
+lists what is actually there, with no guessing at spelling.)
 
 `pnpm typecheck` runs **two** projects — `tsconfig.node.json` (main + preload + shared) and
 `tsconfig.web.json` (renderer + shared). A change to `src/shared/` is checked by both, which is the
@@ -491,14 +833,80 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
   resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
   independently.
+- **J/L cuts and ducking are in that same function, `itemAudioGainAt`** (`src/shared/audio-gain.ts`),
+  and the preview's clip gain now reads it too — before, the preview multiplied fade × transition
+  itself and so ignored the transition-wins rule above. A J/L item's sound plays from its own
+  `<audio>` stand-in for its whole audible span (no seam at the picture cut), and its picture
+  element is *claimed* silently, because an unclaimed media element plays to the speakers
+  unmixed. Ducking is keyed on the key track's clips being present, not on signal level: Web
+  Audio has no sidechain and ffmpeg's `sidechaincompress` has its own detector, so a level-driven
+  duck would be two answers. Loudness mastering (`main/export/master.ts`) is a closed loop on the
+  **encoded** file — gain, 4×-oversampled `alimiter` with `latency=1`, encode, `ebur128`, correct —
+  never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
+  peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
+  default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
+- **Keyframes have one sampler and item-relative frames** (`item.keyframes`, `@shared/keyframes`,
+  `edit_item.keyframes`). The compositor paints `animatedItemAt` (in `#paintItem`, so every kind
+  and a transition's two sides animate alike) and `itemAudioGainAt` reads `animatedVolumeAt`, so
+  preview, `preview_frame` and export — picture and the per-frame volume envelope — sample one
+  curve. No keys returns the item itself. A keyed property takes its value from the keys and its
+  static field draws nowhere; `layout.scale` is a zoom about the centre (a transform, so type
+  enlarges rather than reflows). Frame 0 is `item.from`: moves carry keys; an in-point trim
+  (store trim, roll/slide's `keyframeShiftFrames`, ripple's kept tail, `apply_script` head trim)
+  shifts them to stay on their footage; splits use `sliceKeyframes` (keys inside plus the nearest
+  beyond each end — exact); slip and speed leave them; `retimeTimeline` scales them. Anything that
+  asks "can this clip sound" must use `volumeMayBeAudible`, not `item.volume > 0` — a clip keyed up
+  from volume 0 was otherwise dropped from export.
+- **The `.bay` format changes additively within a version, and any other change is a bump.** A new
+  *optional* field needs nothing: older builds of the same version load the file, carry the key
+  through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field
+  is a format change and needs all three of: `PROJECT_VERSION` bumped, a migration registered from
+  the previous version in `src/main/project/migrations.ts`, and the new format's document spelled
+  out as a string in `src/shared/project-fixtures.ts`. `migrations.test.ts` fails without any of
+  them, and `project-format.test.ts` fails if the store stops writing a key the version-1 file has
+  — which is what catches a rename that moved every reader along with it. Loading is two layers:
+  **migrations** change what a document means, one version step at a time, and a document from a
+  *newer* version is refused rather than loaded, because saving it would drop what this build does
+  not know; **transforms** repair values (a `null` where `JSON.stringify` wrote a `NaN`, a negative
+  start) and must be no-ops on a well-formed file. Never pass a format change off as a transform.
+- **Layering is a test, not a comment** (`src/shared/boundaries.ts`). `shared/` reaches neither
+  process nor Node/Electron/React; the renderer reaches no `node:`/`electron`; `engine/` reaches
+  no store, React or UI; `components/` reaches no store; and the folders of `src/main/` and of
+  `src/renderer/src/` import each other one way only. The rules are over what a file can
+  *reach*, not what it imports — the engine got to the store through `lib/bay.ts` with no import
+  that looked wrong. The failure names the whole route and where the code belongs. This is the
+  deliberate alternative to workspace packages: the same boundaries with nothing moved out of
+  sight of `committed-imports`, the resolver hook or the tsconfig includes.
+- **The store is `store/editor.ts` (state and selectors) over `store/kit.ts` (`edit()`, undo
+  bookkeeping) and one slice per concern in `store/slices/`.** A new action goes in the slice
+  for its concern and in `EditorActions` (`store/types.ts`); each slice's `Actions` type lists
+  exactly what it provides, so a missing or misplaced action fails typecheck.
 - **Every project mutation goes through the store's `edit()`**, which snapshots for undo and stamps
   `updatedAt`. Poster and waveform arrivals pass `{ silent: true }` — they are not edits and must
   not land on the undo stack.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network.** No telemetry, no analytics, no remote fonts or images. The CSP in
-  `src/renderer/index.html` permits no remote origin; loosening it is a product decision, not a fix.
+- **Nothing reaches the network — with three exceptions, all main's.** No telemetry, no
+  analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
+  origin; loosening it is a product decision, not a fix. The first exception is **access**: main
+  (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
+  to refresh the sign-in and read/write the access documents (`src/main/auth/google.ts`, whose
+  `guardedFetch` refuses any other host). What it sends is a refresh token, an ID token and email
+  addresses — never project data, media, paths or usage. It uses Node's `fetch`, because
+  Electron's `net.fetch` rides the editor's session, which `offline.ts` (untouched) blocks. The
+  second exception is whisper models, fetched
+  by main from Hugging Face's `ggerganov/whisper.cpp` repo only when the user clicks Download in
+  Settings, or when a transcription finds no model and "Download models when needed" is on (the
+  renderer passes `download: true` only then). `downloadVerified` checks the size and SHA-256 from
+  the redirect's `x-linked-size`/`x-linked-etag` — measured to be exactly `shasum -a 256` of the
+  file — and writes to `.part` until they match, so a half-download never sits at a name the model
+  search would pick. Audio never leaves the machine. The third is **updates**
+  (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
+  editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
+  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
+  shipped bay contacts nothing and Settings › About says "Updates: releasing soon".
+  `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

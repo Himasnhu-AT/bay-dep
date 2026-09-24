@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 41 — Agent craft: how to make an agent produce good design
 
 The meta-problem. Round 1 wrote the rules down, the agent read all nine files in 15 seconds,

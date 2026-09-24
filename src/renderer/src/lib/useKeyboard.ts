@@ -106,6 +106,26 @@ export function useKeyboard(options: KeyboardOptions): void {
           event.preventDefault()
           state.splitAt()
           break
+        case 'm':
+        case 'M': {
+          event.preventDefault()
+          // M drops a marker at the playhead; Shift+M takes back whatever is on that frame, so a
+          // mis-placed marker is undone where it was made without hunting for it on the ruler.
+          const timeline = selectTimeline(state)
+          if (event.shiftKey) {
+            const here = (timeline?.markers ?? []).filter((m) => m.frame === state.playhead)
+            if (here.length === 0) {
+              state.notify('No marker on this frame to remove.')
+              break
+            }
+            state.transact(() => {
+              for (const marker of here) state.removeMarker(marker.id)
+            })
+          } else {
+            state.addMarker(state.playhead)
+          }
+          break
+        }
         case 'Delete':
         case 'Backspace':
           event.preventDefault()

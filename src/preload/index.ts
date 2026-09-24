@@ -23,11 +23,16 @@ import type {
   ThumbnailRequest
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
+import type { AgentEntry, AgentEvent } from '@shared/agent'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
+import type { WhisperDownload } from '@shared/whisper'
+import type { AccessStatus } from '@shared/access'
+import type { UpdateStatus } from '@shared/update'
 
 const api: BayApi = {
   app: {
+    metrics: () => ipcRenderer.invoke(IPC.appMetrics),
     version: () => ipcRenderer.invoke(IPC.appVersion) as Promise<string>,
     platform: () => ipcRenderer.invoke(IPC.appPlatform) as Promise<NodeJS.Platform>,
     mediaToolsReady: () =>
@@ -64,12 +69,15 @@ const api: BayApi = {
     importPaths: (paths: string[]) =>
       ipcRenderer.invoke(IPC.mediaImportPaths, paths) as Promise<ImportedAsset[]>,
     probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path) as Promise<ProbeResult>,
+    transcribe: (path: string, language?: string, options?: { download?: boolean; model?: string | null }) =>
+      ipcRenderer.invoke(IPC.mediaTranscribe, path, language, options),
     thumbnail: (request: ThumbnailRequest) =>
       ipcRenderer.invoke(IPC.mediaThumbnail, request) as Promise<string | null>,
     filmstrip: (request: FilmstripRequest) =>
       ipcRenderer.invoke(IPC.mediaFilmstrip, request) as Promise<string[]>,
     waveform: (assetId: string, path: string, buckets: number) =>
       ipcRenderer.invoke(IPC.mediaWaveform, assetId, path, buckets) as Promise<number[]>,
+    beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
     pathForFile: (file: File) => {
@@ -85,6 +93,47 @@ const api: BayApi = {
     }
   },
 
+  whisper: {
+    status: (preferredModel) => ipcRenderer.invoke(IPC.whisperStatus, preferredModel),
+    download: (modelId) => ipcRenderer.invoke(IPC.whisperDownload, modelId),
+    cancelDownload: () => ipcRenderer.invoke(IPC.whisperCancel),
+    deleteModel: (file) => ipcRenderer.invoke(IPC.whisperDelete, file),
+    installEngine: () => ipcRenderer.invoke(IPC.whisperInstall),
+    onDownload: (listener) => {
+      const handler = (_event: unknown, payload: WhisperDownload): void => listener(payload)
+      ipcRenderer.on(IPC.whisperProgress, handler)
+      return () => ipcRenderer.removeListener(IPC.whisperProgress, handler)
+    }
+  },
+
+  agent: {
+    start: () => ipcRenderer.invoke(IPC.agentStart),
+    send: (text: string) => ipcRenderer.invoke(IPC.agentSend, text),
+    stop: () => ipcRenderer.invoke(IPC.agentStop),
+    dispose: () => ipcRenderer.invoke(IPC.agentDispose),
+    exportTranscript: (projectName: string, log: AgentEntry[]) =>
+      ipcRenderer.invoke(IPC.agentExportTranscript, projectName, log),
+    // Same push-and-unsubscribe shape as `export.onProgress`: one listener pattern in this
+    // bridge, not two. The wrapper drops `event` so the renderer never sees an Electron type.
+    onEvent: (listener: (event: AgentEvent) => void) => {
+      const handler = (_event: unknown, payload: AgentEvent): void => listener(payload)
+      ipcRenderer.on(IPC.agentEvent, handler)
+      return () => ipcRenderer.removeListener(IPC.agentEvent, handler)
+    }
+  },
+
+  composition: {
+    inspect: (path, includeHtml) =>
+      ipcRenderer.invoke(IPC.compositionInspect, path, includeHtml),
+    write: (path, html) => ipcRenderer.invoke(IPC.compositionWrite, path, html),
+    writeTemplate: (templateId, width, height) =>
+      ipcRenderer.invoke(IPC.compositionWriteTemplate, templateId, width, height),
+    writeGenerated: (name, html) => ipcRenderer.invoke(IPC.compositionWriteGenerated, name, html),
+    import: (paths) => ipcRenderer.invoke(IPC.compositionImport, paths),
+    frameAt: (request) => ipcRenderer.invoke(IPC.compositionFrameAt, request),
+    release: (assetId) => ipcRenderer.invoke(IPC.compositionRelease, assetId)
+  },
+
   project: {
     initial: () => ipcRenderer.invoke(IPC.projectInitial) as Promise<Project>,
     save: (project: Project) =>
@@ -96,7 +145,11 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.projectOpenPath, filePath) as Promise<Project>,
     recent: () => ipcRenderer.invoke(IPC.projectRecent) as Promise<RecentProject[]>,
     autosave: (project: Project) =>
-      ipcRenderer.invoke(IPC.projectAutosave, project) as Promise<void>
+      ipcRenderer.invoke(IPC.projectAutosave, project) as Promise<void>,
+    launchRequest: () => ipcRenderer.invoke(IPC.projectLaunchRequest) as Promise<Project | null>,
+    create: () => ipcRenderer.invoke(IPC.projectCreate) as Promise<Project>,
+    forget: (filePath: string) => ipcRenderer.invoke(IPC.projectForget, filePath) as Promise<void>,
+    reveal: (filePath: string) => ipcRenderer.invoke(IPC.projectReveal, filePath) as Promise<void>
   },
 
   export: {
@@ -137,9 +190,40 @@ const api: BayApi = {
       // At most one executor, per the contract: a second registration replaces the first.
       ipcRenderer.removeAllListeners(IPC.mcpToolCall)
       ipcRenderer.on(IPC.mcpToolCall, wrapped)
+      // Only now is anything listening, so only now may main send. Said from here rather than
+      // by the renderer because this is the line that makes it true.
+      ipcRenderer.send(IPC.mcpExecutorReady, true)
       return () => {
         ipcRenderer.removeListener(IPC.mcpToolCall, wrapped)
+        ipcRenderer.send(IPC.mcpExecutorReady, false)
       }
+    }
+  },
+
+  access: {
+    status: () => ipcRenderer.invoke(IPC.accessStatus),
+    signIn: () => ipcRenderer.invoke(IPC.accessSignIn),
+    cancelSignIn: () => ipcRenderer.invoke(IPC.accessCancelSignIn),
+    signOut: () => ipcRenderer.invoke(IPC.accessSignOut),
+    recheck: () => ipcRenderer.invoke(IPC.accessRecheck),
+    requestAccess: () => ipcRenderer.invoke(IPC.accessRequestAccess),
+    refer: (email: string) => ipcRenderer.invoke(IPC.accessRefer, email),
+    onChange: (listener: (status: AccessStatus) => void) => {
+      const handler = (_event: unknown, payload: AccessStatus): void => listener(payload)
+      ipcRenderer.on(IPC.accessChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.accessChanged, handler)
+    }
+  },
+
+  update: {
+    status: () => ipcRenderer.invoke(IPC.updateStatus),
+    check: () => ipcRenderer.invoke(IPC.updateCheck),
+    download: () => ipcRenderer.invoke(IPC.updateDownload),
+    install: () => ipcRenderer.invoke(IPC.updateInstall),
+    onChange: (listener: (status: UpdateStatus) => void) => {
+      const handler = (_event: unknown, payload: UpdateStatus): void => listener(payload)
+      ipcRenderer.on(IPC.updateChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.updateChanged, handler)
     }
   },
 

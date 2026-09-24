@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+#
+# release-signed: build, sign, notarize and staple bay for macOS, then prove it. `pnpm release:signed`.
+#
+# It follows the owner's ~/bin/xcnotarize: a sourced config file (./.bay-release, same variable
+# names), a notarytool keychain profile (default `xcnotarize`), a plain DMG (the app plus an
+# Applications link, UDZO, signed with --timestamp), `notarytool submit --wait`, then staple and
+# validate. The difference is that electron-builder signs the .app, because an Electron bundle
+# has helpers and frameworks that must be signed inside out with the hardened runtime.
+#
+#   pnpm release:signed                     # notarized, stapled DMG + update zip in release/
+#   pnpm release:signed --no-notarize       # signed only; says plainly that it is not distributable
+#   pnpm release:signed --no-build          # reuse out/ from the last `pnpm build`
+#   pnpm release:signed --version 0.1.1 --notes notes.txt --out /tmp/r
+#                                           # stamp another version (package.json is untouched),
+#                                           # with release notes for the updater, somewhere else
+#   pnpm release:signed --app-name bay-reltest …
+#                                           # a test build whose data lives under another name
+#                                           # (~/Library/Application Support/bay-reltest), so an
+#                                           # update test's automatic relaunch, which passes no
+#                                           # arguments, cannot open a real install's profile
+#
+# Settings (flags > environment > ./.bay-release): SIGN_ID, NOTARY_PROFILE, ARCH.
+# No credential passes through this script. notarytool reads them from the keychain profile.
+#
+# Every Mach-O in the bundle is signed and checked generically, wherever it sits (Resources/ffmpeg,
+# app.asar.unpacked, frameworks). Swapping ffmpeg or adding a binary needs no change here. The script
+# refuses a Mach-O that is not signed by SIGN_ID with the hardened runtime and a secure
+# timestamp, or that lacks the target architecture.
+#
+# Output (release/, or --out):
+#   bay-<version>-<arch>.dmg            the download: notarized, stapled
+#   bay-<version>-<arch>-mac.zip        the same notarized, stapled app, for the in-app updater
+#   latest-mac.yml                      the updater's feed entry for both (sha512, size)
+#   *.sha256                            `shasum -a 256` lines, for the website
+#   mac-<arch>/bay.app                  the signed, notarized, stapled app
+#   notary/<submission-id>.json         Apple's notarization log for each submission
+# To publish an update, upload the zip, the DMG and latest-mac.yml together to the feed folder
+# (README, "Releasing").
+set -euo pipefail
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$here"
+
+info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m ok\033[0m %s\n' "$*"; }
+die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# The environment wins over the file, so keep what it set before sourcing.
+env_sign_id=${SIGN_ID:-}; env_profile=${NOTARY_PROFILE:-}; env_arch=${ARCH:-}
+[[ -f ./.bay-release ]] && source ./.bay-release
+SIGN_ID=${env_sign_id:-${SIGN_ID:-}}
+NOTARY_PROFILE=${env_profile:-${NOTARY_PROFILE:-xcnotarize}}
+ARCH=${env_arch:-${ARCH:-arm64}}
+# Older instructions named the identity BAY_SIGN_IDENTITY. Honour it when it is set.
+SIGN_ID=${BAY_SIGN_IDENTITY:-$SIGN_ID}
+NOTARIZE=1
+BUILD=1
+VERSION=""
+NOTES=""
+APP_NAME=""
+out="$here/release"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-notarize) NOTARIZE=0 ;;
+    --no-build)    BUILD=0 ;;
+    --sign-id)     SIGN_ID="$2"; shift ;;
+    --profile)     NOTARY_PROFILE="$2"; shift ;;
+    --arch)        ARCH="$2"; shift ;;
+    --version)     VERSION="$2"; shift ;;
+    --notes)       NOTES="$2"; shift ;;
+    --out)         out="$2"; shift ;;
+    --app-name)    APP_NAME="$2"; shift ;;
+    -h|--help)     sed -n '2,41p' "$0"; exit 0 ;;
+    *) die "unknown option '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+# --- preflight: fail before a five-minute build, not after it ---------------------------------
+[[ "$(uname)" == Darwin ]] || die "macOS only"
+[[ -n "$SIGN_ID" ]] || die "no SIGN_ID: set it in .bay-release (security find-identity -v -p codesigning)"
+[[ "$SIGN_ID" == "Developer ID Application: "* ]] || die "SIGN_ID must be a 'Developer ID Application' identity to distribute (got: $SIGN_ID)"
+security find-identity -v -p codesigning | grep -qF "\"$SIGN_ID\"" \
+  || die "identity not in the keychain: $SIGN_ID"
+team=$(printf '%s' "$SIGN_ID" | sed -nE 's/.*\(([A-Z0-9]{10})\)$/\1/p')
+[[ -n "$team" ]] || die "cannot read the team id out of: $SIGN_ID"
+if [[ "$NOTARIZE" == 1 ]]; then
+  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
+    || die "notary profile '$NOTARY_PROFILE' does not work here: xcrun notarytool history --keychain-profile $NOTARY_PROFILE"
+fi
+[[ -z "$NOTES" || -f "$NOTES" ]] || die "--notes: no such file: $NOTES"
+version=${VERSION:-$(node -p "require('./package.json').version")}
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "not a version: $version"
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+case "$ARCH" in
+  arm64) app="$out/mac-arm64/bay.app" ;;
+  x64)   app="$out/mac/bay.app" ;;
+  *)     die "ARCH must be arm64 or x64 (got: $ARCH)" ;;
+esac
+dmg="$out/bay-$version-$ARCH.dmg"
+zip="$out/bay-$version-$ARCH-mac.zip"
+info "bay $version ($ARCH) · $SIGN_ID · notarize=$([[ $NOTARIZE == 1 ]] && echo "yes, profile $NOTARY_PROFILE" || echo no) · $out"
+
+# --- build and sign ---------------------------------------------------------------------------
+if [[ "$BUILD" == 1 ]]; then
+  info "pnpm build (typecheck + bundle)"
+  pnpm build
+fi
+[[ -f out/main/index.js ]] || die "out/ is empty: run without --no-build"
+
+info "electron-builder: package and sign bay.app"
+/bin/rm -rf "$app" "$dmg" "$dmg.sha256" "$zip" "$zip.sha256" "$out/latest-mac.yml"
+# identity: electron-builder wants the name without its "Developer ID Application: " prefix.
+# notarize=false: this script notarizes, so it can read Apple's log and refuse on any issue.
+# extraMetadata.version stamps the packaged package.json (app.getVersion()), not the source one.
+./node_modules/.bin/electron-builder --mac "--$ARCH" --dir --publish never \
+  "-c.mac.identity=${SIGN_ID#Developer ID Application: }" \
+  -c.mac.notarize=false \
+  "-c.directories.output=$out" \
+  "-c.extraMetadata.version=$version" \
+  ${APP_NAME:+"-c.extraMetadata.productName=$APP_NAME"}
+[[ -d "$app" ]] || die "electron-builder produced no $app"
+stamped=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+[[ "$stamped" == "$version" ]] || die "the app says it is $stamped, not $version"
+
+# --- verify every signature, generically ------------------------------------------------------
+info "codesign --verify --deep --strict"
+codesign --verify --deep --strict --verbose=2 "$app"
+
+# Every Mach-O in the bundle, found by content and not by name, so a new or renamed binary is
+# checked the day it appears. `--deep` skips Resources, which is where app.asar.unpacked lives.
+info "checking every Mach-O in the bundle"
+count=0
+while IFS= read -r -d '' f; do
+  file -b "$f" | grep -q '^Mach-O' || continue
+  count=$((count + 1))
+  rel=${f#"$app"/}
+  details=$(codesign -dvv "$f" 2>&1) || die "unsigned: $rel"
+  grep -qF "Authority=$SIGN_ID" <<<"$details" || die "not signed by $SIGN_ID: $rel"
+  grep -qF "TeamIdentifier=$team" <<<"$details" || die "wrong team: $rel"
+  grep -qE '^Timestamp=' <<<"$details" || die "no secure timestamp (notarization refuses it): $rel"
+  # Plain executables (not dylibs/frameworks) must carry the hardened runtime.
+  if file -b "$f" | grep -q 'executable'; then
+    grep -qE 'flags=0x[0-9a-f]*\(.*runtime' <<<"$details" || die "no hardened runtime: $rel"
+  fi
+  codesign --verify --strict "$f" 2>/dev/null || die "signature does not verify: $rel"
+  lipo -archs "$f" | tr ' ' '\n' | grep -qx "$ARCH" || die "$rel has no $ARCH slice ($(lipo -archs "$f")): an $ARCH Mac cannot run it"
+done < <(find "$app/Contents" -type f -print0)
+[[ "$count" -gt 0 ]] || die "found no Mach-O files: the check itself is broken"
+resources=$(find "$app/Contents/Resources" -type f -print0 2>/dev/null | xargs -0 file | grep 'Mach-O' | sed "s#^$app/Contents/Resources/##; s#:.*##" | tr '\n' ' ')
+ok "$count Mach-O files signed by $SIGN_ID (runtime + timestamp, $ARCH); in Resources: $resources"
+
+# --- notarize: submit, read the log, refuse on anything but a clean Accepted ------------------
+notarize() { # <file> <label>
+  local target="$1" label="$2" result id status log
+  info "notarytool submit $label (profile $NOTARY_PROFILE): a few minutes"
+  result=$(xcrun notarytool submit "$target" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json)
+  id=$(node -e 'const r=JSON.parse(process.argv[1]); process.stdout.write(r.id||"")' "$result")
+  status=$(node -e 'const r=JSON.parse(process.argv[1]); process.stdout.write(r.status||"")' "$result")
+  [[ -n "$id" ]] || die "notarytool returned no submission id: $result"
+  mkdir -p "$out/notary"
+  log="$out/notary/$id.json"
+  xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" "$log" >/dev/null
+  [[ "$status" == Accepted ]] || die "$label: notarization $status (submission $id). Apple's log: $log"
+  # Accepted can still carry warnings; a clean log has "issues": null.
+  node -e '
+    const log = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+    const issues = log.issues || []
+    for (const i of issues) console.error(`  ${i.severity}: ${i.path}: ${i.message}`)
+    process.exit(issues.length ? 1 : 0)' "$log" || die "$label: Apple accepted it with issues (above; $log)"
+  ok "$label notarized: submission $id, Accepted, no issues"
+}
+
+if [[ "$NOTARIZE" == 1 ]]; then
+  # The app is notarized and stapled on its own first, so every copy of it carries its ticket:
+  # the one in the DMG (dragged to /Applications and first opened offline) and the update zip.
+  submission="$out/.notarize-$version.zip"
+  /bin/rm -f "$submission"
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$submission"
+  notarize "$submission" bay.app
+  /bin/rm -f "$submission"
+  xcrun stapler staple "$app"
+  xcrun stapler validate "$app"
+fi
+
+# --- the update zip: the stapled app, as Squirrel.Mac wants it --------------------------------
+info "update zip: $(basename "$zip")"
+ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+
+# --- DMG: xcnotarize's layout, the app beside an Applications link ----------------------------
+info "hdiutil: $(basename "$dmg")"
+stage=$(mktemp -d "${TMPDIR:-/tmp}/bay-dmg.XXXXXX")
+ditto "$app" "$stage/bay.app"
+ln -s /Applications "$stage/Applications"
+hdiutil create -volname "bay" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+/bin/rm -rf "$stage"
+codesign --force --timestamp --sign "$SIGN_ID" "$dmg"
+codesign --verify --strict --verbose=2 "$dmg"
+
+accepted() { spctl -a -vvv "$@" 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID'; }
+
+if [[ "$NOTARIZE" == 1 ]]; then
+  notarize "$dmg" "$(basename "$dmg")"
+  xcrun stapler staple "$dmg"
+  xcrun stapler validate "$dmg"
+
+  # --- Gatekeeper, as a downloaded copy sees it -----------------------------------------------
+  info "spctl"
+  accepted -t install "$dmg" || die "Gatekeeper does not accept the DMG as notarized"
+  accepted "$app" || die "Gatekeeper does not accept the app as notarized"
+  # A quarantined copy is what a browser download produces, and the update zip is what the
+  # updater unpacks: both must be accepted on their own ticket.
+  q=$(mktemp -d "${TMPDIR:-/tmp}/bay-q.XXXXXX")
+  ditto "$app" "$q/download/bay.app"
+  xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Safari;" "$q/download/bay.app"
+  accepted "$q/download/bay.app" || { /bin/rm -rf "$q"; die "a quarantined copy of the app is not accepted"; }
+  ditto -x -k "$zip" "$q/update"
+  xcrun stapler validate "$q/update/bay.app" >/dev/null || { /bin/rm -rf "$q"; die "the app in the update zip has no stapled ticket"; }
+  codesign --verify --deep --strict "$q/update/bay.app" || { /bin/rm -rf "$q"; die "the app in the update zip does not verify"; }
+  accepted "$q/update/bay.app" || { /bin/rm -rf "$q"; die "the app in the update zip is not accepted"; }
+  /bin/rm -rf "$q"
+  ok "Gatekeeper accepts the DMG, the app, a quarantined copy, and the update zip's app: Notarized Developer ID"
+fi
+
+# --- the updater's feed entry (electron-updater's latest-mac.yml) -----------------------------
+sha512() { openssl dgst -sha512 -binary "$1" | base64 | tr -d '\n'; }
+size() { stat -f %z "$1"; }
+{
+  echo "version: $version"
+  echo "files:"
+  echo "  - url: $(basename "$zip")"
+  echo "    sha512: $(sha512 "$zip")"
+  echo "    size: $(size "$zip")"
+  echo "  - url: $(basename "$dmg")"
+  echo "    sha512: $(sha512 "$dmg")"
+  echo "    size: $(size "$dmg")"
+  echo "path: $(basename "$zip")"
+  echo "sha512: $(sha512 "$zip")"
+  echo "releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'"
+  if [[ -n "$NOTES" ]]; then
+    echo "releaseNotes: |-"
+    sed 's/^/  /' "$NOTES"
+  fi
+} > "$out/latest-mac.yml"
+
+(cd "$out" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256" && shasum -a 256 "$(basename "$zip")" > "$(basename "$zip").sha256")
+info "done"
+echo "    $dmg"
+echo "      sha256 $(cut -d' ' -f1 "$dmg.sha256")  ($(du -h "$dmg" | cut -f1 | tr -d ' '))"
+echo "    $zip"
+echo "      sha256 $(cut -d' ' -f1 "$zip.sha256")  ($(du -h "$zip" | cut -f1 | tr -d ' '))"
+echo "    $out/latest-mac.yml"
+if [[ "$NOTARIZE" == 1 ]]; then
+  echo "    signed, notarized and stapled: ready to download"
+else
+  echo "!   signed, NOT notarized (--no-notarize). Gatekeeper blocks a downloaded copy on first run."
+fi

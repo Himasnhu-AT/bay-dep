@@ -27,6 +27,9 @@
  *    say so in their description.
  */
 
+import { TOOLS } from './tools/index'
+import type { ToolSpec } from './tools/spec'
+
 // ---------------------------------------------------------------------------
 // The wire between main and the renderer
 // ---------------------------------------------------------------------------
@@ -56,507 +59,121 @@ export const MCP_CALL_TIMEOUT_MS = 30_000
 // The catalog
 // ---------------------------------------------------------------------------
 
-export type ToolCategory = 'read' | 'write' | 'submit'
+/**
+ * Every tool, one file each in `./tools/`, collected by the generated `./tools/index.ts` in the
+ * order the manifest lists them. To add a tool, add a file there and run `pnpm gen:tools`.
+ */
+export { TOOLS } from './tools/index'
+export type { ToolCategory, ToolSpec } from './tools/spec'
 
-export interface ToolSpec {
-  name: string
-  /**
-   * What the tool does, written for the model rather than for a reader of this file. Say
-   * when to reach for it, not only what it does — a catalog entry that describes mechanism
-   * without occasion gets used in the wrong place.
-   */
-  description: string
-  category: ToolCategory
-  /** Answers a question without changing anything. Safe to call speculatively. */
-  readOnly: boolean
-  /**
-   * Loaded into every session rather than discovered on demand. Keep this small: the whole
-   * catalog in every context is the cost this flag exists to avoid. A tool earns it by being
-   * needed to *orient* — you cannot edit what you have not read.
-   */
-  alwaysLoad: boolean
-  /** JSON Schema for the arguments. Plain data so no validator leaks into `shared/`. */
-  inputSchema: {
-    type: 'object'
-    properties: Record<string, unknown>
-    required?: string[]
-  }
+/**
+ * Whether bay can be driven over MCP, in the shape the bridge hands the renderer.
+ *
+ * Structurally identical to main's `SocketStatus` plus the live connection count, except that
+ * the path is `socketPath` on this side. Declared here rather than imported from either end
+ * because both ends need it and neither may import the other.
+ */
+export interface AgentSurfaceStatus {
+  ready: boolean
+  error: string | null
+  socketPath: string | null
+  connectionsSeen: number
 }
 
-const frames = (description: string): Record<string, unknown> => ({
-  type: 'integer',
-  minimum: 0,
-  description
-})
-
-const itemId = {
-  type: 'string',
-  description:
-    'Item id from read_project or inspect_item. The first 10 characters are enough; ' +
-    'ids are never invented, always copied from a tool result.'
+/**
+ * The three states the UI has to tell apart, as one line.
+ *
+ * `waiting` and `failed` look identical from outside — nothing is happening either way — and
+ * conflating them is how a subsystem that never worked survives as one nobody used. So the
+ * wording is deliberately different in kind: a failure names a reason, waiting names the
+ * socket path, because the path is what a user needs in order to configure a client.
+ *
+ * It lives in `shared/` for a reason worth keeping: the first version sat in
+ * `main/mcp/socket-server.ts`, where the renderer — the only process with a status bar to put
+ * it in — could not import it. It had no callers for as long as it existed, so the distinction
+ * this function was written to draw was never once drawn on screen, in the subsystem whose
+ * whole point is that a silent failure is indistinguishable from an idle success. The type was
+ * designed carefully, the IPC was plumbed, and the sentence was written on the wrong side of
+ * the process boundary.
+ */
+export function summariseAgentSurface(status: AgentSurfaceStatus): string {
+  if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
+  if (status.connectionsSeen === 0)
+    return `Agent control ready — no agent has connected yet (${status.socketPath ?? 'no socket path'})`
+  const n = status.connectionsSeen
+  return `Agent control ready — ${n} connection${n === 1 ? '' : 's'} this session`
 }
-
-export const TOOLS: ToolSpec[] = [
-  // -- read ------------------------------------------------------------------
-  {
-    name: 'read_project',
-    description:
-      'The project as it stands: name, canvas size and frame rate, every track, and every ' +
-      'item with its id, position and duration in frames. Start here. Everything else takes ' +
-      'ids that come from this output, and the frame rate here is what every other time in ' +
-      'this surface is measured in. ' +
-      'Call it to **orient**, not to confirm — the write tools return the item they changed, ' +
-      'and that answer is authoritative. Measured on a 200-clip timeline, a turn that re-reads ' +
-      'after every edit spends 99% of its bytes re-reading a project it changed by 263 of them.',
-    category: 'read',
-    readOnly: true,
-    alwaysLoad: true,
-    inputSchema: { type: 'object', properties: {} }
-  },
-  {
-    name: 'browse_assets',
-    description:
-      'The media pool: what has been imported, with duration, dimensions, whether it carries ' +
-      'audio, and whether it could be read at all. An asset with an `error` cannot be placed ' +
-      'and re-importing it will not help — say so rather than retrying.',
-    category: 'read',
-    readOnly: true,
-    alwaysLoad: true,
-    inputSchema: { type: 'object', properties: {} }
-  },
-  {
-    name: 'inspect_item',
-    description:
-      'Everything about one placed item: timing, the layout rectangle on the canvas, opacity, ' +
-      'volume, fades, speed, and which asset it draws from. Read this before editing an item ' +
-      'you did not just create — the user may have moved it since.',
-    category: 'read',
-    readOnly: true,
-    alwaysLoad: false,
-    inputSchema: { type: 'object', properties: { itemId }, required: ['itemId'] }
-  },
-  {
-    name: 'preview_frame',
-    description:
-      'Render one frame of the timeline as it currently composites and return it as an image. ' +
-      'This is the only way to see what the edit actually looks like; item positions and sizes ' +
-      'do not tell you whether a clip is framed well, or whether an overlay covers a face. ' +
-      'Use it to check your own work before reporting it done.',
-    category: 'read',
-    readOnly: true,
-    alwaysLoad: true,
-    inputSchema: {
-      type: 'object',
-      properties: { frame: frames('Timeline frame to render. Defaults to the playhead.') }
-    }
-  },
-
-  // -- write -----------------------------------------------------------------
-  {
-    name: 'import_media',
-    description:
-      'Import files from absolute paths into the media pool. Returns one asset per path, ' +
-      'including any that could not be read — check `error` on each before placing it. ' +
-      'Importing a path already in the project reuses the existing asset rather than ' +
-      'duplicating it.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        paths: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Absolute paths. Accepts @./file.json to read the array from a file.'
-        }
-      },
-      required: ['paths']
-    }
-  },
-  {
-    name: 'place_asset',
-    description:
-      'Put an asset on the timeline. Chooses a track with room unless you name one, and picks ' +
-      'video or audio by what the asset carries. The clip takes its full source duration; trim ' +
-      'it afterwards with edit_item rather than trying to place a portion. ' +
-      'Returns the new item complete — id, track, timing and layout. **That returned state is ' +
-      'authoritative: you do not need to call read_project to confirm it.**',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        assetId: { type: 'string', description: 'Asset id from browse_assets or import_media.' },
-        atFrame: frames('Where it starts. Defaults to the playhead.'),
-        trackId: { type: 'string', description: 'Optional. Omit to let bay choose a free track.' }
-      },
-      required: ['assetId']
-    }
-  },
-  {
-    name: 'edit_item',
-    description:
-      'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
-      'it sits on the canvas, its opacity, volume, fades or speed. Only the fields you pass ' +
-      'change. Moving an item onto occupied time on the same track is refused rather than ' +
-      'silently overlapping — move the other item first, or use a different track. ' +
-      'Returns the item complete after the edit. **That returned state is authoritative: you ' +
-      'do not need to call read_project to confirm it.** Re-reading the whole project to check ' +
-      'one change is the most expensive thing you can do here — on a 200-clip timeline it is ' +
-      '36KB to verify an edit that cost 263 bytes.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        itemId,
-        from: frames('New start frame.'),
-        durationInFrames: { type: 'integer', minimum: 1, description: 'New length in frames.' },
-        sourceStartSeconds: {
-          type: 'number',
-          minimum: 0,
-          description:
-            'Which part of the source this clip plays — seconds from the beginning of the ' +
-            'file, not a position on the timeline. This is how you use the middle of a clip: ' +
-            'set it to 10 and the clip starts ten seconds into the footage while staying ' +
-            'exactly where it is on the timeline.\n' +
-            'Seconds rather than the model\'s microseconds because six zeros are easy to get ' +
-            'wrong and the error is silent — a clip reading from the wrong place still plays.\n' +
-            'It is also what gives a clip the room a transition needs: a clip starting at 0 ' +
-            'has nothing before its start to dissolve from, and add_transition will say so.'
-        },
-        trackId: { type: 'string' },
-        left: { type: 'number', description: 'Canvas x in pixels. Negative is valid.' },
-        top: { type: 'number', description: 'Canvas y in pixels. Negative is valid.' },
-        width: { type: 'number' },
-        height: { type: 'number' },
-        opacity: { type: 'number', minimum: 0, maximum: 1 },
-        volume: { type: 'number', minimum: 0, maximum: 2 },
-        speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
-        fadeInFrames: { type: 'integer', minimum: 0 },
-        fadeOutFrames: { type: 'integer', minimum: 0 },
-        adjustments: {
-          type: 'object',
-          description:
-            'Image adjustments — a look control, not a colour grade. Fields merge, so ' +
-            'setting saturate leaves brightness alone. Defaults are the identity values, so ' +
-            'an item with none looks exactly as it does today.',
-          properties: {
-            brightness: { type: 'number', minimum: 0, description: '1 is unchanged.' },
-            contrast: { type: 'number', minimum: 0, description: '1 is unchanged.' },
-            saturate: {
-              type: 'number',
-              minimum: 0,
-              description: '1 is unchanged. 0 is greyscale, above 1 is richer.'
-            },
-            hueRotate: { type: 'number', description: 'Degrees. 0 is unchanged.' },
-            blur: { type: 'number', minimum: 0, description: 'Canvas pixels. 0 is off.' },
-            grayscale: { type: 'number', minimum: 0, maximum: 1 },
-            sepia: { type: 'number', minimum: 0, maximum: 1 },
-            invert: { type: 'number', minimum: 0, maximum: 1 }
-          }
-        },
-        blendMode: {
-          type: 'string',
-          enum: [
-            'normal',
-            'multiply',
-            'screen',
-            'overlay',
-            'darken',
-            'lighten',
-            'color-dodge',
-            'color-burn',
-            'hard-light',
-            'soft-light',
-            'difference',
-            'exclusion',
-            'hue',
-            'saturation',
-            'color',
-            'luminosity'
-          ],
-          description:
-            'How this clip combines with what is under it. Only meaningful on a clip that ' +
-            'has something beneath it — on the lowest video track there is nothing to blend ' +
-            'with and every mode looks the same. multiply darkens, screen lightens, overlay ' +
-            'does both from the underlying tones.'
-        },
-        text: {
-          type: 'object',
-          description:
-            'Type styling. Only for items whose asset is kind "text"; refused on anything ' +
-            'else. Top-level fields merge, so setting color leaves size alone. The three ' +
-            'effect groups — stroke, shadow and background — replace wholesale, or pass ' +
-            'null to switch one off.',
-          properties: {
-            fontFamily: {
-              type: 'string',
-              description: 'A stack installed on this machine. There are no webfonts.'
-            },
-            fontSize: {
-              type: 'number',
-              minimum: 1,
-              maximum: 2000,
-              description:
-                'Canvas pixels. What you ask for; bay shrinks it only when the words will ' +
-                'not fit even wrapped, and says so when it does.'
-            },
-            fontWeight: {
-              type: 'integer',
-              minimum: 100,
-              maximum: 900,
-              description: 'A multiple of 100.'
-            },
-            italic: { type: 'boolean' },
-            color: { type: 'string', description: 'Hex, such as "#FFFFFF".' },
-            align: { type: 'string', enum: ['left', 'center', 'right'] },
-            verticalAlign: { type: 'string', enum: ['top', 'middle', 'bottom'] },
-            lineHeight: {
-              type: 'number',
-              minimum: 0.5,
-              maximum: 4,
-              description: 'Multiple of fontSize.'
-            },
-            letterSpacing: { type: 'number', description: 'Canvas pixels.' },
-            // The three groups carry a description and deliberately no `type`. The
-            // dispatcher's validator understands only the keywords this catalog uses and does
-            // not recurse into objects, so the checking happens in the text-style validator
-            // instead — where it can say `"text.fontWeight" must be a multiple of 100 between
-            // 100 and 900, but got 550` rather than a schema violation on an object the agent
-            // cannot see inside. An error an agent cannot act on is the thing this surface
-            // exists to avoid.
-            stroke: { description: 'An outline: { color, width }. null to remove.' },
-            shadow: {
-              description: 'A drop shadow: { color, blur, offsetX, offsetY }. null to remove.'
-            },
-            background: {
-              description: 'A plate behind the words: { color, padding, radius }. null to remove.'
-            }
-          }
-        }
-      },
-      required: ['itemId']
-    }
-  },
-  {
-    name: 'split_at',
-    description:
-      'Cut every item crossing a frame into two, or only the items you name. A cut exactly on ' +
-      'an item edge does nothing — it would make a zero-length clip — and is reported rather ' +
-      'than silently skipped.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        frame: frames('Where to cut. Defaults to the playhead.'),
-        itemIds: { type: 'array', items: { type: 'string' } }
-      }
-    }
-  },
-  {
-    name: 'delete_items',
-    description:
-      'Remove whole items from the timeline. Leaves a gap by default; pass ripple to close it ' +
-      'by pulling later items on the same track backwards. Ripple here never touches other ' +
-      'tracks, so it will desynchronise anything layered above or below unless you move that ' +
-      'too. To remove a stretch of time rather than a list of clips — and to keep every track ' +
-      'in sync while doing it — use remove_range instead.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        itemIds: { type: 'array', items: { type: 'string' } },
-        ripple: { type: 'boolean' }
-      },
-      required: ['itemIds']
-    }
-  },
-  {
-    name: 'remove_range',
-    description:
-      'Remove a span of time from the timeline and close the hole, keeping every unlocked ' +
-      'track in step. This is the cut you want for trimming a recording: give it the frames to ' +
-      'drop and it splits whatever clips straddle the boundaries, discards what is inside, and ' +
-      'pulls everything after it backwards by the same amount on every track at once. ' +
-      'fromFrame is the first frame removed and toFrame is the first frame kept, so two calls ' +
-      'sharing a bound remove exactly the union and neither drops a frame twice. ' +
-      'Prefer this over delete_items when the thing you want gone is a passage rather than a ' +
-      'clip — it can cut the middle out of a single long take, which delete_items cannot ' +
-      'express at all. A locked track cannot be shifted, so if one holds content after the ' +
-      'cut the result names it under desyncedTracks and that track is now adrift.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fromFrame: { type: 'number' },
-        toFrame: { type: 'number' }
-      },
-      required: ['fromFrame', 'toFrame']
-    }
-  },
-  {
-    name: 'add_track',
-    description:
-      'Add a video or audio track. Video tracks stack — a later one draws over the ones before ' +
-      'it — so an overlay needs its own track above the clip it covers, not a free slot on the ' +
-      'same one.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: { kind: { type: 'string', enum: ['video', 'audio'] } },
-      required: ['kind']
-    }
-  },
-  {
-    name: 'add_transition',
-    description:
-      'Put a transition across the cut between two clips that meet on one track. The two ' +
-      'must abut — the first ending exactly where the second begins — because a transition ' +
-      'is a property of a cut and there is no cut across a gap.\n' +
-      'It straddles the cut without moving anything: the outgoing clip plays on for half the ' +
-      'duration and the incoming starts the same amount early, both using footage outside ' +
-      'the range they occupy. A clip with none to spare gets a shorter transition than you ' +
-      'asked for, and the result says so — read `clampedBecause` rather than assuming you got ' +
-      'the length you requested.\n' +
-      'Adding a second transition to a junction that already has one replaces it.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fromItemId: { type: 'string', description: 'The clip being left.' },
-        toItemId: { type: 'string', description: 'The clip being entered.' },
-        kind: {
-          type: 'string',
-          enum: [
-            'cross-dissolve',
-            'dip-to-black',
-            'dip-to-white',
-            'wipe',
-            'push',
-            'slide',
-            'iris'
-          ],
-          description:
-            'cross-dissolve for ordinary continuity; dip-to-black for a scene break; wipe, ' +
-            'push and slide for movement; iris for emphasis. When unsure, cross-dissolve is ' +
-            'what an editor reaches for by default.'
-        },
-        durationInFrames: {
-          type: 'integer',
-          minimum: 2,
-          description:
-            'Total across the cut, half each side. Around a second reads as a dissolve; ' +
-            'much longer reads as a statement.\n' +
-            '**Omit it** and bay picks about a second, or the most this junction can take if ' +
-            'that is less. There is no way to ask how long a transition *could* be here ' +
-            'without creating one, so the result always reports `maxDurationInFrames` — read ' +
-            'that rather than guessing and retrying.'
-        },
-        direction: {
-          type: 'string',
-          enum: ['left', 'right', 'up', 'down'],
-          description: 'For wipe, push and slide. Ignored by the others.'
-        }
-      },
-      required: ['fromItemId', 'toItemId', 'kind']
-    }
-  },
-  {
-    name: 'remove_transition',
-    description:
-      'Take a transition off a cut, leaving the clips and their timing untouched — the cut ' +
-      'becomes a straight one again.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: { transitionId: { type: 'string' } },
-      required: ['transitionId']
-    }
-  },
-  {
-    name: 'set_playhead',
-    description:
-      'Move the playhead, which is what the user is looking at and what frame-defaulting tools ' +
-      'use. Cheap and safe; move it to where you are working so the user follows along.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: { frame: frames('Frame to move to.') },
-      required: ['frame']
-    }
-  },
-  {
-    name: 'undo',
-    description:
-      'Take back the last change. One agent edit is one undo step, so this reverses exactly ' +
-      'what you last did — not the whole turn.',
-    category: 'write',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: { type: 'object', properties: {} }
-  },
-
-  // -- submit ----------------------------------------------------------------
-  {
-    name: 'export_timeline',
-    description:
-      'Render the timeline to a file. Returns a job id immediately — encoding a long timeline ' +
-      'takes minutes, so poll track_export rather than waiting. Check the result before ' +
-      'telling the user it is done: an export can finish with no frames if the timeline is ' +
-      'empty over the range you asked for.',
-    category: 'submit',
-    readOnly: false,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        outputPath: { type: 'string', description: 'Absolute path, with extension.' },
-        format: { type: 'string', enum: ['mp4', 'mov', 'webm', 'wav', 'mp3'] },
-        fromFrame: frames('First frame. Defaults to 0.'),
-        toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.')
-      },
-      required: ['outputPath', 'format']
-    }
-  },
-  {
-    name: 'track_export',
-    description:
-      'Progress of an export job: stage, frames done, and the output path once it lands. ' +
-      'Poll on a sensible interval rather than in a tight loop; a render reports progress only ' +
-      'as frames are encoded.',
-    category: 'read',
-    readOnly: true,
-    alwaysLoad: false,
-    inputSchema: {
-      type: 'object',
-      properties: { jobId: { type: 'string' } },
-      required: ['jobId']
-    }
-  }
-]
-
-export const ALWAYS_LOADED = TOOLS.filter((t) => t.alwaysLoad).map((t) => t.name)
 
 export function findTool(name: string): ToolSpec | undefined {
   return TOOLS.find((t) => t.name === name)
+}
+
+// ---------------------------------------------------------------------------
+// Dry runs
+// ---------------------------------------------------------------------------
+
+export const VALIDATE_ONLY = 'validateOnly'
+
+const validateOnlyProperty = {
+  type: 'boolean',
+  description:
+    'Dry run. true: check the call against the real project and return what it would ' +
+    'return, as { validateOnly: true, wouldReturn }, without changing anything — no undo ' +
+    'step, nothing marked unsaved. Needs no approval. A call that would be refused is ' +
+    'refused the same way, so this is how to test a plan before proposing or making it.'
+}
+
+/**
+ * The schema a tool is published and validated with: its own, plus `validateOnly` when the
+ * catalog marks it dry-runnable.
+ *
+ * One function feeding the manifest and the validator, so the two cannot disagree — a tool
+ * that advertised the flag and then refused it as an unknown argument would be a control that
+ * does nothing, and one that accepted it unadvertised would be one no agent finds.
+ */
+export function publishedSchema(spec: ToolSpec): ToolSpec['inputSchema'] {
+  if (!spec.dryRunnable) return spec.inputSchema
+  return {
+    ...spec.inputSchema,
+    properties: { ...spec.inputSchema.properties, [VALIDATE_ONLY]: validateOnlyProperty }
+  }
+}
+
+/**
+ * What a call asks for once `validateOnly` is read off it.
+ *
+ * - `run`: an ordinary call. `args` has `validateOnly: false` removed, so an approval made
+ *   without the flag still matches a call that spells it out.
+ * - `dry`: a dry run. `args` is what the handler receives — the flag removed, because no
+ *   handler declares it and the dry run is the executor's business, not the tool's.
+ * - `refused`: a dry run of a tool that cannot have one, with the reason.
+ *
+ * A non-boolean flag is left in place as a `run`, for the validator to name.
+ */
+export type DryRunRequest =
+  | { mode: 'run'; args: Record<string, unknown> }
+  | { mode: 'dry'; args: Record<string, unknown> }
+  | { mode: 'refused'; error: string }
+
+export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): DryRunRequest {
+  const flag = args[VALIDATE_ONLY]
+  if (flag !== true && flag !== false) return { mode: 'run', args }
+  const { [VALIDATE_ONLY]: _flag, ...rest } = args
+  if (flag === false) return { mode: 'run', args: rest }
+  if (spec.dryRunnable) return { mode: 'dry', args: rest }
+  if (spec.readOnly) {
+    return {
+      mode: 'refused',
+      error:
+        `${spec.name} only reads, so it already changes nothing — call it without validateOnly.`
+    }
+  }
+  return {
+    mode: 'refused',
+    error:
+      `${spec.name} cannot be dry-run. ${spec.dryRunRefusal ?? 'Its effects reach outside the project, where a dry run cannot put them back.'} ` +
+      `Tools that accept validateOnly: ${TOOLS.filter((t) => t.dryRunnable).map((t) => t.name).join(', ')}.`
+  }
 }
 
 // ---------------------------------------------------------------------------

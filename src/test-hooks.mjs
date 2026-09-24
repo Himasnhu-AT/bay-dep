@@ -23,6 +23,7 @@
 import { registerHooks } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 
 const EXTENSIONLESS_RELATIVE = /^\.{1,2}\//
 const HAS_EXTENSION = /\.[mc]?[jt]sx?$|\.json$|\.node$/
@@ -49,7 +50,13 @@ function resolveAlias(specifier) {
     if (!specifier.startsWith(prefix)) continue
     const rest = specifier.slice(prefix.length)
     const target = path.join(base, rest)
-    return HAS_EXTENSION.test(target) ? target : `${target}.ts`
+    if (HAS_EXTENSION.test(target)) return target
+    // `@/engine` names a directory whose barrel is `index.ts`, as the bundler resolves it. Without
+    // this only modules that never import a barrel are testable — the MCP executor imports two.
+    if (!existsSync(`${target}.ts`) && existsSync(path.join(target, 'index.ts'))) {
+      return path.join(target, 'index.ts')
+    }
+    return `${target}.ts`
   }
   return null
 }

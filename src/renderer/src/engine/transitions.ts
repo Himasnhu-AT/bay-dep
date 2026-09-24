@@ -198,33 +198,8 @@ export function planTransition(
   }
 }
 
-
 /**
- * What the two clips' audio should be doing at `progress`.
- *
- * A transition that shows both pictures and plays one is the most audible defect this feature
- * can have, and the mapping is a judgement rather than a derivation, so it is stated here:
- *
- * - **Dissolve, wipe, push, slide, iris — cross-fade.** The picture may wipe or slide, but a
- *   hard audio cut in the middle of a two-second wipe sounds like a mistake. Every NLE
- *   cross-fades sound under a visual transition of any kind.
- * - **Dip to black or white — dip through silence.** The visual passes through a solid colour
- *   at the midpoint and the sound passes through nothing, which is what a dip *means*. Both
- *   gains reach 0 at exactly 0.5, so the halves meet where the picture's halves meet.
- *
- * Linear rather than equal-power. Equal-power (`sqrt`) holds perceived loudness better across
- * a long cross-fade, and for transitions of a second or two linear is what editors expect and
- * what matches the picture's own linear alpha — a sound that stays loud while the image is
- * half gone reads as out of sync with it.
+ * The transition audio curve lives in `@shared/audio-gain` so export, in main, uses the same
+ * one. Re-exported so the engine's existing callers and tests are unchanged.
  */
-export function transitionAudioGains(
-  kind: TransitionKind,
-  progress: number
-): { from: number; to: number } {
-  const p = clamp01(progress)
-  if (kind === 'dip-to-black' || kind === 'dip-to-white') {
-    // Silence at the midpoint, matching the picture being fully at the dip colour.
-    return { from: Math.max(0, 1 - p * 2), to: Math.max(0, p * 2 - 1) }
-  }
-  return { from: 1 - p, to: p }
-}
+export { transitionAudioGains } from '@shared/audio-gain'

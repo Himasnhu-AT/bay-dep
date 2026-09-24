@@ -5,6 +5,7 @@
  * conventions. Anything with a decision in it belongs in the module that owns the decision.
  */
 
+import { isLocalRequest } from './offline'
 import { app, BrowserWindow, Menu, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,10 +19,16 @@ import { cacheDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
+import { isOpenableExternally } from './external'
 import { describeSocket } from './mcp/socket-server'
 import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
+import { onAccessChange, startAccess, stopAccess } from './auth/access'
+import { startUpdates, stopUpdates } from './update/updater'
+import { disposeAgent } from './agent/host'
+import { isEntitled } from '@shared/access'
+import { appNameFor } from './app-name'
 
 // The main bundle is ESM, where `__dirname` does not exist. Everything loaded by path — the
 // preload script and the production renderer — is resolved from here.
@@ -32,8 +39,9 @@ const APP_NAME = 'bay'
 // `setName` before anything else reads it. On macOS the menu bar takes the name from the
 // bundle's Info.plist in a packaged app, but the About panel, `app.getPath('userData')` and
 // every dialog title come from here — so an unpackaged run says "bay" too, and userData does
-// not split between "Electron" and "bay" the first time someone packages the app.
-app.setName(APP_NAME)
+// not split between "Electron" and "bay" the first time someone packages the app. A test build
+// stamped with a `bay-…` productName keeps that name, and so its own data (`./app-name`).
+app.setName(appNameFor(app.getName(), app.isPackaged))
 
 // Before `whenReady`, without exception: Electron reads the privileged-scheme table during
 // startup and a later registration is accepted and then ignored.
@@ -79,7 +87,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 20 } : undefined,
     webPreferences: {
-      preload: join(here, '../preload/index.mjs'),
+      preload: join(here, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       // The ffmpeg spawns need Node, and the preload script has to be able to reach the
@@ -109,10 +117,21 @@ function createWindow(): BrowserWindow {
   window.on('resize', rememberBounds)
   window.on('move', rememberBounds)
 
-  // An external link in an editor is always a mistake in-window; it belongs in the browser.
+  // An external link in an editor is always a mistake in-window; it belongs in the browser —
+  // if it is a web page at all (see `isOpenableExternally`).
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (isOpenableExternally(url)) void shell.openExternal(url)
+    else console.warn(`[bay] not opening ${url.slice(0, 80)}: only https links leave the app`)
     return { action: 'deny' }
+  })
+
+  // Nothing in this window reaches the network — not the page, and not a worker it starts, which
+  // the page's CSP does not bind (see offline.ts).
+  const offlineDevServer = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  window.webContents.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+    const allowed = isLocalRequest(details.url, offlineDevServer)
+    if (!allowed) console.warn(`[bay] refused a network request from the editor: ${details.url.slice(0, 120)}`)
+    callback({ cancel: !allowed })
   })
 
   // Nothing bay does should ever navigate the shell away from its own document.
@@ -167,6 +186,19 @@ void app.whenReady().then(() => {
 
   registerBayProtocolHandler()
   registerIpcHandlers()
+
+  // Access before anything can be asked of bay: until `startAccess` has read the stored state
+  // the status is `signed-out`, so the gate (IPC and both sockets) refuses rather than guessing.
+  // Losing access while running ends the in-app agent's session — its tool calls would all be
+  // refused anyway, and a model left talking to a locked app only produces refusals.
+  onAccessChange((status) => {
+    if (!isEntitled(status)) void disposeAgent()
+  })
+  void startAccess().then((status) => console.log(`[bay] access: ${status.state}`))
+  // Updates run whether or not bay is signed in (their channels are open while locked).
+  void startUpdates().catch((error: unknown) => {
+    console.warn(`[bay] update: could not start: ${error instanceof Error ? error.message : String(error)}`)
+  })
   installMenu()
 
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
@@ -212,6 +244,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  stopAccess()
+  stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()
   // Anything queued and never claimed — a document double-clicked at launch that the renderer

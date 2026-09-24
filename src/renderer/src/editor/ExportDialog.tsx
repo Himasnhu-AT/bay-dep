@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
-import type { ExportFormat, ExportProgress } from '@shared/ipc'
+import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { formatTimecode } from '@shared/project'
+import { LOUDNESS_PRESETS, type LoudnessPreset } from '@shared/loudness'
 import { Button, Field, Modal, Section, Select } from '@/components'
 import { FrameExporter } from '@/engine'
 import { bay, call } from '@/lib/bay'
@@ -18,12 +19,20 @@ const FORMATS: { value: ExportFormat; label: string }[] = [
 ]
 
 const QUALITIES = [
-  { value: 'draft', label: 'Draft — fast, soft' },
+  { value: 'draft', label: 'Draft — small, soft' },
   { value: 'good', label: 'Good — the default' },
-  { value: 'best', label: 'Best — slow, large' }
+  { value: 'best', label: 'Best — largest file' }
 ] as const
 
 type Quality = (typeof QUALITIES)[number]['value']
+
+/** Off by default: mastering moves the file's level away from the level the preview played. */
+const LOUDNESS: { value: LoudnessPreset | 'off'; label: string }[] = [
+  { value: 'off', label: 'Off — as mixed' },
+  { value: 'streaming', label: 'Streaming — −14 LUFS' },
+  { value: 'podcast', label: 'Podcast — −16 LUFS' },
+  { value: 'broadcast', label: 'Broadcast — −23 LUFS' }
+]
 type Scale = 'timeline' | '2160' | '1080' | '720' | '480'
 
 const SCALES: { value: Scale; label: string }[] = [
@@ -72,10 +81,14 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
 
   const [format, setFormat] = useState<ExportFormat>('mp4')
   const [quality, setQuality] = useState<Quality>('good')
+  const [loudness, setLoudness] = useState<LoudnessPreset | 'off'>('off')
   const [scale, setScale] = useState<Scale>('timeline')
   const [outputPath, setOutputPath] = useState<string | null>(null)
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [starting, setStarting] = useState(false)
+  /** Frames written with something still missing — held apart from `progress`, which main's
+   * `done` event replaces wholesale and which may arrive after the exporter returns. */
+  const [incomplete, setIncomplete] = useState<IncompleteFrames | null>(null)
   const jobRef = useRef<string | null>(null)
   const exporterRef = useRef<FrameExporter | null>(null)
 
@@ -121,6 +134,7 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
     }
     setStarting(true)
     setProgress(null)
+    setIncomplete(null)
     const job = await call('Export', (api) =>
       api.export.start({
         project,
@@ -130,7 +144,10 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
         width: size.width,
         height: size.height,
         fps: timeline.fps,
-        quality
+        quality,
+        ...(loudness !== 'off' && format !== 'png-sequence'
+          ? { loudness: { ...LOUDNESS_PRESETS[loudness] } }
+          : {})
       })
     )
     setStarting(false)
@@ -171,7 +188,13 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
     exporterRef.current = exporter
 
     try {
-      await exporter.run()
+      const outcome = await exporter.run()
+      // An export that wrote frames with a graphic missing is not a clean one. Main says `done`
+      // because the file closed; only the exporter knows what the frames held.
+      if (outcome.incomplete) {
+        setIncomplete(outcome.incomplete)
+        notify(outcome.incomplete.message, 'error')
+      }
     } catch (error) {
       setProgress((previous) => ({
         jobId: job.jobId,
@@ -218,7 +241,7 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
               value={quality}
               options={QUALITIES.map((entry) => ({ value: entry.value, label: entry.label }))}
               onChange={(next) => setQuality(next)}
-              // Quality is a CRF for the video encoders; a WAV has nothing to apply it to.
+              // Quality drives the video encoder (VideoToolbox -q:v, VP9 CRF); a WAV has nothing to apply it to.
               disabled={running || audioOnly}
             />
           </Field>
@@ -231,6 +254,18 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
               options={SCALES}
               onChange={(next) => setScale(next)}
               disabled={running || audioOnly}
+            />
+          </Field>
+        </div>
+        <div className="mt-1.5">
+          <Field label="Loudness" hint={loudness === 'off' ? undefined : '−1 dBTP'}>
+            <Select
+              label="Loudness mastering"
+              value={loudness}
+              options={LOUDNESS}
+              onChange={(next) => setLoudness(next)}
+              // A PNG sequence has no audio to master.
+              disabled={running || format === 'png-sequence'}
             />
           </Field>
         </div>
@@ -298,6 +333,12 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
               {progress.message ? ` · ${progress.message}` : ''}
             </p>
             {progress.error && <p className="mt-1 text-[11px] text-danger">{progress.error}</p>}
+            {incomplete && (
+              <p role="alert" className="mt-1 flex gap-1.5 text-[11px] text-warning">
+                <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+                <span>{incomplete.message}</span>
+              </p>
+            )}
           </>
         ) : (
           <p className="text-[11px] text-ink-2">

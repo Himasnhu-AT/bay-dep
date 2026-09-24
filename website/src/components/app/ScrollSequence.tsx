@@ -4,7 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { AppPlate } from "@/components/app/AppPlate";
 import { cn } from "@/lib/cn";
 import { product } from "@/lib/product";
-import { CHAPTERS, REEL, STEPS, stateAt } from "@/lib/sequence";
+import {
+  CHAPTERS,
+  REEL,
+  STEPS,
+  VIEW_FRAMES,
+  playheadAt,
+  playheadKeyframes,
+  stateAt,
+} from "@/lib/sequence";
+
+/** Computed once, at build time: the playhead's path through the sequence as CSS. */
+const PLAYHEAD_KEYFRAMES = playheadKeyframes();
 
 /**
  * The figure, held while the build plays out in it.
@@ -24,32 +35,42 @@ import { CHAPTERS, REEL, STEPS, stateAt } from "@/lib/sequence";
  * it, so scrolling does not re-render the figure on every frame.
  */
 
-const FIGURE = "mx-auto w-full max-w-[1560px] px-4 sm:px-8";
+const FIGURE = "mx-auto w-full max-w-[1560px] px-5 sm:px-8";
 
 function Caption() {
   const status = (
     <a
       href="/status"
-      className="text-brass-deep underline underline-offset-2 transition-colors hover:text-ink"
+      className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:text-on-night"
     >
       What actually runs today
     </a>
   );
 
   // The same claims in fewer words where there is less room. A phone still gets
-  // the two that matter: this is a re-creation, and the build is real.
+  // the two that matter: the window is drawn, and the edit is real.
   return (
-    <p className="mt-2.5 max-w-[78ch] text-xs leading-relaxed text-muted sm:mt-4">
-      <span className="text-brass-deep">Fig. 1</span> &middot;{" "}
+    <p className="mt-2.5 max-w-[84ch] text-xs leading-relaxed text-on-night-muted sm:mt-4">
+      <span className="font-medium text-on-night-soft">Fig. 1</span>{" "}
       <span className="sm:hidden">
-        A re-creation, not a capture. {status}.
+        The window is drawn; the edit, its frames and its tool calls are real.{" "}
+        {status}.
       </span>
       <span className="hidden sm:inline">
-        The editor is a re-creation of {product.name}, drawn from its own theme
-        and layout source rather than captured from a screen. The build is real:{" "}
-        {REEL.title}, {REEL.width}×{REEL.height} at {REEL.fps}fps,{" "}
-        {REEL.seconds}s, {REEL.codec}. Every tool name in the log is one the
-        engine has. {status}.
+        The window is a re-creation of {product.name}, drawn from its own theme
+        and layout source. What happens in it is a real edit made in the current
+        app: the pictures in the preview are frames it rendered at each step, and
+        the tool calls are the ones it ran, in order, with paths shortened and 36
+        export polls shown as two. The agent&rsquo;s sentences were written for
+        the session. The result: {REEL.title}, {REEL.width}×{REEL.height} at{" "}
+        {REEL.fps}fps, {REEL.seconds}s. Footage from Pexels; see the{" "}
+        <a
+          href="#credits"
+          className="underline underline-offset-2 transition-colors hover:text-on-night"
+        >
+          credits
+        </a>
+        . {status}.
       </span>
     </p>
   );
@@ -58,13 +79,10 @@ function Caption() {
 function Note({ chapter }: { chapter: (typeof CHAPTERS)[number] }) {
   return (
     <>
-      <p className="text-eyebrow font-medium text-brass-deep uppercase">
-        {chapter.eyebrow}
-      </p>
-      <h3 className="mt-2.5 font-serif text-lead font-normal text-ink sm:text-section">
+      <h3 className="text-lead font-semibold text-on-night sm:text-section">
         {chapter.title}
       </h3>
-      <p className="mt-3 max-w-[74ch] text-base text-ink-soft">
+      <p className="mt-2 max-w-[74ch] text-base text-on-night-soft">
         <span className="sm:hidden">{chapter.short}</span>
         <span className="hidden sm:inline">{chapter.body}</span>
       </p>
@@ -102,6 +120,7 @@ export function ScrollSequence() {
   useEffect(() => {
     if (!pinned) return;
     let frame = 0;
+    const scrollTimelines = CSS.supports("animation-timeline: view()");
 
     const measure = () => {
       frame = 0;
@@ -111,6 +130,12 @@ export function ScrollSequence() {
       const travel = rect.height - window.innerHeight;
       if (travel <= 0) return;
       const p = Math.min(1, Math.max(0, -rect.top / travel));
+      // Where the browser cannot run the playhead off a scroll timeline, it is
+      // moved here, from the same curve the CSS keyframes are written from.
+      if (!scrollTimelines) {
+        const head = el.querySelector<HTMLElement>("[data-plate-playhead]");
+        if (head) head.style.translate = `${((playheadAt(p) / VIEW_FRAMES) * 100).toFixed(3)}% 0`;
+      }
       // Floor over equal bands, so every step holds for the same stretch of
       // scroll. Rounding would give the first and last steps half a band each,
       // and the last band is the one the sequence is built toward.
@@ -135,7 +160,7 @@ export function ScrollSequence() {
   // scroll ever happening.
   if (!pinned) {
     return (
-      <section aria-label={`${product.name} building a reel, step by step`}>
+      <section aria-label={`${product.name} editing four clips, step by step`}>
         <ol className="grid gap-16">
           {CHAPTERS.map((c, i) => {
             // Each chapter is shown at its last step, which is the state it
@@ -145,12 +170,12 @@ export function ScrollSequence() {
               0,
             );
             return (
-              <li key={c.eyebrow}>
+              <li key={c.eyebrow} data-depth-root>
                 <div className={FIGURE}>
                   <div className="max-w-[74ch]">
                     <Note chapter={c} />
                   </div>
-                  <div className="mt-6 min-w-0">
+                  <div data-depth="enter" className="mt-6 min-w-0">
                     <AppPlate step={last} />
                     {i === 0 ? <Caption /> : null}
                   </div>
@@ -168,15 +193,22 @@ export function ScrollSequence() {
   return (
     <section
       ref={section}
-      aria-label={`${product.name} building a reel, step by step`}
-      className="relative h-[1000vh]"
+      aria-label={`${product.name} editing four clips, step by step`}
+      className="relative"
+      // A fifth of a screen of scroll per step, plus a screen to settle on
+      // the last: long enough to read a line, short enough that a 58-step edit
+      // does not take a hundred scroll gestures to watch.
+      style={{ height: `${Math.round(STEPS.length * 22 + 100)}vh` }}
+      data-depth-root
+      data-plate
     >
-      <div className="sticky top-0 flex min-h-screen flex-col justify-center py-2 sm:py-8">
+      <style>{PLAYHEAD_KEYFRAMES}</style>
+      <div className="sticky top-0 flex min-h-screen flex-col justify-center py-2 sm:py-4">
         <div className={FIGURE}>
           {/* The note holds a fixed height so the figure underneath never moves
               as the beats change. A figure that jogged on every beat would read
               as a bug. */}
-          <div className="relative mb-3 min-h-[132px] sm:mb-5 sm:min-h-[150px]">
+          <div className="relative mb-3 min-h-[104px] sm:mb-4 sm:min-h-[112px]">
             {CHAPTERS.map((c, i) => (
               <div
                 key={c.eyebrow}
@@ -193,16 +225,22 @@ export function ScrollSequence() {
             ))}
           </div>
 
-          <AppPlate step={step} />
-          <Caption />
+          {/* Depth: the plate arrives a little behind the page and settles as
+              it pins, so it reads as a leaf set beneath the paper. The note
+              above it moves with the page. See DESIGN.md, "Depth". */}
+          <div data-depth="enter">
+            <AppPlate step={step} live />
+            <Caption />
 
-          {/* A rule that keeps drawing as the sequence advances. The site draws
-              rules; this is the same gesture, held open across six beats. */}
-          <div aria-hidden className="mt-2.5 h-px w-full bg-line sm:mt-6">
-            <div
-              className="h-px bg-brass transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-              style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
-            />
+            {/* A rule that keeps drawing as the sequence advances. The site draws
+                rules; this is the same gesture, held open across six beats. It
+                is a transform, not a width, so advancing it lays nothing out. */}
+            <div aria-hidden className="mt-2.5 h-px w-full bg-night-line sm:mt-6">
+              <div
+                className="h-px w-full origin-left bg-accent transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ transform: `scaleX(${(step + 1) / STEPS.length})` }}
+              />
+            </div>
           </div>
         </div>
       </div>

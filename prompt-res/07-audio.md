@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # Audio — half of perceived picture quality
 
 The cheapest way to make a mediocre motion graphic feel professional is to put the right sound

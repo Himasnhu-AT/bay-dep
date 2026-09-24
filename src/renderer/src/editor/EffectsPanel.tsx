@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Info, Maximize2, Minimize2, Move, RotateCcw } from 'lucide-react'
+import { Maximize2, Minimize2, Move, RotateCcw } from 'lucide-react'
 import {
   containLayout,
   coverLayout,
@@ -28,8 +28,19 @@ import { selectTimeline, useEditor } from '@/store/editor'
  * emitting `blur(Npx)`, and the Adjustments section had shipped a 0-40px slider for it. Nobody
  * caught it because a greyed-out row is the one thing on a panel people trust without checking —
  * which is exactly what makes this direction the more expensive of the two. So: when a field
- * lands, grep this list in the same change. `Colour wheels` and `Crop` are the honest remainder,
- * and they are honest because the model has nowhere to put either.
+ * lands, grep this list in the same change.
+ *
+ * **`Crop` was the next one, and it lasted a single commit** — `Item.crop` landed with
+ * `cropSourceRect`/`cropDestRect` and four edge fields in the inspector while this list still
+ * called it absent and the paragraph below still said an item has nowhere to store a rectangle.
+ * That is twice in two commits, which retires "remember to check" as a strategy: the list is now
+ * one row long, and the rule is that a row here must name a field that does not exist in
+ * `@shared/project`.
+ *
+ * **`Colour wheels` was the last row, and it outlived `Item.grade`** (lift/gamma/gain, LUTs,
+ * texture) just as the others did — still telling people the engine could not do what the
+ * inspector's Grade section did. The list is empty now, so it is gone rather than kept as an
+ * empty frame; a future unbacked control should be drawn disabled where it will live.
  */
 export function EffectsPanel(): ReactNode {
   const selected = useSelectedItems()
@@ -37,13 +48,24 @@ export function EffectsPanel(): ReactNode {
   const project = useEditor((state) => state.project)
   const patchLayout = useEditor((state) => state.patchLayout)
   const patchItem = useEditor((state) => state.patchItem)
+  const transact = useEditor((state) => state.transact)
 
+  /**
+   * Every button on this panel acts on the whole selection, so each one is a loop of
+   * single-item store calls — and each of those is its own `edit()`, hence its own undo
+   * entry. Four clips selected, one click on `0.5s`, four presses of Cmd+Z to take it back,
+   * with the middle two leaving a selection that is half faded. So all three loops below go
+   * through `transact`: one click is one undo step, which is the same promise the MCP tools
+   * make. The inspector already worked this way; this panel did not.
+   */
   const applyLayout = (make: (item: Item) => Layout | null): void => {
     if (!timeline) return
-    for (const item of selected) {
-      const layout = make(item)
-      if (layout) patchLayout(item.id, layout)
-    }
+    transact(() => {
+      for (const item of selected) {
+        const layout = make(item)
+        if (layout) patchLayout(item.id, layout)
+      }
+    })
   }
 
   const fit = (mode: 'cover' | 'contain' | 'reset'): void =>
@@ -68,14 +90,18 @@ export function EffectsPanel(): ReactNode {
     })
 
   const fade = (frames: number): void => {
-    for (const item of selected) {
-      const capped = Math.min(frames, Math.floor(item.durationInFrames / 2))
-      patchItem(item.id, { fadeInFrames: capped, fadeOutFrames: capped })
-    }
+    transact(() => {
+      for (const item of selected) {
+        const capped = Math.min(frames, Math.floor(item.durationInFrames / 2))
+        patchItem(item.id, { fadeInFrames: capped, fadeOutFrames: capped })
+      }
+    })
   }
 
   const setSpeed = (speed: number): void => {
-    for (const item of selected) patchItem(item.id, { speed })
+    transact(() => {
+      for (const item of selected) patchItem(item.id, { speed })
+    })
   }
 
   if (selected.length === 0) {
@@ -150,23 +176,25 @@ export function EffectsPanel(): ReactNode {
           </p>
         </Section>
 
-        <Section title="Not yet in the engine">
-          <div className="grid grid-cols-2 gap-1.5">
-            {['Colour wheels', 'Crop'].map((name) => (
-              <Button key={name} variant="subtle" disabled>
-                {name}
-              </Button>
-            ))}
-          </div>
-          <div className="mt-2 flex items-start gap-2 text-ink-2">
-            <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
-            <p className="text-[10px] leading-relaxed">
-              These are drawn disabled rather than hidden because the project format has no
-              field for them — there is nowhere on an item to store a crop rectangle or a
-              lift/gamma/gain wheel, so a tile here would set nothing. They light up when the
-              model does.
-            </p>
-          </div>
+        {/* Colour wheels sat here as "Not yet in the engine" after `Item.grade` had landed with
+            lift/gamma/gain, LUTs, grain, halation and vignette — the third row to outlive its
+            field. Like crop, a grade is a set of numbers rather than a verb, so it is a pointer
+            to the inspector rather than a tile. */}
+        <Section title="Grade">
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            Set in the inspector: white balance, lift, gamma and gain, a .cube LUT, and halation,
+            vignette and grain. Graded identically in preview and export.
+          </p>
+        </Section>
+
+        {/* Crop was in the list above until `Item.crop` landed. It is not a tile here because a
+            crop is four numbers rather than a verb — there is no useful one-click crop, and a
+            button that guessed at 10% would be a worse control than the fields. */}
+        <Section title="Crop">
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            Set per edge in the inspector, as a percentage of the source. Stored as fractions, so
+            a crop survives replacing the footage with a different resolution.
+          </p>
         </Section>
 
         {/* Transitions were in the list above until the engine could draw them. They are not

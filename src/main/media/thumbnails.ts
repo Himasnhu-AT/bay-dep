@@ -11,13 +11,13 @@ import { access, constants } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { FilmstripRequest, ThumbnailRequest } from '@shared/ipc'
 import { US_PER_SECOND } from '@shared/project'
-import { thumbsDir } from '../paths'
+import { thumbsDir } from './cache-dirs'
 import { mediaUrl } from '../protocol'
-import { ffmpegBin, run } from './ffmpeg'
+import { ffmpegBin, run } from '../ffmpeg/ffmpeg'
 import { cacheKey, stampOf } from './cache-key'
 import { once, withSlot } from './queue'
 import { noteCacheHit, scheduleCacheUpkeep } from './cache-upkeep'
-import { probe } from './probe'
+import { probe } from '../ffmpeg/probe'
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -39,6 +39,15 @@ function evenHeightFilter(height: number): string {
 }
 
 export async function thumbnail(request: ThumbnailRequest): Promise<string | null> {
+  const file = await thumbnailFile(request)
+  return file ? mediaUrl(file) : null
+}
+
+/**
+ * The same thumbnail as a file path rather than a `bay://` URL — for main's own use, such as the
+ * projects screen's posters, where nothing goes through the renderer's protocol.
+ */
+export async function thumbnailFile(request: ThumbnailRequest): Promise<string | null> {
   const stamp = await stampOf(request.path)
   const atUs = Math.max(0, Math.round(request.atUs))
   const size = Math.max(16, Math.round(request.size))
@@ -48,7 +57,7 @@ export async function thumbnail(request: ThumbnailRequest): Promise<string | nul
   return once(key, async () => {
     if (await exists(out)) {
       noteCacheHit(key, out)
-      return mediaUrl(out)
+      return out
     }
     await withSlot(() =>
       run(ffmpegBin(), [
@@ -76,7 +85,7 @@ export async function thumbnail(request: ThumbnailRequest): Promise<string | nul
     if (!(await exists(out))) return null
     noteCacheHit(key, out)
     scheduleCacheUpkeep()
-    return mediaUrl(out)
+    return out
   })
 }
 

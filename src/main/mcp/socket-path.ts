@@ -34,8 +34,14 @@ export const SOCKET_NAME = 'bay-mcp.sock'
  */
 export const MAX_SOCKET_PATH = 104
 
-export function socketPathIn(userDataDir: string): string {
-  const path = join(userDataDir, SOCKET_NAME)
+/**
+ * The in-app agent's own socket. A separate file rather than a flag in the call, because which
+ * kind of caller it is has to be a property of the connection — a call cannot claim it.
+ */
+export const AGENT_SOCKET_NAME = 'bay-agent.sock'
+
+export function socketPathIn(userDataDir: string, name: string = SOCKET_NAME): string {
+  const path = join(userDataDir, name)
   if (path.length > MAX_SOCKET_PATH) {
     throw new Error(
       `The MCP socket path is ${path.length} bytes, over the ${MAX_SOCKET_PATH}-byte limit for ` +

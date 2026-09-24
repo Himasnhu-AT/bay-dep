@@ -1,3 +1,5 @@
+> **Historical:** describes the Rust engine, deleted; recover what it cites with `git show rust-engine-final:dep/rust/<path>` (e.g. `crates/bay-mcp/src/tools.rs`).
+
 # 51 — BRIEFS B and C
 
 Two briefs, written to the shape of `36-story-and-script.md` §7 (**Brief A**, the 9-beat

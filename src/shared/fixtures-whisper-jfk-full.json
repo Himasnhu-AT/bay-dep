@@ -1,0 +1,220 @@
+{
+ "transcription": [
+  {
+   "offsets": {
+    "from": 0,
+    "to": 5410
+   },
+   "text": " And so my fellow Americans, ask not what",
+   "tokens": [
+    {
+     "text": "[_BEG_]",
+     "offsets": {
+      "from": 0,
+      "to": 0
+     }
+    },
+    {
+     "text": " And",
+     "offsets": {
+      "from": 320,
+      "to": 370
+     }
+    },
+    {
+     "text": " so",
+     "offsets": {
+      "from": 370,
+      "to": 530
+     }
+    },
+    {
+     "text": " my",
+     "offsets": {
+      "from": 690,
+      "to": 850
+     }
+    },
+    {
+     "text": " fellow",
+     "offsets": {
+      "from": 850,
+      "to": 1590
+     }
+    },
+    {
+     "text": " Americans",
+     "offsets": {
+      "from": 1590,
+      "to": 2100
+     }
+    },
+    {
+     "text": ",",
+     "offsets": {
+      "from": 2850,
+      "to": 3300
+     }
+    },
+    {
+     "text": " ask",
+     "offsets": {
+      "from": 3300,
+      "to": 4140
+     }
+    },
+    {
+     "text": " not",
+     "offsets": {
+      "from": 4140,
+      "to": 4280
+     }
+    },
+    {
+     "text": " what",
+     "offsets": {
+      "from": 5030,
+      "to": 5350
+     }
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 5410,
+    "to": 9040
+   },
+   "text": " your country can do for you, ask what you",
+   "tokens": [
+    {
+     "text": " your",
+     "offsets": {
+      "from": 5410,
+      "to": 5740
+     }
+    },
+    {
+     "text": " country",
+     "offsets": {
+      "from": 5740,
+      "to": 6410
+     }
+    },
+    {
+     "text": " can",
+     "offsets": {
+      "from": 6410,
+      "to": 6740
+     }
+    },
+    {
+     "text": " do",
+     "offsets": {
+      "from": 6740,
+      "to": 6920
+     }
+    },
+    {
+     "text": " for",
+     "offsets": {
+      "from": 7000,
+      "to": 7000
+     }
+    },
+    {
+     "text": " you",
+     "offsets": {
+      "from": 7010,
+      "to": 7520
+     }
+    },
+    {
+     "text": ",",
+     "offsets": {
+      "from": 7810,
+      "to": 8050
+     }
+    },
+    {
+     "text": " ask",
+     "offsets": {
+      "from": 8190,
+      "to": 8370
+     }
+    },
+    {
+     "text": " what",
+     "offsets": {
+      "from": 8370,
+      "to": 8750
+     }
+    },
+    {
+     "text": " you",
+     "offsets": {
+      "from": 8910,
+      "to": 9040
+     }
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 9040,
+    "to": 11000
+   },
+   "text": " can do for your country.",
+   "tokens": [
+    {
+     "text": " can",
+     "offsets": {
+      "from": 9040,
+      "to": 9320
+     }
+    },
+    {
+     "text": " do",
+     "offsets": {
+      "from": 9320,
+      "to": 9380
+     }
+    },
+    {
+     "text": " for",
+     "offsets": {
+      "from": 9440,
+      "to": 9760
+     }
+    },
+    {
+     "text": " your",
+     "offsets": {
+      "from": 9760,
+      "to": 9990
+     }
+    },
+    {
+     "text": " country",
+     "offsets": {
+      "from": 10020,
+      "to": 10360
+     }
+    },
+    {
+     "text": ".",
+     "offsets": {
+      "from": 10510,
+      "to": 10990
+     }
+    },
+    {
+     "text": "[_TT_550]",
+     "offsets": {
+      "from": 11000,
+      "to": 11000
+     }
+    }
+   ]
+  }
+ ]
+}

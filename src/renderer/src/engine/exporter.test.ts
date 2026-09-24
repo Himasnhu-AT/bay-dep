@@ -25,8 +25,9 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Project } from '@shared/project'
-import { FrameExporter } from './exporter'
+import type { Asset, Item, Project } from '@shared/project'
+import { brfRuntime, type WorkerLike } from './brfCode'
+import { describeIncomplete, FrameExporter } from './exporter'
 
 // --- the DOM the exporter needs, and nothing more -------------------------
 // A timeline with no items draws only its background, so no media element is ever
@@ -50,10 +51,17 @@ class StubContext {
   setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void {
     this.transform = [a, b, c, d, e, f]
   }
+  getTransform(): { a: number } {
+    return { a: this.transform[0] ?? 1 }
+  }
   save(): void {}
   restore(): void {}
   fillRect(): void {
     this.fills += 1
+  }
+  draws = 0
+  drawImage(): void {
+    this.draws += 1
   }
   getImageData(_x: number, _y: number, width: number, height: number): { data: Uint8ClampedArray } {
     return { data: new Uint8ClampedArray(width * height * 4) }
@@ -69,7 +77,9 @@ class StubOffscreenCanvas {
     this.width = width
     this.height = height
   }
-  getContext(): StubContext {
+  /** A 2D context only: no WebGL2 here, as in a renderer whose GPU process has gone. */
+  getContext(type = '2d'): StubContext | null {
+    if (type !== '2d') return null
     lastContext = new StubContext()
     return lastContext
   }
@@ -352,4 +362,228 @@ test('a missing timeline fails before anything is pushed', { timeout: 10_000 }, 
   })
   await assert.rejects(exporter.run(), /No timeline nope/)
   assert.deepEqual(encoder.pushed, [])
+})
+
+// --- frames written with a graphic still pending ----------------------------
+// The requirement: an export must never put the wrong picture in a file silently. A `.brf`
+// module whose worker has not answered is drawn as nothing — the background where the graphic
+// should be — and that frame goes into the file. The exporter waits a bounded time and then
+// writes it anyway, so what it owes the caller is a report naming the frames and the module.
+//
+// The worker here never answers: every frame the module is on stays pending past the wait
+// (seekTimeoutMs is tiny, far below the runtime's own 3s give-up, so the scene is still on its
+// way rather than failed). The frames without the module are the control.
+
+// A `.brf` asset gets a pool entry with no element; disposing the pool still asks what kind of
+// element each entry holds, so the classes must exist for `instanceof`, and nothing more.
+const dom = globalThis as unknown as Record<string, unknown>
+for (const name of ['HTMLImageElement', 'HTMLVideoElement', 'HTMLAudioElement']) dom[name] ??= class {}
+
+const SILENT_WORKER =(): WorkerLike => ({ onmessage: null, onerror: null, postMessage() {}, terminate() {} })
+
+function withModule(from: number, durationInFrames: number): Project {
+  const p = project()
+  const asset: Asset = {
+    id: 'ast_card',
+    kind: 'brf',
+    name: 'Counter card',
+    path: null,
+    durationUs: 2_000_000,
+    width: 16,
+    height: 8,
+    fps: 30,
+    hasAudio: false,
+    hasVideo: true,
+    posterPath: null,
+    waveformPath: null,
+    createdAt: 1,
+    brfCode: 'export default () => <scene duration={2}><text x="50%" y="50%">Hi</text></scene>',
+    compositionVariables: []
+  }
+  const item: Item = {
+    id: 'itm_card',
+    assetId: asset.id,
+    trackId: 'v1',
+    from,
+    durationInFrames,
+    sourceStartUs: 0,
+    layout: { left: 0, top: 0, width: 16, height: 8, opacity: 1, rotation: 0 },
+    volume: 1,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    speed: 1
+  }
+  p.assets.push(asset)
+  const track = p.timelines[0]?.tracks[0]
+  assert.ok(track)
+  track.items.push(item)
+  return p
+}
+
+test('frames written while a .brf scene was still pending are reported, by frame and by name', { timeout: 10_000 }, async () => {
+  brfRuntime.useWorkers(SILENT_WORKER)
+  try {
+    const encoder = fakeEncoder()
+    encoder.install()
+    encoder.releaseAll()
+    // The module covers frames 2..3 of an export of 0..5.
+    const exporter = new FrameExporter({ project: withModule(2, 2), timelineId: 'tl', jobId: 'job-p1', fromFrame: 0, toFrame: 5, seekTimeoutMs: 5 })
+    const outcome = await exporter.run()
+
+    assert.equal(outcome.framesWritten, 6, 'the export still finishes — the file is kept')
+    assert.deepEqual(encoder.finished, ['job-p1'])
+    const report = outcome.incomplete
+    assert.ok(report, 'an export that wrote frames without their graphic must not come back clean')
+    assert.equal(report.frames, 2)
+    assert.deepEqual(report.ranges, [[2, 3]])
+    assert.deepEqual(report.items, [{ name: 'Counter card', frames: 2, ranges: [[2, 3]] }])
+    assert.deepEqual(report.gradeIssues, [])
+    // The sentence is what the user and the agent act on: it must carry the frames, the name,
+    // and what to do next — not merely exist.
+    assert.match(report.message, /2 frames/)
+    assert.match(report.message, /frames 2-3/)
+    assert.match(report.message, /"Counter card"/)
+    assert.match(report.message, /Export again/)
+    // Live on the exporter too, which is what track_export reads when main's `done` lands first.
+    assert.deepEqual(exporter.incomplete, report)
+  } finally {
+    brfRuntime.dispose()
+  }
+})
+
+test('the control: the same module outside the exported range reports a clean export', { timeout: 10_000 }, async () => {
+  brfRuntime.useWorkers(SILENT_WORKER)
+  try {
+    const encoder = fakeEncoder()
+    encoder.install()
+    encoder.releaseAll()
+    // Same project, same silent worker; the range 4..5 does not reach the module at 2..3.
+    const exporter = new FrameExporter({ project: withModule(2, 2), timelineId: 'tl', jobId: 'job-p2', fromFrame: 4, toFrame: 5, seekTimeoutMs: 5 })
+    const outcome = await exporter.run()
+    assert.equal(outcome.framesWritten, 2)
+    assert.equal(outcome.incomplete, null)
+    assert.equal(exporter.incomplete, null)
+  } finally {
+    brfRuntime.dispose()
+  }
+})
+
+test('describeIncomplete: ranges merge, items sort by frames, the sentence caps its list', () => {
+  assert.equal(describeIncomplete([]), null)
+  const one = describeIncomplete([{ frame: 7, missing: ['Title'], gradeIssues: [] }])
+  assert.ok(one)
+  assert.match(one.message, /^1 frame of this export is not the picture/)
+  assert.match(one.message, /One frame was written before everything on it had rendered/)
+  assert.match(one.message, /"Title" \(frame 7\)/)
+
+  const many = describeIncomplete([
+    ...[0, 1, 2, 5, 9, 11, 13, 15, 17].map((frame) => ({ frame, missing: ['Lower third'], gradeIssues: [] })),
+    { frame: 1, missing: ['Title', 'Title'], gradeIssues: [] }
+  ])
+  assert.ok(many)
+  assert.equal(many.frames, 9, 'a frame is counted once, however many entries name it')
+  assert.deepEqual(many.ranges, [[0, 2], [5, 5], [9, 9], [11, 11], [13, 13], [15, 15], [17, 17]])
+  assert.deepEqual(many.items, [
+    { name: 'Lower third', frames: 9, ranges: [[0, 2], [5, 5], [9, 9], [11, 11], [13, 13], [15, 15], [17, 17]] },
+    { name: 'Title', frames: 1, ranges: [[1, 1]] }
+  ])
+  assert.match(many.message, /frames 0-2, 5, 9, 11, 13, 15 and 1 more range/)
+})
+
+test('describeIncomplete: grade issues are deduplicated with their own ranges, and named first', () => {
+  const issue = 'clip itm_a was drawn ungraded: this renderer has no WebGL2'
+  const report = describeIncomplete([
+    { frame: 10, missing: [], gradeIssues: [issue] },
+    { frame: 11, missing: [], gradeIssues: [issue, issue] },
+    { frame: 12, missing: ['Title'], gradeIssues: [issue] },
+    { frame: 30, missing: ['Title'], gradeIssues: [] }
+  ])
+  assert.ok(report)
+  assert.equal(report.frames, 4, 'a frame wrong in both ways counts once')
+  assert.deepEqual(report.ranges, [[10, 12], [30, 30]])
+  assert.deepEqual(report.gradeIssues, [{ issue, frames: 3, ranges: [[10, 12]] }])
+  assert.deepEqual(report.items, [{ name: 'Title', frames: 2, ranges: [[12, 12], [30, 30]] }])
+  // The ungraded clip hides better than a missing title, so it is named first.
+  const gradeAt = report.message.indexOf('itm_a')
+  const titleAt = report.message.indexOf('"Title"')
+  assert.ok(gradeAt > 0 && titleAt > gradeAt, report.message)
+  assert.match(report.message, /no WebGL2 \(frames 10-12\)/)
+  assert.match(report.message, /fix the grade, then export again/)
+  assert.match(report.message, /2 frames were written before everything on them had rendered/)
+})
+
+// A graded still with no WebGL2 to grade it: the compositor draws it ungraded and says so in
+// `gradeIssues` — which export never read, so the file held an ungraded clip under a clean "done".
+test('frames written with a grade that could not run are reported, naming the clip', { timeout: 10_000 }, async () => {
+  class FakeImage extends (globalThis as unknown as { HTMLImageElement: new () => object }).HTMLImageElement {
+    complete = true
+    naturalWidth = 16
+    naturalHeight = 8
+    width = 16
+    height = 8
+    crossOrigin: string | null = null
+    decoding = 'auto'
+    src = ''
+    addEventListener(): void {}
+    removeEventListener(): void {}
+    removeAttribute(): void {}
+  }
+  const hadDocument = 'document' in globalThis
+  Object.defineProperty(globalThis, 'document', {
+    value: { createElement: () => new FakeImage() },
+    configurable: true,
+    writable: true
+  })
+  try {
+    const p = project()
+    p.assets.push({
+      id: 'ast_still',
+      kind: 'image',
+      name: 'still.png',
+      path: '/stills/still.png',
+      durationUs: 0,
+      width: 16,
+      height: 8,
+      fps: 0,
+      hasAudio: false,
+      hasVideo: true,
+      posterPath: null,
+      waveformPath: null,
+      createdAt: 1
+    })
+    const graded = (id: string, from: number, grade: Item['grade']): Item => ({
+      id,
+      assetId: 'ast_still',
+      trackId: 'v1',
+      from,
+      durationInFrames: 2,
+      sourceStartUs: 0,
+      layout: { left: 0, top: 0, width: 16, height: 8, opacity: 1, rotation: 0 },
+      volume: 1,
+      fadeInFrames: 0,
+      fadeOutFrames: 0,
+      speed: 1,
+      ...(grade ? { grade } : {})
+    })
+    // Graded at 0..1; the same still ungraded at 2..3 is the control inside the same export.
+    p.timelines[0]?.tracks[0]?.items.push(graded('itm_graded', 0, { saturation: 0.5 }), graded('itm_plain', 2, undefined))
+
+    const encoder = fakeEncoder()
+    encoder.install()
+    encoder.releaseAll()
+    const exporter = new FrameExporter({ project: p, timelineId: 'tl', jobId: 'job-g1', fromFrame: 0, toFrame: 3, seekTimeoutMs: 5 })
+    const outcome = await exporter.run()
+    assert.equal(outcome.framesWritten, 4)
+    assert.ok(lastContext && lastContext.draws >= 4, 'the still was drawn on every frame — ungraded, not missing')
+    const report = outcome.incomplete
+    assert.ok(report, 'an export that wrote a clip without its grade must not come back clean')
+    assert.deepEqual(report.ranges, [[0, 1]], 'only the graded clip\'s frames; the ungraded control is right as drawn')
+    assert.equal(report.gradeIssues.length, 1)
+    assert.equal(report.gradeIssues[0]?.frames, 2)
+    assert.match(report.gradeIssues[0]?.issue ?? '', /itm_graded/)
+    assert.deepEqual(report.items, [])
+    assert.match(report.message, /itm_graded/)
+  } finally {
+    if (!hadDocument) delete (globalThis as { document?: unknown }).document
+  }
 })
