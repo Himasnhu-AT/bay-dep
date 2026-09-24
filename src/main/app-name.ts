@@ -8,9 +8,9 @@
  * `setName('bay')` overrode the stamped name, and a test build's relaunch would have opened
  * the real ~/Library/Application Support/bay.
  *
- * Only a `bay-` prefix with a lowercase suffix counts, so a stray productName can never move a
- * real install's data somewhere unexpected.
+ * Only a packaged build counts, and only a `bay-` prefix with a lowercase suffix, so a checkout
+ * and a stray productName can never move a real install's data somewhere unexpected.
  */
-export function appNameFor(packagedName: string): string {
-  return /^bay-[a-z0-9][a-z0-9-]{0,40}$/.test(packagedName) ? packagedName : 'bay'
+export function appNameFor(packagedName: string, isPackaged: boolean): string {
+  return isPackaged && /^bay-[a-z0-9][a-z0-9-]{0,40}$/.test(packagedName) ? packagedName : 'bay'
 }

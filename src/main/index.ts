@@ -41,7 +41,7 @@ const APP_NAME = 'bay'
 // every dialog title come from here — so an unpackaged run says "bay" too, and userData does
 // not split between "Electron" and "bay" the first time someone packages the app. A test build
 // stamped with a `bay-…` productName keeps that name, and so its own data (`./app-name`).
-app.setName(appNameFor(app.getName()))
+app.setName(appNameFor(app.getName(), app.isPackaged))
 
 // Before `whenReady`, without exception: Electron reads the privileged-scheme table during
 // startup and a later registration is accepted and then ignored.

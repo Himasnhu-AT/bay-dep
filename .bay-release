@@ -13,8 +13,7 @@ SIGN_ID="Developer ID Application: Himanshu . (38QXSRV6AP)"
 # The notarytool keychain profile. `xcrun notarytool history --keychain-profile xcnotarize` must succeed.
 NOTARY_PROFILE="xcnotarize"
 
-# arm64 only, for now: the bundled binaries in node_modules are the host's. ffmpeg-ffprobe-static
-# downloads one platform's ffmpeg at install time, and pnpm installs only this Mac's
-# claude-agent-sdk-darwin-* package. An x64 build made here would ship arm64 ffmpeg and no
-# `claude`. The script refuses any Mach-O in app.asar.unpacked that lacks the target arch.
+# arm64 only, for now: pnpm installs only this Mac's claude-agent-sdk-darwin-* package, so an x64
+# build made here would ship no `claude`. The script refuses any Mach-O in the bundle that lacks
+# the target arch. ffmpeg comes from vendor/ffmpeg/darwin-<arch> (script/build-ffmpeg.sh).
 ARCH="arm64"

@@ -9,14 +9,22 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { appNameFor } from './app-name'
 
-test('a test build keeps its own name, so its data stays out of the real profile', () => {
-  assert.equal(appNameFor('bay-reltest'), 'bay-reltest')
-  assert.equal(appNameFor('bay-update-proof-2'), 'bay-update-proof-2')
+test('a packaged test build keeps its own name, so its data stays out of the real profile', () => {
+  assert.equal(appNameFor('bay-reltest', true), 'bay-reltest')
+  assert.equal(appNameFor('bay-update-proof-2', true), 'bay-update-proof-2')
 })
 
-test('everything else runs as bay, so a real install always finds its data', () => {
-  // `bay` is the real build; `Electron` is what an unpackaged run would otherwise be called.
-  for (const name of ['bay', 'Electron', 'Bay', 'bay-', 'bay-Reltest', 'bay/../x', 'bay-rel test', 'other', '', `bay-${'x'.repeat(60)}`]) {
-    assert.equal(appNameFor(name), 'bay', JSON.stringify(name))
+test('the real build is unchanged: bay', () => {
+  assert.equal(appNameFor('bay', true), 'bay')
+})
+
+test('an unpackaged run is unchanged, whatever its package says', () => {
+  // A checkout keeps using the profile its developer's probes and ./run.sh expect.
+  for (const name of ['bay', 'bay-reltest', 'Electron']) assert.equal(appNameFor(name, false), 'bay', name)
+})
+
+test('nothing else moves a packaged build off bay', () => {
+  for (const name of ['Electron', 'Bay', 'bay-', 'bay-Reltest', 'bay/../x', 'bay-rel test', 'other', '', `bay-${'x'.repeat(60)}`]) {
+    assert.equal(appNameFor(name, true), 'bay', JSON.stringify(name))
   }
 })

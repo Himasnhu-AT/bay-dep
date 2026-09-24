@@ -174,8 +174,9 @@ The script:
 
 - signs the app with electron-builder: hardened runtime, and only `allow-jit` as an entitlement
   (measured; see `build/entitlements.mac.plist`). Then it checks **every** Mach-O in the
-  bundle, including whatever is in `app.asar.unpacked`, for the Developer ID, the hardened
-  runtime, a secure timestamp and the arm64 slice. A new or swapped binary needs no change.
+  bundle, including `Resources/ffmpeg/` and `app.asar.unpacked`, for the Developer ID, the
+  hardened runtime, a secure timestamp and the arm64 slice. A new or swapped binary needs no
+  change.
 - notarizes the app, staples it, and zips it for the updater. Then it builds the DMG (the app
   beside an Applications link, like xcnotarize's), signs it, notarizes it and staples it. It
   fails if Apple's log (`release/notary/<id>.json`) lists any issue.
@@ -186,7 +187,8 @@ The script:
 
 `--version 0.1.1` stamps another version without touching `package.json`. `--notes file.txt`
 puts release notes in `latest-mac.yml`. `--out dir` writes somewhere other than `release/`.
-Builds are arm64 only: the bundled ffmpeg and `claude` are the ones installed for this Mac.
+Builds are arm64 only, because pnpm installs only this Mac's `claude` package. ffmpeg must be
+built first (`script/build-ffmpeg.sh`), and packaging refuses without it.
 
 **Updates.** bay updates itself from a *generic feed*: an https folder that holds
 `latest-mac.yml` and the zip it names. No feed is configured yet, so a packaged bay checks

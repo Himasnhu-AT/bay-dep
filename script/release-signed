@@ -23,8 +23,8 @@
 # Settings (flags > environment > ./.bay-release): SIGN_ID, NOTARY_PROFILE, ARCH.
 # No credential passes through this script. notarytool reads them from the keychain profile.
 #
-# Everything in app.asar.unpacked is signed and checked generically. Swapping the bundled
-# ffmpeg, or adding any other binary under asarUnpack, needs no change here. The script
+# Every Mach-O in the bundle is signed and checked generically, wherever it sits (Resources/ffmpeg,
+# app.asar.unpacked, frameworks). Swapping ffmpeg or adding a binary needs no change here. The script
 # refuses a Mach-O that is not signed by SIGN_ID with the hardened runtime and a secure
 # timestamp, or that lacks the target architecture.
 #
@@ -150,8 +150,8 @@ while IFS= read -r -d '' f; do
   lipo -archs "$f" | tr ' ' '\n' | grep -qx "$ARCH" || die "$rel has no $ARCH slice ($(lipo -archs "$f")): an $ARCH Mac cannot run it"
 done < <(find "$app/Contents" -type f -print0)
 [[ "$count" -gt 0 ]] || die "found no Mach-O files: the check itself is broken"
-unpacked=$(find "$app/Contents/Resources/app.asar.unpacked" -type f -print0 2>/dev/null | xargs -0 file | grep -c 'Mach-O' || true)
-ok "$count Mach-O files signed by $SIGN_ID (runtime + timestamp, $ARCH), $unpacked of them in app.asar.unpacked"
+resources=$(find "$app/Contents/Resources" -type f -print0 2>/dev/null | xargs -0 file | grep 'Mach-O' | sed "s#^$app/Contents/Resources/##; s#:.*##" | tr '\n' ' ')
+ok "$count Mach-O files signed by $SIGN_ID (runtime + timestamp, $ARCH); in Resources: $resources"
 
 # --- notarize: submit, read the log, refuse on anything but a clean Accepted ------------------
 notarize() { # <file> <label>
