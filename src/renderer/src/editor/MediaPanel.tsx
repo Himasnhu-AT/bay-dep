@@ -1,174 +1,127 @@
-import { useState, type ReactNode } from 'react'
-import { completeBrfImports } from '@/lib/brfImport'
+import { useMemo, useState, type ReactNode } from 'react'
+import { ArrowDownUp, FilmIcon, LayoutGrid, List, MoreHorizontal, Plus } from 'lucide-react'
+import type { Asset } from '@shared/project'
 import {
-  AlertTriangle,
-  Code2,
-  FilmIcon,
-  ImageIcon,
-  Music2,
-  Plus,
-  Trash2,
-  Type as TypeIcon,
-  type LucideIcon,
-  Palette,
-  Sparkles
-} from 'lucide-react'
-import type { Asset, AssetKind } from '@shared/project'
-import { Button, EmptyState, IconButton, Panel, ScrollArea } from '@/components'
-import { call, formatSourceDuration, importMessage } from '@/lib/bay'
-import { cn } from '@/lib/cn'
-import { usePoster } from '@/lib/useMediaCache'
-import { useEditor } from '@/store/editor'
+  filterAssets,
+  kindGroup,
+  MEDIA_KIND_GROUPS,
+  MEDIA_SORTS,
+  sortAssets,
+  usageCounts,
+  type MediaKindFilter,
+  type MediaSort
+} from '@shared/media-library'
+import { canRelink } from '@shared/relink'
+import {
+  Button,
+  ContextMenu,
+  EmptyState,
+  IconButton,
+  InlineAlert,
+  Menu,
+  Modal,
+  Panel,
+  ScrollArea,
+  SearchField,
+  Select,
+  useFloatingTrigger,
+  type MenuEntry
+} from '@/components'
+import { completeBrfImports } from '@/lib/brfImport'
+import { call, importMessage } from '@/lib/bay'
+import { shortcutOf } from '@/lib/commands'
+import {
+  detectBeatsFor,
+  endOfTimeline,
+  exportCaptions,
+  hasCaptions,
+  importCaptionsDialog,
+  locateAndRelink,
+  placeAssetRange
+} from '@/lib/mediaActions'
+import { revealItem } from '@/lib/revealItem'
+import { useFileStatus } from '@/lib/useFileStatus'
+import { editAsset } from '@/mcp/assets'
+import { selectTimeline, useEditor } from '@/store/editor'
+import { AssetTile, placeable } from './AssetTile'
+import { CodeEditorModal, createMotionGraphic } from './CodeEditorModal'
+import { SourceViewer } from './SourceViewer'
 
-/** The drag payload a media card writes and a timeline lane reads. */
-export const ASSET_DRAG_TYPE = 'application/x-bay-asset'
+export { ASSET_DRAG_TYPE } from './AssetTile'
 
-/**
- * Typed `Record<AssetKind, ...>` on purpose: an untyped literal lets a new asset kind index to
- * `undefined`, React renders `<undefined />`, and the whole tree unmounts to a blank window
- * with nothing in the console. That is not hypothetical — adding `html` did exactly that, and
- * both typecheck and the test suite stayed green because neither can see a missing key in an
- * object literal nobody declared exhaustive. The annotation turns the next one into a build
- * error.
- */
-const KIND_ICON: Record<AssetKind, LucideIcon> = {
-  video: FilmIcon,
-  audio: Music2,
-  image: ImageIcon,
-  gif: ImageIcon,
-  text: TypeIcon,
-  html: Code2,
-  brf: Sparkles,
-  lut: Palette,
-  font: TypeIcon
+type View = 'grid' | 'list'
+const VIEW_KEY = 'bay.media.view'
+const SORT_KEY = 'bay.media.sort'
+
+/** A per-viewer preference; a storage that throws (private window) just means the default. */
+function remembered<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const value = localStorage.getItem(key)
+    return allowed.includes(value as T) ? (value as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Still applies for this session.
+  }
+}
+
+/** A question the panel needs answered before it goes on: a relink that looks wrong, a removal. */
+interface Ask {
+  title: string
+  body: string
+  confirm: string
+  danger?: boolean
+  resolve(yes: boolean): void
 }
 
 /**
- * The card's second line when there are no pixel dimensions to show. It was an em dash for
- * every text clip, which is a line of the card spent saying nothing.
+ * The media pool: everything imported into the project, searchable, filterable by kind, sorted
+ * and shown as cards or rows. Selecting an asset opens it in a small source monitor; nothing
+ * about browsing edits the timeline. Each asset's menu holds what can be done to it — place,
+ * rename, reveal, relink, detect beats, transcribe, edit its code, remove.
  */
-const KIND_NOTE: Record<AssetKind, string> = {
-  video: 'Video',
-  audio: 'Audio only',
-  image: 'Image',
-  gif: 'Animated image',
-  text: 'Text clip',
-  html: 'HTML composition',
-  brf: 'Motion graphic',
-  lut: 'Colour LUT',
-  font: 'Font'
-}
-
-function AssetCard({ asset }: { asset: Asset }): ReactNode {
-  const placeAsset = useEditor((state) => state.placeAsset)
-  const removeAsset = useEditor((state) => state.removeAsset)
-  const poster = usePoster(asset, 220)
-  const Icon = KIND_ICON[asset.kind]
-  const broken = Boolean(asset.error)
-
-  return (
-    <div
-      draggable={!broken}
-      onDragStart={(event) => {
-        event.dataTransfer.setData(ASSET_DRAG_TYPE, asset.id)
-        event.dataTransfer.effectAllowed = 'copy'
-      }}
-      className="group relative"
-    >
-      <button
-        type="button"
-        disabled={broken}
-        onClick={() => placeAsset(asset.id)}
-        title={broken ? asset.error : `Place ${asset.name} at the playhead`}
-        className={cn(
-          't-fast block w-full overflow-hidden rounded-sm border border-line bg-surface-2 text-left',
-          broken
-            ? 'cursor-not-allowed border-danger/40'
-            : 'hover:border-line-strong hover:bg-surface-3 focus-visible:border-accent'
-        )}
-      >
-        {/* A broken asset dims its picture, not its explanation: the whole card at 50% put
-            "Could not be read" at ~2:1 in grey, where it read as a caption, not an error. */}
-        <div
-          className={cn(
-            'relative aspect-video w-full overflow-hidden bg-surface-0',
-            broken && 'opacity-50'
-          )}
-        >
-          {poster ? (
-            <img
-              src={poster}
-              alt=""
-              draggable={false}
-              className="size-full object-cover"
-              // A poster that 404s must not leave a broken-image glyph in a dark panel.
-              onError={(event) => {
-                event.currentTarget.style.visibility = 'hidden'
-              }}
-            />
-          ) : (
-            <div className="flex size-full items-center justify-center">
-              <Icon aria-hidden="true" className="size-5 text-ink-2" />
-            </div>
-          )}
-          <span
-            className={cn(
-              'absolute top-1 left-1 rounded-xs px-1 text-[10px] leading-4 font-medium tracking-wide uppercase',
-              asset.kind === 'audio'
-                ? 'bg-clip-audio text-on-media'
-                : asset.kind === 'video'
-                  ? 'bg-clip-video text-on-media'
-                  : 'bg-surface-3 text-ink-1'
-            )}
-          >
-            {asset.kind}
-          </span>
-          {asset.durationUs > 0 && (
-            <span className="absolute right-1 bottom-1 rounded-xs bg-black/70 px-1 text-[10px] leading-4 text-on-media tabular-nums">
-              {formatSourceDuration(asset.durationUs)}
-            </span>
-          )}
-        </div>
-        <div className="px-1.5 py-1">
-          <p className={cn('truncate text-[11px]', broken ? 'text-ink-1' : 'text-ink-0')}>
-            {asset.name}
-          </p>
-          {broken ? (
-            <p className="flex items-center gap-1 truncate text-[10px] text-danger">
-              <AlertTriangle aria-hidden="true" className="size-3 shrink-0" />
-              Could not be read
-            </p>
-          ) : (
-            <p className="truncate text-[10px] text-ink-2">
-              {asset.width && asset.height
-                ? `${asset.width}×${asset.height}`
-                : asset.kind === 'audio'
-                  ? 'Audio only'
-                  : KIND_NOTE[asset.kind]}
-            </p>
-          )}
-        </div>
-      </button>
-
-      <div className="t-fast absolute top-1 right-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
-        <IconButton
-          label={`Remove ${asset.name}`}
-          size="xs"
-          variant="danger"
-          icon={<Trash2 className="size-3" />}
-          onClick={() => removeAsset(asset.id)}
-          className="bg-surface-0/80"
-        />
-      </div>
-    </div>
-  )
-}
-
 export function MediaPanel(): ReactNode {
   const assets = useEditor((state) => state.project.assets)
+  const timelines = useEditor((state) => state.project.timelines)
   const addAssets = useEditor((state) => state.addAssets)
   const notify = useEditor((state) => state.notify)
+
   const [importing, setImporting] = useState(false)
+  const [query, setQuery] = useState('')
+  const [kind, setKind] = useState<MediaKindFilter>('all')
+  const [sort, setSort] = useState<MediaSort>(() => remembered(SORT_KEY, MEDIA_SORTS.map((s) => s.id), 'added'))
+  const [view, setView] = useState<View>(() => remembered(VIEW_KEY, ['grid', 'list'] as const, 'grid'))
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ assetId: string; at: { x: number; y: number } } | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [busy, setBusy] = useState<ReadonlyMap<string, string>>(new Map())
+  const [editingCode, setEditingCode] = useState<string | null>(null)
+  const [ask, setAsk] = useState<Ask | null>(null)
+
+  const files = useFileStatus(assets)
+  const uses = useMemo(() => usageCounts({ timelines }), [timelines])
+  const shown = useMemo(() => sortAssets(filterAssets(assets, { query, kind }), sort), [assets, query, kind, sort])
+  const missingAssets = useMemo(() => assets.filter((asset) => files.missing.has(asset.id)), [assets, files.missing])
+  const selected = assets.find((asset) => asset.id === selectedId)
+  const moreMenu = useFloatingTrigger()
+  const sortMenu = useFloatingTrigger()
+
+  const confirm = (question: Omit<Ask, 'resolve'>): Promise<boolean> =>
+    new Promise((resolve) => setAsk({ ...question, resolve }))
+
+  const setBusyFor = (assetId: string, words: string | null): void =>
+    setBusy((current) => {
+      const next = new Map(current)
+      if (words) next.set(assetId, words)
+      else next.delete(assetId)
+      return next
+    })
 
   const runImport = async (): Promise<void> => {
     setImporting(true)
@@ -186,16 +139,170 @@ export function MediaPanel(): ReactNode {
     notify(message.text, message.kind)
   }
 
+  const place = (asset: Asset, where: 'playhead' | 'end' = 'playhead'): void => {
+    const placed = placeAssetRange(asset, where === 'end' ? { atFrame: endOfTimeline() } : {})
+    if (placed) revealItem(placed)
+  }
+
+  /** The first clip placing an asset on the active timeline, selected, so a panel can act on it. */
+  const selectFirstUse = (asset: Asset): boolean => {
+    const timeline = selectTimeline(useEditor.getState())
+    const first = timeline?.tracks.flatMap((track) => track.items).find((item) => item.assetId === asset.id)
+    if (!first) return false
+    revealItem(first.id)
+    return true
+  }
+
+  const relink = async (asset: Asset): Promise<void> => {
+    await locateAndRelink(asset, missingAssets, (body) =>
+      confirm({ title: 'Use this file?', body, confirm: 'Use it' })
+    )
+    files.refresh()
+  }
+
+  const remove = async (asset: Asset): Promise<void> => {
+    const count = uses.get(asset.id) ?? 0
+    if (count > 0) {
+      const yes = await confirm({
+        title: `Remove “${asset.name}”?`,
+        body:
+          `It is used by ${count} clip${count === 1 ? '' : 's'} on the timeline, and ` +
+          `${count === 1 ? 'that clip goes' : 'those clips go'} with it. ⌘Z brings everything back.`,
+        confirm: count === 1 ? 'Remove it and its clip' : `Remove it and ${count} clips`,
+        danger: true
+      })
+      if (!yes) return
+    }
+    useEditor.getState().removeAsset(asset.id)
+    if (selectedId === asset.id) setSelectedId(null)
+    notify(`Removed ${asset.name} from the project. ⌘Z to undo.`)
+  }
+
+  const rename = (asset: Asset, name: string | null): void => {
+    setRenamingId(null)
+    if (name === null || name.trim() === asset.name) return
+    try {
+      // `edit_asset`'s own function, so a rename here and one by the agent are one behaviour.
+      editAsset({ assetId: asset.id, name })
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
+  const menuFor = (asset: Asset): MenuEntry[] => {
+    const missing = files.missing.has(asset.id)
+    const used = (uses.get(asset.id) ?? 0) > 0
+    const audible = asset.hasAudio && asset.path !== null && (asset.kind === 'video' || asset.kind === 'audio')
+    const hasCode = (asset.kind === 'brf' && asset.brfCode !== undefined) || (asset.kind === 'html' && asset.path !== null)
+    const entries: MenuEntry[] = []
+    if (placeable(asset)) {
+      entries.push(
+        { label: 'Add at Playhead', shortcut: 'Enter', onSelect: () => place(asset) },
+        { label: 'Append to End', onSelect: () => place(asset, 'end') },
+        { kind: 'separator' }
+      )
+    }
+    entries.push({ label: 'Rename', onSelect: () => setRenamingId(asset.id) })
+    if (asset.path) {
+      entries.push({
+        label: 'Reveal in Finder',
+        disabled: missing,
+        onSelect: () => void call('Reveal in Finder', (api) => api.media.revealInFolder(asset.path as string))
+      })
+    }
+    if (canRelink(asset)) {
+      entries.push({ label: missing ? 'Locate Missing File…' : 'Replace File…', onSelect: () => void relink(asset) })
+    }
+    if (audible || hasCode) entries.push({ kind: 'separator' })
+    if (audible) {
+      entries.push(
+        {
+          label: asset.beats ? 'Detect Beats Again' : 'Detect Beats',
+          disabled: missing || busy.has(asset.id),
+          onSelect: () => {
+            setBusyFor(asset.id, 'Detecting beats…')
+            void detectBeatsFor(asset).finally(() => setBusyFor(asset.id, null))
+          }
+        },
+        {
+          label: used ? 'Transcript…' : 'Transcript… (place it first)',
+          disabled: !used || missing,
+          onSelect: () => {
+            if (selectFirstUse(asset)) useEditor.getState().setPanel('transcript')
+          }
+        },
+        {
+          label: used ? 'Add Subtitles…' : 'Add Subtitles… (place it first)',
+          disabled: !used || missing,
+          onSelect: () => {
+            if (selectFirstUse(asset)) useEditor.getState().setPanel('text')
+          }
+        }
+      )
+    }
+    if (hasCode) entries.push({ label: 'Edit Code…', onSelect: () => setEditingCode(asset.id) })
+    entries.push(
+      { kind: 'separator' },
+      { label: used ? 'Remove from Project…' : 'Remove from Project', danger: true, onSelect: () => void remove(asset) }
+    )
+    return entries
+  }
+
+  const menuAsset = menu ? assets.find((asset) => asset.id === menu.assetId) : undefined
+  const counts = useMemo(() => {
+    const byGroup = new Map<string, number>()
+    for (const asset of assets) byGroup.set(kindGroup(asset.kind), (byGroup.get(kindGroup(asset.kind)) ?? 0) + 1)
+    return byGroup
+  }, [assets])
+  const filtered = query.trim() !== '' || kind !== 'all'
+  const captionsExist = hasCaptions()
+
   return (
     <Panel
       title="Media"
       actions={
-        <IconButton
-          label="Import media"
-          icon={<Plus className="size-4" />}
-          disabled={importing}
-          onClick={() => void runImport()}
-        />
+        <>
+          <IconButton
+            label="Import media"
+            shortcut={shortcutOf('file.import')}
+            icon={<Plus className="size-4" />}
+            disabled={importing}
+            onClick={() => void runImport()}
+          />
+          <IconButton {...moreMenu.triggerProps} label="More media actions" icon={<MoreHorizontal className="size-4" />} />
+          <Menu
+            {...moreMenu.surfaceProps}
+            label="Media actions"
+            align="end"
+            items={[
+              { label: 'Import Captions (SRT, VTT)…', onSelect: () => void importCaptionsDialog() },
+              {
+                label: captionsExist ? 'Export Captions as SRT…' : 'Export Captions as SRT… (no captions yet)',
+                disabled: !captionsExist,
+                onSelect: () => void exportCaptions()
+              },
+              { kind: 'separator' },
+              {
+                label: 'New Motion Graphic',
+                onSelect: () =>
+                  void createMotionGraphic().then((assetId) => {
+                    if (!assetId) return
+                    setSelectedId(assetId)
+                    setEditingCode(assetId)
+                  })
+              },
+              ...(missingAssets.length > 0
+                ? ([
+                    { kind: 'separator' },
+                    {
+                      label: `Locate ${missingAssets.length} Missing File${missingAssets.length === 1 ? '' : 's'}…`,
+                      onSelect: () => void relink(missingAssets[0]!)
+                    }
+                  ] satisfies MenuEntry[])
+                : [])
+            ]}
+          />
+        </>
       }
       className="h-full"
       bodyClassName="flex flex-col"
@@ -204,7 +311,7 @@ export function MediaPanel(): ReactNode {
         <EmptyState
           icon={<FilmIcon aria-hidden="true" className="size-6" />}
           title="No media yet"
-          hint="Import video, audio or images — or drop files anywhere on the window."
+          hint="Import video, audio, images or captions — or drop files anywhere on the window."
           action={
             <Button variant="subtle" onClick={() => void runImport()} disabled={importing}>
               {importing ? 'Importing…' : 'Import media'}
@@ -212,17 +319,163 @@ export function MediaPanel(): ReactNode {
           }
         />
       ) : (
-        <ScrollArea className="flex-1 p-3">
-          <div className="grid grid-cols-2 gap-2">
-            {assets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} />
-            ))}
+        <>
+          {selected && <SourceViewer asset={selected} onClose={() => setSelectedId(null)} />}
+
+          <div className="flex flex-col gap-1.5 border-b border-line px-3 py-2">
+            <SearchField label="Search media" placeholder="Search media…" value={query} onValueChange={setQuery} />
+            <div className="flex items-center gap-1">
+              <Select
+                label="Show"
+                value={kind as string}
+                onChange={(value) => setKind(value as MediaKindFilter)}
+                className="min-w-0 flex-1"
+                options={[
+                  { value: 'all', label: `All kinds (${assets.length})` },
+                  ...MEDIA_KIND_GROUPS.filter((group) => counts.has(group.id) || kind === group.id).map((group) => ({
+                    value: group.id,
+                    label: `${group.label} (${counts.get(group.id) ?? 0})`
+                  }))
+                ]}
+              />
+              <IconButton
+                {...sortMenu.triggerProps}
+                label={`Sort: ${MEDIA_SORTS.find((s) => s.id === sort)?.label ?? ''}`}
+                icon={<ArrowDownUp className="size-3.5" />}
+              />
+              <Menu
+                {...sortMenu.surfaceProps}
+                label="Sort media"
+                align="end"
+                items={[
+                  { kind: 'label', label: 'Sort by' },
+                  ...MEDIA_SORTS.map((option) => ({
+                    label: option.label,
+                    checked: option.id === sort,
+                    onSelect: () => {
+                      setSort(option.id)
+                      remember(SORT_KEY, option.id)
+                    }
+                  }))
+                ]}
+              />
+              <IconButton
+                label={view === 'grid' ? 'Show as list' : 'Show as grid'}
+                icon={view === 'grid' ? <List className="size-3.5" /> : <LayoutGrid className="size-3.5" />}
+                onClick={() => {
+                  const next: View = view === 'grid' ? 'list' : 'grid'
+                  setView(next)
+                  remember(VIEW_KEY, next)
+                }}
+              />
+            </div>
           </div>
-          <p className="mt-3 text-[10px] leading-relaxed text-ink-2">
-            Click a clip to place it at the playhead, or drag it onto a track.
-          </p>
-        </ScrollArea>
+
+          {missingAssets.length > 0 && (
+            <div className="border-b border-line px-3 py-2">
+              <InlineAlert tone="warning">
+                <span className="block">
+                  {missingAssets.length === 1
+                    ? `“${missingAssets[0]!.name}” is missing from where it was imported.`
+                    : `${missingAssets.length} files are missing from where they were imported.`}
+                </span>
+                <Button size="sm" variant="subtle" className="mt-1.5" onClick={() => void relink(missingAssets[0]!)}>
+                  {missingAssets.length === 1 ? 'Locate…' : `Locate “${missingAssets[0]!.name}”…`}
+                </Button>
+              </InlineAlert>
+            </div>
+          )}
+
+          <ScrollArea className="flex-1 p-3">
+            {shown.length === 0 ? (
+              <div className="py-6 text-center">
+                <p className="text-[12px] text-ink-2">
+                  {query.trim() ? `No media matches “${query.trim()}”.` : 'No media of this kind.'}
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="mt-2"
+                  onClick={() => {
+                    setQuery('')
+                    setKind('all')
+                  }}
+                >
+                  Show all media
+                </Button>
+              </div>
+            ) : (
+              <div className={view === 'grid' ? 'grid grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2' : 'flex flex-col gap-px'}>
+                {shown.map((asset) => (
+                  <AssetTile
+                    key={asset.id}
+                    asset={asset}
+                    view={view}
+                    selected={asset.id === selectedId}
+                    missing={files.missing.has(asset.id)}
+                    uses={uses.get(asset.id) ?? 0}
+                    bytes={files.sizes.get(asset.id)}
+                    busy={busy.get(asset.id)}
+                    renaming={asset.id === renamingId}
+                    onSelect={() => setSelectedId(asset.id)}
+                    onPlace={() => place(asset)}
+                    onMenu={(at) => setMenu({ assetId: asset.id, at })}
+                    onRename={(name) => rename(asset, name)}
+                  />
+                ))}
+              </div>
+            )}
+            <p className="mt-3 text-[10px] leading-relaxed text-ink-2">
+              {filtered ? `Showing ${shown.length} of ${assets.length}. ` : ''}
+              Click to preview, double-click or Enter to add at the playhead, or drag onto a track.
+              Right-click for more.
+            </p>
+          </ScrollArea>
+        </>
       )}
+
+      <ContextMenu
+        at={menu && menuAsset ? menu.at : null}
+        label={menuAsset ? `${menuAsset.name} actions` : 'Asset actions'}
+        items={menuAsset ? menuFor(menuAsset) : []}
+        onClose={() => setMenu(null)}
+      />
+
+      <CodeEditorModal assetId={editingCode} open={editingCode !== null} onClose={() => setEditingCode(null)} />
+
+      <Modal
+        open={ask !== null}
+        title={ask?.title ?? ''}
+        width={380}
+        onClose={() => {
+          ask?.resolve(false)
+          setAsk(null)
+        }}
+        footer={
+          <>
+            <Button
+              variant="subtle"
+              onClick={() => {
+                ask?.resolve(false)
+                setAsk(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant={ask?.danger ? 'danger' : 'primary'}
+              onClick={() => {
+                ask?.resolve(true)
+                setAsk(null)
+              }}
+            >
+              {ask?.confirm}
+            </Button>
+          </>
+        }
+      >
+        <p className="px-4 py-3 text-[12px] leading-relaxed text-pretty text-ink-1">{ask?.body}</p>
+      </Modal>
     </Panel>
   )
 }

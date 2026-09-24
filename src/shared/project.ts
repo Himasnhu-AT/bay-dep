@@ -500,6 +500,12 @@ export interface Item {
    * Absent or false means the clip sounds as it always did.
    */
   audioDetached?: boolean
+  /**
+   * Switched off: the clip stays on the timeline, and neither draws nor sounds — in the preview,
+   * `preview_frame` and export alike, because all three read the timeline through
+   * `playableTimeline`. Absent or false is enabled, which is every project written before this.
+   */
+  disabled?: boolean
 }
 
 /**
@@ -563,6 +569,12 @@ export interface Track {
   locked: boolean
   muted: boolean
   hidden: boolean
+  /**
+   * Sound only, like `muted`: while any track is soloed, only soloed tracks are heard. Absent
+   * means not soloed — an optional field, so files written before it load unchanged. Read it
+   * through `trackAudible`, never directly, or preview and export will disagree about it.
+   */
+  solo?: boolean
   items: Item[]
 }
 
@@ -866,6 +878,44 @@ export function allItems(timeline: Timeline): Item[] {
   return timeline.tracks.flatMap((t) => t.items)
 }
 
+const playable = new WeakMap<Timeline, Timeline>()
+
+/**
+ * The timeline as it plays: disabled clips taken out, and with them any transition that needed
+ * one. The one place "disabled" is decided — the compositor, the preview's audio and export's
+ * audio graph each take their timeline through here, so a switched-off clip cannot draw in one
+ * and sound in another. Returns `timeline` itself when nothing is disabled (the common case, and
+ * caches keyed on the timeline's identity stay warm), and the same derived object for the same
+ * timeline every time.
+ */
+export function playableTimeline(timeline: Timeline): Timeline {
+  if (!timeline.tracks.some((track) => track.items.some((item) => item.disabled))) return timeline
+  const cached = playable.get(timeline)
+  if (cached) return cached
+  const off = new Set<string>()
+  for (const track of timeline.tracks) for (const item of track.items) if (item.disabled) off.add(item.id)
+  const derived: Timeline = {
+    ...timeline,
+    tracks: timeline.tracks.map((track) => ({ ...track, items: track.items.filter((item) => !off.has(item.id)) })),
+    ...(timeline.transitions
+      ? { transitions: timeline.transitions.filter((t) => !off.has(t.fromItemId) && !off.has(t.toItemId)) }
+      : {})
+  }
+  playable.set(timeline, derived)
+  return derived
+}
+
+/**
+ * Whether a track's sound reaches the mix: not muted, and — while any track is soloed — soloed
+ * itself. The one rule for mute and solo, read by the preview's audio engine, export's audio
+ * graph and ducking alike, so a solo heard in the preview is the solo written to the file.
+ * Governs sound only; `hidden` is picture's and is independent of both.
+ */
+export function trackAudible(tracks: readonly Pick<Track, 'muted' | 'solo'>[], track: Pick<Track, 'muted' | 'solo'>): boolean {
+  if (track.muted) return false
+  return track.solo === true || !tracks.some((other) => other.solo === true)
+}
+
 /**
  * Every item playing at `frame`, ordered the way the compositor must draw them:
  * lowest video track first, so later entries paint on top.
@@ -895,7 +945,7 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
   for (const track of timeline.tracks) {
     if (kind && track.kind !== kind) continue
     if (track.kind === 'video' && track.hidden) continue
-    if (track.kind === 'audio' && track.muted) continue
+    if (track.kind === 'audio' && !trackAudible(timeline.tracks, track)) continue
     for (const item of track.items) {
       if (frame >= item.from && frame < itemEnd(item)) out.push(item)
     }
@@ -1240,12 +1290,53 @@ export function matchFrameRate(fps: number): FrameRateOption | undefined {
   return FRAME_RATES.find((rate) => Math.abs(rate.fps - fps) < 1e-6)
 }
 
+/**
+ * Named canvases, aspect first in the label so a narrow menu that truncates still shows the
+ * shape. The first entry is the default for a new timeline (`emptyTimeline`, persistence): keep
+ * it first, and append rather than reorder.
+ */
 export const CANVAS_PRESETS: CanvasPreset[] = [
-  { id: 'landscape-1080', label: '1920 × 1080 · 16:9', width: 1920, height: 1080, fps: 30 },
-  { id: 'vertical-1080', label: '1080 × 1920 · 9:16', width: 1080, height: 1920, fps: 30 },
-  { id: 'square-1080', label: '1080 × 1080 · 1:1', width: 1080, height: 1080, fps: 30 },
-  { id: 'landscape-4k', label: '3840 × 2160 · 4K', width: 3840, height: 2160, fps: 30 }
+  { id: 'landscape-1080', label: '16:9 · 1920 × 1080', width: 1920, height: 1080, fps: 30 },
+  { id: 'vertical-1080', label: '9:16 · 1080 × 1920', width: 1080, height: 1920, fps: 30 },
+  { id: 'square-1080', label: '1:1 · 1080 × 1080', width: 1080, height: 1080, fps: 30 },
+  { id: 'landscape-4k', label: '16:9 · 3840 × 2160 (4K)', width: 3840, height: 2160, fps: 30 },
+  { id: 'landscape-720', label: '16:9 · 1280 × 720', width: 1280, height: 720, fps: 30 },
+  { id: 'landscape-1440', label: '16:9 · 2560 × 1440', width: 2560, height: 1440, fps: 30 },
+  { id: 'portrait-1080', label: '4:5 · 1080 × 1350', width: 1080, height: 1350, fps: 30 },
+  { id: 'ultrawide-1080', label: '21:9 · 2560 × 1080', width: 2560, height: 1080, fps: 30 }
 ]
+
+/**
+ * How video and images are refitted when the canvas changes shape (`resizeCanvas`, `set_canvas`):
+ * `cover` fills the frame and may crop, `contain` shows all of it, `auto` covers unless that
+ * would cut away too much.
+ */
+export type CanvasFit = 'auto' | 'cover' | 'contain'
+
+/** The smallest and largest side a canvas may have, in pixels. */
+export const CANVAS_MIN_SIDE = 16
+export const CANVAS_MAX_SIDE = 8192
+
+/**
+ * Why a canvas size cannot be used, or null when it can. Even sides because H.264 and VP9 store
+ * colour at half resolution (4:2:0): an odd side cannot be encoded at the canvas's own size, and
+ * finding that out when the export fails is too late. `resizeCanvas` refuses with this, so the
+ * `set_canvas` tool and Project Settings say the same thing.
+ */
+export function checkCanvasSize(width: number, height: number): string | null {
+  if (!Number.isInteger(width) || !Number.isInteger(height)) {
+    return `A canvas is whole pixels; got ${width} × ${height}.`
+  }
+  if (width < CANVAS_MIN_SIDE || height < CANVAS_MIN_SIDE || width > CANVAS_MAX_SIDE || height > CANVAS_MAX_SIDE) {
+    return `A canvas side must be from ${CANVAS_MIN_SIDE} to ${CANVAS_MAX_SIDE} pixels; got ${width} × ${height}.`
+  }
+  if (width % 2 !== 0 || height % 2 !== 0) {
+    const w = width % 2 === 0 ? width : width + 1
+    const h = height % 2 === 0 ? height : height + 1
+    return `A canvas side must be an even number of pixels, because video encoders store colour at half size; ${width} × ${height} cannot be exported. Use ${w} × ${h}.`
+  }
+  return null
+}
 
 /**
  * A layout's position expressed from its chosen corner.

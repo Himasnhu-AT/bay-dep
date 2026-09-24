@@ -36,6 +36,7 @@ import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
 import { coerce } from '@shared/composition'
 import { isCropped, normaliseCrop } from '@shared/project'
 import { bay } from '@/lib/bay'
+import { stillDurationFrames } from '@/store/editing-prefs'
 import {
   assertNoCollision,
   assertUnlocked,
@@ -144,7 +145,7 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
     assertUnlocked(track, `placing ${asset.name}`)
     const duration = Math.max(
       1,
-      asset.durationUs > 0 ? usToFramesAtTimeline(asset.durationUs) : tl.fps * 5
+      asset.durationUs > 0 ? usToFramesAtTimeline(asset.durationUs) : stillDurationFrames(tl.fps)
     )
     assertNoCollision(track, { id: '', from: atFrame, durationInFrames: duration })
     trackId = track.id

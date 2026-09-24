@@ -33,6 +33,13 @@ type Actions = Pick<
   | 'showHome'
   | 'notify'
   | 'dismissToast'
+  | 'setRangeIn'
+  | 'setRangeOut'
+  | 'clearRange'
+  | 'setSnapping'
+  | 'toggleSnapping'
+  | 'toggleLinkedSelection'
+  | 'toggleLoop'
 >
 
 export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
@@ -131,7 +138,8 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
 
     enterProject(project) {
       get().setProject(project)
-      set({ screen: 'editor' })
+      // In and Out belong to the timeline they were marked on.
+      set({ screen: 'editor', rangeIn: null, rangeOut: null })
     },
 
     showHome() {
@@ -160,6 +168,44 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
 
     dismissToast() {
       set({ toast: null })
+    },
+
+    // -- in/out, snapping, linked selection, loop ---------------------------
+    setRangeIn(frame) {
+      if (frame === null) return set({ rangeIn: null })
+      const at = Math.max(0, Math.round(frame))
+      const out = get().rangeOut
+      set({ rangeIn: at, ...(out !== null && out <= at ? { rangeOut: null } : {}) })
+    },
+
+    setRangeOut(frame) {
+      if (frame === null) return set({ rangeOut: null })
+      const at = Math.max(0, Math.round(frame))
+      const from = get().rangeIn
+      set({ rangeOut: at, ...(from !== null && from >= at ? { rangeIn: null } : {}) })
+    },
+
+    clearRange() {
+      set({ rangeIn: null, rangeOut: null })
+    },
+
+    setSnapping(on) {
+      remember('bay.snapping', on ? '1' : '0')
+      set({ snapping: on })
+    },
+
+    toggleSnapping() {
+      get().setSnapping(!get().snapping)
+    },
+
+    toggleLinkedSelection() {
+      const next = !get().linkedSelection
+      remember('bay.linkedSelection', next ? '1' : '0')
+      set({ linkedSelection: next })
+    },
+
+    toggleLoop() {
+      set({ loop: !get().loop })
     }
   }
 }

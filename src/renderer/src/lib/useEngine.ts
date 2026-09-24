@@ -11,7 +11,8 @@
 
 import { useEffect, useRef, type RefObject } from 'react'
 import { timelineDuration } from '@shared/project'
-import { selectTimeline, useEditor, type EditorStore } from '@/store/editor'
+import { loopSpan } from '@shared/editing'
+import { selectDuration, selectTimeline, useEditor, type EditorStore } from '@/store/editor'
 import { AudioEngine, type TrackLevel } from '@/engine/audio'
 import { Compositor } from '@/engine/compositor'
 import { CompositionPool } from '@/engine/compositionPool'
@@ -126,7 +127,15 @@ class Engine {
     this.#offs.push(this.clock.onFrame(this.#onFrame))
     this.#offs.push(
       this.clock.onEnd(() => {
-        useEditor.getState().setPlaying(false)
+        const state = useEditor.getState()
+        // Loop Playback (⌘L) goes round again rather than stopping at the end.
+        const span = state.loop ? loopSpan(state.rangeIn, state.rangeOut, selectDuration(state)) : null
+        if (span) {
+          this.clock.seek(span.from)
+          this.clock.start()
+          return
+        }
+        state.setPlaying(false)
       })
     )
     this.#offs.push(useEditor.subscribe(this.#onStoreChange))
@@ -237,6 +246,15 @@ class Engine {
   // -- internals ------------------------------------------------------------
 
   readonly #onFrame = (frame: number): void => {
+    // Loop Playback: reaching Out (or leaving In→Out) while playing goes back to In.
+    const looping = useEditor.getState()
+    if (looping.loop && this.#clockOwnsPlayhead(looping)) {
+      const span = loopSpan(looping.rangeIn, looping.rangeOut, selectDuration(looping))
+      if (span && (frame >= span.to || frame < span.from)) {
+        this.clock.seek(span.from)
+        return
+      }
+    }
     this.#drawTimed(frame)
     // Only when the clock is the author of the playhead. During a scrub the drag owns it,
     // and writing it back would fight the pointer. `setPlayhead` clamps, so this cannot

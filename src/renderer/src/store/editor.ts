@@ -22,6 +22,7 @@ import { agentSlice } from './slices/agent'
 import { timelineSlice } from './slices/timeline'
 import { itemsSlice } from './slices/items'
 import { viewSlice } from './slices/view'
+import { editingSlice } from './slices/editing'
 import type { EditorStore } from './types'
 
 // The store's public surface, unchanged for every importer.
@@ -34,7 +35,7 @@ export {
   type AgentCheckpoint,
   type AgentRevert
 } from './agent-turns'
-export type { EditorActions, EditorState, EditorStore, PanelId, RegionId, Screen } from './types'
+export type { ClipDialog, EditorActions, EditorState, EditorStore, PanelId, RegionId, Screen } from './types'
 
 // ---------------------------------------------------------------------------
 // Store
@@ -90,6 +91,13 @@ export const useEditor = create<EditorStore>((set, get) => {
     agentCheckpoints: {},
     agentReverts: [],
     compositionEpochs: {},
+    rangeIn: null,
+    rangeOut: null,
+    snapping: remembered('bay.snapping') !== '0',
+    linkedSelection: remembered('bay.linkedSelection') !== '0',
+    loop: false,
+    clipboard: null,
+    clipDialog: null,
     dirty: false,
     past: [],
     future: [],
@@ -98,7 +106,8 @@ export const useEditor = create<EditorStore>((set, get) => {
     ...agentSlice(kit),
     ...timelineSlice(kit),
     ...itemsSlice(kit),
-    ...viewSlice(kit)
+    ...viewSlice(kit),
+    ...editingSlice(kit)
   }
 })
 

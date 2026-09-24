@@ -391,3 +391,16 @@ test('two placements of one composition sounding together get two elements', () 
   assert.equal(routed.length, 2)
   assert.notEqual(routed[0]?.asset.id, routed[1]?.asset.id)
 })
+
+test('solo on another track silences this one in the preview, and un-soloing restores it', () => {
+  const { project, timeline } = scene()
+  assert.equal(audioRoutingAt(project, timeline, 0)[0]?.audible, true)
+  const soloed: Timeline = {
+    ...timeline,
+    tracks: [...timeline.tracks, { id: 'a1', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, solo: true, items: [] }]
+  }
+  const routed = audioRoutingAt(project, soloed, 0)
+  assert.equal(routed[0]?.audible, false, 'the soloed track is heard alone')
+  assert.equal(routed[0]?.metered, true, 'and the silenced one still meters, like a muted one')
+  assert.deepEqual(itemsAtFrame(soloed, 0, 'video').map((i) => i.id), ['itm'], 'solo is sound only')
+})

@@ -1,15 +1,27 @@
 import type { ReactNode } from 'react'
-import { RotateCcw } from 'lucide-react'
 import type { Asset, Item } from '@shared/project'
-import { resolveGrade, type Grade, type GradeWheel } from '@shared/grade'
-import { Button, Field, Section, Select, SliderField } from '@/components'
+import {
+  DEFAULT_GRAIN_SIZE,
+  DEFAULT_HALATION_COLOR,
+  DEFAULT_HALATION_RADIUS,
+  DEFAULT_HALATION_THRESHOLD,
+  resolveGrade,
+  type Grade,
+  type GradeWheel
+} from '@shared/grade'
+import { ColorField, Field, NumberField, Section, SectionReset, Select, SliderField } from '@/components'
 import { useEditor } from '@/store/editor'
+import { Disclosure } from './Disclosure'
 
 /**
- * Colour grade — the small version of the controls. The agent's `edit_item` reaches every field
- * (per-channel wheels, curves); this section holds the handful a person reaches for by hand. The
- * wheel sliders move all three channels together and keep any per-channel offset already set, so
- * nudging Lift here never erases a cast the agent put in.
+ * Colour grade. The common controls first — white balance, saturation, the three wheels as
+ * master sliders, a LUT, texture — and the per-channel wheels one level down in "Channels",
+ * which is where a colour cast is set. Ranges are the agent's (`edit_item.grade`), so nothing
+ * the agent can set reads back here as a pinned slider, and nothing set here is refused there.
+ * Curves stay agent-only: a curve editor is a canvas widget of its own.
+ *
+ * The master sliders move all three channels together and keep any per-channel offset already
+ * set, so nudging Lift never erases a cast.
  *
  * Every control is backed by the same WebGL pass preview and export draw through
  * (`engine/grade.ts`); the line at the bottom says whether the compositor will run it at all.
@@ -40,15 +52,24 @@ const SCALARS: {
   identity: number
   format(value: number): string
 }[] = [
-  { key: 'temperature', label: 'Temperature (K)', caption: 'Temp', min: -1000, max: 1000, step: 10, identity: 0, format: (v) => `${signed(0)(v)}K` },
+  { key: 'temperature', label: 'Temperature (K)', caption: 'Temp', min: -3000, max: 3000, step: 10, identity: 0, format: (v) => `${signed(0)(v)}K` },
   { key: 'tint', label: 'Tint', caption: 'Tint', min: -1, max: 1, step: 0.01, identity: 0, format: signed(2) },
-  { key: 'saturation', label: 'Saturation', caption: 'Saturation', min: 0, max: 2, step: 0.01, identity: 1, format: percent }
+  // "Grade saturation" in the accessible name: Adjustments has a saturation too, a CSS filter
+  // drawn over the graded picture, and the two are different fields.
+  { key: 'saturation', label: 'Grade saturation', caption: 'Saturation', min: 0, max: 4, step: 0.01, identity: 1, format: percent }
 ]
 
-const WHEELS: { key: WheelKey; label: string; min: number; max: number }[] = [
-  { key: 'lift', label: 'Lift', min: -0.2, max: 0.2 },
-  { key: 'gamma', label: 'Gamma', min: -0.5, max: 0.5 },
-  { key: 'gain', label: 'Gain', min: -0.5, max: 0.5 }
+/** The agent's ranges (`mcp/grade.ts`), per channel. */
+const WHEELS: { key: WheelKey; label: string; min: number; max: number; hint: string }[] = [
+  { key: 'lift', label: 'Lift', min: -1, max: 1, hint: 'shadows' },
+  { key: 'gamma', label: 'Gamma', min: -0.9, max: 4, hint: 'mid-tones' },
+  { key: 'gain', label: 'Gain', min: -1, max: 4, hint: 'highlights' }
+]
+
+const CHANNELS: { key: keyof GradeWheel; label: string }[] = [
+  { key: 'r', label: 'Red' },
+  { key: 'g', label: 'Green' },
+  { key: 'b', label: 'Blue' }
 ]
 
 const AMOUNTS: { key: Amount; label: string }[] = [
@@ -58,6 +79,7 @@ const AMOUNTS: { key: Amount; label: string }[] = [
 ]
 
 const mean = (w: GradeWheel | undefined): number => (w ? (w.r + w.g + w.b) / 3 : 0)
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
 
 export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
@@ -76,12 +98,24 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
     })
   }
 
-  const setWheel = (key: WheelKey, value: number): void =>
+  const setWheel = (key: WheelKey, value: number): void => {
+    const range = WHEELS.find((w) => w.key === key)!
     update((g) => {
       const delta = value - mean(g[key])
       const w = g[key] ?? { r: 0, g: 0, b: 0 }
-      return { ...g, [key]: { r: w.r + delta, g: w.g + delta, b: w.b + delta } }
+      return {
+        ...g,
+        [key]: {
+          r: clamp(w.r + delta, range.min, range.max),
+          g: clamp(w.g + delta, range.min, range.max),
+          b: clamp(w.b + delta, range.min, range.max)
+        }
+      }
     })
+  }
+
+  const setChannel = (key: WheelKey, channel: keyof GradeWheel, value: number): void =>
+    update((g) => ({ ...g, [key]: { r: 0, g: 0, b: 0, ...g[key], [channel]: value } }))
 
   const setAmount = (key: Amount, amount: number): void =>
     update((g) => {
@@ -89,32 +123,44 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
         const { [key]: _removed, ...rest } = g
         return rest
       }
-      const size = key === 'grain' ? { size: g.grain?.size ?? 1 } : {}
-      return { ...g, [key]: { ...g[key], ...size, amount } }
+      if (key === 'grain') return { ...g, grain: { size: g.grain?.size ?? DEFAULT_GRAIN_SIZE, amount } }
+      if (key === 'halation') {
+        return {
+          ...g,
+          halation: {
+            threshold: g.halation?.threshold ?? DEFAULT_HALATION_THRESHOLD,
+            radius: g.halation?.radius ?? DEFAULT_HALATION_RADIUS,
+            ...(g.halation?.color ? { color: g.halation.color } : {}),
+            amount
+          }
+        }
+      }
+      return { ...g, vignette: { amount } }
     })
 
   /** Whether the selection disagrees on one control, so its readout can say "Mixed". */
-  const mixedOf = (read: (grade: Grade) => number): boolean => {
+  const mixedOf = (read: (grade: Grade) => number | string): boolean => {
     const value = read(grade)
     return items.some((item) => read(item.grade ?? {}) !== value)
   }
 
+  const touched = items.some((item) => item.grade)
   const active = items.some((item) => resolveGrade(item.grade) !== null)
   const lutOptions = [{ value: '', label: 'None' }, ...luts.map((lut) => ({ value: lut.id, label: lut.name }))]
+  const halation = grade.halation
+  const grain = grade.grain
 
   return (
     <Section
+      id="inspector.grade"
       title="Grade"
+      collapsible
       actions={
-        items.some((item) => item.grade) ? (
-          <Button
-            variant="ghost"
-            onClick={() => transact(() => items.forEach((item) => patchItem(item.id, { grade: undefined })))}
-            icon={<RotateCcw className="size-3" />}
-          >
-            Reset
-          </Button>
-        ) : undefined
+        <SectionReset
+          show={touched}
+          label="Reset grade"
+          onReset={() => transact(() => items.forEach((item) => patchItem(item.id, { grade: undefined })))}
+        />
       }
     >
       {/* Grouped the way a colourist reaches for them — balance, then tone, then the LUT, then
@@ -140,6 +186,7 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
           <SliderField
             key={control.key}
             label={control.label}
+            ariaLabel={`${control.label} (${control.hint}), all channels`}
             value={mean(grade[control.key])}
             mixed={mixedOf((g) => mean(g[control.key]))}
             min={control.min}
@@ -150,6 +197,37 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
           />
         ))}
       </div>
+      <Disclosure id="inspector.grade.channels" label="Channels — colour casts per wheel">
+        <div className="space-y-2">
+          {WHEELS.map((control) => (
+            <div key={control.key} className="space-y-1">
+              <p className="text-[10px] text-ink-2">
+                {control.label} · {control.hint}
+              </p>
+              {CHANNELS.map((channel) => (
+                <NumberField
+                  key={channel.key}
+                  row
+                  label={channel.label}
+                  ariaLabel={`${control.label} ${channel.label.toLowerCase()}`}
+                  value={grade[control.key]?.[channel.key] ?? 0}
+                  mixed={mixedOf((g) => g[control.key]?.[channel.key] ?? 0)}
+                  min={control.min}
+                  max={control.max}
+                  step={0.005}
+                  precision={3}
+                  onCommit={(next) => setChannel(control.key, channel.key, next)}
+                />
+              ))}
+            </div>
+          ))}
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            Equal red, green and blue is a brightness move; unequal is a cast. Curves are set by
+            the agent (edit_item grade.curves).
+          </p>
+        </div>
+      </Disclosure>
+
       <div className="mt-2 space-y-0.5">
         <Field label="LUT">
           <Select<string>
@@ -168,6 +246,11 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             disabled={luts.length === 0}
           />
         </Field>
+        {luts.length === 0 && (
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            No LUT in this project yet. Import a .cube file in the Media panel and it appears here.
+          </p>
+        )}
         {grade.lut && (
           <SliderField
             label="Intensity"
@@ -196,8 +279,69 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
           />
         ))}
       </div>
+      {(halation || grain) && (
+        <Disclosure id="inspector.grade.texture" label="Halation and grain detail">
+          <div className="space-y-1.5">
+            {halation && (
+              <>
+                <SliderField
+                  label="Threshold"
+                  ariaLabel="Halation threshold: how bright a pixel must be to glow"
+                  value={halation.threshold ?? DEFAULT_HALATION_THRESHOLD}
+                  mixed={mixedOf((g) => g.halation?.threshold ?? DEFAULT_HALATION_THRESHOLD)}
+                  min={0}
+                  max={0.99}
+                  step={0.01}
+                  format={percent}
+                  onCommit={(next) =>
+                    update((g) => (g.halation ? { ...g, halation: { ...g.halation, threshold: next } } : g))
+                  }
+                />
+                <NumberField
+                  row
+                  label="Radius"
+                  ariaLabel="Halation radius in pixels"
+                  value={halation.radius ?? DEFAULT_HALATION_RADIUS}
+                  mixed={mixedOf((g) => g.halation?.radius ?? DEFAULT_HALATION_RADIUS)}
+                  min={0.5}
+                  max={200}
+                  step={0.5}
+                  precision={1}
+                  suffix="px"
+                  onCommit={(next) =>
+                    update((g) => (g.halation ? { ...g, halation: { ...g.halation, radius: next } } : g))
+                  }
+                />
+                <Field label="Glow">
+                  <ColorField
+                    label="Halation colour"
+                    value={halation.color ?? DEFAULT_HALATION_COLOR}
+                    onCommit={(color) =>
+                      update((g) => (g.halation ? { ...g, halation: { ...g.halation, color } } : g))
+                    }
+                  />
+                </Field>
+              </>
+            )}
+            {grain && (
+              <NumberField
+                row
+                label="Grain size"
+                ariaLabel="Grain size in pixels"
+                value={grain.size ?? DEFAULT_GRAIN_SIZE}
+                mixed={mixedOf((g) => g.grain?.size ?? DEFAULT_GRAIN_SIZE)}
+                min={0.5}
+                max={16}
+                step={0.1}
+                precision={1}
+                suffix="px"
+                onCommit={(next) => update((g) => (g.grain ? { ...g, grain: { ...g.grain, size: next } } : g))}
+              />
+            )}
+          </div>
+        </Disclosure>
+      )}
       <p className="mt-2 text-[10px] leading-relaxed text-ink-2">
-        {luts.length === 0 ? 'Import a .cube file to use a LUT. ' : ''}
         {active
           ? 'Graded on the GPU, identically in preview and export.'
           : 'No grade — the clip draws untouched, at no extra cost.'}

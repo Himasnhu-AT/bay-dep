@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, RotateCcw } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import {
   defaultAdjustments,
   type Adjustments,
@@ -7,7 +7,7 @@ import {
   type Item,
   type Timeline
 } from '@shared/project'
-import { Button, Section, Select, SliderField } from '@/components'
+import { Section, SectionReset, Select, SliderField } from '@/components'
 import { adjustmentFilter, NO_FILTER } from '../engine/looks'
 import { useEditor } from '@/store/editor'
 
@@ -32,7 +32,10 @@ interface Control {
 const CONTROLS: Control[] = [
   { key: 'brightness', label: 'Brightness', min: 0, max: 3, step: 0.01 },
   { key: 'contrast', label: 'Contrast', min: 0, max: 3, step: 0.01 },
-  { key: 'saturate', label: 'Saturation', min: 0, max: 3, step: 0.01 },
+  // "Saturate", not "Saturation": the Grade has a saturation of its own (a GPU pass before the
+  // LUT); this one is a CSS filter over the graded picture. Two controls with one name read as a
+  // duplicate, and they are two fields that multiply.
+  { key: 'saturate', label: 'Saturate', min: 0, max: 3, step: 0.01 },
   // Degrees, and the full turn is available: 360 is the identity but the wrap is how people
   // find the hue they want, so the range is not cut short at 359.
   { key: 'hueRotate', label: 'Hue', min: -180, max: 180, step: 1, unit: '°' },
@@ -144,15 +147,12 @@ export function AdjustmentsSection({
   return (
     <>
       <Section
+        id="inspector.adjustments"
         title="Adjustments"
+        collapsible
+        defaultOpen={false}
         // Not "Colour": a grade is what this explicitly is not, and the label is the promise.
-        actions={
-          touched ? (
-            <Button variant="ghost" onClick={reset} icon={<RotateCcw className="size-3" />}>
-              Reset
-            </Button>
-          ) : undefined
-        }
+        actions={<SectionReset show={touched} label="Reset adjustments" onReset={reset} />}
       >
         <div className="space-y-0.5">
           {CONTROLS.map((control) => {
@@ -179,9 +179,28 @@ export function AdjustmentsSection({
         <p className="mt-2 font-mono text-[10px] leading-relaxed break-all text-ink-2">
           {filter ?? 'No filter — every value is at its identity, so the clip draws untouched.'}
         </p>
+        <p className="mt-1 text-[10px] leading-relaxed text-ink-2">
+          A quick look drawn over the picture — after the grade, where a clip has one.
+        </p>
       </Section>
 
-      <Section title="Blend">
+      <Section
+        id="inspector.blend"
+        title="Blend"
+        collapsible
+        defaultOpen={false}
+        actions={
+          <SectionReset
+            show={items.some((item) => (item.blendMode ?? 'normal') !== 'normal')}
+            label="Reset blend mode to normal"
+            onReset={() =>
+              transact(() => {
+                for (const item of items) patchItem(item.id, { blendMode: 'normal' })
+              })
+            }
+          />
+        }
+      >
         <Select<BlendMode>
           label="Blend mode"
           value={blendValue}

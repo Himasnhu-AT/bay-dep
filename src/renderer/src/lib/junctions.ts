@@ -26,6 +26,7 @@ import {
   type Track,
   type Transition
 } from '@shared/project'
+import { transitionLengthFrames } from '@/store/editing-prefs'
 
 /** How much source each side of a cut has to spend, and the longest transition that allows. */
 export interface JunctionRoom {
@@ -159,4 +160,36 @@ export function junctionsForTrack(project: Project, timeline: Timeline, track: T
     })
   }
   return junctions
+}
+
+/**
+ * The length a transition gets when nobody chose one: Settings › Editing's transition length (a
+ * second unless changed), or the most the cut can take when that is less. `add_transition` with
+ * no `durationInFrames`, ⌘T and the transition dialog all use it, so an agent and a person
+ * adding "a transition" to the same cut get the same one.
+ */
+export function defaultTransitionFrames(room: JunctionRoom, fps: number): Frames {
+  return Math.min(transitionLengthFrames(fps), Math.max(2, room.capacityInFrames))
+}
+
+/**
+ * The cut nearest `frame` on a video track, preferring cuts on `preferTrackIds` (the selection's
+ * tracks) when there are any. Ties go to the earlier cut. Null when the timeline has no cut.
+ */
+export function nearestJunction(
+  project: Project,
+  timeline: Timeline,
+  frame: Frames,
+  preferTrackIds: readonly string[] = []
+): Junction | null {
+  const all = timeline.tracks
+    .filter((track) => track.kind === 'video')
+    .flatMap((track) => junctionsForTrack(project, timeline, track))
+  const preferred = all.filter((junction) => preferTrackIds.includes(junction.trackId))
+  const pool = preferred.length > 0 ? preferred : all
+  let best: Junction | null = null
+  for (const junction of pool) {
+    if (!best || Math.abs(junction.cutFrame - frame) < Math.abs(best.cutFrame - frame)) best = junction
+  }
+  return best
 }

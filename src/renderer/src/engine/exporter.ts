@@ -19,6 +19,7 @@
  */
 
 import type { IncompleteFrames } from '@shared/ipc'
+import { fitCanvasInFrame } from '@shared/export-presets'
 import { brfRuntime } from './brfCode'
 import { variationFaces } from './brfFonts'
 import { importedFonts } from './importedFonts'
@@ -154,7 +155,19 @@ export class FrameExporter {
     // The compositor draws in timeline coordinates; this is the only place the delivery
     // size enters the render path, which is what keeps a 4K export from being a preview
     // scaled up after the fact.
-    ctx.setTransform(width / Math.max(1, timeline.width), 0, 0, height / Math.max(1, timeline.height), 0, 0)
+    //
+    // One scale for both axes, centred: a delivery of another shape (a 1080×1920 file from a
+    // 16:9 canvas) gets the whole canvas with black bars, never a stretched picture. For a
+    // delivery of the canvas's own shape this is the plain scale it always was.
+    const fit = fitCanvasInFrame(timeline.width, timeline.height, width, height)
+    ctx.fillStyle = '#000000'
+    ctx.fillRect(0, 0, width, height)
+    ctx.setTransform(fit.scale, 0, 0, fit.scale, fit.offsetX, fit.offsetY)
+    // The bars are outside the canvas, and a clip framed past the canvas edge (a cover fit)
+    // must not draw into them.
+    ctx.beginPath()
+    ctx.rect(0, 0, timeline.width, timeline.height)
+    ctx.clip()
 
     let framesWritten = 0
     try {

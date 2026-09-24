@@ -1,0 +1,213 @@
+import type { ReactNode } from 'react'
+import { AlertTriangle } from 'lucide-react'
+import type { Item, Project, Timeline } from '@shared/project'
+import { resolveAudioOffsets, MAX_DUCK_DB } from '@shared/audio-gain'
+import { commonValue, dbToGain, formatDb, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { Field, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
+import { useEditor } from '@/store/editor'
+import { editItems } from './inspectorEdit'
+import { Keyed } from './KeyframeControls'
+import { timecodeField } from './timecodeField'
+
+/**
+ * A clip's sound: level in dB (keyable), the J/L cut, and ducking under another track.
+ *
+ * Level goes through the inspector's own volume path (which keys the playhead when volume is
+ * animated); J/L and duck go through `edit_item`'s executor, so they are validated and stored
+ * exactly as the agent's calls are, and `inspect_item` reads back what was typed here.
+ */
+export function AudioSection({
+  items,
+  project,
+  timeline,
+  volume,
+  onVolume,
+  diamond,
+  navigation
+}: {
+  /** The selected clips that can sound (not detached, asset has audio). */
+  items: Item[]
+  project: Project
+  timeline: Timeline
+  /** Linear gain at the playhead across the selection. */
+  volume: { value: number; mixed: boolean }
+  onVolume(gain: number): void
+  diamond: ReactNode
+  navigation: ReactNode
+}): ReactNode {
+  const first = items[0]
+  if (!first) return null
+  const fps = timeline.fps
+  const tc = timecodeField(fps)
+  const ids = items.map((item) => item.id)
+
+  const lead = commonValue(items.map((item) => item.audioLeadFrames ?? 0))
+  const trail = commonValue(items.map((item) => item.audioTrailFrames ?? 0))
+  const ducked = items.filter((item) => item.duck)
+  const duck = commonValue(items.map((item) => item.duck?.keyTrackId ?? ''))
+  const amount = commonValue(items.map((item) => item.duck?.amountDb ?? 6))
+  const attack = commonValue(items.map((item) => item.duck?.attackFrames ?? Math.round(fps * 0.25)))
+  const release = commonValue(items.map((item) => item.duck?.releaseFrames ?? Math.round(fps * 0.5)))
+
+  // A clip cannot duck under its own track; the choices are every other track, sound or not
+  // (a dialogue track with nothing on it yet is still the right key to name).
+  const ownTracks = new Set(items.map((item) => item.trackId))
+  const keyTracks = timeline.tracks.filter((track) => !ownTracks.has(track.id))
+  const suggested =
+    keyTracks.find((track) => track.kind === 'audio') ?? keyTracks[0]
+
+  const clamped = items.length === 1 ? resolveAudioOffsets(project, timeline, first).clamped : []
+  const touched =
+    items.some((item) => item.audioLeadFrames || item.audioTrailFrames || item.duck) ||
+    volume.mixed ||
+    volume.value !== 1
+
+  const reset = (): void => {
+    // One undo step for the whole reset: nested transactions join this one.
+    useEditor.getState().transact(() => {
+      onVolume(1)
+      editItems(ids, () => ({ audioLeadFrames: 0, audioTrailFrames: 0, duck: null }))
+    })
+  }
+
+  const db = gainToDb(volume.value)
+  return (
+    <Section
+      id="inspector.audio"
+      title="Audio"
+      collapsible
+      actions={
+        <span className="flex items-center gap-0.5">
+          {navigation}
+          <SectionReset show={touched} label="Reset volume, J/L cut and ducking" onReset={reset} />
+        </span>
+      }
+    >
+      <Keyed diamond={diamond}>
+        <SliderField
+          label="Volume"
+          ariaLabel="Volume in decibels"
+          min={VOLUME_DB_FLOOR}
+          max={Number(MAX_VOLUME_DB.toFixed(2))}
+          step={0.5}
+          value={Number.isFinite(db) ? Math.max(VOLUME_DB_FLOOR, db) : VOLUME_DB_FLOOR}
+          mixed={volume.mixed}
+          format={formatDb}
+          onCommit={(next) => onVolume(dbToGain(next))}
+        />
+      </Keyed>
+
+      <h4 className="mt-3 mb-1.5 text-[11px] text-ink-1">J/L cut</h4>
+      <div className="space-y-1.5">
+        <NumberField
+          row
+          label="Sound early"
+          ariaLabel="J-cut: sound starts before the picture"
+          value={lead.value ?? 0}
+          mixed={lead.mixed}
+          min={0}
+          {...tc}
+          onCommit={(next) => editItems(ids, () => ({ audioLeadFrames: Math.max(0, Math.round(next)) }))}
+        />
+        <NumberField
+          row
+          label="Sound late"
+          ariaLabel="L-cut: sound runs on after the picture"
+          value={trail.value ?? 0}
+          mixed={trail.mixed}
+          min={0}
+          {...tc}
+          onCommit={(next) => editItems(ids, () => ({ audioTrailFrames: Math.max(0, Math.round(next)) }))}
+        />
+      </div>
+      {clamped.length > 0 ? (
+        <p className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-warning">
+          <AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0" />
+          <span>{clamped.join(' ')}</span>
+        </p>
+      ) : (
+        <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
+          The sound starts before the picture (J) or runs on after it (L), reading footage beyond
+          the clip’s edges.
+        </p>
+      )}
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <label htmlFor={`duck-${first.id}`} className="text-[11px] text-ink-1">
+          Duck under another track
+        </label>
+        <Switch
+          id={`duck-${first.id}`}
+          checked={ducked.length > 0}
+          disabled={ducked.length === 0 && !suggested}
+          onChange={(on) =>
+            editItems(ids, () =>
+              on && suggested ? { duck: { keyTrackId: suggested.id } } : { duck: null }
+            )
+          }
+        />
+      </div>
+      {ducked.length === 0 && !suggested && (
+        <p className="mt-1 text-[10px] leading-relaxed text-ink-2">
+          Add another track first — a clip ducks under a different track’s sound.
+        </p>
+      )}
+      {ducked.length > 0 && (
+        <div className="mt-1.5 space-y-1.5">
+          <Field label="Under">
+            <Select<string>
+              label="Duck under track"
+              value={duck.mixed ? '' : duck.value || ''}
+              options={[
+                ...(duck.mixed ? [{ value: '', label: 'Mixed', disabled: true }] : []),
+                ...keyTracks.map((track) => ({ value: track.id, label: track.name }))
+              ]}
+              onChange={(id) => id && editItems(ids, () => ({ duck: { keyTrackId: id } }))}
+            />
+          </Field>
+          <NumberField
+            row
+            label="Amount"
+            ariaLabel="Duck amount in dB"
+            value={amount.value ?? 6}
+            mixed={amount.mixed}
+            min={0.5}
+            max={MAX_DUCK_DB}
+            step={0.5}
+            precision={1}
+            suffix="dB"
+            onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), amountDb: next } }))}
+          />
+          <NumberField
+            row
+            label="Attack"
+            ariaLabel="Duck attack: ramp down before the key starts"
+            value={attack.value ?? 0}
+            mixed={attack.mixed}
+            min={0}
+            {...tc}
+            onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), attackFrames: Math.round(next) } }))}
+          />
+          <NumberField
+            row
+            label="Release"
+            ariaLabel="Duck release: ramp back up after the key ends"
+            value={release.value ?? 0}
+            mixed={release.mixed}
+            min={0}
+            {...tc}
+            onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), releaseFrames: Math.round(next) } }))}
+          />
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            Down while the other track has clips with sound; a pause inside a line stays down.
+          </p>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+/** The key track a field edit keeps: the clip's own, or — for one not yet ducked — the suggestion. */
+function keyOf(items: Item[], itemId: string, fallback: string | undefined): string | undefined {
+  return items.find((item) => item.id === itemId)?.duck?.keyTrackId ?? fallback
+}

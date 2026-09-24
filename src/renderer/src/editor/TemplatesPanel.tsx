@@ -6,7 +6,9 @@ import { Button, Panel, ScrollArea } from '@/components'
 import { addTemplate } from '@/mcp/templates'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { cn } from '@/lib/cn'
+import { revealItem } from '@/lib/revealItem'
 import { VariableControl } from './CompositionSection'
+import { TemplatePreview } from './TemplatePreview'
 
 /** The catalog descriptions run to a paragraph for an agent; a list row wants the first line. */
 function firstSentence(text: string): string {
@@ -80,6 +82,8 @@ function TemplateRow({
   onToggle: () => void
 }): ReactNode {
   const notify = useEditor((state) => state.notify)
+  const width = useEditor((state) => selectTimeline(state)?.width ?? 1920)
+  const height = useEditor((state) => selectTimeline(state)?.height ?? 1080)
   const [values, setValues] = useState<Record<string, CompositionVariableValue>>({})
   const [busy, setBusy] = useState(false)
 
@@ -101,6 +105,8 @@ function TemplateRow({
     setBusy(true)
     try {
       const result = await addTemplate({ templateId: spec.id, variables: values })
+      // Selected and scrolled into view, so the toast names a clip the user can already see.
+      if (typeof result.itemId === 'string') revealItem(result.itemId)
       notify(`${spec.name} added at frame ${String(result.from)} on ${String(result.trackName)}.`)
     } catch (error) {
       // `addTemplate` fails with a message written to be acted on — the same one an agent gets.
@@ -140,6 +146,12 @@ function TemplateRow({
 
       {open && (
         <div id={panelId} className="flex flex-col gap-2.5 px-3 pt-1 pb-3">
+          <TemplatePreview
+            spec={spec}
+            values={Object.fromEntries(spec.variables.map((v) => [v.id, values[v.id] ?? v.default]))}
+            width={width}
+            height={height}
+          />
           {spec.variables.map((variable) => (
             <VariableControl
               key={variable.id}
