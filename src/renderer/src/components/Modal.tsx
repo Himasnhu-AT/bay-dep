@@ -23,19 +23,27 @@ export interface ModalProps {
  */
 export function Modal({ open, title, onClose, children, footer, width = 480 }: ModalProps): ReactNode {
   const panelRef = useRef<HTMLDivElement>(null)
+  // Where focus was before the dialog opened, read while rendering the opening: by the time the
+  // effect below runs, a field inside with `autoFocus` has already taken focus.
+  const opener = useRef<HTMLElement | null>(null)
+  const wasOpen = useRef(false)
+  if (open && !wasOpen.current) opener.current = document.activeElement as HTMLElement | null
+  wasOpen.current = open
 
   useEffect(() => {
     if (!open) return
     const panel = panelRef.current
     if (!panel) return
-    const previous = document.activeElement as HTMLElement | null
+    const previous = opener.current
     const focusables = (): HTMLElement[] =>
       Array.from(
         panel.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
         )
       )
-    focusables()[0]?.focus()
+    // A field that asked for focus (`autoFocus` — the name in a Rename dialog) keeps it; otherwise
+    // the first control. Taking it unconditionally put focus on the header's Close button.
+    if (!panel.contains(document.activeElement)) focusables()[0]?.focus()
 
     const onKeyDown = (event: KeyboardEvent): void => {
       // A menu or popover opened from inside the dialog owns its own Escape and Tab: Escape

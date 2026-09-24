@@ -41,6 +41,11 @@ export interface SubtitleStyle {
   maxChars: number
   /** The accent used for the spoken word (or the box), unless the caller picks another. */
   accent: string
+  /**
+   * The words `description` uses for `accent`, when it names it — so a picker that lets the
+   * colour change can stop naming the old one.
+   */
+  accentName?: string
   /** Distance of the text's baseline block from the bottom of the frame, in percent. */
   bottom: number
 }
@@ -53,15 +58,17 @@ export const SUBTITLE_STYLES: readonly SubtitleStyle[] = [
     maxWords: 3,
     maxChars: 22,
     accent: '#8EC8FF',
+    accentName: 'sky blue',
     bottom: 15
   },
   {
     id: 'punch',
     name: 'Punch',
-    description: 'Heavy uppercase with an outline, one or two words, the spoken word yellow and popping.',
+    description: 'Heavy uppercase with an outline, one or two words, the spoken word popping in yellow.',
     maxWords: 2,
     maxChars: 14,
     accent: '#FFE14D',
+    accentName: 'yellow',
     bottom: 26
   },
   {

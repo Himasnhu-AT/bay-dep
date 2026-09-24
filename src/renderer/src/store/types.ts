@@ -482,6 +482,12 @@ export interface EditorActions {
   redo(): void
   markSaved(): void
   /**
+   * Save As wrote the document to `filePath` under `name`: the open project, and every snapshot
+   * in its history, now belong to that file — so ⌘S after Save As writes the new file, and an
+   * undo does not hand the old path back. Not an edit; marks the document saved.
+   */
+  markSavedAs(filePath: string, name: string): void
+  /**
    * Run several mutations as one undoable step.
    *
    * Exists because "one edit is one undo step" is a promise the agent surface makes, and

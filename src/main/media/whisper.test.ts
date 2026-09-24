@@ -15,7 +15,7 @@ import {
   onWhisperDownload,
   ownModelDir
 } from './whisper'
-import type { WhisperDownload } from '@shared/whisper'
+import { isCancelledDownloadError, type WhisperDownload } from '@shared/whisper'
 
 const models = [
   '/m/ggml-tiny.en.bin',
@@ -104,6 +104,17 @@ test('one download at a time: the same model joins, another is refused by name, 
     await assert.rejects(cancelled, /was cancelled/)
     assert.equal(events.at(-1)?.state, 'cancelled', 'cancelled, not failed')
     assert.equal(events.at(-1)?.error, undefined)
+    // The panels tell a cancel from a failure by this message, wrapped or not, so the real
+    // error main throws must read as cancelled — and a real failure must not.
+    const message = await cancelled.catch((error: Error) => error.message)
+    assert.equal(isCancelledDownloadError(message), true)
+    assert.equal(isCancelledDownloadError(`Transcription could not start: ${message}`), true)
+    const broken = (async () => {
+      throw new Error('socket hang up')
+    }) as Parameters<typeof downloadWhisperModel>[3]
+    const failed = await downloadWhisperModel('tiny.en', dir, 'user', broken).catch((error: Error) => error.message)
+    assert.match(failed, /socket hang up/)
+    assert.equal(isCancelledDownloadError(failed), false)
   } finally {
     off()
   }

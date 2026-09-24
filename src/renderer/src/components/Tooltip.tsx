@@ -12,6 +12,8 @@ import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 import { Kbd } from './Kbd'
 import { placeFloating, type Placement } from './placement'
+import { isInsideFloating } from './Floating'
+import { onFloatingChange, tooltipAllowed } from './floatingStack'
 
 export type TooltipSide = 'top' | 'bottom' | 'left' | 'right'
 
@@ -61,10 +63,15 @@ export function Tooltip({ label, shortcut, detail, side = 'bottom', children }: 
     timer.current = null
   }
 
+  // Never over an open menu or popover, unless this trigger is inside it (`floatingStack`).
+  const reveal = (element: HTMLElement): void => {
+    if (tooltipAllowed(isInsideFloating(element))) setTarget(element)
+  }
+
   const show = (element: HTMLElement, delay: number): void => {
     clear()
-    if (delay === 0) setTarget(element)
-    else timer.current = window.setTimeout(() => setTarget(element), delay)
+    if (delay === 0) reveal(element)
+    else timer.current = window.setTimeout(() => reveal(element), delay)
   }
 
   const hide = (): void => {
@@ -74,6 +81,14 @@ export function Tooltip({ label, shortcut, detail, side = 'bottom', children }: 
   }
 
   useEffect(() => clear, [])
+
+  // A menu opening while this tooltip shows (a right-click on its trigger) takes it away.
+  useEffect(() => {
+    if (!target) return
+    return onFloatingChange(() => {
+      if (!tooltipAllowed(isInsideFloating(target))) hide()
+    })
+  }, [target])
 
   useLayoutEffect(() => {
     if (!target || !tip.current) return

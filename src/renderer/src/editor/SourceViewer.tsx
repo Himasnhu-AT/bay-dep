@@ -6,6 +6,7 @@ import { Button, IconButton, Slider } from '@/components'
 import { assetUrl } from '@/engine/mediaPool'
 import { editIntoTimeline, endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
 import { revealItem } from '@/lib/revealItem'
+import { lastSourceFrame, sourceFrameAtSeconds, sourceFrameStartUs, sourceRate, sourceSeekSeconds } from '@/lib/sourcePosition'
 import { useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 
@@ -23,10 +24,9 @@ import { ASSET_DRAG_TYPE } from './AssetTile'
  * Chromium's per-URL cache entry rather than racing two loads of one file.
  */
 
-/** Source time as the editor's one timecode, in frames of the source's own rate (or 30). */
-function formatSourceTime(us: number, fps: number | null): string {
-  const rate = fps && fps > 0 ? fps : 30
-  return formatTimecode(Math.floor((us / 1_000_000) * rate + 1e-6), rate)
+/** A source frame as the editor's one timecode, at the source's own rate (or 30). */
+function formatSourceFrame(frame: number, rate: number): string {
+  return formatTimecode(frame, rate)
 }
 
 export function SourceViewer({
@@ -43,31 +43,34 @@ export function SourceViewer({
   const media = useRef<HTMLVideoElement & HTMLAudioElement>(null)
   const root = useRef<HTMLElement>(null)
   const [playing, setPlaying] = useState(false)
-  const [atUs, setAtUs] = useState(0)
-  const [inUs, setInUs] = useState<number | null>(null)
-  const [outUs, setOutUs] = useState<number | null>(null)
+  // Whole frames of the source, never microseconds read back from the element (`sourcePosition`).
+  const [atFrame, setAtFrame] = useState(0)
+  const [inFrame, setInFrame] = useState<number | null>(null)
+  const [outFrame, setOutFrame] = useState<number | null>(null)
 
   const timed = (asset.kind === 'video' || asset.kind === 'audio') && asset.durationUs > 0
   const url = assetUrl(asset)
   const duration = asset.durationUs
-  const step = 1_000_000 / (asset.fps && asset.fps > 0 ? asset.fps : 30)
+  const rate = sourceRate(asset.fps)
+  const lastFrame = lastSourceFrame(duration, rate)
+  const endFrame = lastFrame + 1
 
   // A different asset starts from its beginning with no marks.
   useEffect(() => {
     setPlaying(false)
-    setAtUs(0)
-    setInUs(null)
-    setOutUs(null)
+    setAtFrame(0)
+    setInFrame(null)
+    setOutFrame(null)
   }, [asset.id])
 
   useEffect(() => {
     if (focusToken > 0) root.current?.focus({ preventScroll: true })
   }, [focusToken])
 
-  const seek = (us: number): void => {
-    const clamped = Math.min(Math.max(0, us), duration)
-    setAtUs(clamped)
-    if (media.current) media.current.currentTime = clamped / 1_000_000
+  const seek = (frame: number): void => {
+    const clamped = Math.min(Math.max(0, Math.round(frame)), lastFrame)
+    setAtFrame(clamped)
+    if (media.current) media.current.currentTime = sourceSeekSeconds(clamped, rate)
   }
 
   const toggle = (): void => {
@@ -75,22 +78,27 @@ export function SourceViewer({
     if (!element) return
     if (element.paused) {
       // From the out mark (or the end), playing starts again from the in mark.
-      if (atUs >= (outUs ?? duration) - step) seek(inUs ?? 0)
+      if (atFrame >= (outFrame ?? endFrame) - 1) seek(inFrame ?? 0)
       void element.play().catch(() => setPlaying(false))
     } else element.pause()
   }
 
   const markIn = (): void => {
-    setInUs(atUs)
-    if (outUs !== null && outUs <= atUs) setOutUs(null)
+    setInFrame(atFrame)
+    if (outFrame !== null && outFrame <= atFrame) setOutFrame(null)
   }
   const markOut = (): void => {
-    setOutUs(Math.max(atUs, step))
-    if (inUs !== null && inUs >= atUs) setInUs(null)
+    // The out mark is where the kept part ends: the start of the frame shown, at least one frame in.
+    setOutFrame(Math.max(atFrame, 1))
+    if (inFrame !== null && inFrame >= atFrame) setInFrame(null)
   }
 
   const place = (where: 'insert' | 'overwrite' | 'end'): void => {
-    const range = { ...(inUs !== null ? { inUs } : {}), ...(outUs !== null ? { outUs } : {}) }
+    // Marks go to the timeline as the exact start of their frames.
+    const range = {
+      ...(inFrame !== null ? { inUs: sourceFrameStartUs(inFrame, rate) } : {}),
+      ...(outFrame !== null ? { outUs: Math.min(duration, sourceFrameStartUs(outFrame, rate)) } : {})
+    }
     const placed =
       where === 'end' ? placeAssetRange(asset, { atFrame: endOfTimeline(), ...range }) : editIntoTimeline(asset, where, range)
     if (placed) {
@@ -116,10 +124,10 @@ export function SourceViewer({
           if (timed) markOut()
           return timed
         case 'ArrowLeft':
-          if (timed) seek(atUs - step * (event.shiftKey ? 10 : 1))
+          if (timed) seek(atFrame - (event.shiftKey ? 10 : 1))
           return timed
         case 'ArrowRight':
-          if (timed) seek(atUs + step * (event.shiftKey ? 10 : 1))
+          if (timed) seek(atFrame + (event.shiftKey ? 10 : 1))
           return timed
         // Final Cut's keys for the three edits; the timeline's own W/D/E never see them here.
         case 'Enter':
@@ -147,9 +155,9 @@ export function SourceViewer({
     }
   }
 
-  const markedIn = inUs ?? 0
-  const markedOut = outUs ?? duration
-  const marked = inUs !== null || outUs !== null
+  const markedIn = inFrame ?? 0
+  const markedOut = outFrame ?? endFrame
+  const marked = inFrame !== null || outFrame !== null
 
   return (
     <section
@@ -187,10 +195,10 @@ export function SourceViewer({
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onTimeUpdate={(event) => {
-              const us = event.currentTarget.currentTime * 1_000_000
-              setAtUs(us)
+              const frame = Math.min(sourceFrameAtSeconds(event.currentTarget.currentTime, rate), lastFrame)
+              setAtFrame(frame)
               // Playback stops at the out mark, the way a source monitor plays a marked range.
-              if (outUs !== null && us >= outUs && !event.currentTarget.paused) event.currentTarget.pause()
+              if (outFrame !== null && frame >= outFrame && !event.currentTarget.paused) event.currentTarget.pause()
             }}
             className={asset.kind === 'audio' ? 'hidden' : 'size-full object-contain'}
           />
@@ -203,12 +211,12 @@ export function SourceViewer({
       {timed && (
         <>
           <div className="relative mt-2">
-            <Slider label="Source position" value={atUs} min={0} max={duration} step={step} onInput={seek} onCommit={seek} />
+            <Slider label="Source position" value={atFrame} min={0} max={lastFrame} step={1} onInput={seek} onCommit={seek} />
             {marked && (
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute -bottom-1 h-0.5 rounded-full bg-accent"
-                style={{ left: `${(markedIn / duration) * 100}%`, width: `${((markedOut - markedIn) / duration) * 100}%` }}
+                style={{ left: `${(markedIn / endFrame) * 100}%`, width: `${((markedOut - markedIn) / endFrame) * 100}%` }}
               />
             )}
           </div>
@@ -225,10 +233,10 @@ export function SourceViewer({
                 where in the clip you are, and the tooltip still says it). */}
             <span
               className="shrink-0 text-[11px] whitespace-nowrap text-ink-2 tabular-nums"
-              title={`${formatSourceTime(atUs, asset.fps)} of ${formatSourceTime(duration, asset.fps)}`}
+              title={`${formatSourceFrame(atFrame, rate)} of ${formatSourceFrame(endFrame, rate)}`}
             >
-              {formatSourceTime(atUs, asset.fps)}
-              <span className="hidden @sm:inline"> / {formatSourceTime(duration, asset.fps)}</span>
+              {formatSourceFrame(atFrame, rate)}
+              <span className="hidden @sm:inline"> / {formatSourceFrame(endFrame, rate)}</span>
             </span>
             <span className="flex-1" />
             <Button size="sm" variant="ghost" onClick={markIn} title="Mark in (I)">
@@ -240,15 +248,15 @@ export function SourceViewer({
           </div>
           <p className="mt-0.5 text-[10px] text-ink-2 tabular-nums">
             {marked
-              ? `Marked ${formatSourceTime(markedIn, asset.fps)} – ${formatSourceTime(markedOut, asset.fps)}`
+              ? `Marked ${formatSourceFrame(markedIn, rate)} – ${formatSourceFrame(markedOut, rate)}`
               : 'No marks: the whole clip is used.'}
             {marked && (
               <button
                 type="button"
                 className="t-fast ml-1.5 rounded-xs text-ink-1 underline-offset-2 hover:text-ink-0 hover:underline focus-visible:outline-accent"
                 onClick={() => {
-                  setInUs(null)
-                  setOutUs(null)
+                  setInFrame(null)
+                  setOutFrame(null)
                 }}
               >
                 Clear

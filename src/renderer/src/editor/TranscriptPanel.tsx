@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { LoaderCircle, ScrollText, Scissors } from 'lucide-react'
 import { findAsset, type Item } from '@shared/project'
 import { cutRanges, findWords, speechItems, timelineWords, wordAt } from '@shared/timeline-words'
-import { defaultWhisperModel, downloadSentence, findWhisperModel, formatBytes } from '@shared/whisper'
+import { defaultWhisperModel, downloadSentence, findWhisperModel, formatBytes, isCancelledDownloadError } from '@shared/whisper'
 import type { WhisperStatus } from '@shared/whisper'
 import { Button, EmptyState, IconButton, InlineAlert, Panel, ProgressBar, ScrollArea, SearchField, Select } from '@/components'
 import { bay } from '@/lib/bay'
@@ -28,7 +28,11 @@ const seconds = (frames: number, fps: number): string => {
   return `${Math.floor(total / 60)}:${String(Math.floor(total % 60)).padStart(2, '0')}`
 }
 
-type Problem = { kind: 'engine' } | { kind: 'model'; modelId: string } | { kind: 'error'; message: string }
+type Problem =
+  | { kind: 'engine' }
+  | { kind: 'model'; modelId: string }
+  | { kind: 'cancelled'; modelId: string }
+  | { kind: 'error'; message: string }
 
 export function TranscriptPanel(): ReactNode {
   const timeline = useEditor(selectTimeline)
@@ -36,6 +40,7 @@ export function TranscriptPanel(): ReactNode {
   const selection = useEditor((state) => state.selection)
   const autoDownload = useEditor((state) => state.autoDownloadModels)
   const download = useEditor((state) => state.whisperDownload)
+  const settingsOpen = useEditor((state) => state.settingsOpen)
   const notify = useEditor((state) => state.notify)
 
   const [language, setLanguage] = useState('en')
@@ -49,19 +54,38 @@ export function TranscriptPanel(): ReactNode {
   const list = useRef<HTMLDivElement>(null)
 
   useEffect(() => onTranscript(() => setVersion((n) => n + 1)), [])
-  // Whether whisper and a model are on this Mac — asked again after a download finishes.
+  // Whether whisper and a model are on this Mac. A model can arrive other ways than a download
+  // started here — copied into the folder, downloaded or chosen in Settings, installed by another
+  // app — so it is asked again when a download settles, when Settings closes, when the window
+  // comes back to the front, and right before Transcribe decides anything.
+  const live = useRef(true)
+  useEffect(
+    () => () => {
+      live.current = false
+    },
+    []
+  )
+  const refreshStatus = useCallback(async (): Promise<WhisperStatus | null> => {
+    const answer = await bay()
+      ?.whisper.status(useEditor.getState().whisperModel)
+      .catch(() => null)
+    if (answer && live.current) setStatus(answer)
+    return answer ?? null
+  }, [])
   useEffect(() => {
-    let live = true
-    void bay()
-      ?.whisper.status()
-      .then((answer) => {
-        if (live) setStatus(answer)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
+    void refreshStatus()
+  }, [refreshStatus, download?.state, settingsOpen])
+  useEffect(() => {
+    const again = (): void => {
+      if (document.visibilityState === 'visible') void refreshStatus()
     }
-  }, [download?.state])
+    window.addEventListener('focus', again)
+    document.addEventListener('visibilitychange', again)
+    return () => {
+      window.removeEventListener('focus', again)
+      document.removeEventListener('visibilitychange', again)
+    }
+  }, [refreshStatus])
 
   const fps = timeline?.fps ?? 30
   const project = useMemo(() => ({ assets }), [assets])
@@ -114,12 +138,13 @@ export function TranscriptPanel(): ReactNode {
   const transcribe = async (): Promise<void> => {
     const paths = [...new Set(untranscribed.map(pathOf).filter((path): path is string => path !== null))]
     if (paths.length === 0) return
-    const installed = status?.installed.map((model) => model.file) ?? []
-    if (status && !status.engine) {
+    const current = (await refreshStatus()) ?? status
+    const installed = current?.installed.map((model) => model.file) ?? []
+    if (current && !current.engine) {
       setProblem({ kind: 'engine' })
       return
     }
-    if (status && !autoDownload && !hasModelFor(installed, language)) {
+    if (current && !autoDownload && !hasModelFor(installed, language)) {
       setProblem({ kind: 'model', modelId: defaultWhisperModel(language).id })
       return
     }
@@ -130,7 +155,12 @@ export function TranscriptPanel(): ReactNode {
       try {
         await transcribeSource(path, language)
       } catch (error) {
-        setProblem({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+        const message = error instanceof Error ? error.message : String(error)
+        setProblem(
+          isCancelledDownloadError(message)
+            ? { kind: 'cancelled', modelId: useEditor.getState().whisperDownload?.modelId ?? defaultWhisperModel(language).id }
+            : { kind: 'error', message }
+        )
         break
       }
     }
@@ -138,9 +168,11 @@ export function TranscriptPanel(): ReactNode {
   }
 
   const downloadModel = async (modelId: string): Promise<void> => {
+    setProblem(null)
     const result = await bay()?.whisper.download(modelId)
-    if (result && !result.ok) setProblem({ kind: 'error', message: result.error })
-    else setProblem(null)
+    if (result && !result.ok) {
+      setProblem(isCancelledDownloadError(result.error) ? { kind: 'cancelled', modelId } : { kind: 'error', message: result.error })
+    }
   }
 
   const cut = (): void => {
@@ -248,7 +280,14 @@ export function TranscriptPanel(): ReactNode {
             label={downloadSentence(download)}
             value={download.totalBytes > 0 ? download.receivedBytes / download.totalBytes : null}
           />
-          <p className="mt-1 text-[11px] text-ink-2 tabular-nums">{downloadSentence(download)}</p>
+          <div className="mt-1 flex items-center gap-2">
+            <p className="min-w-0 flex-1 text-[11px] text-ink-2 tabular-nums">{downloadSentence(download)}</p>
+            {download.state === 'downloading' && (
+              <Button size="sm" variant="ghost" onClick={() => void bay()?.whisper.cancelDownload()}>
+                Cancel
+              </Button>
+            )}
+          </div>
         </div>
       )}
       {problem && <ProblemNote problem={problem} onDownload={(id) => void downloadModel(id)} busy={download?.state === 'downloading'} />}
@@ -381,6 +420,23 @@ function ProblemNote({ problem, onDownload, busy }: { problem: Problem; onDownlo
         <Button size="sm" variant="subtle" className="mt-1.5" onClick={openSettings}>
           Open Transcription settings
         </Button>
+      </InlineAlert>
+    )
+  }
+  if (problem.kind === 'cancelled') {
+    // The user asked for this, so it is said plainly, with the way back — not as a failure.
+    const model = findWhisperModel(problem.modelId) ?? defaultWhisperModel('en')
+    return (
+      <InlineAlert tone="notice">
+        <span className="block">Download cancelled. Nothing was transcribed.</span>
+        <span className="mt-1.5 flex flex-wrap gap-1.5">
+          <Button size="sm" variant="subtle" disabled={busy} onClick={() => onDownload(problem.modelId)}>
+            Download {model.label} ({formatBytes(model.bytes)})
+          </Button>
+          <Button size="sm" variant="ghost" onClick={openSettings}>
+            Choose in Settings
+          </Button>
+        </span>
       </InlineAlert>
     )
   }

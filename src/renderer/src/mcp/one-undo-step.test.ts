@@ -575,6 +575,8 @@ const STORE_CASES: Record<string, StoreCase> = {
   notify: { delta: 0, run: () => state().notify('hello') },
   dismissToast: { delta: 0, run: () => state().dismissToast() },
   markSaved: { delta: 0, run: () => state().markSaved() },
+  // Save As moves the document to a new file; the history is rewritten to match, not grown.
+  markSavedAs: { delta: 0, run: () => state().markSavedAs('/tmp/Saved As.bay', 'Saved As') },
   startAgentSession: { delta: 0, run: () => state().startAgentSession() },
   endAgentSession: { delta: 0, run: () => state().endAgentSession() },
   logUserMessage: { delta: 0, run: () => state().logUserMessage('cut it') },

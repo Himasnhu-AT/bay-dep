@@ -48,10 +48,10 @@ async function launch(stub: unknown): Promise<EditorModule> {
 const initial = async (values: Record<string, string>) =>
   (await launch(storage(values))).useEditor.getState()
 
-test('with nothing stored: approval off, model downloads on, model automatic, debug off', async () => {
+test('with nothing stored: approval off, model downloads off, model automatic, debug off', async () => {
   const state = await initial({})
   assert.equal(state.agentApproval, false)
-  assert.equal(state.autoDownloadModels, true, 'absent means allowed — it is opt-out')
+  assert.equal(state.autoDownloadModels, false, 'absent means ask first — a download is opt-in')
   assert.equal(state.whisperModel, null, 'absent means choose automatically')
   assert.equal(state.debugMode, false)
 })
@@ -69,9 +69,11 @@ test("'bay.agentApproval' is '1' for on and anything else for off", async () => 
   assert.equal((await initial({ 'bay.agentApproval': '0' })).agentApproval, false)
 })
 
-test("'bay.autoDownloadModels' is off only for '0'", async () => {
+test("'bay.autoDownloadModels' is on only for '1'", async () => {
   assert.equal((await initial({ 'bay.autoDownloadModels': '0' })).autoDownloadModels, false)
   assert.equal((await initial({ 'bay.autoDownloadModels': '1' })).autoDownloadModels, true)
+  // A user who turned it on keeps it on after the default changed; anything else asks first.
+  assert.equal((await initial({ 'bay.autoDownloadModels': 'true' })).autoDownloadModels, false)
 })
 
 test("'bay.whisperModel' holds the chosen model's file name", async () => {
@@ -98,12 +100,12 @@ test('storage that throws on every access leaves the defaults, not a dead store'
   const { useEditor } = await launch(hostile)
   const state = useEditor.getState()
   assert.equal(state.agentApproval, false)
-  assert.equal(state.autoDownloadModels, true)
+  assert.equal(state.autoDownloadModels, false)
   assert.equal(state.whisperModel, null)
   assert.equal(state.debugMode, false)
   // And a setting still applies for the session when it cannot be remembered.
-  state.setAutoDownloadModels(false)
-  assert.equal(useEditor.getState().autoDownloadModels, false)
+  state.setAutoDownloadModels(true)
+  assert.equal(useEditor.getState().autoDownloadModels, true)
 })
 
 test('the setters write the same keys and encodings a later launch reads', async () => {

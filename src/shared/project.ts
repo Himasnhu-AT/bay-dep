@@ -59,6 +59,12 @@ export interface Asset {
   /** For `kind: 'text'` — the string to draw. */
   text?: string
   /**
+   * For `kind: 'text'` — the line of a caption, made by `add_captions` (one asset per distinct
+   * line). A caption file brings hundreds of these, so the Media panel leaves placed ones out;
+   * they are edited on their track. Optional and additive: older files carry none.
+   */
+  caption?: boolean
+  /**
    * For `kind: 'html'` — the composition's own id, which is the key its paused timeline
    * registers under as `window.__timelines[compositionId]`.
    *

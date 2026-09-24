@@ -136,7 +136,8 @@ export function AssetTile(props: AssetTileProps): ReactNode {
   ) : missing ? (
     <span className="flex items-center gap-1 text-warning">
       <FileQuestion aria-hidden="true" className="size-3 shrink-0" />
-      File missing — right-click to locate
+      {/* Short enough for a grid card; how to fix it is in the tooltip and the panel's banner. */}
+      <span className="truncate">File missing</span>
     </span>
   ) : busy ? (
     <span className="flex items-center gap-1 text-ink-1">
@@ -163,7 +164,12 @@ export function AssetTile(props: AssetTileProps): ReactNode {
     />
   )
 
-  const detail = [asset.path ?? KIND_NOTE[asset.kind], asset.durationUs > 0 ? formatSourceDuration(asset.durationUs) : null, factsLine(asset, bytes, uses)]
+  const detail = [
+    asset.path ?? KIND_NOTE[asset.kind],
+    missing ? 'File missing — right-click and choose Locate Missing File… to find it.' : null,
+    asset.durationUs > 0 ? formatSourceDuration(asset.durationUs) : null,
+    factsLine(asset, bytes, uses)
+  ]
     .filter(Boolean)
     .join('\n')
 

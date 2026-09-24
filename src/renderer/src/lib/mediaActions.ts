@@ -126,10 +126,10 @@ export function endOfTimeline(): number {
 /** Runs `detect_beats` on an asset and says what it found. */
 export async function detectBeatsFor(asset: Asset): Promise<void> {
   try {
-    const result = (await detectBeats({ assetId: asset.id })) as { bpm: number; beats: unknown[]; confidence: number }
+    const result = (await detectBeats({ assetId: asset.id })) as { bpm: number; beats: unknown[]; steady: boolean }
     const count = result.beats.length
     state().notify(
-      result.confidence < 0.3 || count === 0
+      !result.steady
         ? `No steady beat found in “${asset.name}”.`
         : `Found ${count} beats in “${asset.name}” at ${Math.round(result.bpm)} BPM. Clips now snap to them.`
     )
@@ -199,7 +199,11 @@ export async function locateAndRelink(
   if (problem && !(await confirm(`${problem} Use it anyway?`))) return
 
   const relinks = [{ assetId: asset.id, replacement: probed.asset }]
-  const candidates = siblingCandidates(missing, { assetId: asset.id, oldPath: asset.path, newPath: chosen })
+  const candidates = siblingCandidates(
+    missing,
+    { assetId: asset.id, oldPath: asset.path, newPath: chosen },
+    state().project.assets.map((a) => a.path)
+  )
   let skipped = 0
   if (candidates.length > 0) {
     const sizes = (await call('Relink', (client) => client.media.stat(candidates.map((c) => c.path)))) ?? []

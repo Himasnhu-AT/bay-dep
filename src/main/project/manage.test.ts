@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { copyName, displayFolder, projectStems, refuseUnlisted, renamedPath } from './manage'
+import { canonicalRecents, copyName, displayFolder, nameFromPath, projectStems, refuseUnlisted, renamedPath } from './manage'
 
 const listed = ['/Users/me/Movies/bay/Trip.bay', '/Users/me/Movies/bay/Other.bay']
 
@@ -55,4 +55,38 @@ test('the list shows the folder with home as ~', () => {
   assert.equal(displayFolder('/Users/me/Trip.bay', '/Users/me'), '~')
   // A sibling whose name starts like home is not inside it.
   assert.equal(displayFolder('/Users/meg/Trip.bay', '/Users/me'), '/Users/meg')
+})
+
+test('Save As names the project after its new file', () => {
+  assert.equal(nameFromPath('/Users/me/Movies/bay/Saved As Copy.bay', 'Wild Sage Hare'), 'Saved As Copy')
+  assert.equal(nameFromPath('/Users/me/Movies/bay/Trip.BAY', 'Old'), 'Trip')
+  // A file called just ".bay" has no name to take; the project keeps its own.
+  assert.equal(nameFromPath('/Users/me/Movies/bay/.bay', 'Old'), 'Old')
+})
+
+test('recents are one row per real file: an alias folds into the newest row, under its real path', () => {
+  // The verification run: one file opened as /tmp/… and as /private/tmp/… was listed twice.
+  const real = (path: string): string => (path.startsWith('/tmp/') ? `/private${path}` : path)
+  const rows = [
+    { filePath: '/tmp/v/Golden Sage Vole.bay', name: 'Golden Sage Vole', updatedAt: 3 },
+    { filePath: '/private/tmp/v/Golden Sage Vole.bay', name: 'Golden Sage Vole', updatedAt: 2 },
+    { filePath: '/Users/me/Movies/bay/Trip.bay', name: 'Trip', updatedAt: 1 }
+  ]
+  const out = canonicalRecents(rows, real)
+  assert.deepEqual(
+    out.rows.map((row) => [row.filePath, row.updatedAt]),
+    [
+      ['/private/tmp/v/Golden Sage Vole.bay', 3],
+      ['/Users/me/Movies/bay/Trip.bay', 1]
+    ]
+  )
+  // Both old keys go (the alias, and the older real row), and the newest is written back under
+  // its real path — so the database agrees with the list the screen shows.
+  assert.deepEqual(out.forget.sort(), ['/private/tmp/v/Golden Sage Vole.bay', '/tmp/v/Golden Sage Vole.bay'])
+  assert.deepEqual(out.rekey.map((row) => row.filePath), ['/private/tmp/v/Golden Sage Vole.bay'])
+  // Positive control: rows that are already real are left alone, and nothing is rewritten.
+  const clean = canonicalRecents(rows.slice(1), real)
+  assert.equal(clean.rows.length, 2)
+  assert.deepEqual(clean.forget, [])
+  assert.deepEqual(clean.rekey, [])
 })

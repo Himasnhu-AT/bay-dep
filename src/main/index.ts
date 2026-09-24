@@ -32,7 +32,7 @@ import { startMcpServer, stopMcpServer } from './mcp/server'
 import { isOpenableExternally } from './external'
 import { describeSocket } from './mcp/socket-server'
 import { cancelAll } from './export/encode'
-import { menuTemplate } from './menu'
+import { menuCommandTarget, menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
 import { onAccessChange, startAccess, stopAccess } from './auth/access'
 import { startUpdates, stopUpdates } from './update/updater'
@@ -65,7 +65,7 @@ registerBayScheme()
  */
 app.on('open-file', (event, path) => {
   event.preventDefault()
-  const window = BrowserWindow.getAllWindows()[0]
+  const window = menuCommandTarget(BrowserWindow.getFocusedWindow(), [...editorWindows], lastFocusedEditor)
   if (window && !window.webContents.isLoading()) {
     sendCommand(window, { type: 'open-path', path })
     return
@@ -77,6 +77,10 @@ function sendCommand(window: BrowserWindow, command: MenuCommand): void {
   if (window.isDestroyed()) return
   window.webContents.send(IPC.appMenuCommand, command)
 }
+
+/** The windows that load the editor — the only ones a menu command may go to. */
+const editorWindows = new Set<BrowserWindow>()
+let lastFocusedEditor: BrowserWindow | null = null
 
 function createWindow(): BrowserWindow {
   const saved = restoreBounds(
@@ -151,7 +155,13 @@ function createWindow(): BrowserWindow {
     event.preventDefault()
   })
 
+  editorWindows.add(window)
+  window.on('focus', () => {
+    lastFocusedEditor = window
+  })
   window.on('closed', () => {
+    editorWindows.delete(window)
+    if (lastFocusedEditor === window) lastFocusedEditor = null
     if (saveTimer) clearTimeout(saveTimer)
     void cancelAll()
   })
@@ -173,9 +183,9 @@ function installMenu(recents: readonly RecentProject[] = []): void {
         recents,
         onClearRecents: () => void clearRecentMenu(),
         onCommand: (command) => {
-          // The focused window, not the first one: with two windows open, a menu command
-          // belongs to the one the user is looking at.
-          const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+          // The focused editor, not the first window: a composition's hidden render window is
+          // a window too, and it has no command handler (`menuCommandTarget`).
+          const window = menuCommandTarget(BrowserWindow.getFocusedWindow(), [...editorWindows], lastFocusedEditor)
           if (window) sendCommand(window, command)
         }
       })
@@ -272,7 +282,8 @@ void app.whenReady().then(() => {
   createWindow()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // Editors, not windows: a composition's hidden render window must not stand in for one.
+    if (editorWindows.size === 0) createWindow()
   })
 })
 

@@ -7,10 +7,11 @@
 
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { readdir, readFile, rename as renameFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { copyName, displayFolder, fileStem, projectStems, refuseUnlisted, renamedPath } from './manage'
+import { canonicalRecents, copyName, displayFolder, fileStem, nameFromPath, projectStems, refuseUnlisted, renamedPath } from './manage'
 import { posterFor, uniqueProjectName } from './library'
 import { thumbnailFile } from '../media/thumbnails'
 import type { RecentProject } from '@shared/ipc'
@@ -150,11 +151,26 @@ export async function clearRecentMenu(): Promise<void> {
   recentsChanged()
 }
 
-function rememberRecent(project: Project): void {
+/**
+ * The one spelling of a file: `realpath`, or the path as given when it cannot be resolved (a file
+ * not yet written). Recents are keyed by it, so one file reached through `/tmp` and `/private/tmp`,
+ * or a symlinked folder, is one row.
+ */
+function canonicalPath(filePath: string): string {
+  try {
+    return realpathSync.native(filePath)
+  } catch {
+    return filePath
+  }
+}
+
+function rememberRecent(given: Project): void {
   const db = database()
-  if (!db || !project.filePath) return
+  if (!db || !given.filePath) return
+  const filePath = canonicalPath(given.filePath)
+  const project = { ...given, filePath }
   db.rememberRecent({
-    filePath: project.filePath,
+    filePath,
     id: project.id,
     name: project.name,
     updatedAt: project.updatedAt
@@ -170,7 +186,6 @@ function rememberRecent(project: Project): void {
   // open, and a project with no readable poster is still a project in the list. The row is
   // written again with the poster; `COALESCE` in the upsert keeps an older one if this finds
   // none.
-  const filePath = project.filePath
   void posterFor(project, (path) => readFile(path), async (asset) =>
     asset.path && (asset.kind === 'video' || asset.kind === 'image')
       ? thumbnailFile({
@@ -197,8 +212,13 @@ export async function recent(): Promise<RecentProject[]> {
   const db = database()
   if (!db) return []
   const out: RecentProject[] = []
-  let pruned = false
-  for (const row of db.listRecent(20)) {
+  // One row per real file: aliases written by older builds (or before this) are folded into the
+  // newest row for that file, under its real path, and the database is corrected as it goes.
+  const canonical = canonicalRecents(db.listRecent(40), canonicalPath)
+  for (const path of canonical.forget) db.forgetRecent(path)
+  for (const row of canonical.rekey) db.rememberRecent(row)
+  let pruned = canonical.forget.length > 0
+  for (const row of canonical.rows.slice(0, 20)) {
     // A recents list that offers files the user moved to the bin is worse than a short one.
     if (!(await exists(row.filePath))) {
       db.forgetRecent(row.filePath)
@@ -379,11 +399,13 @@ export async function save(
 export async function saveAs(
   project: Project,
   window: BrowserWindow | null
-): Promise<{ filePath: string } | null> {
+): Promise<{ filePath: string; name: string } | null> {
   const target = await chooseSavePath(project, window)
   if (!target) return null
-  const written = await persist(project, target)
-  return { filePath: written.filePath! }
+  // The project takes the new file's name, as `create` and `rename` keep them; otherwise home
+  // lists two identical cards for two files.
+  const written = await persist({ ...project, name: nameFromPath(target, project.name) }, target)
+  return { filePath: written.filePath!, name: written.name }
 }
 
 export async function open(window: BrowserWindow | null): Promise<Project | null> {
@@ -401,7 +423,7 @@ export async function open(window: BrowserWindow | null): Promise<Project | null
 }
 
 export async function openPath(filePath: string): Promise<Project> {
-  const project = admitAssets(await readProjectFile(filePath))
+  const project = admitAssets(await readProjectFile(canonicalPath(filePath)))
   rememberRecent(project)
   return project
 }

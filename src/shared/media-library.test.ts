@@ -12,7 +12,10 @@ import {
   formatFileSize,
   formatFps,
   kindGroup,
+  isCaptionAsset,
   MEDIA_KIND_GROUPS,
+  mediaPoolAssets,
+  reusedInProject,
   sortAssets,
   usageCounts
 } from './media-library'
@@ -116,4 +119,69 @@ test('file sizes and frame rates read the way people write them', () => {
 test('facts name size, rate, sound and file size, and only what the asset has', () => {
   assert.deepEqual(assetFacts(asset('v'), 14_230_000), ['1920×1080', '30 fps', 'with sound', '14.2 MB'])
   assert.deepEqual(assetFacts(asset('m', { kind: 'audio', width: null, height: null, fps: null, hasVideo: false })), [])
+})
+
+test('a card names a tempo only for a steady beat; a failed detection reads "No steady beat"', () => {
+  const beats = (confidence: number, bpm: number) => ({
+    version: 1,
+    bpm,
+    confidence,
+    beatsPerBar: 4,
+    beatsUs: [500_000, 1_000_000, 1_500_000],
+    downbeatsUs: [],
+    downbeatConfidence: 0,
+    dropouts: []
+  })
+  const audio = { kind: 'audio', width: null, height: null, fps: null, hasVideo: false } as const
+  assert.deepEqual(assetFacts(asset('m', { ...audio, beats: beats(0, 178.4) })), ['No steady beat'])
+  assert.deepEqual(assetFacts(asset('m', { ...audio, beats: beats(0.9, 120) })), ['120 BPM'])
+})
+
+test('placed caption lines are not Media cards; footage, titles and unused lines are', () => {
+  const text = (id: string, words: string, over: Partial<Asset> = {}) =>
+    asset(id, { kind: 'text', path: null, text: words, name: `Caption: ${words}`, ...over })
+  const all = [
+    asset('clip'),
+    text('c1', 'Hello there', { caption: true }),
+    text('c2', 'this is a test', { caption: true }),
+    // From a project saved before the mark: recognised by the name add_captions gave it.
+    text('legacy', 'Old line'),
+    text('title', 'Opening title', { name: 'Opening title' }),
+    text('orphan', 'Deleted track', { caption: true })
+  ]
+  const uses = new Map([
+    ['clip', 1],
+    ['c1', 2],
+    ['c2', 1],
+    ['legacy', 1],
+    ['title', 1]
+  ])
+  assert.deepEqual(
+    mediaPoolAssets(all, uses).map((a) => a.id),
+    ['clip', 'title', 'orphan']
+  )
+  // The fallback is the add_captions name for the asset's own words, not any "Caption:" prefix:
+  // a title someone named that way, whose words differ, stays.
+  const named = text('named', 'Something else', { name: 'Caption: my card' })
+  assert.equal(isCaptionAsset(named), false)
+  assert.equal(isCaptionAsset(asset('video-named', { name: 'Caption: x' })), false)
+})
+
+test('"reused" means already in this project, not probed earlier in the session', () => {
+  // Main said reused for clipB because project A imported it; project B does not have it.
+  const fromMain = [
+    { asset: asset('clipB'), reused: true },
+    { asset: asset('clipA'), reused: false }
+  ]
+  const inB = reusedInProject(fromMain, [asset('other')])
+  assert.deepEqual(
+    inB.map((entry) => entry.reused),
+    [false, false]
+  )
+  // Positive control: the project that does hold clipB reports it reused, whatever main said.
+  const inA = reusedInProject(fromMain, [asset('clipB'), asset('clipA')])
+  assert.deepEqual(
+    inA.map((entry) => entry.reused),
+    [true, true]
+  )
 })
