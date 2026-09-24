@@ -11,7 +11,7 @@ import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
-import { applySpeedPlan, planSpeed, type SpeedPlan } from '@shared/speed'
+import { applySpeedPlan, planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
 import { clone, makeTrack, newId, nextTrackName, placementTrack } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -240,12 +240,24 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         const frame = Math.round(toFrame)
         // The edge's movement in frames, applied to every linked clip's same edge — so a picture
         // and its detached sound trimmed together stay in sync however they were placed.
-        const delta =
+        let delta =
           edge === 'start'
             ? Math.max(0, Math.min(frame, itemEnd(item) - 1)) - item.from
             : Math.max(1, frame - item.from) - item.durationInFrames
-        if (delta === 0) return
         const group = [item, ...(options?.linked === false ? [] : linkedPartners(timeline, itemId))]
+        // The tail stops at the end of the footage, the way the head stops at its start: past it
+        // a clip holds its last frame, which is the frozen tail a speed change used to leave. The
+        // inspector's Duration already stopped there (`retimedLength`); a handle drag did not.
+        // A still or a title has no end of footage (`available` is infinite).
+        if (edge === 'end' && delta > 0) {
+          const project = get().project
+          for (const member of group) {
+            const asset = findAsset(project, member.assetId)
+            const { available } = retimedLength(member, asset?.durationUs ?? 0, member.speed, timeline.fps)
+            delta = Math.min(delta, Math.max(0, available - member.durationInFrames))
+          }
+        }
+        if (delta === 0) return
         const plans: { item: Item; from: number; durationInFrames: number; sourceStartUs: number }[] = []
         for (const member of group) {
           const memberTrack = findTrack(timeline, member.trackId)
