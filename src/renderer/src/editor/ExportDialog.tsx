@@ -21,7 +21,7 @@ import { call } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useProjectSettingsDialog } from '@/store/project-settings-dialog'
-import { exportBlocker, rangeChoice, readMarks, TERMINAL, useExportSession, type RangeKind } from './export-session'
+import { exportBlocker, rangeChoice, TERMINAL, useExportSession, type RangeKind } from './export-session'
 
 const FORMATS: { value: ExportFormat; label: string }[] = [
   { value: 'mp4', label: 'MP4 · H.264' },
@@ -100,8 +100,8 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
     const tl = selectTimeline(state)
     return tl ? timelineDuration(tl) : 0
   })
-  const rangeIn = useEditor((state) => readMarks(state).rangeIn)
-  const rangeOut = useEditor((state) => readMarks(state).rangeOut)
+  const rangeIn = useEditor((state) => state.rangeIn)
+  const rangeOut = useEditor((state) => state.rangeOut)
   const session = useExportSession()
 
   if (!timeline) return null
@@ -464,8 +464,8 @@ function DialogStart(): ReactNode {
   const timeline = useEditor(selectTimeline)
   const duration = timeline ? timelineDuration(timeline) : 0
   const session = useExportSession()
-  const rangeIn = useEditor((state) => readMarks(state).rangeIn)
-  const rangeOut = useEditor((state) => readMarks(state).rangeOut)
+  const rangeIn = useEditor((state) => state.rangeIn)
+  const rangeOut = useEditor((state) => state.rangeOut)
   if (!timeline) return null
   const blockedBy = exportBlocker(session, timeline.fps, duration, { rangeIn, rangeOut })
   return <StartButton blockedBy={blockedBy} />

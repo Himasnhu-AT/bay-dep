@@ -88,6 +88,6 @@ export function stillDurationFrames(fps: number, seconds = editingPrefs().stillS
 }
 
 /** Frames a new transition asks for at this rate, before the cut's handles limit it. */
-export function defaultTransitionFrames(fps: number, seconds = editingPrefs().transitionSeconds): number {
+export function transitionLengthFrames(fps: number, seconds = editingPrefs().transitionSeconds): number {
   return Math.max(2, Math.round(seconds * fps))
 }

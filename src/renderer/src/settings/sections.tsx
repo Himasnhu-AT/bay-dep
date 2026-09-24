@@ -6,7 +6,7 @@ import { selectTimeline, useEditor } from '@/store/editor'
 import {
   STILL_SECONDS,
   TRANSITION_SECONDS,
-  defaultTransitionFrames,
+  transitionLengthFrames,
   stillDurationFrames,
   useEditingPrefs
 } from '@/store/editing-prefs'
@@ -93,7 +93,7 @@ export function EditingSection(): ReactNode {
       </Row>
       <Row
         label="Transition length"
-        hint={`What a new transition asks for; a cut without enough footage either side gets less. ${framesHint(fps === null ? null : defaultTransitionFrames(fps, transitionSeconds), fps) ?? ''}`.trim()}
+        hint={`What a new transition asks for; a cut without enough footage either side gets less. ${framesHint(fps === null ? null : transitionLengthFrames(fps, transitionSeconds), fps) ?? ''}`.trim()}
       >
         <NumberField
           label="Seconds"

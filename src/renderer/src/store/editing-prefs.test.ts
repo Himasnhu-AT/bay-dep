@@ -71,9 +71,9 @@ test('the preferences turn into frames at the timeline rate', async () => {
   const prefs = await launch(storage({ 'bay.stillSeconds': '2', 'bay.transitionSeconds': '0.5' }))
   assert.equal(prefs.stillDurationFrames(30), 60)
   assert.equal(prefs.stillDurationFrames(24000 / 1001), 48)
-  assert.equal(prefs.defaultTransitionFrames(30), 15)
+  assert.equal(prefs.transitionLengthFrames(30), 15)
   // A transition needs a frame on each side of the cut.
-  assert.equal(prefs.defaultTransitionFrames(30, 0.01), 2)
+  assert.equal(prefs.transitionLengthFrames(30, 0.01), 2)
 })
 
 test('placing a title runs for the preferred length — the preference reaches the store', async () => {

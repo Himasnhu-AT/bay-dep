@@ -26,7 +26,7 @@ import { findTimeline, timelineDuration } from '@shared/project'
 import { parseTime } from '@shared/pins'
 import { FrameExporter } from '@/engine'
 import { bay, call } from '@/lib/bay'
-import { useEditor } from '@/store/editor'
+import { useEditor, type EditorStore } from '@/store/editor'
 
 export const TERMINAL: readonly ExportProgress['stage'][] = ['done', 'failed', 'cancelled']
 
@@ -55,13 +55,9 @@ let jobId: string | null = null
 let exporter: FrameExporter | null = null
 let subscribed = false
 
-/** The In/Out marks, read without depending on the editing slice's types being present. */
-export function readMarks(state: unknown): { rangeIn: number | null; rangeOut: number | null } {
-  const marks = state as { rangeIn?: number | null; rangeOut?: number | null }
-  return {
-    rangeIn: typeof marks.rangeIn === 'number' ? marks.rangeIn : null,
-    rangeOut: typeof marks.rangeOut === 'number' ? marks.rangeOut : null
-  }
+/** The timeline's In/Out marks (`rangeOut` exclusive), as the range resolver takes them. */
+export function readMarks(state: Pick<EditorStore, 'rangeIn' | 'rangeOut'>): { rangeIn: number | null; rangeOut: number | null } {
+  return { rangeIn: state.rangeIn, rangeOut: state.rangeOut }
 }
 
 /** The session's Range as the pure resolver's choice, with the custom text parsed at `fps`. */
