@@ -147,3 +147,36 @@ test('set_canvas makes the frame vertical and re-fits the footage to it, as one 
   const refused = await call('set_canvas', { preset: 'cinema' })
   assert.match(refused.ok ? '' : refused.error, /vertical-1080/)
 })
+
+test('the canvas preset in the UI refits clips exactly as set_canvas does — one implementation', async () => {
+  // Before, `setCanvasPreset` set width and height alone: the clip kept its 16:9 framing inside
+  // a 9:16 frame, while the agent's set_canvas refitted it. Both now go through resizeCanvas.
+  seed()
+  const viaTool = await call('set_canvas', { preset: 'vertical-1080' })
+  assert.equal(viaTool.ok, true, JSON.stringify(viaTool))
+  const toolLayout = useEditor.getState().project.timelines[0]!.tracks[0]!.items[0]!.layout
+
+  seed()
+  const before = useEditor.getState().project.timelines[0]!.tracks[0]!.items[0]!.layout
+  const past = useEditor.getState().past.length
+  const result = useEditor.getState().setCanvasPreset('vertical-1080')
+  assert.deepEqual(result, { refitted: 1 })
+  const timeline = useEditor.getState().project.timelines[0]!
+  assert.deepEqual([timeline.width, timeline.height], [1080, 1920])
+  const uiLayout = timeline.tracks[0]!.items[0]!.layout
+  assert.notDeepEqual(uiLayout, before, 'the clip was refitted, not left framed for the old canvas')
+  assert.deepEqual(uiLayout, toolLayout)
+  assert.equal(useEditor.getState().past.length, past + 1, 'one undo step')
+})
+
+test('a canvas with an odd side is refused with the even size to use; an even one is accepted', async () => {
+  seed()
+  const odd = await call('set_canvas', { width: 1081, height: 1920 })
+  assert.equal(odd.ok, false)
+  assert.match(odd.ok ? '' : odd.error, /even/)
+  assert.match(odd.ok ? '' : odd.error, /1082 × 1920/)
+  const after = useEditor.getState().project.timelines[0]!
+  assert.deepEqual([after.width, after.height], [1920, 1080], 'a refusal changes nothing')
+  const even = await call('set_canvas', { width: 1080, height: 1350 })
+  assert.equal(even.ok, true, JSON.stringify(even))
+})

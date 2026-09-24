@@ -11,6 +11,7 @@ import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } f
 import { clone, makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
+import { stillDurationFrames } from '../editing-prefs'
 
 type Actions = Pick<
   EditorActions,
@@ -116,9 +117,9 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         ? 'video'
         : 'audio'
 
-      // A still has no duration of its own, so it gets a sensible default rather than 0.
+      // A still has no duration of its own, so it gets the default from Settings › Editing.
       const naturalFrames =
-        asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : timeline.fps * 5
+        asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : stillDurationFrames(timeline.fps)
       const duration = Math.max(1, naturalFrames)
 
       const explicitTrack = trackId ? findTrack(timeline, trackId) : undefined

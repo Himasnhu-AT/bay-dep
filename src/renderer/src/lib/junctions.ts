@@ -26,6 +26,7 @@ import {
   type Track,
   type Transition
 } from '@shared/project'
+import { transitionLengthFrames } from '@/store/editing-prefs'
 
 /** How much source each side of a cut has to spend, and the longest transition that allows. */
 export interface JunctionRoom {
@@ -162,12 +163,13 @@ export function junctionsForTrack(project: Project, timeline: Timeline, track: T
 }
 
 /**
- * The length a transition gets when nobody chose one: about a second, or the most the cut can
- * take when that is less. `add_transition` with no `durationInFrames` and ⌘T both use it, so an
- * agent and a person adding "a transition" to the same cut get the same one.
+ * The length a transition gets when nobody chose one: Settings › Editing's transition length (a
+ * second unless changed), or the most the cut can take when that is less. `add_transition` with
+ * no `durationInFrames`, ⌘T and the transition dialog all use it, so an agent and a person
+ * adding "a transition" to the same cut get the same one.
  */
 export function defaultTransitionFrames(room: JunctionRoom, fps: number): Frames {
-  return Math.min(Math.round(fps), Math.max(2, room.capacityInFrames))
+  return Math.min(transitionLengthFrames(fps), Math.max(2, room.capacityInFrames))
 }
 
 /**

@@ -21,6 +21,7 @@ import {
 import { closeGap, useTimelineView } from '@/lib/timelineView'
 import { useDrag } from '@/lib/useDrag'
 import { newId, selectDuration, selectTimeline, useEditor } from '@/store/editor'
+import { editingPrefs } from '@/store/editing-prefs'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
 import { junctionsForTrack } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
@@ -278,7 +279,7 @@ export function Timeline(): ReactNode {
     return useEditor.subscribe((state, previous) => {
       if (state.playhead === previous.playhead) return
       apply(state.playhead)
-      if (!state.playing) return
+      if (!state.playing || !editingPrefs().followPlayhead) return
       const scroller = scrollRef.current
       if (!scroller) return
       const x = state.playhead * pixelsPerFrame

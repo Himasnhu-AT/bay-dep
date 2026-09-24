@@ -1290,12 +1290,53 @@ export function matchFrameRate(fps: number): FrameRateOption | undefined {
   return FRAME_RATES.find((rate) => Math.abs(rate.fps - fps) < 1e-6)
 }
 
+/**
+ * Named canvases, aspect first in the label so a narrow menu that truncates still shows the
+ * shape. The first entry is the default for a new timeline (`emptyTimeline`, persistence): keep
+ * it first, and append rather than reorder.
+ */
 export const CANVAS_PRESETS: CanvasPreset[] = [
-  { id: 'landscape-1080', label: '1920 × 1080 · 16:9', width: 1920, height: 1080, fps: 30 },
-  { id: 'vertical-1080', label: '1080 × 1920 · 9:16', width: 1080, height: 1920, fps: 30 },
-  { id: 'square-1080', label: '1080 × 1080 · 1:1', width: 1080, height: 1080, fps: 30 },
-  { id: 'landscape-4k', label: '3840 × 2160 · 4K', width: 3840, height: 2160, fps: 30 }
+  { id: 'landscape-1080', label: '16:9 · 1920 × 1080', width: 1920, height: 1080, fps: 30 },
+  { id: 'vertical-1080', label: '9:16 · 1080 × 1920', width: 1080, height: 1920, fps: 30 },
+  { id: 'square-1080', label: '1:1 · 1080 × 1080', width: 1080, height: 1080, fps: 30 },
+  { id: 'landscape-4k', label: '16:9 · 3840 × 2160 (4K)', width: 3840, height: 2160, fps: 30 },
+  { id: 'landscape-720', label: '16:9 · 1280 × 720', width: 1280, height: 720, fps: 30 },
+  { id: 'landscape-1440', label: '16:9 · 2560 × 1440', width: 2560, height: 1440, fps: 30 },
+  { id: 'portrait-1080', label: '4:5 · 1080 × 1350', width: 1080, height: 1350, fps: 30 },
+  { id: 'ultrawide-1080', label: '21:9 · 2560 × 1080', width: 2560, height: 1080, fps: 30 }
 ]
+
+/**
+ * How video and images are refitted when the canvas changes shape (`resizeCanvas`, `set_canvas`):
+ * `cover` fills the frame and may crop, `contain` shows all of it, `auto` covers unless that
+ * would cut away too much.
+ */
+export type CanvasFit = 'auto' | 'cover' | 'contain'
+
+/** The smallest and largest side a canvas may have, in pixels. */
+export const CANVAS_MIN_SIDE = 16
+export const CANVAS_MAX_SIDE = 8192
+
+/**
+ * Why a canvas size cannot be used, or null when it can. Even sides because H.264 and VP9 store
+ * colour at half resolution (4:2:0): an odd side cannot be encoded at the canvas's own size, and
+ * finding that out when the export fails is too late. `resizeCanvas` refuses with this, so the
+ * `set_canvas` tool and Project Settings say the same thing.
+ */
+export function checkCanvasSize(width: number, height: number): string | null {
+  if (!Number.isInteger(width) || !Number.isInteger(height)) {
+    return `A canvas is whole pixels; got ${width} × ${height}.`
+  }
+  if (width < CANVAS_MIN_SIDE || height < CANVAS_MIN_SIDE || width > CANVAS_MAX_SIDE || height > CANVAS_MAX_SIDE) {
+    return `A canvas side must be from ${CANVAS_MIN_SIDE} to ${CANVAS_MAX_SIDE} pixels; got ${width} × ${height}.`
+  }
+  if (width % 2 !== 0 || height % 2 !== 0) {
+    const w = width % 2 === 0 ? width : width + 1
+    const h = height % 2 === 0 ? height : height + 1
+    return `A canvas side must be an even number of pixels, because video encoders store colour at half size; ${width} × ${height} cannot be exported. Use ${w} × ${h}.`
+  }
+  return null
+}
 
 /**
  * A layout's position expressed from its chosen corner.

@@ -3,7 +3,7 @@ import { Trash2 } from 'lucide-react'
 import { formatTimecode, type TransitionDirection, type TransitionKind } from '@shared/project'
 import { Button, InlineAlert, NumberField, Select, Modal } from '@/components'
 import { useEditor } from '@/store/editor'
-import { whyNoRoom, type Junction } from '@/lib/junctions'
+import { defaultTransitionFrames, whyNoRoom, type Junction } from '@/lib/junctions'
 
 const KINDS: { value: TransitionKind; label: string }[] = [
   { value: 'cross-dissolve', label: 'Cross dissolve' },
@@ -53,7 +53,7 @@ export function TransitionDialog({
     const existing = junction.transition
     setKind(existing?.kind ?? 'cross-dissolve')
     setDirection(existing?.direction ?? 'left')
-    setRequested(existing?.durationInFrames ?? Math.min(20, Math.max(2, junction.capacityInFrames)))
+    setRequested(existing?.durationInFrames ?? defaultTransitionFrames(junction, fps))
   }, [junction?.key, junction?.transition?.id])
 
   if (!junction) return null

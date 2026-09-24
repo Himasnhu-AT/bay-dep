@@ -22,7 +22,6 @@ export interface TopBarProps {
   /** Back to the projects screen. The caller handles unsaved work. */
   onHome(): void
   onExport(): void
-  onSave(): void
   saving: boolean
 }
 
@@ -49,7 +48,7 @@ const THEME_LABEL: Record<ThemePreference, string> = {
 /** A region toggle's "on" state: a neutral fill, overriding IconButton's accent `active`. */
 const REGION_ON = 'aria-pressed:bg-surface-3 aria-pressed:text-ink-0 aria-pressed:hover:bg-surface-4'
 
-export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): ReactNode {
+export function TopBar({ onHome, onExport, saving }: TopBarProps): ReactNode {
   const name = useEditor((state) => state.project.name)
   const dirty = useEditor((state) => state.dirty)
   const canUndo = useEditor((state) => state.past.length > 0)
@@ -196,19 +195,22 @@ export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): React
         className="no-drag"
       />
 
-      {/* The save state is also the Save button; the tooltip is what says so. */}
-      <Tooltip label="Save" shortcut={shortcutOf('file.save')}>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving}
+      {/* The save state is a status, not a button: it read as text and was one, so nothing said
+          it could be pressed. Save is ⌘S and File › Save; the tooltip names the key. The slot is
+          a fixed width, right-aligned, so "Saved" ↔ "Unsaved changes" moves nothing beside it. */}
+      <Tooltip
+        label={saving ? 'Saving' : dirty ? 'Not saved yet' : 'Everything is saved'}
+        shortcut={dirty && !saving ? shortcutOf('file.save') : undefined}
+      >
+        <span
+          role="status"
           className={cn(
-            'no-drag t-press rounded-sm px-2 py-1 text-[11px] tabular-nums active:scale-[0.96]',
-            dirty ? 'text-ink-1 hover:bg-surface-3 hover:text-ink-0' : 'text-ink-2 hover:bg-surface-3'
+            'no-drag inline-block w-24 shrink-0 truncate text-right text-[11px] tabular-nums select-none',
+            dirty ? 'text-ink-1' : 'text-ink-2'
           )}
         >
           {saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}
-        </button>
+        </span>
       </Tooltip>
 
       <Tooltip label="Export" shortcut={shortcutOf('file.export')}>

@@ -80,7 +80,19 @@ interface Job {
 
 const jobs = new Map<string, Job>()
 
+/**
+ * Every path an export in this session finished writing. Reveal and Open act only on these, so
+ * the renderer can show the file it just made and nothing else.
+ */
+const delivered = new Set<string>()
+
+export function wasDelivered(outputPath: string): boolean {
+  return delivered.has(outputPath)
+}
+
 function emit(job: Job, progress: Omit<ExportProgress, 'jobId'>): void {
+  // Recorded here, the one place every `done` passes, rather than at each of its three sites.
+  if (progress.stage === 'done' && progress.outputPath) delivered.add(progress.outputPath)
   if (job.sender.isDestroyed()) return
   job.sender.send(IPC.exportProgress, { jobId: job.id, ...progress } satisfies ExportProgress)
 }
