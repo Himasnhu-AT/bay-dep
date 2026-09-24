@@ -2,7 +2,7 @@
 
 import type { User } from "firebase/auth";
 import { useCallback, useEffect, useState } from "react";
-import { ActionButton } from "@/components/layout";
+import { ActionButton, Field } from "@/components/layout";
 import { SignIn } from "@/components/access/SignIn";
 import { SignedInAs } from "@/components/access/Waitlist";
 import { useAccount } from "@/components/access/useAccount";
@@ -10,9 +10,12 @@ import {
   approve,
   explain,
   type Grant,
+  grant,
   isAdmin,
+  isGrantableEmail,
   listGrants,
   listWaitlist,
+  normalizeEmail,
   revoke,
   type WaitlistEntry,
 } from "@/lib/access";
@@ -56,6 +59,7 @@ function Lists({ admin }: { admin: User }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [grantEmail, setGrantEmail] = useState("");
 
   const reload = useCallback(async () => {
     const [w, g] = await Promise.allSettled([listWaitlist(), listGrants()]);
@@ -104,6 +108,30 @@ function Lists({ admin }: { admin: User }) {
     }
   };
 
+  const doGrant = async () => {
+    const address = normalizeEmail(grantEmail);
+    setNotice(null);
+    if (!isGrantableEmail(address)) {
+      setNotice("That does not look like an email address. Check it and try again.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await grant(admin, address);
+      setNotice(
+        result === "granted"
+          ? `Granted access to ${address}.`
+          : `${address} already has access. Nothing was changed.`,
+      );
+      if (result === "granted") setGrantEmail("");
+      await reload();
+    } catch (err) {
+      setNotice(`Access was not granted. ${explain(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doRevoke = async (email: string) => {
     if (!window.confirm(`Remove access for ${email}? The app stops working for them at its next check.`)) {
       return;
@@ -128,6 +156,30 @@ function Lists({ admin }: { admin: User }) {
           {notice}
         </p>
       ) : null}
+
+      <form
+        noValidate
+        data-state="grant-form"
+        className="mb-20 max-w-[60ch]"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void doGrant();
+        }}
+      >
+        <Field
+          id="grant-email"
+          label="Grant access to an email"
+          type="email"
+          autoComplete="off"
+          placeholder="friend@example.com"
+          value={grantEmail}
+          onChange={setGrantEmail}
+          required
+        />
+        <ActionButton type="submit" className="mt-8" disabled={busy}>
+          Grant access
+        </ActionButton>
+      </form>
 
       <section data-state="admin-lists">
         <div className="flex flex-wrap items-baseline justify-between gap-5">
@@ -213,7 +265,7 @@ function Lists({ admin }: { admin: User }) {
                 <p className="mt-2 text-xs text-muted">
                   {g.via === "referral"
                     ? `Referred by ${g.referrerEmail || "another user"}`
-                    : "Approved from the waitlist"}
+                    : "Granted by the owner"}
                 </p>
                 <ActionButton
                   quiet

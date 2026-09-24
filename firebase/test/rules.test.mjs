@@ -208,6 +208,34 @@ describe('waitlist', () => {
   })
 })
 
+// The website's /admin "Grant access" form: a direct grant with no waitlist
+// entry behind it, the list of grants, and Revoke.
+describe('admin grant form', () => {
+  const adminGrant = (who) => ({
+    email: who.email,
+    via: 'admin',
+    grantedBy: ADMIN.uid,
+    grantedAt: serverTimestamp(),
+  })
+
+  test('the admin grants an email that never joined the waitlist; an unverified owner cannot', async () => {
+    await assertFails(setDoc(doc(as(ADMIN, { verified: false }), 'access', CAROL.email), adminGrant(CAROL)))
+    await assertSucceeds(setDoc(doc(as(ADMIN), 'access', CAROL.email), adminGrant(CAROL)))
+    const mine = await assertSucceeds(getDoc(doc(as(CAROL), 'access', CAROL.email)))
+    assert.equal(mine.exists(), true)
+  })
+
+  test('the admin lists grants and revokes one; nobody else lists', async () => {
+    await approved(ALICE)
+    const snap = await assertSucceeds(getDocs(collection(as(ADMIN), 'access')))
+    assert.deepEqual(snap.docs.map((d) => d.id), [ALICE.email])
+    await assertFails(getDocs(collection(as(ALICE), 'access')))
+    await assertSucceeds(deleteDoc(doc(as(ADMIN), 'access', ALICE.email)))
+    const gone = await assertSucceeds(getDoc(doc(as(ALICE), 'access', ALICE.email)))
+    assert.equal(gone.exists(), false)
+  })
+})
+
 // ---------------------------------------------------------------------------
 
 describe('access', () => {

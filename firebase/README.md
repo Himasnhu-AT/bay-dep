@@ -54,7 +54,8 @@ await b.commit()
 ```
 
 Revoking a grant means deleting `access/{email}`. The admin can also create a grant directly,
-without a waitlist entry, and can reset a user's counter by updating `users/{uid}`.
+without a waitlist entry (the admin page's "Grant access" form writes exactly the `access` doc
+above, alone), and can reset a user's counter by updating `users/{uid}`.
 
 ## Commands
 
