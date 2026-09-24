@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { DepthFallback } from "@/components/DepthFallback";
 import { Reveal } from "@/components/Reveal";
+import { BeforeAfter } from "@/components/app/BeforeAfter";
 import { ScrollSequence } from "@/components/app/ScrollSequence";
 import {
   ActionLink,
@@ -20,11 +21,11 @@ import { product } from "@/lib/product";
  *
  * OWN-WORLD: paper (#f5f1e8), ink, one brass accent, rules where a book rules.
  * Set into it, one dark plate carrying the app's own theme value for value, in
- * the system UI face. Two worlds, one seam, nothing in between.
+ * the app's own face. Two worlds, one seam, nothing in between.
  *
  * STORY: an agent edits the document you are looking at, through the same
- * commands your clicks produce. The visitor watches a real reel get built, then
- * reads what is honestly missing.
+ * commands your clicks produce. The visitor watches a real edit get made, drags
+ * a line across what went in and what came out, then reads what is missing.
  *
  * FIRST VIEWPORT: eyebrow, display headline, one lead, brass rule; the plate's
  * top edge already entering below it.
@@ -141,17 +142,61 @@ export default function Home() {
 
           <Reveal delay={0.1}>
             <p className="mt-8 max-w-[74ch] text-base text-ink-soft">
-              Below is that request being carried out, one step per scroll. On
-              the left is the conversation with your agent and the calls it
-              makes. On the right is {product.name} itself, with the clips
-              landing on the timeline as they are made. Neither side is sped up
-              or rearranged, and the reel at the end is one that exists.
+              Below is that request being carried out, one step per scroll, in{" "}
+              {product.name}&rsquo;s own window. The agent panel on the left is
+              where you typed it and where each call appears as it runs; the
+              clips land on the timeline beside it as they are made. The edit
+              is real: four stock clips, cut, graded and mixed by the agent
+              through the app&rsquo;s own tools, in this order, and rendered.
             </p>
           </Reveal>
         </Wrap>
       </section>
 
       <ScrollSequence />
+
+      {/* The same edit, as a picture you can check: what went in, and what came out. */}
+      <section className="pt-24">
+        <Wrap>
+          <Reveal>
+            <h2 className="max-w-[24ch] font-serif text-section font-normal text-ink">
+              What went in, and what came out.
+            </h2>
+            <p className="mt-3 max-w-[62ch] text-base text-ink-soft">
+              The four clips as they were downloaded, and the edit the agent made
+              of them. Drag the line across the frame.
+            </p>
+          </Reveal>
+          <Reveal delay={0.1}>
+            <div className="mt-8">
+              <BeforeAfter />
+            </div>
+          </Reveal>
+          <p id="credits" className="mt-6 max-w-[80ch] text-xs leading-relaxed text-muted">
+            Footage from Pexels, used under the{" "}
+            <a href="https://www.pexels.com/license/" className="underline underline-offset-2 hover:text-ink">
+              Pexels licence
+            </a>
+            :{" "}
+            <a href="https://www.pexels.com/video/person-walking-on-beach-shore-during-sunrise-6981405/" className="underline underline-offset-2 hover:text-ink">
+              Mikhail Nilov
+            </a>
+            ,{" "}
+            <a href="https://www.pexels.com/video/man-walking-on-beach-during-sunrise-10325661/" className="underline underline-offset-2 hover:text-ink">
+              Karma Rayshar
+            </a>
+            ,{" "}
+            <a href="https://www.pexels.com/video/waves-crashing-to-the-rocks-2053565/" className="underline underline-offset-2 hover:text-ink">
+              Elia Clerici
+            </a>{" "}
+            and{" "}
+            <a href="https://www.pexels.com/video/top-view-of-ocean-waves-crashing-on-beach-shore-5646564/" className="underline underline-offset-2 hover:text-ink">
+              Eduardo Cano Photo Co.
+            </a>
+            {" "}The music and the surf were made for this page.
+          </p>
+        </Wrap>
+      </section>
 
       <section className="pt-24 pb-28">
         <Wrap>

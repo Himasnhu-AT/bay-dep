@@ -12,47 +12,43 @@
   --color-brass-deep: #806331;
   --color-line: #d9d1bf;
 
-  /* The plate. These are not new brand colours; they are the app's own theme,
-     copied value for value from rust/crates/bay-ui/src/theme.rs so the plate is
-     a re-creation rather than an interpretation. If the app's theme changes,
-     these change with it. Measured against app-panel: text 14.6:1, muted 5.3:1,
-     accent 5.7:1, all passing AA. See DESIGN.md. */
-  --color-app-bg: #0f0f14;
-  --color-app-panel: #16161d;
-  --color-app-panel-alt: #1d1d26;
-  --color-app-lane: #121218;
-  --color-app-border: #2a2a36;
-  --color-app-text: #e7e7ee;
-  --color-app-muted: #8a8a9a;
-  --color-app-accent: #5b8cff;
-  --color-app-selected: #2d3a66;
-  --color-app-selected-border: #8fb0ff;
-
-  /* Clip fill per element kind, from theme.rs `element_color`. Named `elem-`
-     and not `clip-`: `--color-clip-text` would generate `bg-clip-text`, which
-     collides with Tailwind's own background-clip utility and silently wins,
-     leaving every Text clip unfilled. */
-  --color-elem-video: #33628f;
-  --color-elem-image: #7a4f95;
-  --color-elem-text: #8f6a33;
-  --color-elem-audio: #2f8f63;
-  --color-elem-shape: #444455;
-
-  /* The reel being built inside the plate carries its own measured ground and
-     track, from docs/native/reel-recipe.md. The track is used at full opacity:
-     the recipe measured #606070 at 3.12:1 and recorded that alpha defeats the
-     measurement, so a faded track would reproduce the exact defect it warns
-     about and leave the bars with no denominator. */
-  --color-reel-ground: #0e0e12;
-  --color-reel-track: #606070;
+  /* The plate. These are not new brand colours; they are the app's own dark
+     theme, copied value for value from the `@theme static` block in
+     ../src/renderer/src/styles.css, each under the app's own name with an
+     `app-` prefix. If the app's theme changes, these change with it, and the
+     repository's `pnpm test` fails until they do (src/shared/website-plate
+     .test.ts compares the two files). Contrast is measured in DESIGN.md. */
+  --color-app-surface-0: #121212;
+  --color-app-surface-1: #181818;
+  --color-app-surface-2: #212121;
+  --color-app-surface-3: #2a2a2a;
+  --color-app-surface-4: #333333;
+  --color-app-ink-0: #ededed;
+  --color-app-ink-1: #a1a1a1;
+  --color-app-ink-2: #8a8a8a;
+  --color-app-ink-3: #4a4a4a;
+  --color-app-line: #262626;
+  --color-app-line-strong: #333333;
+  --color-app-accent: #d9773f;
+  --color-app-playhead: #f5f5f5;
+  --color-app-success: #3dba7e;
+  --color-app-on-media: #e8eaed;
+  --color-app-clip-video: #2c3a4a;
+  --color-app-clip-video-edge: #3d5166;
+  --color-app-clip-audio: #25382f;
+  --color-app-clip-audio-edge: #356047;
+  --color-app-waveform: #5fd39a;
 
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --font-serif: var(--font-fraunces), Georgia, serif;
-  /* The plate renders in the system UI face, because that is what the app is
-     drawn in on the machine. It is deliberately not the site's face. */
-  --font-app: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-    sans-serif;
+  /* The plate is set in the app's own faces. The app draws its interface in
+     Inter, which the site already carries; its monospace is JetBrains Mono,
+     which the site does not load, so the plate falls through to the app's own
+     fallback, the system monospace, rather than fetch a font for a few labels. */
+  --font-app: var(--font-inter), ui-sans-serif, -apple-system, sans-serif;
+  --font-app-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
 
   /* Type scale. Every size on the site is one of these six. */
   --text-eyebrow: 11px;
@@ -243,6 +239,78 @@ body {
       animation: depth-drift linear both;
       animation-timeline: view(block);
       animation-range: cover 0% cover 100%;
+    }
+  }
+}
+
+/*
+ * The plate. See DESIGN.md, "The plate", under Motion.
+ *
+ * Four arrivals, each played once when its element first appears as a step
+ * lands, and each a transform or an opacity so the compositor runs it:
+ *
+ * plate-in    an entry in the agent panel, a track, an inspector section:
+ *             6px up out of nothing, the site's arrival at the app's scale.
+ * plate-land  a clip set down on its lane: 8px of fall, faster than plate-in,
+ *             because it is placed rather than written.
+ * plate-key   a keyframe diamond, grown from its point.
+ * plate-wave  a waveform opening out from its centre line once the clip is down.
+ *
+ * And one continuous motion, the playhead, which is the only thing tied to
+ * the scroll position rather than to the step: its keyframes are written from
+ * the sequence (playheadKeyframes in src/lib/sequence.ts) into the page, and
+ * run on the pinned section's view timeline, the one [data-depth-root] names.
+ * Where scroll timelines are missing, ScrollSequence moves it from the same
+ * curve in its rAF-throttled scroll handler.
+ */
+@keyframes plate-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+@keyframes plate-land {
+  from {
+    opacity: 0;
+    translate: 0 -8px;
+  }
+}
+
+@keyframes plate-key {
+  from {
+    scale: 0;
+  }
+}
+
+@keyframes plate-wave {
+  from {
+    scale: 1 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .plate-in {
+    animation: plate-in 0.45s var(--ease-paper) both;
+  }
+
+  .plate-land {
+    animation: plate-land 0.35s var(--ease-paper) both;
+  }
+
+  .plate-key {
+    animation: plate-key 0.4s var(--ease-paper) both;
+  }
+
+  .plate-wave {
+    animation: plate-wave 0.7s var(--ease-paper) 0.15s both;
+  }
+
+  @supports (animation-timeline: view()) {
+    .plate-playhead {
+      animation: plate-playhead linear both;
+      animation-timeline: --depth-root;
+      animation-range: contain 0% contain 100%;
     }
   }
 }

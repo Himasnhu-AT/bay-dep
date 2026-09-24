@@ -1,407 +1,702 @@
-import { AgentChat } from "@/components/app/AgentChat";
+import type { ReactNode } from "react";
 import {
-  LANES,
+  Bot,
+  ChevronFirst,
+  ChevronLast,
+  ChevronLeft,
+  ChevronRight,
+  Diamond,
+  Eye,
+  Film,
+  FolderOpen,
+  House,
+  LayoutTemplate,
+  Link2,
+  LockOpen,
+  Moon,
+  Music,
+  Music2,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  Play,
+  Redo2,
+  RotateCcw,
+  Scissors,
+  Settings,
+  SkipBack,
+  SkipForward,
+  Sparkles,
+  Trash2,
+  Type,
+  Undo2,
+  Upload,
+  Video,
+  Volume2,
+  VolumeX,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+import { AgentPanel } from "@/components/app/AgentPanel";
+import {
+  PEAKS,
   REEL,
+  STILLS,
+  VIEW_FRAMES,
   stateAt,
-  type ClipKind,
-  type FrameState,
+  timecode,
+  type Clip,
+  type Grade,
 } from "@/lib/sequence";
 
 /**
- * A re-creation of the editor, first built from the Rust UI (rust/crates/bay-ui/,
- * now only at the `rust-engine-final` tag). The panel order
- * (toolbar, scene bar, media | preview | inspector, timeline), the button set,
- * the inspector fields and the `● Claude · <tool>` chip are the app's, and the
- * palette is theme.rs value for value. It is not a screen capture and the page
- * captions it as a re-creation.
+ * The editor as it is today, re-created from its own source: the layout in
+ * src/renderer/src/App.tsx (top bar; rail, side panel, preview over transport,
+ * inspector; timeline; status bar), the sizes in the editor components (a 44px
+ * top bar and rail, a 148px track header, 58px video and 46px audio tracks), the
+ * labels as the app prints them, and the palette from its styles.css, token for
+ * token. The chrome is drawn; the pictures in it are real: the preview shows
+ * frames bay rendered at each state of the edit, and the clips carry filmstrips
+ * of their sources, as the app's do. The caption says which is which.
  *
- * Every breakpoint here is a container query, not a viewport one. The plate does
- * not fill the window: it sits in a grid column beside the notes, so a viewport
- * breakpoint would hand a 720px plate the button set meant for 1280px and clip
- * the very control the beat is about.
+ * Every breakpoint here is a container query on the named container `plate`.
+ * The plate sits in a column that is a fraction of the window, so a viewport
+ * breakpoint would hand a narrow plate the layout meant for a wide one.
  *
- * Everything is driven by one number, the beat index, so the same markup serves
- * the scrolled sequence, the reduced-motion state and the no-script state.
+ * Everything is driven by one number, the step, so the same markup serves the
+ * scrolled sequence, the reduced-motion state and the no-script state. The one
+ * thing that moves continuously is the playhead, on the compositor: see
+ * `plate-playhead` in globals.css.
  */
 
-const CLIP_FILL: Record<ClipKind, string> = {
-  Text: "bg-elem-text",
-  Shape: "bg-elem-shape",
-  Audio: "bg-elem-audio",
-};
+const pct = (frames: number) => `${((frames / VIEW_FRAMES) * 100).toFixed(3)}%`;
 
-/** Seconds to a percentage of the timeline's width. */
-const pct = (seconds: number) => `${(seconds / REEL.seconds) * 100}%`;
-
-function clock(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  const cs = Math.round((seconds % 1) * 100);
-  return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
-}
-
-function Button({
-  label,
-  enabled = true,
-  active = false,
-}: {
-  label: string;
-  enabled?: boolean;
-  active?: boolean;
-}) {
+function Icon({ children, active = false }: { children: ReactNode; active?: boolean }) {
   return (
     <span
-      className={`rounded-[3px] border px-2 py-1 text-[11px] whitespace-nowrap transition-colors duration-300 ${
-        active
-          ? "border-app-selected-border bg-app-selected text-app-text"
-          : enabled
-            ? "border-app-border bg-app-panel-alt text-app-text"
-            : "border-app-border/60 bg-app-panel text-app-muted/45"
+      className={`grid size-7 shrink-0 place-items-center rounded-[4px] ${
+        active ? "bg-app-surface-3 text-app-accent" : "text-app-ink-1"
       }`}
     >
-      {label}
+      {children}
     </span>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function TopBar({ edited }: { edited: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 py-[4px]">
-      <span className="text-[11px] text-app-muted">{label}</span>
-      <span className="font-mono text-[11px] text-app-text tabular-nums">
-        {value}
+    <div className="relative flex h-11 shrink-0 items-center gap-2 border-b border-app-line bg-app-surface-1 px-3">
+      {/* The traffic lights of a macOS window, which the app leaves room for. */}
+      <span aria-hidden className="mr-3 hidden gap-2 @3xl/plate:flex">
+        <span className="size-3 rounded-full bg-app-surface-4" />
+        <span className="size-3 rounded-full bg-app-surface-4" />
+        <span className="size-3 rounded-full bg-app-surface-4" />
       </span>
+      <Icon>
+        <House aria-hidden className="size-4" />
+      </Icon>
+      <span className="text-[13px] font-semibold text-app-ink-0">bay</span>
+      <span aria-hidden className="h-4 w-px bg-app-line-strong" />
+      <span className={edited ? "text-app-ink-1" : "text-app-ink-3"}>
+        <Undo2 aria-hidden className="size-4" />
+      </span>
+      <span className="text-app-ink-3">
+        <Redo2 aria-hidden className="size-4" />
+      </span>
+
+      <span className="absolute left-1/2 hidden -translate-x-1/2 text-[13px] font-medium text-app-ink-0 @2xl/plate:block">
+        {REEL.title}
+      </span>
+
+      <div className="ml-auto flex items-center gap-1.5">
+        <span className="hidden items-center gap-0.5 rounded-[6px] bg-app-surface-2 p-0.5 @4xl/plate:flex">
+          <Icon>
+            <PanelLeft aria-hidden className="size-4" />
+          </Icon>
+          <Icon>
+            <PanelBottom aria-hidden className="size-4" />
+          </Icon>
+          <Icon>
+            <PanelRight aria-hidden className="size-4" />
+          </Icon>
+        </span>
+        <span className="hidden @4xl/plate:contents">
+          <Icon>
+            <Moon aria-hidden className="size-4" />
+          </Icon>
+          <Icon>
+            <Settings aria-hidden className="size-4" />
+          </Icon>
+        </span>
+        <span
+          data-on={edited ? "" : undefined}
+          className="hidden px-1 text-[12px] text-app-ink-1 opacity-0 transition-opacity duration-500 data-[on]:opacity-100 @2xl/plate:inline"
+        >
+          Unsaved changes
+        </span>
+        <span className="flex items-center gap-1.5 rounded-[6px] bg-app-accent px-2.5 py-1 text-[12px] font-medium text-white">
+          <Upload aria-hidden className="size-3.5" />
+          Export
+        </span>
+      </div>
     </div>
   );
 }
 
-/** The reel itself, at 1080x1920, letterboxed into the preview the way fit_contain leaves it. */
-function ReelFrame({ frame }: { frame: FrameState }) {
-  const showTitle = frame === "title" || frame === "chart" || frame === "close";
-  const showChart = frame === "chart" || frame === "close";
-  const showClose = frame === "close";
+function Rail() {
+  const pages = [Bot, FolderOpen, Type, LayoutTemplate, Sparkles, Upload];
+  return (
+    <div className="hidden w-11 shrink-0 flex-col items-center gap-1 border-r border-app-line bg-app-surface-1 py-2 @2xl/plate:flex">
+      {pages.map((P, i) => (
+        <span key={i} className="relative flex w-full justify-center">
+          {i === 0 ? (
+            <span
+              aria-hidden
+              className="absolute top-1/2 left-0 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-app-accent"
+            />
+          ) : null}
+          <Icon active={i === 0}>
+            <P aria-hidden className="size-4" />
+          </Icon>
+        </span>
+      ))}
+    </div>
+  );
+}
 
-  // Return drag under the standard approximation, drag = sigma squared / 2.
-  const bars = [
-    { sigma: "10%", drag: 0.5 },
-    { sigma: "20%", drag: 2.0 },
-    { sigma: "30%", drag: 4.5 },
-    { sigma: "40%", drag: 8.0 },
-  ];
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-[3px] text-[11px]">
+      <span className="text-app-ink-2">{label}</span>
+      <span className="truncate text-app-ink-0 tabular-nums">{value}</span>
+    </div>
+  );
+}
 
+function Field({ label, value, unit, keyed }: { label: string; value: string; unit?: string; keyed?: boolean }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-[4px] border border-app-line-strong bg-app-surface-2 px-2 text-[11px]">
+        <span className="text-app-ink-2">{label}</span>
+        <span className="ml-auto text-[12px] text-app-ink-0 tabular-nums">{value}</span>
+        {unit ? <span className="text-app-ink-2">{unit}</span> : null}
+      </span>
+      {keyed !== undefined ? (
+        <Diamond
+          aria-hidden
+          className={`size-3 shrink-0 ${keyed ? "fill-app-accent text-app-accent" : "text-app-ink-2"}`}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** One of the app's labelled sliders: caption, track with its fill and thumb, live value. */
+function Slider({ label, at, value }: { label: string; at: number; value: string }) {
+  const p = Math.min(1, Math.max(0, at));
+  return (
+    <div className="flex items-center gap-2 py-[5px] text-[11px]">
+      <span className="w-16 shrink-0 text-app-ink-1">{label}</span>
+      <span className="relative h-[3px] flex-1 overflow-hidden rounded-full bg-app-surface-4">
+        {/* The fill is a scale of a full-width bar and the thumb rides on it,
+            so a value changing moves them on the compositor. */}
+        <span
+          className="absolute inset-0 origin-left rounded-full bg-app-accent transition-transform duration-500 ease-paper"
+          style={{ transform: `scaleX(${p})` }}
+        />
+      </span>
+      <span className="w-12 shrink-0 text-right text-app-ink-1 tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
+  return (
+    <div className="border-b border-app-line px-3 py-2.5">
+      <div className="mb-2 flex items-center">
+        <p className="text-[11px] font-semibold tracking-[0.06em] text-app-ink-1 uppercase">{title}</p>
+        {aside ? <span className="ml-auto flex items-center gap-1 text-app-ink-1">{aside}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const signed = (v: number, digits: number) => (v === 0 ? (0).toFixed(digits) : `${v > 0 ? "+" : ""}${v.toFixed(digits)}`);
+
+/** The Grade section, with the app's ranges (GradeSection.tsx): temperature ±1000 K, tint ±1, saturation 0..2, wheels. */
+function GradeSection({ g }: { g: Grade }) {
+  return (
+    <Section
+      title="Grade"
+      aside={
+        <>
+          <RotateCcw aria-hidden className="size-3" />
+          <span className="text-[11px]">Reset</span>
+        </>
+      }
+    >
+      <Slider label="Temp" at={(g.temp + 1000) / 2000} value={`${g.temp > 0 ? "+" : ""}${g.temp}K`} />
+      <Slider label="Tint" at={(g.tint + 1) / 2} value={signed(g.tint, 2)} />
+      <Slider label="Saturation" at={g.saturation / 2} value={`${Math.round(g.saturation * 100)}%`} />
+      <div className="h-1.5" />
+      <Slider label="Lift" at={(g.lift + 0.2) / 0.4} value={signed(g.lift, 3)} />
+      <Slider label="Gamma" at={g.gamma + 0.5} value={signed(g.gamma, 3)} />
+      <Slider label="Gain" at={g.gain + 0.5} value={signed(g.gain, 3)} />
+      <div className="h-1.5" />
+      <Slider label="Halation" at={0} value="0%" />
+      <Slider label="Vignette" at={g.vignette} value={`${Math.round(g.vignette * 100)}%`} />
+      <Slider label="Grain" at={0} value="0%" />
+    </Section>
+  );
+}
+
+function Inspector({ s }: { s: ReturnType<typeof stateAt> }) {
+  const header = (
+    <div className="flex h-9 shrink-0 items-center border-b border-app-line px-3">
+      <span className="text-[11px] font-semibold tracking-[0.06em] text-app-ink-0 uppercase">Inspector</span>
+    </div>
+  );
+  const c = s.selected;
+
+  if (!c) {
+    return (
+      <>
+        {header}
+        <div className="plate-in">
+          <Section title="Canvas">
+            <div className="flex flex-col gap-1.5">
+              <Field label="Preset" value="1920 × 1080 · 16:9" />
+              <Field label="Frame rate" value="30" />
+            </div>
+            <div className="mt-2">
+              <Row label="Resolution" value="1920 × 1080" />
+              <Row label="Tracks" value={String(s.tracks.length)} />
+            </div>
+          </Section>
+          <Section title="Selection">
+            <p className="text-[11px] leading-relaxed text-app-ink-2">
+              Select a clip on the timeline to edit its position, size, fades and speed. Shift-click to add to the
+              selection.
+            </p>
+          </Section>
+        </div>
+      </>
+    );
+  }
+
+  const keyed = Boolean(s.keys[c.id]);
+  const grade = s.grades[c.id];
+  const size = c.kind === "brf" ? "—" : c.id === "walk" || c.id === "walksound" ? "1280 × 720" : "1920 × 1080";
+  // The inspector is taller than the figure lets it be. Where the section the
+  // step is about sits below the fold, it is scrolled to, past Source and
+  // Timing, by a translate, so it moves on the compositor like the rest.
+  const scrolled = Boolean(s.panel);
+
+  return (
+    <>
+      {header}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div
+          key={`${c.id}-${s.panel ?? ""}`}
+          className="plate-in transition-transform duration-700 ease-paper"
+          style={{ transform: scrolled ? "translateY(-212px)" : undefined }}
+        >
+          <Section title="Source">
+            <Row label="Name" value={c.name} />
+            <Row label="Kind" value={c.kind === "brf" ? "brf" : (c.assetKind ?? c.kind)} />
+            {c.assetKind === "audio" ? null : <Row label="Size" value={size} />}
+            <Row label="Source length" value={`0:${String(Math.round(c.sourceSeconds)).padStart(2, "0")}`} />
+          </Section>
+          <Section title="Timing">
+            <div className="grid grid-cols-2 gap-1.5">
+              <Field label="In" value={String(c.from)} unit="f" />
+              <Field label="Len" value={String(c.duration)} unit="f" />
+            </div>
+            <div className="mt-2">
+              <Row label="Starts" value={timecode(c.from)} />
+              <Row label="Ends" value={timecode(c.from + c.duration)} />
+              <Row label="Duration" value={timecode(c.duration)} />
+            </div>
+          </Section>
+          {c.kind === "audio" ? (
+            <Section title="Audio & speed">
+              <Slider label="Volume" at={c.id === "surf" && c.fadeIn ? 0.25 : 0.5} value={c.id === "surf" && c.fadeIn ? "50%" : "100%"} />
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                <Field label="In" value={String(c.fadeIn ?? 0)} unit="f" />
+                <Field label="Out" value={String(c.fadeOut ?? 0)} unit="f" />
+              </div>
+            </Section>
+          ) : grade && s.panel === "grade" ? (
+            <GradeSection g={grade} />
+          ) : (
+            <Section
+              title="Transform"
+              aside={
+                keyed ? (
+                  <>
+                    <ChevronLeft aria-hidden className="size-3" />
+                    <ChevronRight aria-hidden className="size-3" />
+                  </>
+                ) : null
+              }
+            >
+              <div className="grid grid-cols-2 gap-1.5">
+                <Field label="X" value="0" unit="px" keyed={false} />
+                <Field label="Y" value="0" unit="px" keyed={false} />
+                <Field label="W" value="1920" unit="px" keyed={false} />
+                <Field label="H" value="1080" unit="px" keyed={false} />
+                <Field label="Rotate" value="0" unit="°" keyed={false} />
+                <Field label="Scale" value="100" unit="%" keyed={keyed} />
+              </div>
+            </Section>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** The app's waveform: a filled polygon of the source's peaks over the part of it the clip plays. */
+function Waveform({ clip }: { clip: Clip }) {
+  const data = PEAKS[clip.id];
+  if (!data) return null;
+  const span = Math.min(1, clip.duration / (clip.sourceFrames ?? clip.duration));
+  const half = 50;
+  const cols = 120;
+  const top: string[] = [];
+  const bottom: string[] = [];
+  for (let c = 0; c <= cols; c++) {
+    const ratio = (c / cols) * span;
+    const peak = (data.peaks[Math.min(data.peaks.length - 1, Math.floor(ratio * data.peaks.length))] ?? 0) / 100;
+    const a = Math.min(1, peak * data.scale) * (half - 1);
+    const x = ((c / cols) * 100).toFixed(2);
+    top.push(`${x},${(half - a).toFixed(1)}`);
+    bottom.push(`${x},${(half + a).toFixed(1)}`);
+  }
+  return (
+    <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="plate-wave absolute inset-0 size-full">
+      <polygon points={[...top, ...bottom.reverse()].join(" ")} fill="var(--color-app-waveform)" fillOpacity="0.45" />
+    </svg>
+  );
+}
+
+function ClipBody({
+  clip,
+  selected,
+  keys,
+  detached,
+}: {
+  clip: Clip;
+  selected: boolean;
+  keys?: number[];
+  detached: boolean;
+}) {
+  const audio = clip.kind === "audio";
+  const K = clip.kind === "brf" ? Sparkles : (clip.assetKind ?? clip.kind) === "video" ? Video : Music2;
+  const linked = detached && (clip.id === "walk" || clip.id === "walksound");
+  const fadeIn = (clip.fadeIn ?? 0) / clip.duration;
+  const fadeOut = (clip.fadeOut ?? 0) / clip.duration;
   return (
     <div
-      aria-hidden
-      // Its own container, and every size inside it is in `cqw`. The frame is a
-      // 1080x1920 canvas letterboxed into whatever room the preview has, which
-      // on a phone is a fraction of what it is on a laptop. Fixed pixel type
-      // would spill straight out of it.
-      className="@container relative h-full overflow-hidden bg-reel-ground"
-      style={{ aspectRatio: `${REEL.width} / ${REEL.height}` }}
+      className={`plate-land absolute top-1 bottom-1 overflow-hidden rounded-[4px] border ${
+        audio ? "bg-app-clip-audio" : "bg-app-clip-video"
+      } ${
+        selected
+          ? "border-app-accent ring-1 ring-app-accent"
+          : audio
+            ? "border-app-clip-audio-edge"
+            : "border-app-clip-video-edge"
+      }`}
+      style={{ left: pct(clip.from), width: pct(clip.duration) }}
     >
-      {frame === "empty" ? null : (
-        <div className="absolute inset-0 flex flex-col px-[7%] py-[9%]">
-          <div
-            data-on={showTitle ? "" : undefined}
-            className="opacity-0 transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] data-[on]:opacity-100"
-          >
-            <p className="text-[6.5cqw] font-medium tracking-[0.28em] text-app-accent uppercase">
-              Compounding
-            </p>
-            <p className="mt-[6%] text-[17cqw] leading-[1.05] font-semibold text-app-text">
-              Volatility
-              <br />
-              drag
-            </p>
-          </div>
-
-          <div className="mt-auto">
-            <div
-              data-on={showChart ? "" : undefined}
-              className="opacity-0 transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] data-[on]:opacity-100"
+      {clip.strip ? (
+        // The filmstrip: frames of the source, repeated along the clip at the lane's height.
+        <span
+          aria-hidden
+          className="absolute inset-0 bg-left bg-repeat-x"
+          style={{ backgroundImage: `url(/plate/strip-${clip.strip}.avif)`, backgroundSize: "auto 100%" }}
+        />
+      ) : null}
+      {audio ? <Waveform clip={clip} /> : null}
+      {/* Fades are geometry on the clip, the way the app draws them: a wedge. */}
+      {fadeIn > 0 ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 bg-black/45"
+          style={{ width: `${fadeIn * 100}%`, clipPath: "polygon(0 0, 100% 100%, 0 100%)" }}
+        />
+      ) : null}
+      {fadeOut > 0 ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 right-0 bg-black/45"
+          style={{ width: `${fadeOut * 100}%`, clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }}
+        />
+      ) : null}
+      {keys && keys.length > 0 ? (
+        <div aria-hidden className="absolute inset-x-0 bottom-0.5 h-2">
+          {keys.map((k, n) => (
+            <span
+              key={k}
+              className="absolute bottom-0 size-1.5 -translate-x-1/2"
+              style={{ left: `${(k / clip.duration) * 100}%` }}
             >
-              {/* Chart. Bars grow from the bottom edge, not from the middle.
-                  The track runs at full opacity: the recipe measured it at
-                  3.12:1 and recorded that alpha destroys that measurement. */}
-              <div className="flex h-[52cqw] items-end gap-[6%]">
-                {bars.map((b, i) => (
-                  <div key={b.sigma} className="relative h-full flex-1">
-                    <div className="absolute inset-0 bg-reel-track" />
-                    <div
-                      className="absolute inset-x-0 bottom-0 origin-bottom bg-app-accent transition-transform duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                      style={{
-                        height: `${(b.drag / 8) * 100}%`,
-                        transform: showChart ? "scaleY(1)" : "scaleY(0)",
-                        transitionDelay: `${120 + i * 90}ms`,
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-              {/* One grid: the axis, then captions and values under it. */}
-              <div className="mt-[3%] h-px w-full bg-reel-track" />
-              <div className="mt-[3%] flex gap-[6%]">
-                {bars.map((b) => (
-                  <div key={b.sigma} className="flex-1 text-center">
-                    <p className="font-mono text-[5.5cqw] text-app-muted">
-                      {b.sigma}
-                    </p>
-                    <p className="font-mono text-[6.5cqw] text-app-text">
-                      {b.drag.toFixed(1)}%
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div
-              data-on={showClose ? "" : undefined}
-              className="mt-[8%] opacity-0 transition-opacity duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] data-[on]:opacity-100"
-            >
-              <div className="h-px w-[26cqw] bg-app-accent" />
-              <p className="mt-[4%] font-mono text-[7.5cqw] text-app-text">
-                drag ≈ σ² / 2
-              </p>
-            </div>
-          </div>
+              <span
+                className="plate-key block size-1.5 rotate-45 border border-black/50 bg-app-accent"
+                style={{ animationDelay: `${n * 70}ms` }}
+              />
+            </span>
+          ))}
         </div>
-      )}
+      ) : null}
+      <div className="relative flex h-full items-start gap-1 px-1.5 py-1">
+        <K aria-hidden className="mt-px size-3 shrink-0 text-app-on-media/70" />
+        <span
+          className={`truncate text-[11px] leading-tight font-medium text-app-on-media ${
+            clip.strip ? "-mx-0.5 rounded-[2px] bg-black/55 px-0.5" : ""
+          }`}
+        >
+          {clip.name}
+        </span>
+        {linked ? <Link2 aria-hidden className="mt-px size-3 shrink-0 text-app-on-media/80" /> : null}
+        {linked && clip.id === "walk" ? (
+          <VolumeX aria-hidden className="mt-px size-3 shrink-0 text-app-on-media/80" />
+        ) : null}
+      </div>
     </div>
   );
 }
 
-export function AppPlate({ step }: { step: number }) {
-  const state = stateAt(step);
-  const selected = LANES.flatMap((l) => l.clips).find(
-    (c) => c.name === state.selected,
-  );
+export function AppPlate({ step, live = false }: { step: number; live?: boolean }) {
+  const s = stateAt(step);
+  const clips = [...s.clips.values()];
+  // Clips that abut on V1 make a junction; the app marks each, quietly until it carries a transition.
+  const v1 = clips.filter((c) => c.track === "V1").sort((a, b) => a.from - b.from);
+  const junctions = v1
+    .slice(1)
+    .filter((c, i) => v1[i].from + v1[i].duration === c.from)
+    .map((c) => c.from);
+  // With a fifth track the lanes outgrow the panel, and it is scrolled to keep the new one in view.
+  const scrollLanes = s.tracks.length > 4;
 
   return (
     // The tip-in. Ruled along its top edge in brass rather than floated on a
-    // shadow: this is a plate bound into a printed page, not a window hovering
-    // over one, and the site does not use shadows.
-    <div className="@container border-t-2 border-t-brass">
-      <div className="flex flex-col overflow-hidden border border-app-border bg-app-bg font-app text-app-text @5xl:flex-row">
-        {/* The conversation and the editor, behind one frame. Side by side when
-            there is room, stacked under the editor when there is not, so the
-            editor stays the thing you look at first on a phone. Positioned, so a
-            long log clips inside the figure instead of stretching it. */}
-        <div className="relative order-2 h-[26vh] w-full shrink-0 border-t border-app-border @5xl:order-1 @5xl:h-auto @5xl:w-[336px] @5xl:border-t-0">
-          <div className="absolute inset-0">
-            <AgentChat step={step} />
-          </div>
-        </div>
+    // shadow: a plate bound into a printed page, not a window hovering over one.
+    <div className="@container/plate border-t-2 border-t-brass">
+      <div className="relative flex flex-col overflow-hidden border border-app-line bg-app-surface-0 font-app text-app-ink-0 antialiased">
+        <TopBar edited={s.edited} />
 
-        {/* Its own container: the editor pane is narrower than the figure, so
-            its panels must measure against this column and not the whole plate. */}
-        <div className="@container order-1 flex min-w-0 flex-1 flex-col @5xl:order-2">
-          {/* Toolbar. One row, the way the app draws it: the button run is allowed
-            to clip before it is allowed to wrap. */}
-          <div className="flex items-center gap-3 border-b border-app-border bg-app-panel px-3 py-2">
-            <div
-              className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
-              style={{
-                maskImage:
-                  "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
-              }}
-            >
-              {/* The status line lives here, before Save, and only when there is
-                something to say. In the app it is click-to-dismiss. */}
-              {state.status ? (
-                <span className="hidden max-w-[42%] shrink-0 truncate rounded-[3px] bg-app-panel-alt px-2 py-1 text-[11px] text-app-text @md:inline-block">
-                  {state.status}
-                </span>
-              ) : null}
-              <Button label="Save" />
-              <span className="hidden @2xl:contents">
-                <Button label="Export Frame" />
-                <Button label="Export Video" />
-              </span>
-              <span className="mx-0.5 h-4 w-px shrink-0 bg-app-border" />
-              <Button label="+ Text" />
-              <Button label="Delete" enabled={!!selected} />
-              <span className="hidden @xl:contents">
-                <Button label="Split" enabled={!!selected} />
-              </span>
-              <span className="hidden @4xl:contents">
-                <Button label="Duplicate" enabled={!!selected} />
-                <span className="mx-0.5 h-4 w-px shrink-0 bg-app-border" />
-                <Button label="Copy" enabled={!!selected} />
-                <Button label="Paste" enabled={false} />
-              </span>
-            </div>
-
-            {/* Undo, redo and the chip never clip. The sequence ends on undo, so it
-              has to be on screen at the width the sequence is read at. */}
-            <div className="flex shrink-0 items-center gap-1.5">
-              <Button
-                label="Undo"
-                enabled={state.canUndo}
-                active={state.undoPressed}
-              />
-              <Button label="Redo" enabled={false} />
-              <span
-                data-on={state.chip ? "" : undefined}
-                className="ml-1.5 rounded-full border border-app-accent/45 bg-app-accent/12 px-2.5 py-1 font-mono text-[11px] whitespace-nowrap text-app-accent opacity-0 transition-opacity duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] data-[on]:opacity-100"
-              >
-                ● Claude · {state.chip ?? "idle"}
-              </span>
-            </div>
-          </div>
-
-          {/* Scene bar */}
-          <div className="flex items-center gap-2 border-b border-app-border bg-app-panel-alt px-3 py-1.5 text-[11px]">
-            <span className="text-[11px] text-app-muted">SCENES</span>
-            <span className="rounded-[3px] border border-app-selected-border bg-app-selected px-2 py-0.5 text-app-text">
-              Scene 1
-            </span>
-            <span className="text-app-muted">Scene 2</span>
-            <span className="text-app-muted">＋ Scene</span>
-          </div>
-
-          {/* Media | Preview | Inspector */}
-          <div className="flex h-[20vh] @md:h-[236px] @xl:h-[300px]">
-            <div className="flex w-[116px] shrink-0 flex-col gap-1.5 border-r border-app-border bg-app-panel p-2 @lg:w-[186px] @lg:p-3">
-              <p className="text-[10px] tracking-[0.14em] text-app-muted uppercase">
-                Media
-              </p>
-              {[
-                ["Clip.mp4", "video"],
-                ["Logo.png", "image"],
-                ["Music.mp3", "audio"],
-              ].map(([name, kind]) => (
-                <div
-                  key={name}
-                  className="flex items-center gap-1.5 rounded-[3px] border border-app-border bg-app-panel-alt px-1.5 py-1 @lg:gap-2 @lg:px-2 @lg:py-1.5"
-                >
-                  <span
-                    className={`h-2.5 w-2.5 shrink-0 rounded-[2px] ${
-                      kind === "video"
-                        ? "bg-elem-video"
-                        : kind === "image"
-                          ? "bg-elem-image"
-                          : "bg-elem-audio"
-                    }`}
-                  />
-                  <span className="truncate text-[11px]">{name}</span>
-                </div>
-              ))}
-              <p className="mt-1 text-[10px] leading-snug text-app-muted">
-                Click to add at playhead
-              </p>
-            </div>
-
-            <div className="flex flex-1 items-center justify-center bg-app-bg p-3.5">
-              <div className="h-full ring-1 ring-app-border/70">
-                <ReelFrame frame={state.frame} />
+        <div className="flex min-h-0 flex-col @5xl/plate:flex-row">
+          <div className="order-2 flex min-w-0 @5xl/plate:order-1">
+            <Rail />
+            <div className="relative h-[27vh] w-full min-w-0 border-t border-app-line @5xl/plate:h-auto @5xl/plate:w-[300px] @5xl/plate:border-t-0 @5xl/plate:border-r">
+              <div className="absolute inset-0">
+                <AgentPanel step={step} />
               </div>
             </div>
-
-            <div className="hidden w-[216px] shrink-0 border-l border-app-border bg-app-panel p-3 @xl:block">
-              <p className="text-[10px] tracking-[0.14em] text-app-muted uppercase">
-                Inspector
-              </p>
-              {selected ? (
-                <div className="mt-2 divide-y divide-app-border/70">
-                  <InfoRow label="Name" value={selected.name} />
-                  <InfoRow label="Kind" value={selected.kind} />
-                  <InfoRow
-                    label="Start"
-                    value={`${selected.start.toFixed(2)}s`}
-                  />
-                  <InfoRow
-                    label="Duration"
-                    value={`${selected.duration.toFixed(2)}s`}
-                  />
-                  <InfoRow label="Opacity" value="100%" />
-                  <InfoRow label="Scale" value="1.00" />
-                  <InfoRow label="X" value="0.00" />
-                  <InfoRow label="Y" value="0.00" />
-                </div>
-              ) : (
-                <p className="mt-3 text-[11px] leading-snug text-app-muted">
-                  Select a clip to inspect it.
-                </p>
-              )}
-            </div>
           </div>
 
-          {/* Timeline */}
-          <div className="border-t border-app-border bg-app-panel">
-            {/* Ruler */}
-            <div className="flex items-stretch border-b border-app-border">
-              <div className="w-[58px] shrink-0 border-r border-app-border px-1.5 py-1 @xl:w-[64px] @xl:px-2">
-                <span className="font-mono text-[10px] text-app-muted tabular-nums">
-                  {clock(state.playhead)}
-                </span>
-              </div>
-              <div className="relative flex-1">
-                {[0, 5, 10, 15, 20].map((s) => (
-                  <span
-                    key={s}
-                    className="absolute top-1 font-mono text-[9px] text-app-muted tabular-nums"
-                    style={{ left: pct(s), transform: "translateX(2px)" }}
-                  >
-                    {s}s
+          <div className="order-1 flex min-w-0 flex-1 flex-col @5xl/plate:order-2">
+            {/* Preview over transport, beside the inspector. */}
+            <div className="flex min-h-0">
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex h-[21vh] items-center justify-center bg-app-surface-0 p-2.5 @md/plate:h-[210px] @4xl/plate:h-[240px]">
+                  <div className="relative aspect-video h-full max-w-full bg-black">
+                    {/* Frames bay rendered at each state of the edit, cross-faded as the state changes. */}
+                    {STILLS.map((f) => (
+                      // eslint-disable-next-line @next/next/no-img-element -- a static AVIF, lazily loaded, no optimiser to call.
+                      <img
+                        key={f}
+                        src={`/plate/still-${f}.avif`}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        data-on={s.frame === f ? "" : undefined}
+                        className="absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-500 ease-paper data-[on]:opacity-100"
+                      />
+                    ))}
+                    {s.frame === "empty" ? (
+                      <div className="absolute top-1/2 left-1/2 flex w-[200px] -translate-1/2 flex-col items-center gap-1.5 text-center">
+                        <Film aria-hidden className="size-4 text-app-ink-1" />
+                        <p className="text-[11px] text-app-ink-0">Nothing on the timeline yet</p>
+                        <p className="hidden text-[10px] leading-snug text-app-ink-2 @md/plate:block">
+                          Import media and click a clip to place it at the playhead.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex h-9 shrink-0 items-center gap-1.5 border-y border-app-line bg-app-surface-1 px-2 text-app-ink-1">
+                  <span className="hidden items-center gap-1.5 @xl/plate:flex">
+                    <ChevronFirst aria-hidden className="size-4" />
+                    <SkipBack aria-hidden className="size-4" />
                   </span>
-                ))}
+                  <Play aria-hidden className="size-4 text-app-ink-0" />
+                  <span className="hidden items-center gap-1.5 @xl/plate:flex">
+                    <SkipForward aria-hidden className="size-4" />
+                    <ChevronLast aria-hidden className="size-4" />
+                    <span className="mx-1 h-4 w-px bg-app-line-strong" />
+                    <Scissors aria-hidden className="size-4" />
+                  </span>
+                  <span className="mx-auto text-[13px] text-app-ink-0 tabular-nums">
+                    {timecode(s.playhead)}
+                    <span className="text-[11px] text-app-ink-2"> / {timecode(s.duration)}</span>
+                  </span>
+                  <span className="hidden items-center gap-2 @xl/plate:flex">
+                    <ZoomOut aria-hidden className="size-4" />
+                    <span className="relative h-1 w-20 rounded-full bg-app-surface-4">
+                      <span className="absolute inset-y-0 left-0 w-[52%] rounded-full bg-app-accent" />
+                    </span>
+                    <ZoomIn aria-hidden className="size-4" />
+                  </span>
+                </div>
+              </div>
+
+              {/* Positioned, so its sections clip at the preview's height instead
+                  of stretching the figure: the app scrolls this panel too. */}
+              <div className="relative hidden w-[248px] shrink-0 border-l border-app-line bg-app-surface-1 @4xl/plate:block">
+                <div className="absolute inset-0 flex flex-col overflow-hidden">
+                  <Inspector s={s} />
+                </div>
               </div>
             </div>
 
-            {/* Lanes */}
-            <div className="relative">
-              {LANES.map((lane) => (
-                <div key={lane.label} className="flex items-stretch">
-                  <div className="flex w-[58px] shrink-0 items-center border-r border-b border-app-border px-1.5 py-2 @xl:w-[64px] @xl:px-2">
-                    <span className="truncate text-[10px] text-app-muted">
-                      {lane.label}
+            {/* Timeline. A fixed height, the way its panel is: a track that
+                arrives takes empty room below the others instead of pushing
+                the figure taller. */}
+            <div className="relative h-[176px] overflow-hidden bg-app-surface-0 @xl/plate:h-[282px]">
+              <div className="relative z-10 flex h-[26px] border-b border-app-line bg-app-surface-0">
+                <div className="flex w-16 shrink-0 items-center border-r border-app-line px-2 @xl/plate:w-[148px]">
+                  <span className="hidden text-[11px] font-semibold tracking-[0.06em] text-app-ink-1 uppercase @xl/plate:inline">
+                    Timeline
+                  </span>
+                </div>
+                <div className="relative flex-1">
+                  {Array.from({ length: 10 }, (_, i) => i * 2).map((sec) => (
+                    <span
+                      key={sec}
+                      className={`absolute top-0 h-full border-l border-app-line-strong pl-1 text-[10px] leading-[18px] text-app-ink-2 tabular-nums ${
+                        sec % 4 === 0 ? "" : "hidden @xl/plate:block"
+                      }`}
+                      style={{ left: pct(sec * REEL.fps) }}
+                    >
+                      0:{String(sec).padStart(2, "0")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div
+                className="transition-transform duration-700 ease-paper"
+                style={{ transform: scrollLanes ? "translateY(-30px)" : undefined }}
+              >
+                {s.tracks.map((track) => {
+                  const video = track.kind === "video";
+                  return (
+                    <div key={track.id} className="plate-in flex">
+                      <div
+                        className={`flex w-16 shrink-0 flex-col justify-center gap-1 border-b border-l-2 border-b-app-line px-2 @xl/plate:w-[148px] ${
+                          video
+                            ? "h-9 border-l-app-clip-video-edge @xl/plate:h-[58px]"
+                            : "h-[30px] border-l-app-clip-audio-edge @xl/plate:h-[46px]"
+                        }`}
+                      >
+                        <span
+                          className={`self-start truncate rounded-[4px] px-1.5 py-px text-[11px] font-semibold text-app-on-media ${
+                            video ? "bg-app-clip-video-edge" : "bg-app-clip-audio-edge"
+                          }`}
+                        >
+                          {track.id}
+                        </span>
+                        <span className="hidden items-center gap-1.5 text-app-ink-1 @xl/plate:flex">
+                          <LockOpen aria-hidden className="size-3" />
+                          {video ? <Eye aria-hidden className="size-3" /> : null}
+                          <Volume2 aria-hidden className="size-3" />
+                          <Trash2 aria-hidden className="size-3" />
+                        </span>
+                      </div>
+                      <div className="relative min-w-0 flex-1 border-b border-app-line">
+                        {clips
+                          .filter((c) => c.track === track.id)
+                          .map((c) => (
+                            <ClipBody
+                              key={c.id}
+                              clip={c}
+                              selected={s.selected?.id === c.id}
+                              keys={s.keys[c.id]}
+                              detached={s.detached}
+                            />
+                          ))}
+                        {track.id === "V1"
+                          ? junctions.map((j) => {
+                              const on = s.transitions.includes(j);
+                              return (
+                                <span
+                                  key={`${j}-${on}`}
+                                  aria-hidden
+                                  className={`absolute top-1/2 z-10 flex h-3.5 min-w-3.5 -translate-1/2 items-center justify-center rounded-[2px] border ${
+                                    on
+                                      ? "plate-key border-app-accent/70 bg-app-accent/25 px-[3px] text-app-accent"
+                                      : "border-app-line-strong bg-app-surface-3 text-app-ink-1 opacity-40"
+                                  }`}
+                                  style={{ left: pct(j) }}
+                                >
+                                  {on ? (
+                                    <span className="text-[9px] leading-none tabular-nums">18</span>
+                                  ) : (
+                                    // The app's own mark for a cut with room to cross: two triangles meeting.
+                                    <svg viewBox="0 0 8 10" aria-hidden className="size-2">
+                                      <path d="M0 0 L4 5 L0 10 Z M8 0 L4 5 L8 10 Z" fill="currentColor" />
+                                    </svg>
+                                  )}
+                                </span>
+                              );
+                            })
+                          : null}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="flex h-[30px]">
+                  <div className="flex w-16 shrink-0 items-center gap-2 border-b border-app-line px-2 text-[11px] text-app-ink-2 @xl/plate:w-[148px]">
+                    <span className="hidden @xl/plate:inline">Add track</span>
+                    <span className="ml-auto hidden items-center gap-2 @xl/plate:flex">
+                      <Video aria-hidden className="size-3" />
+                      <Music aria-hidden className="size-3" />
                     </span>
                   </div>
-                  <div className="relative h-[21px] flex-1 border-b border-app-border bg-app-lane @md:h-[27px] @xl:h-[30px]">
-                    {lane.clips.map((clip, i) => {
-                      const on = state.clips.has(clip.name);
-                      const isSelected = state.selected === clip.name;
-                      return (
-                        <div
-                          key={clip.name}
-                          data-on={on ? "" : undefined}
-                          className={`absolute top-1 bottom-1 flex items-center overflow-hidden rounded-[3px] border px-1.5 opacity-0 transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] data-[on]:opacity-100 ${
-                            CLIP_FILL[clip.kind]
-                          } ${
-                            isSelected
-                              ? "border-app-selected-border"
-                              : "border-app-border"
-                          }`}
-                          style={{
-                            left: pct(clip.start),
-                            width: pct(clip.duration),
-                            transform: on ? "translateY(0)" : "translateY(5px)",
-                            transitionDelay: on ? `${i * 70}ms` : "0ms",
-                          }}
-                        >
-                          <span className="truncate text-[10px] text-app-text">
-                            {clip.name}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-
-              {/* Playhead. It moves rather than jumping, which is the one thing on
-                the plate that reads as the app being alive. */}
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-y-0 right-0 left-[58px] @xl:left-[64px]"
-              >
-                <div
-                  className="absolute inset-y-0 w-px bg-app-accent transition-[left] duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                  style={{ left: pct(state.playhead) }}
-                >
-                  <span className="absolute -top-px -left-[3px] h-[7px] w-[7px] rounded-[1px] bg-app-accent" />
+                  <div className="flex-1" />
                 </div>
               </div>
+
+              {/* The playhead. A layer as wide as the lanes, translated by the
+                  playhead's share of the view, so moving it is a transform and
+                  a percentage is a frame. */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 right-0 left-16 z-20 overflow-hidden @xl/plate:left-[148px]"
+              >
+                <div
+                  data-plate-playhead
+                  className={live ? "plate-playhead absolute inset-0" : "absolute inset-0"}
+                  // Live, the scroll owns it (globals.css, or ScrollSequence's
+                  // fallback). Still, it sits where the step leaves it.
+                  style={live ? undefined : { translate: `${pct(s.playhead)} 0` }}
+                >
+                  <span className="absolute inset-y-0 left-0 w-px bg-app-playhead" />
+                  <span className="absolute -top-px -left-[5px] size-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-app-playhead" />
+                </div>
+              </div>
+            </div>
+
+            <div className="hidden h-6 shrink-0 items-center gap-3 border-t border-app-line bg-app-surface-1 px-3 text-[11px] text-app-ink-2 tabular-nums @xl/plate:flex">
+              <span>fps 30</span>
+              <span>duration {timecode(s.duration)}</span>
+              <span>canvas 1920×1080</span>
+              <span>media {s.media}</span>
+              <span>selected {s.selected ? 1 : 0}</span>
             </div>
           </div>
         </div>

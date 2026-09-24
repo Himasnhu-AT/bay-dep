@@ -86,98 +86,108 @@ individual measurement being perfect.
 ## The plate
 
 The editor as it appears on the page, in `src/components/app/`. `AppPlate` draws one frame
-of the figure from a beat index; `AgentChat` draws the conversation down its left side;
-`ScrollSequence` decides which index.
+of the figure from a step index, `AgentPanel` draws the agent panel down its left side, and
+`ScrollSequence` decides which step. `BeforeAfter` is the figure after it (see below).
 
-**One step reveals one line.** The log fills from the top and rolls once it is full, and
-the newest line is the only one at full strength. Everything older sits at 55%, because the
-reader is being asked to connect one line to one change in the editor.
+**The plate is the app's window, as it is today.** It is re-created from the current
+source, not from memory and not from a screenshot: the layout in `../src/renderer/src/App.tsx`
+(top bar; icon rail, side panel, preview over transport, inspector; timeline; status bar),
+the sizes in the editor components (44px top bar and rail, 148px track header, 26px ruler,
+58px video and 46px audio tracks, 36px transport, 24px status bar), and the labels as the
+app prints them, down to `Nothing on the timeline yet`, `Unsaved changes`, `Add track`,
+`Show all 11` and the inspector's section names. The icons are the app's own, from
+`lucide-react` at the app's version. When the app's layout changes, this changes with it.
 
-**The figure has two panes because the product does.** The chat is your own client and the
-editor is the app, and the claim the page makes is about the seam between them. Showing
-one without the other leaves a reader guessing which half they are looking at. The chat is
-positioned rather than in flow, so a long log clips inside the figure instead of stretching
-it: the editor decides how tall the figure is.
+**The conversation is inside the window because the app now has one.** The agent panel is
+the app's side panel: your message in a bubble on the right, the agent's prose under it, one
+card per tool call with a check when it returns, and, at the end of a turn that changed the
+project, the Changes card with its Revert. The log fills from the top and, once full, keeps
+its newest entry in view the way the panel scrolls. That is done in CSS (a column pushed up
+by an auto margin while it fits, aligned to the bottom once it overflows), so no script
+measures anything and the no-script figure reads the same. The newest entry is the only one
+at full strength; older ones sit at 75%, which keeps `ink-1` text at about 4.5:1.
 
-Your own turn is not in the log. It sits on the page above the figure, in the paper voice,
-because the words you type are yours and the log is the machine's. It is a
-re-creation first built from the Rust UI's `bay-ui` crate (deleted; at the
-`rust-engine-final` tag), never a screen capture, and the caption
-under it says so. That caption is not decoration: it is the only thing separating an
-honest demonstration from a claim the app is further along than it is.
+**The chrome is drawn; the pictures are real.** The edit on the plate was made in the
+current app (2026-09-24): four Pexels clips (`CREDITS.md`) and two generated sound beds, cut,
+graded, keyframed, dissolved and mixed by calling the app's tools, then exported with
+loudness mastering. The preview shows frames the app itself rendered at each state of that
+edit (`public/plate/still-*.avif`, exported one frame at a time while walking the undo history
+back), and the video clips carry filmstrips of their source ranges (`strip-*.avif`), because
+the app's clips do. About 190 KB of AVIF in all, loaded lazily.
 
-**The palette is not ours.** Every value is copied from `theme.rs` and lives in the
-`@theme` block as `--color-app-*`, plus `--color-elem-*` for the per-kind clip fills from
-`element_color`. If the app's theme changes, these change with it. Do not tune them to
-taste, and do not use them outside the plate.
+**What the plate must keep true.** Every tool name in the panel is one in
+`../src/shared/tools`, in the order the real edit called them, and each changes the editor
+the way that call did: the clips, their frames, the grades, the inspector values, the
+warnings the agent answered, the change list and the export result are that session's. Two
+shortenings, both stated in the caption: paths and ids are shown by name, and the export's 36
+progress polls are shown as two. The agent's sentences were written for the session, and the
+caption says so. Nothing on the plate is an affordance the app lacks: there
+is no cursor, because the agent has none, and no progress bar on the agent's export, because
+the panel shows none; the export's progress is what the agent itself reads back from
+`track_export`. The repository's `pnpm test` holds the two checkable claims:
+`src/shared/website-plate.test.ts` fails when a tool the plate shows leaves the catalog, or
+when a plate colour stops matching the app's.
 
-| Token | Value | Source |
+**The palette is not ours.** Every value is copied from the dark theme in
+`../src/renderer/src/styles.css` and lives in the `@theme` block as `--color-app-*`, under
+the app's own token name. Do not tune them to taste, and do not use them outside the plate.
+
+| Token | Value | The app's role |
 |---|---|---|
-| `app-bg` | `#0f0f14` | the window ground |
-| `app-panel` | `#16161d` | toolbar, media, inspector, timeline |
-| `app-panel-alt` | `#1d1d26` | buttons and the scene bar |
-| `app-lane` | `#121218` | a timeline lane |
-| `app-border` | `#2a2a36` | every divider in the plate |
-| `app-text` | `#e7e7ee` | labels and values |
-| `app-muted` | `#8a8a9a` | secondary labels |
-| `app-accent` | `#5b8cff` | playhead, chip, selection |
-| `app-selected` / `app-selected-border` | `#2d3a66` / `#8fb0ff` | the selected clip and scene |
-| `elem-video` / `elem-image` / `elem-text` / `elem-audio` | `#33628f` / `#7a4f95` / `#8f6a33` / `#2f8f63` | `element_color` |
-| `elem-shape` | `#444455` | `element_color`'s fallback, which is what a shape takes |
-| `reel-ground` / `reel-track` | `#0e0e12` / `#606070` | the reel inside the plate, from `reel-recipe.md` |
+| `app-surface-0` … `app-surface-4` | `#121212` `#181818` `#212121` `#2a2a2a` `#333333` | ground, panel, control, hover, pressed |
+| `app-ink-0` … `app-ink-3` | `#ededed` `#a1a1a1` `#8a8a8a` `#4a4a4a` | primary, secondary, labels, disabled |
+| `app-line` / `app-line-strong` | `#262626` / `#333333` | hairlines between panels / control outlines |
+| `app-accent` | `#d9773f` | the one brand colour: selection, keys, the active rail page |
+| `app-playhead` | `#f5f5f5` | the playhead |
+| `app-success` | `#3dba7e` | the `+` of an added change |
+| `app-on-media` | `#e8eaed` | text on a clip |
+| `app-clip-video` / `-edge` | `#2c3a4a` / `#3d5166` | a picture clip and its border |
+| `app-clip-audio` / `-edge` | `#25382f` / `#356047` | a sound clip and its border |
+| `app-waveform` | `#5fd39a` | the waveform, at 45% as the app draws it |
 
-The element fills are named `elem-` and not `clip-` for a reason worth keeping:
-`--color-clip-text` generates `bg-clip-text`, which is already a Tailwind utility for
-`background-clip`. The core utility wins, so every Text clip renders unfilled and nothing
-errors. Check any new token against Tailwind's own utility names before adding it.
+**Type.** The plate's chrome is Inter, which the app draws its interface in and the site
+already loads. The app's monospace is JetBrains Mono, which the site does not load; the
+plate uses the app's own fallback, the system monospace, rather than fetch a font for a
+dozen tool names.
 
-`reel-track` is used at full opacity. The recipe measured `#606070` at 3.12:1 against the
-reel's ground and recorded that alpha defeats the measurement, so a faded track would
-reproduce the exact defect the recipe exists to warn about.
+**The phone split.** Below `@5xl` the window stacks: top bar, preview and transport, the
+timeline with a narrow header, then the agent panel at 27vh, with the rail, inspector,
+composer and status bar left out. Each chapter carries a one-sentence `short` for phones.
 
-The plate renders in `font-app`, the system UI face, because that is what the app is drawn
-in on the machine. It is deliberately not Inter and never Fraunces: the plate is a
-different object from the page it sits on, and the type is what says so.
+**Breakpoints inside the plate are container queries, never viewport ones**, on the named
+container `plate`. The plate sits in a column that is a fraction of the window, so a
+viewport rule would hand a narrow plate the layout meant for a wide one.
 
-**What the plate must keep true.** The panel order is the app's: toolbar, scene bar, then
-media, preview and inspector side by side, then the timeline. Clips never overlap within a
-lane, because a lane holds one clip at a time. Disabled buttons are disabled for the real
-reason, which is that nothing is selected or there is nothing to undo. Labels are the
-app's strings, down to `+ Text`, `＋ Scene`, `SCENES` and `Select a clip to inspect it.`
+**Nothing jogs.** The timeline has a fixed height, as its panel does, so a track arriving
+takes empty room instead of growing the figure, and when the fifth track outgrows it the
+lanes are scrolled up by a translate, as the app's panel would be scrolled. The inspector is
+positioned, so its sections clip at the preview's height rather than stretching it, and
+where the section a step is about (Grade, Transform, Audio & speed) sits below the fold it
+is scrolled to by a translate.
 
-**The chip is not a narrator.** `● Claude · <tool>` is raised by the planner's
-`Planned::Tx` label, so only tools that return commands raise it. `project_create` is
-answered by the shell before a project is open; `snapshot` and `render` return before the
-planner because they produce a file. Those beats show what the app really shows, which for
-`snapshot` is the status line `Claude snapshotted {at:.2}s`. Putting a chip on a beat that
-would not raise one is the easiest lie on this site to tell and the hardest to notice.
-Every tool name must appear in the catalog the plate was drawn from, `docs/native/mcp.md`,
-which is historical: it went with the Rust engine (`git show rust-engine-final:docs/native/mcp.md`).
-The plate, its chip and its status line re-create the Rust-era UI; the current app's tool
-catalog is `../src/shared/mcp.ts`, and its agent reports each turn's changes in a Changes card
-with a Revert rather than a chip.
+## Before and after
 
-The status line sits in the toolbar before Save, not under the timeline, and only when the
-app has something to say. Its formats are the app's: `Saved to`, `Exported frame to`,
-`Exported video to`, `Claude snapshotted`.
+`BeforeAfter`, under the sequence: the four clips as downloaded, cut to the same frames, and
+the finished edit, in one 16:9 frame with a line you drag. It is the second figure and the
+only other place the plate's colours appear (the frame's ground before a poster arrives).
 
-**The phone split is roughly half editor, a quarter log.** The preview and the log are
-sized in `vh` below `@md`, so the proportion holds on any handset: about 49% of the screen
-to the editor, 26% to the conversation, 16% to the chapter note. A full paragraph, a 60%
-editor and a 30% log do not fit in one portrait screen together, which is why each chapter
-carries a one-sentence `short` used below `sm`. The long body is still the one desktop
-reads, and the stacked fallback reads it at every width.
-
-**The figure stacks on a phone.** Above `@5xl` the conversation sits to the left of the
-editor; below it the same two panes stack, editor first and log under it, so the thing the
-sequence is about is the thing you see first. The reel inside the preview sizes itself in
-`cqw` against its own frame, because that frame is a fraction of its desktop size on a
-phone and fixed pixel type would spill straight out of it.
-
-**Breakpoints inside the plate are container queries, never viewport ones.** The plate
-lives in a grid column roughly 720px wide inside a 1080px page, so a `xl:` rule would hand
-it the button set meant for a 1280px window and clip whatever sits at the end. Undo, redo
-and the chip sit outside the toolbar's mask so they can never be the thing that clips.
+- **Nothing is requested until it is near.** Two posters (AVIF with a WebP fallback, about
+  30 KB each) are lazy images. The videos get their `<source>`s only within 600px of the
+  viewport: AV1 first (about 630 KB and 690 KB), H.264 after (about 880 KB and 1 MB), both
+  960×540, 18.9 s. They play muted and looped while a quarter of the frame is visible, pause
+  when it is not, and under `prefers-reduced-motion` wait for Play.
+- **The wipe is transforms only.** The after layer is a window translated right by the
+  line's share of the width, with its picture translated back by the same amount; the line
+  and its handle are translated with it. One custom property, `--p`, moves all three.
+- **It tracks the pointer 1:1** from wherever you press on the frame, with pointer capture,
+  and `touch-action: pan-y` so a vertical swipe still scrolls the page. The same control is
+  a range input for the keyboard and screen readers (arrows, Home, End), which takes no
+  pointer events and draws a brass focus rule inside the frame.
+- **The two videos keep one clock.** The after video leads; on each frame it presents
+  (`requestVideoFrameCallback`), the before video is re-seeked only if it has drifted more
+  than two frames.
+- **Labels are not laid over the picture.** Which side is which is said in the caption
+  under it. "Hear the edit" unmutes the after video; nothing plays sound unasked.
 
 The plate is ruled along its top edge in brass and casts no shadow. It is a leaf bound
 into a printed page, not a window floating over one, and a drop shadow is the one gesture
@@ -186,9 +196,10 @@ that would make the page read as a dashboard.
 ## Components
 
 All of them are in `src/components/layout.tsx`, and they are server components. The
-marketing pages have four client components and no more: `Reveal`, which needs an
+marketing pages have five client components and no more: `Reveal`, which needs an
 observer, the nav, which needs the current path, `ScrollSequence`, which needs scroll
-position, and `DepthFallback`, which does nothing where CSS scroll timelines work. The
+position, `BeforeAfter`, which needs a pointer and two videos, and `DepthFallback`, which
+does nothing where CSS scroll timelines work. The
 access pages (`/waitlist`, `/waitlist/finish`, `/desktop/sign-in`, `/admin`) are server
 pages around one client component each, in `src/components/access/`, because signing in
 is interactive by nature.
@@ -237,8 +248,8 @@ is interactive by nature.
   a block of them, stack `Command`s with `space-y-2.5` so each stays a discrete
   instruction.
 - **`PullQuote`** closes a page. At most one, and only when the line earns it.
-- **`AppPlate` / `AgentChat` / `ScrollSequence`** are the figure, its conversation pane,
-  and the scroll driver. Home page only.
+- **`AppPlate` / `AgentPanel` / `ScrollSequence`** are the figure, its agent panel and the
+  scroll driver; **`BeforeAfter`** is the comparison under it. Home page only.
 - **`Reveal`** wraps anything that should arrive when it is scrolled to.
 - **`Rule`** is a standalone 1px line that draws itself in from the left.
 
@@ -317,8 +328,23 @@ pins the plate and advances it through six beats as the reader scrolls. The rule
 under, which any future sequence inherits:
 
 - **Scroll drives one integer, not a render loop.** The listener is passive, throttled to
-  an animation frame, and sets a beat index. Everything visible is a CSS transition off
-  that index, so scrolling never re-renders the plate per frame.
+  an animation frame, and sets a step index. Everything visible is a CSS transition or a
+  one-time arrival off that index, so scrolling never re-renders the plate per frame.
+- **One thing is continuous: the playhead.** It is the only motion tied to the scroll
+  position itself, because a playhead that jumped would not read as time. Its path is
+  written from the sequence at build time (`playheadKeyframes` in `src/lib/sequence.ts`)
+  as a keyframe animation of `translate`, run on the pinned section's view timeline
+  (`--depth-root`, range `contain`). Within each step's band it travels to that step's
+  frame over the first 60% of the band and then holds, so it moves while you scroll and
+  rests while you read. Where scroll timelines are missing, `ScrollSequence`'s handler
+  moves it from the same curve (`playheadAt`), so the two cannot drift apart.
+- **Four arrivals, each played once when a step brings its element.** `plate-in` (an entry
+  in the panel, a track, an inspector section: 6px up, 0.45s), `plate-land` (a clip set
+  down on its lane: 8px of fall, 0.35s), `plate-key` (a keyframe diamond grown from its
+  point, 0.4s, 70ms apart) and `plate-wave` (the waveform opening from its centre line,
+  0.7s, after the clip lands). All on `--ease-paper`, all `translate`, `scale` or
+  `opacity`, all off under `prefers-reduced-motion`. Changes of state inside the reel
+  (the canvas turning vertical, the chart being rewritten) are cross-fades between layers.
 - **The static state is the real one.** Pinning is switched on after mount whenever motion
   is allowed and the window is at least 640px tall. Width is not the test: a phone reads
   the sequence as well as a laptop. Height is, because a figure taller than the window
@@ -373,18 +399,22 @@ colour rather than darkening the headline accent. If you retune the palette, re-
 the ratio is `(L1 + 0.05) / (L2 + 0.05)` on relative luminance, and getting it wrong is
 invisible to you and not to the person reading it.
 
-Measured against the plate's own ground (`#16161d`), which is the only place these appear:
+Measured against the app's panel (`app-surface-1`, `#181818`) and its controls
+(`app-surface-2`, `#212121`), which is where these appear:
 
-| Colour | Ratio | Verdict |
-|---|---|---|
-| `app-text` | 14.6:1 | Passes AA and AAA at any size. |
-| `app-accent` | 5.7:1 | Passes AA at any size. |
-| `app-muted` | 5.3:1 | Passes AA at any size. Secondary labels live here. |
+| Colour | On panel | On control | Verdict |
+|---|---|---|---|
+| `app-ink-0` | 15.2:1 | 13.8:1 | Passes AA and AAA at any size. |
+| `app-ink-1` | 6.9:1 | 6.2:1 | Passes AA at any size. The agent's prose. |
+| `app-ink-2` | 5.1:1 | 4.7:1 | Passes AA at any size. Labels and hints. |
+| `app-accent` | 5.6:1 | 5.1:1 | Passes AA at any size. |
+| `app-on-media` on `app-clip-video` | 9.6:1 | | Passes AA at any size. |
+| white on `app-accent` | 3.2:1 | | Fails AA for the 12px Export label. |
 
-The app's palette was measured before it was copied, not after. It passed, so the plate is
-faithful with no departure. If a future theme change drops one of these below 4.5:1, the
-plate departs from the app on that value and this table records it, the way the brass and
-muted departures above are recorded.
+The last row is the app's own Export button (`accent-ink` on `accent`), copied faithfully:
+the plate does not correct it, because a plate that looked better than the app would be
+the dishonest kind of re-creation. It is recorded here and reported to the app, which is
+where it should be fixed; when it is, the token test brings the plate along.
 
 Other standing rules:
 

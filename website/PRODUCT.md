@@ -110,10 +110,19 @@ and `dep/rust/crates/bay-ui/…`).
 - **An honest status record**, in `../docs/native/parity-status.md`: delivered, open and
   deliberately deferred.
 
-Absences future work must not fabricate: there are **no screenshots, recordings, renders or
-frames of the app**, no users, no testimonials, no benchmarks anyone has published, no
-download, and no pricing. A UI shown on the site is a re-creation built from the source
-above, and it is captioned as one.
+Current (2026-09-24): the home page shows a real edit made in the Electron app. Four clips
+from Pexels (`CREDITS.md`) and two generated sound beds were cut to detected beats, graded,
+keyframed, dissolved, mixed (detached sound, J-cut, ducking) and exported with loudness
+mastering, entirely through the app's tools; the tool log, the `.bay` project and the export
+were kept by the author of that change. The plate re-creates the window from
+`../src/renderer/src/` and shows frames the app rendered at each step; Fig. 2 shows the
+downloaded clips beside the finished export. See DESIGN.md, "The plate" and "Before and
+after".
+
+Absences future work must not fabricate: there are **no screenshots or recordings of the
+app's interface** on the site (the window on the plate is drawn), no users, no testimonials,
+no benchmarks anyone has published, no download, and no pricing. What the site shows of the
+app's output is that one credited edit, and it is captioned as such.
 
 ## Product Principles
 
