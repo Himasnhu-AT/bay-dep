@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { AlertTriangle, Trash2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import { formatTimecode, type TransitionDirection, type TransitionKind } from '@shared/project'
-import { Button, NumberField, Select, Modal } from '@/components'
+import { Button, InlineAlert, NumberField, Select, Modal } from '@/components'
 import { useEditor } from '@/store/editor'
 import { whyNoRoom, type Junction } from '@/lib/junctions'
 
@@ -136,10 +136,9 @@ export function TransitionDialog({
         {/* The refusal is the whole reason this dialog opens on cuts without transitions.
             Silently disabling the button would leave someone clicking it and guessing. */}
         {noRoom !== null ? (
-          <p className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-danger/10 p-2 text-[11px] leading-relaxed text-danger">
-            <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          <InlineAlert tone="danger">
             <span>{noRoom}</span>
-          </p>
+          </InlineAlert>
         ) : (
           <p className="text-[11px] leading-relaxed text-ink-2">
             This cut can carry up to{' '}
@@ -178,34 +177,31 @@ export function TransitionDialog({
         {/* `clampedBecause`, before the fact. A 30-frame dissolve that plays as 8 is
             invisible on the canvas, so the number has to be contradicted here or nowhere. */}
         {willClamp && (
-          <p className="flex items-start gap-1.5 rounded-sm border border-accent/40 bg-accent/10 p-2 text-[11px] leading-relaxed text-accent">
-            <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          <InlineAlert tone="warning">
             <span>
               This will play as <span className="tabular-nums">{effective}</span> frames, not{' '}
               <span className="tabular-nums">{requested}</span> — the cut only has{' '}
               {junction.capacityInFrames} to spend. Trim a clip shorter than its source for more.
             </span>
-          </p>
+          </InlineAlert>
         )}
 
         {/* And after the fact, for a transition already stored: the engine's own reason,
             not this component's guess at it. */}
         {resolved?.clampedBecause && (
-          <p className="flex items-start gap-1.5 rounded-sm border border-accent/40 bg-accent/10 p-2 text-[11px] leading-relaxed text-accent">
-            <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          <InlineAlert tone="warning">
             <span>
               Currently playing as{' '}
               <span className="tabular-nums">{resolved.durationInFrames}</span> frames rather than
               the {existing?.durationInFrames} asked for, because {resolved.clampedBecause}.
             </span>
-          </p>
+          </InlineAlert>
         )}
 
         {existing && !resolved && (
-          <p className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-danger/10 p-2 text-[11px] leading-relaxed text-danger">
-            <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          <InlineAlert tone="danger">
             <span>Stored, but nothing is drawing at this cut.</span>
-          </p>
+          </InlineAlert>
         )}
       </div>
     </Modal>

@@ -102,7 +102,7 @@ export function StatusBar(): ReactNode {
       )}
 
       {debugMode && (
-        <Tooltip side="top" label="Debug mode is on" shortcut="View → Toggle Debug Mode (⌥⌘D)">
+        <Tooltip side="top" label="Debug mode is on" detail="View → Toggle Debug Mode (⌥⌘D)">
           <span className="rounded-sm bg-warning/15 px-1 text-[10px] font-semibold tracking-[0.08em] text-warning uppercase">
             Debug
           </span>
@@ -113,7 +113,7 @@ export function StatusBar(): ReactNode {
         <Tooltip
           side="top"
           label="ffmpeg and ffprobe were not found"
-          shortcut="import, waveforms and export need them"
+          detail="Import, waveforms and export need them."
         >
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
@@ -126,7 +126,7 @@ export function StatusBar(): ReactNode {
         <Tooltip
           side="top"
           label={storage.error ?? 'The project database did not open'}
-          shortcut="recent projects will stay empty"
+          detail="Recent projects will stay empty."
         >
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
@@ -142,7 +142,7 @@ export function StatusBar(): ReactNode {
         <Tooltip
           side="top"
           label={summariseAgentSurface(agent)}
-          shortcut="editing, playback and export are unaffected"
+          detail="Editing, playback and export are unaffected."
         >
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
@@ -152,7 +152,7 @@ export function StatusBar(): ReactNode {
       )}
 
       {agent?.ready && (
-        <Tooltip side="top" label={summariseAgentSurface(agent)} shortcut="MCP over a unix socket">
+        <Tooltip side="top" label={summariseAgentSurface(agent)} detail="MCP over a unix socket">
           <span className="text-ink-2">
             agent{' '}
             <span className="text-ink-1 tabular-nums">
@@ -170,7 +170,7 @@ export function StatusBar(): ReactNode {
               ? `Listed but not implemented: ${catalogMismatch.missing.join(', ')}`
               : `Implemented but not listed: ${catalogMismatch.extra.join(', ')}`
           }
-          shortcut="an agent will be refused these tools by name"
+          detail="An agent will be refused these tools by name."
         >
           <span className="flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />

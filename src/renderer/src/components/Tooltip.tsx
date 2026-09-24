@@ -1,17 +1,38 @@
-import { cloneElement, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import {
+  cloneElement,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode
+} from 'react'
 import { createPortal } from 'react-dom'
+import { cn } from '@/lib/cn'
+import { Kbd } from './Kbd'
+import { placeFloating, type Placement } from './placement'
 
 export type TooltipSide = 'top' | 'bottom' | 'left' | 'right'
 
 export interface TooltipProps {
   label: ReactNode
-  /** Rendered after the label in a dimmer weight — "Play", "Space". */
+  /**
+   * The key that does the same thing, drawn dim after the label. Pass a binding in
+   * `@shared/shortcuts` spelling — best of all straight from the registry,
+   * `shortcutOf('clip.split')` — and it is drawn as the platform shows it (`⌘B`).
+   */
   shortcut?: string
+  /** A second line of explanation — a reason, a consequence. Not for shortcuts. */
+  detail?: ReactNode
   side?: TooltipSide
   children: ReactElement<{
     onPointerEnter?: (event: React.PointerEvent) => void
     onPointerLeave?: (event: React.PointerEvent) => void
     onPointerDown?: (event: React.PointerEvent) => void
+    onFocus?: (event: React.FocusEvent) => void
+    onBlur?: (event: React.FocusEvent) => void
+    'aria-describedby'?: string
   }>
 }
 
@@ -22,47 +43,72 @@ const DELAY_MS = 450
  * inspector are all scroll containers with `overflow: hidden` somewhere above them, and a
  * tooltip that lives inside one gets clipped by it — usually on exactly the control at the
  * edge of the panel, where the label matters most.
+ *
+ * They open for the keyboard too: at once on a `:focus-visible` focus (a keyboard user asked
+ * for this control; the hover delay is for a pointer passing over), closed on blur and Escape.
+ * While open the trigger is `aria-describedby` the tooltip. Placement is clamped to the window
+ * and flips to the other side when there is no room.
  */
-export function Tooltip({ label, shortcut, side = 'bottom', children }: TooltipProps): ReactNode {
-  const [box, setBox] = useState<DOMRect | null>(null)
+export function Tooltip({ label, shortcut, detail, side = 'bottom', children }: TooltipProps): ReactNode {
+  const [target, setTarget] = useState<HTMLElement | null>(null)
+  const [placement, setPlacement] = useState<Placement | null>(null)
+  const tip = useRef<HTMLDivElement | null>(null)
   const timer = useRef<number | null>(null)
+  const id = useId()
 
   const clear = (): void => {
     if (timer.current !== null) window.clearTimeout(timer.current)
     timer.current = null
   }
 
-  const show = (event: React.PointerEvent): void => {
-    const target = event.currentTarget as HTMLElement
+  const show = (element: HTMLElement, delay: number): void => {
     clear()
-    timer.current = window.setTimeout(() => setBox(target.getBoundingClientRect()), DELAY_MS)
+    if (delay === 0) setTarget(element)
+    else timer.current = window.setTimeout(() => setTarget(element), delay)
   }
 
   const hide = (): void => {
     clear()
-    setBox(null)
+    setTarget(null)
+    setPlacement(null)
   }
 
-  const style: React.CSSProperties = box
-    ? side === 'top'
-      ? { left: box.left + box.width / 2, top: box.top - 6, transform: 'translate(-50%, -100%)' }
-      : side === 'bottom'
-        ? { left: box.left + box.width / 2, top: box.bottom + 6, transform: 'translate(-50%, 0)' }
-        : side === 'left'
-          ? { left: box.left - 6, top: box.top + box.height / 2, transform: 'translate(-100%, -50%)' }
-          : { left: box.right + 6, top: box.top + box.height / 2, transform: 'translate(0, -50%)' }
-    : {}
+  useEffect(() => clear, [])
 
-  // The child's own pointer handlers are kept and called first. `cloneElement` overwrites
-  // props rather than merging them, so a tooltip wrapped around a control that listens for
-  // `pointerdown` would silently disable it.
+  useLayoutEffect(() => {
+    if (!target || !tip.current) return
+    const r = target.getBoundingClientRect()
+    setPlacement(
+      placeFloating({
+        anchor: { left: r.left, top: r.top, width: r.width, height: r.height },
+        size: { width: tip.current.offsetWidth, height: tip.current.offsetHeight },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        side,
+        align: 'center',
+        gap: 6
+      })
+    )
+  }, [target, side, label, shortcut, detail])
+
+  useEffect(() => {
+    if (!target) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') hide()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [target])
+
+  // The child's own handlers are kept and called first. `cloneElement` overwrites props rather
+  // than merging them, so a tooltip wrapped around a control that listens for `pointerdown`
+  // would silently disable it.
   const child = children.props
   return (
     <>
       {cloneElement(children, {
         onPointerEnter: (event: React.PointerEvent) => {
           child.onPointerEnter?.(event)
-          show(event)
+          show(event.currentTarget as HTMLElement, DELAY_MS)
         },
         onPointerLeave: (event: React.PointerEvent) => {
           child.onPointerLeave?.(event)
@@ -72,17 +118,37 @@ export function Tooltip({ label, shortcut, side = 'bottom', children }: TooltipP
         onPointerDown: (event: React.PointerEvent) => {
           child.onPointerDown?.(event)
           hide()
-        }
+        },
+        onFocus: (event: React.FocusEvent) => {
+          child.onFocus?.(event)
+          const element = event.currentTarget as HTMLElement
+          if (element.matches(':focus-visible')) show(element, 0)
+        },
+        onBlur: (event: React.FocusEvent) => {
+          child.onBlur?.(event)
+          hide()
+        },
+        'aria-describedby': target ? id : child['aria-describedby']
       })}
-      {box &&
+      {target &&
         createPortal(
           <div
+            ref={tip}
+            id={id}
             role="tooltip"
-            style={style}
-            className="pointer-events-none fixed z-[100] rounded-sm border border-line-strong bg-surface-2 px-2 py-1 text-[11px] whitespace-nowrap text-ink-0 shadow-pop"
+            style={
+              placement
+                ? { left: placement.left, top: placement.top }
+                : { left: 0, top: 0, visibility: 'hidden' }
+            }
+            className={cn(
+              'pointer-events-none fixed z-(--z-tooltip) rounded-sm border border-line-strong bg-surface-2 px-2 py-1 text-[11px] text-ink-0 shadow-pop',
+              detail ? 'max-w-72 whitespace-normal' : 'whitespace-nowrap'
+            )}
           >
             {label}
-            {shortcut && <span className="ml-2 text-ink-2">{shortcut}</span>}
+            {shortcut && <Kbd shortcut={shortcut} className="ml-2" />}
+            {detail && <div className="mt-0.5 text-ink-2 text-pretty">{detail}</div>}
           </div>,
           document.body
         )}

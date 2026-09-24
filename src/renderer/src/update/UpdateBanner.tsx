@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Download, LoaderCircle, RefreshCw, RotateCw, X } from 'lucide-react'
 import { isEntitled } from '@shared/access'
 import { bannerVisible, describeUpdate, restartPlan, runRestart, type RestartPlan, type UpdateStatus } from '@shared/update'
-import { Button, Modal } from '@/components'
+import { Button, Modal, ProgressBar } from '@/components'
 import { bay } from '@/lib/bridge'
 import { useAccess } from '@/access/AccessGate'
 import { useEditor } from '@/store/editor'
@@ -179,15 +179,7 @@ function SaveFirst(props: { plan: { project: string } | null; onSave: () => void
 function Progress({ status }: { status: UpdateStatus }): ReactNode {
   if (status.state !== 'downloading') return null
   return (
-    <div
-      className="h-1 w-full overflow-hidden rounded-full bg-surface-3"
-      role="progressbar"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.floor(status.percent)}
-    >
-      <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.min(100, Math.max(0, status.percent))}%` }} />
-    </div>
+    <ProgressBar value={status.percent / 100} label="Downloading the update" />
   )
 }
 
@@ -212,7 +204,7 @@ export function UpdateBanner(): ReactNode {
         <section
           aria-live="polite"
           data-update-state={status.state}
-          className="fixed right-4 bottom-4 z-[1100] flex w-[320px] flex-col gap-2.5 rounded-lg border border-line bg-surface-1 p-3.5 shadow-lg"
+          className="fixed right-4 bottom-4 z-(--z-banner) flex w-[320px] flex-col gap-2.5 rounded-lg border border-line bg-surface-1 p-3.5 shadow-pop"
         >
           <div className="flex items-start gap-2">
             {status.state === 'downloading' && <LoaderCircle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 animate-spin text-ink-2" />}

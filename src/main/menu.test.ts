@@ -21,6 +21,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { MenuCommand } from '@shared/ipc'
+import { COMMANDS } from '@shared/commands'
 import { menuLeaves, menuTemplate } from './menu'
 
 function build(overrides: Partial<Parameters<typeof menuTemplate>[0]> = {}) {
@@ -78,48 +79,161 @@ test('no submenu is empty', () => {
 // File — the items that need the renderer
 // ---------------------------------------------------------------------------
 
-test('every File command reaches the renderer with the right type', () => {
+function itemsOf(template: ReturnType<typeof menuTemplate>, menu: string) {
+  const found = template.find((entry) => entry.label === menu)
+  return Array.isArray(found?.submenu) ? found.submenu : []
+}
+
+test('every File command reaches the renderer as its registry id', () => {
   const { template, sent } = build()
-  const file = template.find((menu) => menu.label === 'File')
-  const items = Array.isArray(file?.submenu) ? file.submenu : []
+  const items = itemsOf(template, 'File')
 
   const byLabel = (label: string) => items.find((item) => item.label === label)
   for (const [label, expected] of [
-    ['Open…', 'open'],
-    ['Save', 'save'],
-    ['Save As…', 'save-as'],
-    ['Import Media…', 'import'],
-    ['Export…', 'export']
+    ['Open…', 'file.open'],
+    ['Save', 'file.save'],
+    ['Save As…', 'file.saveAs'],
+    ['Import Media…', 'file.import'],
+    ['Export…', 'file.export']
   ] as const) {
     const item = byLabel(label)
     assert.ok(item, `File is missing "${label}"`)
     assert.equal(typeof item?.click, 'function', `"${label}" is not wired`)
     sent.length = 0
     ;(item?.click as () => void)()
-    assert.deepEqual(sent, [{ type: expected }], `"${label}" sent the wrong command`)
+    assert.deepEqual(sent, [{ type: 'command', id: expected }], `"${label}" sent the wrong command`)
   }
 })
 
 test('the File accelerators are the ones a Mac user will try', () => {
   const { template } = build()
-  const file = template.find((menu) => menu.label === 'File')
-  const items = Array.isArray(file?.submenu) ? file.submenu : []
+  const items = itemsOf(template, 'File')
   const accel = (label: string) => items.find((item) => item.label === label)?.accelerator
 
   assert.equal(accel('Open…'), 'CmdOrCtrl+O')
   assert.equal(accel('Save'), 'CmdOrCtrl+S')
   assert.equal(accel('Save As…'), 'CmdOrCtrl+Shift+S')
   assert.equal(accel('Import Media…'), 'CmdOrCtrl+I')
+  assert.equal(accel('Export…'), 'CmdOrCtrl+E')
+})
+
+// ---------------------------------------------------------------------------
+// The registry
+// ---------------------------------------------------------------------------
+
+test('every registry command with a menu entry is in the menu bar, and sends its id', () => {
+  const { template, sent } = build()
+  const leaves = menuLeaves(template)
+  let seen = 0
+  for (const spec of COMMANDS) {
+    if (spec.menu === false) continue
+    const item = leaves.find((leaf) => leaf.label === spec.label)
+    assert.ok(item, `"${spec.label}" (${spec.id}) is not in the menu bar`)
+    sent.length = 0
+    ;(item?.click as () => void)()
+    assert.deepEqual(sent, [{ type: 'command', id: spec.id }])
+    seen++
+  }
+  assert.ok(seen >= 20, `only ${seen} commands walked — the registry is not being read`)
+})
+
+test('the menu bar has a menu for every group that has commands, in order', () => {
+  const { template } = build()
+  const titles = template.map((menu) => menu.label)
+  assert.deepEqual(titles, [
+    'bay',
+    'File',
+    'Edit',
+    'Clip',
+    'Mark',
+    'Timeline',
+    'Playback',
+    'View',
+    'Window',
+    'Help'
+  ])
+})
+
+test('a single-key shortcut is shown but never registered, so it cannot steal a keystroke', () => {
+  // A registered `S`, `M` or `Delete` would be taken from every text field in the window: a
+  // clip name could not contain an "s". Only ⌘-combos declared native may register.
+  const { template } = build()
+  const leaves = menuLeaves(template)
+  let checked = 0
+  for (const spec of COMMANDS) {
+    const item = leaves.find((leaf) => leaf.label === spec.label)
+    if (!item?.accelerator) continue
+    checked++
+    const accelerator = String(item.accelerator)
+    const registered = item.registerAccelerator !== false
+    if (!accelerator.includes('CmdOrCtrl')) {
+      assert.equal(registered, false, `${spec.id} registers "${accelerator}" natively`)
+    }
+    assert.equal(
+      registered,
+      spec.accelerator === 'native',
+      `${spec.id}: registration disagrees with its spec`
+    )
+  }
+  // The specimen: Split's `S` is in the menu, shown and not registered.
+  const split = leaves.find((leaf) => leaf.label === 'Split at Playhead')
+  assert.equal(split?.accelerator, 'S')
+  assert.equal(split?.registerAccelerator, false)
+  assert.ok(checked >= 10, `only ${checked} accelerators checked — the walk is not reaching the registry`)
+})
+
+test('Undo and Redo are bay commands that reach the renderer', () => {
+  const { template, sent } = build()
+  const items = itemsOf(template, 'Edit')
+  const undo = items.find((item) => item.label === 'Undo')
+  const redo = items.find((item) => item.label === 'Redo')
+  assert.ok(undo && redo)
+  sent.length = 0
+  ;(undo.click as () => void)()
+  ;(redo.click as () => void)()
+  assert.deepEqual(sent, [
+    { type: 'command', id: 'edit.undo' },
+    { type: 'command', id: 'edit.redo' }
+  ])
+  // Renderer-owned, so ⌘Z inside a text field is still the field's own undo.
+  assert.equal(undo.registerAccelerator, false)
+  // And the text-field roles are still there beside them.
+  for (const role of ['cut', 'copy', 'paste', 'selectAll']) {
+    assert.ok(items.some((item) => item.role === role), `Edit lost role ${role}`)
+  }
+})
+
+test('Settings is in the application menu on macOS and in File elsewhere', () => {
+  const mac = build({ isMac: true }).template
+  assert.ok(itemsOf(mac, 'bay').some((item) => item.label === 'Settings…'))
+  assert.equal(itemsOf(mac, 'File').some((item) => item.label === 'Settings…'), false)
+  const other = build({ isMac: false }).template
+  assert.ok(itemsOf(other, 'File').some((item) => item.label === 'Settings…'))
+})
+
+test('no menu starts or ends with a separator, or has two in a row', () => {
+  for (const isMac of [true, false]) {
+    for (const menu of build({ isMac }).template) {
+      const items = Array.isArray(menu.submenu) ? menu.submenu : []
+      assert.notEqual(items[0]?.type, 'separator', `${menu.label} starts with a separator`)
+      assert.notEqual(items[items.length - 1]?.type, 'separator', `${menu.label} ends with a separator`)
+      items.forEach((item, i) => {
+        if (item.type === 'separator') {
+          assert.notEqual(items[i + 1]?.type, 'separator', `${menu.label} doubles a separator`)
+        }
+      })
+    }
+  }
 })
 
 // ---------------------------------------------------------------------------
 // The deliberate absences
 // ---------------------------------------------------------------------------
 
-test('Edit has no Undo or Redo', () => {
-  // They would drive the system text undo stack, not bay's. A user pressing Cmd+Z expecting
+test('Edit has no undo or redo *role*', () => {
+  // The roles would drive the system text undo stack, not bay's. A user pressing Cmd+Z expecting
   // their cut back would get their last keystroke instead — present and wrong, which is worse
-  // than absent. Restore these only together with a channel to the store's history.
+  // than absent. Undo and Redo are registry commands instead (tested above).
   const { template } = build()
   const roles = menuLeaves(template).map((item) => item.role)
   assert.equal(roles.includes('undo'), false)

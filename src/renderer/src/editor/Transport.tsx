@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { formatTimecode } from '@shared/project'
 import { IconButton, Slider } from '@/components'
+import { shortcutOf } from '@/lib/commands'
 import { selectDuration, selectFps, useEditor } from '@/store/editor'
 
 const MIN_PPF = 0.05
@@ -47,21 +48,21 @@ export function Transport(): ReactNode {
       <div className="flex items-center gap-0.5">
         <IconButton
           label="Go to start"
-          shortcut="Home"
+          shortcut={shortcutOf('playback.toStart')}
           tooltipSide="top"
           icon={<ChevronFirst className="size-4" />}
           onClick={() => setPlayhead(0)}
         />
         <IconButton
           label="Previous frame"
-          shortcut="←"
+          shortcut={shortcutOf('playback.stepBack')}
           tooltipSide="top"
           icon={<SkipBack className="size-3.5" />}
           onClick={() => nudgePlayhead(-1)}
         />
         <IconButton
           label={playing ? 'Pause' : 'Play'}
-          shortcut="Space"
+          shortcut={shortcutOf('playback.toggle')}
           tooltipSide="top"
           variant={playing ? 'primary' : 'subtle'}
           size="md"
@@ -71,14 +72,14 @@ export function Transport(): ReactNode {
         />
         <IconButton
           label="Next frame"
-          shortcut="→"
+          shortcut={shortcutOf('playback.stepForward')}
           tooltipSide="top"
           icon={<SkipForward className="size-3.5" />}
           onClick={() => nudgePlayhead(1)}
         />
         <IconButton
           label="Go to end"
-          shortcut="End"
+          shortcut={shortcutOf('playback.toEnd')}
           tooltipSide="top"
           icon={<ChevronLast className="size-4" />}
           onClick={() => setPlayhead(duration)}
@@ -89,7 +90,7 @@ export function Transport(): ReactNode {
 
       <IconButton
         label="Split at playhead"
-        shortcut="S"
+        shortcut={shortcutOf('clip.split')}
         tooltipSide="top"
         icon={<Scissors className="size-3.5" />}
         disabled={empty}
@@ -116,7 +117,7 @@ export function Transport(): ReactNode {
       <div className="flex shrink-0 items-center gap-1 @md:w-[168px]">
         <IconButton
           label="Zoom out"
-          shortcut="−"
+          shortcut={shortcutOf('timeline.zoomOut')}
           tooltipSide="top"
           icon={<ZoomOut className="size-3.5" />}
           onClick={() => zoomBy(1 / 1.25)}
@@ -133,7 +134,7 @@ export function Transport(): ReactNode {
         />
         <IconButton
           label="Zoom in"
-          shortcut="+"
+          shortcut={shortcutOf('timeline.zoomIn')}
           tooltipSide="top"
           icon={<ZoomIn className="size-3.5" />}
           onClick={() => zoomBy(1.25)}

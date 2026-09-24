@@ -1,0 +1,85 @@
+import { useMemo, useState, type ReactNode } from 'react'
+import { Kbd, Modal, SearchField } from '@/components'
+import { COMMAND_GROUPS, COMMANDS, formatShortcut, shortcutsOf } from '@/lib/commands'
+
+export interface ShortcutsDialogProps {
+  open: boolean
+  onClose(): void
+}
+
+/**
+ * Every command that has a key, grouped as the menu bar groups them — read straight from the
+ * registry, so a key listed here is a key that works. Opened by Help › Keyboard Shortcuts, ⌘/
+ * and ?. A search matches the command's name or the key as drawn ("⌘B", "delete").
+ */
+export function ShortcutsDialog({ open, onClose }: ShortcutsDialogProps): ReactNode {
+  const [query, setQuery] = useState('')
+
+  const groups = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return COMMAND_GROUPS.map((group) => ({
+      group,
+      commands: COMMANDS.filter((command) => {
+        if (command.group !== group) return false
+        const keys = shortcutsOf(command)
+        if (keys.length === 0) return false
+        if (!needle) return true
+        return (
+          command.label.toLowerCase().includes(needle) ||
+          keys.some(
+            (key) =>
+              key.toLowerCase().includes(needle) || formatShortcut(key).toLowerCase().includes(needle)
+          )
+        )
+      })
+    })).filter((entry) => entry.commands.length > 0)
+  }, [query])
+
+  return (
+    <Modal
+      open={open}
+      title="Keyboard shortcuts"
+      width={560}
+      onClose={() => {
+        setQuery('')
+        onClose()
+      }}
+    >
+      <div className="border-b border-line p-3">
+        <SearchField
+          label="Search shortcuts"
+          placeholder="Search shortcuts…"
+          value={query}
+          onValueChange={setQuery}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-4">
+        {groups.length === 0 && (
+          <p className="col-span-2 text-[12px] text-ink-2">No shortcut matches “{query}”.</p>
+        )}
+        {groups.map(({ group, commands }) => (
+          <section key={group} aria-labelledby={`shortcuts-${group}`}>
+            <h3 id={`shortcuts-${group}`} className="mb-1.5 text-[11px] font-semibold text-ink-1">
+              {group}
+            </h3>
+            <dl className="space-y-1">
+              {commands.map((command) => (
+                <div key={command.id} className="flex items-baseline justify-between gap-3">
+                  <dt className="min-w-0 truncate text-[12px] text-ink-0">{command.label}</dt>
+                  <dd className="flex shrink-0 items-baseline gap-1.5">
+                    {shortcutsOf(command).map((key, index) => (
+                      <span key={key} className="flex items-baseline gap-1.5">
+                        {index > 0 && <span className="text-[10px] text-ink-2">or</span>}
+                        <Kbd shortcut={key} className="text-[12px] text-ink-1" />
+                      </span>
+                    ))}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+    </Modal>
+  )
+}

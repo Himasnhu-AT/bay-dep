@@ -103,6 +103,23 @@
 }
 
 /*
+ * The stacking order of everything that floats, as one scale: use `z-(--z-popover)` etc., never
+ * a literal. In-panel layering (sticky headers, the playhead, a dragged clip) stays below
+ * `--z-overlay` with plain `z-10`…`z-40`. A popover sits above a modal because it can be opened
+ * *from* one (a menu in a dialog); a tooltip sits above both; the access gate and the update
+ * banner sit above the whole app.
+ */
+:root {
+  --z-overlay: 40;
+  --z-modal: 70;
+  --z-popover: 80;
+  --z-tooltip: 100;
+  --z-toast: 110;
+  --z-gate: 1000;
+  --z-banner: 1100;
+}
+
+/*
  * The light palette. `data-theme` is set on <html> by public/theme.js before first paint.
  * Overriding the `--color-*` properties themselves (rather than a second set of names) means
  * every utility, every `bg-accent/70` colour-mix and every `var(--color-…)` in a component
@@ -272,6 +289,23 @@
     transition-property: opacity, transform;
     transition-duration: var(--duration-panel);
     transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  /*
+   * A popover or menu arriving: it grows from the edge that touches its trigger (the element
+   * sets `transform-origin`), so it reads as coming *out of* the thing clicked. Entrance only —
+   * a dismissal is instant, because waiting on a closing menu is waiting on nothing. The
+   * reduced-motion block below zeroes it.
+   */
+  .t-pop {
+    animation: t-pop var(--duration-panel) cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  @keyframes t-pop {
+    from {
+      opacity: 0;
+      scale: 0.96;
+    }
   }
 
   /* macOS window drag regions. Children of a drag region must opt out explicitly. */

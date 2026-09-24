@@ -246,11 +246,12 @@ export interface RecentProject {
  * is a File menu whose every item is dead.
  */
 export type MenuCommand =
-  | { type: 'open' }
-  | { type: 'save' }
-  | { type: 'save-as' }
-  | { type: 'import' }
-  | { type: 'export' }
+  /**
+   * A menu item was chosen: run the command with this id (`@shared/commands`) through the
+   * renderer's registry. Every menu item that needs the project — Save, Export, Undo, Split —
+   * is one of these, so the menu and the keyboard run the same code.
+   */
+  | { type: 'command'; id: string }
   /**
    * macOS handed us a `.bay` file — a double-click, or a drop on the Dock icon.
    *
@@ -260,10 +261,6 @@ export type MenuCommand =
    * renderer's handler does not care which case it is.
    */
   | { type: 'open-path'; path: string }
-  /** View → Toggle Debug Mode: shows debug tools such as transcript export. */
-  | { type: 'toggle-debug' }
-  /** bay → Settings… (⌘,). */
-  | { type: 'open-settings' }
 
 // ---------------------------------------------------------------------------
 // The bridge

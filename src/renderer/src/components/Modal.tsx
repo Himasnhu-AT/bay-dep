@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { isInsideFloating } from './Floating'
 import { IconButton } from './IconButton'
 
 export interface ModalProps {
@@ -37,6 +38,9 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
     focusables()[0]?.focus()
 
     const onKeyDown = (event: KeyboardEvent): void => {
+      // A menu or popover opened from inside the dialog owns its own Escape and Tab: Escape
+      // there closes the menu, not the dialog under it.
+      if (isInsideFloating(event.target)) return
       // Escape closes. Listed here rather than on the panel's React props because the panel
       // is not always what holds focus — a `<select>` inside it swallows keydown — and a
       // dialog that traps Tab but cannot be dismissed from the keyboard is a trap.
@@ -72,7 +76,7 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-8"
+      className="fixed inset-0 z-(--z-modal) flex items-center justify-center bg-black/55 p-8"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}

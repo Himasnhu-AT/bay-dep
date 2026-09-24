@@ -3,7 +3,7 @@ import { Music2, Video } from 'lucide-react'
 import { allItems, findAsset, itemEnd, type Item, type Marker, type Track } from '@shared/project'
 import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
 import { linkedPartners, withLinked } from '@shared/links'
-import { IconButton } from '@/components'
+import { ContextMenu, IconButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
@@ -92,7 +92,7 @@ export function Timeline(): ReactNode {
   // `selection` holds item ids — and inventing a second kind of selection there to carry a
   // transient dialog would be a worse trade than holding it here.
   const [junctionKey, setJunctionKey] = useState<string | null>(null)
-  // The clip menu (right-click), at the pointer, relative to the timeline panel.
+  // The clip menu (right-click), at the pointer, in viewport coordinates.
   const [menu, setMenu] = useState<{ itemId: string; x: number; y: number } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -446,29 +446,13 @@ export function Timeline(): ReactNode {
 
   const onClipContextMenu = useCallback((event: React.MouseEvent, item: Item): void => {
     event.preventDefault()
-    const panel = panelRef.current?.getBoundingClientRect()
     const store = useEditor.getState()
     const current = selectTimeline(store)
     if (!store.selection.includes(item.id)) {
       store.select(current ? withLinked(current, [item.id]) : [item.id])
     }
-    setMenu({ itemId: item.id, x: event.clientX - (panel?.left ?? 0), y: event.clientY - (panel?.top ?? 0) })
+    setMenu({ itemId: item.id, x: event.clientX, y: event.clientY })
   }, [])
-
-  useEffect(() => {
-    if (!menu) return
-    const close = (event: Event): void => {
-      if (event instanceof KeyboardEvent && event.key !== 'Escape') return
-      if (event.target instanceof Node && panelRef.current?.querySelector('[data-clip-menu]')?.contains(event.target)) return
-      setMenu(null)
-    }
-    window.addEventListener('pointerdown', close, true)
-    window.addEventListener('keydown', close, true)
-    return () => {
-      window.removeEventListener('pointerdown', close, true)
-      window.removeEventListener('keydown', close, true)
-    }
-  }, [menu])
 
   const menuItem = menu && timeline ? allItems(timeline).find((item) => item.id === menu.itemId) : undefined
   const menuTrack = menuItem ? tracks.find((track) => track.id === menuItem.trackId) : undefined
@@ -488,7 +472,6 @@ export function Timeline(): ReactNode {
 
   const runMenu = (action: 'detach' | 'unlink' | 'reattach'): void => {
     const target = menu?.itemId
-    setMenu(null)
     if (!target) return
     const store = useEditor.getState()
     if (action === 'unlink') {
@@ -730,43 +713,17 @@ export function Timeline(): ReactNode {
         </div>
       )}
 
-      {menu && menuItem && (
-        <div
-          data-clip-menu
-          role="menu"
-          aria-label="Clip"
-          className="absolute z-[60] min-w-44 rounded-sm border border-line bg-surface-2 py-1 text-[12px] text-ink-0 shadow-pop"
-          style={{ left: menu.x, top: menu.y }}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!canDetach}
-            onClick={() => runMenu('detach')}
-            className="block w-full px-3 py-1 text-left hover:bg-surface-3 disabled:text-ink-3 disabled:hover:bg-transparent"
-          >
-            Detach audio
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!menuLinked}
-            onClick={() => runMenu('unlink')}
-            className="block w-full px-3 py-1 text-left hover:bg-surface-3 disabled:text-ink-3 disabled:hover:bg-transparent"
-          >
-            Unlink
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!canReattach}
-            onClick={() => runMenu('reattach')}
-            className="block w-full px-3 py-1 text-left hover:bg-surface-3 disabled:text-ink-3 disabled:hover:bg-transparent"
-          >
-            Reattach audio
-          </button>
-        </div>
-      )}
+      <ContextMenu
+        // `menu` itself, not a fresh `{ x, y }`: the timeline re-renders every frame while playing.
+        at={menuItem ? menu : null}
+        onClose={() => setMenu(null)}
+        label="Clip"
+        items={[
+          { label: 'Detach audio', disabled: !canDetach, onSelect: () => runMenu('detach') },
+          { label: 'Unlink', disabled: !menuLinked, onSelect: () => runMenu('unlink') },
+          { label: 'Reattach audio', disabled: !canReattach, onSelect: () => runMenu('reattach') }
+        ]}
+      />
 
       <TransitionDialog
         junction={openJunction}

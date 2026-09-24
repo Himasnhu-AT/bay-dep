@@ -73,7 +73,7 @@ export function JunctionMarkers({
               : `Room for up to ${junction.capacityInFrames} frames. Click to add one.`
 
         return (
-          <Tooltip key={junction.key} side="top" label={label} shortcut={detail}>
+          <Tooltip key={junction.key} side="top" label={label} detail={detail}>
             <button
               type="button"
               aria-label={`Transition at frame ${junction.cutFrame}. ${label}. ${detail}`}

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react'
 import { cn } from '@/lib/cn'
 import { Tooltip, type TooltipSide } from './Tooltip'
 
@@ -21,7 +21,10 @@ const SIZES: Record<IconButtonSize, string> = {
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /** Required: this control has no visible text, so it must carry its name some other way. */
   label: string
+  /** Shown in the tooltip; `@shared/shortcuts` spelling, ideally `shortcutOf(commandId)`. */
   shortcut?: string
+  /** React 19 passes `ref` as a prop; it reaches the `<button>` (e.g. a menu trigger). */
+  ref?: Ref<HTMLButtonElement>
   icon: ReactNode
   variant?: IconButtonVariant
   size?: IconButtonSize

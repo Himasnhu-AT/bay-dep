@@ -9,7 +9,7 @@ import {
   type WhisperDownload,
   type WhisperStatus
 } from '@shared/whisper'
-import { Button, IconButton, Modal, SegmentedControl } from '@/components'
+import { Badge, Button, IconButton, Modal, ProgressBar, SegmentedControl, Switch } from '@/components'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { bayTheme, type ThemePreference } from '@/lib/theme'
@@ -258,7 +258,7 @@ function TranscriptionSection(): ReactNode {
         {status === null ? (
           <span className="text-[12px] text-ink-2">Checking…</span>
         ) : status.engine ? (
-          <Badge tone="ok">Installed</Badge>
+          <Badge tone="success">Installed</Badge>
         ) : status.brew ? (
           <Button
             variant="primary"
@@ -370,20 +370,11 @@ function ModelRow(props: ModelRowProps): ReactNode {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[12px] font-medium text-ink-0">{label}</span>
-          {active && <Badge tone="ok">{chosen ? 'In use' : 'In use · automatic'}</Badge>}
+          {active && <Badge tone="success">{chosen ? 'In use' : 'In use · automatic'}</Badge>}
         </div>
         {inFlight ? (
           <div className="mt-1 flex items-center gap-2">
-            <div
-              role="progressbar"
-              aria-label={`Downloading ${label}`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(fraction * 100)}
-              className="h-1 flex-1 overflow-hidden rounded-full bg-surface-3"
-            >
-              <div className="h-full rounded-full bg-accent transition-[width] duration-200" style={{ width: `${fraction * 100}%` }} />
-            </div>
+            <ProgressBar value={fraction} label={`Downloading ${label}`} className="flex-1" />
             <span className="shrink-0 text-[11px] text-ink-2 tabular-nums">
               {download.state === 'verifying'
                 ? 'Checking…'
@@ -478,38 +469,13 @@ function SwitchRow(props: { label: string; description: string; checked: boolean
         <div className="text-[12px] font-medium text-ink-0">{props.label}</div>
         <p className="mt-0.5 text-[11px] text-pretty text-ink-2">{props.description}</p>
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={props.checked}
-        aria-label={props.label}
-        onClick={() => props.onChange(!props.checked)}
-        className={cn(
-          't-fast relative mt-0.5 h-5 w-9 shrink-0 rounded-full border',
-          props.checked ? 'border-accent bg-accent' : 'border-line-strong bg-surface-3'
-        )}
-      >
-        <span
-          aria-hidden="true"
-          className={cn(
-            't-fast absolute top-0.5 size-3.5 rounded-full bg-white shadow-sm transition-[left]',
-            props.checked ? 'left-[18px]' : 'left-0.5'
-          )}
-        />
-      </button>
+      <Switch
+        label={props.label}
+        checked={props.checked}
+        onChange={props.onChange}
+        className="mt-0.5"
+      />
     </label>
   )
 }
 
-function Badge({ tone, children }: { tone: 'ok'; children: ReactNode }): ReactNode {
-  return (
-    <span
-      className={cn(
-        'shrink-0 rounded-sm px-1.5 py-px text-[10px] font-medium',
-        tone === 'ok' && 'bg-success/15 text-success'
-      )}
-    >
-      {children}
-    </span>
-  )
-}

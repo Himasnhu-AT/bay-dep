@@ -157,10 +157,10 @@ const dismiss = async (title) => {
 }
 
 const DIALOGS = [
-  ['Import Media…', 'import', 'Import media'],
-  ['Open…', 'open', 'Open project'],
-  ['Save', 'save', 'Save project'],
-  ['Save As…', 'save-as', 'Save project']
+  ['Import Media…', 'file.import', 'Import media'],
+  ['Open…', 'file.open', 'Open project'],
+  ['Save', 'file.save', 'Save project'],
+  ['Save As…', 'file.saveAs', 'Save project']
 ]
 
 const { evaluate } = await attach(PORT)
@@ -181,7 +181,7 @@ await runProbe(async () => {
     window.__bayMenuSeen = []
     if (!window.__bayMenuListening) {
       window.__bayMenuListening = true
-      window.bay.app.onMenuCommand((c) => window.__bayMenuSeen.push(c.type))
+      window.bay.app.onMenuCommand((c) => window.__bayMenuSeen.push(c.type === 'command' ? c.id : c.type))
     }
     return true
   })()`)
@@ -208,7 +208,7 @@ await runProbe(async () => {
 
   for (const [item, command, title] of DIALOGS) {
     // Save with a file writes silently (by design): make this a first save so it must ask.
-    if (command === 'save') {
+    if (command === 'file.save') {
       await evaluate(`(() => { const s = window.bayEngine.store; const p = s.getState().project
         const { filePath, ...rest } = p; s.setState({ project: rest }); return true })()`)
     }

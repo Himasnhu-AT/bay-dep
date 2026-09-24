@@ -116,8 +116,10 @@ export function Slider({
         <div
           className={cn(
             'absolute top-1/2 size-[11px] -translate-x-1/2 -translate-y-1/2 rounded-full',
-            'border border-surface-0 bg-ink-0 t-fast',
-            !disabled && 'group-hover:bg-white'
+            'border border-surface-0 bg-ink-0 t-press',
+            // Grows rather than changing colour: a literal white vanished into the light
+            // theme's surface-3, and ink-0 is already the strongest ink in either theme.
+            !disabled && 'group-hover:scale-[1.2]'
           )}
           style={{ left: `${Math.max(0, Math.min(1, fraction)) * 100}%` }}
         />

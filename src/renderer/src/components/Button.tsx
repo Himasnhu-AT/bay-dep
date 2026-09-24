@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react'
 import { cn } from '@/lib/cn'
 
 export type ButtonVariant = 'ghost' | 'subtle' | 'primary' | 'danger'
@@ -20,6 +20,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant
   size?: ButtonSize
   icon?: ReactNode
+  /** React 19 passes `ref` as a prop; it reaches the `<button>` (e.g. a menu trigger). */
+  ref?: Ref<HTMLButtonElement>
 }
 
 export function Button({

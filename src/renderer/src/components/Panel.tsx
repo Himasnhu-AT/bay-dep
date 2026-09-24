@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
+import { ChevronRight, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { IconButton } from './IconButton'
 
 export interface PanelProps {
   title?: string
@@ -35,20 +37,127 @@ export function Panel({ title, actions, children, className, bodyClassName }: Pa
 export interface SectionProps {
   title: string
   children: ReactNode
+  /** Controls on the title row, right-aligned — `IconButton size="xs"`, or `SectionReset`. */
   actions?: ReactNode
   className?: string
+  /** The title becomes a disclosure button (with `aria-expanded`) that shows and hides the body. */
+  collapsible?: boolean
+  /** Open on first sight; after that the user's choice is remembered. Default true. */
+  defaultOpen?: boolean
+  /**
+   * Remembers the open state across sessions, per id — `'inspector.adjustments'`. Without one a
+   * collapsible section starts at `defaultOpen` every time it mounts.
+   */
+  id?: string
 }
 
-/** A labelled group inside a panel body — the Inspector is built out of these. */
-export function Section({ title, children, actions, className }: SectionProps): ReactNode {
+const sectionKey = (id: string): string => `bay.section.${id}`
+
+function readOpen(id: string | undefined, fallback: boolean): boolean {
+  if (!id) return fallback
+  try {
+    const stored = localStorage.getItem(sectionKey(id))
+    return stored === null ? fallback : stored === '1'
+  } catch {
+    return fallback
+  }
+}
+
+function writeOpen(id: string | undefined, open: boolean): void {
+  if (!id) return
+  try {
+    localStorage.setItem(sectionKey(id), open ? '1' : '0')
+  } catch {
+    // Not remembered this time; the section still opens and closes.
+  }
+}
+
+const SECTION_TITLE = 'text-[10px] font-semibold tracking-[0.08em] text-ink-1 uppercase'
+
+/**
+ * A labelled group inside a panel body — the Inspector is built out of these.
+ *
+ * `collapsible` turns the title into the toggle. The actions stay outside that button (a
+ * button inside a button is invalid, and a reset must not also collapse the section), and a
+ * collapsed section keeps its actions visible, so "this is off-default" shows either way.
+ */
+export function Section({
+  title,
+  children,
+  actions,
+  className,
+  collapsible,
+  defaultOpen = true,
+  id
+}: SectionProps): ReactNode {
+  const [open, setOpen] = useState(() => (collapsible ? readOpen(id, defaultOpen) : true))
+  const bodyId = useId()
   return (
     <div className={cn('border-b border-line px-3 py-3 last:border-b-0', className)}>
-      <div className="mb-2 flex h-4 items-center justify-between">
-        <h3 className="text-[10px] font-semibold tracking-[0.08em] text-ink-1 uppercase">{title}</h3>
+      <div className={cn('flex h-4 items-center justify-between gap-2', open && 'mb-2')}>
+        {collapsible ? (
+          <h3 className="min-w-0">
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={bodyId}
+              onClick={() => {
+                setOpen(!open)
+                writeOpen(id, !open)
+              }}
+              className={cn(
+                't-fast -mx-1 flex h-5 items-center gap-1 rounded-sm px-1 hover:text-ink-0',
+                SECTION_TITLE
+              )}
+            >
+              <ChevronRight
+                aria-hidden="true"
+                className={cn(
+                  'size-3 shrink-0 transition-[rotate] duration-(--duration-fast)',
+                  open && 'rotate-90'
+                )}
+              />
+              {title}
+            </button>
+          </h3>
+        ) : (
+          <h3 className={SECTION_TITLE}>{title}</h3>
+        )}
         {actions}
       </div>
-      {children}
+      <div id={bodyId} hidden={!open}>
+        {children}
+      </div>
     </div>
+  )
+}
+
+export interface SectionResetProps {
+  /** Show it only when something in the section is off its default. */
+  show: boolean
+  /** Names what is reset — "Reset adjustments", not "Reset". */
+  label: string
+  onReset(): void
+}
+
+/**
+ * The one reset affordance for a Section, for its `actions`: an `xs` icon button on the title
+ * row, present only when there is something to reset — so it never grows the row, and its
+ * appearance is itself the sign that the section is off-default.
+ *
+ *     <Section title="Adjustments"
+ *       actions={<SectionReset show={touched} label="Reset adjustments" onReset={reset} />}>
+ */
+export function SectionReset({ show, label, onReset }: SectionResetProps): ReactNode {
+  if (!show) return null
+  return (
+    <IconButton
+      size="xs"
+      tooltipSide="left"
+      label={label}
+      icon={<RotateCcw aria-hidden="true" className="size-3" />}
+      onClick={onReset}
+    />
   )
 }
 

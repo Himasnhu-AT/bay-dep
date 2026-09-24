@@ -6,9 +6,8 @@ import {
   type CompositionVariable,
   type CompositionVariableValue
 } from '@shared/composition'
-import { ColorField, Field, IconButton, NumberField, Section, Select, Slider } from '@/components'
+import { ColorField, Field, IconButton, NumberField, Section, Select, Slider, Switch } from '@/components'
 import { useEditor } from '@/store/editor'
-import { cn } from '@/lib/cn'
 
 /**
  * The controls an HTML composition declares for itself.
@@ -141,24 +140,11 @@ export function VariableControl({
       return (
         <label className="flex flex-1 items-center justify-between gap-2">
           <span className="text-[11px] text-ink-1">{variable.label}</span>
-          <button
-          type="button"
-          role="switch"
-          aria-label={variable.label}
-          aria-checked={value === true}
-          onClick={() => onChange(value !== true)}
-          className={cn(
-            'h-6 w-10 rounded-full border transition-colors',
-            value === true ? 'border-accent bg-accent/70' : 'border-line bg-surface-2'
-          )}
-        >
-          <span
-            className={cn(
-              'block size-4 rounded-full bg-ink-0 transition-transform',
-              value === true ? 'translate-x-5' : 'translate-x-0.5'
-            )}
+          <Switch
+            label={variable.label}
+            checked={value === true}
+            onChange={(next) => onChange(next)}
           />
-          </button>
         </label>
       )
 

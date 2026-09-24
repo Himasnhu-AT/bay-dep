@@ -12,8 +12,9 @@ import {
   Undo2,
   Upload
 } from 'lucide-react'
-import { Button, IconButton } from '@/components'
+import { Button, IconButton, Tooltip } from '@/components'
 import { cn } from '@/lib/cn'
+import { shortcutOf } from '@/lib/commands'
 import { bayTheme, NEXT_THEME, type ThemePreference } from '@/lib/theme'
 import { useEditor } from '@/store/editor'
 
@@ -103,14 +104,14 @@ export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): React
       <div className="no-drag flex items-center gap-0.5">
         <IconButton
           label="Undo"
-          shortcut="⌘Z"
+          shortcut={shortcutOf('edit.undo')}
           icon={<Undo2 className="size-4" />}
           disabled={!canUndo}
           onClick={undo}
         />
         <IconButton
           label="Redo"
-          shortcut="⇧⌘Z"
+          shortcut={shortcutOf('edit.redo')}
           icon={<Redo2 className="size-4" />}
           disabled={!canRedo}
           onClick={redo}
@@ -189,33 +190,38 @@ export function TopBar({ onHome, onExport, onSave, saving }: TopBarProps): React
       />
       <IconButton
         label="Settings"
-        shortcut="⌘,"
+        shortcut={shortcutOf('app.settings')}
         icon={<Settings className="size-4" />}
         onClick={() => useEditor.getState().setSettingsOpen(true)}
         className="no-drag"
       />
 
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={saving}
-        className={cn(
-          'no-drag t-fast rounded-sm px-2 py-1 text-[11px] tabular-nums',
-          dirty ? 'text-ink-1 hover:bg-surface-3 hover:text-ink-0' : 'text-ink-2 hover:bg-surface-3'
-        )}
-      >
-        {saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}
-      </button>
+      {/* The save state is also the Save button; the tooltip is what says so. */}
+      <Tooltip label="Save" shortcut={shortcutOf('file.save')}>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          className={cn(
+            'no-drag t-press rounded-sm px-2 py-1 text-[11px] tabular-nums active:scale-[0.96]',
+            dirty ? 'text-ink-1 hover:bg-surface-3 hover:text-ink-0' : 'text-ink-2 hover:bg-surface-3'
+          )}
+        >
+          {saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}
+        </button>
+      </Tooltip>
 
-      <Button
-        variant="primary"
-        size="sm"
-        icon={<Upload className="size-3.5" />}
-        onClick={onExport}
-        className="no-drag"
-      >
-        Export
-      </Button>
+      <Tooltip label="Export" shortcut={shortcutOf('file.export')}>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Upload className="size-3.5" />}
+          onClick={onExport}
+          className="no-drag"
+        >
+          Export
+        </Button>
+      </Tooltip>
     </header>
   )
 }

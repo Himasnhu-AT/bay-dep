@@ -62,7 +62,7 @@ export function AccessGate({ children }: { children: ReactNode }): ReactNode {
     return (
       <>
         {children}
-        <div className="fixed inset-0 z-[1000]" data-access-overlay>
+        <div className="fixed inset-0 z-(--z-gate)" data-access-overlay>
           <AccessScreen status={status} />
         </div>
       </>

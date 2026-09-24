@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   ArrowDownAZ,
   Clock,
@@ -8,14 +8,13 @@ import {
   List,
   MoreVertical,
   Plus,
-  Search,
-  Settings,
-  X
+  Settings
 } from 'lucide-react'
 import type { Project } from '@shared/project'
 import type { RecentProject } from '@shared/ipc'
-import { IconButton, Toast } from '@/components'
+import { IconButton, Menu, SearchField, Toast, useFloatingTrigger } from '@/components'
 import { call } from '@/lib/bay'
+import { shortcutOf } from '@/lib/commands'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
 
@@ -131,31 +130,13 @@ export function ProjectsHome(): ReactNode {
       <div className="flex min-h-0 flex-1 justify-center px-8 pb-8">
         <section className="flex min-h-0 w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-line bg-surface-1">
           <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
-            <label className="flex h-8 w-72 items-center gap-2 rounded-md border border-line-strong bg-surface-2 px-2.5 focus-within:border-accent">
-              <Search aria-hidden="true" className="size-3.5 text-ink-2" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') setQuery('')
-                }}
-                placeholder="Search projects…"
-                aria-label="Search projects"
-                className="w-full bg-transparent text-[12px] text-ink-0 outline-none placeholder:text-ink-2"
-              />
-              {/* A filter that stays applied with no visible way out reads as "my projects are
-                  gone" — so a non-empty search always shows how to clear it. */}
-              {query && (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  onClick={() => setQuery('')}
-                  className="t-fast grid size-5 shrink-0 place-items-center rounded-sm text-ink-2 hover:bg-surface-3 hover:text-ink-0"
-                >
-                  <X aria-hidden="true" className="size-3" />
-                </button>
-              )}
-            </label>
+            <SearchField
+              label="Search projects"
+              placeholder="Search projects…"
+              value={query}
+              onValueChange={setQuery}
+              className="h-8 w-72"
+            />
             <div className="flex-1" />
             <button
               type="button"
@@ -196,7 +177,7 @@ export function ProjectsHome(): ReactNode {
             />
             <IconButton
               label="Settings"
-              shortcut="⌘,"
+              shortcut={shortcutOf('app.settings')}
               icon={<Settings className="size-3.5" />}
               onClick={() => useEditor.getState().setSettingsOpen(true)}
             />
@@ -345,57 +326,34 @@ function ProjectMenu({
   onChanged,
   notify
 }: Pick<ItemProps, 'recent' | 'onChanged' | 'notify'>): ReactNode {
-  const [open, setOpen] = useState(false)
-  const root = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: PointerEvent): void => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-
+  const menu = useFloatingTrigger()
   return (
-    <div ref={root} className="relative">
+    <>
       <IconButton
+        {...menu.triggerProps}
         label={`More for ${recent.name}`}
         icon={<MoreVertical className="size-3.5" />}
-        onClick={() => setOpen((value) => !value)}
       />
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 bottom-full z-20 mb-1 w-44 overflow-hidden rounded-md border border-line-strong bg-surface-2 py-1 shadow-pop"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false)
-              void call('Show in Finder', (api) => api.project.reveal(recent.filePath))
-            }}
-            className="block w-full px-3 py-1.5 text-left text-[12px] text-ink-1 hover:bg-surface-3 hover:text-ink-0"
-          >
-            Show in Finder
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false)
+      <Menu
+        {...menu.surfaceProps}
+        label={`${recent.name} actions`}
+        side="top"
+        align="end"
+        items={[
+          {
+            label: 'Show in Finder',
+            onSelect: () => void call('Show in Finder', (api) => api.project.reveal(recent.filePath))
+          },
+          {
+            label: 'Remove from list',
+            onSelect: () =>
               void call('Remove from list', (api) => api.project.forget(recent.filePath)).then(() => {
                 notify(`Removed ${recent.name} from the list. The file is still on disk.`)
                 onChanged()
               })
-            }}
-            className="block w-full px-3 py-1.5 text-left text-[12px] text-ink-1 hover:bg-surface-3 hover:text-ink-0"
-          >
-            Remove from list
-          </button>
-        </div>
-      )}
-    </div>
+          }
+        ]}
+      />
+    </>
   )
 }

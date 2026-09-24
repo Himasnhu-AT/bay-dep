@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { completeBrfImports } from '@/lib/brfImport'
 import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
-import { useKeyboard } from '@/lib/useKeyboard'
+import { useCommands } from '@/lib/commands'
 import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
+import { ShortcutsDialog } from '@/editor/ShortcutsDialog'
 import { Inspector } from '@/editor/Inspector'
 import { LeftRail, SidePanel } from '@/editor/LeftRail'
 import { ProjectsHome } from '@/home/ProjectsHome'
@@ -70,6 +71,7 @@ export function App(): ReactNode {
   const markSaved = useEditor((state) => state.markSaved)
 
   const [exportOpen, setExportOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dropping, setDropping] = useState(false)
   // One remembered layout per group. Keys are pinned by these ids: renaming one resets that
@@ -201,12 +203,18 @@ export function App(): ReactNode {
     notify(message.text, message.kind)
   }, [addAssets, notify])
 
+  const onOpen = useCallback((): void => {
+    void call('Open project', (client) => client.project.open()).then((project) => {
+      // Null is either a failed call, already reported, or the user cancelling the picker.
+      // Neither should replace what they are working on.
+      if (project) switchProject(project)
+    })
+  }, [switchProject])
+
   /**
-   * The application menu, which is the one channel that runs main -> renderer.
-   *
-   * It has to: the renderer owns the project, and `project.save(project)` needs a project
-   * that a menu item in the main process does not have. Without this subscription every
-   * item in the File menu is drawn, enabled, and does nothing at all when clicked.
+   * macOS handing bay a document while it runs. Every *menu item* arrives as a registry
+   * command and is run by `useCommands` below; this is the one menu-channel message that is
+   * not a command, because it carries a path.
    */
   useEffect(() => {
     const api = bay()
@@ -214,42 +222,14 @@ export function App(): ReactNode {
     // Not routed through `call`: this registers a listener and returns an unsubscribe,
     // so there is no promise to reject.
     return api.app.onMenuCommand((command) => {
-      switch (command.type) {
-        case 'save':
-          void onSave()
-          break
-        case 'save-as':
-          void onSaveAs()
-          break
-        case 'import':
-          void onImport()
-          break
-        case 'export':
-          setExportOpen(true)
-          break
-        case 'toggle-debug':
-          useEditor.getState().toggleDebugMode()
-          break
-        case 'open-settings':
-          useEditor.getState().setSettingsOpen(true)
-          break
-        case 'open':
-          void call('Open project', (client) => client.project.open()).then((project) => {
-            // Null is either a failed call, already reported, or the user cancelling the
-            // picker. Neither should replace what they are working on.
-            if (project) switchProject(project)
-          })
-          break
-        case 'open-path':
-          void call('Open project', (client) =>
-            client.project.openPath(command.path)
-          ).then((project) => {
-            if (project) switchProject(project)
-          })
-          break
-      }
+      if (command.type !== 'open-path') return
+      void call('Open project', (client) => client.project.openPath(command.path)).then(
+        (project) => {
+          if (project) switchProject(project)
+        }
+      )
     })
-  }, [onSave, onSaveAs, onImport, switchProject])
+  }, [switchProject])
 
   /**
    * The agent surface. Registered here because the executor reaches the store directly and
@@ -283,10 +263,16 @@ export function App(): ReactNode {
     return api.whisper.onDownload((download) => useEditor.getState().setWhisperDownload(download))
   }, [])
 
-  useKeyboard({
-    onSave: () => void onSave(),
-    onExport: () => setExportOpen(true),
-    onEscape: () => setExportOpen(false)
+  // Every shortcut and every menu item (`@/lib/commands`). The host is what only this component
+  // can do: IPC round trips and its own dialogs.
+  useCommands({
+    save: () => void onSave(),
+    saveAs: () => void onSaveAs(),
+    open: onOpen,
+    importMedia: () => void onImport(),
+    openExport: () => setExportOpen(true),
+    openShortcuts: () => setShortcutsOpen(true),
+    escape: () => setExportOpen(false)
   })
 
   // -- files dropped on the window ------------------------------------------
@@ -348,6 +334,7 @@ export function App(): ReactNode {
       <>
         <ProjectsHome />
         <SettingsDialog />
+        <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       </>
     )
   }
@@ -450,6 +437,7 @@ export function App(): ReactNode {
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <SettingsDialog />
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <Modal
         open={confirmingHome}
@@ -460,7 +448,7 @@ export function App(): ReactNode {
           // macOS order: the destructive choice apart on the left, Cancel beside the default.
           // "Don't save" throws work away, so it reads as the one that does.
           <>
-            <Button variant="subtle" onClick={leaveToHome} className="mr-auto text-danger">
+            <Button variant="danger" onClick={leaveToHome} className="mr-auto">
               Don't save
             </Button>
             <Button variant="subtle" onClick={() => setConfirmingHome(false)}>
@@ -491,7 +479,7 @@ export function App(): ReactNode {
       <div
         aria-hidden="true"
         className={cn(
-          't-fast pointer-events-none fixed inset-0 z-40 border-2 border-accent bg-accent/5',
+          't-fast pointer-events-none fixed inset-0 z-(--z-overlay) border-2 border-accent bg-accent/5',
           dropping ? 'opacity-100' : 'opacity-0'
         )}
       />
