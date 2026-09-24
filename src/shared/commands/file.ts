@@ -2,6 +2,13 @@ import { SEPARATOR, type CommandEntry } from './types'
 
 /** File. `app.settings` is drawn in the application menu on macOS, in File elsewhere. */
 export const fileCommands = [
+  {
+    id: 'file.newProject',
+    label: 'New Project',
+    group: 'File',
+    shortcut: 'Mod+N',
+    accelerator: 'native'
+  },
   { id: 'file.open', label: 'Open…', group: 'File', shortcut: 'Mod+O', accelerator: 'native' },
   SEPARATOR,
   { id: 'file.save', label: 'Save', group: 'File', shortcut: 'Mod+S', accelerator: 'native' },
@@ -20,8 +27,10 @@ export const fileCommands = [
     shortcut: 'Mod+I',
     accelerator: 'native'
   },
+  { id: 'file.importCaptions', label: 'Import Captions…', group: 'File' },
   { id: 'file.export', label: 'Export…', group: 'File', shortcut: 'Mod+E', accelerator: 'native' },
   SEPARATOR,
+  { id: 'file.projectSettings', label: 'Project Settings…', group: 'File' },
   {
     id: 'app.settings',
     label: 'Settings…',

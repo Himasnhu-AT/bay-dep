@@ -107,6 +107,7 @@ export function readProject(): Record<string, unknown> {
       locked: track.locked,
       muted: track.muted,
       hidden: track.hidden,
+      ...(track.solo ? { solo: true } : {}),
       items: track.items.map(describeItem)
     })),
     // Always present, empty or not: an agent that has to test for the key before reading it

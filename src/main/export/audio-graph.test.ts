@@ -139,6 +139,21 @@ test('a muted track contributes nothing, whichever kind it is', () => {
   assert.equal(buildAudioGraph(project, timeline, 0, 90), null)
 })
 
+test('a disabled clip is not heard in the file, and the enabled one beside it still is', () => {
+  // `disabled` (⇧E) is read through `playableTimeline`, the same view the preview's audio engine
+  // and the compositor take, so a switched-off clip cannot be silent on screen and loud in a file.
+  const off = { ...item({ id: 'i1', assetId: 'a1', trackId: 't1', from: 0, durationInFrames: 90 }), disabled: true }
+  const on = item({ id: 'i2', assetId: 'a2', trackId: 't1', from: 90, durationInFrames: 90 })
+  const { project, timeline } = projectWith(
+    [track('t1', 'audio', [off, on])],
+    [asset('a1', '/off.wav'), asset('a2', '/on.wav')]
+  )
+  assert.deepEqual(buildAudioGraph(project, timeline, 0, 180)?.inputs, ['/on.wav'])
+  // Positive control: enabled again, it is heard.
+  delete (off as { disabled?: boolean }).disabled
+  assert.deepEqual(buildAudioGraph(project, timeline, 0, 180)?.inputs, ['/off.wav', '/on.wav'])
+})
+
 test("a video track's own audio is mixed, because that is where dialogue lives", () => {
   // The renderer's audio engine walks every track rather than going through `itemsAtFrame`,
   // which filters by kind. Export has to agree or most real edits lose their dialogue.
@@ -535,4 +550,17 @@ test('an unplayable speed plays at 1× in both, never NaN', () => {
     assert.match(buildAudioGraph(project, timeline, 30, 90)?.filter ?? '', /atrim=start=2(\.0+)?:/, `export at speed ${speed}`)
   }
   assert.equal(effectiveSpeed(1.5), 1.5, 'positive control: a real speed passes through')
+})
+
+test('while any track is soloed, export mixes only the soloed tracks — and nothing changes without one', () => {
+  const a = item({ id: 'i1', assetId: 'a1', trackId: 't1', from: 0, durationInFrames: 90 })
+  const b = item({ id: 'i2', assetId: 'a2', trackId: 't2', from: 0, durationInFrames: 90 })
+  const assets = [asset('a1', '/a.wav'), asset('a2', '/b.wav')]
+  const plain = projectWith([track('t1', 'audio', [a]), track('t2', 'audio', [b])], assets)
+  assert.deepEqual(buildAudioGraph(plain.project, plain.timeline, 0, 90)?.inputs, ['/a.wav', '/b.wav'])
+  const soloed = projectWith([track('t1', 'audio', [a]), { ...track('t2', 'audio', [b]), solo: true }], assets)
+  assert.deepEqual(buildAudioGraph(soloed.project, soloed.timeline, 0, 90)?.inputs, ['/b.wav'])
+  // Mute beats solo: a muted soloed track is silent, and the solo still silences the rest.
+  const both = projectWith([track('t1', 'audio', [a]), { ...track('t2', 'audio', [b], true), solo: true }], assets)
+  assert.equal(buildAudioGraph(both.project, both.timeline, 0, 90), null)
 })

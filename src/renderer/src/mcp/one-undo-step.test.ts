@@ -399,6 +399,11 @@ const STORE_CASES: Record<string, StoreCase> = {
   duplicateSelected: { delta: 1, run: (f) => { state().select([f.b, f.c, f.d]); state().duplicateSelected() } },
   rippleDelete: { delta: 1, run: () => { state().rippleDelete(10, 20) } },
   removeAsset: { delta: 1, run: () => state().removeAsset(ASSET.id) },
+  // Relinking one asset repoints every clip that places it: many items, one step.
+  relinkAssets: {
+    delta: 1,
+    run: () => state().relinkAssets([{ assetId: ASSET.id, replacement: importedAsset('/moved/clip.mp4').asset }])
+  },
   addAssets: {
     delta: 1,
     run: () => state().addAssets([importedAsset('/x/1.mp4').asset, importedAsset('/x/2.mp4').asset])
@@ -414,6 +419,14 @@ const STORE_CASES: Record<string, StoreCase> = {
     }
   },
   removeTrack: { delta: 1, run: (f) => state().removeTrack(f.v2) },
+  setBackground: {
+    delta: 1,
+    run: () => {
+      // Derived, not a literal: whatever the fixture's background is, set a different one.
+      const current = state().project.timelines[0]!.background.toLowerCase()
+      state().setBackground(current === '#102030' ? '#304050' : '#102030')
+    }
+  },
 
   // Single-target edits: one entry each, which a stray second `edit()` would break.
   renameProject: { delta: 1, run: () => state().renameProject('Renamed') },
@@ -452,6 +465,17 @@ const STORE_CASES: Record<string, StoreCase> = {
       assert.ok(id)
       const before = past()
       state().moveMarker(id, 50)
+      assert.equal(past() - before, 1)
+    }
+  },
+  patchMarker: {
+    delta: 1,
+    run: () => {
+      const id = state().addMarker(30)
+      assert.ok(id)
+      const before = past()
+      // Label and colour in one call are one step, not two.
+      state().patchMarker(id, { label: 'Fix audio', color: '#E5484D' })
       assert.equal(past() - before, 1)
     }
   },
@@ -583,7 +607,66 @@ const STORE_CASES: Record<string, StoreCase> = {
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },
-  clearAgentPins: { delta: 0, run: () => state().clearAgentPins() }
+  clearAgentPins: { delta: 0, run: () => state().clearAgentPins() },
+
+  // The keyboard editing verbs (slices/editing.ts) and the view state beside them.
+  setRangeIn: { delta: 0, run: () => state().setRangeIn(10) },
+  setRangeOut: { delta: 0, run: () => state().setRangeOut(20) },
+  clearRange: { delta: 0, run: () => state().clearRange() },
+  setSnapping: { delta: 0, run: () => state().setSnapping(false) },
+  toggleSnapping: { delta: 0, run: () => state().toggleSnapping() },
+  toggleLinkedSelection: { delta: 0, run: () => state().toggleLinkedSelection() },
+  toggleLoop: { delta: 0, run: () => state().toggleLoop() },
+  setClipDialog: { delta: 0, run: () => state().setClipDialog({ kind: 'pasteAttributes' }) },
+  copySelection: { delta: 0, run: (f) => { state().select([f.a, f.c]); state().copySelection() } },
+  cutSelection: { delta: 1, run: (f) => { state().select([f.a, f.c, f.d]); state().cutSelection() } },
+  paste: {
+    delta: 1,
+    run: (f) => {
+      state().select([f.a, f.c, f.d])
+      state().copySelection()
+      state().setPlayhead(120)
+      assert.equal(state().paste().length, 3)
+    }
+  },
+  pasteAttributes: {
+    delta: 1,
+    run: (f) => {
+      state().select([f.a])
+      state().copySelection()
+      state().clipboard!.items[0]!.layout.left = 77
+      state().select([f.b, f.c])
+      assert.equal(state().pasteAttributes(['transform']), 2)
+    }
+  },
+  toggleDisabled: { delta: 1, run: (f) => state().toggleDisabled([f.a, f.c, f.d]) },
+  nudgeSelection: { delta: 1, run: (f) => { state().select([f.c, f.d]); assert.ok(state().nudgeSelection(10)) } },
+  closeGapAt: {
+    delta: 1,
+    run: (f) => {
+      state().trimItem(f.a, 'end', 40)
+      const before = past()
+      const result = state().closeGapAt(f.v1, 50)
+      assert.ok(!('error' in result), JSON.stringify(result))
+      assert.equal(past() - before, 1)
+    }
+  },
+  trimToPlayhead: {
+    delta: 1,
+    run: (f) => {
+      state().setPlayhead(30)
+      state().select([f.a, f.c, f.d])
+      state().trimToPlayhead('start', true)
+    }
+  },
+  removeInOutRange: {
+    delta: 1,
+    run: () => {
+      state().setRangeIn(10)
+      state().setRangeOut(20)
+      state().removeInOutRange()
+    }
+  }
 }
 
 /** Store functions that manage history themselves, so "exactly one entry" does not apply. */
@@ -632,8 +715,10 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'patchTransition',
       'moveMarker',
       'removeMarker',
+      'patchMarker',
       'reattachAudio',
-      'unlinkItems'
+      'unlinkItems',
+      'closeGapAt'
     ]
     if (!selfMeasured.includes(action)) {
       assert.equal(

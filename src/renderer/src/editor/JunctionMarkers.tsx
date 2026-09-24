@@ -18,16 +18,17 @@ const KIND_LABEL: Record<string, string> = {
 /**
  * A handle on every cut in a track, whether or not it carries a transition.
  *
- * Cuts without one are marked too, faintly, and that is the point rather than an oversight:
+ * Cuts without one get a hit zone too — shown on hover and on keyboard focus, so Tab walks the
+ * cuts — and that is the point rather than an oversight:
  * a transition lives on the junction, so the junction is what someone has to be able to
  * click. The alternative — dragging a transition from a panel onto a clip — has to guess
  * which of the clip's two edges was meant, and gives a refusal nowhere to appear when the
  * answer is "this cut cannot take one".
  *
- * The marker says what the transition will actually *play*, not what was asked for. A
- * 30-frame dissolve clamped to 8 by a clip with no handles is invisible on the canvas and
- * indistinguishable from a straight cut, so the badge carries the effective number and a
- * warning glyph when the two differ.
+ * A transition is drawn over the window it actually *plays*, not the one asked for. A 30-frame
+ * dissolve clamped to 8 by a clip with no handles is invisible on the canvas and
+ * indistinguishable from a straight cut, so the overlay spans the effective window, carries the
+ * effective number, and turns to a warning when the two differ.
  */
 export function JunctionMarkers({
   project,
@@ -72,6 +73,39 @@ export function JunctionMarkers({
               ? 'This cut cannot take one — click to see why.'
               : `Room for up to ${junction.capacityInFrames} frames. Click to add one.`
 
+        // A transition that plays is drawn over the window it occupies, centred on the cut and
+        // labelled, the way editors draw one — a 14px "20" badge read as a glyph, not an edit.
+        if (stored && resolved) {
+          const left = resolved.firstFrame * pixelsPerFrame
+          const width = Math.max(14, (resolved.lastFrame + 1 - resolved.firstFrame) * pixelsPerFrame)
+          const name = KIND_LABEL[stored.kind] ?? stored.kind
+          return (
+            <Tooltip key={junction.key} side="top" label={label} detail={clamped ? detail : 'Click to change or remove.'}>
+              <button
+                type="button"
+                aria-label={`Transition at frame ${junction.cutFrame}. ${label}. ${detail}`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpen(junction)
+                }}
+                className={cn(
+                  't-fast absolute z-20 flex items-center justify-center gap-1 overflow-hidden rounded-xs border px-1 text-[10px] leading-none whitespace-nowrap',
+                  clamped
+                    ? 'border-danger/70 bg-danger/25 text-on-media hover:bg-danger/40'
+                    : 'border-accent/80 bg-accent/30 text-on-media hover:bg-accent/45'
+                )}
+                style={{ left, width, top: Math.max(2, height / 2 - 8), height: 16 }}
+              >
+                {clamped && <AlertTriangle aria-hidden="true" className="size-2.5 shrink-0" />}
+                {/* Name when it fits, frames always: the frame count is what the handles allowed. */}
+                {width >= 72 && <span className="truncate">{name}</span>}
+                <span className="shrink-0 tabular-nums">{resolved.durationInFrames}f</span>
+              </button>
+            </Tooltip>
+          )
+        }
+
         return (
           <Tooltip key={junction.key} side="top" label={label} detail={detail}>
             <button
@@ -83,38 +117,36 @@ export function JunctionMarkers({
                 onOpen(junction)
               }}
               className={cn(
-                'absolute z-20 flex -translate-x-1/2 items-center justify-center rounded-xs border t-fast',
-                // Present but quiet when there is nothing here yet; a row of loud badges
-                // across every cut would make the timeline unreadable.
-                stored
-                  ? broken || clamped
-                    ? 'border-danger/70 bg-danger/25 text-danger'
-                    : 'border-accent/70 bg-accent/25 text-accent'
-                  : noRoom !== null
-                    ? 'border-line bg-surface-3/60 text-ink-2 opacity-0 hover:opacity-100'
-                    : 'border-line-strong bg-surface-3 text-ink-1 opacity-40 hover:opacity-100'
+                // A wide, full-height hit zone over the cut, drawn only on hover or focus: the
+                // affordance is there wherever the pointer finds a cut, and a row of glyphs on
+                // every cut does not crowd the timeline. Tab reaches it; focus shows it.
+                't-fast absolute z-20 flex -translate-x-1/2 items-center justify-center',
+                // Stored but drawing nothing is never hidden: it is a fault, not an affordance.
+                broken ? 'opacity-100' : 'opacity-0 hover:opacity-100 focus-visible:opacity-100'
               )}
-              style={{
-                left: junction.cutFrame * pixelsPerFrame,
-                top: Math.max(2, height / 2 - 7),
-                height: 14,
-                minWidth: 14,
-                paddingInline: stored ? 3 : 0
-              }}
+              style={{ left: junction.cutFrame * pixelsPerFrame, top: 4, bottom: 4, width: 16 }}
             >
-              {broken || clamped ? (
-                <AlertTriangle aria-hidden="true" className="size-2.5" />
-              ) : stored ? (
-                <span className="text-[9px] leading-none tabular-nums">
-                  {resolved?.durationInFrames}
-                </span>
-              ) : (
-                // An hourglass-ish pinch: two triangles meeting at the cut. Reads as
-                // "things cross here" at 14px, which a plus sign does not.
-                <svg viewBox="0 0 8 10" aria-hidden="true" className="size-2">
-                  <path d="M0 0 L4 5 L0 10 Z M8 0 L4 5 L8 10 Z" fill="currentColor" />
-                </svg>
-              )}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'flex size-4 items-center justify-center rounded-xs border',
+                  broken
+                    ? 'border-danger/70 bg-danger/25 text-danger'
+                    : noRoom !== null
+                      ? 'border-line bg-surface-3 text-ink-2'
+                      : 'border-accent/80 bg-surface-2 text-accent'
+                )}
+              >
+                {broken ? (
+                  <AlertTriangle className="size-2.5" />
+                ) : (
+                  // An hourglass-ish pinch: two triangles meeting at the cut. Reads as
+                  // "things cross here" at 16px, which a plus sign does not.
+                  <svg viewBox="0 0 8 10" className="size-2">
+                    <path d="M0 0 L4 5 L0 10 Z M8 0 L4 5 L8 10 Z" fill="currentColor" />
+                  </svg>
+                )}
+              </span>
             </button>
           </Tooltip>
         )

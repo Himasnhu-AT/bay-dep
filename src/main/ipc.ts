@@ -37,6 +37,8 @@ import {
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { detectBeats } from './media/beats'
+import { sizesOf } from './media/caption-file'
+import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import * as store from './project/store'
 import * as encode from './export/encode'
@@ -73,6 +75,11 @@ interface ChannelApi {
   mediaWaveform: BayApi['media']['waveform']
   mediaBeats: BayApi['media']['beats']
   mediaReveal: BayApi['media']['revealInFolder']
+  mediaStat: BayApi['media']['stat']
+  mediaLocate: BayApi['media']['locate']
+  mediaOpenCaptions: BayApi['media']['openCaptions']
+  mediaReadCaptions: BayApi['media']['readCaptions']
+  mediaSaveCaptions: BayApi['media']['saveCaptions']
 
   projectInitial: BayApi['project']['initial']
   projectSave: BayApi['project']['save']
@@ -85,6 +92,9 @@ interface ChannelApi {
   projectCreate: BayApi['project']['create']
   projectForget: BayApi['project']['forget']
   projectReveal: BayApi['project']['reveal']
+  projectRename: BayApi['project']['rename']
+  projectDuplicate: BayApi['project']['duplicate']
+  projectTrash: BayApi['project']['trash']
 
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
@@ -105,6 +115,8 @@ interface ChannelApi {
   exportFinish: BayApi['export']['finish']
   exportCancel: BayApi['export']['cancel']
   exportChoosePath: BayApi['export']['chooseOutputPath']
+  exportReveal: BayApi['export']['reveal']
+  exportOpen: BayApi['export']['open']
 
   accessStatus: BayApi['access']['status']
   accessSignIn: BayApi['access']['signIn']
@@ -232,6 +244,11 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaReveal: async (_event, path) => {
     shell.showItemInFolder(path)
   },
+  mediaStat: (_event, paths) => sizesOf(Array.isArray(paths) ? paths : []),
+  mediaLocate: (event, name, nearPath) => locate(windowOf(event), String(name), nearPath ?? null),
+  mediaOpenCaptions: (event) => openCaptions(windowOf(event)),
+  mediaReadCaptions: (_event, path) => readCaptions(String(path)),
+  mediaSaveCaptions: (event, defaultName, text) => saveCaptions(windowOf(event), String(defaultName), String(text)),
 
   projectInitial: () => store.initial(),
   projectSave: (event, project) => store.save(project, windowOf(event)),
@@ -244,6 +261,9 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   projectCreate: () => store.create(),
   projectForget: async (_event, filePath) => store.forget(filePath),
   projectReveal: async (_event, filePath) => store.reveal(filePath),
+  projectRename: (_event, filePath, name) => store.rename(filePath, name),
+  projectDuplicate: (_event, filePath) => store.duplicate(filePath),
+  projectTrash: (_event, filePath) => store.trash(filePath),
 
   exportStart: (event, request) => encode.start(request, event.sender),
   exportPushFrame: (_event, frame) => encode.pushFrame(frame),
@@ -251,6 +271,16 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   exportCancel: (_event, jobId) => encode.cancel(jobId),
   exportChoosePath: (event, defaultName, format) =>
     encode.chooseOutputPath(defaultName, format, windowOf(event)),
+  exportReveal: async (_event, outputPath) => {
+    if (!encode.wasDelivered(outputPath)) return false
+    shell.showItemInFolder(outputPath)
+    return true
+  },
+  exportOpen: async (_event, outputPath) => {
+    if (!encode.wasDelivered(outputPath)) return false
+    // `openPath` resolves with an error string rather than rejecting; empty means it opened.
+    return (await shell.openPath(outputPath)) === ''
+  },
 
   accessStatus: async () => access.accessStatus(),
   accessSignIn: () => access.signIn(),

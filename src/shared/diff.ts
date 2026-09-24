@@ -79,6 +79,7 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       if (old.muted !== track.muted) flag(track.muted, 'Muted', 'Unmuted')
       if (old.hidden !== track.hidden) flag(track.hidden, 'Hid', 'Showed')
       if (old.locked !== track.locked) flag(track.locked, 'Locked', 'Unlocked')
+      if ((old.solo === true) !== (track.solo === true)) flag(track.solo === true, 'Soloed', 'Unsoloed')
     }
 
     // By track id: renaming a track is not moving every clip on it.

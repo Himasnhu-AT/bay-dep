@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   ArrowDownAZ,
   Clock,
@@ -12,9 +12,20 @@ import {
 } from 'lucide-react'
 import type { Project } from '@shared/project'
 import type { RecentProject } from '@shared/ipc'
-import { IconButton, Menu, SearchField, Toast, useFloatingTrigger } from '@/components'
+import {
+  Button,
+  ContextMenu,
+  IconButton,
+  Menu,
+  Modal,
+  SearchField,
+  TextField,
+  Toast,
+  useFloatingTrigger,
+  type MenuEntry
+} from '@/components'
 import { call } from '@/lib/bay'
-import { shortcutOf } from '@/lib/commands'
+import { formatShortcut, runCommand, shortcutOf } from '@/lib/commands'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
 
@@ -78,6 +89,9 @@ export function ProjectsHome(): ReactNode {
   const [view, setView] = useState<View>(() => remembered(VIEW_KEY, ['grid', 'list'], 'grid'))
   const [sort, setSort] = useState<Sort>(() => remembered(SORT_KEY, ['recent', 'name'], 'recent'))
   const [busy, setBusy] = useState(false)
+  const [renaming, setRenaming] = useState<RecentProject | null>(null)
+  const [trashing, setTrashing] = useState<RecentProject | null>(null)
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number; recent: RecentProject } | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
     const list = await call('Listing projects', (api) => api.project.recent())
@@ -122,6 +136,53 @@ export function ProjectsHome(): ReactNode {
 
   const now = Date.now()
 
+  /**
+   * One list of actions for a project, drawn by its ⋯ button and by a right-click on it, so the
+   * two can never offer different things. Renaming and trashing ask first (a name to type, and a
+   * file leaving the list); the rest act at once.
+   */
+  const actionsFor = (recent: RecentProject): MenuEntry[] => [
+    { label: 'Rename…', onSelect: () => setRenaming(recent) },
+    {
+      label: 'Duplicate',
+      onSelect: () =>
+        void call(`Duplicating ${recent.name}`, (api) => api.project.duplicate(recent.filePath)).then(
+          (copy) => {
+            if (!copy) return
+            notify(`Duplicated as “${copy.name}”.`)
+            void load()
+          }
+        )
+    },
+    {
+      label: 'Show in Finder',
+      onSelect: () => void call('Show in Finder', (api) => api.project.reveal(recent.filePath))
+    },
+    {
+      label: 'Remove from list',
+      onSelect: () =>
+        void call('Remove from list', (api) => api.project.forget(recent.filePath)).then(() => {
+          notify(`Removed ${recent.name} from the list. The file is still on disk.`)
+          void load()
+        })
+    },
+    { kind: 'separator' },
+    { label: 'Move to Trash…', danger: true, onSelect: () => setTrashing(recent) }
+  ]
+
+  const onContextMenu =
+    (recent: RecentProject) =>
+    (event: MouseEvent): void => {
+      event.preventDefault()
+      setMenuAt({ x: event.clientX, y: event.clientY, recent })
+    }
+
+  // The same command as File › New Project and ⌘N, so all three create a project one way.
+  const createProject = (): void => {
+    if (!busy) runCommand('file.newProject')
+  }
+  const createHint = `Create new project (${formatShortcut(shortcutOf('file.newProject') ?? '')})`
+
   return (
     <div className="flex h-full w-full flex-col bg-surface-0 text-ink-0">
       {/* The window's drag strip — traffic lights live here and the window must stay movable. */}
@@ -130,6 +191,7 @@ export function ProjectsHome(): ReactNode {
       <div className="flex min-h-0 flex-1 justify-center px-8 pb-8">
         <section className="flex min-h-0 w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-line bg-surface-1">
           <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
+            <h1 className="mr-2 text-[13px] font-semibold text-ink-0">bay</h1>
             <SearchField
               label="Search projects"
               placeholder="Search projects…"
@@ -186,15 +248,15 @@ export function ProjectsHome(): ReactNode {
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {view === 'grid' ? (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-5">
-                <CreateTile busy={busy} onCreate={() => void open(() => call('Create project', (api) => api.project.create()))} />
+                <CreateTile busy={busy} hint={createHint} onCreate={createProject} />
                 {shown.map((recent) => (
                   <ProjectCard
                     key={recent.filePath}
                     recent={recent}
                     when={relativeTime(recent.updatedAt, now)}
                     onOpen={() => void openRecent(recent)}
-                    onChanged={() => void load()}
-                    notify={notify}
+                    actions={actionsFor(recent)}
+                    onContextMenu={onContextMenu(recent)}
                   />
                 ))}
               </div>
@@ -203,7 +265,8 @@ export function ProjectsHome(): ReactNode {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void open(() => call('Create project', (api) => api.project.create()))}
+                  onClick={createProject}
+                  title={createHint}
                   className="t-fast flex items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-surface-3"
                 >
                   <span className="grid h-9 w-16 place-items-center rounded-sm border border-line-strong bg-surface-2">
@@ -217,8 +280,8 @@ export function ProjectsHome(): ReactNode {
                     recent={recent}
                     when={relativeTime(recent.updatedAt, now)}
                     onOpen={() => void openRecent(recent)}
-                    onChanged={() => void load()}
-                    notify={notify}
+                    actions={actionsFor(recent)}
+                    onContextMenu={onContextMenu(recent)}
                   />
                 ))}
               </div>
@@ -240,13 +303,170 @@ export function ProjectsHome(): ReactNode {
       <div className="fixed right-4 bottom-4">
         <Toast toast={toast} onDismiss={dismissToast} />
       </div>
+
+      <ContextMenu
+        at={menuAt ? { x: menuAt.x, y: menuAt.y } : null}
+        onClose={() => setMenuAt(null)}
+        label={menuAt ? `${menuAt.recent.name} actions` : 'Project actions'}
+        items={menuAt ? actionsFor(menuAt.recent) : []}
+      />
+      <RenameDialog
+        recent={renaming}
+        onClose={() => setRenaming(null)}
+        onRenamed={(renamed) => {
+          setRenaming(null)
+          notify(`Renamed to “${renamed.name}”.`)
+          void load()
+        }}
+      />
+      <TrashDialog
+        recent={trashing}
+        onClose={() => setTrashing(null)}
+        onTrashed={(gone) => {
+          setTrashing(null)
+          notify(`Moved “${gone.name}” to the Trash.`)
+          void load()
+        }}
+      />
     </div>
   )
 }
 
-function CreateTile({ busy, onCreate }: { busy: boolean; onCreate: () => void }): ReactNode {
+function RenameDialog({
+  recent,
+  onClose,
+  onRenamed
+}: {
+  recent: RecentProject | null
+  onClose: () => void
+  onRenamed: (renamed: RecentProject) => void
+}): ReactNode {
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  // A fresh draft each time the dialog opens on a project.
+  useEffect(() => {
+    if (recent) setName(recent.name)
+  }, [recent])
+
+  const trimmed = name.trim()
+  const submit = async (): Promise<void> => {
+    if (!recent || trimmed === '' || saving) return
+    if (trimmed === recent.name) {
+      onClose()
+      return
+    }
+    setSaving(true)
+    const renamed = await call(`Renaming ${recent.name}`, (api) =>
+      api.project.rename(recent.filePath, trimmed)
+    )
+    setSaving(false)
+    if (renamed) onRenamed(renamed)
+  }
+
   return (
-    <button type="button" disabled={busy} onClick={onCreate} className="group flex flex-col text-left">
+    <Modal
+      open={recent !== null}
+      title="Rename project"
+      onClose={onClose}
+      width={380}
+      footer={
+        <>
+          <Button variant="subtle" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={trimmed === '' || saving} onClick={() => void submit()}>
+            {saving ? 'Renaming…' : 'Rename'}
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="flex flex-col gap-1.5 px-4 py-3"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void submit()
+        }}
+      >
+        <TextField
+          label="Project name"
+          value={name}
+          autoFocus
+          invalid={trimmed === ''}
+          onChange={(event) => setName(event.target.value)}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <p className="text-[11px] leading-relaxed text-pretty text-ink-2">
+          {trimmed === ''
+            ? 'A project needs a name.'
+            : 'The file is renamed to match, unless another project in its folder already has that name.'}
+        </p>
+      </form>
+    </Modal>
+  )
+}
+
+function TrashDialog({
+  recent,
+  onClose,
+  onTrashed
+}: {
+  recent: RecentProject | null
+  onClose: () => void
+  onTrashed: (gone: RecentProject) => void
+}): ReactNode {
+  const [working, setWorking] = useState(false)
+  const confirm = async (): Promise<void> => {
+    if (!recent || working) return
+    setWorking(true)
+    // `trash` resolves to undefined; `call` returns null only when it failed (and said why).
+    const done = await call(`Moving ${recent.name} to the Trash`, (api) =>
+      api.project.trash(recent.filePath)
+    )
+    setWorking(false)
+    if (done !== null) onTrashed(recent)
+  }
+  return (
+    <Modal
+      open={recent !== null}
+      title={recent ? `Move “${recent.name}” to the Trash?` : 'Move to the Trash?'}
+      onClose={onClose}
+      width={400}
+      footer={
+        <>
+          <Button variant="subtle" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" disabled={working} onClick={() => void confirm()}>
+            {working ? 'Moving…' : 'Move to Trash'}
+          </Button>
+        </>
+      }
+    >
+      <p className="px-4 py-3 text-[12px] leading-relaxed text-pretty text-ink-1">
+        The project file goes to the Trash and leaves this list; its media files are not touched.
+        You can restore it from the Trash in Finder.
+      </p>
+    </Modal>
+  )
+}
+
+function CreateTile({
+  busy,
+  hint,
+  onCreate
+}: {
+  busy: boolean
+  hint: string
+  onCreate: () => void
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onCreate}
+      title={hint}
+      className="group flex flex-col text-left"
+    >
       <span className="t-fast grid aspect-video place-items-center rounded-lg border border-line-strong bg-surface-2 group-hover:border-line-hover group-hover:bg-surface-3">
         <Plus aria-hidden="true" className="size-6 text-ink-1 group-hover:text-ink-0" />
       </span>
@@ -259,8 +479,8 @@ interface ItemProps {
   recent: RecentProject
   when: string
   onOpen: () => void
-  onChanged: () => void
-  notify: (text: string, kind?: 'info' | 'error') => void
+  actions: MenuEntry[]
+  onContextMenu: (event: MouseEvent) => void
 }
 
 function Poster({ recent, className }: { recent: RecentProject; className?: string }): ReactNode {
@@ -282,9 +502,9 @@ function Poster({ recent, className }: { recent: RecentProject; className?: stri
   )
 }
 
-function ProjectCard({ recent, when, onOpen, onChanged, notify }: ItemProps): ReactNode {
+function ProjectCard({ recent, when, onOpen, actions, onContextMenu }: ItemProps): ReactNode {
   return (
-    <div className="group relative flex flex-col">
+    <div className="group relative flex flex-col" onContextMenu={onContextMenu}>
       <button type="button" onClick={onOpen} title={recent.filePath} className="flex flex-col text-left">
         <span className="t-fast block aspect-video overflow-hidden rounded-lg border border-line bg-surface-2 group-hover:border-line-hover">
           <Poster recent={recent} className="h-full w-full" />
@@ -293,39 +513,47 @@ function ProjectCard({ recent, when, onOpen, onChanged, notify }: ItemProps): Re
         <span className="px-0.5 text-[11px] text-ink-2">{when}</span>
       </button>
       <div className="absolute right-0 bottom-3">
-        <ProjectMenu recent={recent} onChanged={onChanged} notify={notify} />
+        <ProjectMenu recent={recent} actions={actions} />
       </div>
     </div>
   )
 }
 
-function ProjectRow({ recent, when, onOpen, onChanged, notify }: ItemProps): ReactNode {
+function ProjectRow({ recent, when, onOpen, actions, onContextMenu }: ItemProps): ReactNode {
   return (
-    <div className="group t-fast flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-surface-3">
+    <div
+      className="group t-fast flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-surface-3"
+      onContextMenu={onContextMenu}
+    >
       <button type="button" onClick={onOpen} title={recent.filePath} className="flex min-w-0 flex-1 items-center gap-3 text-left">
         <span className="block h-9 w-16 shrink-0 overflow-hidden rounded-sm border border-line">
           <Poster recent={recent} className="h-full w-full" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] text-ink-0">{recent.name}</span>
-          <span className="block truncate text-[11px] text-ink-2">{recent.filePath}</span>
+          <span className="block truncate text-[11px] text-ink-2">
+            {recent.folder ?? folderOf(recent.filePath)}
+          </span>
         </span>
         <span className="shrink-0 text-[11px] text-ink-2">{when}</span>
       </button>
-      <ProjectMenu recent={recent} onChanged={onChanged} notify={notify} />
+      <ProjectMenu recent={recent} actions={actions} />
     </div>
   )
 }
 
+/** The parent folder's name, for a row whose folder main did not describe. */
+function folderOf(filePath: string): string {
+  const parts = filePath.split(/[\\/]/).filter(Boolean)
+  return parts.length >= 2 ? parts[parts.length - 2]! : filePath
+}
+
 /**
- * Remove from the list, or show the file. Deliberately no "delete": a project is a file the user
- * owns, and deleting it from a thumbnail menu is one mis-click from losing an edit.
+ * The ⋯ menu. Its rows are `actionsFor` in `ProjectsHome`, the same list a right-click opens.
+ * Deleting is "Move to Trash…": the file is someone's work, so it goes where Finder can bring it
+ * back, and only after a confirmation that names it — a thumbnail menu is one mis-click away.
  */
-function ProjectMenu({
-  recent,
-  onChanged,
-  notify
-}: Pick<ItemProps, 'recent' | 'onChanged' | 'notify'>): ReactNode {
+function ProjectMenu({ recent, actions }: Pick<ItemProps, 'recent' | 'actions'>): ReactNode {
   const menu = useFloatingTrigger()
   return (
     <>
@@ -339,20 +567,7 @@ function ProjectMenu({
         label={`${recent.name} actions`}
         side="top"
         align="end"
-        items={[
-          {
-            label: 'Show in Finder',
-            onSelect: () => void call('Show in Finder', (api) => api.project.reveal(recent.filePath))
-          },
-          {
-            label: 'Remove from list',
-            onSelect: () =>
-              void call('Remove from list', (api) => api.project.forget(recent.filePath)).then(() => {
-                notify(`Removed ${recent.name} from the list. The file is still on disk.`)
-                onChanged()
-              })
-          }
-        ]}
+        items={actions}
       />
     </>
   )

@@ -231,6 +231,8 @@ export interface RecentProject {
   updatedAt: number
   /** Data URL of a poster frame, when one has been captured. */
   poster?: string
+  /** The folder the file is in, for display: the home folder written as `~`. */
+  folder?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +373,28 @@ export interface BayApi {
     beats(path: string, options?: { beatsPerBar?: number }): Promise<{ ok: true; grid: BeatGrid } | { ok: false; error: string }>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
+    /**
+     * Each path's size in bytes, or null where no file is there now — moved, deleted, or on a
+     * drive that is not mounted. One call answers both what the Media panel shows (file size)
+     * and what it warns about (missing media). Nothing is read or allowlisted.
+     */
+    stat(paths: string[]): Promise<(number | null)[]>
+    /**
+     * A picker for the one file a missing asset should now point at, titled with its name and
+     * opened in `nearPath`'s folder when that exists. Returns the chosen path, or null when the
+     * picker was dismissed. Nothing is imported: the renderer passes the path to `importPaths`,
+     * which probes it and admits it to `bay://`, and relinks from what that measured.
+     */
+    locate(name: string, nearPath?: string | null): Promise<string | null>
+    /**
+     * A picker for an `.srt` or `.vtt` file, whose text is returned for `add_captions` to parse.
+     * Null when dismissed. Refuses a file too large to be a caption file.
+     */
+    openCaptions(): Promise<{ name: string; text: string } | null>
+    /** The text of a dropped `.srt`/`.vtt` — only those extensions, and only a caption-sized file. */
+    readCaptions(path: string): Promise<{ name: string; text: string }>
+    /** A save dialog for an `.srt`, then the file written. Returns the path, or null if dismissed. */
+    saveCaptions(defaultName: string, text: string): Promise<string | null>
   }
 
   /**
@@ -510,6 +534,16 @@ export interface BayApi {
     forget(filePath: string): Promise<void>
     /** Show the project file in Finder. */
     reveal(filePath: string): Promise<void>
+    /**
+     * Rename a project on the list: the name inside the document, and the file to `<name>.bay`
+     * in the same folder when that name is free (compared case-insensitively, as the Mac's disk
+     * does) — otherwise the file keeps its name. Only a `.bay` on the recents list is touched.
+     */
+    rename(filePath: string, name: string): Promise<RecentProject>
+    /** A copy beside the original, with a new project id and the name "<name> copy". */
+    duplicate(filePath: string): Promise<RecentProject>
+    /** Move a project on the recents list to the Trash (restorable from Finder) and forget it. */
+    trash(filePath: string): Promise<void>
   }
 
   export: {
@@ -520,6 +554,13 @@ export interface BayApi {
     finish(jobId: string): Promise<void>
     cancel(jobId: string): Promise<void>
     chooseOutputPath(defaultName: string, format: ExportFormat): Promise<string | null>
+    /**
+     * Show a finished export in Finder, or open it in the default app. Only a path an export in
+     * this session reported `done` for: anything else resolves `false` and nothing happens, so
+     * these cannot be used to open an arbitrary file.
+     */
+    reveal(outputPath: string): Promise<boolean>
+    open(outputPath: string): Promise<boolean>
     onProgress(listener: (progress: ExportProgress) => void): () => void
   }
 
@@ -639,6 +680,11 @@ export const IPC = {
   mediaWaveform: 'media:waveform',
   mediaBeats: 'media:beats',
   mediaReveal: 'media:reveal',
+  mediaStat: 'media:stat',
+  mediaLocate: 'media:locate',
+  mediaOpenCaptions: 'media:open-captions',
+  mediaReadCaptions: 'media:read-captions',
+  mediaSaveCaptions: 'media:save-captions',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',
@@ -659,12 +705,17 @@ export const IPC = {
   projectCreate: 'project:create',
   projectForget: 'project:forget',
   projectReveal: 'project:reveal',
+  projectRename: 'project:rename',
+  projectDuplicate: 'project:duplicate',
+  projectTrash: 'project:trash',
 
   exportStart: 'export:start',
   exportPushFrame: 'export:push-frame',
   exportFinish: 'export:finish',
   exportCancel: 'export:cancel',
   exportChoosePath: 'export:choose-path',
+  exportReveal: 'export:reveal',
+  exportOpen: 'export:open',
   exportProgress: 'export:progress',
 
   accessStatus: 'access:status',

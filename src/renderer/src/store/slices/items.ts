@@ -5,12 +5,14 @@
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
+import { applyRelinks } from '@shared/relink'
 import { cloneKeyframes, shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
 import { clone, makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
+import { stillDurationFrames } from '../editing-prefs'
 
 type Actions = Pick<
   EditorActions,
@@ -18,6 +20,7 @@ type Actions = Pick<
   | 'removeAsset'
   | 'editAsset'
   | 'patchAsset'
+  | 'relinkAssets'
   | 'placeAsset'
   | 'moveItem'
   | 'trimItem'
@@ -61,6 +64,13 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             track.items = track.items.filter((item) => item.assetId !== assetId)
           }
         }
+      })
+    },
+
+    relinkAssets(relinks) {
+      if (relinks.length === 0) return
+      edit((project) => {
+        applyRelinks(project, relinks)
       })
     },
 
@@ -116,9 +126,9 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         ? 'video'
         : 'audio'
 
-      // A still has no duration of its own, so it gets a sensible default rather than 0.
+      // A still has no duration of its own, so it gets the default from Settings › Editing.
       const naturalFrames =
-        asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : timeline.fps * 5
+        asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : stillDurationFrames(timeline.fps)
       const duration = Math.max(1, naturalFrames)
 
       const explicitTrack = trackId ? findTrack(timeline, trackId) : undefined
@@ -307,14 +317,16 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return { ...plan, changes: plans.flatMap((each) => each.changes) }
     },
 
-    splitAt(frame) {
+    splitAt(frame, options) {
       const state = get()
       const timeline = activeTimeline(state.project)
       if (!timeline) return
       const at = Math.round(frame ?? state.playhead)
       // A selected clip splits with the clips linked to it, so a cut picture and its sound come
-      // out as two linked pairs rather than a picture cut over a sound that is not.
-      const targets = state.selection.length > 0 ? withLinked(timeline, state.selection) : null
+      // out as two linked pairs rather than a picture cut over a sound that is not. "Split all
+      // tracks" (⇧⌘B) ignores the selection and cuts everything the playhead crosses.
+      const targets =
+        state.selection.length > 0 && !options?.allTracks ? withLinked(timeline, state.selection) : null
 
       const created: string[] = []
       editTimeline((tl) => {
@@ -578,13 +590,14 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     // -- tracks -------------------------------------------------------------
-    addTrack(kind) {
+    addTrack(kind, index) {
       const id = newId('trk')
       editTimeline((timeline) => {
         const track = makeTrack(kind, 1)
         track.id = id
         track.name = nextTrackName(timeline, kind)
-        timeline.tracks.push(track)
+        if (index === undefined) timeline.tracks.push(track)
+        else timeline.tracks.splice(Math.max(0, Math.min(timeline.tracks.length, Math.round(index))), 0, track)
       })
       return id
     },
@@ -604,7 +617,10 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     patchTrack(trackId, patch) {
       editTimeline((timeline) => {
         const track = findTrack(timeline, trackId)
-        if (track) Object.assign(track, patch)
+        if (!track) return
+        Object.assign(track, patch)
+        // Not soloed is stored as absence, so a project that tried solo saves as one that never did.
+        if (track.solo === false) delete track.solo
       })
     }
   }
