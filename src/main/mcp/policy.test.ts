@@ -68,6 +68,34 @@ test('an export never overwrites a file that is not media, from anyone; the pane
   assert.equal(await terminal('export_timeline', { outputPath: '/Volumes/Other/cut.mp4' }), null)
 })
 
+test('a download from the panel asks the person first, naming the host; a terminal client is not asked', async () => {
+  const asked: { message: string; detail: string }[] = []
+  const answering = (answer: boolean): PolicyEnv => ({
+    ...env,
+    confirm: async (message, detail) => {
+      asked.push({ message, detail })
+      return answer
+    }
+  })
+  const url = 'https://video.example/watch?v=1&q=what-the-agent-read'
+
+  assert.equal(await checkCallPolicy('import_url', { url }, 'in-app', answering(true)), null, 'agreed: it goes ahead')
+  assert.equal(asked.at(-1)?.message, 'Download a video from video.example?')
+  assert.match(asked.at(-1)?.detail ?? '', /what-the-agent-read/, 'the whole address is shown, query and all')
+
+  const declined = await checkCallPolicy('import_url', { url }, 'in-app', answering(false))
+  assert.match(declined ?? '', /The user declined the download from video\.example\. Nothing was downloaded/)
+
+  const count = asked.length
+  assert.equal(await checkCallPolicy('import_url', { url }, 'socket', answering(false)), null, 'a terminal client already has the network')
+  assert.equal(await checkCallPolicy('import_url', { url, validateOnly: true }, 'in-app', answering(false)), null, 'a dry run downloads nothing')
+  assert.equal(await checkCallPolicy('import_url', { url: '--exec' }, 'in-app', answering(false)), null, 'the tool refuses a non-address itself')
+  assert.equal(asked.length, count, 'none of those asked anyone')
+
+  // Nobody to ask is a refusal, never a silent yes.
+  assert.match((await inApp('import_url', { url })) ?? '', /needs the user's go-ahead.*could not ask/)
+})
+
 test('tools that touch no path are untouched by the policy', async () => {
   assert.equal(await inApp('edit_item', { itemId: 'itm_1', volume: 0.5 }), null)
   assert.equal(await inApp('read_project', {}), null)

@@ -13,6 +13,7 @@
 
 import { ALL_RESOURCES } from '@shared/resources'
 import { examplesGuide, toolReference } from '@shared/guides'
+import { promptKitsGuide } from '@shared/prompt-kits'
 import { TEMPLATE_BODIES } from '../templates'
 import editing from './docs/editing.md?raw'
 import script from './docs/script.md?raw'
@@ -34,6 +35,8 @@ const BODIES: Record<string, string> = {
   // Rendered from the catalog at import, not written: see `@shared/guides`.
   'bay://guide/tools': toolReference(),
   'bay://guide/examples': examplesGuide(),
+  // Rendered from the kits themselves, so the guide and fill_prompt_kit cannot disagree.
+  'bay://guide/prompt-kits': promptKitsGuide(),
   'bay://guide/script': script,
   'bay://guide/review': review,
   'bay://guide/brf': brf,

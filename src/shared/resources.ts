@@ -78,6 +78,15 @@ export const RESOURCES: readonly ResourceSpec[] = [
     mimeType: 'text/markdown'
   },
   {
+    uri: 'bay://guide/prompt-kits',
+    name: 'Prompt kits for generation',
+    description:
+      'Worked-out prompts for generate_image and generate_video — B-roll, establishing shots, drone ' +
+      'orbits, macro details, product heroes, text-free thumbnail backgrounds and more — each with ' +
+      'its slots, what it keeps out, and a suggested model and aspect. Fill one with fill_prompt_kit.',
+    mimeType: 'text/markdown'
+  },
+  {
     uri: 'bay://guide/script',
     name: 'The Script surface',
     description:

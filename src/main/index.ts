@@ -38,6 +38,7 @@ import { onAccessChange, startAccess, stopAccess } from './auth/access'
 import { startGeneration, stopGeneration } from './generate/service'
 import { startUpdates, stopUpdates } from './update/updater'
 import { disposeAgent } from './agent/host'
+import { cancelUrlImports } from './media/url-import'
 import { isEntitled } from '@shared/access'
 import { appNameFor } from './app-name'
 
@@ -301,6 +302,8 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   stopAccess()
   stopGeneration()
+  // A download yt-dlp is still running would otherwise write on after bay has gone.
+  cancelUrlImports()
   stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()

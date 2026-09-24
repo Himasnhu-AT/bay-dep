@@ -891,7 +891,7 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with four exceptions, all main's.** No telemetry, no
+- **Nothing reaches the network — with five exceptions, all main's.** No telemetry, no
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
   origin; loosening it is a product decision, not a fix. The first exception is **access**: main
   (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
@@ -924,7 +924,21 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is sent, so a restart resumes polling instead of paying twice; results land content-addressed
   in `<userData>/generated`, are ffprobed, and a file with no picture is a blocking finding that
   is never imported. The redirect hosts for Veo and Kling downloads are from the providers' docs,
-  not observed — the tests use a local stub and never a live API.
+  not observed — the tests use a local stub and never a live API. The fifth is **`import_url`**
+  (`src/main/media/url-import.ts`, `@shared/url-import`): the *user's own* `yt-dlp`, found like
+  `claude` (`search-dirs.ts`), never shipped or fetched by bay — missing, the tool says
+  `brew install yt-dlp`. It runs only when that tool is called, on one `http(s)` address
+  (`checkDownloadUrl`, checked in the renderer, in main's policy and again in the downloader), as an
+  argument array with `--` before the address, and with `--ignore-config --no-config-locations
+  --no-plugin-dirs --no-exec`, no cookies, `--no-playlist --playlist-items 1`, ≤1080p, ≤2 GB and
+  15 minutes (then the process group is killed; quit kills it too). Output goes to a fresh folder
+  under `<userData>/downloads` and the path yt-dlp prints is believed only inside it; a failed
+  download's folder is removed. Which hosts it reaches is yt-dlp's business — whatever the page and
+  its extractor need — so the guard is consent, not a host list: from the in-app agent every
+  download asks the user in a native dialog showing the whole address (`policy.ts`), because an
+  injected address can carry what the agent read out in its query string. Terminal clients are not
+  asked; they have the network already. `url-import.test.ts` runs the real yt-dlp against
+  127.0.0.1 when it is installed, never the internet.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

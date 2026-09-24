@@ -20,6 +20,7 @@ import type { LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
 import type { Finding } from './findings'
+import type { UrlImportResult } from './url-import'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -385,6 +386,13 @@ export interface BayApi {
     /** Import specific paths — used by drag-and-drop onto the window. */
     importPaths(paths: string[]): Promise<ImportedAsset[]>
     /**
+     * Download one video from a web page with the user's own `yt-dlp` into bay's downloads
+     * folder (`main/media/url-import.ts`) — a network exception, see CLAUDE.md. Nothing is
+     * imported: the renderer passes the returned path to `importPaths`. `dryRun` checks the
+     * address and finds yt-dlp, and returns the argument list without running it.
+     */
+    importUrl(url: string, options?: { dryRun?: boolean }): Promise<UrlImportResult>
+    /**
      * The absolute path behind a dropped `File`.
      *
      * The odd one out in this interface: synchronous, and not backed by a channel in `IPC`.
@@ -735,6 +743,7 @@ export const IPC = {
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',
+  mediaImportUrl: 'media:import-url',
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
   mediaTranscribe: 'media:transcribe',
