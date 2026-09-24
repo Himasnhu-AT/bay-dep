@@ -149,16 +149,28 @@ export function App(): ReactNode {
   // Unsaved work is asked about, never dropped and never saved behind the user's back: going
   // home is not a request to write their file. The agent is stopped either way — its
   // conversation was about the project being left.
-  const [confirmingHome, setConfirmingHome] = useState(false)
+  //
+  // Every way out of a project goes through `guardLeave`: Home, File › New Project, File ›
+  // Open… and a document handed over by Finder. Each of them replaces the project and clears
+  // its undo history, and nothing autosaves, so an unguarded one is a keystroke that loses work.
+  const [leaving, setLeaving] = useState<{ to: string; go: () => void } | null>(null)
+  const guardLeave = useCallback((to: string, go: () => void): void => {
+    const { dirty, screen } = useEditor.getState()
+    if (dirty && screen === 'editor') setLeaving({ to, go })
+    else go()
+  }, [])
+  const leave = useCallback((): void => {
+    const go = leaving?.go
+    setLeaving(null)
+    go?.()
+  }, [leaving])
   const leaveToHome = useCallback((): void => {
-    setConfirmingHome(false)
     void bay()?.agent.dispose()
     showHome()
   }, [showHome])
   const requestHome = useCallback((): void => {
-    if (useEditor.getState().dirty) setConfirmingHome(true)
-    else leaveToHome()
-  }, [leaveToHome])
+    guardLeave('going to your projects', leaveToHome)
+  }, [guardLeave, leaveToHome])
 
   /**
    * Opening another project from the menu is leaving this one, exactly as going home is: the
@@ -206,24 +218,29 @@ export function App(): ReactNode {
   }, [addAssets, notify])
 
   const onOpen = useCallback((): void => {
-    void call('Open project', (client) => client.project.open()).then((project) => {
-      // Null is either a failed call, already reported, or the user cancelling the picker.
-      // Neither should replace what they are working on.
-      if (project) switchProject(project)
+    guardLeave('opening another project', () => {
+      void call('Open project', (client) => client.project.open()).then((project) => {
+        // Null is either a failed call, already reported, or the user cancelling the picker.
+        // Neither should replace what they are working on.
+        if (project) switchProject(project)
+      })
     })
-  }, [switchProject])
+  }, [guardLeave, switchProject])
 
   /**
    * A new project is opened the way a chosen one is: straight in from the projects screen, and
    * through `switchProject` from the editor, which ends the agent's session about the old one.
    */
   const onNewProject = useCallback((): void => {
-    void call('Create project', (client) => client.project.create()).then((project) => {
-      if (!project) return
-      if (useEditor.getState().screen === 'home') enterProject(project)
-      else switchProject(project)
+    // Asked before creating, not after: `create` writes the new `.bay` at once.
+    guardLeave('starting a new project', () => {
+      void call('Create project', (client) => client.project.create()).then((project) => {
+        if (!project) return
+        if (useEditor.getState().screen === 'home') enterProject(project)
+        else switchProject(project)
+      })
     })
-  }, [enterProject, switchProject])
+  }, [guardLeave, enterProject, switchProject])
 
   /**
    * macOS handing bay a document while it runs. Every *menu item* arrives as a registry
@@ -239,11 +256,11 @@ export function App(): ReactNode {
       if (command.type !== 'open-path') return
       void call('Open project', (client) => client.project.openPath(command.path)).then(
         (project) => {
-          if (project) switchProject(project)
+          if (project) guardLeave(`opening “${project.name}”`, () => switchProject(project))
         }
       )
     })
-  }, [switchProject])
+  }, [guardLeave, switchProject])
 
   /**
    * The agent surface. Registered here because the executor reaches the store directly and
@@ -462,18 +479,18 @@ export function App(): ReactNode {
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <Modal
-        open={confirmingHome}
+        open={leaving !== null}
         title="Save changes before leaving?"
-        onClose={() => setConfirmingHome(false)}
+        onClose={() => setLeaving(null)}
         width={380}
         footer={
           // macOS order: the destructive choice apart on the left, Cancel beside the default.
           // "Don't save" throws work away, so it reads as the one that does.
           <>
-            <Button variant="danger" onClick={leaveToHome} className="mr-auto">
+            <Button variant="danger" onClick={leave} className="mr-auto">
               Don't save
             </Button>
-            <Button variant="subtle" onClick={() => setConfirmingHome(false)}>
+            <Button variant="subtle" onClick={() => setLeaving(null)}>
               Cancel
             </Button>
             <Button
@@ -482,7 +499,7 @@ export function App(): ReactNode {
                 void (async () => {
                   await onSave()
                   // Only leave once it actually saved: a cancelled Save dialog keeps the user here.
-                  if (!useEditor.getState().dirty) leaveToHome()
+                  if (!useEditor.getState().dirty) leave()
                 })()
               }}
             >
@@ -493,7 +510,7 @@ export function App(): ReactNode {
       >
         <p className="px-4 py-3 text-[12px] leading-relaxed text-pretty text-ink-1">
           “{useEditor.getState().project.name}” has changes that are not saved. Save them before
-          going to your projects, or leave without them.
+          {' '}{leaving?.to ?? 'leaving'}, or leave without them.
         </p>
       </Modal>
 

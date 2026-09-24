@@ -66,7 +66,13 @@ for (const [name, event, id] of INVENTORY) {
 
 test('no key runs a command while a text field has focus', () => {
   // Typing "s" into a clip name must not razor the timeline.
-  for (const [, event] of INVENTORY) assert.equal(commandForKey(event, true), undefined)
+  // Undo/Redo are the exception, by design: they run whileTyping and their handler undoes the
+  // *text* (see edit.ts), because macOS delivers a ⌘Z left to the field to nothing.
+  const TEXT_AWARE = new Set(['edit.undo', 'edit.redo'])
+  for (const [, event, id] of INVENTORY) {
+    if (TEXT_AWARE.has(id)) continue
+    assert.equal(commandForKey(event, true), undefined, id)
+  }
   // Positive control: a whileTyping command does fire there.
   const specs: CommandSpec[] = [{ id: 'x.t', label: 'T', group: 'File', shortcut: 'S', whileTyping: true }]
   assert.equal(commandForKey(key('s'), true, specs)?.id, 'x.t')
@@ -160,12 +166,16 @@ test('the standard NLE editing keys reach the commands every editor binds them t
   }
   // ⌘C/⌘V/⌘X also run while typing (their handlers hand the key to the text); single keys never do.
   assert.equal(commandForKey(key('c', { metaKey: true }), true)?.id, 'edit.copy')
+  // ⌘Z in a text field must reach the handler (which undoes the text): with no system Undo role
+  // in the menu, a key left to the field is delivered to nothing on macOS.
+  assert.equal(commandForKey(key('z', { metaKey: true }), true)?.id, 'edit.undo')
+  assert.equal(commandForKey(key('Z', { metaKey: true, shiftKey: true }), true)?.id, 'edit.redo')
   assert.equal(commandForKey(key('i'), true), undefined)
   assert.equal(commandForKey(key('j'), true), undefined)
 })
 
 test('shortcutOf gives the primary binding', () => {
-  assert.equal(shortcutOf('clip.delete'), 'Delete')
+  assert.equal(shortcutOf('clip.delete'), 'Backspace')
   assert.equal(shortcutOf('file.save'), 'Mod+S')
 })
 

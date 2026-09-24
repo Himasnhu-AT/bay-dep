@@ -33,11 +33,11 @@ export const clipCommands = [
   { id: 'clip.addTransition', label: 'Add Transition at Nearest Cut', group: 'Clip', shortcut: 'Mod+T' },
   SEPARATOR,
   // Shift is ripple, as in Premiere and Resolve: plain Delete lifts and leaves the gap.
-  { id: 'clip.delete', label: 'Delete', group: 'Clip', shortcut: ['Delete', 'Backspace'] },
+  { id: 'clip.delete', label: 'Delete', group: 'Clip', shortcut: ['Backspace', 'Delete'] },
   {
     id: 'clip.rippleDelete',
     label: 'Ripple Delete',
     group: 'Clip',
-    shortcut: ['Shift+Delete', 'Shift+Backspace']
+    shortcut: ['Shift+Backspace', 'Shift+Delete']
   }
 ] as const satisfies readonly CommandEntry[]

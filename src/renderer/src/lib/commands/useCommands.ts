@@ -3,6 +3,7 @@ import { commandForKey } from '@shared/commands'
 import { bay } from '@/lib/bay'
 import { isTyping, runCommand, setCommandHost } from './registry'
 import type { CommandHost } from './types'
+import { keyMayRun } from './keyGate'
 
 /**
  * Every shortcut and every menu command in the app, mounted once at the root.
@@ -41,6 +42,9 @@ export function useCommands(host: CommandHost): void {
       const typing = isTyping(event.target)
       const spec = commandForKey(event, typing)
       if (!spec) return
+      const modalOpen = document.querySelector('[aria-modal="true"]') !== null
+      const whileTyping = 'whileTyping' in spec && spec.whileTyping === true
+      if (!keyMayRun({ defaultPrevented: event.defaultPrevented, modalOpen, typing, whileTyping })) return
       // Claimed even when the command is disabled: Space would otherwise activate the last
       // button clicked, and arrows would scroll a panel.
       event.preventDefault()
