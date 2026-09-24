@@ -11,8 +11,7 @@ import {
   isVisualItem,
   keyTimeBounds,
   MAX_VOLUME_DB,
-  VOLUME_DB_FLOOR
-} from './inspector'
+  VOLUME_DB_FLOOR, audioNoteForPerson } from './inspector'
 import { mergeKeyframes } from './keyframes'
 import type { Keyframe } from './project'
 
@@ -119,4 +118,11 @@ test('a key can move to the clip’s last frame and no further: the frame after 
   // The clip covers [from, from + duration): its last drawn frame is max, and max + 1 is outside.
   assert.ok(max < item.from + item.durationInFrames && max + 1 === item.from + item.durationInFrames)
   assert.deepEqual(keyTimeBounds({ from: 5, durationInFrames: 1 }), { min: 5, max: 5 })
+})
+
+test('J/L notes use the Audio section’s own words, not the model’s', () => {
+  const note = "the 10-frame audio lead is ignored: a transition on this clip's in-point already overlaps"
+  const person = audioNoteForPerson(note)
+  assert.ok(!/audio lead|in-point/.test(person), person)
+  assert.ok(person.includes('sound-early time') && person.includes("clip's start"), person)
 })

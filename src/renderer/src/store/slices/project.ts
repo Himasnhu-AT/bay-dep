@@ -15,12 +15,19 @@ import { HISTORY_LIMIT } from '../kit'
  * Undo and redo used to clear it, so a ⌘Z made in the inspector emptied the inspector and sent
  * the next arrow key to the playhead instead of the clip.
  */
-export function selectionAfter(selection: readonly string[], project: Project): string[] {
-  if (selection.length === 0) return []
-  const timeline = activeTimeline(project)
+export function selectionAfter(selection: readonly string[], before: Project, after: Project): string[] {
+  const timeline = activeTimeline(after)
   if (!timeline) return []
   const present = new Set(allItems(timeline).map((item) => item.id))
-  return selection.filter((id) => present.has(id))
+  const kept = selection.filter((id) => present.has(id))
+  if (kept.length > 0) return kept
+  // Nothing selected survived — typically undoing a delete, which had emptied the selection. The
+  // clips the step brought back are what the user is looking for; select them, as editors do.
+  const had = activeTimeline(before)
+  const existed = new Set(had ? allItems(had).map((item) => item.id) : [])
+  return allItems(timeline)
+    .map((item) => item.id)
+    .filter((id) => !existed.has(id))
 }
 
 type Actions = Pick<
@@ -92,7 +99,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         project: previous,
         past: state.past.slice(0, -1),
         future: [state.project, ...state.future],
-        selection: selectionAfter(state.selection, previous),
+        selection: selectionAfter(state.selection, state.project, previous),
         dirty: previous !== history.saved,
         ...turnMarks(state)
       })
@@ -107,7 +114,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         project: next,
         past: [...state.past, state.project],
         future: state.future.slice(1),
-        selection: selectionAfter(state.selection, next),
+        selection: selectionAfter(state.selection, state.project, next),
         dirty: next !== history.saved,
         ...turnMarks(state)
       })

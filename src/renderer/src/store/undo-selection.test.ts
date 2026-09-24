@@ -33,3 +33,22 @@ test('undo keeps a selected clip that survives the step, and drops one that does
   s().undo()
   assert.deepEqual(s().selection, [], 'undoing the placement removes the clip, so it leaves the selection')
 })
+
+test('undoing a delete selects the clips it brings back', async () => {
+  const { useEditor, emptyProject } = await import('./editor')
+  const s = () => useEditor.getState()
+  s().setProject(emptyProject(), { resetHistory: true })
+  s().addAssets([
+    {
+      id: 'ast_t', kind: 'text', name: 'Title', path: null, durationUs: 0, width: null, height: null, fps: null,
+      hasAudio: false, hasVideo: false, posterPath: null, waveformPath: null, text: 'Title', createdAt: 0
+    }
+  ])
+  const itemId = s().placeAsset('ast_t', 0)
+  assert.ok(itemId)
+  s().select([itemId])
+  s().deleteSelected()
+  assert.deepEqual(s().selection, [], 'the delete emptied the selection')
+  s().undo()
+  assert.deepEqual(s().selection, [itemId], 'the restored clip comes back selected, so the inspector shows it')
+})

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import type { Item, Project, Timeline } from '@shared/project'
 import { resolveAudioOffsets, MAX_DUCK_DB } from '@shared/audio-gain'
-import { asSentences, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { asSentences, audioNoteForPerson, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
 import { Field, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
 import { useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
@@ -146,7 +146,7 @@ export function AudioSection({
           <AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0" />
           {/* One line per limit: two reasons joined with a space read as one run-on sentence. */}
           <ul className="space-y-1">
-            {asSentences(clamped).map((note) => (
+            {asSentences(clamped.map(audioNoteForPerson)).map((note) => (
               <li key={note}>{note}</li>
             ))}
           </ul>

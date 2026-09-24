@@ -40,6 +40,16 @@ export function AudioMeter({ className }: { className?: string }): ReactNode {
   const [clipped, setClipped] = useState(false)
   // The last peak, for the tooltip, read when the tooltip opens rather than rendered per frame.
   const [peakText, setPeakText] = useState('')
+  // The bar colours are read from the theme's tokens when the effect runs; a theme switch while
+  // paused would otherwise leave the old theme's near-black bars on a light transport, which
+  // read as a full meter. `theme.js` sets `data-theme` on <html>, so that is what is watched.
+  const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme'))
+  useEffect(() => {
+    const root = document.documentElement
+    const observer = new MutationObserver(() => setTheme(root.getAttribute('data-theme')))
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -124,7 +134,7 @@ export function AudioMeter({ className }: { className?: string }): ReactNode {
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [playing, engine])
+  }, [playing, engine, theme])
 
   const resetClip = (): void => {
     channels.current = [

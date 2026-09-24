@@ -48,6 +48,7 @@ import { TextStyleSection } from './TextStyleSection'
 import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
 import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
 import { canSound, commonValue, hasSourceTime, isVisualItem, timingRefusal } from '@shared/inspector'
+import { retimedLength, speedNote, type SpeedPlan } from '@shared/speed'
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
@@ -408,9 +409,21 @@ export function Inspector(): ReactNode {
                   ? timingRefusal(project, timeline, selected.map((item) => item.id), { durationInFrames: next })
                   : null
                 if (refusal) return notify(refusal, 'error')
+                // A clip cannot run past the end of its footage: each one stops at what its
+                // source has left from its in-point at its speed, and says so rather than
+                // silently holding a last frame the way a longer typed value used to.
+                const fps = timeline?.fps ?? 30
+                const shortfalls: string[] = []
                 transact(() => {
-                  for (const item of selected) trimItem(item.id, 'end', item.from + next)
+                  for (const item of selected) {
+                    const asset = findAsset(project, item.assetId)
+                    const { available } = retimedLength(item, asset?.durationUs ?? 0, item.speed, fps)
+                    const length = Math.min(next, available)
+                    if (length < next) shortfalls.push(`“${asset?.name ?? 'clip'}” has ${formatTimecode(available, fps)} of footage from its source in`)
+                    trimItem(item.id, 'end', item.from + length)
+                  }
                 })
+                if (shortfalls.length > 0) notify(`${shortfalls.join('; ')}, so Duration stops there.`)
               }}
               onInvalid={notTime}
               min={1}
@@ -437,11 +450,23 @@ export function Inspector(): ReactNode {
                 mixed={speed.mixed}
                 // `setClipSpeed`, as the clip menu's Speed… and `edit_item({ speed })` do: the clip
                 // keeps its footage, so its length changes, stopping at the next clip.
-                onCommit={(next) =>
-                  useEditor.getState().transact(() => {
-                    for (const item of timedItems) useEditor.getState().setClipSpeed(item.id, Math.max(0.1, next))
+                onCommit={(next) => {
+                  const store = useEditor.getState()
+                  const plans: (SpeedPlan | null)[] = []
+                  store.transact(() => {
+                    for (const item of timedItems) plans.push(useEditor.getState().setClipSpeed(item.id, Math.max(0.1, next)))
                   })
-                }
+                  // Say when the length stopped short (at the next clip, or at the end of the
+                  // footage), the way the clip menu's Speed… does — silently getting 180 frames
+                  // for a 360-frame ask read as the field ignoring the value.
+                  const after = useEditor.getState()
+                  const tl = selectTimeline(after)
+                  if (!tl) return
+                  const notes = plans
+                    .map((plan) => (plan ? speedNote(after.project, tl, plan, (frame) => formatTimecode(frame, tl.fps)) : null))
+                    .filter((note): note is string => Boolean(note))
+                  if (notes.length > 0) after.notify(notes.join(' '))
+                }}
                 step={0.05}
                 min={0.1}
                 max={8}

@@ -278,3 +278,16 @@ export function asSentences(notes: readonly string[]): string[] {
       return /[.!?]$/.test(capital) ? capital : `${capital}.`
     })
 }
+
+/**
+ * The agent's J/L notes in the words the Audio section's fields use. The notes name the
+ * model's fields ("audio lead", "in-point"); beside fields labelled "Sound early" and
+ * "Sound late" that reads as a third, unexplained setting. The agent keeps its own wording.
+ */
+export function audioNoteForPerson(note: string): string {
+  return note
+    .replace(/audio lead/g, 'sound-early time')
+    .replace(/audio trail/g, 'sound-late time')
+    .replace(/in-point/g, 'start')
+    .replace(/out-point/g, 'end')
+}
