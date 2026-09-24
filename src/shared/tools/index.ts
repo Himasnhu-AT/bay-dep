@@ -3,6 +3,7 @@
 
 import type { ToolSpec } from './spec'
 import { tool as addCaptions } from './add-captions'
+import { tool as addComment } from './add-comment'
 import { tool as addMarker } from './add-marker'
 import { tool as addSubtitles } from './add-subtitles'
 import { tool as addTemplate } from './add-template'
@@ -29,11 +30,13 @@ import { tool as previewFrame } from './preview-frame'
 import { tool as proposeEdit } from './propose-edit'
 import { tool as readBrf } from './read-brf'
 import { tool as readComposition } from './read-composition'
+import { tool as readFeedback } from './read-feedback'
 import { tool as readProject } from './read-project'
 import { tool as readScript } from './read-script'
 import { tool as removeMarker } from './remove-marker'
 import { tool as removeRange } from './remove-range'
 import { tool as removeTransition } from './remove-transition'
+import { tool as resolveFeedback } from './resolve-feedback'
 import { tool as setCanvas } from './set-canvas'
 import { tool as setPlayhead } from './set-playhead'
 import { tool as splitAt } from './split-at'
@@ -82,6 +85,9 @@ export const TOOLS: ToolSpec[] = [
   addCaptions,
   addMarker,
   removeMarker,
+  readFeedback,
+  resolveFeedback,
+  addComment,
   setPlayhead,
   undo,
   exportTimeline,

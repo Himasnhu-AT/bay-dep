@@ -150,6 +150,16 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       else if (old.label !== m.label || old.color !== m.color) out.push({ kind: 'changed', text: `Changed marker “${old.label}”${old.label !== m.label ? ` to “${m.label}”` : ''}` })
     }
     for (const [id, m] of oldMarkers) if (!newMarkers.has(id)) out.push({ kind: 'removed', text: `Removed marker “${m.label}”` })
+
+    const oldComments = new Map((was.comments ?? []).map((c) => [c.id, c]))
+    const newComments = new Map((now.comments ?? []).map((c) => [c.id, c]))
+    for (const [id, c] of newComments) {
+      const old = oldComments.get(id)
+      if (!old) out.push({ kind: 'added', text: `Added a comment at ${tc(c.frame)}: “${c.text}”` })
+      else if (!old.resolved && c.resolved) out.push({ kind: 'changed', text: `Resolved the comment “${c.text}”${c.resolvedNote ? ` — ${c.resolvedNote}` : ''}` })
+      else if (!same(old, c)) out.push({ kind: 'changed', text: `Changed the comment “${old.text}”` })
+    }
+    for (const [id, c] of oldComments) if (!newComments.has(id)) out.push({ kind: 'removed', text: `Removed the comment “${c.text}”` })
   }
 
   if (out.length > MAX_LINES) {

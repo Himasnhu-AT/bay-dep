@@ -9,6 +9,7 @@ import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
 import { handlers as cutsHandlers } from './cuts'
 import { handlers as exportsHandlers } from './exports'
+import { handlers as feedbackHandlers } from './feedback'
 import { handlers as frameGridHandlers } from './frameGrid'
 import { handlers as generationHandlers } from './generation'
 import { handlers as linksHandlers } from './links'
@@ -34,6 +35,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'compositions': compositionsHandlers,
   'cuts': cutsHandlers,
   'exports': exportsHandlers,
+  'feedback': feedbackHandlers,
   'frameGrid': frameGridHandlers,
   'generation': generationHandlers,
   'links': linksHandlers,
@@ -60,6 +62,7 @@ export const HANDLERS: Handlers = {
   ...compositionsHandlers,
   ...cutsHandlers,
   ...exportsHandlers,
+  ...feedbackHandlers,
   ...frameGridHandlers,
   ...generationHandlers,
   ...linksHandlers,

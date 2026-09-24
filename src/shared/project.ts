@@ -684,6 +684,32 @@ export interface Marker {
   color?: string
 }
 
+/**
+ * A review note left at a point (or over a span) of the timeline — "this cut is late", "louder
+ * here" — for someone to act on and then resolve. The user leaves them for the agent
+ * (`read_feedback` → fix → `resolve_feedback`), and the agent can leave them for the user.
+ *
+ * Unlike a marker it has a lifecycle: open until resolved, and resolved notes stay (dimmed) as
+ * the record of what was asked and what was done. On the timeline for the marker's reasons: it
+ * names a moment in the program, so it moves with time edits and not with clip edits.
+ *
+ * Named `ReviewComment` rather than `Comment`, which is a DOM global in the renderer.
+ */
+export interface ReviewComment {
+  id: string
+  /** Timeline frame the note is about. */
+  frame: Frames
+  /** Exclusive end, when the note is about a span rather than a moment. Always > `frame`. */
+  endFrame?: Frames
+  text: string
+  author: 'user' | 'agent'
+  resolved: boolean
+  /** Epoch milliseconds. */
+  createdAt: number
+  /** What was done about it, written when it was resolved. */
+  resolvedNote?: string
+}
+
 export interface Timeline {
   id: string
   name: string
@@ -708,6 +734,11 @@ export interface Timeline {
    * `.bay` file written before markers existed has no such key, and must still load.
    */
   markers?: Marker[]
+  /**
+   * Review comments, in no guaranteed order. Optional so every file written before comments
+   * existed still loads; absent rather than `[]` once the last one is removed.
+   */
+  comments?: ReviewComment[]
 }
 
 export interface Project {
@@ -825,6 +856,12 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
     // A marker names a wall-clock moment, so it is scaled like an edge — the same rounding as
     // the clip edges above, which keeps a marker placed on a cut on that cut.
     marker.frame = Math.max(0, Math.round(marker.frame * k))
+  }
+
+  for (const comment of timeline.comments ?? []) {
+    // Scaled like a marker, for the same reason; a span keeps at least one frame.
+    comment.frame = Math.max(0, Math.round(comment.frame * k))
+    if (comment.endFrame !== undefined) comment.endFrame = Math.max(comment.frame + 1, Math.round(comment.endFrame * k))
   }
 
   timeline.fps = fps

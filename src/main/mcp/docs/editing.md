@@ -152,6 +152,14 @@ It moves only when time itself does: `remove_range` slides markers after the cut
 footage, and one inside the removed span lands on the cut rather than vanishing. `remove_marker`
 takes one away.
 
+## Review comments are requests
+
+The user leaves comments at points (or over spans) of the timeline — "this cut is late",
+"louder here" — as round pins on the ruler (`⌥M` at the playhead). `read_feedback` lists the open
+ones with their frame, text and the items under them. Fix each, then `resolve_feedback` with a
+short note of what you changed; resolve only what you actually fixed. `add_comment` leaves the
+user a question or something to check. Comments move with time like markers do.
+
 ## Cutting to music
 
 `detect_beats` with the music's `itemId` finds its tempo, every beat, the first beat of each bar

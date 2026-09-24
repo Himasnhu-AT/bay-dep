@@ -25,7 +25,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Project } from '@shared/project'
-import { PROJECT_VERSION, type Marker } from '@shared/project'
+import { PROJECT_VERSION, type Marker, type ReviewComment } from '@shared/project'
 import { V1_ON_DISK } from '@shared/project-fixtures'
 import { openDatabase } from './db'
 import {
@@ -236,6 +236,55 @@ test('markers on disk load field for field — these key names are a promise to 
   assert.equal(first?.color, '#F5A524')
   assert.equal(second?.label, 'cold open')
   assert.equal(second?.color, undefined, 'colour is optional')
+})
+
+test('a version-1 file without comments loads with none, rather than being refused', async () => {
+  // Review comments came after files like the fixture were written; the key is optional for them.
+  assert.equal(V1_ON_DISK.includes('"comments"'), false, 'the fixture must predate comments')
+  const dir = scratch()
+  const target = join(dir, 'no-comments.bay')
+  writeFileSync(target, V1_ON_DISK, 'utf8')
+  const project = await readProjectFile(target)
+  assert.equal(project.timelines[0]?.comments, undefined)
+})
+
+test('comments on disk load field for field — these key names are a promise to saved files', async () => {
+  // A literal, read back through the typed `ReviewComment` properties, for the markers test's
+  // reason: renaming a field fails typecheck here instead of moving with the code.
+  const withComments = V1_ON_DISK.replace(
+    '"tracks": [',
+    '"comments": [\n' +
+      '        { "id": "cm_1", "frame": 30, "endFrame": 75, "text": "music too loud", "author": "user",\n' +
+      '          "resolved": true, "createdAt": 1700000000000, "resolvedNote": "ducked 6 dB" },\n' +
+      '        { "id": "cm_2", "frame": 12, "text": "is this the take?", "author": "agent", "resolved": false, "createdAt": 1700000000001 }\n' +
+      '      ],\n' +
+      '      "tracks": ['
+  )
+  assert.notEqual(withComments, V1_ON_DISK, 'the comments must actually have been spliced in')
+  const dir = scratch()
+  const target = join(dir, 'comments.bay')
+  writeFileSync(target, withComments, 'utf8')
+
+  const comments: ReviewComment[] | undefined = (await readProjectFile(target)).timelines[0]?.comments
+  assert.equal(comments?.length, 2)
+  const [first, second] = comments ?? []
+  assert.equal(first?.id, 'cm_1')
+  assert.equal(first?.frame, 30)
+  assert.equal(first?.endFrame, 75)
+  assert.equal(first?.text, 'music too loud')
+  assert.equal(first?.author, 'user')
+  assert.equal(first?.resolved, true)
+  assert.equal(first?.createdAt, 1700000000000)
+  assert.equal(first?.resolvedNote, 'ducked 6 dB')
+  assert.equal(second?.author, 'agent')
+  assert.equal(second?.resolved, false)
+  assert.equal(second?.endFrame, undefined, 'endFrame is optional')
+
+  // And back out: what was read writes the same keys again.
+  const rewritten = join(dir, 'comments-again.bay')
+  await writeProjectFile(await readProjectFile(target), rewritten)
+  const again = JSON.parse(readFileSync(rewritten, 'utf8')) as { timelines: { comments?: unknown[] }[] }
+  assert.deepEqual(again.timelines[0]?.comments, JSON.parse(withComments).timelines[0].comments)
 })
 
 test('what bay writes today is still loadable by the version-1 reader', async () => {

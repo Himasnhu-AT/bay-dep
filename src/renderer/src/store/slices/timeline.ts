@@ -1,6 +1,6 @@
 /**
  * The timeline's shape and what sits on it besides clips: canvas and frame rate,
- * transitions, subtitles, captions, markers and scripted edits.
+ * transitions, subtitles, captions, markers, review comments and scripted edits.
  */
 
 import { CANVAS_PRESETS, checkCanvasSize, activeTimeline, allItems, placementLayout, coverLayout, containLayout, defaultLayout, findAsset, findItem, itemEnd, type Asset, type Item, type Project, type Transition, retimeTimeline } from '@shared/project'
@@ -26,6 +26,10 @@ type Actions = Pick<
   | 'moveMarker'
   | 'removeMarker'
   | 'patchMarker'
+  | 'addComment'
+  | 'editComment'
+  | 'resolveComment'
+  | 'removeComment'
 >
 
 export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
@@ -342,6 +346,74 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         if (label) marker.label = label
         if (patch.color === null) delete marker.color
         else if (patch.color !== undefined) marker.color = patch.color
+      })
+    },
+
+    // -- review comments ----------------------------------------------------
+    addComment(frame, text, options = {}) {
+      if (!currentTimeline()) return null
+      const words = text.trim()
+      if (!words) return null
+      const at = Math.max(0, Math.round(frame))
+      const end = options.endFrame === undefined ? undefined : Math.round(options.endFrame)
+      const id = newId('cm')
+      editTimeline((tl) => {
+        const list = tl.comments ?? (tl.comments = [])
+        list.push({
+          id,
+          frame: at,
+          ...(end !== undefined && end > at ? { endFrame: end } : {}),
+          text: words,
+          author: options.author ?? 'user',
+          resolved: false,
+          createdAt: Date.now()
+        })
+      })
+      return id
+    },
+
+    editComment(commentId, patch) {
+      editTimeline((tl) => {
+        const comment = tl.comments?.find((c) => c.id === commentId)
+        if (!comment) return
+        const words = patch.text?.trim()
+        if (words && words !== comment.text) comment.text = words
+        if (patch.frame !== undefined) {
+          const at = Math.max(0, Math.round(patch.frame))
+          // A moved span keeps its length.
+          if (comment.endFrame !== undefined && patch.endFrame === undefined) comment.endFrame += at - comment.frame
+          comment.frame = at
+        }
+        if (patch.endFrame === null) delete comment.endFrame
+        else if (patch.endFrame !== undefined) {
+          const end = Math.round(patch.endFrame)
+          if (end > comment.frame) comment.endFrame = end
+          else delete comment.endFrame
+        }
+        if (patch.resolved === false && comment.resolved) {
+          comment.resolved = false
+          delete comment.resolvedNote
+        } else if (patch.resolved === true && !comment.resolved) comment.resolved = true
+      })
+    },
+
+    resolveComment(commentId, note) {
+      editTimeline((tl) => {
+        const comment = tl.comments?.find((c) => c.id === commentId)
+        if (!comment) return
+        const words = note?.trim()
+        if (comment.resolved && (!words || words === comment.resolvedNote)) return
+        comment.resolved = true
+        if (words) comment.resolvedNote = words
+      })
+    },
+
+    removeComment(commentId) {
+      editTimeline((tl) => {
+        if (!tl.comments?.some((c) => c.id === commentId)) return
+        tl.comments = tl.comments.filter((c) => c.id !== commentId)
+        // Absent rather than empty, as markers are.
+        if (tl.comments.length === 0) delete tl.comments
       })
     }
   }
