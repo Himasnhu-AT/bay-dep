@@ -130,6 +130,11 @@ export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId:
   for (const marker of timeline.markers ?? []) {
     if (marker.frame >= start) marker.frame += length
   }
+  for (const comment of timeline.comments ?? []) {
+    // A span the insert lands inside grows by it, like a clip straddling the point is split around it.
+    if (comment.frame >= start) comment.frame += length
+    if (comment.endFrame !== undefined && comment.endFrame > start) comment.endFrame += length
+  }
   dropBrokenTransitions(timeline, abuttedBefore, result)
   return result
 }
@@ -156,7 +161,7 @@ export function liftRange(
   // The trimming is `rippleDelete`'s, run on this track alone (no transitions, no markers — those
   // are handled here), and then the shift it made is undone: everything it moved to or past
   // `start` goes back right by the span, which leaves each piece exactly where it was.
-  const alone: Timeline = { ...timeline, tracks: [track], transitions: [], markers: [] }
+  const alone: Timeline = { ...timeline, tracks: [track], transitions: [], markers: [], comments: [] }
   const ripple = rippleDelete(alone, start, end, makeId)
   for (const item of track.items) if (item.from >= start) item.from += end - start
   // A span strictly inside one clip splits it: the original keeps the head, the new id is the tail.

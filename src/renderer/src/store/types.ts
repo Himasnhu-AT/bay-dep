@@ -459,6 +459,21 @@ export interface EditorActions {
   /** Rename or recolour a marker. An empty label is refused; a null colour returns to the default. */
   patchMarker(markerId: string, patch: { label?: string; color?: string | null }): void
 
+  // review comments -----------------------------------------------------------
+  /**
+   * Leave a review comment on the active timeline. Returns its id, or null when there is no
+   * timeline or the text is empty. `endFrame` (exclusive, > frame) makes it about a span.
+   */
+  addComment(frame: Frames, text: string, options?: { endFrame?: Frames; author?: 'user' | 'agent' }): string | null
+  /**
+   * Change a comment's words, place or state. Empty text is ignored; `endFrame: null` makes it
+   * a moment again; `resolved: false` reopens it and drops the resolution note.
+   */
+  editComment(commentId: string, patch: { text?: string; frame?: Frames; endFrame?: Frames | null; resolved?: boolean }): void
+  /** Mark a comment done, with what was done about it. */
+  resolveComment(commentId: string, note?: string): void
+  removeComment(commentId: string): void
+
   // selection / view ---------------------------------------------------------
   select(itemIds: string[], additive?: boolean): void
   clearSelection(): void

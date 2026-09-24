@@ -315,6 +315,18 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
       args: () => ({ markerId: state().project.timelines[0]!.markers![0]!.id })
     }
   ],
+  add_comment: [{ delta: 1, args: () => ({ text: 'Check this cut', frame: 30, endFrame: 60 }) }],
+  // Two comments resolved by one call — the shape a missing `transact` would split.
+  resolve_feedback: [
+    {
+      delta: 1,
+      before: () => {
+        assert.ok(state().addComment(10, 'one'), 'the fixture must accept a comment')
+        assert.ok(state().addComment(20, 'two'), 'the fixture must accept a comment')
+      },
+      args: () => ({ commentIds: state().project.timelines[0]!.comments!.map((c) => c.id), note: 'Fixed' })
+    }
+  ],
   edit_asset: [{ delta: 1, args: () => ({ assetId: ASSET.id, name: 'renamed.mp4' }) }],
   apply_script: [{ delta: 1, args: (f) => ({ script: scriptWithout([f.a, f.c, f.d]) }) }],
   // Moving the playhead is not an edit, and must not become one.
@@ -489,6 +501,40 @@ const STORE_CASES: Record<string, StoreCase> = {
       assert.ok(id)
       const before = past()
       state().removeMarker(id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  addComment: { delta: 1, run: () => { state().addComment(30, 'Louder here', { endFrame: 60 }) } },
+  editComment: {
+    delta: 1,
+    run: () => {
+      const id = state().addComment(30, 'Louder')
+      assert.ok(id)
+      const before = past()
+      // Words, place and span in one call are one step.
+      state().editComment(id, { text: 'Louder here', frame: 40, endFrame: 70 })
+      assert.equal(past() - before, 1)
+    }
+  },
+  resolveComment: {
+    delta: 1,
+    run: () => {
+      const id = state().addComment(30, 'Louder')
+      assert.ok(id)
+      const before = past()
+      state().resolveComment(id, 'Raised 3 dB')
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeComment: {
+    delta: 1,
+    run: () => {
+      // Two, for removeMarker's reason.
+      state().addComment(10, 'a')
+      const id = state().addComment(30, 'b')
+      assert.ok(id)
+      const before = past()
+      state().removeComment(id)
       assert.equal(past() - before, 1)
     }
   },
@@ -743,6 +789,9 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'moveMarker',
       'removeMarker',
       'patchMarker',
+      'editComment',
+      'resolveComment',
+      'removeComment',
       'reattachAudio',
       'unlinkItems',
       'closeGapAt'
