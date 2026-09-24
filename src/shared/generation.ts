@@ -5,7 +5,8 @@
  * the renderer — calls a provider's first-party API with a key the user pasted into Settings ›
  * Providers, and only when a generation tool is called. What is sent is the prompt, the options
  * and, for image-to-image or image-to-video, the one reference picture the call named. Nothing
- * else about the project leaves the machine.
+ * else about the project leaves the machine. For speech (`@shared/speech`) the prompt is the text
+ * to be spoken, with the voice and delivery options; no audio is ever sent.
  *
  * Everything here is data plus pure functions, so both processes compile it and the tests can
  * hold it still:
@@ -29,8 +30,9 @@
  * time of writing and the provider's own dashboard is the authority.
  */
 
-export type GenerationProvider = 'openai' | 'gemini' | 'kling'
-export type GenerationKind = 'image' | 'video'
+export type GenerationProvider = 'openai' | 'gemini' | 'kling' | 'elevenlabs'
+/** `speech` is a voiceover from text; its catalog and validator are `@shared/speech`. */
+export type GenerationKind = 'image' | 'video' | 'speech'
 /**
  * - `t2i`/`t2v`: from a prompt alone.
  * - `i2i`: a reference picture edited or restyled into a new picture.
@@ -39,7 +41,7 @@ export type GenerationKind = 'image' | 'video'
  */
 export type GenerationCapability = 't2i' | 'i2i' | 't2v' | 'i2v' | 'firstFrame'
 
-export const GENERATION_PROVIDERS: readonly GenerationProvider[] = ['openai', 'gemini', 'kling']
+export const GENERATION_PROVIDERS: readonly GenerationProvider[] = ['openai', 'gemini', 'kling', 'elevenlabs']
 
 export interface ProviderSpec {
   id: GenerationProvider
@@ -90,6 +92,15 @@ export const PROVIDERS: Record<GenerationProvider, ProviderSpec> = {
       { id: 'secretKey', label: 'Secret key' }
     ],
     keyPage: 'app.klingai.com/global/dev (API keys)'
+  },
+  elevenlabs: {
+    id: 'elevenlabs',
+    label: 'ElevenLabs',
+    apiHosts: ['api.elevenlabs.io'],
+    // Speech comes back as the response body; nothing is downloaded.
+    downloadHosts: [],
+    keyFields: [{ id: 'apiKey', label: 'API key' }],
+    keyPage: 'elevenlabs.io/app/settings/api-keys'
   }
 }
 
@@ -304,6 +315,17 @@ export interface GenerationRequest {
   mode?: string
   /** An absolute path to the one picture sent with the prompt, for i2i/i2v. */
   referencePath?: string
+  // Speech only (`@shared/speech`); `prompt` holds the words to be spoken.
+  voice?: string
+  /** A preset from `SPEECH_STYLES`. */
+  style?: string
+  /** Custom delivery instructions, sent after the preset's. */
+  instructions?: string
+  speed?: number
+  /** The language the estimate used, when the call named one. */
+  language?: string
+  /** `@shared/speech-duration`'s estimate, compared with the measured length when it lands. */
+  estimatedSeconds?: number
 }
 
 export type GenerationValidation =
@@ -563,6 +585,7 @@ export function findingsFor(request: GenerationRequest, probed: ProbedOutput | n
     findings.push({ severity: 'blocking', message: `The provider returned a file bay cannot read${probeError ? ` (${probeError})` : ''}. Nothing was imported; generating again is the only fix.` })
     return findings
   }
+  if (request.kind === 'speech') return speechFindings(request, probed)
   if (!probed.hasVideo) {
     findings.push({
       severity: 'blocking',
@@ -578,6 +601,28 @@ export function findingsFor(request: GenerationRequest, probed: ProbedOutput | n
     if (Math.abs(seconds - request.durationSeconds) > 0.5) {
       findings.push({ severity: 'warn', message: `Asked for ${request.durationSeconds}s and got ${seconds.toFixed(2)}s. Plan the edit around the length the clip actually has.` })
     }
+  }
+  return findings
+}
+
+/** A voiceover with no sound, or no length, is not imported; a length far from the estimate is a warning. */
+function speechFindings(request: GenerationRequest, probed: ProbedOutput): GenerationFinding[] {
+  const findings: GenerationFinding[] = []
+  if (!probed.hasAudio) {
+    findings.push({ severity: 'blocking', message: 'The returned file has no audio stream. Nothing was imported; generate again.' })
+    return findings
+  }
+  const seconds = probed.durationUs / 1_000_000
+  if (!(seconds > 0)) {
+    findings.push({ severity: 'blocking', message: 'The returned audio has no length. Nothing was imported; generate again.' })
+    return findings
+  }
+  const estimate = request.estimatedSeconds
+  if (estimate && estimate > 0 && Math.abs(seconds - estimate) > Math.max(1, estimate * 0.35)) {
+    findings.push({
+      severity: 'warn',
+      message: `Estimated ${estimate.toFixed(1)}s of speech and got ${seconds.toFixed(2)}s. Plan the edit around the measured length${seconds > estimate ? ', or shorten the script' : ''}.`
+    })
   }
   return findings
 }

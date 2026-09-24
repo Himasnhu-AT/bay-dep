@@ -17,9 +17,11 @@ import { tool as detectBeats } from './detect-beats'
 import { tool as detectCuts } from './detect-cuts'
 import { tool as editAsset } from './edit-asset'
 import { tool as editItem } from './edit-item'
+import { tool as estimateSpeech } from './estimate-speech'
 import { tool as exportTimeline } from './export-timeline'
 import { tool as frameGrid } from './frame-grid'
 import { tool as generateImage } from './generate-image'
+import { tool as generateSpeech } from './generate-speech'
 import { tool as generateVideo } from './generate-video'
 import { tool as importMedia } from './import-media'
 import { tool as inspectItem } from './inspect-item'
@@ -94,5 +96,7 @@ export const TOOLS: ToolSpec[] = [
   trackExport,
   generateImage,
   generateVideo,
+  generateSpeech,
+  estimateSpeech,
   trackGeneration,
 ]

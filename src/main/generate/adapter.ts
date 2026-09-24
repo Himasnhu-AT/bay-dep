@@ -61,7 +61,7 @@ export class ProviderError extends Error {
   }
 }
 
-const LABEL: Record<GenerationProvider, string> = { openai: 'OpenAI', gemini: 'Gemini', kling: 'Kling' }
+const LABEL: Record<GenerationProvider, string> = { openai: 'OpenAI', gemini: 'Gemini', kling: 'Kling', elevenlabs: 'ElevenLabs' }
 
 /** Pulls the provider's own message out of an error body, whichever of the usual shapes it has. */
 export function providerMessage(body: unknown): string {
@@ -117,7 +117,12 @@ export function extensionFor(mime: string): string | null {
     'image/webp': 'webp',
     'video/mp4': 'mp4',
     'video/quicktime': 'mov',
-    'video/webm': 'webm'
+    'video/webm': 'webm',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/wave': 'wav'
   }
   return map[base] ?? null
 }

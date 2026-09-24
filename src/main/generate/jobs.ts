@@ -36,6 +36,7 @@ import {
   type GenerationRequest,
   type ProbedOutput
 } from '@shared/generation'
+import { validateSpeech } from '@shared/speech'
 import type { Adapter, AdapterContext, Credentials, Output, Reference } from './adapter'
 import { ProviderError, extensionFor } from './adapter'
 import type { ProviderHttp } from './http'
@@ -142,8 +143,8 @@ export class GenerationJobs {
    * not hold the tool call open.
    */
   async start(input: GenerationRequest): Promise<{ ok: true; job: GenerationJob } | { ok: false; error: string }> {
-    const kind = input?.kind === 'video' ? 'video' : 'image'
-    const checked = validateGeneration({ ...input }, kind)
+    const checked =
+      input?.kind === 'speech' ? validateSpeech({ ...input }) : validateGeneration({ ...input }, input?.kind === 'video' ? 'video' : 'image')
     if (!checked.ok) return { ok: false, error: checked.errors.join(' ') }
     const request = checked.request
     const provider = request.provider
@@ -296,7 +297,7 @@ export class GenerationJobs {
   }
 
   async #collect(job: GenerationJob, output: Output): Promise<void> {
-    const ext = extensionFor(output.mime) ?? (job.kind === 'video' ? 'mp4' : 'png')
+    const ext = extensionFor(output.mime) ?? (job.kind === 'video' ? 'mp4' : job.kind === 'speech' ? 'mp3' : 'png')
     const hash = createHash('sha256').update(output.bytes).digest('hex').slice(0, 12)
     const slug =
       job.request.prompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'generated'

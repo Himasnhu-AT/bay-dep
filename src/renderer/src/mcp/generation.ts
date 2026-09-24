@@ -1,5 +1,5 @@
 /**
- * `generate_image`, `generate_video` and `track_generation`.
+ * `generate_image`, `generate_video`, `generate_speech`, `estimate_speech` and `track_generation`.
  *
  * Like an export, a generation outlives its call — but unlike an export the work is in main (and
  * on a provider's servers), so this module keeps no state: the job table lives in main, persisted
@@ -23,6 +23,9 @@ import {
   type GenerationKind
 } from '@shared/generation'
 import { VALIDATE_ONLY } from '@shared/mcp'
+import { activeTimeline } from '@shared/project'
+import { validateSpeech } from '@shared/speech'
+import { estimateSpeech, type SpeechEstimate, type SpeechPace } from '@shared/speech-duration'
 import { bay } from '@/lib/bay'
 import { ToolError, fail, resolveAsset, store, usToFramesAtTimeline, type Handlers } from './helpers'
 import { placeAsset } from './write'
@@ -89,6 +92,98 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
   }
 }
 
+/** Frames at the active timeline's fps, or null when there is no timeline yet. */
+function framesOf(seconds: number): number | null {
+  const fps = activeTimeline(store().project)?.fps
+  return fps ? Math.round(seconds * fps) : null
+}
+
+/** The estimate as an agent reads it: seconds, frames, range and how it was counted. */
+function spoken(estimate: SpeechEstimate): Record<string, unknown> {
+  return {
+    seconds: estimate.seconds,
+    frames: framesOf(estimate.seconds),
+    range: estimate.range,
+    language: estimate.language,
+    languageDetected: estimate.detected,
+    pace: estimate.pace,
+    ...(estimate.speed !== 1 ? { speed: estimate.speed } : {}),
+    [estimate.unit]: estimate.units,
+    breakdown: estimate.breakdown,
+    notes: estimate.notes
+  }
+}
+
+async function speak(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const dry = args[VALIDATE_ONLY] === true
+  const { [VALIDATE_ONLY]: _flag, ...rest } = args
+  const checked = validateSpeech(rest)
+  if (!checked.ok) fail(checked.errors.join(' '))
+  const { request, estimatedCostUsd, defaultsApplied, estimate } = checked
+  const label = PROVIDERS[request.provider].label
+
+  const keys = await api().generation.keys()
+  const keySet = keys.some((k) => k.provider === request.provider && k.set)
+  const noKey =
+    `No ${label} key is set, so this cannot run. Tell the user to add one in Settings › Providers ` +
+    `(bay never takes keys in chat), then call this again.`
+  const estimated = { ...spoken(estimate), note: 'An estimate; the generated file’s measured length is the authority.' }
+
+  if (dry) {
+    const { prompt: _text, ...options } = request
+    return {
+      valid: true,
+      model: request.model,
+      provider: request.provider,
+      request: { ...options, characters: request.prompt.length },
+      estimatedCostUsd,
+      costNote: 'An estimate from list prices, not a bill; the provider’s dashboard is the authority.',
+      estimatedSpeech: estimated,
+      defaultsApplied,
+      keySet,
+      ...(keySet ? {} : { blocked: noKey })
+    }
+  }
+
+  if (!keySet) fail(noKey)
+  const started = await api().generation.start(request)
+  if (!started.ok) fail(started.error)
+  return {
+    ...summarise(started.job),
+    estimatedSpeech: estimated,
+    defaultsApplied,
+    next: `Call track_generation { jobId: "${started.job.id}" } until it is done or failed, before your final answer.`
+  }
+}
+
+function estimate(args: Record<string, unknown>): Record<string, unknown> {
+  if (typeof args.text !== 'string' || !args.text.trim()) fail('text is empty. Pass the words to be spoken.')
+  // `pace` is an enum in the schema, which the executor enforces before this runs.
+  const speed = args.speed === undefined ? 1 : Number(args.speed)
+  if (!Number.isFinite(speed) || speed <= 0) fail(`speed must be a positive number (1 is the voice’s own pace), not ${String(args.speed)}.`)
+  const target = args.targetSeconds === undefined ? undefined : Number(args.targetSeconds)
+  if (target !== undefined && (!Number.isFinite(target) || target <= 0)) fail(`targetSeconds must be a positive number, not ${String(args.targetSeconds)}.`)
+
+  const result = estimateSpeech(args.text, {
+    ...(typeof args.language === 'string' ? { language: args.language } : {}),
+    ...(args.pace !== undefined ? { pace: args.pace as SpeechPace } : {}),
+    speed
+  })
+  const out: Record<string, unknown> = spoken(result)
+  if (target !== undefined) {
+    const over = Math.round((result.seconds - target) * 100) / 100
+    out.target = { seconds: target, frames: framesOf(target), fits: over <= 0, ...(over > 0 ? { overBySeconds: over } : { spareSeconds: -over }) }
+    if (over > 0) {
+      const perSecond = result.units / Math.max(result.seconds, 0.01)
+      out.next =
+        `About ${Math.ceil(over * perSecond)} ${result.unit} too long at a ${result.pace} pace. Cut words, ` +
+        (result.pace === 'fast' ? '' : 'or ask for a faster pace, ') +
+        `and estimate again${result.range.fast <= target ? ` — at a fast pace it would fit (${result.range.fast}s)` : ''}.`
+    }
+  }
+  return out
+}
+
 function summarise(job: GenerationJob): Record<string, unknown> {
   return {
     jobId: job.id,
@@ -145,6 +240,10 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
       error: `The file landed at ${job.outputPath} but could not be imported${imported?.error ? `: ${imported.error}` : ''}.`
     }
   }
+  const measured =
+    job.kind === 'speech'
+      ? { measuredSeconds: Math.round(imported.durationUs / 10_000) / 100, estimatedSeconds: job.request.estimatedSeconds ?? null }
+      : {}
   const asset = {
     id: imported.id,
     name: imported.name,
@@ -178,6 +277,7 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
   const place = `place_asset { assetId: "${imported.id}" }`
   return {
     ...summarise(job),
+    ...measured,
     asset,
     ...(placed ? { placed } : {}),
     ...(placeError ? { placeError, next: `The asset is imported but was not placed: ${placeError} Retry with ${place}.` } : {}),
@@ -188,5 +288,7 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
 export const handlers: Handlers = {
   generate_image: (args) => generate('image', args),
   generate_video: (args) => generate('video', args),
+  generate_speech: (args) => speak(args),
+  estimate_speech: async (args) => estimate(args),
   track_generation: (args) => track(args)
 }

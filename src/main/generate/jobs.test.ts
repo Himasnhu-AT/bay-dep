@@ -43,7 +43,7 @@ async function setup(stub: Stub, overrides: Partial<JobDeps> = {}): Promise<{ de
   const deps: JobDeps = {
     file: join(dir, 'generation-jobs.json'),
     outDir: join(dir, 'generated'),
-    adapters: { openai: openaiImage, gemini: gemini(), kling },
+    adapters: { openai: openaiImage, gemini: gemini(), kling, elevenlabs: openaiImage },
     http: () => providerHttp(realFetch, STUB_POLICY, 'Stub'),
     baseUrl: () => stub.api,
     credentials: () => ({ apiKey: 'k', accessKey: 'ak', secretKey: 'sk' }),

@@ -349,6 +349,7 @@ const TOOL_EXEMPT: Record<string, string> = {
     'renders a file from the project and never edits it; its frame exporter needs a DOM canvas',
   generate_image: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_video: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
+  generate_speech: 'starts a job in main and never edits the project; generation-speech.test.ts asserts past is untouched',
   track_generation:
     'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step'
 }
