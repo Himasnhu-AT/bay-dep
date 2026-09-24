@@ -17,6 +17,8 @@ type Actions = Pick<
   | 'redo'
   | 'markSaved'
   | 'transact'
+  | 'beginGesture'
+  | 'endGesture'
 >
 
 export function projectSlice({ set, get, history, edit, turnMarks, followReverts }: StoreKit): Actions {
@@ -100,6 +102,30 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
     markSaved() {
       history.saved = get().project
       set({ dirty: false })
+    },
+
+    beginGesture() {
+      if (history.txDepth === 0) {
+        history.txBefore = get().project
+        history.txRecorded = false
+      }
+      history.txDepth += 1
+    },
+
+    endGesture() {
+      if (history.txDepth === 0) return
+      history.txDepth -= 1
+      if (history.txDepth > 0) return
+      const before = history.txBefore
+      history.txBefore = null
+      const recorded = history.txRecorded
+      history.txRecorded = false
+      set((state) => {
+        if (!recorded || !before || before === state.project) return state
+        const past = [...state.past, before]
+        if (past.length > HISTORY_LIMIT) past.shift()
+        return { past, future: [], dirty: true }
+      })
     },
 
     transact(work) {

@@ -399,6 +399,14 @@ export interface EditorActions {
    * user can take back a half-finished edit.
    */
   transact(work: () => void): void
+  /**
+   * `transact` for a pointer gesture: the edits between `beginGesture` and `endGesture` land
+   * live (the preview draws each one) and are one undo step. A drag spans many events, so it
+   * cannot be one callback. Every `beginGesture` must be paired — end it on pointerup, cancel
+   * and lost capture — or history stops recording.
+   */
+  beginGesture(): void
+  endGesture(): void
 }
 
 export type EditorStore = EditorState & EditorActions

@@ -85,6 +85,8 @@ export interface EngineHandle {
   stats(): ClockStats
   /** Per-track audio levels, keyed by track id. Reads the analysers at call time. */
   levels(): Record<string, TrackLevel>
+  /** The master's stereo level, or null before anything has needed sound. For the meter. */
+  masterLevels(): { left: TrackLevel; right: TrackLevel } | null
   /** Redraws the current frame on the next animation frame. Coalesced. */
   redraw(): void
 }
@@ -453,6 +455,7 @@ export function useEngine(canvasRef: RefObject<HTMLCanvasElement | null>): Engin
       audio: engine.audio,
       stats: () => engine.clock.stats(),
       levels: () => engine.audio.levels(),
+      masterLevels: () => engine.audio.masterLevels(),
       redraw: () => engine.redraw()
     }
   }

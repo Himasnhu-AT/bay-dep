@@ -435,6 +435,13 @@ interface TrackNodes {
   samples: Uint8Array<ArrayBuffer>
 }
 
+interface MeterNodes {
+  input: GainNode
+  left: AnalyserNode
+  right: AnalyserNode
+  samples: Float32Array<ArrayBuffer>
+}
+
 interface SourceNodes {
   source: MediaElementAudioSourceNode
   gain: GainNode
@@ -443,6 +450,22 @@ interface SourceNodes {
 }
 
 const ANALYSER_FFT_SIZE = 1024
+
+/**
+ * Peak and RMS of one analyser window of float samples (-1..1). Peak is not clamped: a sample
+ * past full scale is exactly what a clip indicator exists to show.
+ */
+export function levelOf(samples: ArrayLike<number>): TrackLevel {
+  let peak = 0
+  let sum = 0
+  for (let i = 0; i < samples.length; i += 1) {
+    const sample = samples[i] ?? 0
+    const magnitude = Math.abs(sample)
+    if (magnitude > peak) peak = magnitude
+    sum += sample * sample
+  }
+  return { peak, rms: Math.sqrt(sum / Math.max(1, samples.length)) }
+}
 
 /** Source nodes are per element, not per asset. Mirrors the pool's own slot keying. */
 function sourceKey(assetId: string, slot: number): string {
@@ -458,6 +481,8 @@ export class AudioEngine {
   #context: AudioContext | null = null
   #master: GainNode | null = null
   #masterVolume = 1
+  /** The stereo tap the master meter reads: after the master gain, so it shows what you hear. */
+  #meter: MeterNodes | null = null
 
   constructor(pool: MediaPool, sounds: SoundLookup = inspectedSounds()) {
     this.#pool = pool
@@ -480,7 +505,44 @@ export class AudioEngine {
     master.connect(context.destination)
     this.#context = context
     this.#master = master
+    this.#meter = this.#createMeter(context, master)
     return context
+  }
+
+  /**
+   * A tap off the master, split into two analysers. Its own node forced to two channels, so a
+   * mono mix is metered on both sides (the speakers up-mix it that way too) rather than the
+   * right meter reading silence — and the master itself is left exactly as it was. Analysers
+   * are pulled by the context whether or not anything is downstream, so it goes nowhere.
+   */
+  #createMeter(context: AudioContext, master: GainNode): MeterNodes {
+    const input = context.createGain()
+    input.channelCount = 2
+    input.channelCountMode = 'explicit'
+    input.channelInterpretation = 'speakers'
+    const splitter = context.createChannelSplitter(2)
+    const left = context.createAnalyser()
+    const right = context.createAnalyser()
+    left.fftSize = ANALYSER_FFT_SIZE
+    right.fftSize = ANALYSER_FFT_SIZE
+    master.connect(input)
+    input.connect(splitter)
+    splitter.connect(left, 0)
+    splitter.connect(right, 1)
+    return { input, left, right, samples: new Float32Array(new ArrayBuffer(ANALYSER_FFT_SIZE * 4)) }
+  }
+
+  /**
+   * The master's stereo level, sampled at call time; null before anything has needed sound. What
+   * the transport's meter draws — read from a rAF loop, never from React.
+   */
+  masterLevels(): { left: TrackLevel; right: TrackLevel } | null {
+    const meter = this.#meter
+    if (!meter) return null
+    meter.left.getFloatTimeDomainData(meter.samples)
+    const left = levelOf(meter.samples)
+    meter.right.getFloatTimeDomainData(meter.samples)
+    return { left, right: levelOf(meter.samples) }
   }
 
   /** True once anything has needed the context. Lets a caller avoid creating one. */
@@ -637,9 +699,11 @@ export class AudioEngine {
     }
     this.#sources.clear()
     this.#master?.disconnect()
+    this.#meter?.input.disconnect()
     void this.#context?.close().catch(() => {})
     this.#context = null
     this.#master = null
+    this.#meter = null
   }
 
   // -- internals ------------------------------------------------------------

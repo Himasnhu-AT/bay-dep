@@ -168,3 +168,40 @@ test('history outside a transaction is unchanged', () => {
   useEditor.getState().patchItem(itemIds[0]!, { from: 20 })
   assert.equal(past(), before + 2, 'ungrouped edits are still one step each')
 })
+
+// -- gestures: a drag on the preview is many live edits and one undo step -------------------
+
+test('a gesture lands each edit live and pushes one history entry on end', () => {
+  const { itemIds } = load()
+  const id = itemIds[0]!
+  const before = past()
+  const layoutOf = (): { left: number } =>
+    useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items).find((i) => i.id === id)!.layout
+
+  useEditor.getState().beginGesture()
+  useEditor.getState().patchLayout(id, { left: 10 })
+  assert.equal(layoutOf().left, 10, 'the first move must be visible while the drag is still going')
+  useEditor.getState().patchLayout(id, { left: 20 })
+  useEditor.getState().patchLayout(id, { left: 30 })
+  assert.equal(past(), before, 'nothing is pushed while the gesture is open')
+  useEditor.getState().endGesture()
+
+  assert.equal(past(), before + 1, 'a whole drag is exactly one undo step')
+  useEditor.getState().undo()
+  assert.equal(layoutOf().left, 0, 'undo takes the drag back to where it started, not one move back')
+})
+
+test('a gesture that changed nothing pushes nothing, and history records again afterwards', () => {
+  const { itemIds } = load()
+  const before = past()
+  useEditor.getState().beginGesture()
+  useEditor.getState().endGesture()
+  assert.equal(past(), before, 'a click on a clip without a drag is not an edit')
+  // Positive control: the gesture closed, so an ordinary edit is its own step again.
+  useEditor.getState().patchLayout(itemIds[0]!, { left: 5 })
+  assert.equal(past(), before + 1)
+  // An unpaired end is ignored rather than driving the depth negative.
+  useEditor.getState().endGesture()
+  useEditor.getState().patchLayout(itemIds[0]!, { left: 6 })
+  assert.equal(past(), before + 2)
+})

@@ -10,10 +10,12 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { formatTimecode } from '@shared/project'
 import { IconButton, Slider } from '@/components'
 import { shortcutOf } from '@/lib/commands'
-import { selectDuration, selectFps, useEditor } from '@/store/editor'
+import { selectDuration, useEditor } from '@/store/editor'
+import { AudioMeter } from './viewer/AudioMeter'
+import { TimecodeField } from './viewer/TimecodeField'
+import { ViewerControls } from './viewer/ViewerControls'
 
 const MIN_PPF = 0.05
 const MAX_PPF = 60
@@ -30,9 +32,7 @@ function sliderToPpf(value: number): number {
 
 export function Transport(): ReactNode {
   const playing = useEditor((state) => state.playing)
-  const playhead = useEditor((state) => state.playhead)
   const duration = useEditor(selectDuration)
-  const fps = useEditor(selectFps)
   const pixelsPerFrame = useEditor((state) => state.pixelsPerFrame)
   const togglePlay = useEditor((state) => state.togglePlay)
   const setPlayhead = useEditor((state) => state.setPlayhead)
@@ -97,18 +97,17 @@ export function Transport(): ReactNode {
         onClick={() => splitAt()}
       />
 
-      {/*
-        `tabular-nums` is not decoration here. Proportional digits change width as they
-        change value, so a running timecode jitters sideways 30 times a second and drags
-        everything beside it along.
-      */}
-      <div className="flex flex-1 items-baseline justify-center gap-1.5 tabular-nums">
-        <span className="text-[13px] font-medium text-ink-0">
-          {formatTimecode(playhead, fps, true)}
-        </span>
-        <span className="text-[11px] text-ink-2">/</span>
-        <span className="text-[11px] text-ink-2">{formatTimecode(duration, fps, true)}</span>
+      <TimecodeField />
+
+      {/* The meter is the first thing to go when the row is short: the timecode and the
+          buttons are how you drive the transport, the meter only reports. */}
+      <div className="hidden @3xl:flex">
+        <AudioMeter />
       </div>
+
+      <ViewerControls />
+
+      <span aria-hidden="true" className="h-4 w-px bg-line" />
 
       {/* In a 1024px window the row runs out of room, and flex squeezed this group first,
           leaving the zoom slider as a bare thumb with no track — a control that looked broken.

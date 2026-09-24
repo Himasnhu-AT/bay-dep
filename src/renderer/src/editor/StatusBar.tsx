@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, LoaderCircle } from 'lucide-react'
-import { formatFps, formatTimecode } from '@shared/project'
+import { formatFps } from '@shared/project'
+import { formatTimecode } from '@shared/timecode'
 import { summariseAgentSurface, type AgentSurfaceStatus } from '@shared/mcp'
 import { downloadSentence } from '@shared/whisper'
 import { Toast, Tooltip } from '@/components'
@@ -80,7 +81,7 @@ export function StatusBar(): ReactNode {
       {/* `formatFps`, not `fps`: the stored rate is a quotient, so this read
           `fps 29.97002997002997` the moment a project could be NTSC. */}
       <Stat label="fps" value={formatFps(fps)} />
-      <Stat label="duration" value={formatTimecode(duration, fps, true)} />
+      <Stat label="duration" value={formatTimecode(duration, fps)} />
       <Stat
         label="canvas"
         value={timeline ? `${timeline.width}×${timeline.height}` : '—'}
@@ -101,9 +102,12 @@ export function StatusBar(): ReactNode {
         </button>
       )}
 
+      {/* Each status below is focusable (`tabIndex={0}`): its tooltip is the only thing that
+          says what it means for you, and a tooltip opens on keyboard focus — without a tab stop
+          the explanation existed for pointer users only. The global focus ring draws it. */}
       {debugMode && (
         <Tooltip side="top" label="Debug mode is on" detail="View → Toggle Debug Mode (⌥⌘D)">
-          <span className="rounded-sm bg-warning/15 px-1 text-[10px] font-semibold tracking-[0.08em] text-warning uppercase">
+          <span tabIndex={0} className="rounded-sm bg-warning/15 px-1 text-[10px] font-semibold tracking-[0.08em] text-warning uppercase">
             Debug
           </span>
         </Tooltip>
@@ -115,7 +119,7 @@ export function StatusBar(): ReactNode {
           label="ffmpeg and ffprobe were not found"
           detail="Import, waveforms and export need them."
         >
-          <span className="flex items-center gap-1 text-danger">
+          <span tabIndex={0} className="rounded-sm flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Media tools missing
           </span>
@@ -128,7 +132,7 @@ export function StatusBar(): ReactNode {
           label={storage.error ?? 'The project database did not open'}
           detail="Recent projects will stay empty."
         >
-          <span className="flex items-center gap-1 text-danger">
+          <span tabIndex={0} className="rounded-sm flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Storage unavailable
           </span>
@@ -144,7 +148,7 @@ export function StatusBar(): ReactNode {
           label={summariseAgentSurface(agent)}
           detail="Editing, playback and export are unaffected."
         >
-          <span className="flex items-center gap-1 text-danger">
+          <span tabIndex={0} className="rounded-sm flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Agent control unavailable
           </span>
@@ -153,7 +157,7 @@ export function StatusBar(): ReactNode {
 
       {agent?.ready && (
         <Tooltip side="top" label={summariseAgentSurface(agent)} detail="MCP over a unix socket">
-          <span className="text-ink-2">
+          <span tabIndex={0} className="rounded-sm text-ink-2">
             agent{' '}
             <span className="text-ink-1 tabular-nums">
               {agent.connectionsSeen === 0 ? 'idle' : agent.connectionsSeen}
@@ -172,7 +176,7 @@ export function StatusBar(): ReactNode {
           }
           detail="An agent will be refused these tools by name."
         >
-          <span className="flex items-center gap-1 text-danger">
+          <span tabIndex={0} className="rounded-sm flex items-center gap-1 text-danger">
             <AlertTriangle aria-hidden="true" className="size-3" />
             Agent tools incomplete
           </span>
