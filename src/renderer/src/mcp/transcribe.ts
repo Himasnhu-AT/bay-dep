@@ -10,6 +10,7 @@
 
 import { findAsset } from '@shared/project'
 import { segmentsToCues, segmentsToSrt, type TranscriptSegment } from '@shared/transcribe'
+import { transcriptFindings } from '@shared/findings'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
 import { fail, project, resolveAsset, resolveItem, timeline, ToolError, type Handlers } from './helpers'
@@ -98,6 +99,7 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
       itemId: found.item.id,
       lines: cues.length,
       cues,
+      findings: transcriptFindings(result.segments, cues.length),
       next:
         cues.length > 0
           ? 'These cues are in timeline frames for this clip. Pass them to add_captions as `cues` (after the user approves, if approval is on).'
@@ -108,6 +110,7 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
     ...base,
     lines: result.segments.length,
     segments: result.segments,
+    findings: transcriptFindings(result.segments),
     srt: segmentsToSrt(result.segments),
     next: 'Lines are in seconds from the start of the file. To caption a clip, call transcribe with its itemId instead.'
   }

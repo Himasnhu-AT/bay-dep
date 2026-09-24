@@ -7,7 +7,9 @@ import { handlers as beatsHandlers } from './beats'
 import { handlers as brfHandlers } from './brf'
 import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
+import { handlers as cutsHandlers } from './cuts'
 import { handlers as exportsHandlers } from './exports'
+import { handlers as frameGridHandlers } from './frameGrid'
 import { handlers as linksHandlers } from './links'
 import { handlers as markersHandlers } from './markers'
 import { handlers as previewHandlers } from './preview'
@@ -29,7 +31,9 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'brf': brfHandlers,
   'captions': captionsHandlers,
   'compositions': compositionsHandlers,
+  'cuts': cutsHandlers,
   'exports': exportsHandlers,
+  'frameGrid': frameGridHandlers,
   'links': linksHandlers,
   'markers': markersHandlers,
   'preview': previewHandlers,
@@ -52,7 +56,9 @@ export const HANDLERS: Handlers = {
   ...brfHandlers,
   ...captionsHandlers,
   ...compositionsHandlers,
+  ...cutsHandlers,
   ...exportsHandlers,
+  ...frameGridHandlers,
   ...linksHandlers,
   ...markersHandlers,
   ...previewHandlers,

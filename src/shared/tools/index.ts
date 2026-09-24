@@ -13,9 +13,11 @@ import { tool as browseAssets } from './browse-assets'
 import { tool as deleteItems } from './delete-items'
 import { tool as detachAudio } from './detach-audio'
 import { tool as detectBeats } from './detect-beats'
+import { tool as detectCuts } from './detect-cuts'
 import { tool as editAsset } from './edit-asset'
 import { tool as editItem } from './edit-item'
 import { tool as exportTimeline } from './export-timeline'
+import { tool as frameGrid } from './frame-grid'
 import { tool as importMedia } from './import-media'
 import { tool as inspectItem } from './inspect-item'
 import { tool as listProjects } from './list-projects'
@@ -46,10 +48,12 @@ export const TOOLS: ToolSpec[] = [
   openProject,
   transcribe,
   detectBeats,
+  detectCuts,
   readProject,
   browseAssets,
   inspectItem,
   previewFrame,
+  frameGrid,
   readScript,
   proposeEdit,
   writeBrf,

@@ -38,6 +38,7 @@ import { frameProblem, writeFrame } from './frame-pipe'
 import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } from './codec-args'
 import { masterAudio, verifyDelivered } from './master'
 import type { LoudnessReport } from '@shared/loudness'
+import { deliveredFindings } from './delivered'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
 
@@ -489,12 +490,18 @@ async function renderAudioOnly(job: Job): Promise<void> {
       )
       await runFfmpeg(args)
     }
+    const findings = await deliveredFindings(job.request.outputPath, {
+      video: false,
+      audio: true,
+      durationUs: expectedDurationUs(job)
+    })
     emit(job, {
       progress: 1,
       framesDone: job.framesTotal,
       framesTotal: job.framesTotal,
       stage: 'done',
       outputPath: job.request.outputPath,
+      findings,
       ...(loudness ? { loudness, message: loudness.summary } : {})
     })
   } catch (error) {
@@ -508,6 +515,11 @@ async function renderAudioOnly(job: Job): Promise<void> {
   } finally {
     jobs.delete(job.id)
   }
+}
+
+/** The range's length, which the delivered file is checked against. */
+function expectedDurationUs(job: Job): number {
+  return Math.round((job.framesTotal / job.fps) * 1_000_000)
 }
 
 async function discard(path: string | null): Promise<void> {
@@ -567,6 +579,9 @@ export async function finish(jobId: string): Promise<void> {
     if (!scratch) throw new Error('The encoder produced no file.')
 
     let audioPath: string | null = null
+    // Whether the timeline had sound to mix — so the delivered file must carry it. True when the
+    // mix was built, and when it failed: a failed mix is sound that was there and did not arrive.
+    let audioExpected = false
     let audioNote: string | undefined
     let loudness: LoudnessReport | undefined
     // True when `audioPath` is already encoded in the export's codec (mastered), so the mux
@@ -575,6 +590,7 @@ export async function finish(jobId: string): Promise<void> {
     let encoded = false
     try {
       audioPath = await buildAudioTrack(job)
+      audioExpected = audioPath !== null
       if (audioPath && job.request.loudness) {
         const wav = audioPath
         const mastered = join(
@@ -597,6 +613,7 @@ export async function finish(jobId: string): Promise<void> {
       // The video is real and finished; refusing to deliver it would be worse than
       // delivering it with the shortfall stated. What is not allowed is calling this a
       // clean success.
+      audioExpected = true
       audioNote = `Exported without audio — the audio mix failed: ${messageOf(error)}`
     }
 
@@ -629,12 +646,18 @@ export async function finish(jobId: string): Promise<void> {
     }
 
     const message = [audioNote, loudness?.summary].filter(Boolean).join(' ')
+    const findings = await deliveredFindings(job.request.outputPath, {
+      video: true,
+      audio: audioExpected,
+      durationUs: expectedDurationUs(job)
+    })
     emit(job, {
       progress: 1,
       framesDone: job.framesDone,
       framesTotal: job.framesTotal,
       stage: 'done',
       outputPath: job.request.outputPath,
+      findings,
       ...(message ? { message } : {}),
       ...(loudness ? { loudness } : {})
     })

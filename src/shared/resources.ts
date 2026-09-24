@@ -59,6 +59,15 @@ export const RESOURCES: readonly ResourceSpec[] = [
     mimeType: 'text/markdown'
   },
   {
+    uri: 'bay://guide/review',
+    name: 'Reviewing your own edit',
+    description:
+      'Read before telling the user an edit or export is done. How to watch the result with ' +
+      'frame_grid, the checklist (B-roll on the right line, cues on the word, captions clear of ' +
+      'faces, safe areas, audio, clean cuts and transitions), and what blocking findings mean.',
+    mimeType: 'text/markdown'
+  },
+  {
     uri: 'bay://guide/brf',
     name: 'Motion graphics as .brf',
     description:

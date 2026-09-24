@@ -16,6 +16,7 @@ import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc
 import { timelineDuration } from '@shared/project'
 import { parseLoudness } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
+import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
 import { fail, project, timeline, type Handlers } from './helpers'
@@ -201,6 +202,10 @@ export function exportStatus(
   incomplete: IncompleteFrames | null
 ): Record<string, unknown> {
   const finished = ['done', 'failed', 'cancelled'].includes(progress.stage)
+  const findings = progress.stage === 'done' ? doneFindings(progress, incomplete) : null
+  // Main's read-back of the file is the only thing that can say it lacks audio or runs short;
+  // the frames' own faults are known only here. Either kind makes the export not complete.
+  const delivered = progress.findings ?? []
   return {
     jobId: progress.jobId,
     stage: progress.stage,
@@ -237,6 +242,7 @@ export function exportStatus(
       : {}),
     // A file with a graphic missing from some frames is not a clean export, and `done` alone
     // would let the agent report it as one. `complete: true` is claimed only once the job is done.
+    ...(findings ? { findings } : {}),
     ...(incomplete
       ? {
           complete: false,
@@ -250,9 +256,32 @@ export function exportStatus(
           warning: incomplete.message
         }
       : progress.stage === 'done'
-        ? { complete: true }
+        ? hasBlocking(delivered)
+          ? { complete: false, warning: delivered.find((f) => f.severity === 'blocking')!.message }
+          : { complete: true }
         : {})
   }
+}
+
+/**
+ * Everything wrong with a finished export, blocking first: what main found reading the file back,
+ * then the frames written with something missing, then a range that held nothing. The agent's
+ * rule is simple — a blocking finding means the export is not done — so every fault that means
+ * that has to arrive here, not only in a warning string beside it.
+ */
+export function doneFindings(progress: ExportProgress, incomplete: IncompleteFrames | null): Finding[] {
+  const out: Finding[] = [...(progress.findings ?? [])]
+  if (incomplete) {
+    out.push({
+      severity: 'blocking',
+      message: incomplete.message,
+      fix: 'Wait for the named items to load (or fix the ones that failed), then export again.'
+    })
+  }
+  if (progress.framesDone === 0 && progress.framesTotal !== 0) {
+    out.push({ severity: 'blocking', message: 'The export finished with zero frames.', fix: 'Check fromFrame/toFrame cover the edit, and export again.' })
+  }
+  return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'blocking' ? -1 : 1))
 }
 
 /** Test seam: forget everything this session knows about exports. */

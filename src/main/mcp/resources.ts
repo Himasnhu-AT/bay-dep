@@ -16,6 +16,7 @@ import { examplesGuide, toolReference } from '@shared/guides'
 import { TEMPLATE_BODIES } from '../templates'
 import editing from './docs/editing.md?raw'
 import script from './docs/script.md?raw'
+import review from './docs/review.md?raw'
 import brf from './docs/brf.md?raw'
 import contract from './docs/compositions/contract.md?raw'
 import minimal from './docs/compositions/minimal-composition.md?raw'
@@ -34,6 +35,7 @@ const BODIES: Record<string, string> = {
   'bay://guide/tools': toolReference(),
   'bay://guide/examples': examplesGuide(),
   'bay://guide/script': script,
+  'bay://guide/review': review,
   'bay://guide/brf': brf,
   'bay://guide/composition/contract': contract,
   'bay://guide/composition/minimal': minimal,
