@@ -1,0 +1,107 @@
+# vendor/ffmpeg/darwin-x64 — written by script/build-ffmpeg.sh; do not edit by hand.
+# Rebuild: script/build-ffmpeg.sh x64
+
+## Sources (sha256)
+7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3  ffmpeg-8.1.3.tar.xz  https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz
+1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a  libvpx-1.17.0.tar.gz  https://github.com/webmproject/libvpx/archive/refs/tags/v1.17.0.tar.gz
+6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1  opus-1.6.1.tar.gz  https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz
+ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e  lame-3.100.tar.gz  https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+be89390f13a5c9b2388ce0f44a5e89364a20c1c57ce46d382b1fcc3967057577  zimg-3.0.6.tar.gz  https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.6.tar.gz
+686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5  dav1d-1.5.4.tar.xz  https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz
+1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148  nasm-2.16.03.tar.xz  https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz
+ab0a6ca09f8ef70c564c8241fb5a23957886a0b53fb58412b5e07eaf07dba743  meson-1.12.1.tar.gz  https://github.com/mesonbuild/meson/releases/download/1.12.1/meson-1.12.1.tar.gz
+
+## Host
+macOS 26.6.2 arm64; deployment target 12.0
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+make: GNU Make 3.81
+pkg-config: 3.0.6
+ninja: 1.13.2
+python3: Python 3.14.6
+build time: 163s on 15 cores
+
+## Binaries
+b360d7cbd269854e47f55982157a1a0471e4e1ff14f8ff85645749444c0e12e8  ffmpeg  32291968 bytes
+781a6b5f4fb8253b4793171bac74e93ae895ac38ae4fb141dc301b2db84f3259  ffprobe  32103792 bytes
+(sha256 after strip and ad-hoc codesign)
+
+## Linked libraries
+/usr/lib/libSystem.B.dylib
+/usr/lib/libz.1.dylib
+/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox
+/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation
+/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia
+/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo
+/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices
+/usr/lib/libbz2.1.0.dylib
+/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox
+/usr/lib/libiconv.2.dylib
+/usr/lib/libc++.1.dylib
+
+## ffmpeg -version
+ffmpeg version 8.1.3 Copyright (c) 2000-2026 the FFmpeg developers
+built with Apple clang version 21.0.0 (clang-2100.3.34.2)
+configuration: --prefix=/opt/bay-ffmpeg --arch=x86_64 --target-os=darwin --enable-cross-compile --x86asmexe=nasm --cc=clang --cxx=clang++ --extra-cflags='-arch x86_64 -mmacosx-version-min=12.0' --extra-ldflags='-arch x86_64 -mmacosx-version-min=12.0' --pkg-config=pkg-config --pkg-config-flags=--static --disable-autodetect --disable-gpl --disable-version3 --disable-nonfree --enable-static --disable-shared --disable-doc --disable-htmlpages --disable-manpages --disable-podpages --disable-txtpages --disable-ffplay --disable-debug --disable-network --disable-protocols --enable-protocol='file,pipe' --disable-devices --enable-indev=lavfi --enable-pthreads --enable-zlib --enable-bzlib --enable-iconv --extra-libs=-liconv --enable-videotoolbox --enable-audiotoolbox --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libzimg --enable-libdav1d
+libavutil      60. 26.103 / 60. 26.103
+libavcodec     62. 28.103 / 62. 28.103
+libavformat    62. 12.103 / 62. 12.103
+libavdevice    62.  3.103 / 62.  3.103
+libavfilter    11. 14.103 / 11. 14.103
+libswscale      9.  5.103 /  9.  5.103
+libswresample   6.  3.103 /  6.  3.103
+
+
+## ffmpeg -buildconf
+
+  configuration:
+    --prefix=/opt/bay-ffmpeg
+    --arch=x86_64
+    --target-os=darwin
+    --enable-cross-compile
+    --x86asmexe=nasm
+    --cc=clang
+    --cxx=clang++
+    --extra-cflags='-arch x86_64 -mmacosx-version-min=12.0'
+    --extra-ldflags='-arch x86_64 -mmacosx-version-min=12.0'
+    --pkg-config=pkg-config --pkg-config-flags=--static
+    --disable-autodetect
+    --disable-gpl
+    --disable-version3
+    --disable-nonfree
+    --enable-static
+    --disable-shared
+    --disable-doc
+    --disable-htmlpages
+    --disable-manpages
+    --disable-podpages
+    --disable-txtpages
+    --disable-ffplay
+    --disable-debug
+    --disable-network
+    --disable-protocols
+    --enable-protocol='file,pipe'
+    --disable-devices
+    --enable-indev=lavfi
+    --enable-pthreads
+    --enable-zlib
+    --enable-bzlib
+    --enable-iconv
+    --extra-libs=-liconv
+    --enable-videotoolbox
+    --enable-audiotoolbox
+    --enable-libvpx
+    --enable-libopus
+    --enable-libmp3lame
+    --enable-libzimg
+    --enable-libdav1d
+
+
+## ffmpeg -L (first lines)
+ffmpeg is free software; you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public
+License as published by the Free Software Foundation; either
+version 2.1 of the License, or (at your option) any later version.
+
+ffmpeg is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU

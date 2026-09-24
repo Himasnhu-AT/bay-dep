@@ -47,3 +47,10 @@ downloaded-assets/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# script/build-ffmpeg.sh: its work tree (sources, dependencies, objects) and the binaries it
+# writes. BUILDINFO and LICENSES beside them are committed; vendor/ffmpeg/README.md says why the
+# binaries are not.
+/.ffmpeg-build/
+/vendor/ffmpeg/*/ffmpeg
+/vendor/ffmpeg/*/ffprobe

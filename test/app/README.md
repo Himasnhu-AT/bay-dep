@@ -177,7 +177,7 @@ still seeking when the cross-fade happens, and the oracle's renders outlive the 
 reproduced on a fresh launch, on the pre-audit build and on Electron 40 alike, which is what
 ruled bay out. Measure the decoder before diagnosing bay:
 
-    FF=$(ls node_modules/.pnpm/ffmpeg-ffprobe-static*/node_modules/ffmpeg-ffprobe-static/ffmpeg | head -1)
+    FF=vendor/ffmpeg/darwin-arm64/ffmpeg   # bay's own build (script/build-ffmpeg.sh)
     time $FF -v error -hwaccel videotoolbox -ss 24.9 -i assets/podcast-cut/output/goodall-transcript-cut.mp4 -frames:v 1 -f null -
     time $FF -v error                       -ss 24.9 -i assets/podcast-cut/output/goodall-transcript-cut.mp4 -frames:v 1 -f null -
 
@@ -386,7 +386,7 @@ unverified and said to be unverified. It is a good security property and worth k
 spending an hour on the trick.
 
 The corollary is that **the ffmpeg-missing warning in the status bar is still unverified**. Both a
-bundled copy (`node_modules/.../ffmpeg-ffprobe-static`) and a Homebrew copy resolve, and
+vendored copy (`vendor/ffmpeg/<platform>-<arch>/`) and a Homebrew copy resolve, and
 `onPath` hardcodes `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, so clearing `PATH` does not
 defeat it. Breaking either copy means mutating machine state shared by everyone working here,
 which is a worse trade than one unverified JSX branch that is structurally identical to the

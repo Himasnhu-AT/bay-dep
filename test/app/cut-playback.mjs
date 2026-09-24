@@ -50,7 +50,7 @@ import { join } from 'node:path'
 import { attach, runProbe, PreconditionError } from './cdp.mjs'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.FFMPEG ?? 'node_modules/ffmpeg-ffprobe-static/ffmpeg'
+import { FFMPEG, H264 } from './ffmpeg.mjs'
 
 async function media() {
   if (process.env.TAKES) {
@@ -74,7 +74,7 @@ async function media() {
     const cb = Math.round(128 + 70 * Math.cos(n * 1.3)), cr = Math.round(128 + 70 * Math.sin(n * 1.3))
     await run(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=768x1344:r=24:d=5.2',
       '-vf', `geq=lum='128+100*sin(2*PI*(3*Y/H-0.9*T))':cb=${cb}:cr=${cr}`,
-      '-c:v', 'libx264', '-g', '120', '-keyint_min', '120', '-sc_threshold', '0', '-bf', '2',
+      ...H264, '-g', '120', '-bf', '2',
       '-pix_fmt', 'yuv420p', out])
   }
   const score = join(dir, 'score.flac')

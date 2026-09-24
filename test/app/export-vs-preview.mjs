@@ -25,8 +25,7 @@ import { join } from 'node:path'
 import { attach, runProbe } from './cdp.mjs'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.FFMPEG ??
-  'node_modules/.pnpm/ffmpeg-ffprobe-static@6.1.2-rc.1_supports-color@7.2.0/node_modules/ffmpeg-ffprobe-static/ffmpeg'
+import { FFMPEG } from './ffmpeg.mjs'
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
 const W = 320
 const H = 180

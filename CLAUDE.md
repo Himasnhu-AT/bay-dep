@@ -155,12 +155,23 @@ navigate or open windows, and gets no permissions. Before this, a shared project
 could read `~/.ssh` and post it anywhere. The contract already told authors remote resources were
 blocked; now they are.
 
-**bay passes ffmpeg no `-protocol_whitelist`, on purpose.** It was proposed, and measured against
-the shipped ffmpeg it changed nothing any specimen could observe: a local playlist inherits
-`file,crypto,data`, HLS and DASH under a video's name are not detected, concat calls a URL unsafe.
-`src/main/media/local-only.test.ts` pins that property with a direct fetch as its positive control,
-so an ffmpeg upgrade that loosens it fails the suite — a test of the property instead of an
-unfalsifiable flag.
+**bay ships its own ffmpeg, built from pinned source as LGPL-2.1** (`script/build-ffmpeg.sh` →
+`vendor/ffmpeg/<platform>-<arch>/`, found by `src/main/ffmpeg/vendor.ts`; `vendor/ffmpeg/README.md`
+has the why). The npm build it replaced was `--enable-gpl --enable-nonfree` — not redistributable —
+and 2.5 years stale. So: **no libx264** (H.264 is `h264_videotoolbox`, quality mapped by measurement
+in `codec-args.ts`), **no vid.stab** (use `deshake`), no font stack (`drawtext`/`subtitles` are not
+there; bay draws its own text). The binaries are gitignored — run the script once per machine
+(~5 min); tests that need them skip loudly without them, and `pnpm release` refuses to package
+without the binaries BUILDINFO records. `src/main/ffmpeg/capabilities.test.ts` asks the binary for
+every encoder and filter the code's own argument builders write, so adding a filter the build lacks
+fails `pnpm test` by name. Add it to the script's configure line (and its `REQUIRED_*`), not a
+fallback.
+
+**bay passes ffmpeg no `-protocol_whitelist`, on purpose.** With the old npm build it changed
+nothing any specimen could observe; bay's own build is `--disable-network` with only `file` and
+`pipe`, so there is no network code to whitelist. `src/main/media/local-only.test.ts` pins both the
+protocol list and that no URL or local playlist makes a request (Node reaching the same server is
+the positive control); pointed at the old 6.1.1 build, both fail.
 
 **Subtitles are compositions, one per clip, in a chosen design** (`src/shared/subtitles.ts`,
 `add_subtitles`). A text item can show a line; it cannot light the word being spoken, which is what

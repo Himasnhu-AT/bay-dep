@@ -15,15 +15,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { mkdtempSync } from 'node:fs'
+import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Asset, Item, Project, Timeline } from '@shared/project'
 import { buildAudioGraph } from './audio-graph'
 
-const require_ = createRequire(import.meta.url)
-const FFMPEG = (require_('ffmpeg-ffprobe-static') as { ffmpegPath?: string | null }).ffmpegPath ?? ''
+
+const FFMPEG = vendoredTools()?.ffmpeg ?? ''
 const RATE = 48_000
 const FPS = 30
 const PER_FRAME = RATE / FPS
@@ -80,7 +80,7 @@ function levelAt(samples: Int16Array, frequency: number, frame: number): number 
 
 test(
   'a dissolve cross-fades the sound in the rendered file',
-  { skip: existsSync(FFMPEG) ? false : `no bundled ffmpeg at "${FFMPEG}" — run pnpm install` },
+  { skip: FFMPEG ? false : NO_VENDORED_FFMPEG },
   () => {
     const dir = mkdtempSync(join(tmpdir(), 'bay-audio-'))
     const make = (frequency: number): string => {
@@ -160,7 +160,7 @@ test(
 // are about the exported file only.
 // ---------------------------------------------------------------------------
 
-const SKIP = existsSync(FFMPEG) ? false : `no bundled ffmpeg at "${FFMPEG}" — run pnpm install`
+const SKIP = FFMPEG ? false : NO_VENDORED_FFMPEG
 
 function lavfi(dir: string, name: string, graph: string): string {
   const path = join(dir, name)
