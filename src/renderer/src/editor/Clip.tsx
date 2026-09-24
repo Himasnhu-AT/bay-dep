@@ -266,6 +266,11 @@ function ClipImpl({
   // keys decide the level then, and a line that wrote the static field would draw nowhere.
   const volumeKeyed = Boolean(item.keyframes?.volume?.length)
   const showVolume = !blade && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
+  // On a picture clip the line runs through the middle of the clip, where people click to select
+  // and drag to move: an always-live strip there turned a move into a volume change. So on a video
+  // track it takes the pointer only once the clip is selected — click to select, then drag the
+  // line — and an audio clip, whose body is the waveform, keeps it live as editors do.
+  const volumeLive = !locked && (trackKind === 'audio' || selected)
   const beginVolume = useDrag({
     threshold: 1,
     onStart: () => setVolumeDrag(item.volume),
@@ -413,13 +418,16 @@ function ClipImpl({
           aria-valuemax={2}
           aria-valuenow={shownVolume}
           aria-valuetext={formatDb(shownVolume)}
-          title={locked ? undefined : `Volume ${formatDb(shownVolume)} — drag up or down`}
+          title={volumeLive ? `Volume ${formatDb(shownVolume)} — drag up or down` : undefined}
           onPointerDown={(event) => {
-            if (locked || event.button !== 0) return
+            if (!volumeLive || event.button !== 0) return
             event.stopPropagation()
             beginVolume(event)
           }}
-          className={cn('absolute inset-x-2 z-[1] h-2 -translate-y-1/2', !locked && 'cursor-ns-resize')}
+          className={cn(
+            'absolute inset-x-2 z-[1] h-2 -translate-y-1/2',
+            volumeLive ? 'cursor-ns-resize' : 'pointer-events-none'
+          )}
           style={{ top: yForVolume(shownVolume, innerHeight) }}
         >
           <div

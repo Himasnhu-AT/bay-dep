@@ -103,7 +103,9 @@ export function JunctionMarkers({
               >
                 {clamped && <AlertTriangle aria-hidden="true" className="size-2.5 shrink-0" />}
                 {/* Name when it fits, frames always: the frame count is what the handles allowed. */}
-                {width >= 72 && <span className="truncate">{name}</span>}
+                {/* Roughly 5.5px a character at 10px, plus the frame count and padding: a name
+                    that would truncate to "Cross dis…" is left out rather than cut. */}
+                {width >= name.length * 5.5 + 36 && <span className="truncate">{name}</span>}
                 <span className="shrink-0 tabular-nums">{resolved.durationInFrames}f</span>
               </button>
             </Tooltip>
