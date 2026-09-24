@@ -28,6 +28,18 @@ Then `docs/testing.md` and `test/app/README.md`.
 - Not pushed: the owner pushes. If this doc is on a remote, the owner pushed it.
 
 
+## UPDATE (after the first handoff): merged into feat/hyperframes
+- Merged and verified on the combined tree: loose-ends, detach-audio + fonts, LGPL ffmpeg 8.1.3, and
+  keyframes (HEAD 3ccf50d). Combined gates: build ok, 1474/1474 tests, 0 skipped. App probes all pass:
+  keyframes, detach-audio, audio-finish, transition-audio, export-vs-preview, grade, mcp, brf, fonts,
+  cut-playback.
+- Still open: **release** (worktree-agent-a65fa5cbd222ac851), still running. It must merge the new
+  vendored-ffmpeg layout and sign `Contents/Resources/ffmpeg/*`.
+- **TRAP: the ffmpeg binaries are gitignored** (built from pinned source by `script/build-ffmpeg.sh`,
+  into `vendor/ffmpeg/<platform>-<arch>/`). A fresh checkout has none, and then 22 ffmpeg tests SKIP,
+  so the suite reads green. Run the build script first, and always check `skipped 0`.
+- Worktrees: only the active/locked ones are kept. Stale ones are removed; their branches remain.
+
 ## FINAL STATUS OF EACH WIP BRANCH (read this first; written at shutdown)
 Suggested merge order: **loose-ends → keyframes → detach-fonts → ffmpeg → release**.
 - `worktree-agent-ad75e621443e6beef` (**loose-ends**, 40f3342): DONE, gates green (1380).
