@@ -18,15 +18,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Asset, Item, Project, Timeline, Track } from '@shared/project'
 import { detachAudio } from '@shared/links'
 import { buildAudioGraph } from './audio-graph'
+import { vendoredTools } from '../ffmpeg/vendor'
 
-const require_ = createRequire(import.meta.url)
-const FFMPEG = (require_('ffmpeg-ffprobe-static') as { ffmpegPath?: string | null }).ffmpegPath ?? ''
+const FFMPEG = vendoredTools()?.ffmpeg ?? ''
 const RATE = 48_000
 const FPS = 30
 const PER_FRAME = RATE / FPS
@@ -64,7 +63,7 @@ test(
       '-v', 'error', '-y',
       '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30:duration=5',
       '-f', 'lavfi', '-i', 'sine=frequency=440:duration=5',
-      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', movie
+      '-c:v', 'h264_videotoolbox', '-q:v', '90', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', movie
     ])
     const asset: Asset = {
       id: 'shot', kind: 'video', name: 'shot.mp4', path: movie, durationUs: 5_000_000,

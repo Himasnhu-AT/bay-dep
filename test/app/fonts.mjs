@@ -31,7 +31,7 @@ import { join } from 'node:path'
 import { attach, check, PreconditionError, runProbe } from './cdp.mjs'
 
 const ARCHIVO = process.env.ARCHIVO ?? '/Users/himanshu/codes/dodle/studio/video/assets/fonts/Archivo[wdth,wght].ttf'
-const FFMPEG = new URL('../../node_modules/ffmpeg-ffprobe-static/ffmpeg', import.meta.url).pathname
+import { FFMPEG } from './ffmpeg.mjs'
 const REOPEN = process.env.FONTS_REOPEN ?? null
 
 const installed = () =>

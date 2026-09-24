@@ -44,7 +44,7 @@ const SWEEP_MS = Number(process.env.SWEEP_MS ?? 2500)
 const FORCE_EVERY = Number(process.env.FORCE_EVERY ?? 3)
 const SABOTAGE = process.env.SABOTAGE ?? ''
 const FLOOR = 0.002 // peak (0..1) above which a sweep counts as having sound
-const FFMPEG = resolve('node_modules/ffmpeg-ffprobe-static/ffmpeg')
+import { FFMPEG } from './ffmpeg.mjs'
 const SPEECH = resolve(process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4')
 const DIR = join(tmpdir(), `bay-audio-soak-${process.pid}`)
 
@@ -55,7 +55,7 @@ mkdirSync(DIR, { recursive: true })
 const TONE_MP4 = join(DIR, 'tone.mp4')
 const TONE_M4A = join(DIR, 'tone.m4a')
 execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=8', '-f', 'lavfi', '-i', 'sine=f=440:d=8',
-  '-filter:a', 'volume=0.5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', TONE_MP4])
+  '-filter:a', 'volume=0.5', '-c:v', 'h264_videotoolbox', '-q:v', '90', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', TONE_MP4])
 execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=660:d=8', '-filter:a', 'volume=0.5', '-c:a', 'aac', TONE_M4A])
 
 // ffmpeg prints volumedetect on stderr; spawnSync hands it back whatever the exit status.

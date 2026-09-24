@@ -28,13 +28,13 @@ import { join } from 'node:path'
 import { attach, runProbe, PreconditionError } from './cdp.mjs'
 
 const require_ = createRequire(import.meta.url)
-const FFMPEG = require_('ffmpeg-ffprobe-static').ffmpegPath
+import { FFMPEG } from './ffmpeg.mjs'
 const RATE = 48_000
 const FPS = 30
 
 const dir = mkdtempSync(join(tmpdir(), 'bay-detach-'))
 const clip = join(dir, 'shot.mp4')
-execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', `aevalsrc=0.6*sin(2*PI*450*t):s=${RATE}:d=10`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clip])
+execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', `aevalsrc=0.6*sin(2*PI*450*t):s=${RATE}:d=10`, '-c:v', 'h264_videotoolbox', '-q:v', '90', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clip])
 const moviesDir = join(homedir(), 'Movies', 'bay')
 mkdirSync(moviesDir, { recursive: true })
 const exports = [join(moviesDir, `df-detach-${process.pid}-a.mp4`), join(moviesDir, `df-detach-${process.pid}-b.mp4`)]
