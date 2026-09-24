@@ -16,5 +16,9 @@ export const timelineCommands = [
     shortcut: 'Mod+Shift+L'
   },
   SEPARATOR,
-  { id: 'timeline.closeGap', label: 'Close Gap at Playhead', group: 'Timeline' }
+  { id: 'timeline.closeGap', label: 'Close Gap at Playhead', group: 'Timeline' },
+  SEPARATOR,
+  // The pointer tools, on Final Cut's and Resolve's letters. Escape also returns to Select.
+  { id: 'tool.select', label: 'Select Tool', group: 'Timeline', shortcut: 'A' },
+  { id: 'tool.blade', label: 'Blade Tool', group: 'Timeline', shortcut: 'B' }
 ] as const satisfies readonly CommandEntry[]

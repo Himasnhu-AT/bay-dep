@@ -641,6 +641,17 @@ const STORE_CASES: Record<string, StoreCase> = {
   },
   toggleDisabled: { delta: 1, run: (f) => state().toggleDisabled([f.a, f.c, f.d]) },
   nudgeSelection: { delta: 1, run: (f) => { state().select([f.c, f.d]); assert.ok(state().nudgeSelection(10)) } },
+  // A multi-clip drag across lanes: two clips on V1 to the empty V3, one step.
+  moveItemsToTracks: {
+    delta: 1,
+    run: (f) => {
+      const result = state().moveItemsToTracks([
+        { itemId: f.a, from: 0, trackId: f.v3 },
+        { itemId: f.b, from: 60, trackId: f.v3 }
+      ])
+      assert.ok('ok' in result, JSON.stringify(result))
+    }
+  },
   closeGapAt: {
     delta: 1,
     run: (f) => {

@@ -30,6 +30,7 @@ import {
 import { findTool, resolveId } from '@shared/mcp'
 import { describeFont } from '@shared/fonts'
 import { linkedPartners, withLinked } from '@shared/links'
+import { itemRippleNote, planItemRipple } from '@shared/item-ripple'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
@@ -682,46 +683,32 @@ export function deleteItems(args: Record<string, unknown>): Record<string, unkno
   }
 
   const ripple = args.ripple === true
-  // Computed before the delete, because after it the items are gone and the shift cannot be
-  // derived. Each survivor moves back by the total length of everything removed that ended
-  // at or before it, which closes exactly the gaps this call made and no pre-existing ones.
-  const shifts: { id: string; to: number }[] = []
-  if (ripple) {
-    for (const track of tl.tracks) {
-      const removed = track.items.filter((i) => ids.includes(i.id))
-      if (removed.length === 0) continue
-      for (const survivor of track.items) {
-        if (ids.includes(survivor.id)) continue
-        const shift = removed
-          .filter((r) => itemEnd(r) <= survivor.from)
-          .reduce((total, r) => total + r.durationInFrames, 0)
-        if (shift > 0) shifts.push({ id: survivor.id, to: survivor.from - shift })
-      }
-    }
-    shifts.sort((a, b) => a.to - b.to)
-  }
+  // Planned before the delete (`@shared/item-ripple`), because after it the items are gone and
+  // the shift cannot be derived. The clip menu's "Ripple Delete (This Track Only)" calls this
+  // function, so the menu and the agent close the same gaps and name the same tracks.
+  const plan = ripple ? planItemRipple(tl, ids) : null
+  const shifts = plan?.shifts ?? []
 
   store().transact(() => {
     store().select(ids)
     store().deleteSelected()
     // Unlinked: every survivor that shifts is in the list, so letting a move carry its linked
     // clip as well would shift that clip twice.
-    for (const shift of shifts) store().moveItem(shift.id, shift.to, undefined, { linked: false })
+    for (const shift of shifts) store().moveItem(shift.itemId, shift.to, undefined, { linked: false })
   })
 
   const alsoDeleted = ids.filter((id) => !given.includes(id))
+  const trackName = (id: string): string => tl.tracks.find((t) => t.id === id)?.name ?? id
+  const rippledTracks = (plan?.rippledTrackIds ?? []).map(trackName)
+  const outOfSyncTracks = (plan?.outOfSyncTrackIds ?? []).map(trackName)
   return {
     deleted: ids,
     ...(alsoDeleted.length > 0 ? { linkedAlsoDeleted: alsoDeleted } : {}),
     rippled: ripple ? shifts.length : 0,
+    ...(rippledTracks.length > 0 ? { rippledTracks } : {}),
+    ...(outOfSyncTracks.length > 0 ? { outOfSyncTracks } : {}),
     durationInFrames: timelineDuration(timeline()),
-    ...(ripple && shifts.length > 0
-      ? {
-          note:
-            'Ripple moved items on the affected tracks only. Anything layered on other ' +
-            'tracks is now out of sync unless you move it too.'
-        }
-      : {})
+    ...(ripple && shifts.length > 0 ? { note: itemRippleNote(rippledTracks, outOfSyncTracks) } : {})
   }
 }
 

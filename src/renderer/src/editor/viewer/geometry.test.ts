@@ -5,6 +5,7 @@ import {
   boundsOf,
   contains,
   corners,
+  cropDragResult,
   dragResult,
   handlePoint,
   itemFrame,
@@ -227,6 +228,69 @@ test('resize cursors turn with the clip', () => {
   assert.equal(resizeCursor('e', Math.PI / 2), 'ns-resize')
   assert.equal(resizeCursor('se', 0), 'nwse-resize')
   assert.equal(resizeCursor('ne', 0), 'nesw-resize')
+})
+
+// -- crop on canvas ------------------------------------------------------------
+
+const NONE: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
+
+test('dragging the east crop handle in takes that fraction of the box off the right', () => {
+  // A 100×50 box at the origin: 20 units left is 20% of its width.
+  const crop = cropDragResult({ layout: L(), crop: NONE, handle: 'e', pointer: { x: 100, y: 25 } }, { x: 80, y: 25 })
+  assert.deepEqual(crop, { left: 0, top: 0, right: 0.2, bottom: 0 })
+})
+
+test('the west and north handles crop the left and top, and dragging back out uncrops', () => {
+  const start = { left: 0.1, top: 0.2, right: 0, bottom: 0 }
+  const west = cropDragResult({ layout: L(), crop: start, handle: 'w', pointer: { x: 10, y: 25 } }, { x: 30, y: 25 })
+  close(west.left, 0.3, 'left')
+  const north = cropDragResult({ layout: L(), crop: start, handle: 'n', pointer: { x: 50, y: 10 } }, { x: 50, y: 0 })
+  close(north.top, 0, 'top, dragged back to the edge')
+  // Past the box's own edge it stops at no crop, not a negative one.
+  const past = cropDragResult({ layout: L(), crop: start, handle: 'n', pointer: { x: 50, y: 10 } }, { x: 50, y: -40 })
+  assert.equal(past.top, 0)
+})
+
+test('a corner handle moves both of its insets', () => {
+  const crop = cropDragResult({ layout: L(), crop: NONE, handle: 'se', pointer: { x: 100, y: 50 } }, { x: 90, y: 40 })
+  assert.deepEqual(crop, { left: 0, top: 0, right: 0.1, bottom: 0.2 })
+})
+
+test('⇧ crops symmetrically: the opposite inset takes the same value', () => {
+  const crop = cropDragResult({ layout: L(), crop: NONE, handle: 'e', pointer: { x: 100, y: 25 } }, { x: 85, y: 25 }, { symmetric: true })
+  assert.deepEqual(crop, { left: 0.15, top: 0, right: 0.15, bottom: 0 })
+  // And stops before the two meet, leaving the 2% normaliseCrop requires.
+  const far = cropDragResult({ layout: L(), crop: NONE, handle: 'e', pointer: { x: 100, y: 25 } }, { x: -500, y: 25 }, { symmetric: true })
+  assert.equal(far.left, 0.49)
+  assert.equal(far.right, 0.49)
+})
+
+test('an edge dragged past its opposite stops 2% short of it, on the edge normaliseCrop does not clamp', () => {
+  // normaliseCrop clamps right/bottom against left/top, never left against right — so a left
+  // edge the drag did not stop would be written past the right one.
+  const start = { left: 0, top: 0, right: 0.3, bottom: 0 }
+  const crop = cropDragResult({ layout: L(), crop: start, handle: 'w', pointer: { x: 0, y: 25 } }, { x: 200, y: 25 })
+  close(crop.left, 0.68, 'left stops at 1 − right − 2%')
+  assert.equal(crop.right, 0.3)
+})
+
+test('a rotated clip crops along its own axes', () => {
+  // Turned 90° clockwise, the box's +x runs down the screen: pulling the east handle *up* 10
+  // units crops 10% of its 100-unit width.
+  const layout = L({ rotation: 90 })
+  const box = itemFrame(layout)!
+  const east = handlePoint(box, 'e')
+  const crop = cropDragResult({ layout, crop: NONE, handle: 'e', pointer: east }, { x: east.x, y: east.y - 10 })
+  close(crop.right, 0.1, 'right')
+  close(crop.top, 0, 'top untouched')
+})
+
+test('a pushed-in clip crops by the fraction of what is drawn, not of the stored box', () => {
+  // scale 2: the drawn box is 200 wide, so 20 units is 10%.
+  const layout = L({ scale: 2 })
+  const east = handlePoint(itemFrame(layout)!, 'e')
+  const crop = cropDragResult({ layout, crop: NONE, handle: 'e', pointer: east }, { x: east.x - 20, y: east.y })
+  close(crop.right, 0.1, 'right')
 })
 
 test('viewer zoom: fit letterboxes into the box, a percentage is literal', () => {
