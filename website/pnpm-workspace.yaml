@@ -1,6 +1,12 @@
 allowBuilds:
   sharp: false
   unrs-resolver: false
+  # Not needed: @firebase/util's postinstall only bakes $FIREBASE_WEBAPP_CONFIG in for Firebase
+  # App Hosting auto-init (the site passes its config explicitly, src/lib/firebase.ts), and
+  # protobufjs's only prints a version-scheme warning. Declared, so pnpm 12 does not fail the
+  # install with ERR_PNPM_IGNORED_BUILDS.
+  '@firebase/util': false
+  protobufjs: false
 # Transitive advisories the direct bumps did not clear (proved cleared with `pnpm audit`):
 # nanoid <3.3.18 via postcss, js-yaml <4.3.2 via @eslint/eslintrc.
 overrides:
