@@ -72,9 +72,9 @@ export function TextPanel(): ReactNode {
         <div className="mt-4 flex items-start gap-2 rounded-sm border border-line bg-surface-2 p-2.5">
           <TypeIcon aria-hidden="true" className="mt-px size-3.5 shrink-0 text-ink-2" />
           <p className="text-[11px] leading-relaxed text-ink-2">
-            A text clip becomes an asset in the media pool and can be placed more than once.
-            Typeface, colour and alignment are not modelled by the project format yet, so
-            they are not offered here.
+            A title becomes an asset in the media pool and can be placed more than once. Once
+            it is on the timeline, select it to change its words, font, colour, outline and
+            position in the inspector.
           </p>
         </div>
       </ScrollArea>

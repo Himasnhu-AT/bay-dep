@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
 import { formatTimecode, type TransitionDirection, type TransitionKind } from '@shared/project'
-import { Button, InlineAlert, NumberField, Select, Modal } from '@/components'
+import { Button, Field, InlineAlert, NumberField, Select, Modal } from '@/components'
 import { useEditor } from '@/store/editor'
 import { whyNoRoom, type Junction } from '@/lib/junctions'
 
@@ -147,32 +147,43 @@ export function TransitionDialog({
           </p>
         )}
 
-        <Select<TransitionKind>
-          label="Kind"
-          value={kind}
-          options={KINDS}
-          onChange={setKind}
-          disabled={noRoom !== null}
-        />
+        {/* Visible captions: `Select` names itself only to a screen reader, and two unlabelled
+            dropdowns stacked in a dialog read as the same control twice. */}
+        <div className="space-y-1.5">
+          <Field label="Kind">
+            <Select<TransitionKind>
+              label="Transition kind"
+              value={kind}
+              options={KINDS}
+              onChange={setKind}
+              disabled={noRoom !== null}
+            />
+          </Field>
 
-        {DIRECTIONAL.has(kind) && (
-          <Select<TransitionDirection>
-            label="Direction"
-            value={direction}
-            options={DIRECTIONS}
-            onChange={setDirection}
+          {DIRECTIONAL.has(kind) && (
+            <Field label="Direction">
+              <Select<TransitionDirection>
+                label="Transition direction"
+                value={direction}
+                options={DIRECTIONS}
+                onChange={setDirection}
+                disabled={noRoom !== null}
+              />
+            </Field>
+          )}
+
+          <NumberField
+            row
+            label="Duration"
+            ariaLabel="Duration in frames"
+            value={requested}
+            min={2}
+            step={2}
+            suffix="f"
+            onCommit={setRequested}
             disabled={noRoom !== null}
           />
-        )}
-
-        <NumberField
-          label="Duration (frames)"
-          value={requested}
-          min={2}
-          step={2}
-          onCommit={setRequested}
-          disabled={noRoom !== null}
-        />
+        </div>
 
         {/* `clampedBecause`, before the fact. A 30-frame dissolve that plays as 8 is
             invisible on the canvas, so the number has to be contradicted here or nowhere. */}

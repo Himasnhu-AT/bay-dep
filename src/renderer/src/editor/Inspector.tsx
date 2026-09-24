@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react'
-import { FolderOpen, MousePointerClick, RotateCcw } from 'lucide-react'
+import { MousePointerClick } from 'lucide-react'
 import {
   CANVAS_PRESETS,
+  effectiveSpeed,
   findAsset,
   formatTimecode,
   itemEnd,
+  usToFrames,
+  type AssetKind,
   type Item,
+  type TrackKind,
   positionFromOrigin,
   positionToOrigin,
   LAYOUT_ORIGINS,
@@ -24,15 +28,14 @@ import {
 } from '@shared/project'
 import {
   Field,
-  IconButton,
   NumberField,
   Panel,
   ScrollArea,
   Section,
+  SectionReset,
   Select,
   SliderField
 } from '@/components'
-import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { AdjustmentsSection } from './AdjustmentsSection'
@@ -42,40 +45,16 @@ import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
 import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
 import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
+import { canSound, commonValue, hasSourceTime, isVisualItem } from '@shared/inspector'
+import { AudioSection } from './AudioSection'
+import { ClipSection, Readout } from './ClipSection'
+import { KeyframesSection } from './KeyframesSection'
+import { timecodeField } from './timecodeField'
 
-/**
- * One value across a multi-selection, or `mixed` when they disagree.
- *
- * Showing the first item's value and pretending it speaks for the rest is how an
- * inspector silently flattens five different opacities into one on the next keystroke.
- */
-/**
- * `===` plus NaN-equals-NaN, which `===` gets wrong and `Object.is` over-corrects.
- *
- * A single selected clip whose value is NaN reported "Mixed" — one item disagreeing with
- * itself — because `NaN !== NaN`. `Object.is` would fix that and introduce the mirror bug:
- * it separates `-0` from `0`, and `Math.round` produces `-0` readily, so two clips that
- * look identical would read as mixed instead.
- */
-function same<T>(a: T, b: T): boolean {
-  if (a === b) return true
-  return typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)
-}
-
+/** One value across the selection, or `mixed` — see `commonValue` in `@shared/inspector`. */
 function common<T>(items: Item[], read: (item: Item) => T): { value: T; mixed: boolean } {
-  const first = items[0]
-  if (!first) return { value: undefined as T, mixed: false }
-  const value = read(first)
-  return { value, mixed: items.some((item) => !same(read(item), value)) }
-}
-
-function Readout({ label, value }: { label: string; value: ReactNode }): ReactNode {
-  return (
-    <div className="flex items-baseline justify-between gap-2 py-0.5">
-      <span className="shrink-0 text-[11px] text-ink-2">{label}</span>
-      <span className="truncate text-right text-[11px] text-ink-1 tabular-nums">{value}</span>
-    </div>
-  )
+  const { value, mixed } = commonValue(items.map(read))
+  return { value: value as T, mixed }
 }
 
 function TimelineInspector(): ReactNode {
@@ -92,7 +71,7 @@ function TimelineInspector(): ReactNode {
 
   return (
     <>
-      <Section title="Canvas">
+      <Section id="inspector.canvas" title="Canvas" collapsible>
         <Field label="Preset">
           <Select
             label="Canvas preset"
@@ -137,12 +116,12 @@ function TimelineInspector(): ReactNode {
           <Readout label="Tracks" value={timeline.tracks.length} />
         </div>
       </Section>
-      <Section title="Selection">
+      <Section id="inspector.selection" title="Selection" collapsible>
         <div className="flex items-start gap-2 text-ink-2">
           <MousePointerClick aria-hidden="true" className="mt-px size-3.5 shrink-0" />
           <p className="text-[11px] leading-relaxed">
-            Select a clip on the timeline to edit its position, size, fades and speed.
-            Shift-click to add to the selection.
+            Select a clip on the timeline to edit its timing, position, look and sound.
+            Shift-click to add to the selection; fields then apply to every selected clip.
           </p>
         </div>
       </Section>
@@ -158,6 +137,7 @@ const CROP_EDGES: { edge: keyof Crop; label: string }[] = [
   { edge: 'right', label: 'Right' }
 ]
 
+
 export function Inspector(): ReactNode {
   const selected = useSelectedItems()
   const timeline = useEditor(selectTimeline)
@@ -168,6 +148,7 @@ export function Inspector(): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
   const moveItem = useEditor((state) => state.moveItem)
   const trimItem = useEditor((state) => state.trimItem)
+  const trimEdit = useEditor((state) => state.trimEdit)
   const setKeyframe = useEditor((state) => state.setKeyframe)
   const notify = useEditor((state) => state.notify)
   // The playhead only when one animated clip is selected: every other inspector state shows
@@ -180,7 +161,7 @@ export function Inspector(): ReactNode {
   const fps = timeline?.fps ?? 30
   const count = selected.length
 
-  if (count === 0) {
+  if (count === 0 || !timeline) {
     return (
       <Panel title="Inspector" className="h-full" bodyClassName="flex flex-col">
         <ScrollArea className="flex-1">
@@ -192,13 +173,27 @@ export function Inspector(): ReactNode {
 
   const first = selected[0]
   const asset = first ? findAsset(project, first.assetId) : undefined
-  const textItems = selected.filter((item) => findAsset(project, item.assetId)?.kind === 'text')
-  const htmlItems = selected.filter((item) => {
-    const kind = findAsset(project, item.assetId)?.kind
+  const kindOf = (item: Item): AssetKind | undefined => findAsset(project, item.assetId)?.kind
+  const trackKindOf = (item: Item): TrackKind | undefined =>
+    timeline.tracks.find((track) => track.id === item.trackId)?.kind
+
+  // Which controls each clip gets is decided per clip by `@shared/inspector`, and each group of
+  // fields writes to the clips it applies to — so a title and a music bed selected together get
+  // one Opacity that moves the title and one Volume that moves the music, never the reverse.
+  const visualItems = selected.filter((item) => isVisualItem(kindOf(item), trackKindOf(item)))
+  const textItems = visualItems.filter((item) => kindOf(item) === 'text')
+  const htmlItems = visualItems.filter((item) => {
+    const kind = kindOf(item)
     return kind === 'html' || kind === 'brf'
   })
-  const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
-    common(selected, read)
+  // Crop and grade act on a drawn source; text draws glyphs, which neither reaches.
+  const sourceItems = visualItems.filter((item) => isGradeableKind(kindOf(item)))
+  const timedItems = selected.filter((item) => hasSourceTime(kindOf(item)))
+  const soundItems = selected.filter((item) => canSound(findAsset(project, item.assetId), item))
+  const singleVisual = single && visualItems.length === 1 ? single : undefined
+
+  const layout = (read: (item: Item) => number, items: Item[] = visualItems): { value: number; mixed: boolean } =>
+    common(items, read)
   /** What a clip shows at the playhead: its keyed values when it is animated, else as stored. */
   const view = (item: Item): Layout =>
     item.keyframes && keyedPlayhead >= 0 ? animatedLayoutAt(item, keyedPlayhead) : item.layout
@@ -219,20 +214,19 @@ export function Inspector(): ReactNode {
     setKeyframe(item.id, property, frame, value)
     return true
   }
-  const diamond = (property: KeyframeProperty): ReactNode =>
-    single ? <KeyDiamond item={single} property={property} playhead={keyedPlayhead} /> : null
-  const hasPicture = selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false)
+  const pictureDiamond = (property: KeyframeProperty): ReactNode =>
+    singleVisual ? <KeyDiamond item={singleVisual} property={property} playhead={keyedPlayhead} /> : null
 
   /**
    * Every field on this panel writes to the whole selection, one store call per item, and
    * each of those is its own `edit()` — so without a transaction a field committed over
    * four clips is four undo entries, and Cmd+Z once leaves three of them changed and one
    * not. `transact` makes one commit one undo step, which is the promise the MCP tools
-   * already keep. Crop and origin were written this way; these four were older and were not.
+   * already keep.
    */
   const applyLayout = (patch: Parameters<typeof patchLayout>[1]): void => {
     transact(() => {
-      for (const item of selected) {
+      for (const item of visualItems) {
         const rest: Partial<Layout> = {}
         for (const [key, value] of Object.entries(patch) as [keyof Layout, never][]) {
           if ((KEYFRAME_PROPERTIES as readonly string[]).includes(key) && typeof value === 'number' &&
@@ -243,9 +237,9 @@ export function Inspector(): ReactNode {
       }
     })
   }
-  const applyItem = (patch: Parameters<typeof patchItem>[1]): void => {
+  const applyItem = (patch: Parameters<typeof patchItem>[1], items: Item[] = selected): void => {
     transact(() => {
-      for (const item of selected) {
+      for (const item of items) {
         if (patch.volume !== undefined && keyed(item, 'volume', patch.volume)) {
           const { volume: _keyed, ...rest } = patch
           if (Object.keys(rest).length > 0) patchItem(item.id, rest)
@@ -259,8 +253,8 @@ export function Inspector(): ReactNode {
   // X and Y are shown from whichever corner the clip is anchored to. `left` and `top` stay
   // absolute in the model — the conversion happens here, at the one place a person types a
   // number, so nothing that draws or exports has to know an origin exists.
-  const frame = { width: timeline?.width ?? 0, height: timeline?.height ?? 0 }
-  const origin = (selected[0]?.layout.origin ?? DEFAULT_LAYOUT_ORIGIN) as LayoutOrigin
+  const frame = { width: timeline.width, height: timeline.height }
+  const origin = (visualItems[0]?.layout.origin ?? DEFAULT_LAYOUT_ORIGIN) as LayoutOrigin
   const positionOf = (item: Item): { x: number; y: number } =>
     positionFromOrigin(view(item), frame, origin)
 
@@ -270,7 +264,7 @@ export function Inspector(): ReactNode {
   /** Writes one axis back, keeping the other where the clip already is. */
   const setPosition = (axis: 'x' | 'y', next: number): void => {
     transact(() => {
-      for (const item of selected) {
+      for (const item of visualItems) {
         const shown = view(item)
         const current = positionFromOrigin(shown, frame, origin)
         const patch = positionToOrigin({ ...current, [axis]: next }, shown, frame, origin)
@@ -283,17 +277,17 @@ export function Inspector(): ReactNode {
     })
   }
 
-  const cropOf = (edge: keyof Crop): number =>
-    normaliseCrop(selected[0]?.crop)[edge]
-  const cropped = selected.some((item) => isCropped(item.crop))
+  const cropOf = (edge: keyof Crop): { value: number; mixed: boolean } =>
+    common(sourceItems, (item) => normaliseCrop(item.crop)[edge])
+  const cropped = sourceItems.some((item) => isCropped(item.crop))
   const applyCrop = (edge: keyof Crop, fraction: number): void => {
     transact(() => {
-      for (const item of selected) setCrop(item.id, edge, fraction)
+      for (const item of sourceItems) setCrop(item.id, edge, fraction)
     })
   }
   const resetCrop = (): void => {
     transact(() => {
-      for (const item of selected) {
+      for (const item of sourceItems) {
         for (const { edge } of CROP_EDGES) setCrop(item.id, edge, 0)
       }
     })
@@ -308,22 +302,50 @@ export function Inspector(): ReactNode {
    */
   const setOrigin = (next: LayoutOrigin): void => {
     transact(() => {
-      for (const item of selected) patchLayout(item.id, { origin: next })
+      for (const item of visualItems) patchLayout(item.id, { origin: next })
     })
   }
+
+  /**
+   * The source in-point, typed. The same store action as the Alt-drag slip on the timeline
+   * (`trimEdit` with `mode: 'slip'`), so a typed slip is refused with the legal range exactly as
+   * a dragged one is clamped by it — and the clip never moves on the timeline.
+   */
+  const setSourceIn = (sourceFrames: number): void => {
+    const refusals: string[] = []
+    transact(() => {
+      for (const item of timedItems) {
+        const current = usToFrames(item.sourceStartUs, fps)
+        const deltaFrames = Math.round((sourceFrames - current) / effectiveSpeed(item.speed))
+        if (deltaFrames === 0) continue
+        const result = trimEdit({ itemId: item.id, mode: 'slip', deltaFrames })
+        if (!result.ok) refusals.push(result.error)
+      }
+    })
+    if (refusals[0]) notify(refusals[0], 'error')
+  }
+
   const width = layout((item) => view(item).width)
   const height = layout((item) => view(item).height)
   const rotation = layout((item) => view(item).rotation)
   const scale = layout((item) => view(item).scale ?? 1)
   const opacity = layout((item) => view(item).opacity)
-  const volume = layout((item) =>
-    item.keyframes?.volume && keyedPlayhead >= 0 ? animatedVolumeAt(item, keyedPlayhead) : item.volume
+  const volume = layout(
+    (item) => (item.keyframes?.volume && keyedPlayhead >= 0 ? animatedVolumeAt(item, keyedPlayhead) : item.volume),
+    soundItems
   )
-  const speed = layout((item) => item.speed)
-  const fadeIn = layout((item) => item.fadeInFrames)
-  const fadeOut = layout((item) => item.fadeOutFrames)
-  const from = layout((item) => item.from)
-  const durationInFrames = layout((item) => item.durationInFrames)
+  const speed = layout((item) => item.speed, timedItems)
+  const sourceIn = layout((item) => usToFrames(item.sourceStartUs, fps), timedItems)
+  const fadeIn = layout((item) => item.fadeInFrames, selected)
+  const fadeOut = layout((item) => item.fadeOutFrames, selected)
+  const from = layout((item) => item.from, selected)
+  const durationInFrames = layout((item) => item.durationInFrames, selected)
+  const tc = timecodeField(fps)
+  const longestSource = Math.max(0, ...timedItems.map((item) => findAsset(project, item.assetId)?.durationUs ?? 0))
+  const transformTouched = visualItems.some((item) => {
+    const l = item.layout
+    return l.rotation !== 0 || (l.scale ?? 1) !== 1 || l.opacity !== 1
+  })
 
   return (
     <Panel
@@ -337,50 +359,14 @@ export function Inspector(): ReactNode {
       bodyClassName="flex flex-col"
     >
       <ScrollArea className="flex-1">
-        <Section
-          title="Source"
-          actions={
-            asset?.path ? (
-              <IconButton
-                size="xs"
-                tooltipSide="left"
-                label="Reveal in Finder"
-                icon={<FolderOpen className="size-3" />}
-                onClick={() =>
-                  void call('Reveal in Finder', (api) =>
-                    api.media.revealInFolder(asset.path as string)
-                  )
-                }
-              />
-            ) : undefined
-          }
-        >
-          {count > 1 ? (
-            <p className="text-[11px] text-ink-2">
-              {count} clips selected. Shared values are shown; differing ones read “Mixed”.
-            </p>
-          ) : (
-            <>
-              <Readout label="Name" value={asset?.name ?? 'Missing media'} />
-              <Readout label="Kind" value={asset?.kind ?? '—'} />
-              {hasPicture && (
-                <Readout
-                  label="Size"
-                  value={asset?.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}
-                />
-              )}
-              <Readout label="Source length" value={formatSourceDuration(asset?.durationUs ?? 0)} />
-              {asset?.error && (
-                <p className="mt-1 text-[11px] text-danger">{asset.error}</p>
-              )}
-            </>
-          )}
-        </Section>
+        <ClipSection items={selected} asset={asset} visual={visualItems.length > 0} />
 
-        <Section title="Timing">
-          <div className="grid grid-cols-2 gap-1.5">
+        <Section id="inspector.timing" title="Timing" collapsible>
+          <div className="space-y-1.5">
             <NumberField
-              label="In"
+              row
+              label="Start"
+              ariaLabel="Start on the timeline"
               value={from.value}
               mixed={from.mixed}
               // `from` goes through `moveItem`, not `patchItem`: only the move path checks
@@ -392,10 +378,11 @@ export function Inspector(): ReactNode {
                 })
               }}
               min={0}
-              suffix="f"
+              {...tc}
             />
             <NumberField
-              label="Len"
+              row
+              label="Duration"
               value={durationInFrames.value}
               mixed={durationInFrames.mixed}
               onCommit={(next) => {
@@ -404,128 +391,154 @@ export function Inspector(): ReactNode {
                 })
               }}
               min={1}
-              suffix="f"
+              {...tc}
+            />
+            {timedItems.length > 0 && (
+              <NumberField
+                row
+                label="Source in"
+                ariaLabel="Source in: where in the source this clip starts reading"
+                value={sourceIn.value}
+                mixed={sourceIn.mixed}
+                onCommit={setSourceIn}
+                min={0}
+                max={longestSource > 0 ? usToFrames(longestSource, fps) : undefined}
+                {...tc}
+              />
+            )}
+            {timedItems.length > 0 && (
+              <NumberField
+                row
+                label="Speed"
+                value={speed.value}
+                mixed={speed.mixed}
+                onCommit={(next) => applyItem({ speed: Math.max(0.1, next) }, timedItems)}
+                step={0.05}
+                min={0.1}
+                max={8}
+                precision={2}
+                suffix="×"
+              />
+            )}
+            <NumberField
+              row
+              label="Fade in"
+              value={fadeIn.value}
+              mixed={fadeIn.mixed}
+              onCommit={(next) => applyItem({ fadeInFrames: Math.max(0, Math.round(next)) })}
+              min={0}
+              {...tc}
+            />
+            <NumberField
+              row
+              label="Fade out"
+              value={fadeOut.value}
+              mixed={fadeOut.mixed}
+              onCommit={(next) => applyItem({ fadeOutFrames: Math.max(0, Math.round(next)) })}
+              min={0}
+              {...tc}
             />
           </div>
           {first && count === 1 && (
             <div className="mt-2">
-              <Readout label="Starts" value={formatTimecode(first.from, fps, true)} />
               <Readout label="Ends" value={formatTimecode(itemEnd(first), fps, true)} />
-              <Readout
-                label="Duration"
-                value={formatTimecode(first.durationInFrames, fps, true)}
-              />
             </div>
           )}
+          <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
+            Times read minutes:seconds:frames. Type a timecode, 4.5s or 135f.
+            {timedItems.length > 0
+              ? ' Source in slips the footage under the clip without moving it; speed changes how fast the source is read, not the clip’s length.'
+              : ''}
+          </p>
         </Section>
 
-        {/* Transform, like Crop below, is for things with a picture. An audio clip has a layout
-            in the model (every item does), but X/Y/W/H/Rotate/Opacity on a music bed are six
-            controls that move nothing anyone can see. */}
-        {hasPicture && (
-        <Section
-          title="Transform"
-          actions={
-            single?.keyframes ? (
-              <KeyNavigation item={single} properties={PICTURE_PROPERTIES} playhead={keyedPlayhead} />
-            ) : undefined
-          }
-        >
-          {/* Wrapped in a Field for a visible caption: `Select` carries only an aria-label,
-              which is enough when a Section title names it and not enough here, where it sits
-              among X, Y, W and H and would otherwise be an unexplained dropdown. */}
-          {/* "Origin" rather than "X and Y from": the Field label column truncates, and a
-              caption that reads "X and Y fr..." names nothing. Origin is what design tools
-              call this, and the aria-label carries the longer phrasing for a screen reader. */}
-          <Field label="Origin" className="mb-1.5">
-            <Select
-              label="Measure X and Y from"
-              value={origin}
-              onChange={setOrigin}
-              options={LAYOUT_ORIGINS.map((value) => ({
-                value,
-                label: LAYOUT_ORIGIN_LABEL[value]
-              }))}
-            />
-          </Field>
-          <div className="grid grid-cols-2 gap-1.5">
-            <Keyed diamond={diamond('left')}>
-              <NumberField
-                label="X"
-                value={left.value}
-                mixed={left.mixed}
-                onCommit={(next) => setPosition('x', next)}
-                suffix="px"
+        {/* Transform, like Crop below, is for things with a picture — text included. An audio
+            clip has a layout in the model (every item does), but X/Y/W/H/Rotate/Opacity on a
+            music bed are six controls that move nothing anyone can see. */}
+        {visualItems.length > 0 && (
+          <Section
+            id="inspector.transform"
+            title="Transform"
+            collapsible
+            actions={
+              <span className="flex items-center gap-0.5">
+                {singleVisual?.keyframes ? (
+                  <KeyNavigation item={singleVisual} properties={PICTURE_PROPERTIES} playhead={keyedPlayhead} />
+                ) : null}
+                <SectionReset
+                  show={transformTouched}
+                  label="Reset rotation, scale and opacity"
+                  onReset={() => applyLayout({ rotation: 0, scale: 1, opacity: 1 })}
+                />
+              </span>
+            }
+          >
+            {/* "Origin" rather than "X and Y from": the Field label column truncates, and a
+                caption that reads "X and Y fr..." names nothing. */}
+            <Field label="Origin" className="mb-1.5">
+              <Select
+                label="Measure X and Y from"
+                value={origin}
+                onChange={setOrigin}
+                options={LAYOUT_ORIGINS.map((value) => ({
+                  value,
+                  label: LAYOUT_ORIGIN_LABEL[value]
+                }))}
               />
-            </Keyed>
-            <Keyed diamond={diamond('top')}>
-              <NumberField
-                label="Y"
-                value={top.value}
-                mixed={top.mixed}
-                onCommit={(next) => setPosition('y', next)}
-                suffix="px"
-              />
-            </Keyed>
-            <Keyed diamond={diamond('width')}>
-              <NumberField
-                label="W"
-                value={width.value}
-                mixed={width.mixed}
-                onCommit={(next) => applyLayout({ width: Math.max(1, next) })}
-                min={1}
-                suffix="px"
-              />
-            </Keyed>
-            <Keyed diamond={diamond('height')}>
-              <NumberField
-                label="H"
-                value={height.value}
-                mixed={height.mixed}
-                onCommit={(next) => applyLayout({ height: Math.max(1, next) })}
-                min={1}
-                suffix="px"
-              />
-            </Keyed>
-          </div>
-          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-            <Keyed diamond={diamond('rotation')}>
-              <NumberField
-                label="Rotate"
-                value={rotation.value}
-                mixed={rotation.mixed}
-                onCommit={(next) => applyLayout({ rotation: next })}
-                suffix="°"
-              />
-            </Keyed>
-            {/* A zoom about the centre, like Rotate: it enlarges a title rather than reflowing
-                it, and it is what a push-in keys. */}
-            <Keyed diamond={diamond('scale')}>
-              <NumberField
-                label="Scale"
-                // Whole percent: the half-width field clips a decimal ("130.0" read "13(").
-                value={Math.round(scale.value * 100)}
-                mixed={scale.mixed}
-                onCommit={(next) => applyLayout({ scale: Math.max(0, next) / 100 })}
-                min={0}
-                step={1}
-                precision={0}
-                suffix="%"
-              />
-            </Keyed>
-          </div>
-          <div className="mt-2">
-            <Keyed diamond={diamond('opacity')}>
-              <SliderField
-                label="Opacity"
-                value={opacity.value ?? 1}
-                mixed={opacity.mixed}
-                format={(v) => `${Math.round(v * 100)}%`}
-                onCommit={(next) => applyLayout({ opacity: next })}
-              />
-            </Keyed>
-          </div>
-        </Section>
+            </Field>
+            {/* One field per row, label left and value right: two columns with a diamond beside
+                each left the digits about 20px, and W read "19" for 1920. */}
+            <div className="space-y-1.5">
+              <Keyed diamond={pictureDiamond('left')}>
+                <NumberField row label="X" ariaLabel="X position" value={left.value} mixed={left.mixed}
+                  onCommit={(next) => setPosition('x', next)} suffix="px" />
+              </Keyed>
+              <Keyed diamond={pictureDiamond('top')}>
+                <NumberField row label="Y" ariaLabel="Y position" value={top.value} mixed={top.mixed}
+                  onCommit={(next) => setPosition('y', next)} suffix="px" />
+              </Keyed>
+              <Keyed diamond={pictureDiamond('width')}>
+                <NumberField row label="Width" value={width.value} mixed={width.mixed}
+                  onCommit={(next) => applyLayout({ width: Math.max(1, next) })} min={1} suffix="px" />
+              </Keyed>
+              <Keyed diamond={pictureDiamond('height')}>
+                <NumberField row label="Height" value={height.value} mixed={height.mixed}
+                  onCommit={(next) => applyLayout({ height: Math.max(1, next) })} min={1} suffix="px" />
+              </Keyed>
+              <Keyed diamond={pictureDiamond('rotation')}>
+                <NumberField row label="Rotation" value={rotation.value} mixed={rotation.mixed}
+                  onCommit={(next) => applyLayout({ rotation: next })} precision={1} suffix="°" />
+              </Keyed>
+              {/* A zoom about the centre, like Rotation: it enlarges a title rather than reflowing
+                  it, and it is what a push-in keys. */}
+              <Keyed diamond={pictureDiamond('scale')}>
+                <NumberField
+                  row
+                  label="Scale"
+                  value={Math.round(scale.value * 1000) / 10}
+                  mixed={scale.mixed}
+                  onCommit={(next) => applyLayout({ scale: Math.max(0, next) / 100 })}
+                  min={0}
+                  precision={1}
+                  suffix="%"
+                />
+              </Keyed>
+              <Keyed diamond={pictureDiamond('opacity')}>
+                <SliderField
+                  label="Opacity"
+                  value={opacity.value ?? 1}
+                  mixed={opacity.mixed}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onCommit={(next) => applyLayout({ opacity: next })}
+                />
+              </Keyed>
+            </div>
+            {count > 1 && (
+              <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
+                Keyframe diamonds appear with one clip selected: a key is a frame of one clip.
+              </p>
+            )}
+          </Section>
         )}
 
         {/* Type controls only for text items: an outline width on a video clip would be a
@@ -537,38 +550,38 @@ export function Inspector(): ReactNode {
           />
         )}
 
-        {/* Crop applies to anything with a picture. Audio has no edges to trim. */}
-        {hasPicture && (
+        {/* Crop cuts a drawn source. Text draws glyphs straight into its box, which a crop does
+            not reach, and audio has no edges. */}
+        {sourceItems.length > 0 && (
           <Section
+            id="inspector.crop"
             title="Crop"
-            actions={
-              cropped ? (
-                <IconButton
-                  label="Remove the crop"
-                  icon={<RotateCcw aria-hidden="true" className="size-3" />}
-                  onClick={resetCrop}
-                  size="sm"
-                  variant="subtle"
-                />
-              ) : undefined
-            }
+            collapsible
+            defaultOpen={false}
+            actions={<SectionReset show={cropped} label="Remove the crop" onReset={resetCrop} />}
           >
-            <div className="grid grid-cols-2 gap-1.5">
-              {CROP_EDGES.map(({ edge, label }) => (
-                <NumberField
-                  key={edge}
-                  label={label}
-                  // Shown as a percentage because that is what a person means by "take ten off
-                  // the top"; stored as a fraction so it survives a change of source resolution.
-                  value={Math.round(cropOf(edge) * 1000) / 10}
-                  min={0}
-                  max={98}
-                  step={1}
-                  precision={1}
-                  suffix="%"
-                  onCommit={(next) => applyCrop(edge, next / 100)}
-                />
-              ))}
+            <div className="space-y-1.5">
+              {CROP_EDGES.map(({ edge, label }) => {
+                const edgeValue = cropOf(edge)
+                return (
+                  <NumberField
+                    key={edge}
+                    row
+                    label={label}
+                    ariaLabel={`Crop ${label.toLowerCase()}`}
+                    // Shown as a percentage because that is what a person means by "take ten off
+                    // the top"; stored as a fraction so it survives a change of source resolution.
+                    value={Math.round(edgeValue.value * 1000) / 10}
+                    mixed={edgeValue.mixed}
+                    min={0}
+                    max={98}
+                    step={1}
+                    precision={1}
+                    suffix="%"
+                    onCommit={(next) => applyCrop(edge, next / 100)}
+                  />
+                )
+              })}
             </div>
           </Section>
         )}
@@ -582,88 +595,48 @@ export function Inspector(): ReactNode {
           />
         )}
 
-        {/* Adjustments apply to anything with a picture. Audio-only items have nothing to
-            filter, so they get no section rather than a set of sliders that do nothing. */}
-        {timeline && selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false) && (
-          <AdjustmentsSection
-            items={selected.filter((item) => findAsset(project, item.assetId)?.hasVideo !== false)}
-            timeline={timeline}
-          />
-        )}
+        {/* Adjustments and blend apply to anything with a picture, text included (its glyphs are
+            drawn through the same look). Audio-only items have nothing to filter. */}
+        {visualItems.length > 0 && <AdjustmentsSection items={visualItems} timeline={timeline} />}
 
         {/* The grade runs only on picture sources — not text, which draws its own glyphs. */}
-        {selected.some((item) => isGradeableKind(findAsset(project, item.assetId)?.kind)) && (
+        {sourceItems.length > 0 && (
           <GradeSection
-            items={selected.filter((item) => isGradeableKind(findAsset(project, item.assetId)?.kind))}
-            luts={project.assets.filter((asset) => asset.kind === 'lut' && !asset.error)}
+            items={sourceItems}
+            luts={project.assets.filter((candidate) => candidate.kind === 'lut' && !candidate.error)}
           />
         )}
 
-        <Section
-          title="Audio & speed"
-          actions={
-            single?.keyframes?.volume ? (
-              <KeyNavigation item={single} properties={['volume']} playhead={keyedPlayhead} />
-            ) : undefined
-          }
-        >
-          {/* A detached picture plays no sound, so a volume here would be a slider that does
-              nothing; its level lives on the linked audio item. Fades still fade the picture. */}
-          {selected.every((item) => item.audioDetached) ? (
-            <p className="text-[11px] text-ink-2">
-              Sound detached — level, fades and duck of the sound are on the linked audio clip. Fades
+        {soundItems.length > 0 ? (
+          <AudioSection
+            items={soundItems}
+            project={project}
+            timeline={timeline}
+            volume={{ value: volume.value ?? 1, mixed: volume.mixed }}
+            onVolume={(gain) => applyItem({ volume: gain }, soundItems)}
+            diamond={
+              single && soundItems.length === 1 ? (
+                <KeyDiamond item={single} property="volume" playhead={keyedPlayhead} />
+              ) : null
+            }
+            navigation={
+              single?.keyframes?.volume ? (
+                <KeyNavigation item={single} properties={['volume']} playhead={keyedPlayhead} />
+              ) : null
+            }
+          />
+        ) : selected.some((item) => item.audioDetached) ? (
+          <Section id="inspector.audio" title="Audio" collapsible>
+            {/* A detached picture plays no sound, so a volume here would be a slider that does
+                nothing; its level lives on the linked audio item. */}
+            <p className="text-[11px] leading-relaxed text-ink-2">
+              Sound detached — its volume, J/L cut and ducking are on the linked audio clip. Fades
               here fade the picture only.
             </p>
-          ) : (
-            <Keyed diamond={asset?.hasAudio || asset?.kind === 'html' ? diamond('volume') : null}>
-              <SliderField
-                label="Volume"
-                min={0}
-                max={2}
-                step={0.01}
-                value={volume.value ?? 1}
-                mixed={volume.mixed}
-                format={(v) => `${Math.round(v * 100)}%`}
-                onCommit={(next) => applyItem({ volume: next })}
-              />
-            </Keyed>
-          )}
-          <div className="mt-2 grid grid-cols-2 gap-1.5">
-            <NumberField
-              label="In"
-              value={fadeIn.value}
-              mixed={fadeIn.mixed}
-              onCommit={(next) => applyItem({ fadeInFrames: Math.max(0, next) })}
-              min={0}
-              suffix="f"
-            />
-            <NumberField
-              label="Out"
-              value={fadeOut.value}
-              mixed={fadeOut.mixed}
-              onCommit={(next) => applyItem({ fadeOutFrames: Math.max(0, next) })}
-              min={0}
-              suffix="f"
-            />
-          </div>
-          <div className="mt-1.5">
-            <NumberField
-              label="Speed"
-              value={speed.value}
-              mixed={speed.mixed}
-              onCommit={(next) => applyItem({ speed: Math.max(0.1, next) })}
-              step={0.05}
-              min={0.1}
-              max={8}
-              precision={2}
-              suffix="×"
-            />
-          </div>
-          <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
-            Fades are in frames and apply to this clip’s own picture and sound. Speed changes
-            how fast the source is read; it does not change the clip’s length on the timeline.
-          </p>
-        </Section>
+          </Section>
+        ) : null}
+
+        <KeyframesSection items={selected} />
       </ScrollArea>
     </Panel>
   )

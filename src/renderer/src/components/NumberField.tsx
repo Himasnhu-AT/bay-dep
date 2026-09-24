@@ -17,6 +17,18 @@ export interface NumberFieldProps {
   /** Multi-selection where the selected items disagree: shows "Mixed" until edited. */
   mixed?: boolean
   className?: string
+  /**
+   * Label beside the box, in the 64px column every `Field` and `SliderField` uses, instead of
+   * inside it. The inspector's rows use this: inside the box the label and suffix took the
+   * width the digits needed, and a half-width W field read "19" for 1920.
+   */
+  row?: boolean
+  /** What the box shows for a value — a timecode for a frame count. Default: `toFixed(precision)`. */
+  format?(value: number): string
+  /** Reads what was typed back to a value; null when it is not one. Default: `Number`. */
+  parse?(text: string): number | null
+  /** Accessible name when the visible label is an abbreviation. */
+  ariaLabel?: string
 }
 
 function clamp(value: number, min: number | undefined, max: number | undefined): number {
@@ -46,14 +58,24 @@ export function NumberField({
   suffix,
   disabled = false,
   mixed = false,
-  className
+  className,
+  row = false,
+  format,
+  parse,
+  ariaLabel
 }: NumberFieldProps): ReactNode {
   const inputRef = useRef<HTMLInputElement>(null)
   // While dragging or typing the field shows its own value; otherwise it mirrors the store.
   const [draft, setDraft] = useState<string | null>(null)
   const dragStart = useRef(0)
 
-  const display = draft ?? (mixed ? 'Mixed' : value.toFixed(precision))
+  const shown = (n: number): string => (format ? format(n) : n.toFixed(precision))
+  const read = (text: string): number | null => {
+    if (text.trim() === '') return null
+    const parsed = parse ? parse(text) : Number(text)
+    return parsed !== null && Number.isFinite(parsed) ? parsed : null
+  }
+  const display = draft ?? (mixed ? 'Mixed' : shown(value))
 
   const commit = (next: number): void => {
     const rounded = Number(clamp(next, min, max).toFixed(precision))
@@ -83,7 +105,7 @@ export function NumberField({
       // Shift is fine (1/10), Alt is coarse (10×) — the convention every editor shares.
       const scale = state.shift ? 0.1 : state.alt ? 10 : 1
       const next = clamp(dragStart.current + state.dx * step * scale, min, max)
-      setDraft(next.toFixed(precision))
+      setDraft(shown(Number(next.toFixed(precision))))
     },
     onEnd: (state) => {
       document.body.style.cursor = ''
@@ -99,41 +121,51 @@ export function NumberField({
     }
   })
 
-  return (
+  const handle = (
+    <span
+      aria-hidden="true"
+      onPointerDown={disabled ? undefined : onPointerDown}
+      className={cn(
+        'shrink-0 text-[11px] select-none',
+        // Two lines rather than an ellipsis: "Letter spacing" is wider than the column, and
+        // "Letter spa…" names nothing. Two 11px lines still fit the 28px row.
+        row ? 'line-clamp-2 leading-tight text-ink-1' : 'pl-2 pr-1.5 leading-none text-ink-2',
+        !disabled && 'cursor-ew-resize hover:text-ink-0'
+      )}
+    >
+      {label}
+    </span>
+  )
+
+  const box = (
     <div
       className={cn(
-        'flex h-7 items-center rounded-sm border border-line bg-surface-2 t-fast',
+        'flex h-7 min-w-0 items-center rounded-sm border border-line bg-surface-2 t-fast',
         // The global focus ring is a 2px accent outline; a composite control's input has its
         // outline off (the box is the control), so the box carries the same 2px here — a 1px
         // border at 70% was the weakest focus indicator in the app.
         'focus-within:border-accent focus-within:ring-1 focus-within:ring-accent',
         disabled ? 'opacity-40' : 'hover:border-line-strong',
-        className
+        !row && className
       )}
     >
-      <span
-        aria-hidden="true"
-        onPointerDown={disabled ? undefined : onPointerDown}
-        className={cn(
-          'shrink-0 pl-2 pr-1.5 text-[11px] leading-none text-ink-2 select-none',
-          !disabled && 'cursor-ew-resize hover:text-ink-1'
-        )}
-      >
-        {label}
-      </span>
+      {!row && handle}
       <input
         ref={inputRef}
-        aria-label={label}
+        aria-label={ariaLabel ?? label}
         disabled={disabled}
         inputMode="decimal"
         value={display}
-        className="min-w-0 flex-1 bg-transparent pr-2 text-right text-[12px] text-ink-0 tabular-nums outline-none disabled:cursor-not-allowed"
+        className={cn(
+          'min-w-0 flex-1 bg-transparent pr-2 text-right text-[12px] text-ink-0 tabular-nums outline-none disabled:cursor-not-allowed',
+          row && 'pl-2'
+        )}
         onChange={(event) => setDraft(event.target.value)}
-        onFocus={() => setDraft(mixed ? '' : value.toFixed(precision))}
+        onFocus={() => setDraft(mixed ? '' : shown(value))}
         onBlur={() => {
-          const parsed = Number(draft)
+          const parsed = draft === null ? null : read(draft)
           setDraft(null)
-          if (draft !== null && draft.trim() !== '' && Number.isFinite(parsed)) commit(parsed)
+          if (parsed !== null) commit(parsed)
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
@@ -145,10 +177,10 @@ export function NumberField({
             event.preventDefault()
             const direction = event.key === 'ArrowUp' ? 1 : -1
             const scale = event.shiftKey ? 10 : 1
-            const base = draft !== null && draft !== '' ? Number(draft) : value
-            if (!Number.isFinite(base)) return
+            const base = draft !== null && draft !== '' ? read(draft) : value
+            if (base === null || !Number.isFinite(base)) return
             const next = clamp(base + direction * step * scale, min, max)
-            setDraft(next.toFixed(precision))
+            setDraft(shown(Number(next.toFixed(precision))))
             commit(next)
           }
         }}
@@ -158,6 +190,14 @@ export function NumberField({
           {suffix}
         </span>
       )}
+    </div>
+  )
+
+  if (!row) return box
+  return (
+    <div className={cn('grid grid-cols-[64px_1fr] items-center gap-2', className)}>
+      {handle}
+      {box}
     </div>
   )
 }

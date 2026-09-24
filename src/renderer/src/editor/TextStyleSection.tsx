@@ -18,6 +18,7 @@ import {
   IconButton,
   NumberField,
   Section,
+  SectionReset,
   SegmentedControl,
   Select
 } from '@/components'
@@ -125,16 +126,29 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   return (
     <>
       <Section
+        id="inspector.type"
         title={items.length > 1 ? `Type · ${items.length} selected` : 'Type'}
+        collapsible
         actions={
-          <IconButton
-            size="xs"
-            tooltipSide="left"
-            label={style.italic ? 'Upright' : 'Italic'}
-            active={style.italic}
-            icon={<Italic className="size-3" />}
-            onClick={() => set({ italic: !style.italic })}
-          />
+          <span className="flex items-center gap-0.5">
+            <IconButton
+              size="xs"
+              tooltipSide="left"
+              label={style.italic ? 'Upright' : 'Italic'}
+              active={style.italic}
+              icon={<Italic className="size-3" />}
+              onClick={() => set({ italic: !style.italic })}
+            />
+            <SectionReset
+              show={items.some((item) => item.text !== undefined)}
+              label="Reset type to the default style"
+              onReset={() =>
+                transact(() => {
+                  for (const item of items) patchItem(item.id, { text: defaultTextStyle() })
+                })
+              }
+            />
+          </span>
         }
       >
         <Field label="Font">
@@ -159,9 +173,11 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             />
           </Field>
         </div>
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+        <div className="mt-1.5 space-y-1.5">
           <NumberField
+            row
             label="Size"
+            ariaLabel="Font size"
             value={style.fontSize}
             onCommit={(value) => set({ fontSize: Math.max(1, value) })}
             min={1}
@@ -169,7 +185,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             suffix="px"
           />
           <NumberField
-            label="Line"
+            row
+            label="Line height"
             value={style.lineHeight}
             onCommit={(value) => set({ lineHeight: value })}
             step={0.05}
@@ -178,17 +195,18 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             precision={2}
             suffix="×"
           />
-        </div>
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
           <NumberField
-            label="Track"
+            row
+            label="Letter spacing"
             value={style.letterSpacing}
             onCommit={(value) => set({ letterSpacing: value })}
             step={0.5}
             precision={1}
             suffix="px"
           />
-          <ColorField label="Colour" value={style.color} onCommit={(value) => set({ color: value })} />
+          <Field label="Colour">
+            <ColorField label="Text colour" value={style.color} onCommit={(value) => set({ color: value })} />
+          </Field>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <SegmentedControl
@@ -229,14 +247,16 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         ) : (
           <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
             {fit
-              ? `Fits on ${fit.laid.lines.length} line${fit.laid.lines.length === 1 ? '' : 's'} at ${fit.laid.fontSize}px. Text wraps inside the clip’s box — set it in Transform above.`
-              : 'Text wraps inside the clip’s box on the canvas — set it in Transform above.'}
+              ? `Fits on ${fit.laid.lines.length} line${fit.laid.lines.length === 1 ? '' : 's'} at ${fit.laid.fontSize}px. Text wraps inside the clip’s box — its width and height in Transform.`
+              : 'Text wraps inside the clip’s box — its width and height in Transform.'}
           </p>
         )}
       </Section>
 
       <Section
+        id="inspector.outline"
         title="Outline"
+        collapsible
         actions={
           <IconButton
             size="xs"
@@ -270,7 +290,9 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
       </Section>
 
       <Section
+        id="inspector.shadow"
         title="Shadow"
+        collapsible
         actions={
           <IconButton
             size="xs"
@@ -320,7 +342,9 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
       </Section>
 
       <Section
+        id="inspector.plate"
         title="Plate"
+        collapsible
         actions={
           <IconButton
             size="xs"

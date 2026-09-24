@@ -1,47 +1,85 @@
 import type { ReactNode } from 'react'
-import { Maximize2, Minimize2, Move, RotateCcw } from 'lucide-react'
-import {
-  containLayout,
-  coverLayout,
-  defaultLayout,
-  findAsset,
-  type Item,
-  type Layout
-} from '@shared/project'
-import { Button, EmptyState, Panel, ScrollArea, Section } from '@/components'
+import { Check, Wand2 } from 'lucide-react'
+import { findAsset, type Item } from '@shared/project'
+import { hasSourceTime, isVisualItem } from '@shared/inspector'
+import { EmptyState, Panel, ScrollArea, Section } from '@/components'
+import { cn } from '@/lib/cn'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
+import {
+  fadePresetActive,
+  fadePresetFrames,
+  framePresetActive,
+  framePresetLayout,
+  speedPresetActive,
+  type FramePreset
+} from './effectPresets'
 
 /**
- * Everything on this panel maps to a field the project format actually has. Filters and
- * colour grades are listed as disabled rather than omitted: the greyed-out rows are the
- * honest map of what the engine cannot do yet, and a tile that adds an effect nothing
- * renders is a dead control you only discover when the export comes back unchanged.
+ * One-click presets over fields the engine draws: framing, fades and speed. Each row names what
+ * it does in a line and shows a check when the whole selection already has it, so the panel
+ * answers "what is this clip doing?" as well as "what can I do to it?".
  *
- * The obligation runs both ways, which is easy to forget. Transitions sat in that disabled
- * list while the engine had no way to draw one; it draws seven kinds now, so leaving the row
- * greyed out would be the same lie pointing the other way — a working feature advertised as
- * absent, which nobody thinks to check.
- *
- * **Blur graduated the same way and the row outlived it by a day.** It sat here reading "nothing
- * reads a blur off an item yet" after `Adjustments.blur` had landed, `adjustmentFilter` was
- * emitting `blur(Npx)`, and the Adjustments section had shipped a 0-40px slider for it. Nobody
- * caught it because a greyed-out row is the one thing on a panel people trust without checking —
- * which is exactly what makes this direction the more expensive of the two. So: when a field
- * lands, grep this list in the same change.
- *
- * **`Crop` was the next one, and it lasted a single commit** — `Item.crop` landed with
- * `cropSourceRect`/`cropDestRect` and four edge fields in the inspector while this list still
- * called it absent and the paragraph below still said an item has nowhere to store a rectangle.
- * That is twice in two commits, which retires "remember to check" as a strategy: the list is now
- * one row long, and the rule is that a row here must name a field that does not exist in
- * `@shared/project`.
- *
- * **`Colour wheels` was the last row, and it outlived `Item.grade`** (lift/gamma/gain, LUTs,
- * texture) just as the others did — still telling people the engine could not do what the
- * inspector's Grade section did. The list is empty now, so it is gone rather than kept as an
- * empty frame; a future unbacked control should be drawn disabled where it will live.
+ * **Every row must name a field that exists in `@shared/project` and is drawn.** This panel once
+ * listed filters, crop, colour wheels and transitions as disabled "not yet" rows, and each one
+ * outlived the day its field landed — a working feature advertised as absent. The numbers behind
+ * a look (adjustments, grade, crop) are set in the inspector; a preset here is only ever a
+ * shortcut to a value the inspector can also type.
  */
+
+const FRAMES: { id: FramePreset; label: string; description: string }[] = [
+  { id: 'fill', label: 'Fill', description: 'Cover the frame, cropping the overflow' },
+  { id: 'fit', label: 'Fit', description: 'Show the whole picture, letterboxed' },
+  { id: 'centre', label: 'Centre', description: 'Centre at its current size' },
+  { id: 'reset', label: 'Full frame', description: 'The canvas’s own box, as placed' }
+]
+
+const FADES: { seconds: number; label: string; description: string }[] = [
+  { seconds: 0, label: 'No fade', description: 'Hard in and out' },
+  { seconds: 0.25, label: 'Quick fade', description: '¼ s in and out' },
+  { seconds: 0.5, label: 'Fade', description: '½ s in and out' },
+  { seconds: 1, label: 'Slow fade', description: '1 s in and out' }
+]
+
+const SPEEDS: { speed: number; label: string; description: string }[] = [
+  { speed: 0.5, label: 'Half speed', description: '0.5× — slow motion' },
+  { speed: 1, label: 'Normal speed', description: '1× — as recorded' },
+  { speed: 1.5, label: 'Faster', description: '1.5×' },
+  { speed: 2, label: 'Double speed', description: '2× — the clip keeps its length' }
+]
+
+function PresetRow({
+  label,
+  description,
+  active,
+  onApply
+}: {
+  label: string
+  description: string
+  active: boolean
+  onApply(): void
+}): ReactNode {
+  return (
+    <li>
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={onApply}
+        className={cn(
+          't-press grid w-full grid-cols-[1fr_auto] items-center gap-2 rounded-sm px-2 py-1.5 text-left active:scale-[0.98]',
+          active ? 'bg-accent/14' : 'hover:bg-surface-3'
+        )}
+      >
+        <span className="min-w-0">
+          <span className={cn('block text-[12px]', active ? 'text-accent' : 'text-ink-0')}>{label}</span>
+          <span className="block truncate text-[11px] text-ink-2">{description}</span>
+        </span>
+        {active && <Check aria-hidden="true" className="size-3.5 text-accent" />}
+      </button>
+    </li>
+  )
+}
+
 export function EffectsPanel(): ReactNode {
   const selected = useSelectedItems()
   const timeline = useEditor(selectTimeline)
@@ -50,163 +88,114 @@ export function EffectsPanel(): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
   const transact = useEditor((state) => state.transact)
 
-  /**
-   * Every button on this panel acts on the whole selection, so each one is a loop of
-   * single-item store calls — and each of those is its own `edit()`, hence its own undo
-   * entry. Four clips selected, one click on `0.5s`, four presses of Cmd+Z to take it back,
-   * with the middle two leaving a selection that is half faded. So all three loops below go
-   * through `transact`: one click is one undo step, which is the same promise the MCP tools
-   * make. The inspector already worked this way; this panel did not.
-   */
-  const applyLayout = (make: (item: Item) => Layout | null): void => {
-    if (!timeline) return
-    transact(() => {
-      for (const item of selected) {
-        const layout = make(item)
-        if (layout) patchLayout(item.id, layout)
-      }
-    })
-  }
-
-  const fit = (mode: 'cover' | 'contain' | 'reset'): void =>
-    applyLayout((item) => {
-      if (!timeline) return null
-      if (mode === 'reset') return defaultLayout(timeline)
-      const asset = findAsset(project, item.assetId)
-      if (!asset?.width || !asset.height) return defaultLayout(timeline)
-      return mode === 'cover'
-        ? coverLayout(timeline, asset.width, asset.height)
-        : containLayout(timeline, asset.width, asset.height)
-    })
-
-  const centre = (): void =>
-    applyLayout((item) => {
-      if (!timeline) return null
-      return {
-        ...item.layout,
-        left: Math.round((timeline.width - item.layout.width) / 2),
-        top: Math.round((timeline.height - item.layout.height) / 2)
-      }
-    })
-
-  const fade = (frames: number): void => {
-    transact(() => {
-      for (const item of selected) {
-        const capped = Math.min(frames, Math.floor(item.durationInFrames / 2))
-        patchItem(item.id, { fadeInFrames: capped, fadeOutFrames: capped })
-      }
-    })
-  }
-
-  const setSpeed = (speed: number): void => {
-    transact(() => {
-      for (const item of selected) patchItem(item.id, { speed })
-    })
-  }
-
-  if (selected.length === 0) {
+  if (selected.length === 0 || !timeline) {
     return (
       <Panel title="Effects" className="h-full">
         <EmptyState
-          icon={<Move aria-hidden="true" className="size-6" />}
+          icon={<Wand2 aria-hidden="true" className="size-6" />}
           title="Nothing selected"
-          hint="Select one or more clips on the timeline to frame them, fade them, or change their speed."
+          hint="Select one or more clips on the timeline to frame, fade or retime them in one click."
         />
       </Panel>
     )
   }
 
-  const fps = timeline?.fps ?? 30
+  const kindOf = (item: Item) => findAsset(project, item.assetId)?.kind
+  const trackKindOf = (item: Item) => timeline.tracks.find((track) => track.id === item.trackId)?.kind
+  const visual = selected.filter((item) => isVisualItem(kindOf(item), trackKindOf(item)))
+  const timed = selected.filter((item) => hasSourceTime(kindOf(item)))
+  const sourceOf = (item: Item) => findAsset(project, item.assetId) ?? undefined
+  const fps = timeline.fps
+
+  /**
+   * Every row acts on the whole selection as one `transact`: four clips, one click, one undo
+   * step — the same promise the inspector and the MCP tools make.
+   */
+  const frame = (preset: FramePreset): void => {
+    transact(() => {
+      for (const item of visual) {
+        patchLayout(item.id, framePresetLayout(preset, item, timeline, sourceOf(item)))
+      }
+    })
+  }
+  const fade = (frames: number): void => {
+    transact(() => {
+      for (const item of selected) {
+        const capped = fadePresetFrames(frames, item)
+        patchItem(item.id, { fadeInFrames: capped, fadeOutFrames: capped })
+      }
+    })
+  }
+  const setSpeed = (speed: number): void => {
+    transact(() => {
+      for (const item of timed) patchItem(item.id, { speed })
+    })
+  }
 
   return (
     <Panel title="Effects" className="h-full" bodyClassName="flex flex-col">
       <ScrollArea className="flex-1">
-        <Section title={`Frame · ${selected.length} selected`}>
-          <div className="grid grid-cols-2 gap-1.5">
-            <Button
-              variant="subtle"
-              icon={<Maximize2 className="size-3.5" />}
-              onClick={() => fit('cover')}
-            >
-              Fill
-            </Button>
-            <Button
-              variant="subtle"
-              icon={<Minimize2 className="size-3.5" />}
-              onClick={() => fit('contain')}
-            >
-              Fit
-            </Button>
-            <Button variant="subtle" icon={<Move className="size-3.5" />} onClick={centre}>
-              Centre
-            </Button>
-            <Button
-              variant="subtle"
-              icon={<RotateCcw className="size-3.5" />}
-              onClick={() => fit('reset')}
-            >
-              Reset
-            </Button>
-          </div>
+        <p className="px-3 pt-3 text-[11px] text-ink-2 tabular-nums">
+          {selected.length === 1 ? '1 clip selected.' : `${selected.length} clips selected.`} A check
+          marks what every selected clip already has.
+        </p>
+        {visual.length > 0 && (
+          <Section id="effects.frame" title="Frame" collapsible>
+            <ul className="-mx-2 flex flex-col">
+              {FRAMES.map((preset) => (
+                <PresetRow
+                  key={preset.id}
+                  label={preset.label}
+                  description={preset.description}
+                  active={framePresetActive(preset.id, visual, timeline, sourceOf)}
+                  onApply={() => frame(preset.id)}
+                />
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        <Section id="effects.fade" title="Fade" collapsible>
+          <ul className="-mx-2 flex flex-col">
+            {FADES.map((preset) => {
+              const frames = Math.round(preset.seconds * fps)
+              return (
+                <PresetRow
+                  key={preset.seconds}
+                  label={preset.label}
+                  description={preset.description}
+                  active={fadePresetActive(frames, selected)}
+                  onApply={() => fade(frames)}
+                />
+              )
+            })}
+          </ul>
+          <p className="mt-1 text-[10px] text-ink-2">Both ends, capped at half the clip.</p>
         </Section>
 
-        <Section title="Fade">
-          <div className="grid grid-cols-4 gap-1.5">
-            {[0, 0.25, 0.5, 1].map((seconds) => (
-              <Button key={seconds} variant="subtle" onClick={() => fade(Math.round(seconds * fps))}>
-                {seconds === 0 ? 'None' : `${seconds}s`}
-              </Button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[10px] text-ink-2">
-            Applied to both ends, capped at half the clip.
-          </p>
-        </Section>
+        {timed.length > 0 && (
+          <Section id="effects.speed" title="Speed" collapsible>
+            <ul className="-mx-2 flex flex-col">
+              {SPEEDS.map((preset) => (
+                <PresetRow
+                  key={preset.speed}
+                  label={preset.label}
+                  description={preset.description}
+                  active={speedPresetActive(preset.speed, timed)}
+                  onApply={() => setSpeed(preset.speed)}
+                />
+              ))}
+            </ul>
+            <p className="mt-1 text-[10px] text-ink-2">
+              Changes how fast the source is read. The clip keeps its length on the timeline.
+            </p>
+          </Section>
+        )}
 
-        <Section title="Speed">
-          <div className="grid grid-cols-4 gap-1.5">
-            {[0.5, 1, 1.5, 2].map((speed) => (
-              <Button key={speed} variant="subtle" onClick={() => setSpeed(speed)}>
-                {speed}×
-              </Button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[10px] text-ink-2">
-            Changes the read rate into the source. The clip keeps its length on the timeline.
-          </p>
-        </Section>
-
-        {/* Colour wheels sat here as "Not yet in the engine" after `Item.grade` had landed with
-            lift/gamma/gain, LUTs, grain, halation and vignette — the third row to outlive its
-            field. Like crop, a grade is a set of numbers rather than a verb, so it is a pointer
-            to the inspector rather than a tile. */}
-        <Section title="Grade">
-          <p className="text-[10px] leading-relaxed text-ink-2">
-            Set in the inspector: white balance, lift, gamma and gain, a .cube LUT, and halation,
-            vignette and grain. Graded identically in preview and export.
-          </p>
-        </Section>
-
-        {/* Crop was in the list above until `Item.crop` landed. It is not a tile here because a
-            crop is four numbers rather than a verb — there is no useful one-click crop, and a
-            button that guessed at 10% would be a worse control than the fields. */}
-        <Section title="Crop">
-          <p className="text-[10px] leading-relaxed text-ink-2">
-            Set per edge in the inspector, as a percentage of the source. Stored as fractions, so
-            a crop survives replacing the footage with a different resolution.
-          </p>
-        </Section>
-
-        {/* Transitions were in the list above until the engine could draw them. They are not
-            here as a tile because a transition belongs to a cut rather than to the selected
-            clip — there is no correct answer to "which edge did you mean" from a panel. */}
-        <Section title="Transitions">
-          <p className="text-[10px] leading-relaxed text-ink-2">
-            Click the marker on any cut in the timeline. A transition lives on the junction
-            between two touching clips, not on either one of them, so the timeline is where it
-            is set — including the cuts that cannot take one, which say why.
-          </p>
-        </Section>
+        <p className="px-3 py-3 text-[10px] leading-relaxed text-ink-2">
+          Look, grade and crop are set in the inspector. Transitions go on a cut: click the marker
+          between two touching clips on the timeline.
+        </p>
       </ScrollArea>
     </Panel>
   )

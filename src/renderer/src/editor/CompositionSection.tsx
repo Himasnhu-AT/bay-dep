@@ -6,7 +6,7 @@ import {
   type CompositionVariable,
   type CompositionVariableValue
 } from '@shared/composition'
-import { ColorField, Field, IconButton, NumberField, Section, Select, Slider, Switch } from '@/components'
+import { ColorField, Field, IconButton, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
 import { useEditor } from '@/store/editor'
 
 /**
@@ -46,13 +46,28 @@ export function CompositionSection({ items, asset }: CompositionSectionProps): R
 
   const isOverridden = (id: string): boolean => first.variables?.[id] !== undefined
 
+  const overridden = declared.filter((variable) => items.some((item) => item.variables?.[variable.id] !== undefined))
+
   return (
     <Section
+      id="inspector.composition"
       title="Composition"
+      collapsible
       actions={
-        <span className="flex items-center gap-1.5 text-[10px] text-ink-2">
-          <Code2 aria-hidden="true" className="size-3" />
-          {asset.name}
+        <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-ink-2">
+          <Code2 aria-hidden="true" className="size-3 shrink-0" />
+          <span className="truncate">{asset.name}</span>
+          <SectionReset
+            show={overridden.length > 0}
+            label="Reset every control to the composition's defaults"
+            onReset={() =>
+              transact(() => {
+                for (const item of items) {
+                  for (const variable of overridden) setVariable(item.id, variable.id, variable.default)
+                }
+              })
+            }
+          />
         </span>
       }
     >
@@ -166,15 +181,17 @@ export function VariableControl({
       // A slider when the author bounded it, a number field when they did not — a slider with
       // no range has nothing to slide between.
       return variable.min !== undefined && variable.max !== undefined ? (
-        <Slider
-          label={variable.label}
-          min={variable.min}
-          max={variable.max}
-          step={variable.step ?? 1}
-          value={Number(value)}
-          onCommit={(next) => onChange(next)}
-          className="flex-1"
-        />
+        <div className="min-w-0 flex-1">
+          <SliderField
+            label={variable.label}
+            min={variable.min}
+            max={variable.max}
+            step={variable.step ?? 1}
+            value={Number(value)}
+            format={(v) => `${Number(v.toFixed(2))}${variable.unit ?? ''}`}
+            onCommit={(next) => onChange(next)}
+          />
+        </div>
       ) : (
         <NumberField
           label={variable.label}
