@@ -74,22 +74,22 @@ test('an added clip and a removed one are named with their track and time', () =
   const before = project([item('i1', 'a1', 0, 150)])
   const after = project([item('i2', 'a2', 150, 60)])
   assert.deepEqual(texts(describeChanges(before, after)), [
-    'Added “broll.mp4” on V1, 0:05:00–0:07:00',
-    'Removed “interview.mp4” from V1, 0:00:00–0:05:00'
+    'Added “broll.mp4” on V1, 00:00:05:00–00:00:07:00',
+    'Removed “interview.mp4” from V1, 00:00:00:00–00:00:05:00'
   ])
 })
 
 test('a clip is compared by id: moved is moved, not removed and re-added', () => {
   const before = project([item('i1', 'a1', 0, 150)])
   const after = project([item('i1', 'a1', 30, 150)])
-  assert.deepEqual(texts(describeChanges(before, after)), ['Moved “interview.mp4” 0:00:00 → 0:01:00'])
+  assert.deepEqual(texts(describeChanges(before, after)), ['Moved “interview.mp4” 00:00:00:00 → 00:00:01:00'])
 })
 
 test('trims, fades, volume and speed each read as what changed', () => {
   const before = project([item('i1', 'a1', 0, 150)])
   const after = project([item('i1', 'a1', 0, 90, { fadeInFrames: 12, volume: 0.5, speed: 2 })])
   assert.deepEqual(texts(describeChanges(before, after)), [
-    'Trimmed “interview.mp4” to 0:00:00–0:03:00',
+    'Trimmed “interview.mp4” to 00:00:00:00–00:00:03:00',
     'Fade in on “interview.mp4”: 0 → 12 frames',
     'Volume of “interview.mp4”: 100% → 50%',
     'Speed of “interview.mp4”: 1× → 2×'
@@ -105,7 +105,7 @@ test('imports, canvas changes and markers are reported', () => {
   assert.deepEqual(texts(describeChanges(before, after)), [
     'Imported “logo.png”',
     'Canvas 1920×1080 → 1080×1920',
-    'Added marker “Hook” at 0:01:00'
+    'Added marker “Hook” at 00:00:01:00'
   ])
 })
 
@@ -114,7 +114,7 @@ test('captions read as the clips they became, not also as imported text assets',
   const before = project([])
   const text = asset('t1', 'Caption: Hello', { kind: 'text', text: 'Hello', path: null })
   const after = project([item('c1', 't1', 0, 30)], { assets: [...before.assets, text] })
-  assert.deepEqual(texts(describeChanges(before, after)), ['Added “Hello” on V1, 0:00:00–0:01:00'])
+  assert.deepEqual(texts(describeChanges(before, after)), ['Added “Hello” on V1, 00:00:00:00–00:00:01:00'])
 })
 
 test('a long turn is summarised with a count rather than a wall of lines', () => {
@@ -145,7 +145,7 @@ test('track flags, background and marker edits are each reported', () => {
     'Background #000 → #ffffff',
     'Muted track V1',
     'Locked track V1',
-    'Moved marker “Hook” 0:01:00 → 0:02:00'
+    'Moved marker “Hook” 00:00:01:00 → 00:00:02:00'
   ])
 })
 
@@ -193,7 +193,7 @@ test('a slip is reported; a left trim that also moves the in-point is a trim, no
   assert.deepEqual(texts(describeChanges(before, slipped)), ['Slipped “interview.mp4” to start 2.50s into its source'])
   // Trimming the head moves `from` and the in-point together; that is one edit, a trim.
   const trimmed = project([item('i1', 'a1', 30, 120, { sourceStartUs: 1_000_000 })])
-  assert.deepEqual(texts(describeChanges(before, trimmed)), ['Trimmed “interview.mp4” to 0:01:00–0:05:00'])
+  assert.deepEqual(texts(describeChanges(before, trimmed)), ['Trimmed “interview.mp4” to 00:00:01:00–00:00:05:00'])
 })
 
 test('each property of a clip’s picture reports its own line, and only its own', () => {
@@ -247,10 +247,10 @@ test('fourteen changes are all shown; the fifteenth turns the last line into a c
   const fourteen = describeChanges(project([]), many(14))
   assert.equal(fourteen.length, 14)
   assert.ok(fourteen.every((line) => !line.text.includes('more changes')), 'fourteen fit, so none is summarised')
-  assert.equal(fourteen[13]!.text, 'Added “interview.mp4” on V1, 0:04:10–0:04:20')
+  assert.equal(fourteen[13]!.text, 'Added “interview.mp4” on V1, 00:00:04:10–00:00:04:20')
 
   const fifteen = describeChanges(project([]), many(15))
   assert.equal(fifteen.length, 14)
-  assert.equal(fifteen[12]!.text, 'Added “interview.mp4” on V1, 0:04:00–0:04:10', 'thirteen real lines')
+  assert.equal(fifteen[12]!.text, 'Added “interview.mp4” on V1, 00:00:04:00–00:00:04:10', 'thirteen real lines')
   assert.equal(fifteen[13]!.text, '…and 2 more changes')
 })

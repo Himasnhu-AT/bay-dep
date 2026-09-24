@@ -11,6 +11,7 @@
  * the card before anyone approves it.
  */
 
+import { parseTimecode } from './timecode'
 import { formatTimecode } from './project'
 import { leadingSkill } from './skills'
 
@@ -155,22 +156,14 @@ export function activeTrigger(
 }
 
 /**
- * A time the user typed, as a frame: `1:02:15` (m:ss:ff), `0:01:02:15` (h:mm:ss:ff), `4.5s`,
+ * A time the user typed, as a frame: `00:01:02:15` (h:mm:ss:ff, fields right-aligned so `1:02:15`
+ * and `2:15` work too), `4.5s`,
  * `135f`, or a bare number of seconds. Null when it is none of those — the range editor then
  * says so rather than guessing, because a mis-read bound is a range the agent keeps to wrongly.
  */
 export function parseTime(text: string, fps: number): number | null {
-  const value = text.trim().toLowerCase()
-  const rate = Math.max(1, Math.round(fps))
-  let frames: number | null = null
-  if (/^\d+(\.\d+)?f$/.test(value)) frames = Number(value.slice(0, -1))
-  else if (/^\d+(\.\d+)?s?$/.test(value)) frames = Number(value.replace(/s$/, '')) * fps
-  else if (/^\d+(:\d{1,2}){2,3}$/.test(value)) {
-    const parts = value.split(':').map(Number)
-    const [ff, ss, mm, hh = 0] = parts.reverse() as [number, number, number, number?]
-    if (ss > 59 || mm > 59 || ff >= rate) return null
-    frames = ((hh * 60 + mm) * 60 + ss) * rate + ff
-  }
-  if (frames === null || !Number.isFinite(frames) || frames < 0) return null
-  return Math.round(frames)
+  // One parser for every typed time in bay (`@shared/timecode`); a range bound is absolute, so
+  // a signed distance is not one.
+  const parsed = parseTimecode(text, fps)
+  return parsed?.kind === 'absolute' ? parsed.frame : null
 }

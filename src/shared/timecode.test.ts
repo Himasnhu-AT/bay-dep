@@ -37,15 +37,17 @@ test('format and parse are exact inverses at every offered rate', () => {
 test('colon fields are right-aligned to frames, as NLE timecode fields read them', () => {
   assert.deepEqual(parseTimecode('1:23', 30), { kind: 'absolute', frame: 53 })
   assert.deepEqual(parseTimecode('1:00:00', 30), { kind: 'absolute', frame: 60 * 30 })
-  assert.deepEqual(parseTimecode('01.02', 25), { kind: 'absolute', frame: 27 })
+  assert.deepEqual(parseTimecode('01;02', 25), { kind: 'absolute', frame: 27 }, 'drop-frame punctuation reads the same')
   // The leading field may overflow; the others may not.
   assert.deepEqual(parseTimecode('90:00', 30), { kind: 'absolute', frame: 90 * 30 })
   assert.equal(parseTimecode('1:30', 30), null, '30 frames is not a frames field at 30 fps')
   assert.equal(parseTimecode('1:60:00', 30), null)
 })
 
-test('bare numbers are frames; units are wall-clock time', () => {
-  assert.deepEqual(parseTimecode('45', 30), { kind: 'absolute', frame: 45 })
+test('bare numbers are seconds; units are wall-clock time', () => {
+  assert.deepEqual(parseTimecode('12', 30), { kind: 'absolute', frame: 360 })
+  assert.deepEqual(parseTimecode('4.5', 30), { kind: 'absolute', frame: 135 })
+  assert.deepEqual(parseTimecode('135f', 30), { kind: 'absolute', frame: 135 })
   assert.deepEqual(parseTimecode('2s', 30), { kind: 'absolute', frame: 60 })
   assert.deepEqual(parseTimecode('1.5s', 24), { kind: 'absolute', frame: 36 })
   assert.deepEqual(parseTimecode('1m30s', 25), { kind: 'absolute', frame: 90 * 25 })
@@ -57,7 +59,8 @@ test('bare numbers are frames; units are wall-clock time', () => {
 
 test('a sign makes it a distance from the playhead', () => {
   assert.deepEqual(parseTimecode('+2s', 30), { kind: 'relative', delta: 60 })
-  assert.deepEqual(parseTimecode('+15', 30), { kind: 'relative', delta: 15 })
+  assert.deepEqual(parseTimecode('+15f', 30), { kind: 'relative', delta: 15 })
+  assert.deepEqual(parseTimecode('+2', 30), { kind: 'relative', delta: 60 })
   assert.deepEqual(parseTimecode('- 1:00', 30), { kind: 'relative', delta: -30 })
   assert.equal(resolveTimecode({ kind: 'relative', delta: 60 }, 100, 1000), 160)
   assert.equal(resolveTimecode({ kind: 'relative', delta: -500 }, 100, 1000), 0)
@@ -65,7 +68,7 @@ test('a sign makes it a distance from the playhead', () => {
 })
 
 test('text that is not a time is refused, not read as zero', () => {
-  for (const bad of ['', '+', 'abc', '1:2:3:4:5', '2x', 's', '1..2', '-', '1s2m']) {
+  for (const bad of ['', '+', 'abc', '1:2:3:4:5', '2x', 's', '1..2', '-', '1s2m', '0:60:00', '0:10:30', 'soon']) {
     assert.equal(parseTimecode(bad, 30), null, JSON.stringify(bad))
   }
 })
@@ -76,4 +79,6 @@ test('the units style names its unit', () => {
   assert.equal(formatTimecode(162, 30, { style: 'units' }), '5s 12f')
   assert.equal(formatTimecode(68 * 30, 30, { style: 'units' }), '1m 08s')
   assert.equal(formatTimecode(3720 * 30, 30, { style: 'units' }), '1h 02m')
+  assert.equal(formatTimecode(68 * 30 + 12, 30, { style: 'clock' }), '1:08', 'the ruler’s coarse label')
+  assert.equal(formatTimecode(3725 * 30, 30, { style: 'clock' }), '1:02:05')
 })

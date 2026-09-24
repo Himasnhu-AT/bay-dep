@@ -13,6 +13,7 @@
  *    require touching the asset.
  */
 
+import { formatTimecode as formatTimecodeShared } from './timecode'
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
@@ -798,29 +799,14 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
 }
 
 
-/** `1:04:09` / `4:09` / `0:09`, plus frames when `withFrames`. */
 /**
- * Frames as a clock.
- *
- * The divisor is the **nominal** rate, `Math.round(fps)`, not the real one. Two reasons, and
- * the first is a bug this shape had: `total % 29.97002997` is fractional, so the frames field
- * of a 29.97 timeline read `0:01:0.02997002997003051`. The second is that rounding is also
- * correct rather than merely safe — non-drop timecode counts thirty frame slots per second at
- * 29.97, which is why an hour of NTSC wall clock displays as `0:59:56:12`. Every NLE shows it
- * this way, so matching the convention and fixing the fraction are the same edit.
+ * Frames as timecode — kept under this name for its many callers, but no longer its own
+ * implementation: `@shared/timecode` is the one format. `withFrames` is `HH:MM:SS:FF` (four
+ * fields always, so `00:00:05:00` cannot be read as five minutes); without it, the ruler's
+ * coarse `M:SS` clock. Non-drop at fractional rates: 29.97 counts thirty frame slots a second.
  */
 export function formatTimecode(frames: Frames, fps: number, withFrames = false): string {
-  const safeFps = fps > 0 ? Math.max(1, Math.round(fps)) : 30
-  const total = Math.max(0, Math.floor(frames))
-  const totalSeconds = Math.floor(total / safeFps)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  const rest = total % safeFps
-  const pad = (n: number): string => String(n).padStart(2, '0')
-  const clock =
-    hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`
-  return withFrames ? `${clock}:${pad(rest)}` : clock
+  return formatTimecodeShared(frames, fps, { style: withFrames ? 'timecode' : 'clock' })
 }
 
 // ---------------------------------------------------------------------------

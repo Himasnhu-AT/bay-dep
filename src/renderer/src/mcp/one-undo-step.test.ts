@@ -677,7 +677,9 @@ const STORE_EXEMPT: Record<string, string> = {
   placeSubtitles: 'needs a source clip and a composition asset; add-subtitles.test.ts covers it as one step',
   undo: 'moves an entry from past to future',
   redo: 'moves an entry from future to past',
-  transact: 'is the grouping mechanism itself; editor.test.ts covers it'
+  transact: 'is the grouping mechanism itself; editor.test.ts covers it',
+  beginGesture: 'opens a pointer-gesture group (transact across events); editor.test.ts covers it',
+  endGesture: 'closes a pointer-gesture group into one entry; editor.test.ts covers it'
 }
 
 test('every store action is classified as an edit, a non-edit, or history management', () => {

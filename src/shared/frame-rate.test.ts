@@ -70,15 +70,15 @@ test('a non-integer rate does not put a fraction in the frames field', () => {
   for (const frames of [30, 31, 59, 60, 1000, 107892]) {
     const shown = formatTimecode(frames, NTSC, true)
     assert.doesNotMatch(shown, /\./, `${frames} at 29.97 produced ${shown}`)
-    assert.match(shown, /^\d+:\d{2}(:\d{2})?$|^\d+:\d{2}:\d{2}$/)
+    assert.match(shown, /^\d{2}:\d{2}:\d{2}:\d{2}$/)
   }
 })
 
 test('the frames field counts 0..29 at 29.97, the way non-drop timecode does', () => {
-  assert.equal(formatTimecode(0, NTSC, true), '0:00:00')
-  assert.equal(formatTimecode(29, NTSC, true), '0:00:29')
-  assert.equal(formatTimecode(30, NTSC, true), '0:01:00')
-  assert.equal(formatTimecode(30, 30, true), '0:01:00', 'and 30fps is unchanged by the fix')
+  assert.equal(formatTimecode(0, NTSC, true), '00:00:00:00')
+  assert.equal(formatTimecode(29, NTSC, true), '00:00:00:29')
+  assert.equal(formatTimecode(30, NTSC, true), '00:00:01:00')
+  assert.equal(formatTimecode(30, 30, true), '00:00:01:00', 'and 30fps is unchanged by the fix')
 })
 
 // --- retiming -----------------------------------------------------------------------------

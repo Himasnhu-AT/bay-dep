@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FolderOpen } from 'lucide-react'
-import { allItems, type Asset, type Item } from '@shared/project'
+import { allItems, findItem, type Asset, type Item } from '@shared/project'
 import { Field, IconButton, Section, TextField } from '@/components'
 import { call, formatSourceDuration } from '@/lib/bay'
+import { FOCUS_TEXT_EVENT } from '@/lib/viewer'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { editAssetFields } from './inspectorEdit'
 
@@ -66,6 +67,19 @@ function NameField({ asset }: { asset: Asset }): ReactNode {
 function WordsField({ asset, placements }: { asset: Asset; placements: number }): ReactNode {
   const stored = asset.text ?? ''
   const [draft, setDraft] = useState(stored)
+  const field = useRef<HTMLTextAreaElement>(null)
+  // A double-click on this title in the preview puts the cursor here (`requestTextFocus`).
+  useEffect(() => {
+    const onFocusText = (event: Event): void => {
+      const itemId = (event as CustomEvent<{ itemId?: string }>).detail?.itemId
+      const timeline = selectTimeline(useEditor.getState())
+      if (!itemId || !timeline || findItem(timeline, itemId)?.item.assetId !== asset.id) return
+      field.current?.focus()
+      field.current?.select()
+    }
+    window.addEventListener(FOCUS_TEXT_EVENT, onFocusText)
+    return () => window.removeEventListener(FOCUS_TEXT_EVENT, onFocusText)
+  }, [asset.id])
   const commit = (): void => {
     if (draft === stored) return
     if (draft.trim() === '') {
@@ -81,6 +95,7 @@ function WordsField({ asset, placements }: { asset: Asset; placements: number })
         Words
       </label>
       <textarea
+        ref={field}
         id={`words-${asset.id}`}
         value={draft}
         rows={Math.min(6, Math.max(2, draft.split('\n').length))}

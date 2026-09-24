@@ -200,8 +200,12 @@ test('a gesture that changed nothing pushes nothing, and history records again a
   // Positive control: the gesture closed, so an ordinary edit is its own step again.
   useEditor.getState().patchLayout(itemIds[0]!, { left: 5 })
   assert.equal(past(), before + 1)
-  // An unpaired end is ignored rather than driving the depth negative.
+  // An unpaired end is ignored rather than driving the depth negative — which would show at the
+  // *next* gesture: begun at -1, its moves would each become an undo step.
   useEditor.getState().endGesture()
+  useEditor.getState().beginGesture()
   useEditor.getState().patchLayout(itemIds[0]!, { left: 6 })
-  assert.equal(past(), before + 2)
+  useEditor.getState().patchLayout(itemIds[0]!, { left: 7 })
+  useEditor.getState().endGesture()
+  assert.equal(past(), before + 2, 'the next drag is still one step')
 })

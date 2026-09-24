@@ -5,8 +5,8 @@ import { selectDuration, selectFps, useEditor } from '@/store/editor'
 
 /**
  * The transport's timecode: the playhead and the duration, and — clicked — a field that takes a
- * time to jump to. `01:23:10` or `1:23` (fields right-aligned to frames), `45` (frames), `2s`,
- * or a signed distance from the playhead (`+2s`, `-15`). Enter jumps, Escape or leaving cancels;
+ * time to jump to. `00:01:23:10` or `1:23` (fields right-aligned to frames), `2s` or `2`
+ * (seconds), `15f`, or a signed distance from the playhead (`+2s`, `-15f`). Enter jumps, Escape or leaving cancels;
  * something that is not a time says so and keeps what was typed.
  */
 export function TimecodeField(): ReactNode {
@@ -36,7 +36,7 @@ export function TimecodeField(): ReactNode {
   return (
     <div className="flex flex-1 items-center justify-center gap-1.5 tabular-nums">
       {draft === null ? (
-        <Tooltip side="top" label="Go to a time" detail="Type 00:01:10:00, 1:10, 45 (frames), 2s or +2s">
+        <Tooltip side="top" label="Go to a time" detail="Type 00:01:10:00, 1:10, 2s, 15f, or +2s / -15f to move by that much">
           {/*
             `tabular-nums` is not decoration here. Proportional digits change width as they
             change value, so a running timecode jitters sideways 30 times a second and drags
@@ -74,7 +74,7 @@ export function TimecodeField(): ReactNode {
               cancel()
             }
           }}
-          title={invalid ? 'Not a time. Try 00:00:05:00, 1:10, 45, 2s or +2s' : undefined}
+          title={invalid ? 'Not a time. Try 00:00:05:00, 1:10, 2s, 15f or +2s' : undefined}
           className="w-[128px]"
           inputClassName="text-center text-[13px] font-medium tabular-nums"
         />

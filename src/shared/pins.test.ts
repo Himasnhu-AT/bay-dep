@@ -56,7 +56,7 @@ test('each thing has one key, so it cannot be pinned twice', () => {
 test('chips read in the user’s terms', () => {
   assert.equal(pinLabel(asset, 30), 'Interview.mp4')
   assert.equal(pinLabel(clip, 30), 'Interview.mp4 · V1')
-  assert.equal(pinLabel(range, 30), '0:10:00–0:15:00')
+  assert.equal(pinLabel(range, 30), '00:00:10:00–00:00:15:00')
 })
 
 const candidates: MentionCandidate[] = [
@@ -97,17 +97,18 @@ test('/ opens the menu wherever a word starts, but not inside one', () => {
 })
 
 test('typed times are read as frames in every form the range editor offers', () => {
-  assert.equal(parseTime('0:10:00', 30), 300) // m:ss:ff, the form the timeline shows
+  assert.equal(parseTime('00:00:10:00', 30), 300) // m:ss:ff, the form the timeline shows
   assert.equal(parseTime('0:00:10:15', 30), 315) // h:mm:ss:ff
   assert.equal(parseTime('4.5s', 30), 135)
   assert.equal(parseTime('135f', 30), 135)
   assert.equal(parseTime('12', 30), 360) // a bare number is seconds
   // 29.97 counts thirty frame slots a second, as the timeline's own timecode does.
-  assert.equal(parseTime('0:01:00', 29.97), 30)
+  assert.equal(parseTime('00:00:01:00', 29.97), 30)
 })
 
 test('a time that is not one is refused, never guessed', () => {
-  for (const bad of ['', 'soon', '1:2', '0:60:00', '0:10:30', '-5s', '1:2:3:4:5']) {
+  // '1:2' is no longer refused: fields are right-aligned (`@shared/timecode`), so it is 1s 2f.
+  for (const bad of ['', 'soon', '00:00:60:00', '00:00:10:30', '-5s', '1:2:3:4:5']) {
     assert.equal(parseTime(bad, 30), null, bad)
   }
 })
