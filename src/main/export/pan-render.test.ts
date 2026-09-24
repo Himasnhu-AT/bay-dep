@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import type { Asset, Item, Project, Timeline } from '@shared/project'
 import { panGains } from '@shared/audio-gain'
 import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
-import { buildAudioGraph, panFilter } from './audio-graph'
+import { buildAudioGraph, MONO_TO_STEREO, panFilter } from './audio-graph'
 
 const FFMPEG = vendoredTools()?.ffmpeg ?? ''
 const SKIP = FFMPEG ? false : NO_VENDORED_FFMPEG
@@ -160,4 +160,61 @@ test('a mono source pans as a point: its two up-mixed channels take the law betw
   const law = panGains(pan)
   const measured = db(level(samples, 0, 500) / level(samples, 1, 500))
   assert.ok(Math.abs(measured - db(law.left / law.right)) < 0.05, `L−R ${measured.toFixed(3)} dB, law ${db(law.left / law.right).toFixed(3)} dB`)
+})
+
+test('a mono source is up-mixed at unity, before the common format; a stereo one is not touched', () => {
+  const { project, timeline } = setup('/tmp/m.wav', clip())
+  const mono = buildAudioGraph(project, timeline, 0, 60, new Map(), new Map([['/tmp/m.wav', 1]]))!
+  assert.ok(mono.filter.includes(`${MONO_TO_STEREO},aformat=`), mono.filter)
+  const stereo = buildAudioGraph(project, timeline, 0, 60, new Map(), new Map([['/tmp/m.wav', 2]]))!
+  assert.ok(!stereo.filter.includes(MONO_TO_STEREO), stereo.filter)
+})
+
+test('mono and stereo files of the same level export at the same level per channel, as the preview plays them', { skip: SKIP }, () => {
+  // The preview's Web Audio up-mix copies mono to both speakers at unity (measured in the app:
+  // −33.07 dB per channel for both). The export's aformat up-mix alone gave the mono file −3 dB.
+  const dir = mkdtempSync(join(tmpdir(), 'bay-mono-level-'))
+  const monoPath = join(dir, 'mono.wav')
+  const stereoPath = join(dir, 'stereo.wav')
+  execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=500:duration=4', '-af', 'volume=0.25', '-ac', '1', '-ar', String(RATE), monoPath])
+  // Built by joining two identical tones, not with `-ac 2`: that up-mix is the −3 dB under test,
+  // and a specimen made with it is 3 dB down on each side before bay touches it.
+  execFileSync(FFMPEG, [
+    '-v', 'error', '-y',
+    '-f', 'lavfi', '-i', 'sine=frequency=500:duration=4',
+    '-f', 'lavfi', '-i', 'sine=frequency=500:duration=4',
+    '-filter_complex', '[0:a][1:a]join=inputs=2:channel_layout=stereo,volume=0.25', '-ar', String(RATE), stereoPath
+  ])
+  const decode = (path: string, channelCount: number): Int16Array => {
+    const raw = execFileSync(FFMPEG, ['-v', 'error', '-i', path, '-f', 's16le', '-ac', String(channelCount), '-ar', String(RATE), '-'])
+    return new Int16Array(raw.buffer, raw.byteOffset, Math.floor(raw.length / 2))
+  }
+  // The specimens agree before bay: the stereo file's left channel is the mono file's one channel.
+  const monoSource = decode(monoPath, 1)
+  const stereoSource = decode(stereoPath, 2)
+  const monoLevel = ((): number => {
+    const interleaved = new Int16Array(monoSource.length * 2)
+    monoSource.forEach((v, i) => { interleaved[i * 2] = v; interleaved[i * 2 + 1] = v })
+    return level(interleaved, 0, 500)
+  })()
+  assert.ok(Math.abs(db(level(stereoSource, 0, 500) / monoLevel)) < 0.05, 'specimens match per channel')
+  const channels = new Map([[monoPath, 1], [stereoPath, 2]])
+  const renderWith = (path: string): Int16Array => {
+    const { project, timeline } = setup(path, clip())
+    const graph = buildAudioGraph(project, timeline, 0, 60, new Map(), channels)!
+    const out = join(dir, `mix-${Math.random().toString(36).slice(2)}.wav`)
+    execFileSync(FFMPEG, [
+      '-v', 'error', '-y', ...graph.inputs.flatMap((p) => ['-i', p]),
+      '-filter_complex', graph.filter, '-map', '[aout]', '-t', '2', '-ac', '2', '-ar', String(RATE), out
+    ])
+    const raw = execFileSync(FFMPEG, ['-v', 'error', '-i', out, '-f', 's16le', '-ac', '2', '-ar', String(RATE), '-'])
+    return new Int16Array(raw.buffer, raw.byteOffset, Math.floor(raw.length / 2))
+  }
+  const mono = renderWith(monoPath)
+  const stereo = renderWith(stereoPath)
+  assert.ok(level(stereo, 0, 500) > 0.01, 'the specimen is audible')
+  for (const channel of [0, 1] as const) {
+    const difference = db(level(mono, channel, 500) / level(stereo, channel, 500))
+    assert.ok(Math.abs(difference) < 0.05, `channel ${channel}: mono is ${difference.toFixed(3)} dB against stereo`)
+  }
 })

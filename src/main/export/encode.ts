@@ -29,7 +29,7 @@ import { IPC } from '@shared/ipc'
 import type { Project, Timeline } from '@shared/project'
 import { findAsset, findTimeline, timelineDuration } from '@shared/project'
 import { exportScratchDir } from '../paths'
-import { ffmpegBin, MediaToolError } from '../ffmpeg/ffmpeg'
+import { ffmpegBin, ffprobeBin, MediaToolError, run } from '../ffmpeg/ffmpeg'
 import { buildAudioGraph, type CompositionSounds } from './audio-graph'
 import { inspectComposition } from '../html/compositions'
 import type { CompositionSound } from '@shared/composition'
@@ -360,14 +360,39 @@ async function declaredSounds(job: Job): Promise<CompositionSounds> {
   return out
 }
 
-async function buildAudioTrack(job: Job): Promise<string | null> {
-  const graph = buildAudioGraph(
-    job.project,
-    job.timeline,
-    job.fromFrame,
-    job.toFrame,
-    await declaredSounds(job)
+/**
+ * Channel counts of the files a graph reads, so a mono one is up-mixed at unity
+ * (`MONO_TO_STEREO`). A file ffprobe cannot read is left out, and its chain is formatted as before.
+ */
+async function sourceChannels(paths: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  await Promise.all(
+    [...new Set(paths)].map(async (path) => {
+      try {
+        const { stdout } = await run(ffprobeBin(), [
+          '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=channels', '-of', 'csv=p=0', path
+        ])
+        const channels = Number.parseInt(stdout.trim(), 10)
+        if (Number.isFinite(channels) && channels > 0) out.set(path, channels)
+      } catch {
+        // Unreadable here means unreadable to the mix too, which reports it; nothing to add.
+      }
+    })
   )
+  return out
+}
+
+/** The job's audio graph, with its sources' channel counts probed first. */
+async function audioGraphFor(job: Job): Promise<ReturnType<typeof buildAudioGraph>> {
+  const sounds = await declaredSounds(job)
+  const first = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame, sounds)
+  if (!first) return null
+  const channels = await sourceChannels(first.inputs)
+  return buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame, sounds, channels)
+}
+
+async function buildAudioTrack(job: Job): Promise<string | null> {
+  const graph = await audioGraphFor(job)
   if (!graph) return null
   const target = join(exportScratchDir(), `${job.id}.audio.wav`)
   const duration = job.framesTotal / job.fps
@@ -434,13 +459,7 @@ async function renderAudioOnly(job: Job): Promise<void> {
       stage: 'encoding',
       message: 'Mixing audio'
     })
-    const graph = buildAudioGraph(
-      job.project,
-      job.timeline,
-      job.fromFrame,
-      job.toFrame,
-      await declaredSounds(job)
-    )
+    const graph = await audioGraphFor(job)
     if (!graph) throw new Error('This timeline has no audio to export.')
     let loudness: LoudnessReport | undefined
     if (job.request.loudness) {

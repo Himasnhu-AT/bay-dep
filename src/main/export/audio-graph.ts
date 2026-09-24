@@ -28,6 +28,21 @@ export interface AudioGraph {
 const COMMON_FORMAT = 'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo'
 
 /**
+ * A mono source becomes two identical channels at unity *before* `COMMON_FORMAT`, because the
+ * up-mix `aformat` asks for puts each channel at −3 dB (swresample's fixed √½ for a centre
+ * channel with no stereo pair to join) — while the preview's Web Audio up-mix copies mono to both
+ * speakers at unity. Measured: the same −30 dBFS tone read −33.07 dB per channel in the preview
+ * for both a mono and a stereo file, and −36.08 dB for the mono one in the export. Mono clips were
+ * 3 dB quieter in every file than in the editor.
+ */
+export const MONO_TO_STEREO = 'pan=stereo|c0=c0|c1=c0'
+
+/** The first steps of every source's chain: mono up-mixed at unity, then the common format. */
+function formatSteps(path: string, channels: ReadonlyMap<string, number>): string[] {
+  return channels.get(path) === 1 ? [MONO_TO_STEREO, COMMON_FORMAT] : [COMMON_FORMAT]
+}
+
+/**
  * `atempo` accepts 0.5–2.0 and nothing else, so a 4× clip needs two stages and a 0.25× clip
  * needs two the other way. Silently clamping would change the pitch of the result without
  * saying so.
@@ -264,7 +279,12 @@ export function buildAudioGraph(
   timeline: Timeline,
   fromFrame: number,
   toFrameExclusive: number,
-  sounds: CompositionSounds = new Map()
+  sounds: CompositionSounds = new Map(),
+  /**
+   * Channel count per input path, from ffprobe (`sourceChannels` in encode.ts). A path missing
+   * here is formatted as before, so a probe that failed costs 3 dB on a mono file, not the export.
+   */
+  channels: ReadonlyMap<string, number> = new Map()
 ): AudioGraph | null {
   // A disabled clip is not heard in the file, as it is not heard in the preview (`AudioEngine.update`).
   timeline = playableTimeline(timeline)
@@ -294,7 +314,7 @@ export function buildAudioGraph(
     const sourceStart = Math.max(0, sourceTimeAt(item, candidate.startFrame, fps) / US_PER_SECOND)
     const heard = (candidate.endFrame - candidate.startFrame) / fps
 
-    const steps: string[] = [COMMON_FORMAT]
+    const steps: string[] = formatSteps(candidate.path, channels)
     steps.push(`atrim=start=${seconds(sourceStart)}:duration=${seconds(heard * speed)}`)
     steps.push('asetpts=N/SR/TB')
     steps.push(...atempoChain(speed))
@@ -336,7 +356,7 @@ export function buildAudioGraph(
     const mediaStart = entry.mediaStartSeconds + (candidate.startSeconds - entry.startSeconds) * entry.speed
     const mediaDuration = (candidate.endSeconds - candidate.startSeconds) * entry.speed
 
-    const steps: string[] = [COMMON_FORMAT]
+    const steps: string[] = formatSteps(entry.sound.path, channels)
     steps.push(`atrim=start=${seconds(mediaStart)}:duration=${seconds(mediaDuration)}`)
     steps.push('asetpts=N/SR/TB')
     steps.push(...atempoChain(entry.speed))
