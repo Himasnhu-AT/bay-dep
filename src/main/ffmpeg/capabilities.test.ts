@@ -36,6 +36,7 @@ import {
 } from '../export/codec-args'
 import { buildAudioGraph } from '../export/audio-graph'
 import { masterFilter } from '../export/master'
+import { colourFilter } from '../media/frame-grab'
 import { NO_VENDORED_FFMPEG, vendoredTools } from './vendor'
 
 const TOOLS = vendoredTools()
@@ -142,8 +143,8 @@ function filtersTheCodeWrites(): Set<string> {
   const names = new Set(graphs.flatMap(filterNames))
   // Graphs written inline where this suite cannot reach them without Electron: the loudness meter
   // (master.ts `measureLoudness`), the thumbnail/filmstrip scaler (media/thumbnails.ts), and the
-  // freeze-frame grab's `trim` (media/freeze-frame.ts, whose own test renders through it).
-  for (const inline of ['ebur128', 'fps', 'scale', 'trim']) names.add(inline)
+  // freeze-frame grab's colour step (media/frame-grab.ts `colourFilter`).
+  for (const inline of ['ebur128', 'fps', ...filterNames(colourFilter(null))]) names.add(inline)
   return names
 }
 
@@ -162,6 +163,7 @@ test('every encoder and filter bay asks for is in the ffmpeg it ships', { skip: 
     }
   }
   codecs.add('mjpeg') // thumbnails are .jpg
+  codecs.add('png') // freeze frames are .png
   codecs.add('pcm_s16le') // the export's audio pass writes a WAV before the mux
   const wanted = filtersTheCodeWrites()
   // Every name here comes from a parsed graph, none from the inline list: proof the parse ran.

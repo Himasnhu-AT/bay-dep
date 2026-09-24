@@ -51,6 +51,18 @@ export interface ThumbnailRequest {
   size: number
 }
 
+/**
+ * One source frame, grabbed to a still for a freeze frame. `seconds` is where in the source the
+ * compositor's element is seeking for the frame being frozen (`sourceSecondsAt`), and main writes
+ * the frame an element shows there: the last one whose timestamp is at or before it.
+ */
+export interface FreezeFrameRequest {
+  path: string
+  seconds: number
+  /** The clip's asset name, for the file's name. */
+  name: string
+}
+
 export interface FilmstripRequest {
   assetId: string
   path: string
@@ -395,6 +407,13 @@ export interface BayApi {
     readCaptions(path: string): Promise<{ name: string; text: string }>
     /** A save dialog for an `.srt`, then the file written. Returns the path, or null if dismissed. */
     saveCaptions(defaultName: string, text: string): Promise<string | null>
+    /**
+     * Grab one source frame to a PNG where bay keeps what it generates (`<userData>/generated`),
+     * named by its content — the same frame twice is one file, and so one asset. Nothing is
+     * imported: the renderer passes the path to `importPaths`, which probes it and admits it to
+     * `bay://`. A time past the last frame, or a file with no picture, is refused in words.
+     */
+    freezeFrame(request: FreezeFrameRequest): Promise<{ ok: true; path: string } | { ok: false; error: string }>
   }
 
   /**
@@ -685,6 +704,7 @@ export const IPC = {
   mediaOpenCaptions: 'media:open-captions',
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
+  mediaFreezeFrame: 'media:freeze-frame',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',

@@ -64,7 +64,7 @@ SOURCES=(
 # argument builders, so it cannot drift from what the code actually asks for.
 REQUIRED_ENCODERS="h264_videotoolbox hevc_videotoolbox prores_videotoolbox prores_ks libvpx-vp9 png mjpeg aac_at aac libopus libmp3lame pcm_s16le pcm_f32le rawvideo"
 REQUIRED_DECODERS="h264 hevc prores vp8 vp9 libdav1d mjpeg png webp gif aac mp3 opus vorbis flac alac pcm_s16le pcm_s24le pcm_f32le"
-REQUIRED_FILTERS="scale zscale format fps select ebur128 alimiter aresample volume amix adelay atrim apad aformat asetpts concat loudnorm afftdn arnndn silencedetect scdet deshake lut3d haldclut xfade sidechaincompress showinfo pan trim"
+REQUIRED_FILTERS="scale zscale format fps select ebur128 alimiter aresample volume amix adelay atrim apad aformat asetpts concat loudnorm afftdn arnndn silencedetect scdet deshake lut3d haldclut xfade sidechaincompress showinfo pan"
 REQUIRED_MUXERS="mp4 mov webm matroska wav mp3 image2 rawvideo s16le f32le null ipod adts"
 REQUIRED_DEMUXERS="mov matroska mp3 wav aac flac ogg image2 rawvideo lavfi concat"
 

@@ -6,6 +6,8 @@ export const clipCommands = [
   { id: 'clip.split', label: 'Split at Playhead', group: 'Clip', shortcut: ['Mod+B', 'S'] },
   { id: 'clip.splitAll', label: 'Split All Tracks', group: 'Clip', shortcut: 'Mod+Shift+B' },
   { id: 'clip.duplicate', label: 'Duplicate', group: 'Clip', shortcut: 'Mod+D' },
+  // ⌥F, as in Final Cut: hold the frame under the playhead, inserted (`@shared/freeze-frame`).
+  { id: 'clip.freezeFrame', label: 'Add Freeze Frame', group: 'Clip', shortcut: 'Alt+F' },
   SEPARATOR,
   // Q/W ripple, as in CapCut and Premiere: the trimmed-off frames close up behind the clip.
   // ⌥Q/⌥W trim the same edge and leave the gap.

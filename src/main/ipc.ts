@@ -40,6 +40,7 @@ import { detectBeats } from './media/beats'
 import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
+import { freezeFrame } from './media/freeze-frame'
 import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
@@ -80,6 +81,7 @@ interface ChannelApi {
   mediaOpenCaptions: BayApi['media']['openCaptions']
   mediaReadCaptions: BayApi['media']['readCaptions']
   mediaSaveCaptions: BayApi['media']['saveCaptions']
+  mediaFreezeFrame: BayApi['media']['freezeFrame']
 
   projectInitial: BayApi['project']['initial']
   projectSave: BayApi['project']['save']
@@ -249,6 +251,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaOpenCaptions: (event) => openCaptions(windowOf(event)),
   mediaReadCaptions: (_event, path) => readCaptions(String(path)),
   mediaSaveCaptions: (event, defaultName, text) => saveCaptions(windowOf(event), String(defaultName), String(text)),
+  mediaFreezeFrame: (_event, request) => freezeFrame(request),
 
   projectInitial: () => store.initial(),
   projectSave: (event, project) => store.save(project, windowOf(event)),

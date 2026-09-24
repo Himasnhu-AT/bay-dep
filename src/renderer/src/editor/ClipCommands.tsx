@@ -7,7 +7,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { PASTE_ATTRIBUTES, type PasteAttribute } from '@shared/clipboard'
-import { allItems, findItem, itemEnd, type Item } from '@shared/project'
+import { allItems, findAsset, findItem, itemEnd, type Item } from '@shared/project'
 import { Button, Checkbox, Modal, NumberField, Popover, type MenuEntry } from '@/components'
 import { runCommand, shortcutOf, type CommandId } from '@/lib/commands'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -47,6 +47,11 @@ export function clipMenuEntries(item: Item, at: { x: number; y: number }): MenuE
   const playheadInside = selected.some((i) => state.playhead > i.from && state.playhead < itemEnd(i))
   const locked = timeline ? findItem(timeline, item.id)?.track.locked === true : false
   const noClipboard = state.clipboard === null
+  // Freeze Frame holds a frame of a video clip, from its first frame to its last.
+  const asset = findAsset(state.project, item.assetId)
+  const onVideoTrack = timeline ? findItem(timeline, item.id)?.track.kind === 'video' : false
+  const freezable = asset?.kind === 'video' && asset.hasVideo && !asset.error && onVideoTrack
+  const playheadOver = state.playhead >= item.from && state.playhead < itemEnd(item)
   return [
     row('edit.cut', 'Cut', { disabled: locked }),
     row('edit.copy', 'Copy'),
@@ -55,6 +60,7 @@ export function clipMenuEntries(item: Item, at: { x: number; y: number }): MenuE
     { kind: 'separator' },
     row('clip.split', 'Split at Playhead', { disabled: !playheadInside || locked }),
     row('clip.duplicate', 'Duplicate', { disabled: locked }),
+    row('clip.freezeFrame', 'Add Freeze Frame', { disabled: locked || !freezable || !playheadOver }),
     row('clip.toggleEnabled', item.disabled ? 'Enable Clip' : 'Disable Clip', { disabled: locked }),
     row('clip.addTransition', 'Add Transition at Nearest Cut'),
     {

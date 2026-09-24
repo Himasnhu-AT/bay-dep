@@ -89,6 +89,7 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.mediaReadCaptions, path) as Promise<{ name: string; text: string }>,
     saveCaptions: (defaultName: string, text: string) =>
       ipcRenderer.invoke(IPC.mediaSaveCaptions, defaultName, text) as Promise<string | null>,
+    freezeFrame: (request) => ipcRenderer.invoke(IPC.mediaFreezeFrame, request),
     pathForFile: (file: File) => {
       // A `File` is one of the few complex objects contextBridge passes through intact
       // rather than proxying, which is what makes this work at all. It throws for a File
