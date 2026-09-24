@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { itemsAtFrame, type Item, type Timeline, type Track } from '@shared/project'
 import {
+  autoScrollDelta,
   boxFrom,
   clampFade,
   combineSelection,
@@ -194,4 +195,17 @@ test('a trim edge moves by the pointer\'s travel from where it was grabbed, not 
   assert.ok(Math.abs(trimEdgeFrame(end, -10, ppf) - (end - 3.57)) < 0.01)
   assert.ok(Math.abs(trimEdgeFrame(end, -60, ppf) - (end - 21.43)) < 0.01)
   assert.equal(trimEdgeFrame(end, 25, 0), end, 'a zero zoom cannot divide')
+})
+
+test('auto-scroll follows the direction of the drag, not just the edge it is near', () => {
+  const bounds = { left: 148, right: 1000 }
+  // Near the right edge, moving left (pulling the last clip's end handle in): no scroll.
+  assert.equal(autoScrollDelta(975, 985, bounds), 0)
+  // Positive controls: moving toward each edge still scrolls.
+  assert.equal(autoScrollDelta(985, 975, bounds), 24)
+  assert.equal(autoScrollDelta(160, 170, bounds), -24)
+  // Near the left edge moving right, mid-view, and a first move with no direction: none.
+  assert.equal(autoScrollDelta(170, 160, bounds), 0)
+  assert.equal(autoScrollDelta(500, 400, bounds), 0)
+  assert.equal(autoScrollDelta(985, null, bounds), 0)
 })

@@ -268,3 +268,21 @@ export function laneHitAt(
   }
   return null
 }
+
+/**
+ * How far a drag near an edge scrolls the timeline, in pixels: 24 toward the edge the pointer is
+ * *moving toward*, and nothing otherwise. Scrolling on any move near an edge fought a drag that
+ * started there: at zoom-to-fit the last clip ends ~24px from the right edge, so pulling its end
+ * handle left scrolled the view right and trimmed 1 frame for a 10-frame drag.
+ */
+export function autoScrollDelta(
+  clientX: number,
+  previousX: number | null,
+  bounds: { left: number; right: number },
+  margin = 48
+): number {
+  if (previousX === null) return 0
+  if (clientX > bounds.right - margin && clientX > previousX) return 24
+  if (clientX < bounds.left + margin && clientX < previousX) return -24
+  return 0
+}

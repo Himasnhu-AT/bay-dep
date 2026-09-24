@@ -9,6 +9,7 @@ import { cn } from '@/lib/cn'
 import { runCommand } from '@/lib/commands'
 import {
   boxFrom,
+  autoScrollDelta,
   combineSelection,
   displayOrder,
   formatDelta,
@@ -309,12 +310,17 @@ export function Timeline(): ReactNode {
     return null
   }, [])
 
+  // The last pointer x a drag reported, and when: a gap longer than a drag's move interval means a
+  // new drag, whose first move has no direction yet and so never scrolls.
+  const lastDragX = useRef<{ x: number; at: number } | null>(null)
   const autoScroll = useCallback((clientX: number): void => {
     const scroller = scrollRef.current
     if (!scroller) return
     const box = scroller.getBoundingClientRect()
-    if (clientX > box.right - 48) scroller.scrollLeft += 24
-    else if (clientX < box.left + HEADER_WIDTH + 48) scroller.scrollLeft -= 24
+    const now = performance.now()
+    const previous = lastDragX.current && now - lastDragX.current.at < 250 ? lastDragX.current.x : null
+    lastDragX.current = { x: clientX, at: now }
+    scroller.scrollLeft += autoScrollDelta(clientX, previous, { left: box.left + HEADER_WIDTH, right: box.right })
   }, [])
 
   // -- the playhead, driven imperatively ------------------------------------
