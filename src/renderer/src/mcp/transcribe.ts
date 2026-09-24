@@ -24,9 +24,33 @@ type Transcript = { segments: TranscriptSegment[]; model: string; language: stri
  */
 const transcripts = new Map<string, Promise<Transcript>>()
 
+/**
+ * The same transcripts once they have arrived, readable without waiting — for the Transcript
+ * panel, which draws words the moment a transcription (its own, the agent's, or `add_subtitles`'s)
+ * finishes, and must not start whisper just to learn whether one exists.
+ */
+const settled = new Map<string, Transcript>()
+const listeners = new Set<() => void>()
+
+function keyOf(path: string, language: string | undefined): string {
+  return JSON.stringify([path, language ?? 'en', useEditor.getState().whisperModel])
+}
+
+/** A transcript this session already has for `path`, or undefined. Never runs whisper. */
+export function cachedTranscript(path: string, language?: string): Transcript | undefined {
+  return settled.get(keyOf(path, language))
+}
+
+/** Called whenever a transcript arrives. Returns the unsubscribe. */
+export function onTranscript(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 /** Forget every cached transcript — for a test that answers one file differently per case. */
 export function forgetTranscripts(): void {
   transcripts.clear()
+  settled.clear()
 }
 
 /** The source file's speech, from whisper or the session's cache. Fails with a message to show. */
@@ -35,12 +59,15 @@ export async function transcribeSource(path: string, language?: string): Promise
   if (!api) fail('This window has no bridge to the app, so it cannot run the transcriber.')
   // The user's Settings decide whether a missing model may be fetched, and which model to use.
   const { autoDownloadModels, whisperModel } = useEditor.getState()
-  const key = JSON.stringify([path, language ?? 'en', whisperModel])
+  const key = keyOf(path, language)
   let pending = transcripts.get(key)
   if (!pending) {
     pending = api.media.transcribe(path, language, { download: autoDownloadModels, model: whisperModel }).then((result) => {
       if (!result.ok) throw new ToolError(result.error)
-      return { segments: result.segments, model: result.model, language: result.language }
+      const transcript = { segments: result.segments, model: result.model, language: result.language }
+      settled.set(key, transcript)
+      for (const listener of listeners) listener()
+      return transcript
     })
     transcripts.set(key, pending)
     // A failure is not remembered: the fix (a model, a setting) should work on the next call.

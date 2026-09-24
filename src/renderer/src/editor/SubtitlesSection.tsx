@@ -1,9 +1,11 @@
-import { useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { Captions, LoaderCircle } from 'lucide-react'
-import { allItems, findAsset } from '@shared/project'
+import { allItems, findAsset, findTrack, formatTimecode } from '@shared/project'
 import { SUBTITLE_STYLES, type SubtitleStyle, type SubtitleStyleId } from '@shared/subtitles'
-import { Button } from '@/components'
+import { Button, ColorField, Field, Section, SectionReset, Select, SliderField } from '@/components'
+import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
+import { hasModelFor, SUBTITLE_LANGUAGES, subtitleArgs } from '@/lib/subtitleOptions'
 import { executeToolCall } from '@/mcp'
 import { selectTimeline, useEditor } from '@/store/editor'
 
@@ -14,7 +16,7 @@ import { selectTimeline, useEditor } from '@/store/editor'
  * the same composition, one undo step, and replaces earlier subtitles over that clip.
  */
 
-const SAMPLE = ['you', 'are', 'an', 'overthinker']
+const SAMPLE = ['this', 'is', 'your', 'subtitle']
 const SPOKEN = 2
 
 function wordStyle(style: SubtitleStyle, state: 'said' | 'now' | 'later'): CSSProperties {
@@ -62,7 +64,7 @@ function lineStyle(id: SubtitleStyleId): CSSProperties {
   }
 }
 
-function StylePreview({ style }: { style: SubtitleStyle }): ReactNode {
+function StylePreview({ style, scale = 1 }: { style: SubtitleStyle; scale?: number }): ReactNode {
   // Punch shows two words at a time, like the design; the rest show the phrase.
   const words = style.id === 'punch' ? SAMPLE.slice(2, 4) : SAMPLE
   const spoken = style.id === 'punch' ? 0 : SPOKEN
@@ -73,7 +75,16 @@ function StylePreview({ style }: { style: SubtitleStyle }): ReactNode {
       // A stand-in for footage: a dim, warm gradient, so the text reads the way it will over video.
       style={{ background: 'linear-gradient(160deg, #5b4a42 0%, #2c2623 55%, #151312 100%)' }}
     >
-      <span className="text-white" style={{ ...lineStyle(style.id), lineHeight: 1.2, letterSpacing: '-0.01em' }}>
+      <span
+        className="text-white"
+        style={{
+          ...lineStyle(style.id),
+          lineHeight: 1.2,
+          letterSpacing: '-0.01em',
+          // Roughly the size the design will draw at; the card is too small to show 2× honestly.
+          zoom: Math.min(1.4, Math.max(0.6, scale))
+        }}
+      >
         {words.map((word, i) => (
           <span key={word} style={{ ...wordStyle(style, i < spoken ? 'said' : i === spoken ? 'now' : 'later'), margin: '0 2px' }}>
             {word}
@@ -91,18 +102,62 @@ export function SubtitlesSection(): ReactNode {
   const notify = useEditor((state) => state.notify)
   const [chosen, setChosen] = useState<SubtitleStyleId>('spotlight')
   const [busy, setBusy] = useState(false)
+  // Null until the user picks one: until then the target follows the selection.
+  const [picked, setPicked] = useState<string | null>(null)
+  const [language, setLanguage] = useState('en')
+  const [accent, setAccent] = useState<string | null>(null)
+  const [scale, setScale] = useState(1)
+  const [bottom, setBottom] = useState<number | null>(null)
+  const [modelFiles, setModelFiles] = useState<string[] | null>(null)
 
-  // The selected clip if it has sound; otherwise the first clip on the timeline that does.
+  // Clips with sound, in timeline order. A composition's sound is not speech to transcribe.
   const audible = timeline
-    ? allItems(timeline).filter((item) => findAsset(project, item.assetId)?.hasAudio === true && findAsset(project, item.assetId)?.kind !== 'html')
+    ? allItems(timeline)
+        .filter((item) => {
+          const asset = findAsset(project, item.assetId)
+          return asset?.hasAudio === true && asset.kind !== 'html'
+        })
+        .sort((a, b) => a.from - b.from)
     : []
-  const target = audible.find((item) => selection.includes(item.id)) ?? audible[0]
-  const targetName = target ? findAsset(project, target.assetId)?.name : null
+  // The picked clip; else the selected clip with sound; else the first clip that has sound.
+  const target =
+    audible.find((item) => item.id === picked) ??
+    audible.find((item) => selection.includes(item.id)) ??
+    audible[0]
+  const style = SUBTITLE_STYLES.find((s) => s.id === chosen) ?? SUBTITLE_STYLES[0]!
+
+  // Which models are on this Mac, so a non-English choice can say it needs a multilingual one.
+  // Asked only once a language other than English is chosen: English is always served.
+  useEffect(() => {
+    if (language === 'en' || modelFiles !== null) return
+    let live = true
+    bay()
+      ?.whisper.status()
+      .then((status) => {
+        if (live) setModelFiles(status.installed.map((model) => model.file))
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [language, modelFiles])
+
+  const clipLabel = (itemId: string): string => {
+    const item = audible.find((i) => i.id === itemId)
+    if (!item || !timeline) return itemId
+    const name = findAsset(project, item.assetId)?.name ?? 'Clip'
+    const track = findTrack(timeline, item.trackId)?.name
+    return `${name}${track ? ` · ${track}` : ''} · ${formatTimecode(item.from, timeline.fps)}`
+  }
+
+  const designEdited = accent !== null || scale !== 1 || bottom !== null
+  const needsModel = language !== 'en' && modelFiles !== null && !hasModelFor(modelFiles, language)
 
   const apply = async (): Promise<void> => {
     if (!target) return
     setBusy(true)
-    const result = await executeToolCall({ id: `ui-subtitles-${Date.now()}`, tool: 'add_subtitles', args: { itemId: target.id, style: chosen } })
+    const args = subtitleArgs({ itemId: target.id, style, language, accent, scale, bottom })
+    const result = await executeToolCall({ id: `ui-subtitles-${Date.now()}`, tool: 'add_subtitles', args })
     setBusy(false)
     if (result.ok) {
       const value = result.value as { words?: number; replaced?: string }
@@ -123,37 +178,103 @@ export function SubtitlesSection(): ReactNode {
       <p className="mb-2.5 text-[11px] leading-relaxed text-pretty text-ink-2">
         Word by word, transcribed on this Mac. Pick a design; applying another one later swaps it.
       </p>
+      <div className="mb-2.5 grid gap-1.5">
+        <Field label="Clip">
+          {target ? (
+            <Select
+              label="Clip to subtitle"
+              value={target.id}
+              options={audible.map((item) => ({ value: item.id, label: clipLabel(item.id) }))}
+              onChange={setPicked}
+            />
+          ) : (
+            <p className="text-[11px] text-ink-2">No clip with sound on the timeline.</p>
+          )}
+        </Field>
+        <Field label="Language">
+          <Select label="Spoken language" value={language} options={[...SUBTITLE_LANGUAGES]} onChange={setLanguage} />
+        </Field>
+        {language !== 'en' && (
+          <p className="text-[10px] leading-relaxed text-pretty text-ink-2">
+            {needsModel
+              ? 'Only English models are on this Mac. A multilingual one downloads on first use if Settings › Transcription allows it; otherwise download one there.'
+              : 'Other languages use a multilingual model — the ones not marked “English” in Settings › Transcription.'}
+          </p>
+        )}
+      </div>
       <div role="radiogroup" aria-label="Subtitle design" className="grid grid-cols-2 gap-2">
-        {SUBTITLE_STYLES.map((style) => (
+        {SUBTITLE_STYLES.map((option) => (
           <button
-            key={style.id}
+            key={option.id}
             type="button"
             role="radio"
-            aria-checked={chosen === style.id}
-            title={style.description}
-            onClick={() => setChosen(style.id)}
+            aria-checked={chosen === option.id}
+            title={option.description}
+            onClick={() => setChosen(option.id)}
             className={cn(
-              't-fast flex flex-col gap-1 rounded-md border p-1 text-left',
-              chosen === style.id ? 'border-accent bg-accent/10' : 'border-line hover:border-line-strong'
+              't-press flex flex-col gap-1 rounded-md border p-1 text-left active:scale-[0.96]',
+              chosen === option.id ? 'border-accent bg-accent/10' : 'border-line hover:border-line-strong'
             )}
           >
-            <StylePreview style={style} />
-            <span className="px-0.5 text-[11px] font-medium text-ink-0">{style.name}</span>
+            <StylePreview style={accent ? { ...option, accent } : option} scale={scale} />
+            <span className="px-0.5 text-[11px] font-medium text-ink-0">{option.name}</span>
           </button>
         ))}
       </div>
-      <p className="mt-2 min-h-8 text-[11px] leading-snug text-pretty text-ink-2">
-        {SUBTITLE_STYLES.find((style) => style.id === chosen)?.description}
-      </p>
+      <p className="mt-2 min-h-8 text-[11px] leading-snug text-pretty text-ink-2">{style.description}</p>
+      <Section
+        title="Design options"
+        collapsible
+        defaultOpen={false}
+        id="text.subtitles.design"
+        className="-mx-3"
+        actions={
+          <SectionReset
+            show={designEdited}
+            label="Reset design options"
+            onReset={() => {
+              setAccent(null)
+              setScale(1)
+              setBottom(null)
+            }}
+          />
+        }
+      >
+        <div className="grid gap-1.5">
+          <Field label="Highlight">
+            <ColorField label="Highlight colour" value={accent ?? style.accent} onCommit={setAccent} />
+          </Field>
+          <SliderField
+            label="Size"
+            ariaLabel="Text size, relative to the design"
+            value={scale}
+            min={0.5}
+            max={2}
+            step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onCommit={setScale}
+          />
+          <SliderField
+            label="Bottom"
+            ariaLabel="Distance from the bottom of the frame, in percent"
+            value={bottom ?? style.bottom}
+            min={0}
+            max={90}
+            step={1}
+            format={(v) => `${Math.round(v)}%`}
+            onCommit={setBottom}
+          />
+        </div>
+      </Section>
       <Button
         variant="primary"
-        className="mt-1 w-full"
+        className="mt-2 w-full"
         disabled={!target || busy}
         icon={busy ? <LoaderCircle className="size-3.5 animate-spin" /> : undefined}
         title={target ? undefined : 'Place a clip with sound first'}
         onClick={() => void apply()}
       >
-        {busy ? 'Transcribing…' : targetName ? `Add to “${targetName}”` : 'No clip with sound'}
+        {busy ? 'Transcribing…' : target ? 'Add subtitles' : 'No clip with sound'}
       </Button>
     </section>
   )

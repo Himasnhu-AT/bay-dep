@@ -80,6 +80,15 @@ const api: BayApi = {
     beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
+    stat: (paths: string[]) => ipcRenderer.invoke(IPC.mediaStat, paths) as Promise<(number | null)[]>,
+    locate: (name: string, nearPath?: string | null) =>
+      ipcRenderer.invoke(IPC.mediaLocate, name, nearPath) as Promise<string | null>,
+    openCaptions: () =>
+      ipcRenderer.invoke(IPC.mediaOpenCaptions) as Promise<{ name: string; text: string } | null>,
+    readCaptions: (path: string) =>
+      ipcRenderer.invoke(IPC.mediaReadCaptions, path) as Promise<{ name: string; text: string }>,
+    saveCaptions: (defaultName: string, text: string) =>
+      ipcRenderer.invoke(IPC.mediaSaveCaptions, defaultName, text) as Promise<string | null>,
     pathForFile: (file: File) => {
       // A `File` is one of the few complex objects contextBridge passes through intact
       // rather than proxying, which is what makes this work at all. It throws for a File
@@ -149,7 +158,12 @@ const api: BayApi = {
     launchRequest: () => ipcRenderer.invoke(IPC.projectLaunchRequest) as Promise<Project | null>,
     create: () => ipcRenderer.invoke(IPC.projectCreate) as Promise<Project>,
     forget: (filePath: string) => ipcRenderer.invoke(IPC.projectForget, filePath) as Promise<void>,
-    reveal: (filePath: string) => ipcRenderer.invoke(IPC.projectReveal, filePath) as Promise<void>
+    reveal: (filePath: string) => ipcRenderer.invoke(IPC.projectReveal, filePath) as Promise<void>,
+    rename: (filePath: string, name: string) =>
+      ipcRenderer.invoke(IPC.projectRename, filePath, name) as Promise<RecentProject>,
+    duplicate: (filePath: string) =>
+      ipcRenderer.invoke(IPC.projectDuplicate, filePath) as Promise<RecentProject>,
+    trash: (filePath: string) => ipcRenderer.invoke(IPC.projectTrash, filePath) as Promise<void>
   },
 
   export: {

@@ -5,6 +5,7 @@
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
+import { applyRelinks } from '@shared/relink'
 import { cloneKeyframes, shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
@@ -18,6 +19,7 @@ type Actions = Pick<
   | 'removeAsset'
   | 'editAsset'
   | 'patchAsset'
+  | 'relinkAssets'
   | 'placeAsset'
   | 'moveItem'
   | 'trimItem'
@@ -61,6 +63,13 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             track.items = track.items.filter((item) => item.assetId !== assetId)
           }
         }
+      })
+    },
+
+    relinkAssets(relinks) {
+      if (relinks.length === 0) return
+      edit((project) => {
+        applyRelinks(project, relinks)
       })
     },
 
