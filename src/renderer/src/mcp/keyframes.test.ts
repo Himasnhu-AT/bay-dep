@@ -242,3 +242,36 @@ test('remove_range over a clip\'s head: the tail lands on the cut still animated
   assert.ok(current(a))
   for (let f = 100; f < 200; f += 1) assert.equal(scaleAt([b], f), before[f + 100], `frame ${f}`)
 })
+
+test('apply_script: a head trim keeps keys on their footage; a move carries them', async () => {
+  const { a, b } = load()
+  await keyed(a)
+  await keyed(b)
+  const beforeA = Array.from({ length: 150 }, (_, f) => scaleAt([a], f))
+  const beforeB = Array.from({ length: 300 }, (_, f) => scaleAt([b], f))
+  const read = await executeToolCall({ id: newId('call'), tool: 'read_script', args: {} })
+  assert.ok(read.ok, JSON.stringify(read))
+  const script = read.value as unknown as string
+  const lineOf = (id: string): string => {
+    const line = script.split('\n').find((l) => {
+      const shown = /^- \[([^\]]+)\]/.exec(l)?.[1]
+      return shown !== undefined && id.startsWith(shown)
+    })
+    assert.ok(line, `no script line for ${id}:\n${script}`)
+    return line
+  }
+  // A: only `in` moves (0 -> 30): a head trim. B: `in` and `out` both +30: a move.
+  const aLine = lineOf(a)
+  const bLine = lineOf(b)
+  assert.ok(aLine.includes('00:00:00:00 → 00:00:05:00'), aLine)
+  assert.ok(bLine.includes('00:00:05:00 → 00:00:10:00'), bLine)
+  const edited = script
+    .replace(aLine, aLine.replace('00:00:00:00 → 00:00:05:00', '00:00:01:00 → 00:00:05:00'))
+    .replace(bLine, bLine.replace('00:00:05:00 → 00:00:10:00', '00:00:06:00 → 00:00:11:00'))
+  assert.notEqual(edited, script, 'the edit must land in the script')
+  await call('apply_script', { script: edited })
+  assert.equal(current(a)!.from, 30)
+  assert.equal(current(b)!.from, 180)
+  for (let f = 30; f < 150; f += 1) assert.equal(scaleAt([a], f), beforeA[f], `head-trimmed frame ${f}`)
+  for (let f = 150; f < 300; f += 1) assert.equal(scaleAt([b], f + 30), beforeB[f], `moved frame ${f}`)
+})
