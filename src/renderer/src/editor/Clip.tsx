@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Code2,
@@ -14,6 +14,9 @@ import {
 } from 'lucide-react'
 import { US_PER_SECOND, type Asset, type AssetKind, type Item } from '@shared/project'
 import { cn } from '@/lib/cn'
+import { clampFade, formatDb, volumeAtY, yForVolume } from '@/lib/timelineLayout'
+import { useDrag } from '@/lib/useDrag'
+import { useEditor } from '@/store/editor'
 import { useFilmstrip, useWaveform } from '@/lib/useMediaCache'
 
 /** Below this width a clip is a coloured sliver; fetching pictures for it is wasted work. */
@@ -38,6 +41,8 @@ export interface ClipProps {
   height: number
   selected: boolean
   locked: boolean
+  /** On a hidden track: the clip draws nothing in the picture, so it is drawn dimmed here. */
+  hidden?: boolean
   /** The kind of track the clip sits on: a video file's detached sound draws as audio. */
   trackKind: 'video' | 'audio'
   /** Live drag/trim preview. The store is not written until the pointer goes up. */
@@ -192,6 +197,7 @@ function ClipImpl({
   height,
   selected,
   locked,
+  hidden = false,
   trackKind,
   previewFrom,
   previewDuration,
@@ -203,14 +209,61 @@ function ClipImpl({
   const width = Math.max(2, previewDuration * pixelsPerFrame)
   const audio =
     trackKind === 'audio' || asset?.kind === 'audio' || (asset ? !asset.hasVideo && asset.hasAudio : false)
-  const Icon = asset ? KIND_ICON[asset.kind] : AlertTriangle
+  // A video file's detached sound, on an audio track, is sound: it gets the sound icon.
+  const Icon = !asset ? AlertTriangle : audio ? Music2 : KIND_ICON[asset.kind]
+  // `disabled` is Team EDITING's field (enable/disable clip); read loosely until it is in the model.
+  const disabled = (item as Item & { disabled?: boolean }).disabled === true
+  const innerHeight = height - 8
   const showThumbs = width >= THUMBS_MIN_WIDTH
 
   const strip = useFilmstrip(asset, STRIP_FRAMES, STRIP_HEIGHT, showThumbs && !audio)
   const peaks = useWaveform(asset, WAVEFORM_BUCKETS, showThumbs && Boolean(asset?.hasAudio))
 
-  const fadeIn = item.fadeInFrames * pixelsPerFrame
-  const fadeOut = item.fadeOutFrames * pixelsPerFrame
+  const [fadeDrag, setFadeDrag] = useState<{ edge: 'in' | 'out'; frames: number } | null>(null)
+  const [volumeDrag, setVolumeDrag] = useState<number | null>(null)
+  const fadeInFrames = fadeDrag?.edge === 'in' ? fadeDrag.frames : item.fadeInFrames
+  const fadeOutFrames = fadeDrag?.edge === 'out' ? fadeDrag.frames : item.fadeOutFrames
+  const fadeIn = fadeInFrames * pixelsPerFrame
+  const fadeOut = fadeOutFrames * pixelsPerFrame
+
+  // Fade handles: the same two fields the inspector's Fade in / Fade out write, so dragging one
+  // is that field. One undo step, on release; the drag itself only redraws this clip.
+  const beginFade = useDrag({
+    threshold: 1,
+    onMove: (state) => {
+      setFadeDrag((current) => {
+        if (!current) return current
+        const start = current.edge === 'in' ? item.fadeInFrames : item.fadeOutFrames
+        const raw = start + (current.edge === 'in' ? state.dx : -state.dx) / pixelsPerFrame
+        return { ...current, frames: clampFade(item, current.edge, raw) }
+      })
+    },
+    onEnd: () => {
+      const current = fadeDrag
+      setFadeDrag(null)
+      if (!current) return
+      const field = current.edge === 'in' ? 'fadeInFrames' : 'fadeOutFrames'
+      if (current.frames !== item[field]) useEditor.getState().patchItem(item.id, { [field]: current.frames })
+    },
+    onClick: () => setFadeDrag(null)
+  })
+
+  // The level line on a sound clip. Not offered while volume is keyframed: the keys decide the
+  // level then, and a line that wrote the static field would draw nowhere (`@shared/keyframes`).
+  const volumeKeyed = Boolean(item.keyframes?.volume?.length)
+  const showVolume = audio && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
+  const beginVolume = useDrag({
+    threshold: 1,
+    onStart: () => setVolumeDrag(item.volume),
+    onMove: (state) => setVolumeDrag(volumeAtY(yForVolume(item.volume, innerHeight) + state.dy, innerHeight)),
+    onEnd: (state) => {
+      setVolumeDrag(null)
+      const next = volumeAtY(yForVolume(item.volume, innerHeight) + state.dy, innerHeight)
+      if (next !== item.volume) useEditor.getState().patchItem(item.id, { volume: next })
+    },
+    onClick: () => setVolumeDrag(null)
+  })
+  const shownVolume = volumeDrag ?? item.volume
   const keyFrames = keyFramesOf(item)
 
   return (
@@ -236,10 +289,13 @@ function ClipImpl({
             ? 'var(--color-clip-audio-edge)'
             : 'var(--color-clip-video-edge)'
       }}
+      aria-disabled={disabled || undefined}
+      title={disabled ? 'Disabled — plays no picture or sound' : hidden ? 'On a hidden track — not in the picture' : undefined}
       className={cn(
         'group absolute overflow-hidden rounded-sm border select-none',
         locked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing',
         selected && 'ring-1 ring-accent',
+        (hidden || disabled) && !dragging && 'opacity-45',
         dragging && 'z-10 opacity-85 shadow-pop'
       )}
     >
@@ -295,6 +351,7 @@ function ClipImpl({
         <span
           className={cn(
             'truncate text-[11px] leading-tight font-medium text-on-media [text-shadow:0_1px_2px_rgb(0_0_0/0.65)]',
+            disabled && 'line-through',
             !audio &&
               showThumbs &&
               (asset?.kind === 'video' || asset?.kind === 'image' || asset?.kind === 'gif') &&
@@ -325,6 +382,79 @@ function ClipImpl({
           </span>
         )}
       </div>
+
+      {showVolume && (
+        <div
+          role="slider"
+          aria-label={`Volume of ${asset?.name ?? 'clip'}`}
+          aria-valuemin={0}
+          aria-valuemax={2}
+          aria-valuenow={shownVolume}
+          aria-valuetext={formatDb(shownVolume)}
+          title={locked ? undefined : `Volume ${formatDb(shownVolume)} — drag up or down`}
+          onPointerDown={(event) => {
+            if (locked || event.button !== 0) return
+            event.stopPropagation()
+            beginVolume(event)
+          }}
+          className={cn('absolute inset-x-2 z-[1] h-2 -translate-y-1/2', !locked && 'cursor-ns-resize')}
+          style={{ top: yForVolume(shownVolume, innerHeight) }}
+        >
+          <div
+            aria-hidden="true"
+            className={cn(
+              'absolute inset-x-0 top-1/2 h-px',
+              volumeDrag !== null ? 'bg-accent' : 'bg-on-media/55 group-hover:bg-on-media/80'
+            )}
+          />
+        </div>
+      )}
+      {volumeDrag !== null && (
+        <span className="pointer-events-none absolute right-1 bottom-0.5 z-[2] rounded-xs bg-black/70 px-1 text-[10px] text-on-media tabular-nums">
+          {formatDb(volumeDrag)}
+        </span>
+      )}
+
+      {/* Fade handles: a corner square at the top, where the wedge meets the clip's top edge.
+          Shown on hover and while selected, so they do not crowd an unfocused timeline. */}
+      {!locked && width >= 24 && (
+        <>
+          {(['in', 'out'] as const).map((edge) => {
+            const x = edge === 'in' ? Math.max(8, fadeIn) : Math.min(width - 8, width - fadeOut)
+            const frames = edge === 'in' ? fadeInFrames : fadeOutFrames
+            return (
+              <div
+                key={edge}
+                role="slider"
+                aria-label={edge === 'in' ? 'Fade in' : 'Fade out'}
+                aria-valuemin={0}
+                aria-valuemax={item.durationInFrames}
+                aria-valuenow={frames}
+                title={`${edge === 'in' ? 'Fade in' : 'Fade out'} ${frames}f — drag to change`}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return
+                  event.stopPropagation()
+                  setFadeDrag({ edge, frames: edge === 'in' ? item.fadeInFrames : item.fadeOutFrames })
+                  beginFade(event)
+                }}
+                className={cn(
+                  't-fast absolute top-0 z-[2] size-2.5 -translate-x-1/2 cursor-ew-resize rounded-xs border border-black/60 bg-on-media',
+                  fadeDrag?.edge === edge || selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                )}
+                style={{ left: x }}
+              />
+            )
+          })}
+          {fadeDrag && (
+            <span
+              className="pointer-events-none absolute top-3 z-[3] -translate-x-1/2 rounded-xs bg-black/70 px-1 text-[10px] whitespace-nowrap text-on-media tabular-nums"
+              style={{ left: Math.min(width - 24, Math.max(24, fadeDrag.edge === 'in' ? fadeIn : width - fadeOut)) }}
+            >
+              {fadeDrag.edge === 'in' ? 'Fade in' : 'Fade out'} {fadeDrag.frames}f
+            </span>
+          )}
+        </>
+      )}
 
       {/*
         Trim handles are 8px of hit area on a 1px-looking edge. Anything narrower and

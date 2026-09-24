@@ -563,6 +563,12 @@ export interface Track {
   locked: boolean
   muted: boolean
   hidden: boolean
+  /**
+   * Sound only, like `muted`: while any track is soloed, only soloed tracks are heard. Absent
+   * means not soloed — an optional field, so files written before it load unchanged. Read it
+   * through `trackAudible`, never directly, or preview and export will disagree about it.
+   */
+  solo?: boolean
   items: Item[]
 }
 
@@ -867,6 +873,17 @@ export function allItems(timeline: Timeline): Item[] {
 }
 
 /**
+ * Whether a track's sound reaches the mix: not muted, and — while any track is soloed — soloed
+ * itself. The one rule for mute and solo, read by the preview's audio engine, export's audio
+ * graph and ducking alike, so a solo heard in the preview is the solo written to the file.
+ * Governs sound only; `hidden` is picture's and is independent of both.
+ */
+export function trackAudible(tracks: readonly Pick<Track, 'muted' | 'solo'>[], track: Pick<Track, 'muted' | 'solo'>): boolean {
+  if (track.muted) return false
+  return track.solo === true || !tracks.some((other) => other.solo === true)
+}
+
+/**
  * Every item playing at `frame`, ordered the way the compositor must draw them:
  * lowest video track first, so later entries paint on top.
  *
@@ -895,7 +912,7 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
   for (const track of timeline.tracks) {
     if (kind && track.kind !== kind) continue
     if (track.kind === 'video' && track.hidden) continue
-    if (track.kind === 'audio' && track.muted) continue
+    if (track.kind === 'audio' && !trackAudible(timeline.tracks, track)) continue
     for (const item of track.items) {
       if (frame >= item.from && frame < itemEnd(item)) out.push(item)
     }

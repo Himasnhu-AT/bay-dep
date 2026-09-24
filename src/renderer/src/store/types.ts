@@ -281,9 +281,14 @@ export interface EditorActions {
   setKeyframe(itemId: string, property: KeyframeProperty, frame: Frames, value: number | null): void
 
   // tracks -------------------------------------------------------------------
-  addTrack(kind: TrackKind): string
+  /**
+   * A new empty track, named next in its kind. `index` is its place in `timeline.tracks` — the
+   * array, not the display: video draws in array order (later on top), so a video track "above
+   * V1" goes after it. Absent appends, which puts a new video track on top of the picture.
+   */
+  addTrack(kind: TrackKind, index?: number): string
   removeTrack(trackId: string): void
-  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name'>>): void
+  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo'>>): void
 
   // transitions ---------------------------------------------------------------
   /**
@@ -352,6 +357,8 @@ export interface EditorActions {
   addMarker(frame: Frames, label?: string, color?: string): string | null
   moveMarker(markerId: string, frame: Frames): void
   removeMarker(markerId: string): void
+  /** Rename or recolour a marker. An empty label is refused; a null colour returns to the default. */
+  patchMarker(markerId: string, patch: { label?: string; color?: string | null }): void
 
   // selection / view ---------------------------------------------------------
   select(itemIds: string[], additive?: boolean): void

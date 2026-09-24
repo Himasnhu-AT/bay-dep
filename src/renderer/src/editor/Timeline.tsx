@@ -1,12 +1,26 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Music2, Video } from 'lucide-react'
-import { allItems, findAsset, itemEnd, type Item, type Marker, type Track } from '@shared/project'
+import { allItems, findAsset, formatTimecode, itemEnd, textAssetName, type Asset, type Item, type Marker, type Track } from '@shared/project'
+import { isCommandId, shortcutOf } from '@shared/commands'
 import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
 import { linkedPartners, withLinked } from '@shared/links'
-import { ContextMenu, IconButton } from '@/components'
+import { Button, ContextMenu, IconButton, Kbd, type MenuEntry } from '@/components'
 import { cn } from '@/lib/cn'
+import { runCommand } from '@/lib/commands'
+import {
+  boxFrom,
+  combineSelection,
+  displayOrder,
+  formatDelta,
+  gapAt,
+  marqueeHits,
+  trackHeightFor,
+  type Box,
+  type Gap
+} from '@/lib/timelineLayout'
+import { closeGap, useTimelineView } from '@/lib/timelineView'
 import { useDrag } from '@/lib/useDrag'
-import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
+import { newId, selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
 import { junctionsForTrack } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
@@ -14,6 +28,7 @@ import { Clip } from './Clip'
 import { JunctionMarkers } from './JunctionMarkers'
 import { TransitionDialog } from './TransitionDialog'
 import { TimelineRuler } from './TimelineRuler'
+import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
 
 /** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
@@ -21,13 +36,48 @@ const NO_MARKERS: readonly Marker[] = []
 
 const HEADER_WIDTH = 148
 const RULER_HEIGHT = 26
-const VIDEO_TRACK_HEIGHT = 58
-const AUDIO_TRACK_HEIGHT = 46
+/** The marker strip along the ruler's top edge; the playhead starts below it so it never covers a flag. */
+const MARKER_STRIP = 10
 /**
  * Snap tolerance in *pixels*, not frames. A frame-based threshold would be invisible when
  * zoomed in and would snap across half a minute when zoomed out.
  */
 const SNAP_PX = 8
+/** Height of `TimelineToolbar`, which sits above the scroller. */
+const TOOLBAR_HEIGHT = 30
+/** Team EDITING's paste command; the lane menu offers it once it exists. */
+const PASTE_COMMAND = 'edit.paste'
+
+/**
+ * "Add text here": a title clip on this track at this frame, selected so the inspector is on it.
+ * The same asset shape the Text panel mints (text is the one kind with no file behind it).
+ */
+function addTextAt(frame: number, trackId: string): void {
+  const store = useEditor.getState()
+  const text = 'Title'
+  const asset: Asset = {
+    id: newId('ast'),
+    kind: 'text',
+    name: textAssetName(text),
+    path: null,
+    durationUs: 0,
+    width: null,
+    height: null,
+    fps: null,
+    hasAudio: false,
+    hasVideo: false,
+    posterPath: null,
+    waveformPath: null,
+    text,
+    createdAt: Date.now()
+  }
+  store.transact(() => {
+    store.addAssets([asset])
+    const itemId = store.placeAsset(asset.id, frame, trackId)
+    if (itemId) store.select([itemId])
+  })
+}
+
 /** Empty runway past the last clip, so there is somewhere to drag to. */
 const TAIL_SECONDS = 5
 
@@ -66,9 +116,29 @@ interface TrimModeGesture {
   preview: Map<string, TrimChange>
 }
 
-function trackHeight(track: Track): number {
-  return track.kind === 'video' ? VIDEO_TRACK_HEIGHT : AUDIO_TRACK_HEIGHT
+/** A rubber band in progress, in the content box's coordinates (scrolls with the lanes). */
+interface MarqueeGesture {
+  originX: number
+  originY: number
+  x: number
+  y: number
+  base: string[]
+  mode: 'replace' | 'add' | 'toggle'
 }
+
+/** Snapping as Team EDITING's view state provides it (`snapping`); on when a build predates it. */
+function snappingOn(state: object): boolean {
+  return (state as { snapping?: boolean }).snapping !== false
+}
+
+/** Selection edits by modifier: ⇧ adds, ⌘ toggles, a plain click replaces. */
+function clickMode(event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }): 'replace' | 'add' | 'toggle' {
+  if (event.metaKey || event.ctrlKey) return 'toggle'
+  return event.shiftKey ? 'add' : 'replace'
+}
+
+const sameGap = (a: Gap | null, b: Gap | null): boolean =>
+  a === b || (a !== null && b !== null && a.trackId === b.trackId && a.from === b.from && a.to === b.to)
 
 export function Timeline(): ReactNode {
   const timeline = useEditor(selectTimeline)
@@ -76,11 +146,14 @@ export function Timeline(): ReactNode {
   const project = useEditor((state) => state.project)
   const selection = useEditor((state) => state.selection)
   const pixelsPerFrame = useEditor((state) => state.pixelsPerFrame)
+  const trackSizes = useTimelineView((state) => state.trackSizes)
+  const selectedGap = useTimelineView((state) => state.selectedGap)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const rulerRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   const laneRefs = useRef(new Map<string, HTMLDivElement>())
+  const contentRef = useRef<HTMLDivElement>(null)
 
   // Quantised: auto-scrolling during playback must not re-render the ruler on every frame,
   // so the visible window only changes in 256px steps and the ticks are drawn with margin.
@@ -94,10 +167,39 @@ export function Timeline(): ReactNode {
   const [junctionKey, setJunctionKey] = useState<string | null>(null)
   // The clip menu (right-click), at the pointer, in viewport coordinates.
   const [menu, setMenu] = useState<{ itemId: string; x: number; y: number } | null>(null)
+  // The empty-lane menu: which track, which frame, and where the pointer was.
+  const [laneMenu, setLaneMenu] = useState<{ trackId: string; frame: number; x: number; y: number } | null>(null)
+  const [marquee, setMarquee] = useState<MarqueeGesture | null>(null)
+  const [hoverGap, setHoverGap] = useState<Gap | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
   const fps = timeline?.fps ?? 30
-  const tracks = timeline?.tracks ?? []
+  const tracks = useMemo(() => timeline?.tracks ?? [], [timeline])
+  // Listed top to bottom as the picture stacks: the front video layer first, audio below.
+  const ordered = useMemo(() => displayOrder(tracks), [tracks])
+  const heightOf = useCallback(
+    (track: Track): number => trackHeightFor(track.kind, trackSizes[track.id]),
+    [trackSizes]
+  )
+
+  // A gap and a clip are never selected together: selecting a clip drops the gap.
+  useEffect(
+    () =>
+      useEditor.subscribe((state, previous) => {
+        if (state.selection !== previous.selection && state.selection.length > 0) {
+          if (useTimelineView.getState().selectedGap) useTimelineView.setState({ selectedGap: null })
+        }
+      }),
+    []
+  )
+  // …and a gap that stopped existing (an undo, a move into it) stops being selected.
+  useEffect(() => {
+    if (!selectedGap) return
+    const track = tracks.find((candidate) => candidate.id === selectedGap.trackId)
+    if (!sameGap(track ? (gapAt(track, selectedGap.from) ?? null) : null, selectedGap)) {
+      useTimelineView.getState().selectGap(null)
+    }
+  }, [tracks, selectedGap])
 
   // Looked up by key every render rather than held as an object: a trim or an undo while the
   // dialog is open changes what this cut can do, and a snapshot would keep describing the
@@ -130,6 +232,7 @@ export function Timeline(): ReactNode {
     (frame: number, ignore: Set<string>): number => {
       if (!timeline) return Math.round(frame)
       const state = useEditor.getState()
+      if (!snappingOn(state)) return Math.round(frame)
       return snapFrame(frame, snapTargets(state.project, timeline, state.playhead, ignore), SNAP_PX / pixelsPerFrame)
     },
     [timeline, pixelsPerFrame]
@@ -402,8 +505,11 @@ export function Timeline(): ReactNode {
       }
       // Shift-click edits the selection and nothing else — dragging a shift-click would
       // move whatever was already selected, which is never what the gesture meant.
-      if (event.shiftKey) {
-        store.select([item.id], true)
+      // ⌘-click toggles one clip in or out of the selection; ⇧-click adds it (and its links).
+      const mode = clickMode(event)
+      if (mode !== 'replace') {
+        const ids = timeline ? withLinked(timeline, [item.id]) : [item.id]
+        store.select(combineSelection(store.selection, ids, mode))
         return
       }
       // Linked selection: a picture and its detached sound select, and so drag, together.
@@ -411,7 +517,13 @@ export function Timeline(): ReactNode {
         store.select(timeline ? withLinked(timeline, [item.id]) : [item.id])
       }
       const track = tracks.find((candidate) => candidate.id === item.trackId)
-      if (!track || track.locked) return
+      if (!track) return
+      if (track.locked) {
+        // Selected (so the inspector shows it) but not movable — and said so, since a drag that
+        // does nothing reads as the editor being stuck.
+        store.notify(`Track ${track.name} is locked — unlock it in the track header.`)
+        return
+      }
       const selected = useEditor.getState().selection
       const others = selected.filter((id) => id !== item.id)
       setMove({
@@ -441,6 +553,118 @@ export function Timeline(): ReactNode {
     },
     [tracks, beginTrim, startTrimMode]
   )
+
+  // -- empty lanes: marquee, gaps, the lane menu ------------------------------
+
+  /** A client point in the content box's coordinates — the box scrolls with the lanes. */
+  const contentPoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
+    const box = contentRef.current?.getBoundingClientRect()
+    return box ? { x: clientX - box.left, y: clientY - box.top } : { x: clientX, y: clientY }
+  }, [])
+
+  /** Every clip on an unlocked track, as a rectangle in content coordinates. */
+  const clipRects = useCallback((): (Box & { id: string })[] => {
+    const rects: (Box & { id: string })[] = []
+    let top = RULER_HEIGHT
+    for (const track of ordered) {
+      const height = heightOf(track)
+      if (!track.locked) {
+        for (const item of track.items) {
+          const left = HEADER_WIDTH + item.from * pixelsPerFrame
+          rects.push({ id: item.id, left, right: left + Math.max(2, item.durationInFrames * pixelsPerFrame), top: top + 4, bottom: top + height - 4 })
+        }
+      }
+      top += height
+    }
+    return rects
+  }, [ordered, heightOf, pixelsPerFrame])
+
+  const beginMarquee = useDrag({
+    onMove: (state) => {
+      autoScroll(state.x)
+      setMarquee((current) => {
+        if (!current) return current
+        const point = contentPoint(state.x, state.y)
+        const band = boxFrom(current.originX, current.originY, point.x, point.y)
+        const hits = marqueeHits(band, clipRects())
+        const withLinks = timeline ? withLinked(timeline, hits) : hits
+        useEditor.getState().select(combineSelection(current.base, withLinks, current.mode))
+        return { ...current, x: point.x, y: point.y }
+      })
+    },
+    onEnd: () => setMarquee(null),
+    onClick: () => setMarquee(null)
+  })
+
+  const onLanePointerDown = (event: React.PointerEvent<HTMLDivElement>, track: Track): void => {
+    if (event.button !== 0 || event.target !== event.currentTarget) return
+    const frame = frameAtClientX(event.clientX)
+    const mode = clickMode(event)
+    const store = useEditor.getState()
+    // A press on an empty lane is a click (select the gap under it, or clear the selection) or
+    // the start of a rubber band — which of the two is decided by how far the pointer travels.
+    if (mode === 'replace') {
+      const gap = gapAt(track, frame) ?? null
+      useTimelineView.getState().selectGap(gap)
+      if (!gap) store.clearSelection()
+    }
+    const origin = contentPoint(event.clientX, event.clientY)
+    setMarquee({ originX: origin.x, originY: origin.y, x: origin.x, y: origin.y, base: mode === 'replace' ? [] : store.selection, mode })
+    beginMarquee(event)
+  }
+
+  const onLanePointerMove = (event: React.PointerEvent<HTMLDivElement>, track: Track): void => {
+    if (marquee || move || trim || trimMode) return
+    const next = event.target === event.currentTarget ? (gapAt(track, frameAtClientX(event.clientX)) ?? null) : null
+    setHoverGap((current) => (sameGap(current, next) ? current : next))
+  }
+
+  const onLaneContextMenu = (event: React.MouseEvent<HTMLDivElement>, track: Track): void => {
+    if (event.target !== event.currentTarget) return
+    event.preventDefault()
+    setLaneMenu({ trackId: track.id, frame: Math.round(frameAtClientX(event.clientX)), x: event.clientX, y: event.clientY })
+  }
+
+  const laneMenuTrack = laneMenu ? tracks.find((track) => track.id === laneMenu.trackId) : undefined
+  const laneMenuGap = laneMenu && laneMenuTrack ? gapAt(laneMenuTrack, laneMenu.frame) : undefined
+  const laneMenuItems: MenuEntry[] =
+    !laneMenu || !laneMenuTrack
+      ? []
+      : [
+          {
+            // Paste is Team EDITING's command and pastes at the playhead, so "here" moves it first.
+            label: 'Paste here',
+            disabled: !isCommandId(PASTE_COMMAND),
+            shortcut: isCommandId(PASTE_COMMAND) ? shortcutOf(PASTE_COMMAND) : undefined,
+            onSelect: () => {
+              useEditor.getState().setPlayhead(laneMenu.frame)
+              runCommand(PASTE_COMMAND)
+            }
+          },
+          {
+            label: 'Add text here',
+            disabled: laneMenuTrack.kind !== 'video' || laneMenuTrack.locked,
+            onSelect: () => addTextAt(laneMenu.frame, laneMenuTrack.id)
+          },
+          {
+            label: 'Add marker here',
+            shortcut: shortcutOf('mark.add'),
+            onSelect: () => useEditor.getState().addMarker(laneMenu.frame)
+          },
+          { kind: 'separator' },
+          {
+            label: laneMenuGap ? `Close gap (${laneMenuGap.to - laneMenuGap.from}f)` : 'Close gap — not on a gap',
+            disabled: !laneMenuGap || laneMenuTrack.locked,
+            onSelect: () => {
+              if (laneMenuGap) closeGap(laneMenuGap)
+            }
+          },
+          {
+            label: `Select all on ${laneMenuTrack.name}`,
+            disabled: laneMenuTrack.items.length === 0,
+            onSelect: () => useEditor.getState().select(laneMenuTrack.items.map((item) => item.id))
+          }
+        ]
 
   // -- clip menu --------------------------------------------------------------
 
@@ -491,9 +715,9 @@ export function Timeline(): ReactNode {
 
   const laneTops = new Map<string, number>()
   let cursor = RULER_HEIGHT
-  for (const track of tracks) {
+  for (const track of ordered) {
     laneTops.set(track.id, cursor)
-    cursor += trackHeight(track)
+    cursor += heightOf(track)
   }
 
   const movingIds = move ? new Set(move.itemIds) : null
@@ -501,8 +725,9 @@ export function Timeline(): ReactNode {
 
   return (
     <div ref={panelRef} className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1">
+      <TimelineToolbar fps={fps} />
       <div ref={scrollRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-auto">
-        <div className="relative" style={{ width: HEADER_WIDTH + contentWidth, minHeight: '100%' }}>
+        <div ref={contentRef} className="relative" style={{ width: HEADER_WIDTH + contentWidth, minHeight: '100%' }}>
           <div className="sticky top-0 z-[35] flex">
             <div
               className="sticky left-0 z-10 flex shrink-0 items-center border-r border-b border-line bg-surface-1 px-2"
@@ -527,16 +752,19 @@ export function Timeline(): ReactNode {
             />
           </div>
 
-          {tracks.map((track) => {
-            const height = trackHeight(track)
+          {ordered.map((track) => {
+            const height = heightOf(track)
             const removable = tracks.filter((other) => other.kind === track.kind).length > 1
+            const laneGaps: Gap[] = []
+            if (hoverGap?.trackId === track.id) laneGaps.push(hoverGap)
+            if (selectedGap?.trackId === track.id && !sameGap(selectedGap, hoverGap)) laneGaps.push(selectedGap)
             return (
               <div key={track.id} className="flex" style={{ height }}>
                 <div
                   className="sticky left-0 z-30 shrink-0 border-r border-line bg-surface-1"
                   style={{ width: HEADER_WIDTH }}
                 >
-                  <TrackHeader track={track} height={height} removable={removable} />
+                  <TrackHeader track={track} height={height} size={trackSizes[track.id] ?? 'medium'} removable={removable} />
                 </div>
                 <div
                   // A lane really is a list of selectable things, and saying so is what
@@ -548,9 +776,10 @@ export function Timeline(): ReactNode {
                     if (element) laneRefs.current.set(track.id, element)
                     else laneRefs.current.delete(track.id)
                   }}
-                  onPointerDown={(event) => {
-                    if (event.target === event.currentTarget) useEditor.getState().clearSelection()
-                  }}
+                  onPointerDown={(event) => onLanePointerDown(event, track)}
+                  onPointerMove={(event) => onLanePointerMove(event, track)}
+                  onPointerLeave={() => setHoverGap(null)}
+                  onContextMenu={(event) => onLaneContextMenu(event, track)}
                   onDragOver={(event) => {
                     if (!event.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return
                     event.preventDefault()
@@ -569,8 +798,38 @@ export function Timeline(): ReactNode {
                     track.kind === 'video' ? 'bg-surface-1' : 'bg-surface-0/40',
                     track.locked && 'opacity-60'
                   )}
-                  style={{ width: contentWidth, height }}
+                  style={{
+                    width: contentWidth,
+                    height,
+                    // Locked reads as locked before anything is clicked: a hatch across the lane.
+                    backgroundImage: track.locked
+                      ? 'repeating-linear-gradient(135deg, var(--color-line-strong) 0 1px, transparent 1px 7px)'
+                      : undefined
+                  }}
                 >
+                  {/* The gap under the pointer, and the selected one. Pointer-transparent, so a
+                      press still lands on the lane and can start a rubber band. */}
+                  {laneGaps.map((gap) => {
+                    const selectedHere = sameGap(gap, selectedGap)
+                    const width = Math.max(2, (gap.to - gap.from) * pixelsPerFrame)
+                    return (
+                      <div
+                        key={`${gap.from}-${selectedHere ? 's' : 'h'}`}
+                        aria-hidden="true"
+                        className={cn(
+                          'pointer-events-none absolute inset-y-1 rounded-xs border',
+                          selectedHere ? 'border-accent bg-accent/15' : 'border-line-strong bg-surface-3/50'
+                        )}
+                        style={{ left: gap.from * pixelsPerFrame, width }}
+                      >
+                        {selectedHere && width >= 120 && (
+                          <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 truncate text-center text-[10px] text-ink-1 tabular-nums">
+                            Gap {gap.to - gap.from}f — Delete closes it
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
                   {track.items.map((original) => {
                     const trimming = trim?.itemId === original.id
                     // During a slip, slide or roll, draw the item as the plan will leave it —
@@ -596,6 +855,7 @@ export function Timeline(): ReactNode {
                         height={height}
                         selected={selection.includes(item.id)}
                         locked={track.locked}
+                        hidden={track.kind === 'video' && track.hidden}
                         trackKind={track.kind}
                         previewFrom={trimming ? trim.from : item.from}
                         previewDuration={trimming ? trim.durationInFrames : item.durationInFrames}
@@ -667,7 +927,7 @@ export function Timeline(): ReactNode {
                           HEADER_WIDTH + Math.max(0, item.from + move.deltaFrames) * pixelsPerFrame,
                         width: Math.max(2, item.durationInFrames * pixelsPerFrame),
                         top: top + 4,
-                        height: (lane ? trackHeight(lane) : VIDEO_TRACK_HEIGHT) - 8
+                        height: (lane ? heightOf(lane) : trackHeightFor('video')) - 8
                       }}
                     />
                   )
@@ -675,10 +935,22 @@ export function Timeline(): ReactNode {
             </div>
           )}
 
+          {marquee && (marquee.x !== marquee.originX || marquee.y !== marquee.originY) && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute z-[45] rounded-xs border border-accent bg-accent/10"
+              style={(() => {
+                const band = boxFrom(marquee.originX, marquee.originY, marquee.x, marquee.y)
+                return { left: band.left, top: band.top, width: band.right - band.left, height: band.bottom - band.top }
+              })()}
+            />
+          )}
+
           <div
             ref={playheadRef}
             aria-hidden="true"
-            className="pointer-events-none absolute top-0 bottom-0 left-0 z-40 w-px bg-playhead"
+            className="pointer-events-none absolute bottom-0 left-0 z-40 w-px bg-playhead"
+            style={{ top: MARKER_STRIP }}
           >
             <div className="absolute -top-px -left-[5px] size-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-playhead" />
           </div>
@@ -700,16 +972,48 @@ export function Timeline(): ReactNode {
         </div>
       )}
 
+      {/* The same readout for a move or a trim: how far, and where it lands, in timecode. */}
+      {(move?.deltaFrames || trim) && timeline ? (
+        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
+          {move ? (
+            <>
+              Move {formatDelta(move.deltaFrames)}
+              <span className="ml-2 text-ink-2">
+                starts {formatTimecode(Math.max(0, move.anchorFrom + move.deltaFrames), fps, true)}
+              </span>
+            </>
+          ) : trim ? (
+            (() => {
+              const original = allItems(timeline).find((item) => item.id === trim.itemId)
+              const delta = original ? trim.durationInFrames - original.durationInFrames : 0
+              return (
+                <>
+                  Trim {trim.edge === 'start' ? 'start' : 'end'} {formatDelta(trim.edge === 'start' ? -delta : delta)}
+                  <span className="ml-2 text-ink-2">duration {formatTimecode(trim.durationInFrames, fps, true)}</span>
+                </>
+              )
+            })()
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Centred on the *lanes*, not on the panel — otherwise it lands over the add-track
           row and reads as a label for it. `cursor` is where the last lane ends. */}
       {nothingPlaced && (
         <div
           className="pointer-events-none absolute right-0 left-0 flex items-center justify-center"
-          style={{ top: RULER_HEIGHT, height: Math.max(0, cursor - RULER_HEIGHT) }}
+          style={{ top: RULER_HEIGHT + TOOLBAR_HEIGHT, height: Math.max(0, cursor - RULER_HEIGHT), left: HEADER_WIDTH }}
         >
-          <p className="rounded-sm border border-line bg-surface-1/90 px-3 py-1.5 text-[11px] text-ink-2">
-            Drag media here, or click a clip in the media pool to place it at the playhead.
-          </p>
+          {/* The drop is taken by the lane underneath (pointer-transparent here); the button is
+              the one live part, for someone who has no media yet. */}
+          <div className="flex items-center gap-2 rounded-md border border-dashed border-line-strong bg-surface-1/90 px-3 py-2 text-[11px] text-ink-2">
+            <span>
+              Drag media here or press <Kbd shortcut={shortcutOf('file.import') ?? 'Mod+I'} /> to import
+            </span>
+            <Button size="sm" variant="subtle" className="pointer-events-auto" onClick={() => runCommand('file.import')}>
+              Import media…
+            </Button>
+          </div>
         </div>
       )}
 
@@ -724,6 +1028,8 @@ export function Timeline(): ReactNode {
           { label: 'Reattach audio', disabled: !canReattach, onSelect: () => runMenu('reattach') }
         ]}
       />
+
+      <ContextMenu at={laneMenuTrack ? laneMenu : null} onClose={() => setLaneMenu(null)} label="Timeline" items={laneMenuItems} />
 
       <TransitionDialog
         junction={openJunction}

@@ -30,6 +30,7 @@
 import {
   findAsset,
   itemEnd,
+  trackAudible,
   type Asset,
   type Item,
   type Project,
@@ -149,7 +150,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
         transitionGain,
         gain,
         metered: true,
-        audible: !track.muted
+        audible: trackAudible(timeline.tracks, track)
       })
       return
     }
@@ -167,7 +168,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
         claim: drawn !== undefined && asset.hasVideo ? { asset, slot: drawn } : null
       },
       metered: true,
-      audible: !track.muted
+      audible: trackAudible(timeline.tracks, track)
     })
   }
 
@@ -236,7 +237,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
       // element is claimed silently so its sound cannot reach the speakers unmixed.
       const picture = sharedPicture(timeline, item, pictureSlots)
       if (picture !== null && !isDetached(project, timeline, item)) {
-        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, metered: true, audible: !track.muted })
+        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, metered: true, audible: trackAudible(timeline.tracks, track) })
         continue
       }
       const standIn = detachedAsset(asset, item)
@@ -253,14 +254,14 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
           claim: partner ? { asset, slot: pictureSlots.get(partner.id) ?? 0 } : null
         },
         metered: true,
-        audible: !track.muted
+        audible: trackAudible(timeline.tracks, track)
       })
       continue
     }
 
     const slot = audioSlotsUsed.get(asset.id) ?? 0
     audioSlotsUsed.set(asset.id, slot + 1)
-    out.push({ item, track, asset, slot, transitionGain, gain, metered: true, audible: !track.muted })
+    out.push({ item, track, asset, slot, transitionGain, gain, metered: true, audible: trackAudible(timeline.tracks, track) })
   }
 
   return out
@@ -412,7 +413,7 @@ export function compositionSoundsAt(
           entry,
           gain: itemAudioGainAt(project, timeline, item, frame) * entry.sound.volume,
           mediaSeconds,
-          audible: !track.muted
+          audible: trackAudible(timeline.tracks, track)
         })
       }
     }
@@ -515,7 +516,7 @@ export class AudioEngine {
     for (const track of timeline.tracks) {
       liveTracks.add(track.id)
       const nodes = this.#trackNodes(context, track)
-      this.#setAudible(nodes, !track.muted)
+      this.#setAudible(nodes, trackAudible(timeline.tracks, track))
     }
 
     {

@@ -2,6 +2,7 @@ import type { ReactNode, RefObject } from 'react'
 import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
+import { RulerMarkers } from './TimelineMarkers'
 
 export interface TimelineRulerProps {
   fps: number
@@ -96,31 +97,19 @@ export function TimelineRuler({
       style={{ width: contentWidth }}
     >
       {/*
-        Flags along the top edge, clear of the timecode labels at the bottom. Pointer events stay
-        on so the label shows as a tooltip; a press still bubbles to the ruler and scrubs, so a
-        marker never gets in the way of moving the playhead — and pressing one lands on it.
-        Only markers inside the visible window are mounted, for the same reason ticks are.
+        Flags along the top edge, clear of the timecode labels at the bottom. A flag is a
+        control: click to edit, drag to move (`TimelineMarkers`); the rest of the ruler scrubs.
       */}
       {/* Time ranges pinned in the agent composer: the stretch the agent has been told to stay
           inside, shown where the user can see it rather than only as a chip in a side panel. */}
       <PinnedRanges pixelsPerFrame={pixelsPerFrame} />
-      {markers
-        .filter((marker) => marker.frame >= viewStart && marker.frame <= viewEnd)
-        .map((marker) => (
-          <div
-            key={marker.id}
-            title={`${marker.label} · ${formatTimecode(marker.frame, fps, true)}`}
-            aria-label={`Marker: ${marker.label}`}
-            className="absolute top-0 z-[1] -ml-[4px] h-[9px] w-[9px]"
-            style={{ left: marker.frame * pixelsPerFrame }}
-          >
-            <div
-              aria-hidden="true"
-              className="size-full [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]"
-              style={{ backgroundColor: marker.color ?? 'var(--color-accent)' }}
-            />
-          </div>
-        ))}
+      <RulerMarkers
+        markers={markers}
+        fps={fps}
+        pixelsPerFrame={pixelsPerFrame}
+        viewStart={viewStart}
+        viewEnd={viewEnd}
+      />
       {ticks.map((frame) => {
         const major = frame % labelStep === 0
         return (

@@ -578,13 +578,14 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     // -- tracks -------------------------------------------------------------
-    addTrack(kind) {
+    addTrack(kind, index) {
       const id = newId('trk')
       editTimeline((timeline) => {
         const track = makeTrack(kind, 1)
         track.id = id
         track.name = nextTrackName(timeline, kind)
-        timeline.tracks.push(track)
+        if (index === undefined) timeline.tracks.push(track)
+        else timeline.tracks.splice(Math.max(0, Math.min(timeline.tracks.length, Math.round(index))), 0, track)
       })
       return id
     },
@@ -604,7 +605,10 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     patchTrack(trackId, patch) {
       editTimeline((timeline) => {
         const track = findTrack(timeline, trackId)
-        if (track) Object.assign(track, patch)
+        if (!track) return
+        Object.assign(track, patch)
+        // Not soloed is stored as absence, so a project that tried solo saves as one that never did.
+        if (track.solo === false) delete track.solo
       })
     }
   }

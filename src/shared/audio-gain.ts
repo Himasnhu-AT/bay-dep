@@ -19,6 +19,7 @@ import {
   handlesFor,
   itemEnd,
   resolveTransition,
+  trackAudible,
   transitionAtFrame
 } from './project'
 import { animatedVolumeAt, volumeMayBeAudible } from './keyframes'
@@ -228,7 +229,7 @@ export function duckGainAt(project: Project, timeline: Timeline, item: Item, fra
   const amount = Number.isFinite(duck.amountDb) ? Math.min(MAX_DUCK_DB, duck.amountDb) : 0
   if (!(amount > 0)) return 1
   const key = timeline.tracks.find((track) => track.id === duck.keyTrackId)
-  if (!key || key.muted) return 1
+  if (!key || !trackAudible(timeline.tracks, key)) return 1
   const attack = wholeFrames(duck.attackFrames)
   const release = wholeFrames(duck.releaseFrames)
 
