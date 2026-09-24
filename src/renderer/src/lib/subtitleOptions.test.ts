@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SUBTITLE_STYLES } from '@shared/subtitles'
-import { describeSubtitleStyle, hasModelFor, subtitleArgs } from './subtitleOptions'
+import { describeSubtitleStyle, hasModelFor, previewFitRatio, subtitleArgs } from './subtitleOptions'
 
 const spotlight = SUBTITLE_STYLES.find((s) => s.id === 'spotlight')!
 const punch = SUBTITLE_STYLES.find((s) => s.id === 'punch')!
@@ -70,4 +70,19 @@ test('the description stops naming a colour once another highlight is picked', (
       }
     }
   }
+})
+
+test('a preview line that fits keeps its size; one that overflows shrinks until it fits', () => {
+  // Positive control: room to spare, or exactly enough, changes nothing.
+  assert.equal(previewFitRatio({ width: 90, height: 16 }, { width: 110, height: 72 }), 1)
+  assert.equal(previewFitRatio({ width: 110, height: 72 }, { width: 110, height: 72 }), 1)
+  // "this is your subtit": 150 px of line in a 110 px card. Shrunk by the ratio, it fits.
+  const wide = previewFitRatio({ width: 150, height: 16 }, { width: 110, height: 72 })
+  assert.ok(wide < 1 && 150 * wide <= 110, `shrunk to ${150 * wide}`)
+  // Too tall (three wrapped lines in a short card) is the other way to overflow.
+  const tall = previewFitRatio({ width: 100, height: 90 }, { width: 110, height: 72 })
+  assert.ok(tall < 1 && 90 * tall <= 72)
+  // Both at once: the tighter ratio wins.
+  const both = previewFitRatio({ width: 200, height: 90 }, { width: 110, height: 72 })
+  assert.ok(200 * both <= 110 && 90 * both <= 72)
 })

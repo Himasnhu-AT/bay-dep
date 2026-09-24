@@ -68,3 +68,13 @@ export function describeSubtitleStyle(style: SubtitleStyle, accent: string | nul
   if (!style.accentName || accent === null || accent.toUpperCase() === style.accent.toUpperCase()) return style.description
   return style.description.replace(style.accentName, 'the highlight colour you picked')
 }
+
+/**
+ * How much a preview line must shrink to fit its card: 1 when its content (`need`, the line's
+ * scroll width and height) fits the room it has (`room`), else the tighter of the two ratios,
+ * a hair under so rounding does not leave the last pixel cut.
+ */
+export function previewFitRatio(need: { width: number; height: number }, room: { width: number; height: number }): number {
+  const ratio = Math.min(room.width / Math.max(1, need.width), room.height / Math.max(1, need.height))
+  return ratio >= 1 ? 1 : ratio * 0.97
+}

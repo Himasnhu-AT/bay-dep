@@ -6,7 +6,14 @@ import { Button, IconButton, Slider } from '@/components'
 import { assetUrl } from '@/engine/mediaPool'
 import { editIntoTimeline, endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
 import { revealItem } from '@/lib/revealItem'
-import { lastSourceFrame, sourceFrameAtSeconds, sourceFrameStartUs, sourceRate, sourceSeekSeconds } from '@/lib/sourcePosition'
+import {
+  lastSourceFrame,
+  markedPlaybackStop,
+  sourceFrameAtSeconds,
+  sourceFrameStartUs,
+  sourceRate,
+  sourceSeekSeconds
+} from '@/lib/sourcePosition'
 import { useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 
@@ -17,7 +24,9 @@ import { ASSET_DRAG_TYPE } from './AssetTile'
  * the timeline; only these buttons (or a double-click, Enter or a drag in the panel) do.
  *
  * Opening it from a click moves focus into it (`focusToken`), so I and O mark the source and not
- * the timeline's range.
+ * the timeline's range. While it has focus, ← and → step a frame (with ⇧, ten), and Home and End
+ * go to the source's first and last frame — the whole clip, as in Premiere and Final Cut, not the
+ * marks, so they still reach footage outside a marked part.
  *
  * Its media element is its own — never one of the compositor's pooled elements, which the
  * preview seeks every frame — and it loads with CORS like the pool does, so the two share
@@ -72,6 +81,28 @@ export function SourceViewer({
     setAtFrame(clamped)
     if (media.current) media.current.currentTime = sourceSeekSeconds(clamped, rate)
   }
+
+  // Playing up to an out mark: checked every display frame (not on `timeupdate`, ~4 a second,
+  // which ran about three frames past the mark), pausing on the last kept frame and seeking back
+  // to it if the check came late.
+  useEffect(() => {
+    const element = media.current
+    if (!playing || outFrame === null || !element) return
+    let handle = 0
+    const check = (): void => {
+      const frame = sourceFrameAtSeconds(element.currentTime, rate)
+      const stop = markedPlaybackStop(frame, outFrame)
+      if (stop === null) {
+        handle = requestAnimationFrame(check)
+        return
+      }
+      element.pause()
+      setAtFrame(stop)
+      if (frame !== stop) element.currentTime = sourceSeekSeconds(stop, rate)
+    }
+    handle = requestAnimationFrame(check)
+    return () => cancelAnimationFrame(handle)
+  }, [playing, outFrame, rate])
 
   const toggle = (): void => {
     const element = media.current
@@ -128,6 +159,12 @@ export function SourceViewer({
           return timed
         case 'ArrowRight':
           if (timed) seek(atFrame + (event.shiftKey ? 10 : 1))
+          return timed
+        case 'Home':
+          if (timed) seek(0)
+          return timed
+        case 'End':
+          if (timed) seek(lastFrame)
           return timed
         // Final Cut's keys for the three edits; the timeline's own W/D/E never see them here.
         case 'Enter':
@@ -196,9 +233,9 @@ export function SourceViewer({
             onPause={() => setPlaying(false)}
             onTimeUpdate={(event) => {
               const frame = Math.min(sourceFrameAtSeconds(event.currentTarget.currentTime, rate), lastFrame)
+              // Past the out mark only while the rAF check above catches up; it seeks back.
+              if (!event.currentTarget.paused && markedPlaybackStop(frame, outFrame) !== null) return
               setAtFrame(frame)
-              // Playback stops at the out mark, the way a source monitor plays a marked range.
-              if (outFrame !== null && frame >= outFrame && !event.currentTarget.paused) event.currentTarget.pause()
             }}
             className={asset.kind === 'audio' ? 'hidden' : 'size-full object-contain'}
           />

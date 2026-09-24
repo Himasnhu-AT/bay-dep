@@ -147,6 +147,8 @@ export function browseAssets(): Record<string, unknown> {
       height: asset.height,
       hasVideo: asset.hasVideo,
       hasAudio: asset.hasAudio,
+      // Only when import recorded it (1 mono, 2 stereo); older assets simply do not say.
+      ...(asset.channels ? { channels: asset.channels } : {}),
       ...(asset.error
         ? { error: asset.error, placeable: false }
         : asset.kind === 'font'

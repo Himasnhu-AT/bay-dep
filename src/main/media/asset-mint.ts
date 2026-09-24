@@ -44,6 +44,7 @@ export function assetFrom(path: string, result: ProbeResult): Asset {
     fps: result.fps,
     hasAudio: result.hasAudio,
     hasVideo: result.hasVideo,
+    ...(result.hasAudio && result.channels ? { channels: result.channels } : {}),
     posterPath: null,
     waveformPath: null,
     createdAt: Date.now()

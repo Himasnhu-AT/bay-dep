@@ -149,7 +149,10 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
       1,
       asset.durationUs > 0 ? usToFramesAtTimeline(asset.durationUs) : stillDurationFrames(tl.fps)
     )
-    assertNoCollision(track, { id: '', from: atFrame, durationInFrames: duration })
+    // Checked at the frame the store will use: the store places at the rounded, non-negative
+    // frame, and treats `trackId` as where the clip was aimed — a clash there would send it to
+    // another track without a word. The agent named this track, so it gets the conflict instead.
+    assertNoCollision(track, { id: '', from: Math.max(0, Math.round(atFrame)), durationInFrames: duration })
     trackId = track.id
   }
 

@@ -257,8 +257,18 @@ export interface EditorActions {
   relinkAssets(relinks: { assetId: string; replacement: Asset }[]): void
 
   // items --------------------------------------------------------------------
-  /** Places an asset at `atFrame`, choosing a track that has room. Returns the new item id. */
-  placeAsset(assetId: string, atFrame?: Frames, trackId?: string): string | null
+  /**
+   * Places an asset at `atFrame` (the playhead when omitted) on a track with room and returns the
+   * new item id. `trackId` is the lane it was aimed at: used when it is the right kind and free
+   * there, otherwise the nearest track that is (a new one if none) — placement never overlaps
+   * (`placementTrack`). `span` places only that part of the source, at that length.
+   */
+  placeAsset(
+    assetId: string,
+    atFrame?: Frames,
+    trackId?: string,
+    span?: { sourceStartUs: number; durationInFrames: Frames }
+  ): string | null
   /**
    * Moves a clip, and everything linked to it (`@shared/links`) by the same number of frames on
    * their own tracks — unless `linked: false`. Refuses the whole move, silently like every

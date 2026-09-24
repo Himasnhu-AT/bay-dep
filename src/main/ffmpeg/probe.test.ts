@@ -169,6 +169,25 @@ test('an audio-only file reports no picture and no rate', () => {
   assert.equal(result.height, null)
   assert.equal(result.fps, null)
   assert.match(result.summary, /44\.1kHz/)
+  assert.equal(result.channels, 2)
+})
+
+test('channels come from the audio stream, and are absent when there is none or it does not say', () => {
+  const mono: FfprobeOutput = {
+    streams: [{ codec_name: 'pcm_s16le', codec_type: 'audio', sample_rate: '48000', channels: 1, duration: '3' }],
+    format: { duration: '3' }
+  }
+  assert.equal(shapeProbe(mono, PATH).channels, 1)
+  const unsaid: FfprobeOutput = {
+    streams: [{ codec_name: 'aac', codec_type: 'audio', sample_rate: '48000', duration: '3' }],
+    format: { duration: '3' }
+  }
+  assert.equal('channels' in shapeProbe(unsaid, PATH), false)
+  const silent: FfprobeOutput = {
+    streams: [{ codec_name: 'h264', codec_type: 'video', width: 64, height: 64, r_frame_rate: '25/1', duration: '1' }],
+    format: { duration: '1' }
+  }
+  assert.equal('channels' in shapeProbe(silent, PATH), false)
 })
 
 test('a silent video reports no audio', () => {

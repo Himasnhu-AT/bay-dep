@@ -40,10 +40,12 @@ export function placeAssetRange(
   const trimmed = asset.durationUs > 0 && (inUs > 0 || outUs < asset.durationUs) && outUs > inUs
   let placed: string | null = null
   s.transact(() => {
-    placed = s.placeAsset(asset.id, options.atFrame, options.trackId)
-    if (placed && trimmed) {
-      s.patchItem(placed, { sourceStartUs: inUs, durationInFrames: Math.max(1, usToFrames(outUs - inUs, timeline.fps)) })
-    }
+    placed = s.placeAsset(
+      asset.id,
+      options.atFrame,
+      options.trackId,
+      trimmed ? { sourceStartUs: inUs, durationInFrames: Math.max(1, usToFrames(outUs - inUs, timeline.fps)) } : undefined
+    )
   })
   if (placed) s.select([placed])
   return placed

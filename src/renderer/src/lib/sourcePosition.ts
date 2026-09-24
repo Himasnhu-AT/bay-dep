@@ -44,3 +44,17 @@ export function sourceSeekSeconds(frame: number, rate: number): number {
 export function sourceFrameAtSeconds(seconds: number, rate: number): number {
   return Math.max(0, Math.floor(seconds * rate + 1e-3))
 }
+
+/**
+ * While a source plays up to an out mark: the frame to stop on once the element reaches
+ * `frame`, or null to keep playing. The out mark is where the kept part *ends* (the start of the
+ * first frame not kept), so playback stops on the frame before it — the last frame placed.
+ * Checked every display frame; if the check comes late, the returned frame is the one to seek
+ * back to, so the picture never rests past the mark. It used to pause from `timeupdate`, which
+ * Chromium fires about every 250 ms: measured, 2.11 s with the mark at 2.00 s.
+ */
+export function markedPlaybackStop(frame: number, outFrame: number | null): number | null {
+  if (outFrame === null) return null
+  const last = Math.max(0, outFrame - 1)
+  return frame >= last ? last : null
+}

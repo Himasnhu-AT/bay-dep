@@ -119,6 +119,14 @@ test('a failed import keeps the file listed, with its error and nothing claimed 
   assert.equal(asset.fps, null)
 })
 
+test('an imported sound keeps its channel count; a file that does not say, or has no sound, gets none', () => {
+  assert.equal(assetFrom('/m/voice.wav', { ...AUDIO_ONLY, channels: 1 }).channels, 1)
+  assert.equal(assetFrom('/m/music.wav', { ...AUDIO_ONLY, channels: 2 }).channels, 2)
+  // Absent, not undefined-valued: nothing is written to the .bay for it.
+  assert.equal('channels' in assetFrom('/m/voice.wav', AUDIO_ONLY), false)
+  assert.equal('channels' in assetFrom('/m/broll.mov', { ...VIDEO_SILENT, channels: 2 }), false)
+})
+
 /** The keys of the version-1 fixture's assets, read from the document's text. */
 function onDiskAssetKeys(): string[] {
   const document = JSON.parse(V1_ON_DISK) as { assets: Record<string, unknown>[] }

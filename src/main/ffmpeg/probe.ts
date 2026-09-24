@@ -153,6 +153,7 @@ export function shapeProbe(parsed: FfprobeOutput, path: string): ProbeResult {
     fps: stillImage ? null : fps,
     hasVideo: video !== undefined,
     hasAudio: audio !== undefined,
+    ...(audio?.channels && audio.channels > 0 ? { channels: audio.channels } : {}),
     summary: parts.join(' · ')
   }
 }

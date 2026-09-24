@@ -40,6 +40,7 @@ import {
   locateAndRelink,
   placeAssetRange
 } from '@/lib/mediaActions'
+import { requestFocus } from '@/lib/focusRequest'
 import { revealItem } from '@/lib/revealItem'
 import { useFileStatus } from '@/lib/useFileStatus'
 import { editAsset } from '@/mcp/assets'
@@ -247,7 +248,11 @@ export function MediaPanel(): ReactNode {
           label: used ? 'Add Subtitles…' : 'Add Subtitles… (place it first)',
           disabled: !used || missing,
           onSelect: () => {
-            if (selectFirstUse(asset)) useEditor.getState().setPanel('text')
+            if (!selectFirstUse(asset)) return
+            useEditor.getState().setPanel('text')
+            // The tile this menu closed over is unmounted by the switch; focus goes to the
+            // Subtitles section instead of falling to the page.
+            requestFocus('subtitles')
           }
         }
       )

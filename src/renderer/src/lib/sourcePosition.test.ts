@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { lastSourceFrame, sourceFrameAtSeconds, sourceFrameStartUs, sourceRate, sourceSeekSeconds } from './sourcePosition'
+import { lastSourceFrame, markedPlaybackStop, sourceFrameAtSeconds, sourceFrameStartUs, sourceRate, sourceSeekSeconds } from './sourcePosition'
 
 /** Chromium hands `currentTime` back truncated to whole microseconds. */
 const chromium = (seconds: number): number => Math.floor(seconds * 1e6) / 1e6
@@ -44,4 +44,16 @@ test('the last frame is the one playing at the very end; a file with no rate cou
   assert.equal(sourceRate(null), 30)
   assert.equal(sourceRate(0), 30)
   assert.equal(sourceRate(25), 25)
+})
+
+test('playback to an out mark stops on the last frame before it, and a late check seeks back to it', () => {
+  // Out mark at 2 s (frame 60 at 30 fps): frames 0–59 are kept, so 59 is where it rests.
+  assert.equal(markedPlaybackStop(58, 60), null, 'still inside the marked part')
+  assert.equal(markedPlaybackStop(59, 60), 59, 'the last kept frame: stop here, not a frame later')
+  // The verified overshoot: paused at 2.11 s, frame 63. Seek back to 59.
+  assert.equal(markedPlaybackStop(sourceFrameAtSeconds(2.11, 30), 60), 59)
+  // Positive control: with no out mark nothing stops it early (the element ends by itself).
+  assert.equal(markedPlaybackStop(10_000, null), null)
+  // An out mark on frame 1 keeps only frame 0.
+  assert.equal(markedPlaybackStop(0, 1), 0)
 })

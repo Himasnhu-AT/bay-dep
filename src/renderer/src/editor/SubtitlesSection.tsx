@@ -1,11 +1,12 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Captions, LoaderCircle } from 'lucide-react'
 import { allItems, findAsset, findTrack, formatTimecode } from '@shared/project'
 import { SUBTITLE_STYLES, type SubtitleStyle, type SubtitleStyleId } from '@shared/subtitles'
 import { Button, ColorField, Field, Section, SectionReset, Select, SliderField } from '@/components'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
-import { describeSubtitleStyle, hasModelFor, SUBTITLE_LANGUAGES, subtitleArgs } from '@/lib/subtitleOptions'
+import { FOCUS_REQUEST_EVENT, takeFocusRequest } from '@/lib/focusRequest'
+import { describeSubtitleStyle, hasModelFor, previewFitRatio, SUBTITLE_LANGUAGES, subtitleArgs } from '@/lib/subtitleOptions'
 import { addSubtitles } from '@/mcp/subtitles'
 import { runUserTool } from '@/lib/userTool'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -72,8 +73,34 @@ function StylePreview({ style, scale = 1, bottom }: { style: SubtitleStyle; scal
   const spoken = style.id === 'punch' ? 0 : SPOKEN
   // Roughly the size the design will draw at; the card is too small to show 2× honestly.
   const size = Math.min(1.4, Math.max(0.6, scale))
+  // What the line is shrunk by so it fits its card: a word wider than the card cannot wrap, and
+  // was cut at the right edge ("this is your subtit"), worse at 125% UI zoom. Measured after
+  // layout and re-measured whenever the design, size or card width changes.
+  const [fit, setFit] = useState(1)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const lineRef = useRef<HTMLSpanElement>(null)
+  const [cardWidth, setCardWidth] = useState(0)
+  useEffect(() => {
+    const card = cardRef.current
+    if (!card) return
+    const observer = new ResizeObserver(() => setCardWidth(card.clientWidth))
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [])
+  useLayoutEffect(() => setFit(1), [style.id, size, cardWidth])
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    const line = lineRef.current
+    if (!card || !line || line.clientWidth === 0) return
+    const ratio = previewFitRatio(
+      { width: line.scrollWidth, height: line.offsetHeight },
+      { width: line.clientWidth, height: card.clientHeight - 8 }
+    )
+    if (ratio < 1) setFit((current) => Math.max(0.4, current * ratio))
+  })
   return (
     <div
+      ref={cardRef}
       aria-hidden="true"
       className="relative h-20 overflow-hidden rounded-sm"
       // A stand-in for footage: a dim, warm gradient, so the text reads the way it will over video.
@@ -83,17 +110,21 @@ function StylePreview({ style, scale = 1, bottom }: { style: SubtitleStyle; scal
           sides, wrapping rather than running off the card. Held inside the card at the top, so a
           high setting still shows the line rather than cropping it away. */}
       <span
+        ref={lineRef}
         className="absolute inset-x-1.5 block text-center text-balance text-white"
         style={{
-          ...lineStyle(style.id, size),
+          ...lineStyle(style.id, size * fit),
           bottom: `clamp(4px, ${bottom}%, calc(100% - 2.8em))`,
           lineHeight: 1.2,
           letterSpacing: '-0.01em'
         }}
       >
+        {/* Real spaces between the words: with margins alone the phrase had no break
+            opportunity, so it could never wrap and ran off the card instead. */}
         {words.map((word, i) => (
-          <span key={word} style={{ ...wordStyle(style, i < spoken ? 'said' : i === spoken ? 'now' : 'later'), margin: '0 2px' }}>
-            {word}
+          <span key={word}>
+            {i > 0 && ' '}
+            <span style={wordStyle(style, i < spoken ? 'said' : i === spoken ? 'now' : 'later')}>{word}</span>
           </span>
         ))}
       </span>
@@ -115,6 +146,24 @@ export function SubtitlesSection(): ReactNode {
   const [scale, setScale] = useState(1)
   const [bottom, setBottom] = useState<number | null>(null)
   const [modelFiles, setModelFiles] = useState<string[] | null>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+
+  // Media › Add Subtitles… opens this panel from a menu over a tile the switch unmounts: focus
+  // comes here, to the first control, rather than falling to the page body.
+  useEffect(() => {
+    const focusIfAsked = (): void => {
+      if (!takeFocusRequest('subtitles')) return
+      requestAnimationFrame(() => {
+        const first = sectionRef.current?.querySelector<HTMLElement>(
+          'button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+        ;(first ?? sectionRef.current)?.focus()
+      })
+    }
+    focusIfAsked()
+    window.addEventListener(FOCUS_REQUEST_EVENT, focusIfAsked)
+    return () => window.removeEventListener(FOCUS_REQUEST_EVENT, focusIfAsked)
+  }, [])
 
   // Clips with sound, in timeline order. A composition's sound is not speech to transcribe.
   const audible = timeline
@@ -174,7 +223,7 @@ export function SubtitlesSection(): ReactNode {
   }
 
   return (
-    <section aria-labelledby="subtitles-heading" className="mb-5">
+    <section ref={sectionRef} tabIndex={-1} aria-labelledby="subtitles-heading" className="mb-5 outline-none">
       <div className="mb-2 flex items-center gap-1.5">
         <Captions aria-hidden="true" className="size-3.5 text-ink-2" />
         <h3 id="subtitles-heading" className="text-[12px] font-medium text-ink-0">

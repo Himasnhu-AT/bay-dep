@@ -12,7 +12,7 @@ import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } f
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
 import { applySpeedPlan, planSpeed, type SpeedPlan } from '@shared/speed'
-import { clone, makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
+import { clone, makeTrack, newId, nextTrackName, placementTrack } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
 import { editingPrefs, stillDurationFrames } from '../editing-prefs'
@@ -105,7 +105,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     // -- items --------------------------------------------------------------
-    placeAsset(assetId, atFrame, trackId) {
+    placeAsset(assetId, atFrame, trackId, span) {
       const state = get()
       const timeline = activeTimeline(state.project)
       const asset = findAsset(state.project, assetId)
@@ -133,10 +133,14 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       // A still has no duration of its own, so it gets the default from Settings › Editing.
       const naturalFrames =
         asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : stillDurationFrames(timeline.fps)
-      const duration = Math.max(1, naturalFrames)
+      // A marked part of the source is placed at its own length, so the room looked for is the
+      // room it will take.
+      const duration = Math.max(1, Math.round(span?.durationInFrames ?? naturalFrames))
+      const sourceStartUs = Math.max(0, Math.round(span?.sourceStartUs ?? 0))
 
-      const explicitTrack = trackId ? findTrack(timeline, trackId) : undefined
-      let target = explicitTrack ?? trackWithRoom(timeline, kind, from, duration)
+      // `trackId` is where the clip was aimed, not a licence to overlap: the wrong kind of lane,
+      // a locked one or one with a clip in the way sends it to the nearest track with room.
+      let target = placementTrack(timeline, kind, from, duration, trackId)
 
       const itemId = newId('itm')
       editTimeline((tl) => {
@@ -162,7 +166,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
           trackId: track.id,
           from,
           durationInFrames: duration,
-          sourceStartUs: 0,
+          sourceStartUs,
           layout,
           volume: 1,
           fadeInFrames: 0,

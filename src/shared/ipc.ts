@@ -32,6 +32,8 @@ export interface ProbeResult {
   fps: number | null
   hasVideo: boolean
   hasAudio: boolean
+  /** Channels of the first audio stream, when there is one and ffprobe says. */
+  channels?: number
   /** Container/codec summary, for the inspector. e.g. "h264 · aac · 1920×1080 · 29.97fps" */
   summary: string
 }

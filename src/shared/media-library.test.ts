@@ -121,6 +121,16 @@ test('facts name size, rate, sound and file size, and only what the asset has', 
   assert.deepEqual(assetFacts(asset('m', { kind: 'audio', width: null, height: null, fps: null, hasVideo: false })), [])
 })
 
+test('a sound card says mono or stereo when the asset knows, and nothing when it does not', () => {
+  const sound = (channels?: number) =>
+    asset('s', { kind: 'audio', width: null, height: null, fps: null, hasVideo: false, ...(channels ? { channels } : {}) })
+  assert.deepEqual(assetFacts(sound(1), 353_000), ['Mono', '353 KB'])
+  assert.deepEqual(assetFacts(sound(2)), ['Stereo'])
+  assert.deepEqual(assetFacts(sound(6)), ['6 ch'])
+  // An asset imported before channels were recorded shows nothing, not a guess.
+  assert.deepEqual(assetFacts(sound()), [])
+})
+
 test('a card names a tempo only for a steady beat; a failed detection reads "No steady beat"', () => {
   const beats = (confidence: number, bpm: number) => ({
     version: 1,

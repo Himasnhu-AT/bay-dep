@@ -140,6 +140,11 @@ export function formatFps(fps: number): string {
   return `${Math.round(fps * 1000) / 1000} fps`
 }
 
+/** "Mono", "Stereo" or "6 ch" — how many channels a sound has, as a card says it. */
+export function channelsLabel(channels: number): string {
+  return channels === 1 ? 'Mono' : channels === 2 ? 'Stereo' : `${channels} ch`
+}
+
 /**
  * The facts a card or list row shows about an asset, in reading order: size, rate, sound,
  * file size. Duration is drawn separately (on the poster, or in its own column).
@@ -149,6 +154,7 @@ export function assetFacts(asset: Asset, bytes?: number | null): string[] {
   if (asset.width && asset.height) facts.push(`${asset.width}×${asset.height}`)
   if (asset.fps && asset.kind === 'video') facts.push(formatFps(asset.fps))
   if (asset.kind === 'video') facts.push(asset.hasAudio ? 'with sound' : 'no sound')
+  if (asset.kind === 'audio' && asset.channels) facts.push(channelsLabel(asset.channels))
   if (asset.kind === 'font' && asset.font) facts.push(asset.font.family)
   if (asset.beats) facts.push(hasSteadyBeat(asset.beats) ? `${Math.round(asset.beats.bpm)} BPM` : 'No steady beat')
   if (typeof bytes === 'number') facts.push(formatFileSize(bytes))

@@ -52,6 +52,11 @@ export interface Asset {
   fps: number | null
   hasAudio: boolean
   hasVideo: boolean
+  /**
+   * Audio channels of the first sound stream (1 mono, 2 stereo), read at import. Optional and
+   * additive: assets imported before it, and files that do not say, carry none — and show none.
+   */
+  channels?: number
   /** Absolute path to a cached poster frame, once one has been generated. */
   posterPath: string | null
   /** Absolute path to a cached peaks file, once one has been generated. */

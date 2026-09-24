@@ -109,3 +109,46 @@ export function trackWithRoom(
   }
   return null
 }
+
+/**
+ * Where a clip of `kind` covering [from, from+duration) goes when it is aimed at `laneId` — a drop
+ * onto a lane, "Add text here", the source monitor's edit onto its track, `place_asset` with a
+ * `trackId`. Placement never overwrites: the lane itself when it is the right kind, unlocked and
+ * free for that span; otherwise the track of `kind` with room that is *displayed* nearest to it
+ * (ties go to the lower-numbered track); null when none has room, and the caller adds a lane.
+ * With no lane, the first track of `kind` with room (`trackWithRoom`).
+ *
+ * The drop used to take the lane as given: a still landed on top of a clip on V1, three drops at
+ * one frame stacked three clips, and a sound dropped on V1 became a clip on a video track.
+ */
+export function placementTrack(
+  timeline: Timeline,
+  kind: TrackKind,
+  from: Frames,
+  duration: Frames,
+  laneId?: string
+): Track | null {
+  const lane = laneId ? timeline.tracks.find((track) => track.id === laneId) : undefined
+  if (!lane) return trackWithRoom(timeline, kind, from, duration)
+  // The order the timeline draws them in, top to bottom (`displayOrder` in lib/timelineLayout,
+  // which the store may not import): video reversed, then audio as stored.
+  const shown = [
+    ...timeline.tracks.filter((track) => track.kind === 'video').reverse(),
+    ...timeline.tracks.filter((track) => track.kind === 'audio')
+  ]
+  const at = shown.indexOf(lane)
+  const probe = { from, durationInFrames: duration } as Item
+  let best: Track | null = null
+  let bestDistance = Infinity
+  // Array order, so on a tie the first found — the lower-numbered track — is kept.
+  for (const track of timeline.tracks) {
+    if (track.kind !== kind || track.locked) continue
+    if (track.items.some((existing) => itemsOverlap(existing, probe))) continue
+    const distance = Math.abs(shown.indexOf(track) - at)
+    if (distance < bestDistance) {
+      best = track
+      bestDistance = distance
+    }
+  }
+  return best
+}
