@@ -1,5 +1,6 @@
 import { defaultTransitionFrames, nearestJunction, whyNoRoom } from '@/lib/junctions'
 import { closeSelectedGap } from '@/lib/timelineView'
+import { addFreezeFrame } from '@/lib/freezeFrame'
 import { selectSelectedItems, selectTimeline } from '@/store/editor'
 import type { CommandContext, Handlers } from './types'
 
@@ -13,6 +14,7 @@ export const clipHandlers = {
   'clip.split': { when: inEditor, run: ({ state }) => state.splitAt() },
   'clip.splitAll': { when: inEditor, run: ({ state }) => state.splitAt(undefined, { allTracks: true }) },
   'clip.duplicate': { when: inEditor, run: ({ state }) => state.duplicateSelected() },
+  'clip.freezeFrame': { when: inEditor, run: () => void addFreezeFrame() },
   'clip.trimStartRipple': { when: inEditor, run: ({ state }) => state.trimToPlayhead('start', true) },
   'clip.trimEndRipple': { when: inEditor, run: ({ state }) => state.trimToPlayhead('end', true) },
   'clip.trimStart': { when: inEditor, run: ({ state }) => state.trimToPlayhead('start', false) },

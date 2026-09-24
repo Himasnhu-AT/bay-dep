@@ -484,6 +484,12 @@ export interface Item {
   /** Duck this clip's sound while another track is sounding — music under dialogue. */
   duck?: AudioDuck
   /**
+   * Stereo position of this clip's sound, −1 (hard left) to 1 (hard right). Absent or 0 is
+   * centre, which changes nothing. The law is `panGains` in `@shared/audio-gain` — the one
+   * function the preview's channel gains and export's `pan` filter both read. Static: not keyable.
+   */
+  pan?: number
+  /**
    * Animation: keys per property, sampled by `@shared/keyframes` — the one function the
    * compositor, `preview_frame`, export and the audio gain all read. Absent is the fast path and
    * means every property holds its static value, which is every project written before this.

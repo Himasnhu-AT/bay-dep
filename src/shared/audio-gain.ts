@@ -30,6 +30,40 @@ function clamp01(value: number): number {
 }
 
 /**
+ * The per-channel gains `pan` puts on a clip's stereo sound: `left` multiplies the left channel,
+ * `right` the right. The one pan law — the preview sets its two channel gain nodes from this and
+ * export writes it into a `pan` filter, so the two cannot be re-decided apart.
+ *
+ * **Constant power, unity at centre, no fold-over.** With x = (pan + 1) / 2:
+ * left = √2·cos(x·π/2), right = √2·sin(x·π/2). So left² + right² = 2 at every position — a
+ * dual-mono dialogue clip (the commonest thing panned) keeps its loudness as it moves — and centre
+ * is exactly 1/1, so every clip written before pan existed sounds exactly as it did. Hard left is
+ * +3 dB on the left channel and silence on the right; half left (−0.5) is +2.3 dB / −5.3 dB.
+ *
+ * Why not Web Audio's `StereoPannerNode`: on stereo input it folds the attenuated side *into* the
+ * other channel, which for correlated material reaches +6 dB at the extreme and is a curve ffmpeg
+ * has no filter for — it could only be imitated, and imitations diverge. A gain per channel is
+ * exact on both sides.
+ *
+ * Stereo sources pan as a balance: the side panned away from is attenuated, never moved across.
+ * A mono source is up-mixed to two identical channels before this (Web Audio's speaker up-mix;
+ * ffmpeg's `aformat` to stereo), so it pans as a point source.
+ *
+ * A non-finite pan is centre; anything outside −1..1 is clamped.
+ */
+export function panGains(pan: number | undefined | null): { left: number; right: number } {
+  const p = typeof pan === 'number' && Number.isFinite(pan) ? Math.max(-1, Math.min(1, pan)) : 0
+  // Exact at centre: √2·cos(π/4) is 1.0000000000000002, and a gain that is not exactly 1 would put
+  // a pan filter on every unpanned clip in every export.
+  if (p === 0) return { left: 1, right: 1 }
+  const angle = ((p + 1) / 2) * (Math.PI / 2)
+  const left = Math.SQRT2 * Math.cos(angle)
+  const right = Math.SQRT2 * Math.sin(angle)
+  // cos(π/2) is 6e-17, not 0: hard left/right must silence the other side exactly.
+  return { left: p === 1 ? 0 : left, right: p === -1 ? 0 : right }
+}
+
+/**
  * What the two clips' audio should be doing at `progress`.
  *
  * A transition that shows both pictures and plays one is the most audible defect this feature

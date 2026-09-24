@@ -14,6 +14,11 @@ export interface SliderProps {
   step?: number
   disabled?: boolean
   className?: string
+  /**
+   * Where the fill starts: `min` by default. A bipolar control (pan) fills from its centre, so
+   * the bar shows which way and how far rather than a level that is not there.
+   */
+  origin?: number
 }
 
 /**
@@ -32,12 +37,16 @@ export function Slider({
   max = 1,
   step = 0.01,
   disabled = false,
-  className
+  className,
+  origin
 }: SliderProps): ReactNode {
   const trackRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<number | null>(null)
   const current = draft ?? value
   const fraction = max > min ? (current - min) / (max - min) : 0
+  const originFraction = origin !== undefined && max > min ? (origin - min) / (max - min) : 0
+  const fillFrom = Math.max(0, Math.min(1, Math.min(originFraction, fraction)))
+  const fillTo = Math.max(0, Math.min(1, Math.max(originFraction, fraction)))
 
   const valueAt = (clientX: number): number => {
     const track = trackRef.current
@@ -110,8 +119,8 @@ export function Slider({
     >
       <div className="relative h-[3px] w-full rounded-full bg-surface-3">
         <div
-          className="absolute inset-y-0 left-0 rounded-full bg-accent/85"
-          style={{ width: `${Math.max(0, Math.min(1, fraction)) * 100}%` }}
+          className="absolute inset-y-0 rounded-full bg-accent/85"
+          style={{ left: `${fillFrom * 100}%`, width: `${(fillTo - fillFrom) * 100}%` }}
         />
         <div
           className={cn(

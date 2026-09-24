@@ -31,6 +31,7 @@ import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
+import type { FreezeResult } from '@shared/freeze-frame'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
 /** The three regions around the preview that can be hidden. The preview itself cannot. */
@@ -355,6 +356,11 @@ export interface EditorActions {
    */
   openSpan(atFrame: Frames, frames: Frames, mode: 'insert' | 'overwrite', trackId?: string): OpenSpanResult | null
   setClipDialog(dialog: ClipDialog | null): void
+  /**
+   * Insert a still of `still` (already imported) at `frame` of `itemId`, opening that much time on
+   * every unlocked track, and add the asset — one undo step. See `@shared/freeze-frame`.
+   */
+  insertFreezeFrame(spec: { itemId: string; frame: Frames; frames: Frames; still: Asset }): FreezeResult | { error: string }
 
   // tracks -------------------------------------------------------------------
   /**

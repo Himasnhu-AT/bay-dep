@@ -162,7 +162,7 @@ export const PASTE_ATTRIBUTES = [
   { id: 'transform', label: 'Transform', detail: 'Position, size, rotation, opacity, crop and their keyframes' },
   { id: 'grade', label: 'Colour grade', detail: 'Wheels, curves, LUT, halation, vignette, grain' },
   { id: 'adjustments', label: 'Adjustments', detail: 'Brightness, contrast, saturation, blur, blend mode' },
-  { id: 'volume', label: 'Volume', detail: 'Level, fades, ducking and volume keyframes' },
+  { id: 'volume', label: 'Volume', detail: 'Level, pan, fades, ducking and volume keyframes' },
   { id: 'speed', label: 'Speed', detail: 'Playback rate' }
 ] as const
 
@@ -207,6 +207,7 @@ export function attributePatch(
     patch.fadeInFrames = Math.min(source.fadeInFrames, target.durationInFrames)
     patch.fadeOutFrames = Math.min(source.fadeOutFrames, target.durationInFrames)
     patch.duck = source.duck ? copy(source.duck) : undefined
+    patch.pan = source.pan
     takeKeys(['volume'])
   }
   if (attributes.has('speed')) patch.speed = source.speed

@@ -140,3 +140,19 @@ test('overwrite refuses a locked track, and works on the unlocked one beside it'
   assert.ok(liftRange(tl, 'v2', 10, 20, makeId))
   assert.equal(playingAt(tl, 'v2', 15), null)
 })
+
+test('a split by insert keeps a J lead on the head and an L trail on the tail only', () => {
+  // The span opened between the halves is a hard cut: the head's sound cannot trail into it, and
+  // the tail's cannot lead into it. Freeze frame opens time through this same function.
+  const tl = timeline([
+    track('v1', [item({ id: 'a', from: 0, durationInFrames: 100, audioLeadFrames: 10, audioTrailFrames: 8 })])
+  ])
+  const result = insertTime(tl, 40, 20, makeId)
+  assert.deepEqual(result.split, [{ headId: 'a', tailId: result.createdItemIds[0] }])
+  const head = tl.tracks[0]!.items.find((i) => i.id === 'a')!
+  const tail = tl.tracks[0]!.items.find((i) => i.id === result.createdItemIds[0])!
+  assert.equal(head.audioLeadFrames, 10)
+  assert.equal(head.audioTrailFrames, undefined)
+  assert.equal(tail.audioLeadFrames, undefined)
+  assert.equal(tail.audioTrailFrames, 8)
+})

@@ -23,6 +23,8 @@ import { sliceKeyframes } from './keyframes'
 export interface OpenSpanResult {
   /** Items the frame fell strictly inside, now two pieces; the ids of the new later pieces. */
   createdItemIds: string[]
+  /** The same splits as pairs: the head keeps its id, the tail is new. */
+  split: { headId: string; tailId: string }[]
   /** Items removed because the overwritten span covered them completely. */
   removedItemIds: string[]
   /** Transitions dropped because the two clips they joined no longer meet. */
@@ -76,7 +78,7 @@ function moveOutgoing(timeline: Timeline, itemId: string, toId: string): void {
 export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId: () => string): OpenSpanResult {
   const start = Math.max(0, Math.round(at))
   const length = Math.round(span)
-  const result: OpenSpanResult = { createdItemIds: [], removedItemIds: [], removedTransitionIds: [], desyncedTrackIds: [] }
+  const result: OpenSpanResult = { createdItemIds: [], split: [], removedItemIds: [], removedTransitionIds: [], desyncedTrackIds: [] }
   if (length <= 0) return result
   const abuttedBefore = abutting(timeline)
 
@@ -108,6 +110,10 @@ export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId:
         keyframes: sliceKeyframes(item.keyframes, headFrames, item.durationInFrames)
       }
       if (!tail.keyframes) delete tail.keyframes
+      // A J lead belongs to the clip's first cut and an L trail to its last; the opened span
+      // between the halves is a hard cut in and out, so each half keeps only its own outer offset.
+      delete tail.audioLeadFrames
+      delete item.audioTrailFrames
       if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, headFrames)
       item.durationInFrames = headFrames
       item.fadeOutFrames = Math.min(item.fadeOutFrames, headFrames)
@@ -115,6 +121,7 @@ export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId:
       moveOutgoing(timeline, item.id, tail.id)
       additions.push(tail)
       result.createdItemIds.push(tail.id)
+      result.split.push({ headId: item.id, tailId: tail.id })
     }
     if (additions.length > 0) track.items.push(...additions)
     track.items.sort((a, b) => a.from - b.from)
@@ -142,7 +149,7 @@ export function liftRange(
   if (!track || track.locked) return null
   const start = Math.max(0, Math.round(from))
   const end = Math.round(to)
-  const result: OpenSpanResult = { createdItemIds: [], removedItemIds: [], removedTransitionIds: [], desyncedTrackIds: [] }
+  const result: OpenSpanResult = { createdItemIds: [], split: [], removedItemIds: [], removedTransitionIds: [], desyncedTrackIds: [] }
   if (end <= start) return result
   const abuttedBefore = abutting(timeline)
 
@@ -155,7 +162,10 @@ export function liftRange(
   // A span strictly inside one clip splits it: the original keeps the head, the new id is the tail.
   const [created] = ripple.createdItemIds
   const [trimmed] = ripple.trimmedItemIds
-  if (created && trimmed && ripple.createdItemIds.length === 1) moveOutgoing(timeline, trimmed, created)
+  if (created && trimmed && ripple.createdItemIds.length === 1) {
+    moveOutgoing(timeline, trimmed, created)
+    result.split.push({ headId: trimmed, tailId: created })
+  }
   result.createdItemIds.push(...ripple.createdItemIds)
   result.removedItemIds.push(...ripple.removedItemIds)
   dropBrokenTransitions(timeline, abuttedBefore, result)

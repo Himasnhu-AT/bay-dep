@@ -678,7 +678,16 @@ const STORE_CASES: Record<string, StoreCase> = {
       state().removeInOutRange()
     }
   },
-  openSpan: { delta: 1, run: () => { state().openSpan(15, 10, 'insert') } }
+  openSpan: { delta: 1, run: () => { state().openSpan(15, 10, 'insert') } },
+  // The still and the insert across every track, one step (`@shared/freeze-frame`).
+  insertFreezeFrame: {
+    delta: 1,
+    run: (f) => {
+      const still: Asset = { ...ASSET, id: 'ast_freeze', kind: 'image', name: 'freeze.png', path: '/g/freeze.png', durationUs: 0, hasAudio: false }
+      const result = state().insertFreezeFrame({ itemId: f.a, frame: 30, frames: 45, still })
+      assert.ok(!('error' in result), JSON.stringify(result))
+    }
+  }
 }
 
 /** Store functions that manage history themselves, so "exactly one entry" does not apply. */

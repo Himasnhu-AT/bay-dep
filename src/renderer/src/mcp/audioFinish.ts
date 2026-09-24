@@ -1,5 +1,5 @@
 /**
- * `edit_item`'s sound-finishing fields — J/L cuts and ducking — validated, and reported back as
+ * `edit_item`'s sound-finishing fields — J/L cuts, ducking and pan — validated, and reported back as
  * they will actually sound.
  *
  * Kept beside `adjustments.ts` rather than inline in `editItem` so the rules live in one place
@@ -16,11 +16,11 @@
 
 import type { AudioDuck, Item, Project, Timeline, Track } from '@shared/project'
 import { findAsset } from '@shared/project'
-import { MAX_DUCK_DB, resolveAudioOffsets } from '@shared/audio-gain'
+import { MAX_DUCK_DB, panGains, resolveAudioOffsets } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
 import { fail, resolveTrack } from './helpers'
 
-type Patch = Pick<Item, 'audioLeadFrames' | 'audioTrailFrames' | 'duck'>
+type Patch = Pick<Item, 'audioLeadFrames' | 'audioTrailFrames' | 'duck' | 'pan'>
 
 function wholeFramesArg(name: string, value: unknown): number {
   const n = Number(value)
@@ -40,7 +40,10 @@ export function audioFinishPatch(
 ): Patch {
   const patch: Patch = {}
   const touches =
-    args.audioLeadFrames !== undefined || args.audioTrailFrames !== undefined || args.duck !== undefined
+    args.audioLeadFrames !== undefined ||
+    args.audioTrailFrames !== undefined ||
+    args.duck !== undefined ||
+    args.pan !== undefined
   if (!touches) return patch
 
   const asset = findAsset(project, item.assetId)
@@ -49,11 +52,30 @@ export function audioFinishPatch(
     (args.audioLeadFrames === undefined || Number(args.audioLeadFrames) === 0) &&
     (args.audioTrailFrames === undefined || Number(args.audioTrailFrames) === 0) &&
     (args.duck === undefined || args.duck === null)
-  if (!clearing && (!asset || !asset.hasAudio)) {
+  const onlyPan =
+    args.audioLeadFrames === undefined && args.audioTrailFrames === undefined && args.duck === undefined
+  if (!clearing && !onlyPan && (!asset || !asset.hasAudio)) {
     fail(
       `Item ${item.id} draws ${asset ? `${asset.name}, which has no audio` : 'a missing asset'}, ` +
         `so a J/L cut or a duck on it would change nothing. These fields apply to clips with sound.`
     )
+  }
+
+  if (args.pan !== undefined) {
+    // A composition may play sounds it declares, and they pan with its clip.
+    const pannable = asset && (asset.hasAudio || asset.kind === 'html')
+    if (!pannable && Number(args.pan) !== 0) {
+      fail(
+        `Item ${item.id} draws ${asset ? `${asset.name}, which has no audio` : 'a missing asset'}, ` +
+          `so a pan on it would change nothing. Pan applies to clips with sound.`
+      )
+    }
+    const pan = Number(args.pan)
+    if (args.pan === null || typeof args.pan === 'boolean' || !Number.isFinite(pan) || pan < -1 || pan > 1) {
+      fail(`pan must be a number from -1 (hard left) through 0 (centre) to 1 (hard right); got ${JSON.stringify(args.pan)}.`)
+    }
+    // Centre is stored as absence, so an unpanned clip carries no field and export writes no filter.
+    patch.pan = pan === 0 ? undefined : pan
   }
 
   if (args.audioLeadFrames !== undefined) {
@@ -140,6 +162,13 @@ export function audioFinishReport(
       }
       for (const reason of offsets.clamped) warnings.push(`J/L cut: ${reason}.`)
     }
+  }
+  // Absent at centre, like the stored field: a report of `pan: 0` would say someone set it.
+  if (typeof item.pan === 'number' && Number.isFinite(item.pan) && item.pan !== 0) {
+    const gains = panGains(item.pan)
+    const db = (gain: number): string => (gain <= 0 ? 'silent' : `${(20 * Math.log10(gain)).toFixed(1)} dB`)
+    report.pan = item.pan
+    report.panGains = `left ${db(gains.left)}, right ${db(gains.right)}`
   }
   if (item.duck) {
     report.duck = { ...item.duck }

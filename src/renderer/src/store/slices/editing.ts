@@ -10,6 +10,7 @@ import { attributePatch, copyClips, pasteClips } from '@shared/clipboard'
 import { applyMoves, clipsUnderPlayhead, planCloseGap, planNudge, planPullBack } from '@shared/editing'
 import { linkedPartners, withLinked } from '@shared/links'
 import { insertTime, liftRange, type OpenSpanResult } from '@shared/insert-edit'
+import { applyFreezeFrame, freezeRefusal, type FreezeResult } from '@shared/freeze-frame'
 import { applyTrackMoves, checkTrackMoves } from '@shared/track-move'
 import { makeTrack, newId, nextTrackName } from '../factory'
 import type { EditorActions } from '../types'
@@ -29,6 +30,7 @@ type Actions = Pick<
   | 'removeInOutRange'
   | 'openSpan'
   | 'setClipDialog'
+  | 'insertFreezeFrame'
 >
 
 /** Fields a patch set to `undefined` are removed, so "no grade" is stored as absence. */
@@ -39,7 +41,7 @@ function assignPatch(item: Item, patch: Partial<Item>): void {
   }
 }
 
-export function editingSlice({ set, get, editTimeline, currentTimeline }: StoreKit): Actions {
+export function editingSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
   return {
     copySelection() {
       const state = get()
@@ -298,6 +300,25 @@ export function editingSlice({ set, get, editTimeline, currentTimeline }: StoreK
 
     setClipDialog(dialog) {
       set({ clipDialog: dialog })
+    },
+
+    insertFreezeFrame({ itemId, frame, frames, still }) {
+      const timeline = currentTimeline()
+      const found = timeline ? findItem(timeline, itemId) : undefined
+      if (!timeline || !found) return { error: 'That clip is no longer on the timeline.' }
+      const refusal = freezeRefusal(timeline, found.item, frame)
+      if (refusal) return { error: refusal }
+      // One `edit()`: the asset and the timeline change land together and undo together.
+      const holder: { value: FreezeResult | null } = { value: null }
+      edit((project) => {
+        if (!project.assets.some((asset) => asset.id === still.id)) project.assets.push(still)
+        const tl = activeTimeline(project)
+        if (tl) holder.value = applyFreezeFrame(tl, { itemId, frame, frames, still }, newId)
+      })
+      const result = holder.value
+      if (!result) return { error: 'That clip is no longer under the playhead.' }
+      set({ selection: [result.freezeItemId] })
+      return result
     }
   }
 }
