@@ -347,7 +347,11 @@ it spawns. Builds are arm64 only, because `node_modules` holds this Mac's ffmpeg
 **An update restarts bay with no arguments.** Squirrel relaunches the bundle as Finder would:
 no `--user-data-dir`, and no environment. A test update from an isolated profile therefore
 relaunches onto the default profile, which is the real user's. Test updates only with builds
-made with `--app-name bay-reltest` (their data lives under that name). The renderer decides
+made with `--app-name bay-reltest`, which keep their data under that name (`main/app-name.ts`).
+That did not work at first. Main's `setName('bay')` overrode the stamped name, and the first
+test build opened the real profile. It was checked in a bare Electron app, never in bay. Now
+check a test build's socket log line before anything else, and run its first launch with
+`CFFIXED_USER_HOME` pointed at a scratch folder, so a wrong name lands there. The renderer decides
 when a restart is safe (`restartPlan`/`runRestart` in `@shared/update`): it saves first, or
 writes the autosave sidecar while locked, and installs only if that succeeded. The update
 channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
