@@ -18,6 +18,12 @@ import editing from './docs/editing.md?raw'
 import script from './docs/script.md?raw'
 import review from './docs/review.md?raw'
 import brf from './docs/brf.md?raw'
+import generation from './docs/generation.md?raw'
+import formatTalkingHead from './docs/format-talking-head.md?raw'
+import formatPodcastClip from './docs/format-podcast-clip.md?raw'
+import formatRanking from './docs/format-ranking.md?raw'
+import formatAd from './docs/format-ad.md?raw'
+import formatExplainer from './docs/format-explainer.md?raw'
 import contract from './docs/compositions/contract.md?raw'
 import minimal from './docs/compositions/minimal-composition.md?raw'
 import dataAttributes from './docs/compositions/data-attributes.md?raw'
@@ -37,6 +43,12 @@ const BODIES: Record<string, string> = {
   'bay://guide/script': script,
   'bay://guide/review': review,
   'bay://guide/brf': brf,
+  'bay://guide/generation': generation,
+  'bay://guide/format/talking-head': formatTalkingHead,
+  'bay://guide/format/podcast-clip': formatPodcastClip,
+  'bay://guide/format/ranking': formatRanking,
+  'bay://guide/format/ad': formatAd,
+  'bay://guide/format/explainer': formatExplainer,
   'bay://guide/composition/contract': contract,
   'bay://guide/composition/minimal': minimal,
   'bay://guide/composition/data-attributes': dataAttributes,

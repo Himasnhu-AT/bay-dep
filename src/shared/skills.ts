@@ -195,7 +195,11 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     body: [
       'Review the edit. Change nothing.',
       '',
-      'Look at frames across the timeline with preview_frame — the start, each cut, the end — and read the structure with read_project. Report what works, and what feels off: framing, pacing, text that is hard to read, anything covering a face. Say plainly that you cannot hear the audio. Finish with the one change you would make first. Change nothing unless the user then asks for a change.'
+      '1. Read the structure with read_project. If there is dialogue, transcribe it (itemId) so the grid shows the words.',
+      '2. Watch it with frame_grid over the whole timeline (or each stretch of a long one), and go through the checklist in bay://guide/review. Look closer at anything doubtful with preview_frame.',
+      '3. Report what works, and what feels off: framing, pacing, B-roll on the wrong line, text that is hard to read or covers a face, black or stray frames at cuts. Say plainly that you cannot hear the audio. Finish with the one change you would make first.',
+      '',
+      'Change nothing unless the user then asks for a change.'
     ].join('\n')
   }
 ]
