@@ -20,6 +20,7 @@ import { isBrfPath } from '@shared/brf'
 import { FONT_EXTENSIONS, isFontPath } from '@shared/fonts'
 import { fontsDir } from '../paths'
 import { importFontFile } from './font-import'
+import { adoptProjectAssets, type Adoption } from './adopt'
 import { thumbnail } from './thumbnails'
 import {
   AUDIO_EXTENSIONS,
@@ -39,14 +40,12 @@ import {
  */
 const byPath = new Map<string, Asset>()
 
-/** Re-seeds the map when a project is opened, so its assets dedupe against new imports. */
-export function adoptAssets(assets: readonly Asset[]): void {
-  for (const asset of assets) {
-    if (!asset.path) continue
-    const absolute = resolve(asset.path)
-    byPath.set(absolute, asset)
-    allowPath(absolute)
-  }
+/**
+ * Admits an opened project's asset paths to `bay://` and re-seeds the dedupe map with them — only
+ * the paths a project may name (`adopt.ts`). A refused path shows as offline media.
+ */
+export function adoptAssets(assets: readonly Asset[]): Adoption {
+  return adoptProjectAssets(assets, byPath, allowPath, fontsDir())
 }
 
 function messageOf(error: unknown): string {
