@@ -196,7 +196,7 @@ export function speedNote(
     return (
       `${nameOf(clamp.itemId)} starts at ${formatFrame(clamp.at)} on ${trackName(clamp.trackId)}, so the clip stops ` +
       `there: ${plan.length} frames instead of ${plan.wanted}, and it plays less of its footage. ` +
-      `Turn on "Push later clips" to make room.`
+      `To make room, use Speed… in the clip’s right-click menu with "Push later clips" on.`
     )
   }
   if (plan.outOfSyncTrackIds.length > 0) {
