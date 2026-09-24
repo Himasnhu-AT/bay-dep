@@ -104,6 +104,7 @@ export function TimelineRuler({
       {/* Time ranges pinned in the agent composer: the stretch the agent has been told to stay
           inside, shown where the user can see it rather than only as a chip in a side panel. */}
       <PinnedRanges pixelsPerFrame={pixelsPerFrame} />
+      <InOutRange pixelsPerFrame={pixelsPerFrame} durationFrames={durationFrames} fps={fps} />
       {markers
         .filter((marker) => marker.frame >= viewStart && marker.frame <= viewEnd)
         .map((marker) => (
@@ -162,5 +163,41 @@ function PinnedRanges({ pixelsPerFrame }: { pixelsPerFrame: number }): ReactNode
         ) : null
       )}
     </>
+  )
+}
+
+/**
+ * The In/Out range (I / O), shaded across the ruler. Either end alone reaches the timeline's edge.
+ * Out is exclusive, so the shade stops where the Out frame begins. Neutral rather than accent, so
+ * it never reads as the agent's pinned range, which is drawn in the same place.
+ */
+function InOutRange({
+  pixelsPerFrame,
+  durationFrames,
+  fps
+}: {
+  pixelsPerFrame: number
+  durationFrames: number
+  fps: number
+}): ReactNode {
+  const rangeIn = useEditor((state) => state.rangeIn)
+  const rangeOut = useEditor((state) => state.rangeOut)
+  if (rangeIn === null && rangeOut === null) return null
+  const from = rangeIn ?? 0
+  const to = rangeOut ?? Math.max(from + 1, durationFrames)
+  const label =
+    `In ${rangeIn === null ? 'start' : formatTimecode(rangeIn, fps, true)} · ` +
+    `Out ${rangeOut === null ? 'end' : formatTimecode(rangeOut, fps, true)}`
+  return (
+    <div
+      data-in-out-range
+      title={`${label}. ⌥X clears.`}
+      aria-label={`In to Out range: ${label}`}
+      className="pointer-events-none absolute inset-y-0 bg-ink-0/10"
+      style={{ left: from * pixelsPerFrame, width: Math.max(1, (to - from) * pixelsPerFrame) }}
+    >
+      {rangeIn !== null && <div aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-ink-1" />}
+      {rangeOut !== null && <div aria-hidden="true" className="absolute inset-y-0 right-0 w-0.5 bg-ink-1" />}
+    </div>
   )
 }

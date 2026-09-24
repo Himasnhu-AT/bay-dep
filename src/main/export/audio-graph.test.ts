@@ -139,6 +139,21 @@ test('a muted track contributes nothing, whichever kind it is', () => {
   assert.equal(buildAudioGraph(project, timeline, 0, 90), null)
 })
 
+test('a disabled clip is not heard in the file, and the enabled one beside it still is', () => {
+  // `disabled` (⇧E) is read through `playableTimeline`, the same view the preview's audio engine
+  // and the compositor take, so a switched-off clip cannot be silent on screen and loud in a file.
+  const off = { ...item({ id: 'i1', assetId: 'a1', trackId: 't1', from: 0, durationInFrames: 90 }), disabled: true }
+  const on = item({ id: 'i2', assetId: 'a2', trackId: 't1', from: 90, durationInFrames: 90 })
+  const { project, timeline } = projectWith(
+    [track('t1', 'audio', [off, on])],
+    [asset('a1', '/off.wav'), asset('a2', '/on.wav')]
+  )
+  assert.deepEqual(buildAudioGraph(project, timeline, 0, 180)?.inputs, ['/on.wav'])
+  // Positive control: enabled again, it is heard.
+  delete (off as { disabled?: boolean }).disabled
+  assert.deepEqual(buildAudioGraph(project, timeline, 0, 180)?.inputs, ['/off.wav', '/on.wav'])
+})
+
 test("a video track's own audio is mixed, because that is where dialogue lives", () => {
   // The renderer's audio engine walks every track rather than going through `itemsAtFrame`,
   // which filters by kind. Export has to agree or most real edits lose their dialogue.

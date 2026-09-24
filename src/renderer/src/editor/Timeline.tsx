@@ -16,6 +16,7 @@ import { JunctionMarkers } from './JunctionMarkers'
 import { TransitionDialog } from './TransitionDialog'
 import { TimelineRuler } from './TimelineRuler'
 import { TrackHeader } from './TrackHeader'
+import { ClipDialogs, clipMenuEntries } from './ClipCommands'
 
 /** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
 const NO_MARKERS: readonly Marker[] = []
@@ -129,8 +130,9 @@ export function Timeline(): ReactNode {
   /** Snaps to the origin, the playhead, every other clip's two edges, markers and beats (`lib/snap`). */
   const snap = useCallback(
     (frame: number, ignore: Set<string>): number => {
-      if (!timeline) return Math.round(frame)
       const state = useEditor.getState()
+      // Snapping off (N) rounds to the frame; ⌘ during a drag suspends it either way.
+      if (!timeline || !state.snapping) return Math.round(frame)
       return snapFrame(frame, snapTargets(state.project, timeline, state.playhead, ignore), SNAP_PX / pixelsPerFrame)
     },
     [timeline, pixelsPerFrame]
@@ -280,10 +282,11 @@ export function Timeline(): ReactNode {
           store.moveItem(
             item.id,
             item.from + current.deltaFrames,
-            item.id === current.itemIds[0] ? current.targetTrackId : undefined
+            item.id === current.itemIds[0] ? current.targetTrackId : undefined,
+            { linked: store.linkedSelection }
           )
           moved.add(item.id)
-          for (const partner of linkedPartners(timeline, item.id)) moved.add(partner.id)
+          if (store.linkedSelection) for (const partner of linkedPartners(timeline, item.id)) moved.add(partner.id)
         }
       })
     },
@@ -311,13 +314,13 @@ export function Timeline(): ReactNode {
       const current = trim
       setTrim(null)
       if (!current) return
-      useEditor
-        .getState()
-        .trimItem(
-          current.itemId,
-          current.edge,
-          current.edge === 'start' ? current.from : current.from + current.durationInFrames
-        )
+      const store = useEditor.getState()
+      store.trimItem(
+        current.itemId,
+        current.edge,
+        current.edge === 'start' ? current.from : current.from + current.durationInFrames,
+        { linked: store.linkedSelection }
+      )
     },
     onClick: () => setTrim(null)
   })
@@ -409,7 +412,7 @@ export function Timeline(): ReactNode {
       }
       // Linked selection: a picture and its detached sound select, and so drag, together.
       if (!store.selection.includes(item.id)) {
-        store.select(timeline ? withLinked(timeline, [item.id]) : [item.id])
+        store.select(timeline && store.linkedSelection ? withLinked(timeline, [item.id]) : [item.id])
       }
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
@@ -450,7 +453,7 @@ export function Timeline(): ReactNode {
     const store = useEditor.getState()
     const current = selectTimeline(store)
     if (!store.selection.includes(item.id)) {
-      store.select(current ? withLinked(current, [item.id]) : [item.id])
+      store.select(current && store.linkedSelection ? withLinked(current, [item.id]) : [item.id])
     }
     setMenu({ itemId: item.id, x: event.clientX, y: event.clientY })
   }, [])
@@ -502,7 +505,14 @@ export function Timeline(): ReactNode {
 
   return (
     <div ref={panelRef} className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1">
-      <div ref={scrollRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-auto">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        // Found by Zoom to Fit (⇧Z), which needs the lanes' visible width.
+        data-timeline-scroller=""
+        data-lane-offset={HEADER_WIDTH}
+        className="relative min-h-0 flex-1 overflow-auto"
+      >
         <div className="relative" style={{ width: HEADER_WIDTH + contentWidth, minHeight: '100%' }}>
           <div className="sticky top-0 z-[35] flex">
             <div
@@ -720,11 +730,15 @@ export function Timeline(): ReactNode {
         onClose={() => setMenu(null)}
         label="Clip"
         items={[
+          ...(menuItem && menu ? clipMenuEntries(menuItem, menu) : []),
+          { kind: 'separator' },
           { label: 'Detach audio', disabled: !canDetach, onSelect: () => runMenu('detach') },
           { label: 'Unlink', disabled: !menuLinked, onSelect: () => runMenu('unlink') },
           { label: 'Reattach audio', disabled: !canReattach, onSelect: () => runMenu('reattach') }
         ]}
       />
+
+      <ClipDialogs />
 
       <TransitionDialog
         junction={openJunction}

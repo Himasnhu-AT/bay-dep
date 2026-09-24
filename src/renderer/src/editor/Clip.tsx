@@ -217,7 +217,7 @@ function ClipImpl({
     <div
       role="option"
       aria-selected={selected}
-      aria-label={asset?.name ?? 'Missing media'}
+      aria-label={`${asset?.name ?? 'Missing media'}${item.disabled ? ' (disabled)' : ''}`}
       onPointerDown={(event) => {
         // A right-click opens the menu; it must not also start a drag.
         if (event.button !== 0) return
@@ -240,7 +240,9 @@ function ClipImpl({
         'group absolute overflow-hidden rounded-sm border select-none',
         locked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing',
         selected && 'ring-1 ring-accent',
-        dragging && 'z-10 opacity-85 shadow-pop'
+        dragging && 'z-10 opacity-85 shadow-pop',
+        // Disabled (⇧E): still on the timeline, drawn and heard nowhere.
+        item.disabled && !dragging && 'opacity-40'
       )}
     >
       {asset && !audio && showThumbs && (

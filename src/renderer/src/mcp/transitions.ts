@@ -20,7 +20,7 @@
 
 import { findItem, resolveTransition, type Transition } from '@shared/project'
 import { resolveId } from '@shared/mcp'
-import { roomAt, whyInactive } from '@/lib/junctions'
+import { defaultTransitionFrames, roomAt, whyInactive } from '@/lib/junctions'
 import { fail, project, resolveItem, store, timeline, type Handlers } from './helpers'
 
 /**
@@ -84,7 +84,7 @@ export function addTransition(args: Record<string, unknown>): Record<string, unk
   // the choice an editor makes anyway, and it means the common call is `{ from, to, kind }`.
   let durationInFrames: number
   if (args.durationInFrames === undefined) {
-    durationInFrames = Math.min(Math.round(timeline().fps), Math.max(2, room.capacityInFrames))
+    durationInFrames = defaultTransitionFrames(room, timeline().fps)
   } else {
     durationInFrames = Math.round(Number(args.durationInFrames))
     if (!Number.isFinite(durationInFrames) || durationInFrames < 2) {

@@ -591,7 +591,66 @@ const STORE_CASES: Record<string, StoreCase> = {
   // Pins steer the agent; they are not edits to the project.
   addAgentPin: { delta: 0, run: () => state().addAgentPin({ kind: 'range', fromFrame: 0, toFrame: 30 }) },
   removeAgentPin: { delta: 0, run: () => state().removeAgentPin('range:0-30') },
-  clearAgentPins: { delta: 0, run: () => state().clearAgentPins() }
+  clearAgentPins: { delta: 0, run: () => state().clearAgentPins() },
+
+  // The keyboard editing verbs (slices/editing.ts) and the view state beside them.
+  setRangeIn: { delta: 0, run: () => state().setRangeIn(10) },
+  setRangeOut: { delta: 0, run: () => state().setRangeOut(20) },
+  clearRange: { delta: 0, run: () => state().clearRange() },
+  setSnapping: { delta: 0, run: () => state().setSnapping(false) },
+  toggleSnapping: { delta: 0, run: () => state().toggleSnapping() },
+  toggleLinkedSelection: { delta: 0, run: () => state().toggleLinkedSelection() },
+  toggleLoop: { delta: 0, run: () => state().toggleLoop() },
+  setClipDialog: { delta: 0, run: () => state().setClipDialog({ kind: 'pasteAttributes' }) },
+  copySelection: { delta: 0, run: (f) => { state().select([f.a, f.c]); state().copySelection() } },
+  cutSelection: { delta: 1, run: (f) => { state().select([f.a, f.c, f.d]); state().cutSelection() } },
+  paste: {
+    delta: 1,
+    run: (f) => {
+      state().select([f.a, f.c, f.d])
+      state().copySelection()
+      state().setPlayhead(120)
+      assert.equal(state().paste().length, 3)
+    }
+  },
+  pasteAttributes: {
+    delta: 1,
+    run: (f) => {
+      state().select([f.a])
+      state().copySelection()
+      state().clipboard!.items[0]!.layout.left = 77
+      state().select([f.b, f.c])
+      assert.equal(state().pasteAttributes(['transform']), 2)
+    }
+  },
+  toggleDisabled: { delta: 1, run: (f) => state().toggleDisabled([f.a, f.c, f.d]) },
+  nudgeSelection: { delta: 1, run: (f) => { state().select([f.c, f.d]); assert.ok(state().nudgeSelection(10)) } },
+  closeGapAt: {
+    delta: 1,
+    run: (f) => {
+      state().trimItem(f.a, 'end', 40)
+      const before = past()
+      const result = state().closeGapAt(f.v1, 50)
+      assert.ok(!('error' in result), JSON.stringify(result))
+      assert.equal(past() - before, 1)
+    }
+  },
+  trimToPlayhead: {
+    delta: 1,
+    run: (f) => {
+      state().setPlayhead(30)
+      state().select([f.a, f.c, f.d])
+      state().trimToPlayhead('start', true)
+    }
+  },
+  removeInOutRange: {
+    delta: 1,
+    run: () => {
+      state().setRangeIn(10)
+      state().setRangeOut(20)
+      state().removeInOutRange()
+    }
+  }
 }
 
 /** Store functions that manage history themselves, so "exactly one entry" does not apply. */
@@ -641,7 +700,8 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'moveMarker',
       'removeMarker',
       'reattachAudio',
-      'unlinkItems'
+      'unlinkItems',
+      'closeGapAt'
     ]
     if (!selfMeasured.includes(action)) {
       assert.equal(
