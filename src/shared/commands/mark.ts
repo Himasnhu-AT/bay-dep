@@ -1,7 +1,7 @@
 import { SEPARATOR, type CommandEntry } from './types'
 
 /**
- * Mark: markers and the In/Out range. Out is exclusive (`rangeOut` is the first frame after the
+ * Mark: markers, review comments and the In/Out range. Out is exclusive (`rangeOut` is the first frame after the
  * range), so going to the next edit and pressing O marks exactly up to that cut.
  */
 export const markCommands = [
@@ -12,6 +12,8 @@ export const markCommands = [
     group: 'Mark',
     shortcut: 'Shift+M'
   },
+  // ⌥M: next to M, because a comment is a marker that asks for something.
+  { id: 'mark.addComment', label: 'Add Comment at Playhead', group: 'Mark', shortcut: 'Alt+M' },
   SEPARATOR,
   { id: 'mark.setIn', label: 'Set In', group: 'Mark', shortcut: 'I' },
   { id: 'mark.setOut', label: 'Set Out', group: 'Mark', shortcut: 'O' },

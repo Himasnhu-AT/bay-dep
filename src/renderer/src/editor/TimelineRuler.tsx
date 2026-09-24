@@ -3,6 +3,7 @@ import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
 import { RulerMarkers } from './TimelineMarkers'
+import { RulerComments } from './TimelineComments'
 
 /** A label starts this far right of its tick (`left-1`). */
 const LABEL_INSET = 4
@@ -136,6 +137,9 @@ export function TimelineRuler({
         viewStart={viewStart}
         viewEnd={viewEnd}
       />
+      {/* Review comments share the strip as round pins, after the flags so an open note on a
+          marker's frame is the one on top. */}
+      <RulerComments fps={fps} pixelsPerFrame={pixelsPerFrame} viewStart={viewStart} viewEnd={viewEnd} />
       {ticks.map((frame) => {
         const major = frame % labelStep === 0
         return (

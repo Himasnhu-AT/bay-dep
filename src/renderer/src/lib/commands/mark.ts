@@ -1,4 +1,5 @@
 import { selectTimeline } from '@/store/editor'
+import { requestCommentComposer } from '@/lib/commentComposer'
 import type { CommandContext, Handlers } from './types'
 
 const inEditor = ({ state }: CommandContext): boolean => state.screen === 'editor'
@@ -18,6 +19,14 @@ export const markHandlers = {
       state.transact(() => {
         for (const marker of here) state.removeMarker(marker.id)
       })
+    }
+  },
+  // Opens the toolbar's Comments popover on a new note at the playhead: a comment is its words,
+  // so there is nothing to add until they are typed.
+  'mark.addComment': {
+    when: inEditor,
+    run: ({ state }) => {
+      if (!requestCommentComposer()) state.notify('Open the timeline to add a comment.')
     }
   },
   'mark.setIn': { when: inEditor, run: ({ state }) => state.setRangeIn(state.playhead) },

@@ -6,6 +6,7 @@ import { runCommand } from '@/lib/commands'
 import { useEditor } from '@/store/editor'
 import { useTimelineTool } from '@/lib/timelineTool'
 import { MarkerListButton } from './TimelineMarkers'
+import { CommentListButton } from './TimelineComments'
 
 /** The store's zoom range (`setPixelsPerFrame` clamps to it); the slider is logarithmic across it. */
 const MIN_PPF = 0.05
@@ -73,6 +74,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
       />
       <Separator />
       <MarkerListButton fps={fps} />
+      <CommentListButton fps={fps} />
 
       <div className="ml-auto flex items-center gap-0.5">
         <IconButton
