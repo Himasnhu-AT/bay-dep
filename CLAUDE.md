@@ -237,6 +237,20 @@ within a second, the newest queued capture is served first, stale ones are dropp
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
 
+**A media load that failed is retried under a new URL, with CORS** (`mediaRetry.ts`). Chromium
+remembers a failed load per URL and CORS mode. A `bay://` path refused before it was allowlisted
+kept failing after the allowlist, even on a fresh element. Meanwhile `fetch` of that URL answered
+200. So the same-URL retry could never work, and dropping CORS "worked" only by changing the key,
+into a load that plays silence. `test/app/audio-soak.mjs` reproduces the race: before the fix,
+every forced iteration was silent; after it, none were.
+
+**A GUI probe must never send a global keystroke or trust Accessibility for window presence**
+(`test/app/menu.mjs`, `test/app/README.md`). Accessibility lists only the active Space. With
+another app full screen, bay has "0 windows". `key code 53` lands in whatever app is in front,
+and it once landed in the user's chat app while they were typing. Use the window server's list
+(`CGWindowListCopyWindowInfo`), and send a key only after re-checking `frontmost` in the same
+script.
+
 **A cut during playback is prepared before the playhead reaches it** (`Compositor.preroll`,
 `engine/pictureHold.ts`, `test/app/cut-playback.mjs`). Every cut played one black picture, cold
 and warm, graded or not: the incoming clip's element was first told where to be by the draw *at*
