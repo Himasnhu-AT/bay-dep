@@ -11,23 +11,19 @@
  * where a caption or a logo that is being checked would be.
  */
 
-import { DEFAULT_GRID_CELLS, gridFrames, gridLayout, LABEL_HEIGHT, MAX_GRID_CELLS, spokenAround } from '@shared/frame-grid'
+import { cellWait, DEFAULT_GRID_CELLS, gridFrames, gridLayout, LABEL_HEIGHT, MAX_GRID_CELLS, spokenAround } from '@shared/frame-grid'
 import { findAsset, formatTimecode, itemsAtFrame, sourceTimeAt, timelineDuration, US_PER_SECOND, type Asset, type Project, type Timeline } from '@shared/project'
 import type { TranscriptSegment } from '@shared/transcribe'
-import { MediaPool, renderFrame } from '@/engine'
+import { DEFAULT_SOURCE_TIMEOUT_MS, MediaPool, renderFrame } from '@/engine'
 import { fail, project, resolveAsset, timeline, type Handlers } from './helpers'
-import { cachedTranscript } from './transcribe'
+import { anyTranscriptFor } from './transcribe'
 
 const GRID_TIMELINE_ID = 'frame-grid'
 
-/** A transcript this session already has for `path`, under the languages a transcription is usually run with. */
+/** A transcript this session already has for `path`, in whatever language and by whatever model. */
 function transcriptOf(path: string | null): readonly TranscriptSegment[] | null {
   if (!path) return null
-  for (const language of [undefined, 'auto']) {
-    const found = cachedTranscript(path, language)
-    if (found) return found.segments
-  }
-  return null
+  return anyTranscriptFor(path)?.segments ?? null
 }
 
 interface Cell {
@@ -178,6 +174,26 @@ function fit(ctx: CanvasRenderingContext2D, text: string, width: number): string
   return `${cut}…`
 }
 
+/** The sentence for cells that do not show what an export would: late ones first, since nothing else names them. */
+function gridWarning(incomplete: readonly { missing: string[]; late?: true }[], total: number, late: number): string {
+  const missing = [...new Set(incomplete.flatMap((c) => c.missing))]
+  const parts: string[] = []
+  if (late > 0) {
+    parts.push(
+      `${late} of ${total} cells were drawn without waiting for their media, because the grid ran out of time ` +
+        '— they may show black or stale pictures. Ask for fewer cells (count) or a shorter stretch.'
+    )
+  }
+  const short = incomplete.length - late
+  if (short > 0) {
+    parts.push(
+      `${short} of ${total} cells are missing items (${missing.join(', ') || 'unnamed'}), so those cells do not show what an export would. ` +
+        'Call frame_grid again in a moment if media was loading, or check browse_assets.'
+    )
+  }
+  return parts.join(' ')
+}
+
 export async function frameGrid(args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const { source, tl, cells, describe } = plan(args)
   const layout = gridLayout(cells.length, tl.width / Math.max(1, tl.height))
@@ -193,12 +209,17 @@ export async function frameGrid(args: Record<string, unknown>): Promise<Record<s
   // One pool for every cell: the grid owns it and nothing else draws from it, and a pool per
   // cell would open every video again for each of up to 36 stills.
   const pool = new MediaPool({ maxVideoElements: 8 })
-  const incomplete: { frame: number; missing: string[] }[] = []
+  const incomplete: { frame: number; missing: string[]; late?: true }[] = []
   const textWarnings = new Set<string>()
+  // One deadline for the whole grid: 36 cells each allowed the full per-source wait would outlast
+  // the tool's own timeout, and the caller would get nothing instead of a grid with gaps marked.
+  const began = performance.now()
+  let late = 0
   try {
     for (const [index, cell] of cells.entries()) {
       const x = (index % layout.columns) * layout.cellWidth
       const y = Math.floor(index / layout.columns) * (layout.cellHeight + LABEL_HEIGHT)
+      const wait = cellWait(performance.now() - began, DEFAULT_SOURCE_TIMEOUT_MS)
       let still
       try {
         still = await renderFrame({
@@ -207,13 +228,19 @@ export async function frameGrid(args: Record<string, unknown>): Promise<Record<s
           frame: cell.frame,
           maxSize: Math.max(layout.cellWidth, layout.cellHeight),
           format: 'png',
-          pool
+          pool,
+          timeoutMs: wait.timeoutMs
         })
       } catch (error) {
         fail(`Frame ${cell.frame} could not be rendered: ${error instanceof Error ? error.message : String(error)}`)
       }
       ctx.drawImage(await loadImage(still.dataUrl), x, y, layout.cellWidth, layout.cellHeight)
-      if (still.pending > 0 || still.placeholders > 0) incomplete.push({ frame: cell.frame, missing: still.unresolved })
+      if (wait.late) {
+        late++
+        incomplete.push({ frame: cell.frame, missing: still.unresolved, late: true })
+      } else if (still.pending > 0 || still.placeholders > 0) {
+        incomplete.push({ frame: cell.frame, missing: still.unresolved })
+      }
       for (const t of still.textFits ?? []) {
         if (t.clipped) textWarnings.add(`${t.itemId}: cut off — does not fit its box.`)
         else if (!t.fontAvailable) textWarnings.add(`${t.itemId}: its font is not installed, so another was substituted.`)
@@ -244,14 +271,7 @@ export async function frameGrid(args: Record<string, unknown>): Promise<Record<s
       image,
       ...(labelled === 0 ? { words: 'No transcript is cached for these sources this session — call transcribe on the clip to label the cells with what is said.' } : {}),
       ...(textWarnings.size > 0 ? { textWarnings: [...textWarnings] } : {}),
-      ...(incomplete.length > 0
-        ? {
-            incomplete,
-            warning:
-              `${incomplete.length} of ${cells.length} cells are missing items (${[...new Set(incomplete.flatMap((c) => c.missing))].join(', ')}), ` +
-              'so those cells do not show what an export would. Call frame_grid again in a moment if media was loading, or check browse_assets.'
-          }
-        : {})
+      ...(incomplete.length > 0 ? { incomplete, warning: gridWarning(incomplete, cells.length, late) } : {})
     }
   } finally {
     pool.dispose()

@@ -1,6 +1,6 @@
 import type { ToolSpec } from './spec'
 import { frames } from './fields'
-import { DEFAULT_GRID_CELLS, MAX_GRID_CELLS } from '../frame-grid'
+import { DEFAULT_GRID_CELLS, GRID_TOOL_TIMEOUT_MS, MAX_GRID_CELLS } from '../frame-grid'
 
 export const order = 72
 
@@ -18,7 +18,7 @@ export const tool: ToolSpec = {
     'get them.',
   category: 'read',
   readOnly: true,
-  timeoutMs: 3 * 60_000,
+  timeoutMs: GRID_TOOL_TIMEOUT_MS,
   inputSchema: {
     type: 'object',
     properties: {

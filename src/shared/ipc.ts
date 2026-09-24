@@ -40,6 +40,14 @@ export interface SceneCut {
   score: number
 }
 
+/** scdet's default threshold: a score (0–100) above it is a cut. */
+export const DEFAULT_CUT_THRESHOLD = 10
+
+/** The threshold scdet is run with for one asked for: it takes 1–100. The one place the range lives. */
+export function clampCutThreshold(threshold: number): number {
+  return Math.min(100, Math.max(1, threshold))
+}
+
 /** What ffprobe told us about a file, before it becomes an Asset. */
 export interface ProbeResult {
   path: string

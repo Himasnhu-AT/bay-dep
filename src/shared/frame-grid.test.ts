@@ -1,7 +1,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { gridFrames, gridLayout, LABEL_HEIGHT, MAX_GRID_CELLS, MAX_GRID_EDGE, spokenAround } from './frame-grid'
+import { cellWait, GRID_DEADLINE_MS, GRID_TOOL_TIMEOUT_MS, gridFrames, gridLayout, LABEL_HEIGHT, MAX_GRID_CELLS, MAX_GRID_EDGE, spokenAround } from './frame-grid'
 import type { TranscriptSegment } from './transcribe'
+
+test('cellWait: full waits early, shorter ones near the deadline, none past it — and those cells are late', () => {
+  assert.deepEqual(cellWait(0, 5000), { timeoutMs: 5000, late: false })
+  // 16 s left: 1 s per wait, so a still that waits every way it can still ends near the deadline.
+  assert.deepEqual(cellWait(GRID_DEADLINE_MS - 16_000, 5000), { timeoutMs: 1000, late: false })
+  assert.deepEqual(cellWait(GRID_DEADLINE_MS, 5000), { timeoutMs: 0, late: true })
+  assert.deepEqual(cellWait(GRID_DEADLINE_MS + 60_000, 5000), { timeoutMs: 0, late: true })
+  // The deadline leaves the grid time to compose and answer inside the tool's own timeout.
+  assert.ok(GRID_DEADLINE_MS < GRID_TOOL_TIMEOUT_MS)
+  // 36 cells at the full per-source wait, several waits each, would not fit — the reason for the deadline.
+  assert.ok(MAX_GRID_CELLS * 5000 * 2 > GRID_TOOL_TIMEOUT_MS)
+})
 
 test('gridFrames takes the middle of equal slices, never the range ends', () => {
   // 0..119 in 12 slices of 10: the middles are 5, 15, … 115.

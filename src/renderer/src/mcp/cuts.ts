@@ -2,13 +2,12 @@
  * `detect_cuts` — shot changes inside a video file.
  *
  * The detection runs in main (`media/scene-cuts.ts`, ffmpeg's `scdet`); this adapter decides
- * which file and maps the cuts onto the timeline. The mapping is `timelineFrameAt`, the same one
- * `detect_beats` uses, so a cut's frame here is the frame `split_at` needs to land on it.
+ * which file and maps the cuts onto the timeline. The mapping is `cutFrameOnItem`: the first frame
+ * of the new shot, so a cut's frame here is the frame `split_at` needs to land on it.
  */
 
-import { timelineFrameAt } from '@shared/beats'
-import type { SceneCut } from '@shared/ipc'
-import { allItems, findAsset, type Asset, type Item } from '@shared/project'
+import { clampCutThreshold, DEFAULT_CUT_THRESHOLD, type SceneCut } from '@shared/ipc'
+import { allItems, effectiveSpeed, findAsset, itemEnd, US_PER_SECOND, type Asset, type Item } from '@shared/project'
 import { bay } from '@/lib/bay'
 import { fail, project, resolveAsset, resolveItem, timeline, ToolError, type Handlers } from './helpers'
 
@@ -23,11 +22,26 @@ async function cutsOf(asset: Asset, threshold: number | undefined): Promise<Scen
   return result.cuts
 }
 
+/**
+ * The timeline frame a shot change starts on: the FIRST frame whose source time is at or after
+ * the cut. Nearest (the beat mapping, `timelineFrameAt`) is right for a beat, which is a moment;
+ * a cut is a boundary, and rounding down to a frame before it puts the old shot's last picture
+ * after the split — a one-frame flash of the wrong shot. The epsilon keeps a cut that lands
+ * exactly on a frame (2 s at 30 fps is 60.000000001 after the float division) on that frame.
+ * Null when the clip does not play it.
+ */
+export function cutFrameOnItem(item: Item, us: number, fps: number): number | null {
+  if (us < item.sourceStartUs) return null
+  const elapsedSeconds = (us - item.sourceStartUs) / effectiveSpeed(item.speed) / US_PER_SECOND
+  const frame = item.from + Math.ceil(elapsedSeconds * fps - 1e-6)
+  return frame < itemEnd(item) ? frame : null
+}
+
 /** The cuts a placed clip plays, as timeline frames. A cut on the clip's first frame is its own edit, not one inside it. */
 export function cutsOnItem(cuts: readonly SceneCut[], item: Item, fps: number): { frame: number; seconds: number; score: number }[] {
   const out: { frame: number; seconds: number; score: number }[] = []
   for (const cut of cuts) {
-    const frame = timelineFrameAt(item, cut.us, fps)
+    const frame = cutFrameOnItem(item, cut.us, fps)
     if (frame === null || frame <= item.from) continue
     out.push({ frame, seconds: seconds(cut.us), score: cut.score })
   }
@@ -48,7 +62,8 @@ export async function detectCuts(args: Record<string, unknown>): Promise<Record<
 
   const cuts = await cutsOf(asset, threshold)
   const fps = timeline().fps
-  const base = { asset: asset.name, threshold: threshold ?? 10 }
+  // The threshold scdet actually ran with: main clamps to 1–100, so a 0 or 250 asked for is not what was used.
+  const base = { asset: asset.name, threshold: threshold === undefined ? DEFAULT_CUT_THRESHOLD : clampCutThreshold(threshold) }
 
   if (found) {
     const onClip = cutsOnItem(cuts, found.item, fps)

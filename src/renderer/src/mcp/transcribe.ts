@@ -42,6 +42,22 @@ export function cachedTranscript(path: string, language?: string): Transcript | 
   return settled.get(keyOf(path, language))
 }
 
+/**
+ * Any transcript this session has for `path`, whatever language or model made it — for labels
+ * (`frame_grid`), where words from a French transcription or last model are still the words said.
+ * Prefers the one `cachedTranscript` would return, then the newest. Never runs whisper.
+ */
+export function anyTranscriptFor(path: string): Transcript | undefined {
+  const preferred = cachedTranscript(path)
+  if (preferred) return preferred
+  let newest: Transcript | undefined
+  for (const [key, transcript] of settled) {
+    const [keyPath] = JSON.parse(key) as [string, string, unknown]
+    if (keyPath === path) newest = transcript
+  }
+  return newest
+}
+
 /** Called whenever a transcript arrives. Returns the unsubscribe. */
 export function onTranscript(listener: () => void): () => void {
   listeners.add(listener)

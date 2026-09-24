@@ -30,7 +30,7 @@ function make(name: string, withAudio: boolean, seconds: number): string {
   return out
 }
 
-const TWO_SECONDS = { video: true, audio: true, durationUs: 2_000_000 }
+const TWO_SECONDS = { video: true, audio: true, durationUs: 2_000_000, fps: 30 }
 
 test('a clean file with picture and sound has no findings', { skip: SKIP }, async () => {
   assert.deepEqual(await deliveredFindings(make('clean.mov', true, 2), TWO_SECONDS), [])

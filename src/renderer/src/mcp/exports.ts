@@ -202,10 +202,9 @@ export function exportStatus(
   incomplete: IncompleteFrames | null
 ): Record<string, unknown> {
   const finished = ['done', 'failed', 'cancelled'].includes(progress.stage)
-  const findings = progress.stage === 'done' ? doneFindings(progress, incomplete) : null
   // Main's read-back of the file is the only thing that can say it lacks audio or runs short;
-  // the frames' own faults are known only here. Either kind makes the export not complete.
-  const delivered = progress.findings ?? []
+  // the frames' own faults are known only here. Any blocking one makes the export not complete.
+  const findings = progress.stage === 'done' ? doneFindings(progress, incomplete) : null
   return {
     jobId: progress.jobId,
     stage: progress.stage,
@@ -255,9 +254,11 @@ export function exportStatus(
           },
           warning: incomplete.message
         }
-      : progress.stage === 'done'
-        ? hasBlocking(delivered)
-          ? { complete: false, warning: delivered.find((f) => f.severity === 'blocking')!.message }
+      : findings
+        ? // Every blocking finding, not only main's: a zero-frame export has no read-back fault
+          // and is still not done.
+          hasBlocking(findings)
+          ? { complete: false, warning: findings.find((f) => f.severity === 'blocking')!.message }
           : { complete: true }
         : {})
   }
