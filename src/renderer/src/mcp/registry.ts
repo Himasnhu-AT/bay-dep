@@ -12,10 +12,12 @@ import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
 import { handlers as frameGridHandlers } from './frameGrid'
 import { handlers as generationHandlers } from './generation'
+import { handlers as highlightsHandlers } from './highlights'
 import { handlers as linksHandlers } from './links'
 import { handlers as markersHandlers } from './markers'
 import { handlers as previewHandlers } from './preview'
 import { handlers as projectsHandlers } from './projects'
+import { handlers as promptKitsHandlers } from './promptKits'
 import { handlers as proposalsHandlers } from './proposals'
 import { handlers as readHandlers } from './read'
 import { handlers as scriptHandlers } from './script'
@@ -24,6 +26,7 @@ import { handlers as templatesHandlers } from './templates'
 import { handlers as transcribeHandlers } from './transcribe'
 import { handlers as transitionsHandlers } from './transitions'
 import { handlers as trimHandlers } from './trim'
+import { handlers as urlImportHandlers } from './urlImport'
 import { handlers as writeHandlers } from './write'
 
 /** Each module’s handlers, separately, so a tool claimed twice can be found. */
@@ -38,10 +41,12 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'feedback': feedbackHandlers,
   'frameGrid': frameGridHandlers,
   'generation': generationHandlers,
+  'highlights': highlightsHandlers,
   'links': linksHandlers,
   'markers': markersHandlers,
   'preview': previewHandlers,
   'projects': projectsHandlers,
+  'promptKits': promptKitsHandlers,
   'proposals': proposalsHandlers,
   'read': readHandlers,
   'script': scriptHandlers,
@@ -50,6 +55,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'transcribe': transcribeHandlers,
   'transitions': transitionsHandlers,
   'trim': trimHandlers,
+  'urlImport': urlImportHandlers,
   'write': writeHandlers,
 }
 
@@ -65,10 +71,12 @@ export const HANDLERS: Handlers = {
   ...feedbackHandlers,
   ...frameGridHandlers,
   ...generationHandlers,
+  ...highlightsHandlers,
   ...linksHandlers,
   ...markersHandlers,
   ...previewHandlers,
   ...projectsHandlers,
+  ...promptKitsHandlers,
   ...proposalsHandlers,
   ...readHandlers,
   ...scriptHandlers,
@@ -77,5 +85,6 @@ export const HANDLERS: Handlers = {
   ...transcribeHandlers,
   ...transitionsHandlers,
   ...trimHandlers,
+  ...urlImportHandlers,
   ...writeHandlers,
 }

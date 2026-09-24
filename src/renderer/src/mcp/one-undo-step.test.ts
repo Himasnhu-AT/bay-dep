@@ -191,7 +191,9 @@ function importedAsset(path: string): ImportedAsset {
 ;(globalThis as { window?: unknown }).window = {
   bay: {
     media: {
-      importPaths: async (paths: string[]) => paths.map(importedAsset)
+      importPaths: async (paths: string[]) => paths.map(importedAsset),
+      // import_url's download is main's; here it has already landed.
+      importUrl: async () => ({ ok: true, path: '/downloads/one/talk [abc].mp4', ytDlp: '/opt/homebrew/bin/yt-dlp' })
     },
     composition: {
       write: async () => ({ ok: true }),
@@ -305,6 +307,19 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     }
   ],
   add_marker: [{ delta: 1, args: () => ({ frame: 45, label: 'Beat' }) }],
+  import_url: [{ delta: 1, args: () => ({ url: 'https://video.example/watch?v=abc' }) }],
+  // Two picks, each a start and an end marker: four markers, one step.
+  mark_highlights: [
+    {
+      delta: 1,
+      args: () => ({
+        highlights: [
+          { title: 'Opening', fromFrame: 0, toFrame: 40 },
+          { title: 'Answer', fromFrame: 60, toFrame: 110 }
+        ]
+      })
+    }
+  ],
   set_canvas: [{ delta: 1, args: () => ({ preset: 'vertical-1080' }) }],
   remove_marker: [
     {

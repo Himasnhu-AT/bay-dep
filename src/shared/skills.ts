@@ -189,6 +189,26 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     ].join('\n')
   },
   {
+    slug: 'highlights',
+    title: 'Find Highlights',
+    description: 'Use when the user wants the best moments of a long talk, podcast or interview found — marked on the timeline, cut into a highlight reel, or pulled out as shorts.',
+    body: [
+      'Find the moments in a long recording that work as short clips on their own, and mark or cut them.',
+      '',
+      '1. Read the timeline (read_project) and find the speech clip. If the user named a length, a number of clips or a focus (viral moments, or complete knowledge points), use it; otherwise 3 clips of 30–60 seconds, balanced. If they pinned a time range, work only inside it.',
+      '2. Call find_highlights with the clip\'s itemId (and fromFrame/toFrame for a range, and focus, genre, count, minSeconds, maxSeconds). It transcribes on this Mac if needed (reusing a transcript from this session) and returns numbered sentences with their frames, plus the rubric. Tell the user if it is transcribing; a first run may download a speech model.',
+      '3. Read the sentences and choose clips yourself. Each starts on a sentence\'s fromFrame and ends on the same or a later sentence\'s toFrame, opens on the start of a thought, lands its point, and makes sense to someone who never saw the rest. Score each 0–100 on hook, information, emotion and completeness, honestly, and keep only the strongest — fewer good clips beat padding.',
+      '4. Check your picks before placing anything: no two overlap, each lies inside the bounds find_highlights gave, and each length is within the target. mark_highlights checks the same things and refuses with every fault listed — fix exactly those and call again.',
+      '5. Call mark_highlights with the picks, their scores and a one-line reason each, plus the focus and minSeconds/maxSeconds. It places a start and end marker per clip, ranked by score.',
+      '6. List the clips for the user: rank, title, timecodes, length, score and why it works. Then do what they asked for:',
+      '   - Markers only: stop here.',
+      '   - A highlight reel on this timeline: remove_range each gap between the picks, starting from the last gap so earlier frames do not move, then the head and tail. Check the joins with preview_frame.',
+      '   - Separate shorts: export_timeline each range (its toFrame is inclusive, so pass the pick\'s toFrame − 1), or suggest /short-form for a vertical version.',
+      '',
+      PROPOSE
+    ].join('\n')
+  },
+  {
     slug: 'review',
     title: 'Review My Edit',
     description: 'Use when the user wants feedback on their edit without anything being changed.',

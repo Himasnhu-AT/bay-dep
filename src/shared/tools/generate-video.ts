@@ -15,7 +15,7 @@ export const tool: ToolSpec = {
     'that first frame. An option the model does not take is refused with the values it does; ' +
     'nothing is narrowed silently. If no key is set, tell the user to add one in Settings › ' +
     'Providers — never ask for a key in chat. Models: ' +
-    describeModels('video'),
+    describeModels('video') + ' For a common shot, fill_prompt_kit writes a tested prompt (bay://guide/prompt-kits).',
   category: 'write',
   readOnly: false,
   selfValidating: true,
