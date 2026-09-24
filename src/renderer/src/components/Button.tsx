@@ -38,7 +38,9 @@ export function Button({
       className={cn(
         // Press feedback: 0.96, the value that reads as tactile without looking like a bounce.
         'no-drag t-press inline-flex shrink-0 items-center justify-center rounded-sm active:scale-[0.96]',
-        'whitespace-nowrap select-none',
+        // An icon never gives up its size to the label: squeezed, a flex item shrinks, and in a
+        // too-narrow button the svg went first, rendering Overwrite's icon as a dot.
+        'whitespace-nowrap select-none [&>svg]:shrink-0',
         // A disabled control is drawn, not hidden — the greyed-out ones are the map of
         // what the engine cannot do yet.
         'disabled:pointer-events-none disabled:opacity-40',

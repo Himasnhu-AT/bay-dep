@@ -17,7 +17,8 @@ import { cn } from '@/lib/cn'
 import { clampFade, formatDb, volumeAtY, yForVolume } from '@/lib/timelineLayout'
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
-import { useFilmstrip, useWaveform } from '@/lib/useMediaCache'
+import { usePoster, useFilmstrip, useWaveform } from '@/lib/useMediaCache'
+import { laneFrames, stripFrameIndex, wantsLanePoster } from '@/lib/mediaKinds'
 import { BLADE_CURSOR } from '@/lib/timelineTool'
 
 /** Below this width a clip is a coloured sliver; fetching pictures for it is wasted work. */
@@ -105,7 +106,7 @@ function Filmstrip({
   width: number
   height: number
 }): ReactNode {
-  if (frames.length === 0 || asset.durationUs <= 0) return null
+  if (frames.length === 0) return null
   const aspect = asset.width && asset.height ? asset.width / asset.height : 16 / 9
   // One column per frame-width of clip, so a picture is never stretched past its natural
   // aspect at lane height. Capped, because a long clip zoomed in would otherwise want
@@ -119,8 +120,7 @@ function Filmstrip({
       {Array.from({ length: columns }, (_, column) => {
         const localFrames = (column / columns) * item.durationInFrames
         const sourceUs = item.sourceStartUs + (localFrames / fps) * US_PER_SECOND * item.speed
-        const ratio = Math.min(0.999, Math.max(0, sourceUs / asset.durationUs))
-        const url = frames[Math.min(frames.length - 1, Math.floor(ratio * frames.length))]
+        const url = frames[stripFrameIndex(frames.length, sourceUs, asset.durationUs)]
         return (
           <div
             key={column}
@@ -225,6 +225,11 @@ function ClipImpl({
   const showThumbs = width >= THUMBS_MIN_WIDTH
 
   const strip = useFilmstrip(asset, STRIP_FRAMES, STRIP_HEIGHT, showThumbs && !audio)
+  // A still has no filmstrip; its lane repeats the poster. 220 is the media tile's size (long
+  // edge, so a 16:9 still is 124 px tall, over STRIP_HEIGHT), so the tile's request already made
+  // it and this is a cache hit.
+  const poster = usePoster(asset && showThumbs && !audio && wantsLanePoster(asset) ? asset : undefined, 220)
+  const lane = asset ? laneFrames(asset, strip, poster) : strip
   const peaks = useWaveform(asset, WAVEFORM_BUCKETS, showThumbs && Boolean(asset?.hasAudio))
 
   const [fadeDrag, setFadeDrag] = useState<{ edge: 'in' | 'out'; frames: number } | null>(null)
@@ -317,7 +322,7 @@ function ClipImpl({
     >
       {asset && !audio && showThumbs && (
         <Filmstrip
-          frames={strip}
+          frames={lane}
           item={item}
           asset={asset}
           fps={fps}

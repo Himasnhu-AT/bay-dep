@@ -41,3 +41,32 @@ export function canMakePoster(asset: Asset): boolean {
 export function canMakeFilmstrip(asset: Asset): boolean {
   return Boolean(asset.path) && !asset.error && asset.hasVideo && FILMSTRIP[asset.kind]
 }
+
+/**
+ * The pictures a timeline clip draws behind its name. Moving pictures get their filmstrip; a
+ * still gets its poster once, repeated along the lane, because the filmstrip of an image is that
+ * one picture. Clips used to draw only filmstrips, and `FILMSTRIP` refuses images, so every image
+ * clip was a dark lane (a freeze frame, a photo) while its media tile showed a poster.
+ */
+export function laneFrames(asset: Asset, strip: readonly string[], poster: string | null): string[] {
+  if (canMakeFilmstrip(asset)) return [...strip]
+  if (canMakePoster(asset) && poster) return [poster]
+  return []
+}
+
+/** Whether a clip asks for the asset's poster to draw on its lane (see `laneFrames`). */
+export function wantsLanePoster(asset: Asset): boolean {
+  return canMakePoster(asset) && !canMakeFilmstrip(asset)
+}
+
+/**
+ * Which of `count` strip frames shows source time `sourceUs`. The frames are spread evenly over
+ * the whole source. A source with no duration (a still) has one picture, the first; the clip
+ * used to draw nothing at all for it.
+ */
+export function stripFrameIndex(count: number, sourceUs: number, durationUs: number): number {
+  if (count <= 0) return -1
+  if (!(durationUs > 0)) return 0
+  const ratio = Math.min(0.999, Math.max(0, sourceUs / durationUs))
+  return Math.min(count - 1, Math.floor(ratio * count))
+}

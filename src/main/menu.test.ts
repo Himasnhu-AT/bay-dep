@@ -22,19 +22,27 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { MenuCommand } from '@shared/ipc'
 import { COMMANDS } from '@shared/commands'
-import { menuLeaves, menuTemplate } from './menu'
+import { menuLeaves, menuTemplate, STATE_ITEM_IDS } from './menu'
 
 function build(overrides: Partial<Parameters<typeof menuTemplate>[0]> = {}) {
   const sent: MenuCommand[] = []
+  const cleared: number[] = []
   const template = menuTemplate({
     appName: 'bay',
     isMac: true,
     includeDevTools: false,
+    recents: [],
     onCommand: (command) => sent.push(command),
+    onClearRecents: () => cleared.push(1),
     ...overrides
   })
-  return { template, sent }
+  return { template, sent, cleared }
 }
+
+const RECENTS = [
+  { name: 'Launch film', filePath: '/Users/me/Movies/bay/Launch film.bay', folder: '~/Movies/bay' },
+  { name: 'Launch film', filePath: '/Users/me/Desktop/Launch film.bay', folder: '~/Desktop' }
+]
 
 function labels(template: ReturnType<typeof menuTemplate>): string[] {
   return menuLeaves(template)
@@ -47,16 +55,28 @@ function labels(template: ReturnType<typeof menuTemplate>): string[] {
 // ---------------------------------------------------------------------------
 
 test('every menu item does something', () => {
-  const { template } = build()
-  for (const item of menuLeaves(template)) {
-    if (item.type === 'separator') continue
-    const wired = item.role !== undefined || typeof item.click === 'function'
-    assert.ok(
-      wired,
-      `"${item.label ?? '(unlabelled)'}" has neither a role nor a click — a menu item that ` +
-        `does nothing is worse than one that is absent`
-    )
+  // With and without recents: the empty Open Recent is the one state with an inert item.
+  for (const recents of [[], RECENTS]) {
+    const { template } = build({ recents })
+    for (const item of menuLeaves(template)) {
+      if (item.type === 'separator') continue
+      const wired = item.role !== undefined || typeof item.click === 'function'
+      // The one exception, and how it is kept one: an item that *reports a state* ("No Recent
+      // Projects") may do nothing, but only if it is disabled, so it never looks clickable, and
+      // only if its id is listed in STATE_ITEM_IDS, so a new inert item fails here until
+      // someone decides it is a state and not a dead control.
+      const stateReport = item.enabled === false && item.id !== undefined && STATE_ITEM_IDS.has(item.id)
+      assert.ok(
+        wired || stateReport,
+        `"${item.label ?? '(unlabelled)'}" has neither a role nor a click — a menu item that ` +
+          `does nothing is worse than one that is absent`
+      )
+    }
   }
+})
+
+test('the only state-report item is the empty Open Recent', () => {
+  assert.deepEqual([...STATE_ITEM_IDS], ['recent.none'])
 })
 
 test('every item that is not a separator is labelled or has a role to label it', () => {
@@ -117,6 +137,60 @@ test('the File accelerators are the ones a Mac user will try', () => {
   assert.equal(accel('Save As…'), 'CmdOrCtrl+Shift+S')
   assert.equal(accel('Import Media…'), 'CmdOrCtrl+I')
   assert.equal(accel('Export…'), 'CmdOrCtrl+E')
+})
+
+// ---------------------------------------------------------------------------
+// File › Open Recent
+// ---------------------------------------------------------------------------
+
+function openRecent(template: ReturnType<typeof menuTemplate>) {
+  const item = itemsOf(template, 'File').find((entry) => entry.label === 'Open Recent')
+  return { item, items: Array.isArray(item?.submenu) ? item.submenu : [] }
+}
+
+test('Open Recent sits directly under Open…', () => {
+  const items = itemsOf(build().template, 'File')
+  const open = items.findIndex((item) => item.label === 'Open…')
+  assert.ok(open >= 0)
+  assert.equal(items[open + 1]?.label, 'Open Recent')
+})
+
+test('each recent opens through open-path, so the unsaved-changes guard runs, with its folder beside it', () => {
+  const { template, sent } = build({ recents: RECENTS })
+  const { items } = openRecent(template)
+  const projects = items.filter((item) => item.type !== 'separator' && item.label !== 'Clear Menu')
+  assert.equal(projects.length, 2)
+  // Two projects of one name are told apart by their folder.
+  assert.deepEqual(projects.map((item) => item.sublabel), ['~/Movies/bay', '~/Desktop'])
+  for (const [i, item] of projects.entries()) {
+    sent.length = 0
+    ;(item.click as () => void)()
+    assert.deepEqual(sent, [{ type: 'open-path', path: RECENTS[i]!.filePath }])
+  }
+})
+
+test('Clear Menu is last, enabled with recents, and calls back', () => {
+  const { template, cleared } = build({ recents: RECENTS })
+  const { items } = openRecent(template)
+  const clear = items[items.length - 1]
+  assert.equal(clear?.label, 'Clear Menu')
+  assert.equal(items[items.length - 2]?.type, 'separator')
+  assert.notEqual(clear?.enabled, false)
+  ;(clear?.click as () => void)()
+  assert.equal(cleared.length, 1)
+})
+
+test('with no recents Open Recent says so, disabled, and Clear Menu is greyed', () => {
+  const { item, items } = openRecent(build({ recents: [] }).template)
+  assert.ok(item, 'Open Recent must be there even when empty: its place in File should not move')
+  const none = items[0]
+  assert.equal(none?.label, 'No Recent Projects')
+  assert.equal(none?.enabled, false)
+  assert.equal(none?.click, undefined)
+  const clear = items.find((entry) => entry.label === 'Clear Menu')
+  assert.equal(clear?.enabled, false)
+  // Positive control: with recents the placeholder is gone.
+  assert.equal(openRecent(build({ recents: RECENTS }).template).items.some((entry) => entry.label === 'No Recent Projects'), false)
 })
 
 // ---------------------------------------------------------------------------

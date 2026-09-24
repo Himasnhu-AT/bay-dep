@@ -157,7 +157,7 @@ export function SourceViewer({
       aria-label={`Source: ${asset.name}`}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="border-b border-line px-3 pt-2 pb-3 outline-none"
+      className="@container border-b border-line px-3 pt-2 pb-3 outline-none"
     >
       <div className="mb-1.5 flex items-center gap-1">
         <p className="min-w-0 flex-1 truncate text-[11px] text-ink-1" title={asset.name}>
@@ -220,8 +220,15 @@ export function SourceViewer({
               icon={playing ? <Pause className="size-3" /> : <Play className="size-3" />}
               onClick={toggle}
             />
-            <span className="text-[11px] text-ink-2 tabular-nums">
-              {formatSourceTime(atUs, asset.fps)} / {formatSourceTime(duration, asset.fps)}
+            {/* One line, always. In the 300 px panel "position / length" wrapped onto two lines
+                and pushed the row taller; below 24rem of panel the length goes (the slider shows
+                where in the clip you are, and the tooltip still says it). */}
+            <span
+              className="shrink-0 text-[11px] whitespace-nowrap text-ink-2 tabular-nums"
+              title={`${formatSourceTime(atUs, asset.fps)} of ${formatSourceTime(duration, asset.fps)}`}
+            >
+              {formatSourceTime(atUs, asset.fps)}
+              <span className="hidden @sm:inline"> / {formatSourceTime(duration, asset.fps)}</span>
             </span>
             <span className="flex-1" />
             <Button size="sm" variant="ghost" onClick={markIn} title="Mark in (I)">
@@ -251,8 +258,12 @@ export function SourceViewer({
         </>
       )}
 
-      <div className="mt-2 grid grid-cols-3 gap-1.5">
+      {/* Flex, not three equal columns: "Overwrite" is wider than a third of the 300 px panel,
+          and equal columns squeezed its icon to a dot. Each button now takes its own width
+          plus an equal share of what is left. */}
+      <div className="mt-2 flex gap-1.5">
         <Button
+          className="flex-1"
           variant="primary"
           icon={<Plus className="size-3.5" />}
           title={`Insert ${marked ? 'the marked part' : 'it'} at the playhead; everything after slides right (W or Enter)`}
@@ -261,6 +272,7 @@ export function SourceViewer({
           Insert
         </Button>
         <Button
+          className="flex-1"
           variant="subtle"
           icon={<Replace className="size-3.5" />}
           title={`Overwrite what is at the playhead with ${marked ? 'the marked part' : 'it'}; nothing moves (D)`}
@@ -269,6 +281,7 @@ export function SourceViewer({
           Overwrite
         </Button>
         <Button
+          className="flex-1"
           variant="subtle"
           icon={<ArrowRightToLine className="size-3.5" />}
           title={`Append ${marked ? 'the marked part' : 'it'} after the end of the timeline (E)`}

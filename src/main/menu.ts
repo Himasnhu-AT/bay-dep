@@ -32,10 +32,18 @@
  *
  * **No View → Reload.** Standard in Electron templates, and in an editor ⌘R means "discard
  * everything since the last save". The accelerator is too close to ⌘T and ⌘E to leave armed.
+ *
+ * **File › Open Recent is the one part built from data, not the registry.** Main rebuilds the
+ * whole menu when the recents change (`onRecentsChanged` in `project/store.ts`). A recent sends
+ * `open-path`, the same command as a document double-clicked in Finder, so the renderer's
+ * unsaved-changes guard runs before anything is replaced. With no recents the submenu holds one
+ * disabled "No Recent Projects": the single item allowed to have neither role nor click
+ * (`STATE_ITEM_IDS`), because it reports a state rather than offering an action, and a submenu
+ * that opens onto nothing reads as broken.
  */
 
 import type { MenuItemConstructorOptions } from 'electron'
-import type { MenuCommand } from '@shared/ipc'
+import type { MenuCommand, RecentProject } from '@shared/ipc'
 import { MENU_GROUPS, SEPARATOR, shortcutsOf, type CommandEntry, type CommandGroup, type CommandSpec } from '@shared/commands'
 import { toAccelerator } from '@shared/shortcuts'
 
@@ -46,6 +54,45 @@ export interface MenuOptions {
   /** DevTools is a developer affordance; it stays out of a release build's menu. */
   includeDevTools: boolean
   isMac: boolean
+  /** File › Open Recent, newest first (`recentForMenu`). */
+  recents: readonly Pick<RecentProject, 'name' | 'filePath' | 'folder'>[]
+  /** Clear Menu. */
+  onClearRecents: () => void
+}
+
+/**
+ * Items that report a state and do nothing, so have neither role nor click. `menu.test.ts`
+ * allows exactly these, disabled, and nothing else without an action.
+ */
+export const STATE_ITEM_IDS: ReadonlySet<string> = new Set(['recent.none'])
+
+/** File › Open Recent's submenu. */
+export function openRecentMenu(
+  recents: MenuOptions['recents'],
+  onCommand: MenuOptions['onCommand'],
+  onClear: () => void
+): MenuItemConstructorOptions[] {
+  const clear: MenuItemConstructorOptions = {
+    id: 'recent.clear',
+    label: 'Clear Menu',
+    enabled: recents.length > 0,
+    click: () => onClear()
+  }
+  if (recents.length === 0) {
+    return [{ id: 'recent.none', label: 'No Recent Projects', enabled: false }, SEP, clear]
+  }
+  return [
+    ...recents.map(
+      (recent): MenuItemConstructorOptions => ({
+        label: recent.name || recent.filePath,
+        // The folder tells two projects of one name apart. macOS 14.4+ draws it under the name.
+        ...(recent.folder ? { sublabel: recent.folder } : {}),
+        click: () => onCommand({ type: 'open-path', path: recent.filePath })
+      })
+    ),
+    SEP,
+    clear
+  ]
 }
 
 /** On macOS these live in the application menu, where every Mac app keeps them. */
@@ -54,12 +101,13 @@ const APP_MENU_IDS = new Set(['app.settings'])
 const SEP: MenuItemConstructorOptions = { type: 'separator' }
 
 export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[] {
-  const { appName, onCommand, includeDevTools, isMac } = options
+  const { appName, onCommand, includeDevTools, isMac, recents, onClearRecents } = options
 
   const item = (spec: CommandSpec): MenuItemConstructorOptions => {
     const shortcut = shortcutsOf(spec)[0]
     const accelerator = shortcut === undefined ? undefined : toAccelerator(shortcut)
     return {
+      id: spec.id,
       label: spec.label,
       click: () => onCommand({ type: 'command', id: spec.id }),
       ...(accelerator
@@ -114,9 +162,17 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
       ]
     : []
 
+  const fileCommands = commandsOf('File')
+  // Open Recent directly under Open…, where every Mac app has it.
+  const afterOpen = fileCommands.findIndex((entry) => entry.id === 'file.open') + 1
+  fileCommands.splice(afterOpen > 0 ? afterOpen : fileCommands.length, 0, {
+    id: 'file.openRecent',
+    label: 'Open Recent',
+    submenu: openRecentMenu(recents, onCommand, onClearRecents)
+  })
   const file: MenuItemConstructorOptions = {
     label: 'File',
-    submenu: [...withSep(commandsOf('File')), isMac ? { role: 'close' } : { role: 'quit' }]
+    submenu: [...withSep(fileCommands), isMac ? { role: 'close' } : { role: 'quit' }]
   }
 
   const edit: MenuItemConstructorOptions = {

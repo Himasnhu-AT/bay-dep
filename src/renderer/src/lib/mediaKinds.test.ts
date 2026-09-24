@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset } from '@shared/project'
-import { canMakeFilmstrip, canMakePoster } from './mediaKinds'
+import { canMakeFilmstrip, canMakePoster, laneFrames, stripFrameIndex, wantsLanePoster } from './mediaKinds'
 
 function asset(kind: Asset['kind'], extra: Partial<Asset> = {}): Asset {
   return {
@@ -39,4 +39,28 @@ test('an asset that failed to probe, or has no file, gets neither', () => {
   assert.equal(canMakePoster(asset('video', { error: 'unreadable' })), false)
   assert.equal(canMakePoster(asset('video', { path: undefined })), false)
   assert.equal(canMakeFilmstrip(asset('video', { error: 'unreadable' })), false)
+})
+
+test('an image clip draws its poster on the lane; a video draws its filmstrip; sound draws neither', () => {
+  // The specimen is what a freeze frame imports as: an image with no duration.
+  const still = asset('image', { durationUs: 0, hasVideo: true })
+  assert.equal(canMakeFilmstrip(still), false, 'the specimen must be one the filmstrip path refuses')
+  assert.deepEqual(laneFrames(still, [], 'bay://poster.png'), ['bay://poster.png'])
+  assert.equal(wantsLanePoster(still), true)
+  // Positive control: a video keeps its strip and never swaps it for the poster.
+  assert.deepEqual(laneFrames(asset('video'), ['f0', 'f1'], 'bay://poster.png'), ['f0', 'f1'])
+  assert.equal(wantsLanePoster(asset('video')), false)
+  // No poster yet, or a kind ffmpeg cannot picture: nothing, rather than a broken URL.
+  assert.deepEqual(laneFrames(still, [], null), [])
+  assert.deepEqual(laneFrames(asset('html'), [], 'bay://poster.png'), [])
+  assert.equal(wantsLanePoster(asset('audio')), false)
+})
+
+test('a still has its one strip frame at every source time; a video maps time across the strip', () => {
+  assert.equal(stripFrameIndex(1, 0, 0), 0)
+  assert.equal(stripFrameIndex(1, 3_000_000, 0), 0)
+  assert.equal(stripFrameIndex(24, 0, 10_000_000), 0)
+  assert.equal(stripFrameIndex(24, 5_000_000, 10_000_000), 12)
+  assert.equal(stripFrameIndex(24, 10_000_000, 10_000_000), 23)
+  assert.equal(stripFrameIndex(0, 0, 10_000_000), -1)
 })

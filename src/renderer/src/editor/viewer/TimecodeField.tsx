@@ -79,8 +79,11 @@ export function TimecodeField(): ReactNode {
           inputClassName="text-center text-[13px] font-medium tabular-nums"
         />
       )}
-      <span className="text-[11px] text-ink-2">/</span>
-      <span className="text-[11px] text-ink-2">{formatTimecode(duration, fps)}</span>
+      {/* The length is the transport's third thing to go when the row is short (see the
+          priority list in Transport.tsx); the status bar shows it too. */}
+      <span className="hidden text-[11px] whitespace-nowrap text-ink-2 @2xl:inline">
+        / {formatTimecode(duration, fps)}
+      </span>
     </div>
   )
 }

@@ -14,7 +14,17 @@ import type { MenuCommand } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import { registerBayScheme, registerBayProtocolHandler } from './protocol'
 import { registerIpcHandlers } from './ipc'
-import { closeStore, readWindowBounds, takePendingOpen, rememberOpenPath, writeWindowBounds } from './project/store'
+import {
+  clearRecentMenu,
+  closeStore,
+  onRecentsChanged,
+  readWindowBounds,
+  recentForMenu,
+  takePendingOpen,
+  rememberOpenPath,
+  writeWindowBounds
+} from './project/store'
+import type { RecentProject } from '@shared/ipc'
 import { cacheDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
@@ -153,13 +163,15 @@ function createWindow(): BrowserWindow {
   return window
 }
 
-function installMenu(): void {
+function installMenu(recents: readonly RecentProject[] = []): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       menuTemplate({
         appName: APP_NAME,
         isMac: process.platform === 'darwin',
         includeDevTools: is.dev,
+        recents,
+        onClearRecents: () => void clearRecentMenu(),
         onCommand: (command) => {
           // The focused window, not the first one: with two windows open, a menu command
           // belongs to the one the user is looking at.
@@ -169,6 +181,30 @@ function installMenu(): void {
       })
     )
   )
+}
+
+/**
+ * The menu again with File › Open Recent as it is now. Rebuilds are serialised and coalesced:
+ * reading the recents checks every file on disk, and two reads finishing out of order must not
+ * leave the older list installed.
+ */
+let menuRebuild: Promise<void> | null = null
+let menuStale = false
+function rebuildMenu(): void {
+  if (menuRebuild) {
+    menuStale = true
+    return
+  }
+  menuRebuild = recentForMenu()
+    .then((recents) => installMenu(recents))
+    .catch(() => installMenu())
+    .finally(() => {
+      menuRebuild = null
+      if (menuStale) {
+        menuStale = false
+        rebuildMenu()
+      }
+    })
 }
 
 void app.whenReady().then(() => {
@@ -200,6 +236,8 @@ void app.whenReady().then(() => {
     console.warn(`[bay] update: could not start: ${error instanceof Error ? error.message : String(error)}`)
   })
   installMenu()
+  onRecentsChanged(rebuildMenu)
+  rebuildMenu()
 
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
   // in bay evicts, so without this a scheme change leaks its entire previous cache for the

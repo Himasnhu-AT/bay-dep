@@ -5,10 +5,14 @@ import { runCommand, shortcutOf } from '@/lib/commands'
 import { useViewer, VIEWER_ZOOMS, type ViewerZoom } from '@/lib/viewer'
 
 /**
- * The viewer's own controls in the transport: zoom, the overlays menu, full screen.
+ * The viewer's own controls in the transport: zoom, the Viewer options menu, crop, full screen.
  *
- * The overlays go through the command registry, so the menu here, the View menu in the menu bar
+ * Everything goes through the command registry, so the menu here, the View menu in the menu bar
  * and the shortcut are one action each and cannot disagree about what "safe areas" toggles.
+ *
+ * The options menu always lists Crop and Full-screen as well as the guides: in a narrow transport
+ * their buttons are hidden (Transport.tsx has the order things go in), and the menu is where they
+ * are then. Listing them always, rather than only while hidden, keeps the menu one fixed list.
  */
 export function ViewerControls(): ReactNode {
   const zoom = useViewer((state) => state.zoom)
@@ -30,14 +34,14 @@ export function ViewerControls(): ReactNode {
       />
       <IconButton
         {...overlays.triggerProps}
-        label="Viewer overlays"
+        label="Viewer options"
         tooltipSide="top"
         active={anyOverlay}
         icon={<Grid3x3 className="size-3.5" />}
       />
       <Menu
         {...overlays.surfaceProps}
-        label="Viewer overlays"
+        label="Viewer options"
         side="top"
         items={[
           {
@@ -46,7 +50,19 @@ export function ViewerControls(): ReactNode {
             shortcut: shortcutOf('view.safeAreas'),
             onSelect: () => runCommand('view.safeAreas')
           },
-          { label: 'Thirds Grid', checked: grid, onSelect: () => runCommand('view.grid') }
+          { label: 'Thirds Grid', checked: grid, onSelect: () => runCommand('view.grid') },
+          { kind: 'separator' },
+          {
+            label: 'Crop in Viewer',
+            checked: cropMode,
+            shortcut: shortcutOf('view.cropMode'),
+            onSelect: () => runCommand('view.cropMode')
+          },
+          {
+            label: 'Full-Screen Preview',
+            shortcut: shortcutOf('view.fullscreenPreview'),
+            onSelect: () => runCommand('view.fullscreenPreview')
+          }
         ]}
       />
       <IconButton
@@ -54,6 +70,7 @@ export function ViewerControls(): ReactNode {
         shortcut={shortcutOf('view.cropMode')}
         tooltipSide="top"
         active={cropMode}
+        className="hidden @xl:inline-flex"
         icon={<Crop className="size-3.5" />}
         onClick={() => runCommand('view.cropMode')}
       />
@@ -61,6 +78,7 @@ export function ViewerControls(): ReactNode {
         label="Full-screen preview"
         shortcut={shortcutOf('view.fullscreenPreview')}
         tooltipSide="top"
+        className="hidden @xl:inline-flex"
         icon={<Maximize className="size-3.5" />}
         onClick={() => runCommand('view.fullscreenPreview')}
       />

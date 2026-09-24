@@ -5,7 +5,7 @@
  * is tested directly. What is left here is the part that genuinely needs an app.
  */
 
-import { BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, rename as renameFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -24,6 +24,7 @@ import {
 } from '../window-state'
 import { adoptAssets } from '../media/import'
 import { describeStorage, openDatabase, type AppDatabase } from './db'
+import { menuRecents, parseHidden, RECENT_MENU_HIDDEN_KEY, unhide } from './recent-menu'
 import {
   EXTENSION,
   freshProject,
@@ -118,6 +119,37 @@ export function closeStore(): void {
 // Recents
 // ---------------------------------------------------------------------------
 
+/**
+ * Whoever shows the recents outside the renderer (File › Open Recent) is told when the list may
+ * have changed: a project opened, saved, created, renamed, binned or taken off the list, or one
+ * found gone from disk. The listener re-reads `recentForMenu`; it is not told what changed.
+ */
+const recentsListeners = new Set<() => void>()
+
+export function onRecentsChanged(listener: () => void): () => void {
+  recentsListeners.add(listener)
+  return () => recentsListeners.delete(listener)
+}
+
+function recentsChanged(): void {
+  for (const listener of recentsListeners) listener()
+}
+
+/** File › Open Recent's entries: the recents less the ones Clear Menu hid (`recent-menu.ts`). */
+export async function recentForMenu(): Promise<RecentProject[]> {
+  const rows = await recent()
+  return menuRecents(rows, parseHidden(database()?.getState(RECENT_MENU_HIDDEN_KEY) ?? null))
+}
+
+/** Clear Menu: hides every listed project from the menu and the Dock; the projects screen keeps them. */
+export async function clearRecentMenu(): Promise<void> {
+  const db = database()
+  const rows = await recent()
+  db?.setState(RECENT_MENU_HIDDEN_KEY, JSON.stringify(rows.map((row) => row.filePath)))
+  if (process.platform === 'darwin') app.clearRecentDocuments()
+  recentsChanged()
+}
+
 function rememberRecent(project: Project): void {
   const db = database()
   if (!db || !project.filePath) return
@@ -128,6 +160,12 @@ function rememberRecent(project: Project): void {
     updatedAt: project.updatedAt
   })
   db.setState(LAST_PROJECT_KEY, project.filePath)
+  // Opened or saved again after a Clear Menu: back in the menu, as it would be on any Mac app.
+  const shown = unhide(parseHidden(db.getState(RECENT_MENU_HIDDEN_KEY)), project.filePath)
+  if (shown) db.setState(RECENT_MENU_HIDDEN_KEY, JSON.stringify(shown))
+  // The Dock's and Finder's recent documents; the file type is declared in electron-builder.yml.
+  if (process.platform === 'darwin') app.addRecentDocument(project.filePath)
+  recentsChanged()
   // The thumbnail follows, off the critical path: reading a poster must never slow a save or an
   // open, and a project with no readable poster is still a project in the list. The row is
   // written again with the poster; `COALESCE` in the upsert keeps an older one if this finds
@@ -159,14 +197,19 @@ export async function recent(): Promise<RecentProject[]> {
   const db = database()
   if (!db) return []
   const out: RecentProject[] = []
+  let pruned = false
   for (const row of db.listRecent(20)) {
     // A recents list that offers files the user moved to the bin is worse than a short one.
     if (!(await exists(row.filePath))) {
       db.forgetRecent(row.filePath)
+      pruned = true
       continue
     }
     out.push({ ...row, folder: displayFolder(row.filePath, homedir()) })
   }
+  // Only when something went: the menu's listener calls back into here, and an unconditional
+  // notice would rebuild the menu forever.
+  if (pruned) recentsChanged()
   return out
 }
 
@@ -209,6 +252,7 @@ export async function create(): Promise<Project> {
 
 export function forget(filePath: string): void {
   database()?.forgetRecent(filePath)
+  recentsChanged()
 }
 
 export function reveal(filePath: string): void {
@@ -271,6 +315,7 @@ export async function trash(filePath: string): Promise<void> {
   listedProject(filePath)
   await shell.trashItem(filePath)
   database()?.forgetRecent(filePath)
+  recentsChanged()
 }
 
 export async function initial(): Promise<Project> {
