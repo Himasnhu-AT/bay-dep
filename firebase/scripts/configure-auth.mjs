@@ -78,7 +78,9 @@ const after = await call('GET', `${ADMIN}/config`)
 const google = await call('GET', `${ADMIN}/defaultSupportedIdpConfigs/google.com`)
 const email = after.json.signIn?.email ?? {}
 const live = {
-  emailLink: email.enabled === true && email.passwordRequired === false,
+  // The API omits a boolean that is false (proto3 JSON), so an absent passwordRequired IS false:
+  // `=== false` read a correctly configured email link as missing.
+  emailLink: email.enabled === true && email.passwordRequired !== true,
   emailSignIn: email,
   authorizedDomains: after.json.authorizedDomains ?? [],
   google: google.status === 200 ? { enabled: google.json.enabled === true } : `HTTP ${google.status}`,
