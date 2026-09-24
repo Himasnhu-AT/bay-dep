@@ -165,6 +165,12 @@ test('a slip past the end of the source is refused with the range that would wor
   assert.deepEqual(refused.range, { min: -10, max: 20 })
   assert.match(refused.error, /-10 to \+20/, 'the refusal must name the legal range')
   assert.match(refused.error, /20 frames of short\.mp4 come after/, 'and which side ran out')
+  // The inspector's toast: the clip by name and the footage in frames, never the item id or
+  // `deltaFrames`, which the agent needs and a person cannot act on.
+  assert.ok(refused.userMessage, 'a person gets their own sentence')
+  assert.match(refused.userMessage, /short\.mp4 has 10 frames of footage before this clip and 20 frames after it/)
+  assert.doesNotMatch(refused.userMessage, /deltaFrames|\ba\b is|item /)
+  assert.match(refused.error, /Slipping a by/, 'the agent still gets the id')
 
   apply(w, { itemId: 'a', mode: 'slip', deltaFrames: 20 })
   const a = w.timeline.tracks[0]!.items[0]!

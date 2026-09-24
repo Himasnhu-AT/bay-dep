@@ -343,6 +343,12 @@ test('volume keys take dB, converted to gain; dB is refused elsewhere and above 
 
 test('two keys on one frame are refused, and unsorted keys are sorted', () => {
   assert.match(refused({ left: [{ frame: 10, value: 0 }, { frame: 10, value: 5 }] }), /two keys on frame 10 \(timeline frame 310\)/)
+  // The inspector shows the same refusal in its own words: the property as the panel names it.
+  const clash = mergeKeyframes(undefined, { left: [{ frame: 10, value: 0 }, { frame: 10, value: 5 }] }, TARGET)
+  assert.equal(clash.ok, false)
+  if (clash.ok) return
+  assert.match(clash.userMessage ?? '', /X position already has a key on that frame/)
+  assert.doesNotMatch(clash.userMessage ?? '', /keyframes\.|itm_/)
   const keys = accepted({ left: [{ frame: 20, value: 2 }, { frame: 10, value: 1 }] })!
   assert.deepEqual(keys.left!.map((k) => k.frame), [10, 20])
 })

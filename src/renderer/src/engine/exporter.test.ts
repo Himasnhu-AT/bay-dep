@@ -27,7 +27,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Project } from '@shared/project'
 import { brfRuntime, type WorkerLike } from './brfCode'
-import { describeIncomplete, FrameExporter } from './exporter'
+import { describeIncomplete, FrameExporter, writtenFrameIssues } from './exporter'
 
 // --- the DOM the exporter needs, and nothing more -------------------------
 // A timeline with no items draws only its background, so no media element is ever
@@ -70,6 +70,9 @@ class StubContext {
   fillRect(): void {
     this.fills += 1
   }
+  /** The placeholder card's edge and label (16×8 is too small for the label, so only the edge). */
+  strokeRect(): void {}
+  fillText(): void {}
   draws = 0
   drawImage(): void {
     this.draws += 1
@@ -502,6 +505,50 @@ test('the control: the same module outside the exported range reports a clean ex
   } finally {
     brfRuntime.dispose()
   }
+})
+
+test('frames written with a placeholder card are reported — an item that cannot be drawn is not a clean export', { timeout: 10_000 }, async () => {
+  // Measured in the app: a `.brf` whose code threw exported as six grey "Box" cards and the
+  // dialog said "Done 100%". The same card stands in for missing and unreadable media, so the
+  // specimen is the module's asset marked unreadable, and the frames without it are the control.
+  brfRuntime.useWorkers(SILENT_WORKER)
+  try {
+    const encoder = fakeEncoder()
+    encoder.install()
+    encoder.releaseAll()
+    const p = withModule(2, 2)
+    const asset = p.assets.find((a) => a.id === 'ast_card')
+    assert.ok(asset)
+    asset.error = 'the module threw: boom'
+    const exporter = new FrameExporter({ project: p, timelineId: 'tl', jobId: 'job-ph', fromFrame: 0, toFrame: 5, seekTimeoutMs: 5 })
+    const outcome = await exporter.run()
+
+    assert.equal(outcome.framesWritten, 6, 'the file is still written')
+    const report = outcome.incomplete
+    assert.ok(report, 'an export that wrote placeholder cards must not come back clean')
+    assert.equal(report.frames, 2)
+    assert.deepEqual(report.ranges, [[2, 3]])
+    assert.deepEqual(report.items, [], 'nothing was pending — waiting would not have helped')
+    assert.deepEqual(report.placeholders, [{ name: 'Counter card (the module threw: boom)', frames: 2, ranges: [[2, 3]] }])
+    // What the reader needs to act: the item, why, where, and that re-exporting will not help.
+    assert.match(report.message, /Counter card \(the module threw: boom\) \(frames 2-3\)/)
+    assert.match(report.message, /placeholder/)
+    assert.match(report.message, /will not change them/)
+    assert.deepEqual(exporter.incomplete, report)
+  } finally {
+    brfRuntime.dispose()
+  }
+})
+
+test('writtenFrameIssues: a placeholder alone makes a frame wrong; a clean draw is null', () => {
+  const clean = { pending: 0, pendingNames: [], placeholders: 0, placeholderNames: [] }
+  assert.equal(writtenFrameIssues(3, clean), null)
+  assert.deepEqual(writtenFrameIssues(3, { ...clean, placeholders: 1, placeholderNames: ['a missing asset'] }), {
+    frame: 3,
+    missing: [],
+    gradeIssues: [],
+    placeholders: ['a missing asset']
+  })
 })
 
 test('describeIncomplete: ranges merge, items sort by frames, the sentence caps its list', () => {

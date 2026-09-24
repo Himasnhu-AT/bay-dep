@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { commandForKey } from '@shared/commands'
+import { commandForKey, commandSpec } from '@shared/commands'
 import { bay } from '@/lib/bay'
 import { isTyping, runCommand, setCommandHost } from './registry'
 import type { CommandHost } from './types'
-import { keyMayRun } from './keyGate'
+import { keyMayRun, menuCommandMayRun } from './keyGate'
+import { useEditor } from '@/store/editor'
 
 /**
  * Every shortcut and every menu command in the app, mounted once at the root.
@@ -14,7 +15,8 @@ import { keyMayRun } from './keyGate'
  * works everywhere, because Escape is how you get out; it goes to `host.escape`.
  *
  * Menu clicks arrive as `{ type: 'command', id }` over the app-menu channel and run through the
- * same `runCommand`, so a menu item and its key cannot do different things.
+ * same `runCommand`, so a menu item and its key cannot do different things. An open dialog
+ * refuses them as it refuses keys (`menuCommandMayRun`), with a note rather than silence.
  */
 export function useCommands(host: CommandHost): void {
   // Read through a ref so the listeners are registered once, not on every parent render.
@@ -53,7 +55,20 @@ export function useCommands(host: CommandHost): void {
     window.addEventListener('keydown', onKeyDown)
 
     const unsubscribe = bay()?.app.onMenuCommand((command) => {
-      if (command.type === 'command') runCommand(command.id, 'menu')
+      if (command.type !== 'command') return
+      const spec = commandSpec(command.id)
+      const allowed = menuCommandMayRun({
+        modalOpen: document.querySelector('[aria-modal="true"]') !== null,
+        typing: isTyping(document.activeElement),
+        whileTyping: spec?.whileTyping === true,
+        native: spec?.accelerator === 'native'
+      })
+      if (!allowed) {
+        // Said, not swallowed: a menu item that does nothing reads as broken.
+        useEditor.getState().notify(`Close the dialog first to use ${spec?.label ?? 'that command'}.`, 'info')
+        return
+      }
+      runCommand(command.id, 'menu')
     })
 
     return () => {

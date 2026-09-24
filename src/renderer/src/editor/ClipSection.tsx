@@ -3,7 +3,7 @@ import { FolderOpen } from 'lucide-react'
 import { allItems, findItem, type Asset, type Item } from '@shared/project'
 import { Field, IconButton, Section, TextField } from '@/components'
 import { call, formatSourceDuration } from '@/lib/bay'
-import { FOCUS_TEXT_EVENT } from '@/lib/viewer'
+import { FOCUS_TEXT_EVENT, takeTextFocus } from '@/lib/viewer'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { editAssetFields } from './inspectorEdit'
 
@@ -69,16 +69,20 @@ function WordsField({ asset, placements }: { asset: Asset; placements: number })
   const [draft, setDraft] = useState(stored)
   const field = useRef<HTMLTextAreaElement>(null)
   // A double-click on this title in the preview puts the cursor here (`requestTextFocus`).
+  // Also taken on mount: the request may have been what opened the inspector or this section.
   useEffect(() => {
-    const onFocusText = (event: Event): void => {
-      const itemId = (event as CustomEvent<{ itemId?: string }>).detail?.itemId
+    const shows = (itemId: string): boolean => {
       const timeline = selectTimeline(useEditor.getState())
-      if (!itemId || !timeline || findItem(timeline, itemId)?.item.assetId !== asset.id) return
+      return !!timeline && findItem(timeline, itemId)?.item.assetId === asset.id
+    }
+    const focus = (): void => {
+      if (!takeTextFocus(shows)) return
       field.current?.focus()
       field.current?.select()
     }
-    window.addEventListener(FOCUS_TEXT_EVENT, onFocusText)
-    return () => window.removeEventListener(FOCUS_TEXT_EVENT, onFocusText)
+    focus()
+    window.addEventListener(FOCUS_TEXT_EVENT, focus)
+    return () => window.removeEventListener(FOCUS_TEXT_EVENT, focus)
   }, [asset.id])
   const commit = (): void => {
     if (draft === stored) return

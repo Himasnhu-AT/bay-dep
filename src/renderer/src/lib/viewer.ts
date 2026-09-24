@@ -13,6 +13,8 @@
 import { create } from 'zustand'
 import type { EngineHandle } from '@/lib/useEngine'
 import { remember, remembered } from '@/store/prefs'
+import { useEditor } from '@/store/editor'
+import { openSection } from './openSection'
 
 export type ViewerZoom = 'fit' | '0.5' | '1' | '2'
 
@@ -86,5 +88,25 @@ export const useViewer = create<ViewerState>((set, get) => ({
 export const FOCUS_TEXT_EVENT = 'bay:focus-text'
 
 export function requestTextFocus(itemId: string): void {
+  // The field may not exist yet: the inspector hidden, or its Clip section collapsed (a collapsed
+  // section's body is not mounted). So show both, and leave the request for the field to take
+  // when it mounts — a double-click that did nothing in those states read as broken.
+  pendingTextFocus = { itemId, at: Date.now() }
+  useEditor.getState().setRegionHidden('inspector', false)
+  openSection('inspector.clip')
   window.dispatchEvent(new CustomEvent(FOCUS_TEXT_EVENT, { detail: { itemId } }))
+}
+
+/** A focus request not yet taken, for a field that mounts just after it. Stale after a second. */
+let pendingTextFocus: { itemId: string; at: number } | null = null
+
+/**
+ * Takes the pending request if it is for an item this field shows (`matches`), so exactly one
+ * field focuses once. The event path and the mount path both go through here.
+ */
+export function takeTextFocus(matches: (itemId: string) => boolean, now = Date.now()): boolean {
+  const request = pendingTextFocus
+  if (!request || now - request.at > 1000 || !matches(request.itemId)) return false
+  pendingTextFocus = null
+  return true
 }

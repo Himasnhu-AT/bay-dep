@@ -18,6 +18,8 @@ import {
   snapTargets,
   topmostAt,
   viewerSize,
+  scrollForCentre,
+  centreOfScroll,
   type Frame
 } from './geometry'
 
@@ -297,4 +299,17 @@ test('viewer zoom: fit letterboxes into the box, a percentage is literal', () =>
   const canvas = { width: 1920, height: 1080 }
   assert.deepEqual(viewerSize('fit', canvas, { width: 1000, height: 1000 }), { width: 976, height: 549 })
   assert.deepEqual(viewerSize(0.5, canvas, { width: 10, height: 10 }), { width: 960, height: 540 })
+})
+
+test('zooming centres the viewer: 200% of 1920 in an 864-wide viewer shows the middle, not the corner', () => {
+  // The measured case: scrollWidth 3840, clientWidth 864 stayed at scrollLeft 0.
+  assert.equal(scrollForCentre(0.5, 3840, 864), 1488)
+  // What was centred stays centred through a resize, and nothing scrolls past either end.
+  const centre = centreOfScroll(1488, 3840, 864)
+  assert.equal(centre, 0.5)
+  assert.equal(scrollForCentre(centre, 3840, 1200), 1320)
+  assert.equal(scrollForCentre(0, 3840, 864), 0)
+  assert.equal(scrollForCentre(1, 3840, 864), 3840 - 864)
+  // Content smaller than the viewport has nothing to scroll.
+  assert.equal(scrollForCentre(0.5, 500, 864), 0)
 })

@@ -81,9 +81,9 @@ test('dB and gain round-trip, and agree with the agent’s db volume keys', () =
 test('formatDb fits the readout column and says −∞ for silence', () => {
   assert.equal(formatDb(Number.NEGATIVE_INFINITY), '−∞')
   assert.equal(formatDb(0), '0dB')
-  assert.equal(formatDb(-6.02), '-6.0dB')
+  assert.equal(formatDb(-6.02), '−6.0dB')
   assert.equal(formatDb(2.5), '+2.5dB')
-  assert.equal(formatDb(-24.4), '-24dB')
+  assert.equal(formatDb(-24.4), '−24dB')
   for (const db of [-59.9, -12.34, -1, 0.04, 6.02]) assert.ok(formatDb(db).length <= 6, formatDb(db))
 })
 

@@ -341,6 +341,23 @@ export function viewerSize(
     : { width: Math.floor(availableHeight * aspect), height: Math.floor(availableHeight) }
 }
 
+/**
+ * The scroll offset that puts `centre` (a fraction of the scrolled content, 0.5 = its middle) in
+ * the middle of the viewport, held to what the scroller can reach. A zoomed viewer used to stay at
+ * (0, 0), so 200% showed the canvas's top-left corner; zooming now centres, and a resize keeps
+ * whatever was in the middle there.
+ */
+export function scrollForCentre(centre: number, scrollSize: number, clientSize: number): number {
+  const max = Math.max(0, scrollSize - clientSize)
+  const at = Math.round((Number.isFinite(centre) ? centre : 0.5) * scrollSize - clientSize / 2)
+  return Math.min(max, Math.max(0, at))
+}
+
+/** Which fraction of the scrolled content sits in the middle of the viewport now. */
+export function centreOfScroll(scroll: number, scrollSize: number, clientSize: number): number {
+  return scrollSize > 0 ? (scroll + clientSize / 2) / scrollSize : 0.5
+}
+
 /** What a drag on the preview is doing. */
 export type DragMode = { kind: 'move' } | { kind: 'resize'; handle: Handle } | { kind: 'rotate' }
 

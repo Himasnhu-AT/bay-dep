@@ -322,7 +322,19 @@ export interface KeyframeTarget {
 
 export type KeyframeMerge =
   | { ok: true; keyframes: ItemKeyframes | undefined; changed: KeyframeProperty[] }
-  | { ok: false; error: string }
+  | { ok: false; error: string; userMessage?: string }
+
+/** How the inspector names each animatable property, for refusals a person reads. */
+const PROPERTY_WORDS: Record<KeyframeProperty, string> = {
+  opacity: 'Opacity',
+  left: 'X position',
+  top: 'Y position',
+  width: 'Width',
+  height: 'Height',
+  rotation: 'Rotation',
+  scale: 'Scale',
+  volume: 'Volume'
+}
 
 function describeEase(ease: unknown): string {
   return JSON.stringify(ease)
@@ -496,6 +508,9 @@ export function mergeKeyframes(
       if (clash) {
         return {
           ok: false,
+          userMessage:
+            `${PROPERTY_WORDS[property]} already has a key on that frame. One frame holds one value: ` +
+            `remove one of them, or put them a frame apart for a jump.`,
           error:
             `keyframes.${property} has two keys on frame ${frame} (timeline frame ${target.from + frame}). ` +
             `One frame holds one value; remove one, or put them a frame apart for a jump.`

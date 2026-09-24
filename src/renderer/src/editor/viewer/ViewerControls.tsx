@@ -70,7 +70,7 @@ export function ViewerControls(): ReactNode {
         shortcut={shortcutOf('view.cropMode')}
         tooltipSide="top"
         active={cropMode}
-        className="hidden @xl:inline-flex"
+        className="hidden @2xl:inline-flex"
         icon={<Crop className="size-3.5" />}
         onClick={() => runCommand('view.cropMode')}
       />
@@ -78,7 +78,7 @@ export function ViewerControls(): ReactNode {
         label="Full-screen preview"
         shortcut={shortcutOf('view.fullscreenPreview')}
         tooltipSide="top"
-        className="hidden @xl:inline-flex"
+        className="hidden @2xl:inline-flex"
         icon={<Maximize className="size-3.5" />}
         onClick={() => runCommand('view.fullscreenPreview')}
       />

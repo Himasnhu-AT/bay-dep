@@ -5,9 +5,23 @@
  * checkpoints, because it is the one door a whole project comes in through.
  */
 
+import { activeTimeline, allItems, type Project } from '@shared/project'
 import type { EditorActions, EditorState } from '../types'
 import type { StoreKit } from '../kit'
 import { HISTORY_LIMIT } from '../kit'
+
+/**
+ * The selection that survives stepping to `project`: every selected clip that still exists there.
+ * Undo and redo used to clear it, so a ⌘Z made in the inspector emptied the inspector and sent
+ * the next arrow key to the playhead instead of the clip.
+ */
+export function selectionAfter(selection: readonly string[], project: Project): string[] {
+  if (selection.length === 0) return []
+  const timeline = activeTimeline(project)
+  if (!timeline) return []
+  const present = new Set(allItems(timeline).map((item) => item.id))
+  return selection.filter((id) => present.has(id))
+}
 
 type Actions = Pick<
   EditorActions,
@@ -78,7 +92,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         project: previous,
         past: state.past.slice(0, -1),
         future: [state.project, ...state.future],
-        selection: [],
+        selection: selectionAfter(state.selection, previous),
         dirty: previous !== history.saved,
         ...turnMarks(state)
       })
@@ -93,7 +107,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         project: next,
         past: [...state.past, state.project],
         future: state.future.slice(1),
-        selection: [],
+        selection: selectionAfter(state.selection, next),
         dirty: next !== history.saved,
         ...turnMarks(state)
       })

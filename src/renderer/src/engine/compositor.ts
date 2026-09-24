@@ -101,6 +101,14 @@ export interface DrawStats {
    */
   pendingNames: string[]
   /**
+   * The names behind `placeholders` alone, each with why: what this frame drew as a grey card
+   * because it could not be drawn at all (a `.brf` that threw, missing or undecodable media).
+   * Unlike `pendingNames`, waiting does not help — but an export that wrote such a frame wrote a
+   * wrong picture just the same, and used to finish as a clean "Done". Every placeholder site
+   * goes through `#placeholder`, so the count, this list and `unresolvedNames` move together.
+   */
+  placeholderNames: string[]
+  /**
    * How each text item actually came out.
    *
    * Reported for the same reason `pending` is: the output looks plausible while being wrong.
@@ -242,7 +250,7 @@ export class Compositor {
     timeline = playableTimeline(timeline)
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
-    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
+    const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [], placeholderNames: [] }
 
     this.#pool.beginGeneration()
     // The project's imported fonts registered before anything draws — every drawing path (the
@@ -500,19 +508,13 @@ export class Compositor {
     item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {
-      this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
-      stats.placeholders += 1
-      stats.unresolvedNames.push(
-        asset ? `${asset.name} (${asset.error ?? 'unreadable'})` : 'a missing asset'
-      )
+      this.#placeholder(ctx, item, stats, asset?.name ?? 'Missing media', asset ? `${asset.name} (${asset.error ?? 'unreadable'})` : 'a missing asset')
       return
     }
 
     const entry = this.#pool.acquire(asset, slot)
     if (entry.status === 'error') {
-      this.#drawPlaceholder(ctx, item, asset.name)
-      stats.placeholders += 1
-      stats.unresolvedNames.push(`${asset.name} (could not be decoded)`)
+      this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (could not be decoded)`)
       return
     }
 
@@ -548,18 +550,14 @@ export class Compositor {
           return
         }
         if ('error' in scene) {
-          this.#drawPlaceholder(ctx, item, asset.name)
-          stats.placeholders += 1
-          stats.unresolvedNames.push(`${asset.name} (${scene.error})`)
+          this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (${scene.error})`)
           return
         }
         doc = scene.doc
       } else {
         const entry = documentOf(asset)
         if ('error' in entry) {
-          this.#drawPlaceholder(ctx, item, asset.name)
-          stats.placeholders += 1
-          stats.unresolvedNames.push(`${asset.name} (${entry.error})`)
+          this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (${entry.error})`)
           return
         }
         doc = entry.doc
@@ -571,9 +569,7 @@ export class Compositor {
         return
       }
       if ('error' in painted) {
-        this.#drawPlaceholder(ctx, item, asset.name)
-        stats.placeholders += 1
-        stats.unresolvedNames.push(`${asset.name} (${painted.error})`)
+        this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (${painted.error})`)
         return
       }
       this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats)
@@ -749,6 +745,17 @@ export class Compositor {
     } finally {
       ctx.restore()
     }
+  }
+
+  /**
+   * Draws the grey card for an item that cannot be drawn and records it: the one way a
+   * placeholder happens, so no site can paint one without the export hearing about it.
+   */
+  #placeholder(ctx: RenderTarget, item: Item, stats: DrawStats, label: string, why: string): void {
+    this.#drawPlaceholder(ctx, item, label)
+    stats.placeholders += 1
+    stats.unresolvedNames.push(why)
+    stats.placeholderNames.push(why)
   }
 
   #drawPlaceholder(ctx: RenderTarget, item: Item, name: string): void {

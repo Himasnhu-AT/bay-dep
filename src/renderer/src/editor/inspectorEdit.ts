@@ -14,7 +14,9 @@ import { ToolError } from '@/mcp/helpers'
 import { editItem } from '@/mcp/write'
 import { useEditor } from '@/store/editor'
 
+/** The refusal as a person should read it: the tool's own sentence for them, when it has one. */
 function message(error: unknown): string {
+  if (error instanceof ToolError && error.userMessage) return error.userMessage
   return error instanceof Error ? error.message : String(error)
 }
 

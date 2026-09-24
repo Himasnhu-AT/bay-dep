@@ -425,7 +425,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
       hasPicture: track.kind === 'video',
       hasAudio: Boolean(asset?.hasAudio) || asset?.kind === 'html'
     })
-    if (!merged.ok) fail(merged.error)
+    if (!merged.ok) fail(merged.error, merged.userMessage)
     patch.keyframes = merged.keyframes
   }
 

@@ -417,3 +417,29 @@ test('a menu command goes to an editor window, never a composition render window
   // No editor at all is nowhere to send, not the render window.
   assert.equal(menuCommandTarget(render, [], null), null)
 })
+
+test('a key macOS hands the menu for a renderer-owned command is dropped; a click and a native key are not', () => {
+  // Measured: with Settings open, M arrived at "Add Marker" with triggeredByAccelerator and added
+  // a marker behind the dialog, because `registerAccelerator: false` still leaves the shown key
+  // as an NSMenu key equivalent. The renderer claims every key it runs, so such a click is always
+  // a key the renderer refused.
+  const { template, sent } = build()
+  const leaves = menuLeaves(template)
+  type Click = (item: unknown, window: unknown, event: { triggeredByAccelerator: boolean }) => void
+  const click = (label: string, byKey: boolean): void =>
+    (leaves.find((leaf) => leaf.label === label)?.click as unknown as Click)({}, undefined, { triggeredByAccelerator: byKey })
+
+  sent.length = 0
+  click('Add Marker', true)
+  click('Ripple Trim Start to Playhead', true)
+  click('Undo', true)
+  assert.deepEqual(sent, [], 'a key the renderer declined ran from the menu')
+
+  // Positive controls: the same item clicked with the mouse, and Save's native accelerator.
+  click('Add Marker', false)
+  click('Save', true)
+  assert.deepEqual(sent, [
+    { type: 'command', id: 'mark.add' },
+    { type: 'command', id: 'file.save' }
+  ])
+})

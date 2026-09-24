@@ -79,11 +79,12 @@ export function EditingSection(): ReactNode {
   return (
     <Section title="Editing" description="Defaults for new clips and transitions. Clips already on the timeline keep their length.">
       <Row
-        label="Image and text length"
+        label="Image & title length"
         hint={`How long a still image or a title runs when you place it. ${framesHint(fps === null ? null : stillDurationFrames(fps, stillSeconds), fps) ?? ''}`.trim()}
       >
         <NumberField
-          label="Seconds"
+          label="Length"
+          ariaLabel="Image and title length, in seconds"
           value={stillSeconds}
           step={0.5}
           min={STILL_SECONDS.min}
@@ -99,7 +100,8 @@ export function EditingSection(): ReactNode {
         hint={`What a new transition asks for; a cut without enough footage either side gets less. ${framesHint(fps === null ? null : transitionLengthFrames(fps, transitionSeconds), fps) ?? ''}`.trim()}
       >
         <NumberField
-          label="Seconds"
+          label="Length"
+          ariaLabel="Transition length, in seconds"
           value={transitionSeconds}
           step={0.1}
           min={TRANSITION_SECONDS.min}

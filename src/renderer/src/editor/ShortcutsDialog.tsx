@@ -59,7 +59,10 @@ export function ShortcutsDialog({ open, onClose }: ShortcutsDialogProps): ReactN
       }}
     >
       <div className="border-b border-line p-3">
+        {/* Focused on open: the sheet is opened to find a key, and focus on Close made the first
+            keystroke of the search go nowhere. `Modal` leaves a field that took focus alone. */}
         <SearchField
+          autoFocus
           label="Search shortcuts"
           placeholder="Search shortcuts…"
           value={query}

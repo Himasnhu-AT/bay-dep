@@ -1,6 +1,7 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { ChevronRight, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { OPEN_SECTION_EVENT } from '@/lib/openSection'
 import { IconButton } from './IconButton'
 
 export interface PanelProps {
@@ -92,6 +93,17 @@ export function Section({
 }: SectionProps): ReactNode {
   const [open, setOpen] = useState(() => (collapsible ? readOpen(id, defaultOpen) : true))
   const bodyId = useId()
+  // `openSection(id)` from outside (a field inside is about to be focused).
+  useEffect(() => {
+    if (!collapsible || !id) return
+    const onOpen = (event: Event): void => {
+      if ((event as CustomEvent<{ id?: string }>).detail?.id !== id) return
+      setOpen(true)
+      writeOpen(id, true)
+    }
+    window.addEventListener(OPEN_SECTION_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_SECTION_EVENT, onOpen)
+  }, [collapsible, id])
   return (
     <div className={cn('border-b border-line px-3 py-3 last:border-b-0', className)}>
       <div className={cn('flex h-4 items-center justify-between gap-2', open && 'mb-2')}>

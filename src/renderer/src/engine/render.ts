@@ -263,7 +263,7 @@ export async function renderFrame(options: RenderFrameOptions): Promise<Rendered
       0
     )
 
-    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
+    let stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [], placeholderNames: [] }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await awaitSources(pool, project, timeline, frame, timeoutMs)
       stats = compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })

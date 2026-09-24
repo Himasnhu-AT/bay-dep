@@ -109,7 +109,13 @@ export type TrimPlan = {
 
 export type TrimRefusal = {
   ok: false
+  /** For the agent: names the item and the legal `deltaFrames`, so the next call can succeed. */
   error: string
+  /**
+   * For a person, when the refusal reaches the inspector as a toast: the clip by name, in
+   * frames of footage, with no ids or argument names. Absent where `error` already reads that way.
+   */
+  userMessage?: string
   /** Present when the refusal is about the size of the move: the range that would be accepted. */
   range?: { min: Frames; max: Frames }
 }
@@ -338,6 +344,7 @@ function planSlip(
     // change nothing on screen, and report success: the control that does not do what it says.
     return {
       ok: false,
+      userMessage: `${asset?.name ?? 'This clip'} is a still, so there is nothing to slip: every source in shows the same picture.`,
       error:
         `Item ${item.id} draws ${asset ? `a ${asset.kind}` : 'a missing asset'} with no source ` +
         `duration, so there is no window to slip — every read point shows the same picture. ` +
@@ -348,10 +355,16 @@ function planSlip(
   const range = { min: -room.before, max: room.after }
   if (delta === 0) return zeroDelta('slip', range)
   if (delta < range.min || delta > range.max) {
-    return outOfRange(`Slipping ${item.id}`, delta, range, {
-      min: `only ${room.before} frames of ${asset.name} come before its in-point`,
-      max: `only ${room.after} frames of ${asset.name} come after its out-point`
-    })
+    const frames = (n: number): string => `${n} frame${n === 1 ? '' : 's'}`
+    return {
+      ...outOfRange(`Slipping ${item.id}`, delta, range, {
+        min: `only ${room.before} frames of ${asset.name} come before its in-point`,
+        max: `only ${room.after} frames of ${asset.name} come after its out-point`
+      }),
+      userMessage:
+        `${asset.name} has ${frames(room.before)} of footage before this clip and ${frames(room.after)} ` +
+        `after it, so its source in can move ${frames(room.before)} earlier or ${frames(room.after)} later at most.`
+    }
   }
   const next = change(item)
   next.sourceStartUs = movedSourceStart(item, asset, delta, timeline.fps, item.durationInFrames)

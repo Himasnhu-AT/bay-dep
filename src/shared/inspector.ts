@@ -7,7 +7,19 @@
  * not a React tree that happens to render them.
  */
 
-import type { AssetKind, Keyframe, KeyframeEase, TrackKind } from './project'
+import { clipName } from './editing'
+import { linkedPartners } from './links'
+import {
+  findTrack,
+  itemsOverlap,
+  type AssetKind,
+  type Item,
+  type Keyframe,
+  type KeyframeEase,
+  type Project,
+  type Timeline,
+  type TrackKind
+} from './project'
 
 // ---------------------------------------------------------------------------
 // Which controls a clip gets
@@ -125,7 +137,7 @@ export function formatDb(db: number): string {
   const rounded = Math.abs(db) >= 10 ? Math.round(db) : Math.round(db * 10) / 10
   if (rounded === 0) return '0dB'
   const text = Math.abs(db) >= 10 ? String(Math.abs(rounded)) : Math.abs(rounded).toFixed(1)
-  return `${rounded > 0 ? '+' : '-'}${text}dB`
+  return `${rounded > 0 ? '+' : '−'}${text}dB`
 }
 
 /**
@@ -190,4 +202,79 @@ export function editKey(
       return next
     })
     .sort((a, b) => a.frame - b.frame)
+}
+
+// ---------------------------------------------------------------------------
+// Typed Start and Duration: why the store would refuse, in words
+// ---------------------------------------------------------------------------
+
+/**
+ * Why typing a new Start (`from`) or Duration into the inspector would do nothing, or null when
+ * it will apply. The store's `moveItem` and `trimItem` refuse a collision or a locked track by
+ * returning without a word, so a typed value that collided just snapped back — the field looked
+ * broken. This mirrors their rules (each selected clip, and the clips linked to it, which move
+ * and trim with it) and names the clip, the track and the neighbour, the way the executor does
+ * for the agent.
+ */
+export function timingRefusal(
+  project: Project,
+  timeline: Timeline,
+  itemIds: readonly string[],
+  change: { from: number } | { durationInFrames: number }
+): string | null {
+  const byId = new Map(timeline.tracks.flatMap((track) => track.items.map((item) => [item.id, item] as const)))
+  // Where every affected clip would be afterwards: the selection and each one's linked partners.
+  const after = new Map<string, Item>()
+  for (const id of itemIds) {
+    const item = byId.get(id)
+    if (!item) continue
+    if ('from' in change) {
+      const delta = Math.max(0, Math.round(change.from)) - item.from
+      for (const member of [item, ...linkedPartners(timeline, id)]) {
+        after.set(member.id, { ...member, from: member.from + delta })
+      }
+    } else {
+      const delta = Math.max(1, Math.round(change.durationInFrames)) - item.durationInFrames
+      for (const member of [item, ...linkedPartners(timeline, id)]) {
+        after.set(member.id, { ...member, durationInFrames: member.durationInFrames + delta })
+      }
+    }
+  }
+  const verb = 'from' in change ? 'move' : 'change length'
+  for (const [id, moved] of after) {
+    const before = byId.get(id)
+    const track = findTrack(timeline, moved.trackId)
+    if (!before || !track) continue
+    const name = clipName(project, before)
+    if (track.locked && (moved.from !== before.from || moved.durationInFrames !== before.durationInFrames)) {
+      return `${track.name} is locked, so ${name} cannot ${verb}. Unlock ${track.name} first.`
+    }
+    if (moved.durationInFrames < 1) return `${name} must stay at least one frame long.`
+    if (moved.from < 0) return `${name} cannot start before the beginning of the timeline.`
+    for (const other of track.items) {
+      if (other.id === id) continue
+      const otherAfter = after.get(other.id) ?? other
+      if (!itemsOverlap(otherAfter, moved)) continue
+      const otherName = clipName(project, other)
+      return 'from' in change
+        ? `${name} would land on ${otherName} on ${track.name}. Pick a start in free time, or move ${otherName} first.`
+        : `${name} would run into ${otherName} on ${track.name}. Make it shorter, or move ${otherName} first.`
+    }
+  }
+  return null
+}
+
+/**
+ * Clause-shaped notes (the agent's `clamped` reasons: "the audio lead is 0 frames, not 10: …")
+ * as sentences a panel can list one per line. Joined with a space they read as one run-on
+ * sentence with a lowercase start in the middle.
+ */
+export function asSentences(notes: readonly string[]): string[] {
+  return notes
+    .map((note) => note.trim())
+    .filter((note) => note !== '')
+    .map((note) => {
+      const capital = note.charAt(0).toUpperCase() + note.slice(1)
+      return /[.!?]$/.test(capital) ? capital : `${capital}.`
+    })
 }

@@ -24,9 +24,16 @@ import { useEditor, type EditorStore } from '@/store/editor'
 
 /** A failure the dispatcher turns into `{ ok: false, error }`. The message is the product. */
 export class ToolError extends Error {
-  constructor(message: string) {
+  /**
+   * The same refusal for a person, when the inspector runs the tool's executor for them and the
+   * agent's wording names ids or argument names (`keyframes.left`). Absent when `message` reads
+   * fine to both.
+   */
+  readonly userMessage: string | undefined
+  constructor(message: string, userMessage?: string) {
     super(message)
     this.name = 'ToolError'
+    this.userMessage = userMessage
   }
 }
 
@@ -39,8 +46,8 @@ export type Handler = (args: Record<string, unknown>) => unknown | Promise<unkno
  */
 export type Handlers = Record<string, Handler>
 
-export function fail(message: string): never {
-  throw new ToolError(message)
+export function fail(message: string, userMessage?: string): never {
+  throw new ToolError(message, userMessage)
 }
 
 export function store(): EditorStore {

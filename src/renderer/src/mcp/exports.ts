@@ -244,7 +244,8 @@ export function exportStatus(
             frames: incomplete.frames,
             ranges: incomplete.ranges,
             items: incomplete.items,
-            gradeIssues: incomplete.gradeIssues
+            gradeIssues: incomplete.gradeIssues,
+            placeholders: incomplete.placeholders
           },
           warning: incomplete.message
         }

@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { isInsideFloating } from './Floating'
+import { isTopModal, openModal, takeKey } from './modalStack'
 import { IconButton } from './IconButton'
 
 export interface ModalProps {
@@ -30,6 +31,19 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
   if (open && !wasOpen.current) opener.current = document.activeElement as HTMLElement | null
   wasOpen.current = open
 
+  // This dialog's place among open dialogs, claimed when it opens — keyed on `open` alone, so a
+  // re-registered key listener (a new `onClose`) does not move it (`modalStack.ts`).
+  const place = useRef<symbol | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const claim = openModal()
+    place.current = claim.token
+    return () => {
+      claim.release()
+      place.current = null
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const panel = panelRef.current
@@ -49,6 +63,9 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
       // A menu or popover opened from inside the dialog owns its own Escape and Tab: Escape
       // there closes the menu, not the dialog under it.
       if (isInsideFloating(event.target)) return
+      // A dialog opened over this one owns the keyboard: one Escape closes one dialog.
+      if (!isTopModal(place.current)) return
+      if (event.key === 'Escape' && !takeKey(event)) return
       // Escape closes. Listed here rather than on the panel's React props because the panel
       // is not always what holds focus — a `<select>` inside it swallows keydown — and a
       // dialog that traps Tab but cannot be dismissed from the keyboard is a trap.

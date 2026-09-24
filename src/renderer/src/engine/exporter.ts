@@ -28,7 +28,7 @@ import {
   timelineDuration,
   type Project
 } from '@shared/project'
-import { Compositor } from './compositor'
+import { Compositor, type DrawStats } from './compositor'
 import { CompositionPool } from './compositionPool'
 import { MediaPool } from './mediaPool'
 import { awaitSources } from './render'
@@ -197,13 +197,8 @@ export class FrameExporter {
           stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         }
         // Both are recorded from the draw that was written — the last one — and nothing else.
-        if (stats.pending > 0 || (stats.gradeIssues?.length ?? 0) > 0) {
-          this.#incomplete.push({
-            frame,
-            missing: stats.pending > 0 ? stats.pendingNames : [],
-            gradeIssues: stats.gradeIssues ?? []
-          })
-        }
+        const wrong = writtenFrameIssues(frame, stats)
+        if (wrong) this.#incomplete.push(wrong)
         if (this.#cancelled) break
         // Export has no audio consumer, so the picture is the only vote there is.
         this.#pool.retireIdle()
@@ -261,13 +256,35 @@ export class FrameExporter {
 /** How many frame ranges the sentence spells out before it says "and N more". */
 const RANGES_IN_MESSAGE = 6
 
-/** What one written frame got wrong: items still pending, and grade failures. */
+/** What one written frame got wrong: items still pending, grade failures, placeholder cards. */
 export interface WrittenFrameIssues {
   frame: number
   /** Names of the items the frame was written without. */
   missing: readonly string[]
   /** The compositor's grade issues for the frame; each names its clip. */
   gradeIssues: readonly string[]
+  /** Items drawn as a placeholder card, each with why (`DrawStats.placeholderNames`). */
+  placeholders?: readonly string[]
+}
+
+/**
+ * What the draw that was written got wrong, or null for a clean frame. Pure over the draw's
+ * stats, so the rule — pending, a failed grade, *or a placeholder* makes a frame wrong — is
+ * tested without an encoder. Placeholders were once left out: a `.brf` that threw exported as
+ * six grey "Box" cards and the dialog said "Done 100%".
+ */
+export function writtenFrameIssues(
+  frame: number,
+  stats: Pick<DrawStats, 'pending' | 'pendingNames' | 'gradeIssues' | 'placeholders' | 'placeholderNames'>
+): WrittenFrameIssues | null {
+  const gradeIssues = stats.gradeIssues ?? []
+  if (stats.pending === 0 && gradeIssues.length === 0 && stats.placeholders === 0) return null
+  return {
+    frame,
+    missing: stats.pending > 0 ? stats.pendingNames : [],
+    gradeIssues,
+    placeholders: stats.placeholders > 0 ? stats.placeholderNames : []
+  }
 }
 
 function toRanges(frames: readonly number[]): [number, number][] {
@@ -325,6 +342,7 @@ export function describeIncomplete(wrong: readonly WrittenFrameIssues[]): Incomp
   const named = tally(missingFrames, (w) => w.missing)
   const gradeIssues = graded.map(({ key, frames: n, ranges: r }) => ({ issue: key, frames: n, ranges: r }))
   const items = named.map(({ key, frames: n, ranges: r }) => ({ name: key, frames: n, ranges: r }))
+  const placeholders = tally(wrong, (w) => w.placeholders ?? []).map(({ key, frames: n, ranges: r }) => ({ name: key, frames: n, ranges: r }))
 
   const parts: string[] = [`${frames} frame${frames === 1 ? '' : 's'} of this export ${frames === 1 ? 'is' : 'are'} not the picture the timeline describes (${spellRanges(ranges)}).`]
   if (gradeIssues.length > 0) {
@@ -342,8 +360,16 @@ export function describeIncomplete(wrong: readonly WrittenFrameIssues[]): Incomp
         `come out incomplete, look at them with preview_frame, which names what is still pending.`
     )
   }
+  if (placeholders.length > 0) {
+    // Last: a grey card with the item's name on it is the one fault nobody can miss on playback.
+    parts.push(
+      `These could not be drawn at all, so the file shows a grey placeholder card instead: ` +
+        `${placeholders.map((p) => `${p.name} (${spellRanges(p.ranges)})`).join('; ')}. ` +
+        `Exporting again will not change them; fix or replace those items first.`
+    )
+  }
   parts.push('Every other frame is complete.')
-  return { frames, ranges, items, gradeIssues, message: parts.join(' ') }
+  return { frames, ranges, items, gradeIssues, placeholders, message: parts.join(' ') }
 }
 
 interface Target {

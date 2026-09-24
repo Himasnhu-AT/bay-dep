@@ -15,7 +15,10 @@
  * shortcut but `registerAccelerator: false`: a registered `S` or `Delete` would be taken from
  * every text field in the window, and a ⌘-combo the renderer also handles would run twice.
  * Only `accelerator: 'native'` commands (Open, Save, Export…) register — those must work while
- * a text field has focus, and the renderer's key handler ignores them.
+ * a text field has focus, and the renderer's key handler ignores them. An unregistered key is
+ * still an NSMenu key equivalent, though: macOS offers the menu every key the page leaves
+ * unclaimed, so a renderer-owned item's click that says `triggeredByAccelerator` is dropped
+ * (`menuClickRuns`) — it is a key the renderer's gate refused, behind a dialog or in a field.
  *
  * **Undo/Redo are commands, never `role: 'undo'`.** The role drives the *system text* undo
  * stack, which is right inside a text field and wrong everywhere else in an editor — a user
@@ -115,18 +118,45 @@ export function menuCommandTarget<W>(focused: W | null, editors: readonly W[], l
   return editors[0] ?? null
 }
 
+/**
+ * Whether a click on one of bay's command items should reach the renderer.
+ *
+ * `registerAccelerator: false` does not stop macOS: an item that *shows* a key is still one of
+ * NSMenu's key equivalents, and a key the page leaves unhandled is offered to the menu. Measured
+ * in the running app: with Settings open, M, I, O, N and B each arrived here with
+ * `triggeredByAccelerator: true` and added a marker, set In/Out, toggled snapping and switched
+ * the tool behind the dialog; Q ripple-trimmed the selected clip. With no dialog the same keys
+ * never arrived here at all (the renderer ran and claimed them), and typing in a text field did
+ * not reach the menu either — so dropping these costs nothing and nothing runs twice.
+ *
+ * A mouse click (or a native accelerator: Save, Open, Export) always goes through; the renderer
+ * decides what a dialog allows (`menuCommandMayRun`).
+ */
+export function menuClickRuns(native: boolean, event: { triggeredByAccelerator?: boolean } | undefined): boolean {
+  return native || event?.triggeredByAccelerator !== true
+}
+
 export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[] {
   const { appName, onCommand, includeDevTools, isMac, recents, onClearRecents } = options
 
   const item = (spec: CommandSpec): MenuItemConstructorOptions => {
     const shortcut = shortcutsOf(spec)[0]
     const accelerator = shortcut === undefined ? undefined : toAccelerator(shortcut)
+    const native = spec.accelerator === 'native'
     return {
       id: spec.id,
       label: spec.label,
-      click: () => onCommand({ type: 'command', id: spec.id }),
+      click: (_item, _window, event) => {
+        // A renderer-owned key reaches the menu only when the renderer declined it: its key
+        // handler claims (preventDefault) every key it runs, and Chromium hands macOS's menu
+        // only the keys the page left unclaimed. So a key-equivalent click here is a key the
+        // renderer's gate refused — a dialog was open, or a text field had focus — and running
+        // it would undo that refusal. See `menuClickRuns`.
+        if (!menuClickRuns(native, event)) return
+        onCommand({ type: 'command', id: spec.id })
+      },
       ...(accelerator
-        ? { accelerator, registerAccelerator: spec.accelerator === 'native' }
+        ? { accelerator, registerAccelerator: native }
         : {})
     }
   }

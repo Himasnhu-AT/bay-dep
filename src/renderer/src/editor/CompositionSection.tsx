@@ -51,7 +51,7 @@ export function CompositionSection({ items, asset }: CompositionSectionProps): R
   return (
     <Section
       id="inspector.composition"
-      title="Composition"
+      title={asset.kind === 'brf' ? 'Motion graphic' : 'Composition'}
       collapsible
       actions={
         <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-ink-2">
@@ -72,13 +72,23 @@ export function CompositionSection({ items, asset }: CompositionSectionProps): R
       }
     >
       {declared.length === 0 ? (
-        <p className="text-[10px] leading-relaxed text-ink-2">
-          This composition declares no controls. Add them to the file with{' '}
-          <code className="text-ink-1">data-composition-variables</code> on its{' '}
-          <code className="text-ink-1">&lt;html&gt;</code> element, then bind one with{' '}
-          <code className="text-ink-1">data-var-text</code> or read it in CSS as{' '}
-          <code className="text-ink-1">var(--id)</code>.
-        </p>
+        // How to declare one depends on what the file is: a motion graphic is a module, and HTML
+        // instructions on it pointed at an element it does not have.
+        asset.kind === 'brf' ? (
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            This motion graphic declares no controls. Add them to its code with{' '}
+            <code className="text-ink-1">export const vars = {'{'} title: 'Launch day' {'}'}</code>, then read{' '}
+            <code className="text-ink-1">vars.title</code> in the scene; each becomes a field here.
+          </p>
+        ) : (
+          <p className="text-[10px] leading-relaxed text-ink-2">
+            This composition declares no controls. Add them to the file with{' '}
+            <code className="text-ink-1">data-composition-variables</code> on its{' '}
+            <code className="text-ink-1">&lt;html&gt;</code> element, then bind one with{' '}
+            <code className="text-ink-1">data-var-text</code> or read it in CSS as{' '}
+            <code className="text-ink-1">var(--id)</code>.
+          </p>
+        )
       ) : (
         <div className="flex flex-col gap-2.5">
           {declared.map((variable) => (

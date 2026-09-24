@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
 import type { ExportFormat } from '@shared/ipc'
 import { formatFps, formatTimecode, timelineDuration } from '@shared/project'
@@ -39,6 +39,11 @@ const QUALITIES: { value: ExportQuality; label: string }[] = [
 ]
 
 type LoudnessChoice = 'off' | LoudnessPreset | 'custom'
+
+/** A level as the fields show it, with a real minus sign: −80, −1.5. */
+function formatLevel(value: number): string {
+  return `${value < 0 ? '−' : ''}${Math.abs(value)}`
+}
 
 /** Off by default: mastering moves the file's level away from the level the preview played. */
 const LOUDNESS: { value: LoudnessChoice; label: string }[] = [
@@ -103,6 +108,8 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
   const rangeIn = useEditor((state) => state.rangeIn)
   const rangeOut = useEditor((state) => state.rangeOut)
   const session = useExportSession()
+  // What the last loudness entry was held to, when it was out of range; cleared by the next commit.
+  const [clampNote, setClampNote] = useState<string | null>(null)
 
   if (!timeline) return null
 
@@ -226,9 +233,11 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
                 precision={1}
                 suffix="LUFS"
                 disabled={locked}
-                onCommit={(integratedLufs) =>
-                  typeof settings.loudness === 'object' && update({ loudness: { ...settings.loudness, integratedLufs } })
-                }
+                onClamp={(asked, kept) => setClampNote(`${formatLevel(asked)} LUFS is outside the target range, so it is ${formatLevel(kept)}.`)}
+                onCommit={(integratedLufs) => {
+                  setClampNote(null)
+                  if (typeof settings.loudness === 'object') update({ loudness: { ...settings.loudness, integratedLufs } })
+                }}
               />
               <NumberField
                 label="Peak"
@@ -239,12 +248,20 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
                 precision={1}
                 suffix="dBTP"
                 disabled={locked}
-                onCommit={(truePeakDb) =>
-                  typeof settings.loudness === 'object' && update({ loudness: { ...settings.loudness, truePeakDb } })
-                }
+                onClamp={(asked, kept) => setClampNote(`${formatLevel(asked)} dBTP is outside the peak range, so it is ${formatLevel(kept)}.`)}
+                onCommit={(truePeakDb) => {
+                  setClampNote(null)
+                  if (typeof settings.loudness === 'object') update({ loudness: { ...settings.loudness, truePeakDb } })
+                }}
               />
             </div>
           </div>
+        )}
+        {typeof settings.loudness === 'object' && settings.format !== 'png-sequence' && (
+          // The limits, always shown: a typed −80 used to become −40 with nothing said.
+          <p className={cn('mt-1 text-[11px] text-pretty', clampNote ? 'text-warning' : 'text-ink-2')} role={clampNote ? 'status' : undefined}>
+            {clampNote ? `${clampNote} ` : ''}Target −40 to −5 LUFS · peak −12 to 0 dBTP.
+          </p>
         )}
         {loudnessProblem && 'error' in loudnessProblem && <p className="mt-1.5 text-[11px] text-pretty text-danger">{loudnessProblem.error}</p>}
 

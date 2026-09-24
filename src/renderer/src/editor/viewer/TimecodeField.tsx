@@ -81,7 +81,7 @@ export function TimecodeField(): ReactNode {
       )}
       {/* The length is the transport's third thing to go when the row is short (see the
           priority list in Transport.tsx); the status bar shows it too. */}
-      <span className="hidden text-[11px] whitespace-nowrap text-ink-2 @2xl:inline">
+      <span className="hidden text-[11px] whitespace-nowrap text-ink-2 @3xl:inline">
         / {formatTimecode(duration, fps)}
       </span>
     </div>

@@ -5,6 +5,7 @@ import { useViewer } from '@/lib/viewer'
 import { useEditor } from '@/store/editor'
 import { emptyChannel, formatDb, meterPosition, stepChannel, type ChannelMeter } from './meter'
 
+/** The full width; the transport narrows it by CSS (`className`) and the draw follows. */
 const WIDTH = 88
 const BAR = 4
 const GAP = 2
@@ -31,7 +32,7 @@ function prefersReducedMotion(): boolean {
  * refresh and no re-render. Paused, it draws once, empty (the analysers hold their last window
  * forever, so reading them while paused would freeze a stale level on screen).
  */
-export function AudioMeter(): ReactNode {
+export function AudioMeter({ className }: { className?: string }): ReactNode {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const playing = useEditor((state) => state.playing)
   const engine = useViewer((state) => state.engine)
@@ -45,9 +46,17 @@ export function AudioMeter(): ReactNode {
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
     const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.round(WIDTH * dpr)
-    canvas.height = Math.round(HEIGHT * dpr)
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // The width is whatever the layout gave the canvas — 88 px, or the compact meter a narrow
+    // transport shows — read on every draw so the bars stay sharp across a container resize.
+    let width = 0
+    const fit = (): void => {
+      const next = Math.max(1, Math.round(canvas.clientWidth || WIDTH))
+      if (next === width) return
+      width = next
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(HEIGHT * dpr)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
     const colours = {
       track: token('--color-surface-3', '#333'),
       signal: token('--color-success', '#3c3'),
@@ -55,17 +64,18 @@ export function AudioMeter(): ReactNode {
       hot: token('--color-danger', '#c33'),
       tick: token('--color-ink-0', '#fff')
     }
-    const cautionAt = meterPosition(CAUTION_DB) * WIDTH
-    const hotAt = meterPosition(HOT_DB) * WIDTH
     const ballistics = !prefersReducedMotion()
 
     const draw = (): void => {
-      ctx.clearRect(0, 0, WIDTH, HEIGHT)
+      fit()
+      const cautionAt = meterPosition(CAUTION_DB) * width
+      const hotAt = meterPosition(HOT_DB) * width
+      ctx.clearRect(0, 0, width, HEIGHT)
       channels.current.forEach((channel, index) => {
         const y = index * (BAR + GAP)
         ctx.fillStyle = colours.track
-        ctx.fillRect(0, y, WIDTH, BAR)
-        const level = meterPosition(channel.rmsDb) * WIDTH
+        ctx.fillRect(0, y, width, BAR)
+        const level = meterPosition(channel.rmsDb) * width
         // Three fills, not a gradient: the zones are information, and each reads as one colour.
         ctx.fillStyle = colours.signal
         ctx.fillRect(0, y, Math.min(level, cautionAt), BAR)
@@ -77,10 +87,10 @@ export function AudioMeter(): ReactNode {
           ctx.fillStyle = colours.hot
           ctx.fillRect(hotAt, y, level - hotAt, BAR)
         }
-        const peak = meterPosition(channel.peakDb) * WIDTH
+        const peak = meterPosition(channel.peakDb) * width
         if (peak > 0) {
           ctx.fillStyle = channel.peakDb >= HOT_DB ? colours.hot : colours.tick
-          ctx.fillRect(Math.min(WIDTH - 1, peak), y, 1, BAR)
+          ctx.fillRect(Math.min(width - 1, peak), y, 1, BAR)
         }
       })
     }
@@ -141,8 +151,8 @@ export function AudioMeter(): ReactNode {
           role="img"
           aria-label="Master level, left and right"
           tabIndex={0}
-          className="rounded-xs"
-          style={{ width: WIDTH, height: HEIGHT }}
+          className={cn('rounded-xs', className ?? 'w-[88px]')}
+          style={{ height: HEIGHT }}
         />
       </Tooltip>
       <Tooltip

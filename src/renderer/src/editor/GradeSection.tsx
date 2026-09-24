@@ -52,7 +52,7 @@ const SCALARS: {
   identity: number
   format(value: number): string
 }[] = [
-  { key: 'temperature', label: 'Temperature (K)', caption: 'Temp', min: -3000, max: 3000, step: 10, identity: 0, format: (v) => `${signed(0)(v)}K` },
+  { key: 'temperature', label: 'Temperature (K)', caption: 'Temp', min: -3000, max: 3000, step: 10, identity: 0, format: (v) => (v === 0 ? 'Neutral' : `${signed(0)(v)}K`) },
   { key: 'tint', label: 'Tint', caption: 'Tint', min: -1, max: 1, step: 0.01, identity: 0, format: signed(2) },
   // "Grade saturation" in the accessible name: Adjustments has a saturation too, a CSS filter
   // drawn over the graded picture, and the two are different fields.

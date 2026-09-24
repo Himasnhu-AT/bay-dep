@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Film } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useElementSize } from '@/lib/useElementSize'
@@ -6,7 +6,7 @@ import { useEngine } from '@/lib/useEngine'
 import { useViewer } from '@/lib/viewer'
 import { selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { DebugHud } from './DebugHud'
-import { viewerSize } from './viewer/geometry'
+import { centreOfScroll, scrollForCentre, viewerSize } from './viewer/geometry'
 import { Guides } from './viewer/Guides'
 import { TransformOverlay } from './viewer/TransformOverlay'
 
@@ -65,9 +65,31 @@ export function Preview(): ReactNode {
   const scale = canvas.width > 0 ? inner / canvas.width : 0
   const empty = duration === 0
 
+  // What sits in the middle of a zoomed viewer, as fractions of the scrolled content. A new zoom
+  // starts centred; a resize (or the zoom's own new size) keeps whatever was in the middle there.
+  const centre = useRef({ x: 0.5, y: 0.5 })
+  const scrolling = zoom !== 'fit' && !fullscreen
+  useLayoutEffect(() => {
+    centre.current = { x: 0.5, y: 0.5 }
+  }, [zoom])
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el || !scrolling) return
+    el.scrollLeft = scrollForCentre(centre.current.x, el.scrollWidth, el.clientWidth)
+    el.scrollTop = scrollForCentre(centre.current.y, el.scrollHeight, el.clientHeight)
+  }, [scrolling, zoom, box.width, box.height, size.width, size.height])
+
   return (
     <div
       ref={containerRef}
+      onScroll={(event) => {
+        if (!scrolling) return
+        const el = event.currentTarget
+        centre.current = {
+          x: centreOfScroll(el.scrollLeft, el.scrollWidth, el.clientWidth),
+          y: centreOfScroll(el.scrollTop, el.scrollHeight, el.clientHeight)
+        }
+      }}
       className={cn(
         'flex min-h-0 flex-1 bg-surface-0',
         fullscreen ? 'fixed inset-0 z-(--z-overlay)' : 'relative',

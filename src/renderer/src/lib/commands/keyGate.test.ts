@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { keyMayRun } from './keyGate'
+import { keyMayRun, menuCommandMayRun } from './keyGate'
 
 const base = { defaultPrevented: false, modalOpen: false, typing: false, whileTyping: false }
 
@@ -22,4 +22,24 @@ test('an open dialog blocks timeline commands', () => {
 
 test('an open dialog still lets its own text fields undo, cut, copy and paste', () => {
   assert.equal(keyMayRun({ ...base, modalOpen: true, typing: true, whileTyping: true }), true)
+})
+
+// -- the native menu bar ----------------------------------------------------------------------
+
+const menu = { modalOpen: false, typing: false, whileTyping: false, native: false }
+
+test('with no dialog open, every menu command runs (the positive control)', () => {
+  assert.equal(menuCommandMayRun(menu), true)
+})
+
+test('an open dialog refuses a menu command that edits the timeline behind it', () => {
+  // Mark › Add Marker, Clip › Ripple Trim Start… chosen while Settings is open.
+  assert.equal(menuCommandMayRun({ ...menu, modalOpen: true }), false)
+  // Edit › Paste with focus on a dialog button would paste clips behind it.
+  assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, whileTyping: true }), false)
+})
+
+test('an open dialog still lets File commands and its own field’s text editing through', () => {
+  assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, native: true }), true)
+  assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, typing: true, whileTyping: true }), true)
 })

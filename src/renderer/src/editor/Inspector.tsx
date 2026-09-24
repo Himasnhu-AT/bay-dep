@@ -47,7 +47,7 @@ import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
 import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
 import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
-import { canSound, commonValue, hasSourceTime, isVisualItem } from '@shared/inspector'
+import { canSound, commonValue, hasSourceTime, isVisualItem, timingRefusal } from '@shared/inspector'
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
@@ -330,7 +330,7 @@ export function Inspector(): ReactNode {
         const deltaFrames = Math.round((sourceFrames - current) / effectiveSpeed(item.speed))
         if (deltaFrames === 0) continue
         const result = trimEdit({ itemId: item.id, mode: 'slip', deltaFrames })
-        if (!result.ok) refusals.push(result.error)
+        if (!result.ok) refusals.push(result.userMessage ?? result.error)
       }
     })
     if (refusals[0]) notify(refusals[0], 'error')
@@ -352,6 +352,8 @@ export function Inspector(): ReactNode {
   const from = layout((item) => item.from, selected)
   const durationInFrames = layout((item) => item.durationInFrames, selected)
   const tc = timecodeField(fps)
+  const notTime = (text: string): void =>
+    notify(`“${text.trim()}” is not a time. Type a timecode (00:00:04:15), seconds (4.5s) or frames (135f).`, 'error')
   const longestSource = Math.max(0, ...timedItems.map((item) => findAsset(project, item.assetId)?.durationUs ?? 0))
   const transformTouched = visualItems.some((item) => {
     const l = item.layout
@@ -384,10 +386,15 @@ export function Inspector(): ReactNode {
               // for collisions, and a typed-in start that overlaps a neighbour must be
               // refused the same way a dragged one is.
               onCommit={(next) => {
+                // The store refuses a collision or a locked track by doing nothing; say why
+                // instead of letting the field snap back as if it were broken.
+                const refusal = timeline ? timingRefusal(project, timeline, selected.map((item) => item.id), { from: next }) : null
+                if (refusal) return notify(refusal, 'error')
                 transact(() => {
                   for (const item of selected) moveItem(item.id, next)
                 })
               }}
+              onInvalid={notTime}
               min={0}
               {...tc}
             />
@@ -397,10 +404,15 @@ export function Inspector(): ReactNode {
               value={durationInFrames.value}
               mixed={durationInFrames.mixed}
               onCommit={(next) => {
+                const refusal = timeline
+                  ? timingRefusal(project, timeline, selected.map((item) => item.id), { durationInFrames: next })
+                  : null
+                if (refusal) return notify(refusal, 'error')
                 transact(() => {
                   for (const item of selected) trimItem(item.id, 'end', item.from + next)
                 })
               }}
+              onInvalid={notTime}
               min={1}
               {...tc}
             />

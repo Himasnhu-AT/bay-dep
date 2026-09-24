@@ -314,7 +314,10 @@ better-hidden fault first. `track_export` reads it live from the exporter, not f
 cannot know. It returns `complete: false`, `incompleteFrames` and a `warning`, and a clean `done`
 returns `complete: true`. The export form shows the same sentence. The frame count used to be a
 counter that nothing read. Every pending site goes through `notePending`: a branch that bumped
-`pending` and forgot the name arrived in parallel with the field.
+`pending` and forgot the name arrived in parallel with the field. A **placeholder** frame is wrong
+too — a `.brf` that threw, media missing or undecodable, drawn as a grey card — and was once left
+out: six "Box" cards exported as a clean "Done 100%". Every placeholder site goes through
+`#placeholder` (`DrawStats.placeholderNames`), and `IncompleteFrames.placeholders` names each.
 
 **Tool calls stream into the panel as the model writes them.** `content_block_start` for a
 `tool_use` shows the card at once, and each `input_json_delta` (keyed by block index, so the stream

@@ -27,6 +27,17 @@ export interface NumberFieldProps {
   format?(value: number): string
   /** Reads what was typed back to a value; null when it is not one. Default: `Number`. */
   parse?(text: string): number | null
+  /**
+   * Called with the text when what was typed is not a value (`parse` said null), so the caller can
+   * say what the field accepts. Without it the field quietly puts the old value back.
+   */
+  onInvalid?(text: string): void
+  /**
+   * Called when a typed or dragged value was outside `min`..`max` and was held to the limit, with
+   * what was asked and what was kept — so the caller can say so instead of the number silently
+   * changing under the person who typed it.
+   */
+  onClamp?(asked: number, kept: number): void
   /** Accessible name when the visible label is an abbreviation. */
   ariaLabel?: string
 }
@@ -62,12 +73,18 @@ export function NumberField({
   row = false,
   format,
   parse,
+  onInvalid,
+  onClamp,
   ariaLabel
 }: NumberFieldProps): ReactNode {
   const inputRef = useRef<HTMLInputElement>(null)
   // While dragging or typing the field shows its own value; otherwise it mirrors the store.
   const [draft, setDraft] = useState<string | null>(null)
   const dragStart = useRef(0)
+  // Escape blurs to leave the field; the blur must then neither commit nor complain about what
+  // was typed. Read from a ref because the blur runs inside the same key event, before the
+  // `setDraft(null)` above it has re-rendered the handler.
+  const cancelling = useRef(false)
 
   const shown = (n: number): string => (format ? format(n) : n.toFixed(precision))
   const read = (text: string): number | null => {
@@ -90,6 +107,9 @@ export function NumberField({
     // commits NaN to the project; with it, 3 -> 3.
     if (!Number.isFinite(rounded)) return
     onCommit(rounded)
+    // After the commit, so a caller that clears its note on every commit still shows this one.
+    const asked = Number(next.toFixed(precision))
+    if (Number.isFinite(asked) && asked !== rounded) onClamp?.(asked, rounded)
   }
 
   const onPointerDown = useDrag({
@@ -163,14 +183,19 @@ export function NumberField({
         onChange={(event) => setDraft(event.target.value)}
         onFocus={() => setDraft(mixed ? '' : shown(value))}
         onBlur={() => {
-          const parsed = draft === null ? null : read(draft)
+          const cancelled = cancelling.current
+          cancelling.current = false
+          const parsed = draft === null || cancelled ? null : read(draft)
           setDraft(null)
+          if (cancelled) return
           if (parsed !== null) commit(parsed)
+          else if (draft !== null && draft.trim() !== '') onInvalid?.(draft)
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             event.currentTarget.blur()
           } else if (event.key === 'Escape') {
+            cancelling.current = true
             setDraft(null)
             event.currentTarget.blur()
           } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {

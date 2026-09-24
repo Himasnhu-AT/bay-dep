@@ -29,7 +29,8 @@ test('a done export with frames missing a graphic is reported as not complete, n
     frames: 2,
     ranges: [[0, 1]],
     items: [{ name: 'Counter probe', frames: 2, ranges: [[0, 1]] }],
-    gradeIssues: []
+    gradeIssues: [],
+    placeholders: []
   })
   assert.equal(typeof status.warning, 'string')
   assert.match(String(status.warning), /frames 0-1/)
