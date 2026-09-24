@@ -19,13 +19,17 @@ import { tool as editAsset } from './edit-asset'
 import { tool as editItem } from './edit-item'
 import { tool as estimateSpeech } from './estimate-speech'
 import { tool as exportTimeline } from './export-timeline'
+import { tool as fillPromptKit } from './fill-prompt-kit'
+import { tool as findHighlights } from './find-highlights'
 import { tool as frameGrid } from './frame-grid'
 import { tool as generateImage } from './generate-image'
 import { tool as generateSpeech } from './generate-speech'
 import { tool as generateVideo } from './generate-video'
 import { tool as importMedia } from './import-media'
+import { tool as importUrl } from './import-url'
 import { tool as inspectItem } from './inspect-item'
 import { tool as listProjects } from './list-projects'
+import { tool as markHighlights } from './mark-highlights'
 import { tool as openProject } from './open-project'
 import { tool as placeAsset } from './place-asset'
 import { tool as previewFrame } from './preview-frame'
@@ -55,6 +59,7 @@ export const TOOLS: ToolSpec[] = [
   listProjects,
   openProject,
   transcribe,
+  findHighlights,
   detectBeats,
   detectCuts,
   readProject,
@@ -70,6 +75,7 @@ export const TOOLS: ToolSpec[] = [
   addTemplate,
   readComposition,
   importMedia,
+  importUrl,
   placeAsset,
   editAsset,
   editItem,
@@ -86,6 +92,7 @@ export const TOOLS: ToolSpec[] = [
   setCanvas,
   addCaptions,
   addMarker,
+  markHighlights,
   removeMarker,
   readFeedback,
   resolveFeedback,
@@ -94,6 +101,7 @@ export const TOOLS: ToolSpec[] = [
   undo,
   exportTimeline,
   trackExport,
+  fillPromptKit,
   generateImage,
   generateVideo,
   generateSpeech,

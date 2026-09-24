@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, type WebContents } from 'electron'
 import { IPC } from '@shared/ipc'
 import { MCP_CALL_TIMEOUT_MS, findTool, type McpToolCall, type McpToolResult } from '@shared/mcp'
 import { type ToolOutcome } from './protocol'
@@ -268,6 +268,19 @@ function policyEnv(): PolicyEnv {
   return {
     home: homedir(),
     roots: [...temps],
+    confirm: async (message, detail) => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !isCompositionWindow(w))
+      const options = {
+        type: 'question' as const,
+        message,
+        detail,
+        buttons: ['Download', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1
+      }
+      const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options)
+      return response === 0
+    },
     head: async (path) => {
       let handle
       try {

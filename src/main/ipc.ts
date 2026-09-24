@@ -42,6 +42,8 @@ import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
+import { importFromUrl } from './media/url-import'
+import { downloadsDir } from './paths'
 import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
@@ -74,6 +76,7 @@ interface ChannelApi {
 
   mediaImportDialog: BayApi['media']['importDialog']
   mediaImportPaths: BayApi['media']['importPaths']
+  mediaImportUrl: BayApi['media']['importUrl']
   mediaProbe: BayApi['media']['probe']
   mediaThumbnail: BayApi['media']['thumbnail']
   mediaTranscribe: BayApi['media']['transcribe']
@@ -235,6 +238,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
 
   mediaImportDialog: (event) => importDialog(windowOf(event)),
   mediaImportPaths: (_event, paths) => importPaths(paths),
+  mediaImportUrl: (_event, url, options) =>
+    importFromUrl(url, { downloadsDir: downloadsDir(), ffmpeg: mediaToolsReady().ffmpeg }, { dryRun: options?.dryRun === true }),
   mediaProbe: (_event, path) => probe(path),
   mediaThumbnail: (_event, request) => thumbnail(request),
   mediaTranscribe: async (_event, path, language, options) => {

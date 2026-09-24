@@ -68,6 +68,7 @@ const api: BayApi = {
     importDialog: () => ipcRenderer.invoke(IPC.mediaImportDialog) as Promise<ImportedAsset[]>,
     importPaths: (paths: string[]) =>
       ipcRenderer.invoke(IPC.mediaImportPaths, paths) as Promise<ImportedAsset[]>,
+    importUrl: (url: string, options?: { dryRun?: boolean }) => ipcRenderer.invoke(IPC.mediaImportUrl, url, options),
     probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path) as Promise<ProbeResult>,
     transcribe: (path: string, language?: string, options?: { download?: boolean; model?: string | null }) =>
       ipcRenderer.invoke(IPC.mediaTranscribe, path, language, options),
