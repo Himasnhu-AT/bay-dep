@@ -67,9 +67,14 @@ export async function addFreezeFrame(): Promise<void> {
       )
       return
     }
-    const still: Asset = imported.reused
-      ? imported.asset
-      : { ...imported.asset, name: `Freeze · ${asset.name} · ${formatTimecode(frame, timeline.fps, true)}` }
+    // Named like its clip label unless this project already holds that still under a name. A
+    // `reused` import (the same frame grabbed before, in any project) came back named after its
+    // file — "freeze-clipa-mp4-e354bd844f38.png" — which is how the verifier saw it.
+    const existing = findAsset(useEditor.getState().project, imported.asset.id)
+    const still: Asset = existing ?? {
+      ...imported.asset,
+      name: `Freeze · ${asset.name} · ${formatTimecode(frame, timeline.fps, true)}`
+    }
     // Planned again inside the store against the timeline as it is now: the grab took a moment,
     // and the clip may have moved or gone meanwhile.
     const result = useEditor.getState().insertFreezeFrame({

@@ -13,7 +13,7 @@ import { LeftRail, SidePanel } from '@/editor/LeftRail'
 import { ProjectsHome } from '@/home/ProjectsHome'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { ProjectSettingsDialog } from '@/settings/ProjectSettingsDialog'
-import { Button, Modal } from '@/components'
+import { Button, ErrorBoundary, Modal } from '@/components'
 import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
 import type { RefObject } from 'react'
 import type { Project } from '@shared/project'
@@ -417,7 +417,9 @@ export function App(): ReactNode {
             {/* `inert` while collapsed: a 0px panel is still mounted, and without it its controls
                 stayed in the tab order and the accessibility tree, reachable but invisible. */}
             <div inert={hiddenRegions.side} className="h-full min-h-0">
-              <SidePanel />
+              <ErrorBoundary region="the side panel">
+                <SidePanel />
+              </ErrorBoundary>
             </div>
           </ResizablePanel>
           <ResizableHandle aria-label="Resize side panel" />
@@ -438,8 +440,10 @@ export function App(): ReactNode {
                 >
                   <ResizablePanel id="viewer" minSize="320px">
                     <div className="flex h-full min-h-0 min-w-0 flex-col">
-                      <Preview />
-                      <Transport />
+                      <ErrorBoundary region="the viewer">
+                        <Preview />
+                        <Transport />
+                      </ErrorBoundary>
                     </div>
                   </ResizablePanel>
                   <ResizableHandle aria-label="Resize inspector" />
@@ -455,7 +459,9 @@ export function App(): ReactNode {
                     onResize={followCollapse('inspector', inspectorRef)}
                   >
                     <div inert={hiddenRegions.inspector} className="h-full min-h-0">
-                      <Inspector />
+                      <ErrorBoundary region="the inspector">
+                        <Inspector />
+                      </ErrorBoundary>
                     </div>
                   </ResizablePanel>
                 </ResizablePanelGroup>
@@ -472,7 +478,9 @@ export function App(): ReactNode {
                 onResize={followCollapse('timeline', timelineRef)}
               >
                 <div inert={hiddenRegions.timeline} className="flex h-full min-h-0 flex-col">
-                  <Timeline />
+                  <ErrorBoundary region="the timeline">
+                    <Timeline />
+                  </ErrorBoundary>
                 </div>
               </ResizablePanel>
             </ResizablePanelGroup>

@@ -6,9 +6,12 @@ import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyRelinks } from '@shared/relink'
-import { cloneKeyframes, shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
+import { shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
+import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
+import { formatTimecode } from '@shared/timecode'
+import { applySpeedPlan, planSpeed, type SpeedPlan } from '@shared/speed'
 import { clone, makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -32,6 +35,7 @@ type Actions = Pick<
   | 'setCompositionVariable'
   | 'duplicateSelected'
   | 'patchItem'
+  | 'setClipSpeed'
   | 'detachAudio'
   | 'reattachAudio'
   | 'unlinkItems'
@@ -469,33 +473,34 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     duplicateSelected() {
-      const ids = get().selection
-      if (ids.length === 0) return
-      const created: string[] = []
-      editTimeline((timeline) => {
-        for (const track of timeline.tracks) {
-          if (track.locked) continue
-          const additions: Item[] = []
-          for (const item of track.items) {
-            if (!ids.includes(item.id)) continue
-            const copy: Item = {
-              ...item,
-              id: newId('itm'),
-              from: itemEnd(item),
-              layout: { ...item.layout },
-              ...(item.keyframes ? { keyframes: cloneKeyframes(item.keyframes) } : {})
-            }
-            if (track.items.some((other) => itemsOverlap(other, copy))) continue
-            additions.push(copy)
-            created.push(copy.id)
+      const state = get()
+      const ids = state.selection
+      if (ids.length === 0) {
+        state.notify('Select the clips to duplicate first.')
+        return
+      }
+      const holder: { value: DuplicateResult | null } = { value: null }
+      editTimeline((timeline, project) => {
+        holder.value = duplicateClips(project, timeline, ids, {
+          makeId: newId,
+          makeTrack: (tl, kind) => {
+            const track = makeTrack(kind, 1)
+            track.name = nextTrackName(tl, kind)
+            return track
           }
-          if (additions.length > 0) {
-            track.items.push(...additions)
-            track.items.sort((a, b) => a.from - b.from)
-          }
-        }
+        })
       })
-      if (created.length > 0) set({ selection: created })
+      const result = holder.value
+      if (!result) return
+      if (!result.ok) {
+        state.notify(result.error, 'error')
+        return
+      }
+      set({ selection: result.itemIds })
+      const timeline = activeTimeline(get().project)
+      if (timeline) {
+        state.notify(describeDuplicate(timeline, result, (frame) => formatTimecode(frame, timeline.fps)))
+      }
     },
 
     patchItem(itemId, patch, options) {
@@ -526,6 +531,19 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       })
     },
 
+    setClipSpeed(itemId, speed, options) {
+      const holder: { value: SpeedPlan | null } = { value: null }
+      editTimeline((timeline, project) => {
+        const found = findItem(timeline, itemId)
+        if (!found || found.track.locked) return
+        const plan = planSpeed(project, timeline, itemId, speed, options)
+        if (!plan) return
+        applySpeedPlan(timeline, plan)
+        holder.value = plan
+      })
+      return holder.value
+    },
+
     detachAudio(itemIds, trackId) {
       const holder: { value: ReturnType<typeof detachAudio> | null } = { value: null }
       editTimeline((tl, project) => {
@@ -541,7 +559,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       })
       const result = holder.value ?? {
         detached: [],
-        refused: itemIds.map((itemId) => ({ itemId, reason: 'no timeline is open' })),
+        refused: itemIds.map((itemId) => ({ itemId, reason: 'no timeline is open', forPerson: 'Open a timeline first.' })),
         warnings: [],
         createdTrackIds: [],
         addedTransitionIds: []
@@ -560,7 +578,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return (
         holder.value ?? {
           reattached: [],
-          refused: itemIds.map((itemId) => ({ itemId, reason: 'no timeline is open' }))
+          refused: itemIds.map((itemId) => ({ itemId, reason: 'no timeline is open', forPerson: 'Open a timeline first.' }))
         }
       )
     },

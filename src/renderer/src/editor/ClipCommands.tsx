@@ -8,6 +8,8 @@
 import { useState, type ReactNode } from 'react'
 import { PASTE_ATTRIBUTES, type PasteAttribute } from '@shared/clipboard'
 import { allItems, findAsset, findItem, itemEnd, type Item } from '@shared/project'
+import { speedNote } from '@shared/speed'
+import { formatTimecode } from '@shared/timecode'
 import { Button, Checkbox, Modal, NumberField, Popover, type MenuEntry } from '@/components'
 import { runCommand, shortcutOf, type CommandId } from '@/lib/commands'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -55,10 +57,23 @@ export function clipMenuEntries(item: Item, at: { x: number; y: number }): MenuE
   return [
     row('edit.cut', 'Cut', { disabled: locked }),
     row('edit.copy', 'Copy'),
-    row('edit.paste', 'Paste at Playhead', { disabled: noClipboard }),
-    row('edit.pasteAttributes', 'Paste Attributes…', { disabled: noClipboard }),
+    row('edit.paste', noClipboard ? 'Paste at Playhead — nothing copied' : 'Paste at Playhead', { disabled: noClipboard }),
+    row('edit.pasteAttributes', noClipboard ? 'Paste Attributes… — nothing copied' : 'Paste Attributes…', {
+      disabled: noClipboard
+    }),
     { kind: 'separator' },
-    row('clip.split', 'Split at Playhead', { disabled: !playheadInside || locked }),
+    row(
+      'clip.split',
+      // A disabled row says why: a cut on a clip's edge would make a zero-length clip.
+      locked
+        ? 'Split at Playhead — track is locked'
+        : playheadInside
+          ? 'Split at Playhead'
+          : selected.some((i) => state.playhead === i.from || state.playhead === itemEnd(i))
+            ? 'Split at Playhead — playhead is on the clip’s edge'
+            : 'Split at Playhead — playhead is not over the clip',
+      { disabled: !playheadInside || locked }
+    ),
     row('clip.duplicate', 'Duplicate', { disabled: locked }),
     row('clip.freezeFrame', 'Add Freeze Frame', { disabled: locked || !freezable || !playheadOver }),
     row('clip.toggleEnabled', item.disabled ? 'Enable Clip' : 'Disable Clip', { disabled: locked }),
@@ -143,27 +158,62 @@ function PasteAttributesDialog({ open, onClose }: { open: boolean; onClose(): vo
   )
 }
 
+/** Remembered for the session, like Paste Attributes' choices. */
+let lastRipple = false
+
 function SpeedPopover({ itemId, at, onClose }: { itemId: string; at: { x: number; y: number }; onClose(): void }): ReactNode {
   const item = useEditor((state) => {
     const timeline = selectTimeline(state)
     return timeline ? findItem(timeline, itemId)?.item : undefined
   })
+  const fps = useEditor((state) => selectTimeline(state)?.fps ?? 30)
+  const [ripple, setRipple] = useState(lastRipple)
+  // A stable anchor: a new object each render would re-place the popover every render.
+  const [anchor] = useState(at)
   if (!item) return null
+  const apply = (next: number): void => {
+    const store = useEditor.getState()
+    // The same plan `edit_item({ speed })` runs: the clip keeps its footage, so its length
+    // changes; a linked sound follows.
+    const plan = store.setClipSpeed(itemId, Math.max(0.1, next), { ripple })
+    const timeline = selectTimeline(useEditor.getState())
+    if (!plan || !timeline) return
+    const note = speedNote(store.project, timeline, plan, (frame) => formatTimecode(frame, timeline.fps))
+    if (note) store.notify(note)
+  }
   return (
-    <Popover open anchor={at} onClose={onClose} label="Clip speed" width={200}>
-      <NumberField
-        label="Speed"
-        value={item.speed}
-        step={0.05}
-        min={0.1}
-        max={16}
-        precision={2}
-        suffix="×"
-        // `patchItem`, as the inspector's Speed field does: a linked sound follows the rate.
-        onCommit={(next) => useEditor.getState().patchItem(itemId, { speed: Math.max(0.1, next) })}
-      />
+    <Popover open anchor={anchor} onClose={onClose} label="Clip speed" width={220}>
+      <div
+        // Enter applies and closes: the field commits on its own Enter (it blurs), which runs
+        // before this bubbles up.
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') onClose()
+        }}
+      >
+        <NumberField
+          label="Speed"
+          value={item.speed}
+          step={0.05}
+          min={0.1}
+          max={16}
+          precision={2}
+          suffix="×"
+          onCommit={apply}
+        />
+      </div>
+      <div className="mt-2">
+        <Checkbox
+          label="Push later clips"
+          checked={ripple}
+          onChange={(on) => {
+            lastRipple = on
+            setRipple(on)
+          }}
+        />
+      </div>
       <p className="mt-2 text-[10px] leading-relaxed text-pretty text-ink-2">
-        The clip keeps its length on the timeline and plays more or less of its source.
+        The clip plays the same footage, so faster makes it shorter and slower makes it longer (now{' '}
+        {formatTimecode(item.durationInFrames, fps)}). Without “Push later clips” it stops at the next clip.
       </p>
     </Popover>
   )

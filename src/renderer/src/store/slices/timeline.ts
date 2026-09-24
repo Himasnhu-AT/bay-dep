@@ -6,7 +6,7 @@
 import { CANVAS_PRESETS, checkCanvasSize, activeTimeline, allItems, placementLayout, coverLayout, containLayout, defaultLayout, findAsset, findItem, itemEnd, type Asset, type Item, type Project, type Transition, retimeTimeline } from '@shared/project'
 import { captionAssetName, captionLayout, captionStyle, checkCues } from '@shared/captions'
 import { applyScriptOps } from '@shared/script'
-import { clone, makeTrack, newId } from '../factory'
+import { clone, makeTrack, newId, nextMarkerName } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
 
@@ -302,7 +302,7 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
       const timeline = currentTimeline()
       if (!timeline) return null
       const id = newId('mk')
-      const name = label?.trim() || `Marker ${(timeline.markers?.length ?? 0) + 1}`
+      const name = label?.trim() || nextMarkerName(timeline.markers)
       editTimeline((tl) => {
         const list = tl.markers ?? (tl.markers = [])
         list.push({

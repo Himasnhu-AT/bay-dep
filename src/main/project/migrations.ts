@@ -31,7 +31,7 @@
  */
 
 import type { Item, Layout, Project, Timeline, Track } from '@shared/project'
-import { PROJECT_VERSION } from '@shared/project'
+import { adjustmentsOf, PROJECT_VERSION } from '@shared/project'
 import { repairKeyframes } from '@shared/keyframes'
 
 /** A document as parsed from JSON, before anything vouches for its shape. */
@@ -190,6 +190,25 @@ export const TRANSFORMS: Transform[] = [
         // `scale` is optional: absent is 1. A `null` from a NaN is removed rather than drawn.
         if ('scale' in repaired && !finite(repaired.scale)) delete repaired.scale
         item.layout = repaired
+      })
+    }
+  },
+  {
+    // Every adjustment field present and finite (`adjustmentsOf`): a partial object — hand-edited,
+    // or written by something that set one field — drew fine but put `undefined` in front of the
+    // inspector's sliders, which threw and blanked the window. A no-op on anything bay wrote.
+    name: 'item-adjustments',
+    apply(project) {
+      eachItem(project, (item) => {
+        if (item.adjustments === undefined) return
+        if (typeof item.adjustments !== 'object' || item.adjustments === null) {
+          delete item.adjustments
+          return
+        }
+        const repaired = adjustmentsOf(item.adjustments)
+        const current = item.adjustments as unknown as Record<string, unknown>
+        const same = (Object.keys(repaired) as (keyof typeof repaired)[]).every((key) => current[key] === repaired[key])
+        if (!same) item.adjustments = { ...item.adjustments, ...repaired }
       })
     }
   },

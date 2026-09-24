@@ -124,9 +124,14 @@ export function pasteClips(
       target && payload.tracks.length === 1 && target.kind === source.kind
         ? target
         : timeline.tracks.find((t) => t.id === source.id && t.kind === source.kind)
+    // The nearest track of the kind with room: the copy stays close to where it was asked for.
+    const home = timeline.tracks.findIndex((t) => t === preferred || t.id === source.id)
+    const distance = (t: Track): number => (home < 0 ? 0 : Math.abs(timeline.tracks.indexOf(t) - home))
     const candidates = [
       ...(preferred ? [preferred] : []),
-      ...timeline.tracks.filter((t) => t.kind === source.kind && t !== preferred)
+      ...timeline.tracks
+        .filter((t) => t.kind === source.kind && t !== preferred)
+        .sort((a, b) => distance(a) - distance(b))
     ].filter((t) => !claimed.has(t.id))
     let destination = candidates.find((t) => fits(t, group))
     if (!destination) {
@@ -151,6 +156,79 @@ export function pasteClips(
   }
 
   return { ok: true, itemIds, createdTrackIds, addedAssetIds }
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate
+// ---------------------------------------------------------------------------
+
+export type DuplicateResult =
+  | (Extract<PasteResult, { ok: true }> & { at: Frames; sourceTrackIds: string[] })
+  | { ok: false; error: string }
+
+/**
+ * Duplicate (⌘D): a copy of the clips straight after them — the group shifted by its own span, so
+ * one clip lands on its own end and several keep their spacing. It is Paste at the selection's
+ * end, so it lands where Paste would: on the clips' own tracks when there is room, else on the
+ * nearest track of the kind with room, else on a new one. It used to skip any clip whose next
+ * slot was taken, silently, so ⌘D on a clip with another after it did nothing at all.
+ */
+export function duplicateClips(
+  project: Project,
+  timeline: Timeline,
+  itemIds: readonly string[],
+  options: Omit<PasteOptions, 'trackId'>
+): DuplicateResult {
+  const unlocked = timeline.tracks
+    .filter((track) => !track.locked)
+    .flatMap((track) => track.items)
+    .filter((item) => itemIds.includes(item.id))
+    .map((item) => item.id)
+  if (unlocked.length === 0) {
+    const locked = timeline.tracks.find((t) => t.locked && t.items.some((i) => itemIds.includes(i.id)))
+    return {
+      ok: false,
+      error: locked
+        ? `${locked.name} is locked — unlock it in the track header to duplicate its clips.`
+        : 'Select the clips to duplicate first.'
+    }
+  }
+  const payload = copyClips(project, timeline, unlocked)
+  if (!payload) return { ok: false, error: 'Select the clips to duplicate first.' }
+  const at = Math.max(...payload.items.map((item) => item.from + item.durationInFrames))
+  const result = pasteClips(project, timeline, payload, at, options)
+  if (!result.ok) return result
+  return { ...result, at, sourceTrackIds: payload.tracks.map((t) => t.id) }
+}
+
+/**
+ * Where a duplicate went, as one sentence: "Duplicated to 00:00:11:00 on V1." — or, when the
+ * clips' own track had no room, which track took them instead and why.
+ */
+export function describeDuplicate(
+  timeline: Timeline,
+  result: Extract<DuplicateResult, { ok: true }>,
+  formatFrame: (frame: Frames) => string
+): string {
+  const name = (id: string): string => timeline.tracks.find((t) => t.id === id)?.name ?? id
+  const landed = [
+    ...new Set(
+      result.itemIds
+        .map((id) => timeline.tracks.find((t) => t.items.some((i) => i.id === id))?.id)
+        .filter((id): id is string => id !== undefined)
+    )
+  ]
+  const count = result.itemIds.length
+  const what = count === 1 ? 'the clip' : `${count} clips`
+  const moved = landed.filter((id) => !result.sourceTrackIds.includes(id))
+  const where = `at ${formatFrame(result.at)} on ${landed.map(name).join(', ')}`
+  if (moved.length === 0) return `Duplicated ${what} ${where}.`
+  const from = result.sourceTrackIds.map(name).join(', ')
+  const created = moved.filter((id) => result.createdTrackIds.includes(id))
+  return (
+    `${from} had no room after ${count === 1 ? 'it' : 'them'}, so the copy went ${where}` +
+    (created.length > 0 ? ` (a new track).` : '.')
+  )
 }
 
 // ---------------------------------------------------------------------------

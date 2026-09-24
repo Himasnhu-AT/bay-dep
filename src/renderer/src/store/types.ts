@@ -27,6 +27,7 @@ import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
+import type { SpeedPlan } from '@shared/speed'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
@@ -295,6 +296,12 @@ export interface EditorActions {
    * item's own.
    */
   patchItem(itemId: string, patch: Partial<Omit<Item, 'id' | 'trackId'>>, options?: LinkOptions): void
+  /**
+   * Changes a clip's speed so it plays the same footage (`@shared/speed`): its length changes, is
+   * clamped to the footage, and stops at the next clip unless `ripple` moves later clips.
+   * `edit_item({ speed })` runs the same plan. Returns what it did, or null for no such clip.
+   */
+  setClipSpeed(itemId: string, speed: number, options?: { ripple?: boolean }): SpeedPlan | null
   /** "Detach audio": each clip's sound onto a linked audio item (`@shared/links`). */
   detachAudio(itemIds: string[], trackId?: string): DetachResult
   /** The reverse: the picture sounds again and its linked audio item is removed. */

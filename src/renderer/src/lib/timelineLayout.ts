@@ -169,3 +169,102 @@ export function formatDelta(frames: number): string {
   if (frames === 0) return '0f'
   return `${frames > 0 ? '+' : '−'}${Math.abs(frames)}f`
 }
+
+// -- trimming ---------------------------------------------------------------------
+
+/**
+ * Where a dragged trim edge is, in (fractional) frames: where it was when grabbed plus the
+ * pointer's travel. Not the frame under the pointer — the handle is 8px wide, so a grab inside
+ * it put the edge under the pointer on the first move, a jump of up to 8px (about 20 frames at
+ * 0.4 px/frame) before the hand had moved at all. Snapping and rounding happen after this.
+ */
+export function trimEdgeFrame(edgeAtGrab: number, dxPx: number, pixelsPerFrame: number): number {
+  if (!(pixelsPerFrame > 0)) return edgeAtGrab
+  return edgeAtGrab + dxPx / pixelsPerFrame
+}
+
+// -- hit zones at a cut ----------------------------------------------------------
+
+/** A clip sits this many px inside its lane, top and bottom (`Clip.tsx`: `top: 4`, `height - 8`). */
+export const CLIP_INSET = 4
+/** A trim handle's hit width at each end of a clip (`Clip.tsx`'s `w-2`). */
+export const TRIM_HANDLE_WIDTH = 8
+/** A fade corner: this big (`size-2.5`), centred this far in from its end, on the clip's top edge. */
+export const FADE_CORNER_SIZE = 10
+export const FADE_CORNER_INSET = 8
+/** The cut target's width: it may cover part of each trim handle, never all of it. */
+export const JUNCTION_TARGET_WIDTH = 12
+
+export interface Rect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * Where the button on a cut sits, in lane coordinates: a short pill in the middle of the lane,
+ * below the fade corners.
+ *
+ * It was a full-height, 16px-wide zone over the cut, stacked above the clips — so at every butt
+ * cut it covered both trim handles and the outgoing clip's fade-out corner, and trimming,
+ * rolling or fading at a cut could not be done with the mouse at all. The handles now keep the
+ * top and bottom of the lane; the cut keeps its middle, which is also where a stored
+ * transition's band is drawn.
+ */
+export function junctionTarget(cutX: number, laneHeight: number): Rect {
+  const inner = Math.max(0, laneHeight - 2 * CLIP_INSET)
+  const height = Math.max(8, Math.min(16, Math.floor(inner / 3)))
+  const centredTop = CLIP_INSET + (inner - height) / 2
+  const top = Math.max(CLIP_INSET + FADE_CORNER_SIZE, centredTop)
+  return { left: cutX - JUNCTION_TARGET_WIDTH / 2, top, width: JUNCTION_TARGET_WIDTH, height }
+}
+
+export type LaneHit =
+  | { kind: 'junction'; cutX: number }
+  | { kind: 'fade-in' | 'fade-out' | 'trim-start' | 'trim-end' | 'body'; clip: number }
+
+function inside(rect: Rect, x: number, y: number): boolean {
+  return x >= rect.left && x < rect.left + rect.width && y >= rect.top && y < rect.top + rect.height
+}
+
+/**
+ * What a press at (x, y) in a lane lands on, in the timeline's stacking order: the cut target
+ * (z-20) over the fade corners (z-2) over the trim handles over the clip body. `clips` are
+ * `{ left, width }` in lane px with their fade lengths in px (a fade corner rides its wedge).
+ */
+export function laneHitAt(
+  x: number,
+  y: number,
+  laneHeight: number,
+  clips: readonly { left: number; width: number; fadeIn?: number; fadeOut?: number }[],
+  cuts: readonly number[]
+): LaneHit | null {
+  for (const cutX of cuts) {
+    if (inside(junctionTarget(cutX, laneHeight), x, y)) return { kind: 'junction', cutX }
+  }
+  const corner = (cx: number): Rect => ({
+    left: cx - FADE_CORNER_SIZE / 2,
+    top: CLIP_INSET,
+    width: FADE_CORNER_SIZE,
+    height: FADE_CORNER_SIZE
+  })
+  for (let i = clips.length - 1; i >= 0; i--) {
+    const clip = clips[i]
+    if (!clip || clip.width < 24) continue
+    const inX = clip.left + Math.max(FADE_CORNER_INSET, clip.fadeIn ?? 0)
+    const outX = clip.left + Math.min(clip.width - FADE_CORNER_INSET, clip.width - (clip.fadeOut ?? 0))
+    if (inside(corner(outX), x, y)) return { kind: 'fade-out', clip: i }
+    if (inside(corner(inX), x, y)) return { kind: 'fade-in', clip: i }
+  }
+  for (let i = clips.length - 1; i >= 0; i--) {
+    const clip = clips[i]
+    if (!clip) continue
+    const body: Rect = { left: clip.left, top: CLIP_INSET, width: clip.width, height: laneHeight - 2 * CLIP_INSET }
+    if (!inside(body, x, y)) continue
+    if (x >= clip.left + clip.width - TRIM_HANDLE_WIDTH) return { kind: 'trim-end', clip: i }
+    if (x < clip.left + TRIM_HANDLE_WIDTH) return { kind: 'trim-start', clip: i }
+    return { kind: 'body', clip: i }
+  }
+  return null
+}

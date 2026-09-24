@@ -8,8 +8,17 @@
 
 import { allItems, itemEnd } from '@shared/project'
 import { resolveId } from '@shared/mcp'
-import { linkedPartners } from '@shared/links'
+import { linkedPartners, type LinkRefusal } from '@shared/links'
 import { fail, resolveTrack, store, timeline, type Handlers } from './helpers'
+
+/** A refusal as the agent reads it: ids and the tool's own words; `forPerson` is the UI's. */
+function forAgent(refusal: LinkRefusal): Record<string, unknown> {
+  return {
+    itemId: refusal.itemId,
+    reason: refusal.reason,
+    ...(refusal.conflict ? { conflict: refusal.conflict } : {})
+  }
+}
 
 function resolveIds(given: readonly string[]): string[] {
   const known = allItems(timeline()).map((i) => i.id)
@@ -60,7 +69,7 @@ export function detachAudioTool(args: Record<string, unknown>): Record<string, u
     return {
       action,
       reattached: done.reattached.map((r) => ({ itemId: r.pictureId, removedAudioItemIds: r.removedAudioIds })),
-      ...(done.refused.length > 0 ? { refused: done.refused } : {})
+      ...(done.refused.length > 0 ? { refused: done.refused.map(forAgent) } : {})
     }
   }
 
@@ -93,7 +102,7 @@ export function detachAudioTool(args: Record<string, unknown>): Record<string, u
       ? { createdTracks: done.createdTrackIds.map((id) => ({ trackId: id, name: trackName(id) })) }
       : {}),
     ...(done.addedTransitionIds.length > 0 ? { copiedTransitionIds: done.addedTransitionIds } : {}),
-    ...(done.refused.length > 0 ? { refused: done.refused } : {}),
+    ...(done.refused.length > 0 ? { refused: done.refused.map(forAgent) } : {}),
     ...(done.warnings.length > 0 ? { warnings: done.warnings } : {}),
     note:
       'The pictures play no sound now; each audio item carries it, linked. Fade, level or duck the ' +

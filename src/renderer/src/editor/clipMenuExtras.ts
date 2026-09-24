@@ -66,14 +66,14 @@ export function detachToEntries(item: Item, timeline: Timeline, canDetach: boole
   if (!canDetach) return []
   const detach = (trackId: string | 'new') => () => {
     const store = useEditor.getState()
-    let refused: { reason: string }[] = []
+    let refused: { forPerson: string }[] = []
     store.transact(() => {
       const target = trackId === 'new' ? store.addTrack('audio') : trackId
       refused = store.detachAudio([item.id], target).refused
       // A refused detach leaves no empty track behind it.
       if (refused.length > 0 && trackId === 'new') store.removeTrack(target)
     })
-    if (refused.length > 0) store.notify(refused.map((r) => r.reason).join('. ') + '.', 'error')
+    if (refused.length > 0) store.notify(refused.map((r) => r.forPerson).join(' '), 'error')
   }
   const audioTracks = timeline.tracks.filter((track) => track.kind === 'audio')
   return [

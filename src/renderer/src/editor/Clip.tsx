@@ -261,10 +261,11 @@ function ClipImpl({
     onClick: () => setFadeDrag(null)
   })
 
-  // The level line on a sound clip. Not offered while volume is keyframed: the keys decide the
-  // level then, and a line that wrote the static field would draw nowhere (`@shared/keyframes`).
+  // The level line on any clip that sounds — an audio clip, or a video clip carrying its own sound
+  // (once detached, the sound's own clip has the line). Not offered while volume is keyframed: the
+  // keys decide the level then, and a line that wrote the static field would draw nowhere.
   const volumeKeyed = Boolean(item.keyframes?.volume?.length)
-  const showVolume = !blade && audio && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
+  const showVolume = !blade && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
   const beginVolume = useDrag({
     threshold: 1,
     onStart: () => setVolumeDrag(item.volume),

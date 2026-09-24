@@ -4,6 +4,7 @@ import type { Project, Timeline, Track } from '@shared/project'
 import { Tooltip } from '@/components'
 import { cn } from '@/lib/cn'
 import { junctionsForTrack, whyNoRoom, type Junction } from '@/lib/junctions'
+import { junctionTarget } from '@/lib/timelineLayout'
 
 const KIND_LABEL: Record<string, string> = {
   'cross-dissolve': 'Cross dissolve',
@@ -18,8 +19,8 @@ const KIND_LABEL: Record<string, string> = {
 /**
  * A handle on every cut in a track, whether or not it carries a transition.
  *
- * Cuts without one get a hit zone too — shown on hover and on keyboard focus, so Tab walks the
- * cuts — and that is the point rather than an oversight:
+ * Cuts without one get a small target too — faint while the lane is hovered, full on hover and on
+ * keyboard focus, so Tab walks the cuts — and that is the point rather than an oversight:
  * a transition lives on the junction, so the junction is what someone has to be able to
  * click. The alternative — dragging a transition from a panel onto a clip — has to guess
  * which of the clip's two edges was meant, and gives a refusal nowhere to appear when the
@@ -79,6 +80,7 @@ export function JunctionMarkers({
           const left = resolved.firstFrame * pixelsPerFrame
           const width = Math.max(14, (resolved.lastFrame + 1 - resolved.firstFrame) * pixelsPerFrame)
           const name = KIND_LABEL[stored.kind] ?? stored.kind
+          const band = junctionTarget(0, height)
           return (
             <Tooltip key={junction.key} side="top" label={label} detail={clamped ? detail : 'Click to change or remove.'}>
               <button
@@ -95,7 +97,9 @@ export function JunctionMarkers({
                     ? 'border-danger/70 bg-danger/25 text-on-media hover:bg-danger/40'
                     : 'border-accent/80 bg-accent/30 text-on-media hover:bg-accent/45'
                 )}
-                style={{ left, width, top: Math.max(2, height / 2 - 8), height: 16 }}
+                // The same band of the lane as a bare cut's target, so the handles and fade
+                // corners above and below it stay reachable under a transition too.
+                style={{ left, width, top: band.top, height: band.height }}
               >
                 {clamped && <AlertTriangle aria-hidden="true" className="size-2.5 shrink-0" />}
                 {/* Name when it fits, frames always: the frame count is what the handles allowed. */}
@@ -106,6 +110,7 @@ export function JunctionMarkers({
           )
         }
 
+        const target = junctionTarget(junction.cutFrame * pixelsPerFrame, height)
         return (
           <Tooltip key={junction.key} side="top" label={label} detail={detail}>
             <button
@@ -117,19 +122,22 @@ export function JunctionMarkers({
                 onOpen(junction)
               }}
               className={cn(
-                // A wide, full-height hit zone over the cut, drawn only on hover or focus: the
-                // affordance is there wherever the pointer finds a cut, and a row of glyphs on
-                // every cut does not crowd the timeline. Tab reaches it; focus shows it.
-                't-fast absolute z-20 flex -translate-x-1/2 items-center justify-center',
+                // A short pill in the middle of the lane (`junctionTarget`): the top and bottom
+                // of the cut stay with the two trim handles and the fade corners, which a
+                // full-height zone here used to cover. Faint while the lane is hovered, full on
+                // hover or focus; Tab reaches it.
+                't-fast absolute z-20 flex items-center justify-center',
                 // Stored but drawing nothing is never hidden: it is a fault, not an affordance.
-                broken ? 'opacity-100' : 'opacity-0 hover:opacity-100 focus-visible:opacity-100'
+                broken
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover/lane:opacity-50 hover:opacity-100! focus-visible:opacity-100!'
               )}
-              style={{ left: junction.cutFrame * pixelsPerFrame, top: 4, bottom: 4, width: 16 }}
+              style={target}
             >
               <span
                 aria-hidden="true"
                 className={cn(
-                  'flex size-4 items-center justify-center rounded-xs border',
+                  'flex size-full items-center justify-center rounded-xs border',
                   broken
                     ? 'border-danger/70 bg-danger/25 text-danger'
                     : noRoom !== null

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { isInsideFloating } from './Floating'
 import { IconButton } from './IconButton'
+import { isolatePointerEvents } from './isolate'
 
 export interface ModalProps {
   open: boolean
@@ -77,7 +78,11 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
   return createPortal(
     <div
       className="fixed inset-0 z-(--z-modal) flex items-center justify-center bg-black/55 p-8"
+      // Portalled, but React still bubbles through the component tree: a dialog opened from a
+      // clip or a lane must not start a drag, a scrub or a selection there (see `isolate.ts`).
+      {...isolatePointerEvents}
       onPointerDown={(event) => {
+        event.stopPropagation()
         if (event.target === event.currentTarget) onClose()
       }}
     >

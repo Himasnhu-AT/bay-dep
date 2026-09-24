@@ -12,6 +12,7 @@ import {
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 import { placeFloating, type FloatingAlign, type FloatingSide, type Placement } from './placement'
+import { isolatePointerEvents } from './isolate'
 
 /** What a floating surface hangs from: a trigger element, or a point (a right-click). */
 export type Anchor = HTMLElement | { x: number; y: number }
@@ -140,12 +141,25 @@ export function FloatingSurface(props: FloatingSurfaceProps): ReactNode {
     }
     const onBlur = (): void => dismiss('blur')
     const onResize = (): void => dismiss('resize')
+    // Escape with focus nowhere — a field inside blurred on Enter and focus fell to <body> —
+    // still closes the surface; otherwise it stayed open with nothing to close it but a click.
+    // With focus on anything else, that element (or this surface's own handler) owns the key.
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      const active = document.activeElement
+      if (active !== null && active !== document.body) return
+      // Capture phase, stopped here: the editor's own Escape (disarm a tool) must not also run.
+      event.stopPropagation()
+      dismiss('escape')
+    }
+    window.addEventListener('keydown', onEscape, true)
     document.addEventListener('pointerdown', onPointerDown, true)
     window.addEventListener('blur', onBlur)
     window.addEventListener('resize', onResize)
     if (closeOnScroll) window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('keydown', onEscape, true)
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('resize', onResize)
       window.removeEventListener('scroll', onScroll, true)
@@ -166,6 +180,7 @@ export function FloatingSurface(props: FloatingSurfaceProps): ReactNode {
       aria-label={props.label}
       tabIndex={-1}
       style={style}
+      {...isolatePointerEvents}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()

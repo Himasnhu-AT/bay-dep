@@ -76,6 +76,17 @@ export function nextTrackName(timeline: Timeline, kind: TrackKind): string {
   return `${kind === 'video' ? 'V' : 'A'}${count + 1}`
 }
 
+/**
+ * "Marker N" for the lowest N no marker is called: counting the list named a new marker after
+ * one that still existed once any had been deleted — two "Marker 2" rows in the markers list.
+ */
+export function nextMarkerName(markers: readonly { label: string }[] | undefined): string {
+  const taken = new Set((markers ?? []).map((marker) => marker.label))
+  let n = 1
+  while (taken.has(`Marker ${n}`)) n += 1
+  return `Marker ${n}`
+}
+
 /** The first track of `kind` with room for [from, from+duration), or null if none has. */
 export function trackWithRoom(
   timeline: Timeline,

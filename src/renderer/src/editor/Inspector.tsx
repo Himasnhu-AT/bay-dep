@@ -423,7 +423,13 @@ export function Inspector(): ReactNode {
                 label="Speed"
                 value={speed.value}
                 mixed={speed.mixed}
-                onCommit={(next) => applyItem({ speed: Math.max(0.1, next) }, timedItems)}
+                // `setClipSpeed`, as the clip menu's Speed… and `edit_item({ speed })` do: the clip
+                // keeps its footage, so its length changes, stopping at the next clip.
+                onCommit={(next) =>
+                  useEditor.getState().transact(() => {
+                    for (const item of timedItems) useEditor.getState().setClipSpeed(item.id, Math.max(0.1, next))
+                  })
+                }
                 step={0.05}
                 min={0.1}
                 max={8}
@@ -458,7 +464,7 @@ export function Inspector(): ReactNode {
           <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
             Times read hours:minutes:seconds:frames. Type a timecode (00:00:04:15), 4.5s for seconds or 135f for frames; a bare number is seconds.
             {timedItems.length > 0
-              ? ' Source in slips the footage under the clip without moving it; speed changes how fast the source is read, not the clip’s length.'
+              ? ' Source in slips the footage under the clip without moving it; speed keeps the footage and changes the clip’s length (it stops at the next clip — Speed… in the clip menu can push later clips).'
               : ''}
           </p>
         </Section>

@@ -15,6 +15,7 @@ import {
   gapAt,
   marqueeHits,
   trackHeightFor,
+  trimEdgeFrame,
   type Box,
   type Gap
 } from '@/lib/timelineLayout'
@@ -177,6 +178,7 @@ export function Timeline(): ReactNode {
   const [view, setView] = useState({ left: 0, width: 0 })
   const [move, setMove] = useState<MoveGesture | null>(null)
   const [trim, setTrim] = useState<TrimGesture | null>(null)
+  const trimScrollAtGrab = useRef(0)
   const [trimMode, setTrimMode] = useState<TrimModeGesture | null>(null)
   // The junction under edit. Local because a cut is not a selectable object in the store —
   // `selection` holds item ids — and inventing a second kind of selection there to carry a
@@ -485,7 +487,11 @@ export function Timeline(): ReactNode {
         if (!current) return current
         const item = allItems(timeline).find((candidate) => candidate.id === current.itemId)
         if (!item) return current
-        const raw = frameAtClientX(state.x)
+        // The edge moves by the pointer's travel, not to the pointer: a handle grabbed 4px in
+        // must not jump 4px (20 frames at a wide zoom) on the first move.
+        // Travel includes what auto-scroll moved the lanes under the pointer.
+        const scrolled = (scrollRef.current?.scrollLeft ?? 0) - trimScrollAtGrab.current
+        const raw = trimEdgeFrame(current.edge === 'start' ? item.from : itemEnd(item), state.dx + scrolled, pixelsPerFrame)
         const frame = state.meta ? Math.round(raw) : snap(raw, new Set([item.id]))
         if (current.edge === 'start') {
           const from = Math.max(0, Math.min(frame, itemEnd(item) - 1))
@@ -694,6 +700,7 @@ export function Timeline(): ReactNode {
         return
       }
       useEditor.getState().select([item.id])
+      trimScrollAtGrab.current = scrollRef.current?.scrollLeft ?? 0
       setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames })
       beginTrim(event)
     },
@@ -796,14 +803,24 @@ export function Timeline(): ReactNode {
       ? []
       : [
           {
-            // ⌘V's store action, at this frame and on this track (the planner takes both).
-            label: 'Paste here',
+            // ⌘V's store action, at this frame and on this track (the planner takes both). A
+            // disabled row says why, as "Close gap — not on a gap" does.
+            label: laneMenuTrack.locked
+              ? `Paste here — ${laneMenuTrack.name} is locked`
+              : hasClipboard
+                ? 'Paste here'
+                : 'Paste here — nothing copied',
             disabled: !hasClipboard || laneMenuTrack.locked,
             shortcut: shortcutOf('edit.paste'),
             onSelect: () => void useEditor.getState().paste(laneMenu.frame, laneMenuTrack.id)
           },
           {
-            label: 'Add text here',
+            label:
+              laneMenuTrack.kind !== 'video'
+                ? 'Add text here — text goes on a video track'
+                : laneMenuTrack.locked
+                  ? `Add text here — ${laneMenuTrack.name} is locked`
+                  : 'Add text here',
             disabled: laneMenuTrack.kind !== 'video' || laneMenuTrack.locked,
             onSelect: () => addTextAt(laneMenu.frame, laneMenuTrack.id)
           },
@@ -865,7 +882,7 @@ export function Timeline(): ReactNode {
     }
     const refused =
       action === 'detach' ? store.detachAudio([target]).refused : store.reattachAudio([target]).refused
-    if (refused.length > 0) store.notify(refused.map((r) => r.reason).join('. ') + '.', 'error')
+    if (refused.length > 0) store.notify(refused.map((r) => r.forPerson).join(' '), 'error')
   }
 
   // -- render ---------------------------------------------------------------
@@ -971,7 +988,7 @@ export function Timeline(): ReactNode {
                       .placeAsset(assetId, Math.round(frameAtClientX(event.clientX)), track.id)
                   }}
                   className={cn(
-                    'relative border-b border-line',
+                    'group/lane relative border-b border-line',
                     track.kind === 'video' ? 'bg-surface-1' : 'bg-surface-0/40',
                     track.locked && 'opacity-60'
                   )}
@@ -1158,7 +1175,7 @@ export function Timeline(): ReactNode {
           shown because the drag stops at it, and a drag that stops for no visible reason reads
           as the editor sticking. */}
       {trimMode && (
-        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
+        <div className="pointer-events-none absolute top-[3px] left-1/2 z-50 -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
           {trimMode.mode === 'slip' ? 'Slip' : trimMode.mode === 'slide' ? 'Slide' : 'Roll'}{' '}
           {trimMode.deltaFrames > 0 ? '+' : ''}
           {trimMode.deltaFrames} frames
@@ -1171,7 +1188,7 @@ export function Timeline(): ReactNode {
 
       {/* The same readout for a move or a trim: how far, and where it lands, in timecode. */}
       {((move && (move.deltaFrames || move.lanes || move.blocked)) || trim) && timeline ? (
-        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 max-w-[80%] -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
+        <div className="pointer-events-none absolute top-[3px] left-1/2 z-50 max-w-[50%] -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
           {move ? (
             <>
               Move {formatDelta(move.deltaFrames)}
@@ -1205,7 +1222,7 @@ export function Timeline(): ReactNode {
         const hint = pointerHint(tool, armed, mods, hover, fps)
         return hint ? (
           <div
-            className="pointer-events-none absolute bottom-2 left-1/2 z-50 max-w-[80%] -translate-x-1/2 truncate rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop"
+            className="pointer-events-none absolute top-[3px] left-1/2 z-50 max-w-[50%] -translate-x-1/2 truncate rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop"
           >
             {hint}
           </div>

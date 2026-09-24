@@ -10,7 +10,11 @@ import {
   gapAt,
   gapsOf,
   insertIndexFor,
+  junctionTarget,
+  laneHitAt,
   marqueeHits,
+  trackHeightFor,
+  trimEdgeFrame,
   volumeAtY,
   yForVolume
 } from './timelineLayout'
@@ -128,4 +132,66 @@ test('the volume line maps top to +6 dB, the middle to unity and the bottom to s
   assert.equal(formatDb(0.5), '−6.0 dB')
   assert.equal(formatDb(2), '+6.0 dB')
   assert.equal(formatDb(0), '−∞ dB')
+})
+
+// -- hit zones at a butt cut -----------------------------------------------------
+
+test('at a butt cut the trim handles and fade corners stay reachable; only the middle is the cut', () => {
+  const lane = trackHeightFor('video', 'medium')
+  const clips = [
+    { left: 0, width: 100 },
+    { left: 100, width: 100 }
+  ]
+  const cuts = [100]
+  const at = (x: number, y: number) => laneHitAt(x, y, lane, clips, cuts)
+  // The centre of the cut opens the transition dialog.
+  assert.deepEqual(at(100, lane / 2), { kind: 'junction', cutX: 100 })
+  // Either side of the cut, near the top and the bottom of the clip, is a trim handle.
+  assert.deepEqual(at(98, 16), { kind: 'trim-end', clip: 0 })
+  assert.deepEqual(at(98, lane - 8), { kind: 'trim-end', clip: 0 })
+  assert.deepEqual(at(102, lane - 8), { kind: 'trim-start', clip: 1 })
+  assert.deepEqual(at(102, 16), { kind: 'trim-start', clip: 1 })
+  // The outgoing clip's fade-out corner and the incoming one's fade-in corner.
+  assert.deepEqual(at(95, 8), { kind: 'fade-out', clip: 0 })
+  assert.deepEqual(at(106, 8), { kind: 'fade-in', clip: 1 })
+  // Positive control: away from any cut, the same row is the body.
+  assert.deepEqual(at(50, lane / 2), { kind: 'body', clip: 0 })
+})
+
+test('the cut target never covers a fade corner or a whole trim handle at any track height', () => {
+  for (const size of ['small', 'medium', 'large'] as const) {
+    const lane = trackHeightFor('video', size)
+    const rect = junctionTarget(100, lane)
+    assert.ok(rect.height >= 8, `${size}: a target shorter than 8px cannot be aimed at`)
+    assert.ok(rect.width < 16, `${size}: the target must leave part of each 8px handle`)
+    // Every column of each trim handle has handle above the target and below it.
+    for (const x of [93, 97, 99, 101, 103, 107]) {
+      const clips = [
+        { left: 0, width: 100 },
+        { left: 100, width: 100 }
+      ]
+      const above = laneHitAt(x, 5, lane, clips, [100])
+      const below = laneHitAt(x, lane - 5, lane, clips, [100])
+      assert.notEqual(above?.kind, 'junction', `${size}: x=${x} top is the cut`)
+      assert.notEqual(below?.kind, 'junction', `${size}: x=${x} bottom is the cut`)
+    }
+    // No pixel of either fade corner is under the target.
+    for (let y = 4; y < 14; y++) {
+      for (let x = 87; x < 113; x++) {
+        const hit = laneHitAt(x, y, lane, [{ left: 0, width: 100 }, { left: 100, width: 100 }], [100])
+        assert.notEqual(hit?.kind, 'junction', `${size}: (${x}, ${y}) is a fade corner under the cut`)
+      }
+    }
+  }
+})
+
+test('a trim edge moves by the pointer\'s travel from where it was grabbed, not to the pointer', () => {
+  // The verifier's numbers: at 2.8 px/frame, -10/-30/-60px gave -5/-13/-23 frames, a jump of the
+  // grab offset; the travel alone is -3.6/-10.7/-21.4.
+  const ppf = 2.8
+  const end = 330
+  assert.equal(trimEdgeFrame(end, 0, ppf), end, 'no travel, no change — wherever in the handle it was grabbed')
+  assert.ok(Math.abs(trimEdgeFrame(end, -10, ppf) - (end - 3.57)) < 0.01)
+  assert.ok(Math.abs(trimEdgeFrame(end, -60, ppf) - (end - 21.43)) < 0.01)
+  assert.equal(trimEdgeFrame(end, 25, 0), end, 'a zero zoom cannot divide')
 })
