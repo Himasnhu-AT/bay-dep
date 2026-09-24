@@ -11,7 +11,6 @@ import {
   gapsOf,
   insertIndexFor,
   marqueeHits,
-  spanBlockedBy,
   volumeAtY,
   yForVolume
 } from './timelineLayout'
@@ -86,16 +85,6 @@ test('gaps are the holes a clip follows, not the runway after the last clip', ()
   assert.equal(gapAt(t, 30), undefined, 'half-open: the next clip’s first frame is not the gap')
   assert.equal(gapAt(t, 100), undefined, 'after the last clip there is nothing to close')
   assert.equal(gapAt(t, 42), undefined)
-})
-
-test('a span is blocked by the first unlocked track with something in it, and not by a locked one', () => {
-  const tracks = [
-    track('V1', 'video', [item('a', 'V1', 0, 10)]),
-    track('L', 'video', [item('l', 'L', 12, 5)], { locked: true }),
-    track('A1', 'audio', [item('s', 'A1', 14, 10)])
-  ]
-  assert.equal(spanBlockedBy(tracks, 10, 14), undefined)
-  assert.equal(spanBlockedBy(tracks, 10, 15)?.id, 'A1')
 })
 
 // -- marquee ---------------------------------------------------------------------

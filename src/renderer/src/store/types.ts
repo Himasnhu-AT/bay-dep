@@ -27,6 +27,7 @@ import type { DetachResult, ReattachResult } from '@shared/links'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
+import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
 /** The three regions around the preview that can be hidden. The preview itself cannot. */
@@ -39,6 +40,14 @@ export type Screen = 'home' | 'editor'
 export interface LinkOptions {
   linked?: boolean
 }
+
+/**
+ * A small editor hanging off the timeline for a clip command: Paste Attributes (from ⌥⇧⌘V or
+ * the clip menu) and the clip menu's Speed…, at the point the menu was opened.
+ */
+export type ClipDialog =
+  | { kind: 'pasteAttributes' }
+  | { kind: 'speed'; itemId: string; x: number; y: number }
 
 export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export'
 
@@ -143,6 +152,22 @@ export interface EditorState {
    * a whole conversation, not one sentence. The timeline draws the pinned ranges on its ruler.
    */
   agentPins: Pin[]
+  /**
+   * The timeline's In and Out points (I / O), in timeline frames, or null when unset. Half-open
+   * like `remove_range`: `rangeOut` is the first frame *after* the range. View state — not saved,
+   * not undoable. Read by the ruler's shading, Remove Range, Loop Playback and Export's range.
+   */
+  rangeIn: Frames | null
+  rangeOut: Frames | null
+  /** Whether timeline drags snap to edges, the playhead, markers and beats (N). Per viewer. */
+  snapping: boolean
+  /** Whether clicking a linked clip selects its partners too (⇧⌘L). Per viewer; on by default. */
+  linkedSelection: boolean
+  /** Loop Playback (⌘L): play In→Out (or the whole timeline) over and over. */
+  loop: boolean
+  /** Clips copied or cut (⌘C / ⌘X), bay's own clipboard. Survives switching projects. */
+  clipboard: ClipboardPayload | null
+  clipDialog: ClipDialog | null
   dirty: boolean
   past: Project[]
   future: Project[]
@@ -238,7 +263,7 @@ export interface EditorActions {
    */
   trimEdit(spec: TrimSpec, options?: LinkOptions): TrimPlan | TrimRefusal
   /** Splits the selection (or everything at the frame); a selected clip's linked clips split too. */
-  splitAt(frame?: Frames): void
+  splitAt(frame?: Frames, options?: { allTracks?: boolean }): void
   deleteSelected(): void
   /**
    * Removes a span of timeline and closes the hole, keeping every unlocked track in step.
@@ -279,6 +304,33 @@ export interface EditorActions {
    * `value` null, remove the key at that frame. The inspector's diamond and auto-key both land here.
    */
   setKeyframe(itemId: string, property: KeyframeProperty, frame: Frames, value: number | null): void
+
+  // editing verbs (slices/editing.ts) ---------------------------------------------
+  /** Copy the selected clips (with linked partners when linked selection is on). Returns how many. */
+  copySelection(): number
+  /** Copy, then lift the selection. */
+  cutSelection(): void
+  /**
+   * Paste the clipboard with its earliest clip at `at` (default: the playhead), each clip on the
+   * track it came from or the next free one of its kind. Selects what it pasted.
+   */
+  paste(at?: Frames, trackId?: string): string[]
+  /** Give the selected clips the chosen attributes of the first copied clip. One undo step. */
+  pasteAttributes(attributes: readonly PasteAttribute[]): number
+  /** Switch clips off (or back on): all off if any is on. Defaults to the selection. */
+  toggleDisabled(itemIds?: string[]): void
+  /** Move the selection by `delta` frames, refusing (with a toast naming the blocker) if blocked. */
+  nudgeSelection(delta: Frames): boolean
+  /** Close the gap containing `frame` on one track — see `planCloseGap` in `@shared/editing`. */
+  closeGapAt(trackId: string, frame: Frames): { closedFrames: number; from: Frames; to: Frames } | { error: string }
+  /**
+   * Trim the clips under the playhead (selected ones, or all on unlocked tracks) so their start or
+   * end is the playhead. `ripple` also closes the gap that leaves on each clip's track.
+   */
+  trimToPlayhead(edge: 'start' | 'end', ripple: boolean): void
+  /** Remove In→Out across every unlocked track and close it up: the `remove_range` tool's path. */
+  removeInOutRange(): void
+  setClipDialog(dialog: ClipDialog | null): void
 
   // tracks -------------------------------------------------------------------
   /**
@@ -368,6 +420,15 @@ export interface EditorActions {
   setPlaying(playing: boolean): void
   togglePlay(): void
   setScrubbing(scrubbing: boolean): void
+  /** Set In (null clears it). An In at or after Out clears Out. */
+  setRangeIn(frame: Frames | null): void
+  /** Set Out, exclusive (null clears it). An Out at or before In clears In. */
+  setRangeOut(frame: Frames | null): void
+  clearRange(): void
+  setSnapping(on: boolean): void
+  toggleSnapping(): void
+  toggleLinkedSelection(): void
+  toggleLoop(): void
   setPixelsPerFrame(pixelsPerFrame: number): void
   zoomBy(factor: number): void
   setPanel(panel: PanelId): void

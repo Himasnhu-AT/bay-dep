@@ -10,9 +10,9 @@
  */
 
 import { create } from 'zustand'
-import { selectTimeline, useEditor, type EditorStore } from '@/store/editor'
+import { useEditor } from '@/store/editor'
 import { remember, remembered } from '@/store/prefs'
-import { spanBlockedBy, type Gap, type TrackSize } from './timelineLayout'
+import type { Gap, TrackSize } from './timelineLayout'
 
 /**
  * Stored as JSON under this key: `{ [trackId]: size }`. Read back by later builds, so it is a
@@ -58,35 +58,18 @@ export const useTimelineView = create<TimelineViewState>((set, get) => ({
   }
 }))
 
-/** `closeGapAt` as Team EDITING's store provides it; absent in builds that predate it. */
-type CloseGapAt = (trackId: string, frame: number) => { closedFrames: number } | { error: string }
-
 /**
  * Closes a gap: the clips after it on its track move left by its length (and their linked
- * clips with them) — `closeGapAt`, the same action the Close Gap command runs.
- *
- * TODO(merge): the fallback below exists only until `closeGapAt` is in the store. Once it is,
- * delete the fallback branch: it removes the span as *time* across every track (`rippleDelete`),
- * which is only the same edit when no other track has anything there, so it refuses otherwise.
+ * clips with them) — `closeGapAt`, the same action the Close Gap command runs. A refusal names
+ * its blocker, so it is shown as it comes.
  */
 export function closeGap(gap: Gap): boolean {
-  const store = useEditor.getState() as EditorStore & { closeGapAt?: CloseGapAt }
-  if (typeof store.closeGapAt === 'function') {
-    const result = store.closeGapAt(gap.trackId, gap.from)
-    if ('error' in result) {
-      store.notify(result.error, 'error')
-      return false
-    }
-    return true
-  }
-  const timeline = selectTimeline(store)
-  if (!timeline) return false
-  const blocker = spanBlockedBy(timeline.tracks, gap.from, gap.to)
-  if (blocker) {
-    store.notify(`${blocker.name} has clips in this gap, so closing it would cut them.`, 'error')
+  const store = useEditor.getState()
+  const result = store.closeGapAt(gap.trackId, gap.from)
+  if ('error' in result) {
+    store.notify(result.error, 'error')
     return false
   }
-  store.rippleDelete(gap.from, gap.to)
   return true
 }
 

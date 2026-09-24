@@ -22,7 +22,13 @@
  * pressing ⌘Z expecting their last cut back would get their last typed character instead. The
  * keys are renderer-owned, so in a text field ⌘Z is left to the field; a menu click runs the
  * `edit.undo` handler, which undoes the text if a field has focus and the project otherwise.
- * Cut, Copy, Paste and Select All stay roles: they must keep working in text fields.
+ * Cut, Copy and Paste are commands for the same reason: as roles they could only ever act on text,
+ * so ⌘C could not copy a clip. Their handlers hand the key back to a focused text field (or a text
+ * selection) through `document.execCommand`, so text fields keep working. Select All stays a role.
+ *
+ * **No page zoom in View.** ⌘= and ⌘- zoom the *timeline*, as in every NLE; the zoomIn/zoomOut
+ * roles registered them natively and zoomed the whole window instead. Actual Size (⌘0) stays, so
+ * a window zoomed some other way (a pinch) can always be put back.
  *
  * **No View → Reload.** Standard in Electron templates, and in an editor ⌘R means "discard
  * everything since the last save". The accelerator is too close to ⌘T and ⌘E to leave armed.
@@ -117,11 +123,9 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
     label: 'Edit',
     submenu: [
       ...withSep(commandsOf('Edit')),
-      // Text-field editing. See the header for why Undo/Redo above are commands, not roles.
-      { role: 'cut' },
-      { role: 'copy' },
-      { role: 'paste' },
-      ...(isMac ? ([{ role: 'pasteAndMatchStyle' }] as MenuItemConstructorOptions[]) : []),
+      // Text-field editing. See the header for why Undo/Redo and Cut/Copy/Paste above are
+      // commands, not roles. Paste and Match Style is gone with them: bay has no styled text,
+      // and its registered ⌥⇧⌘V would take the key from Paste Attributes.
       { role: 'delete' },
       SEP,
       { role: 'selectAll' }
@@ -138,8 +142,6 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
     submenu: [
       ...withSep(commandsOf('View')),
       { role: 'resetZoom' },
-      { role: 'zoomIn' },
-      { role: 'zoomOut' },
       SEP,
       { role: 'togglefullscreen' },
       ...(includeDevTools ? ([SEP, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[]) : [])

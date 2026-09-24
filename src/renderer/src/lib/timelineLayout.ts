@@ -79,21 +79,6 @@ export function gapAt(track: Pick<Track, 'id' | 'items'>, frame: number): Gap | 
   return gapsOf(track).find((gap) => frame >= gap.from && frame < gap.to)
 }
 
-/**
- * Whether a span is empty on every unlocked track — the condition under which removing it as
- * *time* (`rippleDelete`, which keeps every track in step) closes this gap and takes nothing
- * else with it. Returns the first track that has something there, so a refusal can name it.
- */
-export function spanBlockedBy(
-  tracks: readonly Pick<Track, 'id' | 'name' | 'locked' | 'items'>[],
-  from: Frames,
-  to: Frames
-): Pick<Track, 'id' | 'name'> | undefined {
-  return tracks.find(
-    (track) => !track.locked && track.items.some((item) => item.from < to && itemEnd(item) > from)
-  )
-}
-
 // -- marquee -------------------------------------------------------------------
 
 export interface Box {

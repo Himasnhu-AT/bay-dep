@@ -175,9 +175,13 @@ test('a single-key shortcut is shown but never registered, so it cannot steal a 
       `${spec.id}: registration disagrees with its spec`
     )
   }
-  // The specimen: Split's `S` is in the menu, shown and not registered.
+  // The specimens: Set In's `I` is in the menu, shown and not registered; so is Split's ⌘B, which
+  // the renderer handles too, so a registered one would split twice.
+  const setIn = leaves.find((leaf) => leaf.label === 'Set In')
+  assert.equal(setIn?.accelerator, 'I')
+  assert.equal(setIn?.registerAccelerator, false)
   const split = leaves.find((leaf) => leaf.label === 'Split at Playhead')
-  assert.equal(split?.accelerator, 'S')
+  assert.equal(split?.accelerator, 'CmdOrCtrl+B')
   assert.equal(split?.registerAccelerator, false)
   assert.ok(checked >= 10, `only ${checked} accelerators checked — the walk is not reaching the registry`)
 })
@@ -197,10 +201,39 @@ test('Undo and Redo are bay commands that reach the renderer', () => {
   ])
   // Renderer-owned, so ⌘Z inside a text field is still the field's own undo.
   assert.equal(undo.registerAccelerator, false)
-  // And the text-field roles are still there beside them.
-  for (const role of ['cut', 'copy', 'paste', 'selectAll']) {
-    assert.ok(items.some((item) => item.role === role), `Edit lost role ${role}`)
+  // Select All is still the text-field role beside them.
+  assert.ok(items.some((item) => item.role === 'selectAll'), 'Edit lost role selectAll')
+})
+
+test('Cut, Copy and Paste are bay commands, renderer-owned, never text-only roles', () => {
+  // As roles ⌘C could only copy text, never a clip. As renderer-owned commands the handler gives
+  // the key back to a focused field (execCommand) and otherwise acts on clips.
+  const { template, sent } = build()
+  const items = itemsOf(template, 'Edit')
+  sent.length = 0
+  for (const label of ['Cut', 'Copy', 'Paste']) {
+    const item = items.find((candidate) => candidate.label === label)
+    assert.ok(item, `Edit has no ${label}`)
+    assert.equal(item.registerAccelerator, false, `${label} must not steal its key from text fields`)
+    ;(item.click as () => void)()
   }
+  assert.deepEqual(sent, [
+    { type: 'command', id: 'edit.cut' },
+    { type: 'command', id: 'edit.copy' },
+    { type: 'command', id: 'edit.paste' }
+  ])
+  const roles = menuLeaves(template).map((item) => item.role)
+  for (const role of ['cut', 'copy', 'paste', 'pasteAndMatchStyle']) {
+    assert.equal(roles.includes(role as never), false, `role ${role} would take its key natively`)
+  }
+})
+
+test('View has no page-zoom in/out roles: ⌘= and ⌘- zoom the timeline', () => {
+  const { template } = build()
+  const roles = menuLeaves(template).map((item) => item.role)
+  assert.equal(roles.includes('zoomIn'), false)
+  assert.equal(roles.includes('zoomOut'), false)
+  assert.ok(roles.includes('resetZoom'), 'Actual Size must stay, to undo a pinch-zoom')
 })
 
 test('Settings is in the application menu on macOS and in File elsewhere', () => {

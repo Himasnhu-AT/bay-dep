@@ -307,14 +307,16 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return { ...plan, changes: plans.flatMap((each) => each.changes) }
     },
 
-    splitAt(frame) {
+    splitAt(frame, options) {
       const state = get()
       const timeline = activeTimeline(state.project)
       if (!timeline) return
       const at = Math.round(frame ?? state.playhead)
       // A selected clip splits with the clips linked to it, so a cut picture and its sound come
-      // out as two linked pairs rather than a picture cut over a sound that is not.
-      const targets = state.selection.length > 0 ? withLinked(timeline, state.selection) : null
+      // out as two linked pairs rather than a picture cut over a sound that is not. "Split all
+      // tracks" (⇧⌘B) ignores the selection and cuts everything the playhead crosses.
+      const targets =
+        state.selection.length > 0 && !options?.allTracks ? withLinked(timeline, state.selection) : null
 
       const created: string[] = []
       editTimeline((tl) => {

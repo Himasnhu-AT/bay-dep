@@ -9,7 +9,7 @@
  */
 
 import type { Item, Project, Timeline } from '@shared/project'
-import { US_PER_SECOND, effectiveSpeed, findAsset, sourceTimeAt, trackAudible } from '@shared/project'
+import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceTimeAt, trackAudible } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
@@ -253,6 +253,8 @@ export function buildAudioGraph(
   toFrameExclusive: number,
   sounds: CompositionSounds = new Map()
 ): AudioGraph | null {
+  // A disabled clip is not heard in the file, as it is not heard in the preview (`AudioEngine.update`).
+  timeline = playableTimeline(timeline)
   const fps = timeline.fps > 0 ? timeline.fps : 30
   const found = candidates(project, timeline, fromFrame, toFrameExclusive)
   const declared = soundCandidates(project, timeline, fromFrame, toFrameExclusive, sounds)

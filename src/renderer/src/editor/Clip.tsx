@@ -211,8 +211,7 @@ function ClipImpl({
     trackKind === 'audio' || asset?.kind === 'audio' || (asset ? !asset.hasVideo && asset.hasAudio : false)
   // A video file's detached sound, on an audio track, is sound: it gets the sound icon.
   const Icon = !asset ? AlertTriangle : audio ? Music2 : KIND_ICON[asset.kind]
-  // `disabled` is Team EDITING's field (enable/disable clip); read loosely until it is in the model.
-  const disabled = (item as Item & { disabled?: boolean }).disabled === true
+  const disabled = item.disabled === true
   const innerHeight = height - 8
   const showThumbs = width >= THUMBS_MIN_WIDTH
 
@@ -270,7 +269,7 @@ function ClipImpl({
     <div
       role="option"
       aria-selected={selected}
-      aria-label={asset?.name ?? 'Missing media'}
+      aria-label={`${asset?.name ?? 'Missing media'}${item.disabled ? ' (disabled)' : ''}`}
       onPointerDown={(event) => {
         // A right-click opens the menu; it must not also start a drag.
         if (event.button !== 0) return
@@ -295,8 +294,10 @@ function ClipImpl({
         'group absolute overflow-hidden rounded-sm border select-none',
         locked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing',
         selected && 'ring-1 ring-accent',
-        (hidden || disabled) && !dragging && 'opacity-45',
-        dragging && 'z-10 opacity-85 shadow-pop'
+        dragging && 'z-10 opacity-85 shadow-pop',
+        // Disabled (⇧E): still on the timeline, drawn and heard nowhere. A hidden track's clips
+        // draw nowhere in the picture either, so they dim the same way.
+        (hidden || disabled) && !dragging && 'opacity-40'
       )}
     >
       {asset && !audio && showThumbs && (

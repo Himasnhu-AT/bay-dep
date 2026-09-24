@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Music2, Video } from 'lucide-react'
 import { allItems, findAsset, formatTimecode, itemEnd, textAssetName, type Asset, type Item, type Marker, type Track } from '@shared/project'
-import { isCommandId, shortcutOf } from '@shared/commands'
+import { shortcutOf } from '@shared/commands'
 import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
 import { linkedPartners, withLinked } from '@shared/links'
 import { Button, ContextMenu, IconButton, Kbd, type MenuEntry } from '@/components'
@@ -30,6 +30,7 @@ import { TransitionDialog } from './TransitionDialog'
 import { TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
+import { ClipDialogs, clipMenuEntries } from './ClipCommands'
 
 /** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
 const NO_MARKERS: readonly Marker[] = []
@@ -45,8 +46,6 @@ const MARKER_STRIP = 10
 const SNAP_PX = 8
 /** Height of `TimelineToolbar`, which sits above the scroller. */
 const TOOLBAR_HEIGHT = 30
-/** Team EDITING's paste command; the lane menu offers it once it exists. */
-const PASTE_COMMAND = 'edit.paste'
 
 /**
  * "Add text here": a title clip on this track at this frame, selected so the inspector is on it.
@@ -124,11 +123,6 @@ interface MarqueeGesture {
   y: number
   base: string[]
   mode: 'replace' | 'add' | 'toggle'
-}
-
-/** Snapping as Team EDITING's view state provides it (`snapping`); on when a build predates it. */
-function snappingOn(state: object): boolean {
-  return (state as { snapping?: boolean }).snapping !== false
 }
 
 /** Selection edits by modifier: ⇧ adds, ⌘ toggles, a plain click replaces. */
@@ -230,9 +224,9 @@ export function Timeline(): ReactNode {
   /** Snaps to the origin, the playhead, every other clip's two edges, markers and beats (`lib/snap`). */
   const snap = useCallback(
     (frame: number, ignore: Set<string>): number => {
-      if (!timeline) return Math.round(frame)
       const state = useEditor.getState()
-      if (!snappingOn(state)) return Math.round(frame)
+      // Snapping off (N) rounds to the frame; ⌘ during a drag suspends it either way.
+      if (!timeline || !state.snapping) return Math.round(frame)
       return snapFrame(frame, snapTargets(state.project, timeline, state.playhead, ignore), SNAP_PX / pixelsPerFrame)
     },
     [timeline, pixelsPerFrame]
@@ -382,10 +376,11 @@ export function Timeline(): ReactNode {
           store.moveItem(
             item.id,
             item.from + current.deltaFrames,
-            item.id === current.itemIds[0] ? current.targetTrackId : undefined
+            item.id === current.itemIds[0] ? current.targetTrackId : undefined,
+            { linked: store.linkedSelection }
           )
           moved.add(item.id)
-          for (const partner of linkedPartners(timeline, item.id)) moved.add(partner.id)
+          if (store.linkedSelection) for (const partner of linkedPartners(timeline, item.id)) moved.add(partner.id)
         }
       })
     },
@@ -413,13 +408,13 @@ export function Timeline(): ReactNode {
       const current = trim
       setTrim(null)
       if (!current) return
-      useEditor
-        .getState()
-        .trimItem(
-          current.itemId,
-          current.edge,
-          current.edge === 'start' ? current.from : current.from + current.durationInFrames
-        )
+      const store = useEditor.getState()
+      store.trimItem(
+        current.itemId,
+        current.edge,
+        current.edge === 'start' ? current.from : current.from + current.durationInFrames,
+        { linked: store.linkedSelection }
+      )
     },
     onClick: () => setTrim(null)
   })
@@ -508,13 +503,13 @@ export function Timeline(): ReactNode {
       // ⌘-click toggles one clip in or out of the selection; ⇧-click adds it (and its links).
       const mode = clickMode(event)
       if (mode !== 'replace') {
-        const ids = timeline ? withLinked(timeline, [item.id]) : [item.id]
+        const ids = timeline && store.linkedSelection ? withLinked(timeline, [item.id]) : [item.id]
         store.select(combineSelection(store.selection, ids, mode))
         return
       }
       // Linked selection: a picture and its detached sound select, and so drag, together.
       if (!store.selection.includes(item.id)) {
-        store.select(timeline ? withLinked(timeline, [item.id]) : [item.id])
+        store.select(timeline && store.linkedSelection ? withLinked(timeline, [item.id]) : [item.id])
       }
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track) return
@@ -587,8 +582,9 @@ export function Timeline(): ReactNode {
         const point = contentPoint(state.x, state.y)
         const band = boxFrom(current.originX, current.originY, point.x, point.y)
         const hits = marqueeHits(band, clipRects())
-        const withLinks = timeline ? withLinked(timeline, hits) : hits
-        useEditor.getState().select(combineSelection(current.base, withLinks, current.mode))
+        const store = useEditor.getState()
+        const withLinks = timeline && store.linkedSelection ? withLinked(timeline, hits) : hits
+        store.select(combineSelection(current.base, withLinks, current.mode))
         return { ...current, x: point.x, y: point.y }
       })
     },
@@ -627,19 +623,17 @@ export function Timeline(): ReactNode {
 
   const laneMenuTrack = laneMenu ? tracks.find((track) => track.id === laneMenu.trackId) : undefined
   const laneMenuGap = laneMenu && laneMenuTrack ? gapAt(laneMenuTrack, laneMenu.frame) : undefined
+  const hasClipboard = useEditor((state) => state.clipboard !== null)
   const laneMenuItems: MenuEntry[] =
     !laneMenu || !laneMenuTrack
       ? []
       : [
           {
-            // Paste is Team EDITING's command and pastes at the playhead, so "here" moves it first.
+            // ⌘V's store action, at this frame and on this track (the planner takes both).
             label: 'Paste here',
-            disabled: !isCommandId(PASTE_COMMAND),
-            shortcut: isCommandId(PASTE_COMMAND) ? shortcutOf(PASTE_COMMAND) : undefined,
-            onSelect: () => {
-              useEditor.getState().setPlayhead(laneMenu.frame)
-              runCommand(PASTE_COMMAND)
-            }
+            disabled: !hasClipboard || laneMenuTrack.locked,
+            shortcut: shortcutOf('edit.paste'),
+            onSelect: () => void useEditor.getState().paste(laneMenu.frame, laneMenuTrack.id)
           },
           {
             label: 'Add text here',
@@ -673,7 +667,7 @@ export function Timeline(): ReactNode {
     const store = useEditor.getState()
     const current = selectTimeline(store)
     if (!store.selection.includes(item.id)) {
-      store.select(current ? withLinked(current, [item.id]) : [item.id])
+      store.select(current && store.linkedSelection ? withLinked(current, [item.id]) : [item.id])
     }
     setMenu({ itemId: item.id, x: event.clientX, y: event.clientY })
   }, [])
@@ -726,7 +720,14 @@ export function Timeline(): ReactNode {
   return (
     <div ref={panelRef} className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1">
       <TimelineToolbar fps={fps} />
-      <div ref={scrollRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-auto">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        // Found by Zoom to Fit (⇧Z), which needs the lanes' visible width.
+        data-timeline-scroller=""
+        data-lane-offset={HEADER_WIDTH}
+        className="relative min-h-0 flex-1 overflow-auto"
+      >
         <div ref={contentRef} className="relative" style={{ width: HEADER_WIDTH + contentWidth, minHeight: '100%' }}>
           <div className="sticky top-0 z-[35] flex">
             <div
@@ -1023,6 +1024,8 @@ export function Timeline(): ReactNode {
         onClose={() => setMenu(null)}
         label="Clip"
         items={[
+          ...(menuItem && menu ? clipMenuEntries(menuItem, menu) : []),
+          { kind: 'separator' },
           { label: 'Detach audio', disabled: !canDetach, onSelect: () => runMenu('detach') },
           { label: 'Unlink', disabled: !menuLinked, onSelect: () => runMenu('unlink') },
           { label: 'Reattach audio', disabled: !canReattach, onSelect: () => runMenu('reattach') }
@@ -1030,6 +1033,8 @@ export function Timeline(): ReactNode {
       />
 
       <ContextMenu at={laneMenuTrack ? laneMenu : null} onClose={() => setLaneMenu(null)} label="Timeline" items={laneMenuItems} />
+
+      <ClipDialogs />
 
       <TransitionDialog
         junction={openJunction}
