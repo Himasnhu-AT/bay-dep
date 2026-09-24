@@ -86,6 +86,7 @@ import {
   type Track,
   type Transition
 } from './project'
+import { shiftKeyframes } from './keyframes'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1045,6 +1046,10 @@ export function applyScriptOps(
       const found = find(op.itemId)
       if (!found) continue
       const { item } = found
+      // A head trim keeps keys on the footage they were on; a move carries them (`@shared/keyframes`).
+      if (op.kind === 'head trim' && item.keyframes) {
+        item.keyframes = shiftKeyframes(item.keyframes, item.from - op.from)
+      }
       item.from = op.from
       item.durationInFrames = op.durationInFrames
       item.sourceStartUs = op.sourceStartUs

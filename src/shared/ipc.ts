@@ -99,6 +99,19 @@ export interface CompositionFrameRequest {
    * and a different one in text, and only the renderer knows which is which.
    */
   cssVariables?: Record<string, string>
+  /**
+   * The project's imported fonts, as bay's copies of the files. A composition's sandbox cannot
+   * load `bay://`, so main inlines each as a `data:` `@font-face` in the window — only files in
+   * bay's fonts folder, whatever the request says. Absent: none.
+   */
+  fonts?: {
+    family: string
+    path: string
+    weight: string
+    stretch: string
+    style: string
+    format: 'truetype' | 'opentype' | 'woff' | 'woff2'
+  }[]
 }
 
 export interface CompositionFrame {

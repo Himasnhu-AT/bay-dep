@@ -56,6 +56,7 @@ import {
   type Timeline,
   type Track
 } from './project'
+import { shiftKeyframes } from './keyframes'
 
 export type TrimMode = 'slip' | 'slide' | 'roll'
 
@@ -79,6 +80,12 @@ export interface TrimChange {
   sourceStartUs: Micros
   fadeInFrames: Frames
   fadeOutFrames: Frames
+  /**
+   * Set when this item's in-point moved without the clip moving as a whole (roll's incoming side,
+   * slide's right neighbour): its keyframes shift by this much so they stay on the timeline frame,
+   * and the footage, they were on. Absent means they move with the clip (see `@shared/keyframes`).
+   */
+  keyframeShiftFrames?: Frames
 }
 
 export interface TrimTransitionReport {
@@ -430,6 +437,7 @@ function planSlide(
     const next = change(right)
     next.from = right.from + delta
     next.durationInFrames = right.durationInFrames - delta
+    next.keyframeShiftFrames = -delta
     next.sourceStartUs = movedSourceStart(
       right,
       findAsset(project, right.assetId),
@@ -493,6 +501,7 @@ function planRoll(
   const inc = change(incoming)
   inc.from = incoming.from + delta
   inc.durationInFrames = incoming.durationInFrames - delta
+  inc.keyframeShiftFrames = -delta
   inc.sourceStartUs = movedSourceStart(
     incoming,
     findAsset(project, incoming.assetId),
@@ -526,6 +535,9 @@ export function applyTrimPlan(timeline: Timeline, plan: TrimPlan): void {
       fadeInFrames: next.fadeInFrames,
       fadeOutFrames: next.fadeOutFrames
     })
+    if (next.keyframeShiftFrames && found.item.keyframes) {
+      found.item.keyframes = shiftKeyframes(found.item.keyframes, next.keyframeShiftFrames)
+    }
     touched.add(found.track)
   }
   for (const track of touched) track.items.sort((a, b) => a.from - b.from)

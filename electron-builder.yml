@@ -27,18 +27,32 @@ files:
   - package.json
   - '!**/*.map'
 
-# The ffmpeg binaries cannot live inside the asar archive: the OS cannot spawn a file that is
-# not on disk. This works in development and fails only in a packaged build, which is the worst
-# kind of packaging bug to find late.
-#
-# The database used to need the same treatment and no longer does — it is `node:sqlite`, built
-# into the runtime, so there is no native module here to unpack, rebuild, or keep in step with
-# Electron's ABI.
+# bay's own LGPL ffmpeg (script/build-ffmpeg.sh → vendor/ffmpeg/<platform>-<arch>/) goes to
+# Contents/Resources/ffmpeg/ as plain files: the OS cannot spawn a file inside the asar archive,
+# and `vendoredTools()` in src/main/ffmpeg/vendor.ts looks there first. The licences and the
+# BUILDINFO (version, configure line, source hashes) travel with the binaries, which is what the
+# LGPL asks of anyone shipping them. `beforePack` refuses to package when the binaries for the
+# platform/arch being packed are missing or are not the ones BUILDINFO records.
+beforePack: script/check-ffmpeg-vendor.cjs
+extraResources:
+  - from: vendor/ffmpeg/${platform}-${arch}
+    to: ffmpeg
+    filter: [ffmpeg, ffprobe, ffmpeg.exe, ffprobe.exe, BUILDINFO]
+  - from: vendor/ffmpeg/LICENSES
+    to: ffmpeg/LICENSES
+  - from: vendor/ffmpeg/README.md
+    to: ffmpeg/README.md
+  # The notice and the written source offer for the above, next to the files they describe.
+  - from: NOTICE
+    to: NOTICE
+
+# The database used to need unpacking and no longer does — it is `node:sqlite`, built into the
+# runtime, so there is no native module here to unpack, rebuild, or keep in step with Electron's
+# ABI.
 asarUnpack:
-  - node_modules/ffmpeg-ffprobe-static/**
-  # The same reason for the Agent SDK's Claude Code binary (`BAY_AGENT_RUNTIME=sdk`), which
-  # ships in a per-platform optional dependency. `bundledExecutable()` in src/main/agent/sdk.ts
-  # rewrites the resolved `app.asar/…` path to `app.asar.unpacked/…`, and finds nothing unless
+  # The Agent SDK's Claude Code binary (`BAY_AGENT_RUNTIME=sdk`) cannot be spawned from inside the
+  # asar archive either; it ships in a per-platform optional dependency. `bundledExecutable()`
+  # in src/main/agent/sdk.ts rewrites the resolved `app.asar/…` path to `app.asar.unpacked/…`, and finds nothing unless
   # this entry put the file there.
   - node_modules/@anthropic-ai/claude-agent-sdk-*/**
 

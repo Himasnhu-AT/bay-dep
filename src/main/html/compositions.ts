@@ -45,6 +45,8 @@ import { checkSounds, fileChecks } from './audio'
 import { bgraToRgba, describeSizeMismatch } from './bitmap'
 import { seekScript, variablesScript } from './scripts'
 import { decideCompositionRequest } from './sandbox'
+import { compositionFontCss } from './font-css'
+import { fontsDir } from '../paths'
 
 /**
  * How many composition windows may exist at once.
@@ -117,6 +119,10 @@ interface Entry {
   last: Buffer | null
   /** The variable values currently applied to this page, as JSON, or null if none yet. */
   variables: string | null
+  /** The imported fonts injected into this page, as JSON — '[]' until a request brings some. */
+  fonts: string
+  /** Settles once the injection of `fonts` has loaded; every capture waits for it. */
+  fontsApplied: Promise<void>
   usedAt: number
   /**
    * How many captures are part-way through on this window.
@@ -362,7 +368,7 @@ async function openUncontended(request: CompositionFrameRequest): Promise<Entry 
   })()
 
   const entry: Entry = {
-    window, path: request.path, info, ready, last: null, variables: null, usedAt: Date.now(),
+    window, path: request.path, info, ready, last: null, variables: null, fonts: '[]', fontsApplied: Promise.resolve(), usedAt: Date.now(),
     busy: 0
   }
   entries.set(request.assetId, entry)
@@ -379,6 +385,37 @@ async function openUncontended(request: CompositionFrameRequest): Promise<Entry 
  * sat until main's thirty second timeout while main, the renderer and the socket were all
  * healthy and nothing logged a thing.
  */
+/**
+ * Inlines the project's imported fonts into a composition window and waits until a paint uses them.
+ * Never rejects: a font that will not load leaves the composition in its fallback face, which the
+ * editor's own text path reports; a rejected injection would fail every capture of the window.
+ */
+async function injectFonts(window: BrowserWindow, fonts: NonNullable<CompositionFrameRequest['fonts']>): Promise<void> {
+  try {
+    const sheet = await compositionFontCss(fonts, fontsDir(), (path) => readFile(path))
+    if (!sheet.css) return
+    await window.webContents.insertCSS(sheet.css)
+    // The inserted sheet's faces join `document.fonts` only at the next style recalc, so one is
+    // forced first; then the faces load; then two frames pass, so a capture is of a paint that
+    // used them.
+    await window.webContents.executeJavaScript(`(async () => {
+      const wanted = ${JSON.stringify(sheet.families)}
+      const unquote = (s) => s.replace(/^["']|["']$/g, '')
+      void getComputedStyle(document.documentElement).fontFamily
+      void document.documentElement.offsetHeight
+      await Promise.all(wanted.map((family) => document.fonts.load('16px ' + JSON.stringify(family)).catch(() => null)))
+      await Promise.all(Array.from(document.fonts)
+        .filter((face) => wanted.includes(unquote(face.family)))
+        .map((face) => face.load().catch(() => null)))
+      await document.fonts.ready
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return true
+    })()`)
+  } catch {
+    // See above: the composition draws in its fallback face.
+  }
+}
+
 export function isCompositionWindow(window: BrowserWindow): boolean {
   for (const entry of entries.values()) {
     if (entry.window === window) return true
@@ -398,6 +435,22 @@ export async function compositionFrameAt(
 
     // Re-applied only when the values actually changed: it is a full DOM pass, and an export
     // runs it once per frame otherwise for no benefit.
+    // The project's imported fonts, injected once per set: a composition that names "Archivo"
+    // draws the face the project imported, not whatever the machine has. Loaded before the seek,
+    // so the first captured frame is already in the face rather than a fallback.
+    //
+    // **Every capture awaits the same injection**, not just the one that started it. The preview's
+    // pool and a `preview_frame`/export pool ask one window for frames concurrently; with the
+    // "already started" check alone, the second request saw the set as applied, skipped the wait,
+    // and captured the fallback face while the first was still loading — measured as a 125%
+    // stretch composition inking 46.6% of the frame on one run in three and 63.4% on the others.
+    const fontsWanted = JSON.stringify(request.fonts ?? [])
+    if (fontsWanted !== entry.fonts) {
+      entry.fonts = fontsWanted
+      entry.fontsApplied = injectFonts(entry.window, request.fonts ?? [])
+    }
+    await entry.fontsApplied
+
     const wanted = JSON.stringify([request.variables ?? {}, request.cssVariables ?? {}])
     if (wanted !== entry.variables) {
       await entry.window.webContents.executeJavaScript(

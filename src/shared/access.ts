@@ -2,7 +2,8 @@
  * Who may use bay, as both processes see it.
  *
  * bay is invite-only: the desktop app works for an account that has a grant (`access/{email}` in
- * Firestore, made by the owner or by an approved user's referral), and for nobody else. Main
+ * Firestore, made by the owner — approving a waitlist entry or granting an email — or by an
+ * approved user's referral), and for nobody else. Main
  * decides; the renderer only draws what main reports, and main refuses the editor's IPC and every
  * MCP tool call until the answer is `entitled` (`src/main/auth/`).
  *
@@ -18,8 +19,10 @@
  *                  → needs email, lastVerifiedAt, lockAt, whether the last attempt failed, and
  *                  whether the sign-in survives a quit (safeStorage) — "you will sign in again
  *                  after quitting" is a sentence the user must be able to read.
- * - no-access      "{email} does not have access to bay yet. Request access, or ask someone who
- *                  has it to refer you." / "{email} is not verified …"  → email + which reason.
+ * - no-access      "{email} does not have access to bay yet. bay is invite-only: ask someone
+ *                  who has access to refer this email, or join the waitlist." /
+ *                  "{email} is not verified …"  → email + which reason. The screen shows the
+ *                  email with a Copy button, because the person must send it to a referrer.
  * - locked-offline "bay could not verify your access for 14 days, so it is locked. Connect to the
  *                  internet and sign in again."  → email, lastVerifiedAt.
  * - revoked        "The sign-in for {email} was revoked or has expired. Sign in again." /
@@ -135,7 +138,7 @@ export function describeAccess(status: AccessStatus): { title: string; detail: s
           }
         : {
             title: `${status.email} does not have access to bay yet`,
-            detail: 'bay is invite-only. Request access, or ask someone who has it to refer you.'
+            detail: 'bay is invite-only. Ask someone who has access to refer this email, or join the waitlist.'
           }
     case 'locked-offline':
       return {

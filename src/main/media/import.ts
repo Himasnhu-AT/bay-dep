@@ -17,6 +17,10 @@ import { probe } from '../ffmpeg/probe'
 import { compositionAsset } from '../html/compositions'
 import { COMPOSITION_EXTENSIONS, isCompositionPath } from '@shared/composition'
 import { isBrfPath } from '@shared/brf'
+import { FONT_EXTENSIONS, isFontPath } from '@shared/fonts'
+import { fontsDir } from '../paths'
+import { importFontFile } from './font-import'
+import { adoptProjectAssets, type Adoption } from './adopt'
 import { thumbnail } from './thumbnails'
 import {
   AUDIO_EXTENSIONS,
@@ -36,14 +40,12 @@ import {
  */
 const byPath = new Map<string, Asset>()
 
-/** Re-seeds the map when a project is opened, so its assets dedupe against new imports. */
-export function adoptAssets(assets: readonly Asset[]): void {
-  for (const asset of assets) {
-    if (!asset.path) continue
-    const absolute = resolve(asset.path)
-    byPath.set(absolute, asset)
-    allowPath(absolute)
-  }
+/**
+ * Admits an opened project's asset paths to `bay://` and re-seeds the dedupe map with them — only
+ * the paths a project may name (`adopt.ts`). A refused path shows as offline media.
+ */
+export function adoptAssets(assets: readonly Asset[]): Adoption {
+  return adoptProjectAssets(assets, byPath, allowPath, fontsDir())
 }
 
 function messageOf(error: unknown): string {
@@ -96,7 +98,9 @@ export async function importPaths(paths: readonly string[]): Promise<ImportedAss
       // than in a second importer keeps deduplication and path registration in one place: two
       // import paths with separate ideas of "already imported" is how one file lands in the
       // pool twice under different ids.
-      asset = isLutPath(path)
+      asset = isFontPath(path)
+        ? await importFontFile(path, fontsDir())
+        : isLutPath(path)
         ? await lutAsset(path)
         : isBrfPath(path)
         ? await brfAsset(path)
@@ -106,6 +110,8 @@ export async function importPaths(paths: readonly string[]): Promise<ImportedAss
     } catch (error) {
       asset = failedAsset(path, messageOf(error))
     }
+    // A font is served from bay's copy, not from where it was imported.
+    if (asset.kind === 'font' && asset.path && !asset.error) allowPath(asset.path)
     byPath.set(path, asset)
     warmPoster(asset)
     out.push({ asset, reused: false })
@@ -128,7 +134,8 @@ export async function importDialog(window: BrowserWindow | null): Promise<Import
           'gif',
           ...COMPOSITION_EXTENSIONS,
           'brf',
-          ...LUT_EXTENSIONS
+          ...LUT_EXTENSIONS,
+          ...FONT_EXTENSIONS
         ]
       },
       { name: 'Video', extensions: VIDEO_EXTENSIONS },
@@ -136,6 +143,7 @@ export async function importDialog(window: BrowserWindow | null): Promise<Import
       { name: 'Images', extensions: [...IMAGE_EXTENSIONS, 'gif'] },
       { name: 'Compositions', extensions: [...COMPOSITION_EXTENSIONS, 'brf'] },
       { name: 'Colour LUTs', extensions: LUT_EXTENSIONS },
+      { name: 'Fonts', extensions: [...FONT_EXTENSIONS] },
       { name: 'All files', extensions: ['*'] }
     ]
   }

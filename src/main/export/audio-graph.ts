@@ -12,6 +12,7 @@ import type { Item, Project, Timeline } from '@shared/project'
 import { US_PER_SECOND, effectiveSpeed, findAsset, sourceTimeAt } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
+import { volumeMayBeAudible } from '@shared/keyframes'
 import { scheduleCompositionSounds, type ScheduledSound } from '@shared/composition-audio'
 
 export interface AudioGraph {
@@ -83,7 +84,13 @@ function candidates(
       // reason (`audio.ts` checks `asset.error` in the same walk); export must agree, or the
       // file gets audio the user never heard.
       if (asset.error) continue
-      if (item.volume <= 0) continue
+      // Not `item.volume`: with volume keys that is not what plays, and a clip keyed up from 0
+      // would be dropped from the file while the preview played it.
+      if (!volumeMayBeAudible(item)) continue
+      // A picture whose sound was detached plays none: its linked audio item is the one input
+      // that sound is decoded from. Skipped here, not merely enveloped to zero, so the file is not
+      // opened a second time to contribute silence.
+      if (item.audioDetached) continue
       const span = audibleSpan(project, timeline, item)
       const startFrame = Math.max(span.firstFrame, fromFrame)
       const endFrame = Math.min(span.endFrame, toFrameExclusive)
@@ -198,7 +205,7 @@ function soundCandidates(
       if (!asset || asset.kind !== 'html' || asset.error) continue
       const declared = sounds.get(asset.id)
       if (!declared || declared.length === 0) continue
-      if (!(item.volume > 0)) continue
+      if (!volumeMayBeAudible(item)) continue
       const schedule = scheduleCompositionSounds(
         item,
         audibleSpan(project, timeline, item),

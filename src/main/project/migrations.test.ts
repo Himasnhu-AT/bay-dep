@@ -219,3 +219,41 @@ test('a track missing its required fields gets their defaults, and no optional f
   // Absence of `transitions` means "none"; materialising `[]` would churn every file on save.
   assert.equal('transitions' in project.timelines[0]!, false)
 })
+
+test('keyframes are repaired on the way in, through the real load path, and good ones pass untouched', () => {
+  // The specimen is what the writer makes of a NaN key, not a hand-made null.
+  const nanKey = JSON.parse(JSON.stringify({ frame: 4, value: Number.NaN })) as { value: unknown }
+  assert.equal(nanKey.value, null, 'the specimen must be what JSON.stringify makes of NaN')
+
+  const raw = parse(V1_ON_DISK) as unknown as Project
+  const item = firstItem(raw) as unknown as Record<string, unknown>
+  // Out of order, two keys on one frame (the later wins), a NaN, and a property a newer build
+  // added — the sampler's binary search needs the first three repaired; the fourth must survive.
+  item.keyframes = {
+    opacity: [{ frame: 30, value: 1 }, { frame: 0, value: 0 }, { frame: 30, value: 0.5 }, nanKey],
+    blur: [{ frame: 0, value: 2 }],
+    width: []
+  }
+  ;(item.layout as Record<string, unknown>).scale = null
+  const loaded = migrate(JSON.parse(JSON.stringify(raw)), '/tmp/keyed.bay')
+  const repaired = firstItem(loaded)
+  assert.deepEqual(repaired.keyframes, {
+    opacity: [{ frame: 0, value: 0 }, { frame: 30, value: 0.5 }],
+    blur: [{ frame: 0, value: 2 }]
+  })
+  assert.equal('scale' in repaired.layout, false, 'a NaN scale is removed, so it reads as 1')
+
+  // Positive control: a well-formed keyed item loads exactly as written.
+  const good = parse(V1_ON_DISK) as unknown as Project
+  const goodItem = firstItem(good)
+  goodItem.keyframes = { scale: [{ frame: 0, value: 1 }, { frame: 60, value: 1.1, ease: 'inOut' }] }
+  goodItem.layout.scale = 1.2
+  const kept = firstItem(migrate(JSON.parse(JSON.stringify(good)), '/tmp/good.bay'))
+  assert.deepEqual(kept.keyframes, goodItem.keyframes)
+  assert.equal(kept.layout.scale, 1.2)
+
+  // Keys that repair to nothing are removed entirely, so the item takes the no-keys fast path.
+  const empty = parse(V1_ON_DISK) as unknown as Project
+  ;(firstItem(empty) as unknown as Record<string, unknown>).keyframes = { opacity: [nanKey] }
+  assert.equal('keyframes' in firstItem(migrate(JSON.parse(JSON.stringify(empty)), '/tmp/e.bay')), false)
+})

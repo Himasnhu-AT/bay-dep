@@ -28,11 +28,13 @@ import {
   cropSourceRect,
   cropDestRect
 } from '@shared/project'
+import { animatedItemAt } from '@shared/keyframes'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
 import { brfRuntime } from './brfCode'
+import { importedFonts } from './importedFonts'
 import type { BrfDocument } from '@shared/brf'
 import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
@@ -241,6 +243,10 @@ export class Compositor {
     const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
 
     this.#pool.beginGeneration()
+    // The project's imported fonts registered before anything draws — every drawing path (the
+    // preview, `preview_frame`, export) comes through here, so none can draw text in a face the
+    // project has and the document does not. A no-op when the font set has not changed.
+    importedFonts.sync(project.assets)
     this.#project = project
 
     const width = Math.max(1, finite(timeline.width, 1))
@@ -435,8 +441,10 @@ export class Compositor {
         const graded = gradeSource(grade, {
           source: element,
           ...src,
-          width: Math.max(1, Math.round(Math.abs(dest.dw) * scaleX)),
-          height: Math.max(1, Math.round(Math.abs(dest.dh) * scaleY)),
+          // Times the item's own zoom, which `applyRotation` applies after the device scale was
+          // read: a pushed-in clip is graded at the size it appears, not upscaled from its box.
+          width: Math.max(1, Math.round(Math.abs(dest.dw) * scaleX * zoomOf(item))),
+          height: Math.max(1, Math.round(Math.abs(dest.dh) * scaleY * zoomOf(item))),
           boxWidth: Math.abs(dest.dw),
           boxHeight: Math.abs(dest.dh),
           frame,
@@ -483,6 +491,10 @@ export class Compositor {
     stats: DrawStats,
     opts: { alphaMul?: number }
   ): void {
+    // Keyframes resolve here, once, into the layout every draw below reads — so a transition's
+    // two sides, text, .brf, compositions and placeholders all animate through one sampler, and
+    // an item with no keys is passed through as the same object.
+    item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {
       this.#drawPlaceholder(ctx, item, asset?.name ?? 'Missing media')
@@ -502,6 +514,12 @@ export class Compositor {
     }
 
     if (asset.kind === 'text') {
+      // An imported face still loading: drawn now, the words would be in a fallback face, which
+      // looks deliberate. Incomplete, like a decoding video, and waited for the same way.
+      if (item.text && importedFonts.isLoading(item.text.fontFamily)) {
+        notePending(stats, asset.name)
+        return
+      }
       const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
       if (fit) stats.textFits.push(fit)
       stats.drawn += 1
@@ -1064,13 +1082,25 @@ function noteGradeIssue(stats: DrawStats | undefined, message: string): void {
   if (!issues.includes(message)) issues.push(message)
 }
 
+/**
+ * `layout.scale`: a zoom about the box's centre, 1 when absent or not a finite non-negative
+ * number (one NaN must not remove the clip).
+ */
+export function zoomOf(item: Item): number {
+  const scale = item.layout.scale
+  return scale === undefined || !Number.isFinite(scale) || scale < 0 ? 1 : scale
+}
+
+/** Rotation and zoom, both about the box's centre. Named for the rotation it did first. */
 function applyRotation(ctx: RenderTarget, item: Item, box: Box): void {
   const degrees = finite(item.layout.rotation, 0) % 360
-  if (degrees === 0) return
+  const zoom = zoomOf(item)
+  if (degrees === 0 && zoom === 1) return
   const centreX = box.left + box.width / 2
   const centreY = box.top + box.height / 2
   ctx.translate(centreX, centreY)
-  ctx.rotate((degrees * Math.PI) / 180)
+  if (degrees !== 0) ctx.rotate((degrees * Math.PI) / 180)
+  if (zoom !== 1) ctx.scale(zoom, zoom)
   ctx.translate(-centreX, -centreY)
 }
 

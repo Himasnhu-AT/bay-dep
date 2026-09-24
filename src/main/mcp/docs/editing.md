@@ -206,10 +206,50 @@ footage there is, and are set aside on a cut that already has a transition; the 
 either happens, with the numbers. Fades apply to the sound's own edges, so give a lead 3–4 frames
 of `fadeInFrames` or it clicks in under the previous shot.
 
+**Separating a clip's sound from its picture: `detach_audio`.** A video clip's sound is tied to
+its picture — its `fadeOutFrames` fades both. `detach_audio { itemIds }` puts each clip's sound on
+an audio track as a linked item (same file, in-point and span) and silences the picture; nothing
+changes audibly when it lands. Then fade, level, duck or J/L-cut the returned `audioItemId` with
+`edit_item`, and fade the picture without touching the sound. The pair stays **linked**: moving,
+trimming, slipping, splitting or deleting either does both (`edit_item`/`trim_item` take
+`linked: false` for one alone; `action: "unlink"` breaks the link; `"reattach"` undoes the
+detach). Never duplicate a clip onto a hidden track for its sound — that decodes the file twice.
+`read_project` marks linked items with `linkedItemIds` and silenced pictures with `audioDetached`.
+
 `duck: { keyTrackId, amountDb, attackFrames, releaseFrames }` pulls a clip down under another
 track — the music bed under the dialogue track. It follows the key track's clips being *present*,
 not their loudness, so the preview and the export duck identically; the dip is complete as the
 key starts and a pause inside a dialogue clip stays ducked. 6 dB is light, 12 firm.
+
+## Animation: keyframes
+
+`edit_item` `keyframes: { property: [{ frame, value, ease? }] }` animates opacity, left, top,
+width, height, rotation, `scale` (a zoom about the centre) and volume. A keyed property takes its
+value from its keys at every frame — its static field no longer draws, and setting it while keys
+exist is warned about. **`frame` is item-relative**: 0 is the clip's first frame, `durationInFrames`
+its end; for timeline frame T use `T - from`. The result's `animation` reads each property back
+in timeline frames, so check it there.
+
+- Push in 4% over a 150-frame clip: `{ scale: [{ frame: 0, value: 1 }, { frame: 150, value: 1.04 }] }`.
+- Fade a title up over half a second: `{ opacity: [{ frame: 0, value: 0 }, { frame: 15, value: 1 }] }`.
+- Ride the music down to −12 dB from 0:10 to 0:14 (clip at 0, 30 fps): `{ volume: [{ frame: 285, db: 0 },
+  { frame: 300, db: -12 }, { frame: 420, db: -12 }, { frame: 435, db: 0 }] }` — volume keys take `db`.
+
+`ease` shapes the segment *from* that key to the next: `linear` (default), `hold`, `in`, `out`,
+`inOut`, or a cubic-bezier `[x1, y1, x2, y2]`. Each property you name is replaced whole; `null`
+removes it, `keyframes: null` removes all. Keys move with the clip; trimming its head keeps them on
+the same footage; `split_at` and `remove_range` divide them so each piece animates exactly as the
+whole did; speed and slip leave them where they are. Fades, transitions and ducking still multiply
+on top of an animated opacity or volume.
+
+## Fonts are project assets
+
+`import_media` a `.ttf`, `.otf`, `.woff` or `.woff2` — variable fonts included — and it becomes a
+`kind: "font"` asset: not placed, but named by its `family` (the import result and
+`read_project.fonts` say it, with the axes a variable font has). Text items take it as
+`text.fontFamily`, `.brf` text as `font` (with `variations` for its axes), compositions as
+`font-family` — bay injects the face into the composition for you. bay keeps its own copy, so the
+project keeps drawing in it on reopen; never install a font system-wide for bay.
 
 ## Looks
 

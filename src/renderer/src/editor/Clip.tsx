@@ -2,6 +2,8 @@ import { memo, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Code2,
+  Link2,
+  VolumeX,
   ImageIcon,
   Music2,
   Type as TypeIcon,
@@ -36,6 +38,8 @@ export interface ClipProps {
   height: number
   selected: boolean
   locked: boolean
+  /** The kind of track the clip sits on: a video file's detached sound draws as audio. */
+  trackKind: 'video' | 'audio'
   /** Live drag/trim preview. The store is not written until the pointer goes up. */
   previewFrom: number
   previewDuration: number
@@ -44,6 +48,7 @@ export interface ClipProps {
    * a fresh closure per clip per render would defeat the `memo` below. */
   onPointerDownBody(event: React.PointerEvent, item: Item): void
   onPointerDownTrim(event: React.PointerEvent, item: Item, edge: 'start' | 'end'): void
+  onContextMenu(event: React.MouseEvent, item: Item): void
 }
 
 /**
@@ -62,7 +67,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   text: TypeIcon,
   html: Code2,
   brf: Sparkles,
-  lut: Palette
+  lut: Palette,
+  font: TypeIcon
 }
 
 /**
@@ -186,14 +192,17 @@ function ClipImpl({
   height,
   selected,
   locked,
+  trackKind,
   previewFrom,
   previewDuration,
   dragging,
   onPointerDownBody,
-  onPointerDownTrim
+  onPointerDownTrim,
+  onContextMenu
 }: ClipProps): ReactNode {
   const width = Math.max(2, previewDuration * pixelsPerFrame)
-  const audio = asset?.kind === 'audio' || (asset ? !asset.hasVideo && asset.hasAudio : false)
+  const audio =
+    trackKind === 'audio' || asset?.kind === 'audio' || (asset ? !asset.hasVideo && asset.hasAudio : false)
   const Icon = asset ? KIND_ICON[asset.kind] : AlertTriangle
   const showThumbs = width >= THUMBS_MIN_WIDTH
 
@@ -202,13 +211,19 @@ function ClipImpl({
 
   const fadeIn = item.fadeInFrames * pixelsPerFrame
   const fadeOut = item.fadeOutFrames * pixelsPerFrame
+  const keyFrames = keyFramesOf(item)
 
   return (
     <div
       role="option"
       aria-selected={selected}
       aria-label={asset?.name ?? 'Missing media'}
-      onPointerDown={(event) => onPointerDownBody(event, item)}
+      onPointerDown={(event) => {
+        // A right-click opens the menu; it must not also start a drag.
+        if (event.button !== 0) return
+        onPointerDownBody(event, item)
+      }}
+      onContextMenu={(event) => onContextMenu(event, item)}
       style={{
         left: previewFrom * pixelsPerFrame,
         width,
@@ -258,6 +273,21 @@ function ClipImpl({
         />
       )}
 
+      {/* A diamond per keyed frame, any property, along the bottom edge — where the keys are,
+          not what they do; the inspector says what. Not interactive, so a drag starting on one
+          is still a clip drag. */}
+      {keyFrames.length > 0 && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0.5 h-2">
+          {keyFrames.map((frame) => (
+            <span
+              key={frame}
+              className="absolute bottom-0 size-1.5 -translate-x-1/2 rotate-45 border border-black/50 bg-accent"
+              style={{ left: frame * pixelsPerFrame }}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="pointer-events-none relative flex h-full items-start gap-1 px-1.5 py-1">
         <Icon aria-hidden="true" className="mt-px size-3 shrink-0 text-on-media/70" />
         {/* Over a filmstrip the name gets the same dark backing as the speed badge: a text
@@ -273,6 +303,22 @@ function ClipImpl({
         >
           {asset?.name ?? 'Missing media'}
         </span>
+        {/* Linked: this clip moves, trims and deletes with its picture or sound. Detached: the
+            picture plays no sound of its own. Both are states with no other cue on the lane. */}
+        {item.linkId && (
+          <Link2
+            role="img"
+            aria-label="Linked"
+            className="mt-px size-3 shrink-0 text-on-media/80"
+          >
+            <title>Linked — moves, trims and deletes with its {audio ? 'picture' : 'sound'}</title>
+          </Link2>
+        )}
+        {item.audioDetached && (
+          <VolumeX role="img" aria-label="Sound detached" className="mt-px size-3 shrink-0 text-on-media/80">
+            <title>Sound detached — this picture plays no sound of its own</title>
+          </VolumeX>
+        )}
         {item.speed !== 1 && (
           <span className="ml-auto shrink-0 rounded-xs bg-black/55 px-1 text-[10px] text-on-media tabular-nums">
             {item.speed}×
@@ -306,6 +352,18 @@ function ClipImpl({
       )}
     </div>
   )
+}
+
+/** Every frame, item-relative and inside the clip, that holds a key of any property. */
+function keyFramesOf(item: Item): number[] {
+  if (!item.keyframes) return []
+  const frames = new Set<number>()
+  for (const list of Object.values(item.keyframes)) {
+    for (const key of list ?? []) {
+      if (key.frame >= 0 && key.frame <= item.durationInFrames) frames.add(key.frame)
+    }
+  }
+  return [...frames].sort((a, b) => a - b)
 }
 
 /**

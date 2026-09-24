@@ -29,12 +29,15 @@ export function trimItem(args: Record<string, unknown>): Record<string, unknown>
   const endBefore = Math.max(0, ...track.items.map(itemEnd))
   // No `transact` around this, unlike most tools here: `trimEdit` is a single `edit()`, so it
   // is already exactly one undo step, and a wrapper nothing could observe is not worth keeping.
-  const result = store().trimEdit({
-    itemId: item.id,
-    mode,
-    deltaFrames: Number(args.deltaFrames),
-    ...(edge ? { edge } : {})
-  })
+  const result = store().trimEdit(
+    {
+      itemId: item.id,
+      mode,
+      deltaFrames: Number(args.deltaFrames),
+      ...(edge ? { edge } : {})
+    },
+    { linked: args.linked !== false }
+  )
   if (!result.ok) fail(result.error)
 
   const tl = timeline()

@@ -32,13 +32,11 @@
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { attach, runProbe, PreconditionError } from './cdp.mjs'
 
-const require_ = createRequire(import.meta.url)
-const FFMPEG = require_('ffmpeg-ffprobe-static').ffmpegPath
+import { FFMPEG, H264 } from './ffmpeg.mjs'
 const RATE = 48_000
 const FPS = 30
 
@@ -49,8 +47,8 @@ const make = (name, args) => {
   return path
 }
 const tone = (hz) => `aevalsrc=0.6*sin(2*PI*${hz}*t):s=${RATE}:d=10`
-const clipA = make('a.mp4', ['-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', tone(450), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest'])
-const clipB = make('b.mp4', ['-f', 'lavfi', '-i', 'smptebars=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', tone(900), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest'])
+const clipA = make('a.mp4', ['-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', tone(450), ...H264, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest'])
+const clipB = make('b.mp4', ['-f', 'lavfi', '-i', 'smptebars=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', tone(900), ...H264, '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest'])
 const music = make('music.wav', ['-f', 'lavfi', '-i', tone(600), '-ac', '2'])
 const voice = make('voice.wav', ['-f', 'lavfi', '-i', tone(900), '-ac', '2'])
 

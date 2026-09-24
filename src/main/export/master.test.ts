@@ -20,15 +20,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { masterAudio, masterFilter, verifyDelivered } from './master'
 import { audioCodecArgs } from './codec-args'
+import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
 
-const require_ = createRequire(import.meta.url)
-const FFMPEG = (require_('ffmpeg-ffprobe-static') as { ffmpegPath?: string | null }).ffmpegPath ?? ''
-const SKIP = existsSync(FFMPEG) ? false : `no bundled ffmpeg at "${FFMPEG}" — run pnpm install`
+const FFMPEG = vendoredTools()?.ffmpeg ?? ''
+const SKIP = FFMPEG ? false : NO_VENDORED_FFMPEG
 const RATE = 48_000
 
 /** The test's own meter: integrated LUFS and true peak dBTP, from the last summary block. */

@@ -8,6 +8,7 @@ import type {
   Crop,
   Frames,
   Item,
+  KeyframeProperty,
   Layout,
   Project,
   TextStyle,
@@ -22,6 +23,7 @@ import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { RippleDeleteResult } from '@shared/ripple'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
+import type { DetachResult, ReattachResult } from '@shared/links'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
@@ -32,6 +34,11 @@ export type RegionId = 'side' | 'inspector' | 'timeline'
 
 /** What the window shows: the projects screen, or a project open in the editor. */
 export type Screen = 'home' | 'editor'
+
+/** `linked: false` edits the one clip named and leaves the clips linked to it where they are. */
+export interface LinkOptions {
+  linked?: boolean
+}
 
 export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export'
 
@@ -213,8 +220,14 @@ export interface EditorActions {
   // items --------------------------------------------------------------------
   /** Places an asset at `atFrame`, choosing a track that has room. Returns the new item id. */
   placeAsset(assetId: string, atFrame?: Frames, trackId?: string): string | null
-  moveItem(itemId: string, toFrame: Frames, toTrackId?: string): void
-  trimItem(itemId: string, edge: 'start' | 'end', toFrame: Frames): void
+  /**
+   * Moves a clip, and everything linked to it (`@shared/links`) by the same number of frames on
+   * their own tracks — unless `linked: false`. Refuses the whole move, silently like every
+   * mutator here, if any linked clip is locked, would collide or would start before frame 0.
+   */
+  moveItem(itemId: string, toFrame: Frames, toTrackId?: string, options?: LinkOptions): void
+  /** Trims one edge; linked clips' same edge moves by the same frames unless `linked: false`. */
+  trimItem(itemId: string, edge: 'start' | 'end', toFrame: Frames, options?: LinkOptions): void
   /**
    * Slip, slide or roll one clip — see `@shared/trim` for what each keeps still.
    *
@@ -223,7 +236,8 @@ export interface EditorActions {
    * frames, and "moved by 12 when you asked for 40" reported as success is a lie. The timeline
    * clamps its gestures *before* calling, using the same planner.
    */
-  trimEdit(spec: TrimSpec): TrimPlan | TrimRefusal
+  trimEdit(spec: TrimSpec, options?: LinkOptions): TrimPlan | TrimRefusal
+  /** Splits the selection (or everything at the frame); a selected clip's linked clips split too. */
   splitAt(frame?: Frames): void
   deleteSelected(): void
   /**
@@ -237,7 +251,18 @@ export interface EditorActions {
    */
   rippleDelete(fromFrame?: Frames, toFrame?: Frames): RippleDeleteResult | null
   duplicateSelected(): void
-  patchItem(itemId: string, patch: Partial<Omit<Item, 'id' | 'trackId'>>): void
+  /**
+   * Sets fields on one item. The sync fields — `from`, `durationInFrames`, `sourceStartUs`,
+   * `speed` — move linked clips by the same amount unless `linked: false`; everything else is the
+   * item's own.
+   */
+  patchItem(itemId: string, patch: Partial<Omit<Item, 'id' | 'trackId'>>, options?: LinkOptions): void
+  /** "Detach audio": each clip's sound onto a linked audio item (`@shared/links`). */
+  detachAudio(itemIds: string[], trackId?: string): DetachResult
+  /** The reverse: the picture sounds again and its linked audio item is removed. */
+  reattachAudio(itemIds: string[]): ReattachResult
+  /** Breaks the links of these clips and their partners. Returns the ids that were linked. */
+  unlinkItems(itemIds: string[]): string[]
   /**
    * Set one of a composition clip's declared variables, on that clip alone.
    *
@@ -249,6 +274,11 @@ export interface EditorActions {
   /** Set one edge of a clip's crop, as a fraction of the source. */
   setCrop(itemId: string, edge: keyof Crop, fraction: number): void
   patchLayout(itemId: string, patch: Partial<Layout>): void
+  /**
+   * Put a key on one property at an item-relative frame — replacing one already there — or, with
+   * `value` null, remove the key at that frame. The inspector's diamond and auto-key both land here.
+   */
+  setKeyframe(itemId: string, property: KeyframeProperty, frame: Frames, value: number | null): void
 
   // tracks -------------------------------------------------------------------
   addTrack(kind: TrackKind): string

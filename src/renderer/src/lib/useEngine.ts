@@ -21,6 +21,7 @@ import { renderFrame, awaitSources } from '@/engine/render'
 import { FrameExporter } from '@/engine/exporter'
 import { brfRuntime } from '@/engine/brfCode'
 import { variationFaces } from '@/engine/brfFonts'
+import { importedFonts } from '@/engine/importedFonts'
 import { PictureHold } from '@/engine/pictureHold'
 
 /**
@@ -162,6 +163,7 @@ class Engine {
     this.#offs.push(this.compositions.onReady(() => this.redraw()))
     this.#offs.push(brfRuntime.onReady(() => this.redraw()))
     this.#offs.push(variationFaces.onReady(() => this.redraw()))
+    this.#offs.push(importedFonts.onReady(() => this.redraw()))
 
     // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
     // producing frames while the media elements play on, so the sound runs away from a

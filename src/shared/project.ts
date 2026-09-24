@@ -22,7 +22,7 @@ import type { Grade, LutData } from './grade'
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
  * timeline — a clip's `grade.lut` refers to it by id.
  */
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut'
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut' | 'font'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -101,6 +101,13 @@ export interface Asset {
    */
   lut?: LutData
   /**
+   * For `kind: 'font'` — a typeface the project brings with it (`.ttf`, `.otf`, `.woff`, `.woff2`,
+   * variable or static). Like a LUT it is never placed: text items, `.brf` text and HTML
+   * compositions name its `family`. `path` is bay's own copy of the file (main copies it on import
+   * into its fonts folder), so the project keeps drawing in it if the original moves.
+   */
+  font?: FontInfo
+  /**
    * The source's beat grid (`@shared/beats`), once `detect_beats` has analysed it. In source
    * time, so it is a property of the file and every placement maps it through its own in-point
    * and speed. Derived data like the poster: written silently, and recomputable from the file.
@@ -109,6 +116,37 @@ export interface Asset {
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
+}
+
+/** A variable font's design axis, as its `fvar` table declares it. */
+export interface FontAxis {
+  /** The four-letter tag: `wght`, `wdth`, `slnt`, `ital`, `opsz`, or a font's own (`GRAD`). */
+  tag: string
+  min: number
+  default: number
+  max: number
+}
+
+/** What main read from a font file's own tables — enough to register it and to describe it. */
+export interface FontInfo {
+  /**
+   * The CSS family name the face registers under: the typographic family (name ID 16) when the
+   * font has one, else its family (ID 1). A variable font's ID 1 is often its default instance
+   * ("Archivo SemiBold"), which is not what anyone types; ID 16 is ("Archivo").
+   */
+  family: string
+  fullName: string | null
+  postscriptName: string | null
+  /** `font-weight` descriptor: one weight, or the `wght` axis range as "min max". */
+  weight: string
+  /** `font-stretch` descriptor: one width, or the `wdth` axis range, in percent. */
+  stretch: string
+  style: 'normal' | 'italic'
+  /** Empty for a static font. */
+  axes: FontAxis[]
+  format: 'truetype' | 'opentype' | 'woff' | 'woff2'
+  /** Where the file was imported from, before bay copied it. */
+  importedFrom: string
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +223,56 @@ export interface Layout {
    * frame, whatever this says.
    */
   origin?: LayoutOrigin
+  /**
+   * A uniform zoom about the box's centre, drawn as a transform like `rotation`. Absent means 1.
+   *
+   * A zoom rather than a bigger box, because a box that grows reflows a title's words instead of
+   * enlarging them, and because "push in 4%" is then one number — `width`, `height`, `left` and
+   * `top` moving together to keep a centre is four, and an agent keeps them in step badly.
+   */
+  scale?: number
 }
+
+/**
+ * How a keyframe's value travels to the next key's: the curve of the segment that *starts* at
+ * this key (After Effects' convention). `hold` keeps this value until the next key, then jumps.
+ * `in`/`out`/`inOut` are CSS's `ease-in`/`ease-out`/`ease-in-out`; a tuple is a CSS
+ * `cubic-bezier(x1, y1, x2, y2)` with x1 and x2 in 0..1. Absent means `linear`.
+ */
+export type KeyframeEase = 'linear' | 'hold' | 'in' | 'out' | 'inOut' | [number, number, number, number]
+
+/**
+ * One key: a value at a frame. **`frame` is item-relative** — 0 is the item's first frame
+ * (`item.from`), whatever the timeline's fps and wherever the clip sits — so moving a clip
+ * carries its animation with it. The rules for every other edit are in `@shared/keyframes`.
+ */
+export interface Keyframe {
+  frame: Frames
+  value: number
+  ease?: KeyframeEase
+}
+
+/**
+ * Every property that can be animated. Each is also a static field — the six layout fields,
+ * `scale` and `volume` — and **a property with keys takes its value from them at every frame**;
+ * the static field is what it reads with none. Fades, transitions and ducking still multiply on
+ * top, as they do over a static value.
+ */
+export const KEYFRAME_PROPERTIES = [
+  'opacity',
+  'left',
+  'top',
+  'width',
+  'height',
+  'rotation',
+  'scale',
+  'volume'
+] as const
+
+export type KeyframeProperty = (typeof KEYFRAME_PROPERTIES)[number]
+
+/** Keys per property, sorted by frame with no two on one frame. An empty list is stored as absence. */
+export type ItemKeyframes = Partial<Record<KeyframeProperty, Keyframe[]>>
 
 /**
  * How a text item is drawn.
@@ -395,6 +482,24 @@ export interface Item {
   audioTrailFrames?: Frames
   /** Duck this clip's sound while another track is sounding — music under dialogue. */
   duck?: AudioDuck
+  /**
+   * Animation: keys per property, sampled by `@shared/keyframes` — the one function the
+   * compositor, `preview_frame`, export and the audio gain all read. Absent is the fast path and
+   * means every property holds its static value, which is every project written before this.
+   */
+  keyframes?: ItemKeyframes
+  /**
+   * Items sharing a `linkId` (and overlapping in time) are one clip to the edit operations: move,
+   * trim, slip, split and delete act on all of them unless asked not to. Set by "Detach audio" on
+   * the picture and the audio item it made (`@shared/links`). Absent means not linked.
+   */
+  linkId?: string
+  /**
+   * This clip's own sound is not played — it was detached onto an audio item of its own, which is
+   * where its level, fades and duck now live. The picture's fades then fade only the picture.
+   * Absent or false means the clip sounds as it always did.
+   */
+  audioDetached?: boolean
 }
 
 /**
@@ -644,6 +749,21 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
       const half = Math.floor(item.durationInFrames / 2)
       item.fadeInFrames = Math.min(Math.round(item.fadeInFrames * k), half)
       item.fadeOutFrames = Math.min(Math.round(item.fadeOutFrames * k), half)
+      // Keys are item-relative frames, so they scale like durations: the same wall-clock moment
+      // into the clip. Two keys that round onto one frame keep the later one, which is what the
+      // curve reached there.
+      // New lists rather than edits in place: a split or duplicate may share one with its twin.
+      if (item.keyframes) {
+        const scaled: ItemKeyframes = {}
+        for (const property of KEYFRAME_PROPERTIES) {
+          const list = item.keyframes[property]
+          if (!list || list.length === 0) continue
+          const byFrame = new Map<number, Keyframe>()
+          for (const key of list) byFrame.set(Math.round(key.frame * k), { ...key, frame: Math.round(key.frame * k) })
+          scaled[property] = [...byFrame.values()].sort((a, b) => a.frame - b.frame)
+        }
+        item.keyframes = scaled
+      }
       floor = end
     }
   }

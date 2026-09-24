@@ -35,7 +35,7 @@
  * (a positive control that the sampler sees ordinary picture changes and tracks them).
  *
  * Media: TAKES=<folder> uses s1*…s5* .mp4 from it (the user's urban-shinobi takes); otherwise it
- * makes its own under ~/.bay-probe-media/cut-playback-v2 — 768x1344 24 fps H.264 with keyframes 5 s
+ * makes its own under ~/.bay-probe-media/cut-playback-v3 — 768x1344 24 fps H.264 with keyframes 5 s
  * apart and B-frames, so a seek to a trimmed in-point has to decode from a distant keyframe, as the
  * real takes do. Builds its timeline in the page; the harness restores the project. Nothing saves.
  *
@@ -50,7 +50,7 @@ import { join } from 'node:path'
 import { attach, runProbe, PreconditionError } from './cdp.mjs'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.FFMPEG ?? 'node_modules/ffmpeg-ffprobe-static/ffmpeg'
+import { FFMPEG, H264 } from './ffmpeg.mjs'
 
 async function media() {
   if (process.env.TAKES) {
@@ -61,7 +61,7 @@ async function media() {
     return { clips: clips.map((c) => join(process.env.TAKES, c)), score: score ? join(process.env.TAKES, score) : null }
   }
   // Versioned by name: a changed recipe must not be satisfied by a specimen from the old one.
-  const dir = join(homedir(), '.bay-probe-media', 'cut-playback-v2')
+  const dir = join(homedir(), '.bay-probe-media', 'cut-playback-v3')
   await mkdir(dir, { recursive: true })
   const clips = []
   for (let n = 1; n <= 5; n++) {
@@ -74,7 +74,7 @@ async function media() {
     const cb = Math.round(128 + 70 * Math.cos(n * 1.3)), cr = Math.round(128 + 70 * Math.sin(n * 1.3))
     await run(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=768x1344:r=24:d=5.2',
       '-vf', `geq=lum='128+100*sin(2*PI*(3*Y/H-0.9*T))':cb=${cb}:cr=${cr}`,
-      '-c:v', 'libx264', '-g', '120', '-keyint_min', '120', '-sc_threshold', '0', '-bf', '2',
+      ...H264, '-g', '120', '-bf', '2',
       '-pix_fmt', 'yuv420p', out])
   }
   const score = join(dir, 'score.flac')

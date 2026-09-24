@@ -155,12 +155,23 @@ navigate or open windows, and gets no permissions. Before this, a shared project
 could read `~/.ssh` and post it anywhere. The contract already told authors remote resources were
 blocked; now they are.
 
-**bay passes ffmpeg no `-protocol_whitelist`, on purpose.** It was proposed, and measured against
-the shipped ffmpeg it changed nothing any specimen could observe: a local playlist inherits
-`file,crypto,data`, HLS and DASH under a video's name are not detected, concat calls a URL unsafe.
-`src/main/media/local-only.test.ts` pins that property with a direct fetch as its positive control,
-so an ffmpeg upgrade that loosens it fails the suite — a test of the property instead of an
-unfalsifiable flag.
+**bay ships its own ffmpeg, built from pinned source as LGPL-2.1** (`script/build-ffmpeg.sh` →
+`vendor/ffmpeg/<platform>-<arch>/`, found by `src/main/ffmpeg/vendor.ts`; `vendor/ffmpeg/README.md`
+has the why). The npm build it replaced was `--enable-gpl --enable-nonfree` — not redistributable —
+and 2.5 years stale. So: **no libx264** (H.264 is `h264_videotoolbox`, quality mapped by measurement
+in `codec-args.ts`), **no vid.stab** (use `deshake`), no font stack (`drawtext`/`subtitles` are not
+there; bay draws its own text). The binaries are gitignored — run the script once per machine
+(~5 min); tests that need them skip loudly without them, and `pnpm release` refuses to package
+without the binaries BUILDINFO records. `src/main/ffmpeg/capabilities.test.ts` asks the binary for
+every encoder and filter the code's own argument builders write, so adding a filter the build lacks
+fails `pnpm test` by name. Add it to the script's configure line (and its `REQUIRED_*`), not a
+fallback.
+
+**bay passes ffmpeg no `-protocol_whitelist`, on purpose.** With the old npm build it changed
+nothing any specimen could observe; bay's own build is `--disable-network` with only `file` and
+`pipe`, so there is no network code to whitelist. `src/main/media/local-only.test.ts` pins both the
+protocol list and that no URL or local playlist makes a request (Node reaching the same server is
+the positive control); pointed at the old 6.1.1 build, both fail.
 
 **Subtitles are compositions, one per clip, in a chosen design** (`src/shared/subtitles.ts`,
 `add_subtitles`). A text item can show a line; it cannot light the word being spoken, which is what
@@ -211,6 +222,25 @@ vs 125 is 27.5% vs 51.4% of the frame. Each (family, settings) is a face cloned 
 `@font-face` rules or `local()` (full/PostScript names only). A loading face makes the item
 *pending*, so export and `preview_frame` wait on `variationFaces.settle` like any other source.
 
+**Fonts are assets, not machine state** (`kind: 'font'`, `@shared/fonts`, `media/font-file.ts`,
+`engine/importedFonts.ts`). Main reads the file's own tables (name ID 16 before ID 1: a variable
+font's ID 1 is its default instance, "Archivo SemiBold") and copies it, content-addressed, into
+`<userData>/fonts`, admitted to `bay://` like any asset path. The compositor registers each as a
+`FontFace` with the axis ranges as descriptors (a single weight would clamp every other one), a
+loading face makes text *pending*, `brfFonts` clones variation faces from the imported source, and
+composition windows get the same bytes as a `data:` `@font-face` — only files from that folder,
+with descriptors checked, since a `.bay` may be someone else's.
+
+**Detached audio is a linked item, and the picture's element is shared where it can be**
+(`@shared/links`, `detach_audio`). The picture gets `audioDetached`, the sound an audio-track item
+with the same asset/in/span; items sharing a `linkId` and overlapping in time move, trim, slip,
+split and delete together. Links are re-derived from overlap after every `edit()`
+(`normaliseLinks`), so a split or `remove_range` of a pair yields two pairs without either knowing
+links exist. Preview: an aligned sound plays through the picture's own element (one decode);
+anything else gets an `<audio>` stand-in with the picture element claimed silently. Export skips
+the detached picture as an input. Gain lookups ask for the item's *own* transition
+(`transitionOfItemAt`), because a picture dissolve and its copied audio cross-fade share frames.
+
 A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
 undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
 anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main
@@ -236,6 +266,20 @@ paused — they vanished during playback. Live, a miss shows the latest decoded 
 within a second, the newest queued capture is served first, stale ones are dropped, and three frames
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
+
+**A media load that failed is retried under a new URL, with CORS** (`mediaRetry.ts`). Chromium
+remembers a failed load per URL and CORS mode. A `bay://` path refused before it was allowlisted
+kept failing after the allowlist, even on a fresh element. Meanwhile `fetch` of that URL answered
+200. So the same-URL retry could never work, and dropping CORS "worked" only by changing the key,
+into a load that plays silence. `test/app/audio-soak.mjs` reproduces the race: before the fix,
+every forced iteration was silent; after it, none were.
+
+**A GUI probe must never send a global keystroke or trust Accessibility for window presence**
+(`test/app/menu.mjs`, `test/app/README.md`). Accessibility lists only the active Space. With
+another app full screen, bay has "0 windows". `key code 53` lands in whatever app is in front,
+and it once landed in the user's chat app while they were typing. Use the window server's list
+(`CGWindowListCopyWindowInfo`), and send a key only after re-checking `frontmost` in the same
+script.
 
 **A cut during playback is prepared before the playhead reaches it** (`Compositor.preroll`,
 `engine/pictureHold.ts`, `test/app/cut-playback.mjs`). Every cut played one black picture, cold
@@ -336,13 +380,14 @@ bay has seen, so winding the clock back buys nothing. The refresh token is store
 
 **Releases are signed by `script/release-signed`, and every Mach-O is checked by content, not by
 name** (`pnpm release:signed`, `.bay-release`). electron-builder signs. The script then walks
-the bundle, `app.asar.unpacked` included, which `codesign --deep` skips. It refuses any binary
-without the Developer ID, the hardened runtime, a secure timestamp or the arm64 slice. So the
-ffmpeg swap needs no signing change. It notarizes the app, then the DMG, and fails on any
+the whole bundle, including `Contents/Resources` (ffmpeg and ffprobe in `Resources/ffmpeg/`, and
+`claude` in `app.asar.unpacked`), which `codesign --deep` skips. It refuses any binary without
+the Developer ID, the hardened runtime, a secure timestamp or the arm64 slice, so moving or
+swapping a binary needs no signing change. It notarizes the app, then the DMG, and fails on any
 issue in Apple's log. The only entitlement is `allow-jit`, measured in a signed build. The four
 that were there before had comments no one had tested. `disable-library-validation` claimed
 ffmpeg needed it, but library validation governs dylibs loaded into a process, not executables
-it spawns. Builds are arm64 only, because `node_modules` holds this Mac's ffmpeg and `claude`.
+it spawns. Builds are arm64 only, because pnpm installs only this Mac's `claude-agent-sdk-darwin-*`.
 
 **An update restarts bay with no arguments.** Squirrel relaunches the bundle as Finder would:
 no `--user-data-dir`, and no environment. A test update from an isolated profile therefore
@@ -356,6 +401,13 @@ when a restart is safe (`restartPlan`/`runRestart` in `@shared/update`): it save
 writes the autosave sidecar while locked, and installs only if that succeeded. The update
 channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
 cannot sign in gets fixed.
+
+**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
+email directly on the website's `/admin`; an entitled user refers one from inside bay
+(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
+(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
+`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
+site says "Releasing soon" and points at the waitlist.
 
 ## graft — read the graph before you grep
 
@@ -793,6 +845,18 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
   peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
   default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
+- **Keyframes have one sampler and item-relative frames** (`item.keyframes`, `@shared/keyframes`,
+  `edit_item.keyframes`). The compositor paints `animatedItemAt` (in `#paintItem`, so every kind
+  and a transition's two sides animate alike) and `itemAudioGainAt` reads `animatedVolumeAt`, so
+  preview, `preview_frame` and export — picture and the per-frame volume envelope — sample one
+  curve. No keys returns the item itself. A keyed property takes its value from the keys and its
+  static field draws nowhere; `layout.scale` is a zoom about the centre (a transform, so type
+  enlarges rather than reflows). Frame 0 is `item.from`: moves carry keys; an in-point trim
+  (store trim, roll/slide's `keyframeShiftFrames`, ripple's kept tail, `apply_script` head trim)
+  shifts them to stay on their footage; splits use `sliceKeyframes` (keys inside plus the nearest
+  beyond each end — exact); slip and speed leave them; `retimeTimeline` scales them. Anything that
+  asks "can this clip sound" must use `volumeMayBeAudible`, not `item.volume > 0` — a clip keyed up
+  from volume 0 was otherwise dropped from export.
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field
