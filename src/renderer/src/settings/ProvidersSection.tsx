@@ -1,5 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { GENERATION_PROVIDERS, PROVIDERS, type GenerationProvider, type ProviderKeyStatus } from '@shared/generation'
+import {
+  GENERATION_PROVIDERS,
+  MAX_GENERATION_ACTIVE,
+  MAX_GENERATION_BUDGET_USD,
+  PROVIDERS,
+  type GenerationProvider,
+  type GenerationSpending,
+  type ProviderKeyStatus
+} from '@shared/generation'
 import { Button } from '@/components'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
@@ -35,7 +43,110 @@ export function ProvidersSection(): ReactNode {
       {GENERATION_PROVIDERS.map((provider) => (
         <ProviderRow key={provider} provider={provider} status={keys?.find((k) => k.provider === provider) ?? null} onChange={setKeys} />
       ))}
+      <SpendingRow />
     </Section>
+  )
+}
+
+const inputClass =
+  'h-7 w-20 rounded-sm border border-line-strong bg-surface-2 px-2 font-mono text-[12px] text-ink-0 outline-none focus:border-accent disabled:opacity-40'
+
+/**
+ * The spend guard's limits. Main enforces them on every generation, whoever asks — the agent
+ * cannot raise them, which is the point: a prompt injection that reaches the agent could
+ * otherwise spend the user's money. Main checks what is typed here; this form only sends it.
+ */
+function SpendingRow(): ReactNode {
+  const [spending, setSpending] = useState<GenerationSpending | null>(null)
+  const [budget, setBudget] = useState('')
+  const [active, setActive] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    let live = true
+    void bay()
+      ?.generation.spending()
+      .then((current) => {
+        if (!live) return
+        setSpending(current)
+        setBudget(String(current.budgetUsd))
+        setActive(String(current.maxActive))
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  const save = async (): Promise<void> => {
+    const api = bay()
+    if (!api || busy) return
+    setBusy(true)
+    setMessage(null)
+    try {
+      // A blank field is NaN, not 0, so main refuses it rather than reading it as a $0 budget.
+      const asNumber = (text: string): number => (text.trim() === '' ? NaN : Number(text))
+      const result = await api.generation.setLimits({ budgetUsd: asNumber(budget), maxActive: asNumber(active) })
+      if (result.ok) {
+        setSpending(result.spending)
+        setMessage({ ok: true, text: 'Saved.' })
+      } else {
+        setMessage({ ok: false, text: result.error })
+      }
+    } catch (error) {
+      setMessage({ ok: false, text: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const spent = spending ? `$${spending.spentUsd.toFixed(2)} of $${spending.budgetUsd.toFixed(2)} estimated so far this session.` : undefined
+  return (
+    <div className="flex flex-col gap-2 border-t border-line pt-3">
+      <Row label="Spending limit" hint={`bay refuses any generation that would pass these, and only you can raise them. ${spent ?? ''}`.trim()}>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void save()
+          }}
+        >
+          <label className="flex items-center gap-1 text-[12px] text-ink-1">
+            $
+            <input
+              type="number"
+              min={0}
+              max={MAX_GENERATION_BUDGET_USD}
+              step="0.5"
+              value={budget}
+              onChange={(event) => setBudget(event.target.value)}
+              aria-label="Session budget in US dollars"
+              disabled={busy || !spending}
+              className={inputClass}
+            />
+            per session
+          </label>
+          <label className="flex items-center gap-1 text-[12px] text-ink-1">
+            <input
+              type="number"
+              min={1}
+              max={MAX_GENERATION_ACTIVE}
+              step="1"
+              value={active}
+              onChange={(event) => setActive(event.target.value)}
+              aria-label="Jobs at once"
+              disabled={busy || !spending}
+              className={cn(inputClass, 'w-14')}
+            />
+            jobs at once
+          </label>
+          <Button type="submit" variant="primary" disabled={busy || !spending}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        </form>
+      </Row>
+      {message && <p className={cn('text-[12px] text-pretty', message.ok ? 'text-success' : 'text-danger')}>{message.text}</p>}
+    </div>
   )
 }
 
@@ -87,7 +198,16 @@ function ProviderRow(props: {
 
   return (
     <div className="flex flex-col gap-2">
-      <Row label={spec.label} hint={set ? (props.status?.persisted === false ? 'Set — in memory only until bay quits.' : 'Set.') : `Not set. Get a key at ${spec.keyPage}.`}>
+      <Row
+        label={spec.label}
+        hint={
+          set
+            ? props.status?.persisted === false
+              ? 'Set — in memory only until bay quits.'
+              : 'Set.'
+            : (props.status?.problem ?? `Not set. Get a key at ${spec.keyPage}.`)
+        }
+      >
         {set && (
           <Button variant="ghost" disabled={busy} onClick={() => void clear()}>
             Remove

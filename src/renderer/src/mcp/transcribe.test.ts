@@ -15,7 +15,7 @@ import type { Asset, Item, Project } from '@shared/project'
 import { segmentsToCues, type TranscriptSegment } from '@shared/transcribe'
 import { useEditor, emptyProject } from '@/store/editor'
 import { executeToolCall } from './index'
-import { forgetTranscripts } from './transcribe'
+import { anyTranscriptFor, cachedTranscript, forgetTranscripts } from './transcribe'
 
 // Each case answers the same file its own way; the session cache would hand back the first.
 beforeEach(() => forgetTranscripts())
@@ -246,4 +246,20 @@ test('the same clip asked twice is transcribed once; a different model is a new 
   await executeToolCall({ id: 'c', tool: 'transcribe', args: { itemId: 'clip_cached' } })
   assert.equal(sent.length, 2, 'another model is another transcription')
   useEditor.getState().setWhisperModel(null)
+})
+
+test('labels find a transcript by file, whatever language or model made it', async () => {
+  seed()
+  const path = '/footage/interview.mp4'
+  // Transcribed in French, then the model changed in Settings: the strict key finds nothing.
+  await run({ itemId: 'clip_interview', language: 'fr' })
+  useEditor.getState().setWhisperModel('ggml-small.bin')
+  try {
+    assert.equal(cachedTranscript(path), undefined, 'the specimen must miss the exact-key lookup, or this test proves nothing')
+    assert.deepEqual(anyTranscriptFor(path)?.segments, SEGMENTS)
+    // Negative control: another file has none.
+    assert.equal(anyTranscriptFor('/footage/broll.mp4'), undefined)
+  } finally {
+    useEditor.getState().setWhisperModel(null)
+  }
 })

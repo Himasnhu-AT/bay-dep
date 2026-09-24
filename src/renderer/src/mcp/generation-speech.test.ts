@@ -51,8 +51,9 @@ const voiceAsset = (path: string): Asset => ({
           updatedAt: Date.now()
         }
         jobs.unshift(job)
-        return { ok: true, job }
+        return { ok: true, job, spending: { spentUsd: 0, budgetUsd: 5, active: 0, maxActive: 3 } }
       },
+      spending: async () => ({ spentUsd: 0, budgetUsd: 5, active: 0, maxActive: 3 }),
       job: async (id: string) => jobs.find((j) => j.id === id) ?? null,
       jobs: async () => jobs
     },

@@ -493,7 +493,8 @@ async function renderAudioOnly(job: Job): Promise<void> {
     const findings = await deliveredFindings(job.request.outputPath, {
       video: false,
       audio: true,
-      durationUs: expectedDurationUs(job)
+      durationUs: expectedDurationUs(job),
+      fps: job.fps
     })
     emit(job, {
       progress: 1,
@@ -649,7 +650,8 @@ export async function finish(jobId: string): Promise<void> {
     const findings = await deliveredFindings(job.request.outputPath, {
       video: true,
       audio: audioExpected,
-      durationUs: expectedDurationUs(job)
+      durationUs: expectedDurationUs(job),
+      fps: job.fps
     })
     emit(job, {
       progress: 1,

@@ -18,16 +18,18 @@
 
 import {
   PROVIDERS,
+  spendRefusal,
   validateGeneration,
   type GenerationJob,
-  type GenerationKind
+  type GenerationKind,
+  type GenerationSpending
 } from '@shared/generation'
 import { VALIDATE_ONLY } from '@shared/mcp'
-import { activeTimeline } from '@shared/project'
+import { activeTimeline, allItems } from '@shared/project'
 import { validateSpeech } from '@shared/speech'
 import { estimateSpeech, type SpeechEstimate, type SpeechPace } from '@shared/speech-duration'
 import { bay } from '@/lib/bay'
-import { ToolError, fail, resolveAsset, store, usToFramesAtTimeline, type Handlers } from './helpers'
+import { ToolError, fail, project, resolveAsset, store, usToFramesAtTimeline, type Handlers } from './helpers'
 import { placeAsset } from './write'
 
 function api(): NonNullable<ReturnType<typeof bay>> {
@@ -66,6 +68,10 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
     `(bay never takes keys in chat), then call this again.`
 
   if (dry) {
+    // What main's spend guard would say, so the plan can be priced before it is refused.
+    const spending = await api().generation.spending()
+    const overLimit = spendRefusal(spending, estimatedCostUsd)
+    const blocked = !keySet ? noKey : overLimit
     return {
       valid: true,
       model: request.model,
@@ -75,15 +81,22 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
       costNote: 'An estimate from list prices, not a bill; the provider’s dashboard is the authority.',
       defaultsApplied,
       keySet,
-      ...(keySet ? {} : { blocked: noKey })
+      ...sessionSpend(spending),
+      ...(blocked ? { blocked } : {})
     }
   }
 
   if (!keySet) fail(noKey)
   const started = await api().generation.start(request)
   if (!started.ok) fail(started.error)
+  // A submission refused at once (a bad key, a prompt the provider will not take) is already
+  // failed here; telling the agent to poll it would only delay the error it needs now.
+  if (started.job.status === 'failed') {
+    fail(`${label} refused the request: ${started.job.error ?? 'no reason was given'}. Nothing was imported.`)
+  }
   return {
     ...summarise(started.job),
+    ...sessionSpend(started.spending),
     defaultsApplied,
     next:
       `Call track_generation { jobId: "${started.job.id}" }` +
@@ -131,6 +144,9 @@ async function speak(args: Record<string, unknown>): Promise<Record<string, unkn
 
   if (dry) {
     const { prompt: _text, ...options } = request
+    const spending = await api().generation.spending()
+    const overLimit = spendRefusal(spending, estimatedCostUsd)
+    const blocked = !keySet ? noKey : overLimit
     return {
       valid: true,
       model: request.model,
@@ -141,15 +157,20 @@ async function speak(args: Record<string, unknown>): Promise<Record<string, unkn
       estimatedSpeech: estimated,
       defaultsApplied,
       keySet,
-      ...(keySet ? {} : { blocked: noKey })
+      ...sessionSpend(spending),
+      ...(blocked ? { blocked } : {})
     }
   }
 
   if (!keySet) fail(noKey)
   const started = await api().generation.start(request)
   if (!started.ok) fail(started.error)
+  if (started.job.status === 'failed') {
+    fail(`${label} refused the request: ${started.job.error ?? 'no reason was given'}. Nothing was imported.`)
+  }
   return {
     ...summarise(started.job),
+    ...sessionSpend(started.spending),
     estimatedSpeech: estimated,
     defaultsApplied,
     next: `Call track_generation { jobId: "${started.job.id}" } until it is done or failed, before your final answer.`
@@ -182,6 +203,16 @@ function estimate(args: Record<string, unknown>): Record<string, unknown> {
     }
   }
   return out
+}
+
+/** The spend guard's standing, as the agent reads it: estimates, and the limit only the user can raise. */
+function sessionSpend(spending: GenerationSpending | undefined): Record<string, unknown> {
+  if (!spending) return {}
+  return {
+    sessionSpendUsd: spending.spentUsd,
+    sessionBudgetUsd: spending.budgetUsd,
+    spendNote: 'Estimated spend this session against the budget the user set in Settings › Providers. bay refuses a call that would pass it.'
+  }
 }
 
 function summarise(job: GenerationJob): Record<string, unknown> {
@@ -255,6 +286,22 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
     hasAudio: imported.hasAudio,
     hasVideo: imported.hasVideo
   }
+  // Polling a finished job again is normal (the agent re-checks before its final answer); with
+  // `place: true` it must not lay a second copy of the clip. Placed means on any timeline.
+  const current = project()
+  const known = current.assets.find((a) => a.id === imported.id || (a.path !== null && a.path === imported.path))
+  const onTimeline = known
+    ? current.timelines.flatMap((tl) => allItems(tl)).find((item) => item.assetId === known.id)
+    : undefined
+  if (args.place === true && known && onTimeline) {
+    return {
+      ...summarise(job),
+      asset: { ...asset, id: known.id },
+      placed: false,
+      note: `Already imported and on the timeline (item ${onTimeline.id}), so it was not placed again. Call place_asset { assetId: "${known.id}" } if the edit needs a second copy.`
+    }
+  }
+
   // Import and place are one undo step, like every other tool.
   // A refused placement (a locked or occupied track) still leaves the asset imported, and says
   // so: failing the whole call would hide that the paid-for file is already in the pool.

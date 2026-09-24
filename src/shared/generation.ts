@@ -446,13 +446,16 @@ export function validateGeneration(
       errors.push(`${model.id} does not take a reference picture. Models that do: ${able.join(', ') || 'none'}.`)
     }
     const ext = referencePath.split('.').pop()?.toLowerCase() ?? ''
-    if (!(ext in REFERENCE_IMAGE_TYPES)) {
+    // `in` would take `constructor` or `toString` as a picture type; only the table's own keys count.
+    if (!Object.hasOwn(REFERENCE_IMAGE_TYPES, ext)) {
       errors.push(`The reference must be a PNG, JPEG or WebP picture; "${referencePath.split('/').pop()}" is not. Pass an image asset.`)
     }
   }
 
   const values: Partial<Record<OptionName, string | number>> = {}
   const defaultsApplied: string[] = []
+  /** Options already refused above: a rule about them would only add "…, not undefined". */
+  const refused = new Set<OptionName>()
   for (const option of OPTIONS) {
     const allowed = model[OPTION_VALUES[option]] as readonly (string | number)[] | undefined
     const given = input[option]
@@ -466,15 +469,18 @@ export function validateGeneration(
       continue
     }
     if (!allowed) {
+      refused.add(option)
       errors.push(`${model.id} does not take ${option}. It takes: ${OPTIONS.filter((o) => model[OPTION_VALUES[o]]).join(', ') || 'no options beyond the prompt'}.`)
       continue
     }
     if (option === 'aspectRatio' && referencePath && model.aspectFromReference) {
+      refused.add(option)
       errors.push(`${model.id} takes its frame from the reference picture, so aspectRatio would be ignored. Leave it out, or crop the reference to the shape you want.`)
       continue
     }
     const value = option === 'durationSeconds' ? Number(given) : String(given)
     if (!allowed.includes(value)) {
+      refused.add(option)
       errors.push(`${model.id} does not take ${option} ${typeof value === 'number' ? value : `"${value}"`}. Allowed: ${list(allowed)}.`)
       continue
     }
@@ -482,6 +488,7 @@ export function validateGeneration(
   }
 
   for (const rule of model.rules ?? []) {
+    if (refused.has(rule.require.option) || ('option' in rule.when && refused.has(rule.when.option))) continue
     const applies =
       'reference' in rule.when
         ? referencePath !== undefined
@@ -511,6 +518,19 @@ export function validateGeneration(
     ...(referencePath ? { referencePath } : {})
   }
   return { ok: true, request, model, estimatedCostUsd: estimateCost(model, request), defaultsApplied }
+}
+
+/**
+ * The estimate for a `generate_image`/`generate_video` call as the agent wrote it, for the agent
+ * panel's tool card; null for any other tool, or a call the catalog would refuse. The reference
+ * picture is left out: no model's price depends on it.
+ */
+export function estimateToolCallUsd(tool: string, args: Record<string, unknown>): number | null {
+  const kind: GenerationKind | null = tool === 'generate_image' ? 'image' : tool === 'generate_video' ? 'video' : null
+  if (!kind) return null
+  const { referenceAssetId: _reference, ...rest } = args
+  const checked = validateGeneration(rest, kind)
+  return checked.ok ? checked.estimatedCostUsd : null
 }
 
 /** USD for one call, rounded to the cent. */
@@ -564,6 +584,80 @@ export interface ProviderKeyStatus {
   set: boolean
   /** False when there is no system keychain: the key lasts until bay quits. */
   persisted: boolean
+  /**
+   * Why a key saved earlier could not be read back (the file is damaged, or it was sealed by
+   * another keychain). Absent when nothing went wrong. The key must be set again.
+   */
+  problem?: string
+}
+
+// ---------------------------------------------------------------------------
+// The spend guard
+// ---------------------------------------------------------------------------
+
+/**
+ * What one session of bay may spend on generation without the user raising it. Enforced by main
+ * on every job start, whoever calls — the in-app agent, a terminal client, a script — because a
+ * prompt injection that reaches the agent could otherwise spend the user's money freely.
+ */
+export interface GenerationLimits {
+  /** USD of estimated cost this session may start, summed over every job this run of bay sent. */
+  budgetUsd: number
+  /** Jobs queued or running at once. */
+  maxActive: number
+}
+
+export const DEFAULT_GENERATION_LIMITS: GenerationLimits = { budgetUsd: 5, maxActive: 3 }
+export const MAX_GENERATION_BUDGET_USD = 1000
+export const MAX_GENERATION_ACTIVE = 20
+
+/** Where the guard stands: the limits and what has been counted against them. */
+export interface GenerationSpending extends GenerationLimits {
+  /** Estimated USD of every job this run of bay has sent. An estimate, like every price here. */
+  spentUsd: number
+  /** Jobs queued or running now, resumed ones included. */
+  active: number
+}
+
+/** Checks limits the user typed (or a file holds). Every refusal names the range that is taken. */
+export function checkLimits(input: unknown): { ok: true; limits: GenerationLimits } | { ok: false; error: string } {
+  const given = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  // Numbers only: `Number(null)` and `Number('')` are 0, which would read a blank field as "$0".
+  const budget = typeof given.budgetUsd === 'number' ? given.budgetUsd : NaN
+  const active = typeof given.maxActive === 'number' ? given.maxActive : NaN
+  const shown = (value: unknown): string => (typeof value === 'string' ? JSON.stringify(value) : String(value))
+  if (!Number.isFinite(budget) || budget < 0 || budget > MAX_GENERATION_BUDGET_USD) {
+    return { ok: false, error: `The session budget must be between $0 and $${MAX_GENERATION_BUDGET_USD}; got ${shown(given.budgetUsd)}.` }
+  }
+  if (!Number.isInteger(active) || active < 1 || active > MAX_GENERATION_ACTIVE) {
+    return { ok: false, error: `Jobs at once must be a whole number from 1 to ${MAX_GENERATION_ACTIVE}; got ${shown(given.maxActive)}.` }
+  }
+  return { ok: true, limits: { budgetUsd: Math.round(budget * 100) / 100, maxActive: active } }
+}
+
+/**
+ * Why the spend guard refuses a call estimated at `estimateUsd`, or null when it fits. Each
+ * sentence says what was spent, what the limit is, and where the user raises it: the agent
+ * cannot raise it, and must not try to route around it. Main enforces it; a dry run reports it.
+ */
+export function spendRefusal(spending: GenerationSpending, estimateUsd: number): string | null {
+  if (spending.active >= spending.maxActive) {
+    return (
+      `${spending.active} generation job${spending.active === 1 ? ' is' : 's are'} already running, and the limit is ${spending.maxActive} at once. Nothing was sent. ` +
+      'Wait for one to finish (track_generation), or ask the user to raise "Jobs at once" in Settings › Providers.'
+    )
+  }
+  if (spending.spentUsd + estimateUsd > spending.budgetUsd + 1e-9) {
+    return (
+      `This call (~${usd(estimateUsd)}) would take generation spending this session past its limit: ${usd(spending.spentUsd)} spent of ${usd(spending.budgetUsd)}. ` +
+      'Nothing was sent. Ask the user to raise the session budget in Settings › Providers if they want to spend more; do not retry until they have.'
+    )
+  }
+  return null
+}
+
+function usd(value: number): string {
+  return `$${value.toFixed(2)}`
 }
 
 /** The shape of a probe the findings read. A subset of `ProbeResult`, so no import cycle. */

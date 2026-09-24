@@ -24,7 +24,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { admissibleFromProject, mediaUrl, parseRange, serveFile } from './serve'
+import { admissibleFromProject, allowedBy, mediaUrl, parseRange, serveFile } from './serve'
 
 const SIZE = 1000
 
@@ -186,6 +186,26 @@ test('a traversal cannot walk out of a directory-prefix allowlist', async () => 
 
   const response = await serveFile(new Request(mediaUrl(escape)), underPrefix)
   assert.equal(response.status, 403)
+})
+
+test('the allowlist rule resolves a path before its prefix check, whoever asks', () => {
+  // `isAllowed` is asked directly too — generation checks a reference path the agent named —
+  // so the rule cannot rely on `decodeMediaUrl` having resolved the path first.
+  const root = subdir
+  const admitted = join(dir, 'admitted.mp4')
+  const allowed = new Set([admitted])
+  // Built by concatenation, not `join`, which would normalise the `..` away.
+  const escape = root + sep + '..' + sep + 'secret.txt'
+  assert.ok(escape.startsWith(root + sep), 'the raw specimen must beat a naive prefix check, or this test proves nothing')
+  assert.equal(allowedBy(allowed, root, escape), false)
+  // An admitted file reached through a detour is still that file.
+  assert.equal(allowedBy(allowed, root, root + sep + '..' + sep + 'admitted.mp4'), true)
+  // Positive controls: inside the root, the root itself, and the admitted file.
+  assert.equal(allowedBy(allowed, root, root + sep + 'poster.jpg'), true)
+  assert.equal(allowedBy(allowed, root, root), true)
+  assert.equal(allowedBy(allowed, root, admitted), true)
+  // A sibling that shares the root's name as a prefix is not inside it.
+  assert.equal(allowedBy(allowed, root, `${root}-other${sep}x.jpg`), false)
 })
 
 test('an allowed path that is a directory is not served as a file', async () => {

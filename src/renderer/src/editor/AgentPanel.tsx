@@ -7,6 +7,7 @@ import { bay } from '@/lib/bay'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
+import { estimateToolCallUsd } from '@shared/generation'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
 
@@ -364,6 +365,8 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
   // A failed call opens itself. Its text is the recovery instruction, and hiding that behind a
   // click is hiding the only part that helps.
   const expanded = open || entry.state === 'failed'
+  // A paid call says what it costs where the user already looks: on the card, not in its result.
+  const costUsd = estimateToolCallUsd(entry.tool, entry.args)
 
   return (
     <div className="rounded border border-line bg-surface-2 text-[11px]">
@@ -386,6 +389,11 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
             ? `/${entry.args['skill']} loaded`
             : entry.tool}
         </span>
+        {costUsd !== null && (
+          <span className="font-mono text-ink-2" title="Estimated from list prices; the provider bills the actual amount.">
+            ~${costUsd.toFixed(2)}
+          </span>
+        )}
         {(hasArgs || entry.result) && (
           <ChevronRight
             aria-hidden="true"

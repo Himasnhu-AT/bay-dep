@@ -10,16 +10,15 @@
  * Pure Node — no Electron — so the parse and the real binary run under `pnpm test`.
  */
 
-import type { SceneCut } from '@shared/ipc'
+import { clampCutThreshold, DEFAULT_CUT_THRESHOLD, type SceneCut } from '@shared/ipc'
 import { ffmpegBin, run } from '../ffmpeg/ffmpeg'
 import { withSlot } from './queue'
 
-/** scdet's default threshold: a score (0–100) above it is a cut. */
-export const DEFAULT_CUT_THRESHOLD = 10
+export { DEFAULT_CUT_THRESHOLD }
 
 /** The filter graph. Its filter names are asked of the vendored binary by `capabilities.test.ts`. */
 export function sceneCutFilter(threshold: number): string {
-  const t = Math.min(100, Math.max(1, threshold))
+  const t = clampCutThreshold(threshold)
   return `scale=320:-2,scdet=threshold=${t}:sc_pass=1,metadata=mode=print:file=-`
 }
 

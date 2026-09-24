@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DURATION_TOLERANCE, exportFindings, hasBlocking, transcriptFindings, type DeliveredFile } from './findings'
+import { DURATION_TOLERANCE, durationToleranceUs, exportFindings, hasBlocking, transcriptFindings, type DeliveredFile } from './findings'
 
 const GOOD: DeliveredFile = { sizeBytes: 1_000_000, hasVideo: true, hasAudio: true, durationUs: 10_000_000 }
-const VIDEO_WITH_SOUND = { video: true, audio: true, durationUs: 10_000_000 }
+const VIDEO_WITH_SOUND = { video: true, audio: true, durationUs: 10_000_000, fps: 30 }
 
 test('a clean export has no findings — the positive control for every refusal below', () => {
   assert.deepEqual(exportFindings(GOOD, VIDEO_WITH_SOUND), [])
@@ -54,6 +54,20 @@ test('duration is checked at 2%, both sides of the bound', () => {
   const unknown = exportFindings({ ...GOOD, durationUs: null }, VIDEO_WITH_SOUND)
   assert.equal(unknown[0]!.severity, 'warn')
   assert.equal(hasBlocking(unknown), false)
+})
+
+test('a short export may run a frame plus 20 ms long, which is more than 2% of it', () => {
+  // Six frames at 30 fps: 200 ms. WebM/Opus priming adds ~8 ms — 4%, and not a wrong file.
+  const short = { video: true, audio: true, durationUs: 200_000, fps: 30 }
+  assert.deepEqual(exportFindings({ ...GOOD, durationUs: 208_000 }, short), [])
+  // Up to one frame (33.3 ms) + 20 ms either way is inside…
+  assert.deepEqual(exportFindings({ ...GOOD, durationUs: 253_000 }, short), [])
+  assert.deepEqual(exportFindings({ ...GOOD, durationUs: 147_000 }, short), [])
+  // …and past it is still blocking: the slack does not swallow a real fault.
+  assert.equal(exportFindings({ ...GOOD, durationUs: 254_000 }, short)[0]?.severity, 'blocking')
+  assert.equal(exportFindings({ ...GOOD, durationUs: 300_000 }, short)[0]?.severity, 'blocking')
+  // A long export is still held to 2%, not loosened to a frame.
+  assert.equal(durationToleranceUs(VIDEO_WITH_SOUND), 200_000)
 })
 
 test('several faults are all reported', () => {

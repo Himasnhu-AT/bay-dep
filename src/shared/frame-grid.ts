@@ -18,6 +18,29 @@ export const MAX_GRID_EDGE = 2048
 /** Height of the caption strip under each cell: a timecode line and a words line. */
 export const LABEL_HEIGHT = 40
 
+/** The `frame_grid` tool's timeout: past it the caller gets no grid at all. */
+export const GRID_TOOL_TIMEOUT_MS = 3 * 60_000
+/** When cells stop waiting for sources, leaving the rest of the tool's time to compose and answer. */
+export const GRID_DEADLINE_MS = GRID_TOOL_TIMEOUT_MS - 30_000
+/**
+ * How many times over one still can wait its per-source timeout: up to three draw attempts, each
+ * a media wait, a settle, a second media wait and a readiness wait, and a metadata wait per clip
+ * inside the media waits. Generous on purpose; dividing by it keeps a cell started before the
+ * deadline from running far past it.
+ */
+const WAITS_PER_STILL = 16
+
+/**
+ * How long the next cell may wait on each source, `elapsedMs` into the grid. Past the deadline it
+ * waits not at all (`timeoutMs: 0`: it draws whatever has loaded) and is `late` — the grid marks it
+ * incomplete rather than letting the whole call run out and return nothing.
+ */
+export function cellWait(elapsedMs: number, perSourceMs: number, deadlineMs: number = GRID_DEADLINE_MS): { timeoutMs: number; late: boolean } {
+  const remaining = deadlineMs - elapsedMs
+  if (remaining <= 0) return { timeoutMs: 0, late: true }
+  return { timeoutMs: Math.max(0, Math.min(perSourceMs, Math.floor(remaining / WAITS_PER_STILL))), late: false }
+}
+
 /**
  * `count` frames spread over the inclusive range `[from, to]`, each the middle of an equal slice
  * — never both ends, which are usually the frame either side of a cut and tell nothing. Distinct

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import type { Asset, Item, Project } from '@shared/project'
 import { emptyProject, useEditor } from '@/store/editor'
 import { executeToolCall } from './index'
+import { cutsOnItem, detectCuts } from './cuts'
 
 /** Shots change at 2 s, 5 s and 9 s of the file. */
 const CUTS = [
@@ -117,6 +118,33 @@ test('the file form gives seconds, and frames for every placement', async () => 
     { itemId: 'clip_take', frames: [130, 220] },
     { itemId: 'clip_second', frames: [] }
   ])
+})
+
+test('a cut maps to the first timeline frame of the new shot, not the nearest (30 fps timeline, 24 fps source)', () => {
+  // Source frame 37 at 24 fps begins at 1.541667 s. On a 30 fps timeline, frame 46 shows 1.5333 s —
+  // still the old shot — and frame 47 shows 1.5667 s, the first picture of the new one. Nearest
+  // rounds 46.25 to 46 and puts the split one frame early.
+  const clip = item('c', 'take', { from: 0, durationInFrames: 300, sourceStartUs: 0 })
+  const cutUs = Math.round((37 / 24) * 1_000_000)
+  const [cut] = cutsOnItem([{ us: cutUs, score: 50 }], clip, 30)
+  assert.equal(cut?.frame, 47)
+  assert.ok(((cut!.frame - 1) / 30) * 1_000_000 < cutUs, 'the frame before shows the old shot')
+  assert.ok((cut!.frame / 30) * 1_000_000 >= cutUs - 1, 'this frame shows the new one')
+  // Positive control: a cut exactly on a timeline frame stays on it, not the frame after.
+  assert.deepEqual(cutsOnItem([{ us: 2_000_000, score: 50 }], clip, 30).map((c) => c.frame), [60])
+  // And a cut the clip's last frame cannot show (it would start after the clip ends) is dropped.
+  const short = item('s', 'take', { from: 0, durationInFrames: 46, sourceStartUs: 0 })
+  assert.deepEqual(cutsOnItem([{ us: cutUs, score: 50 }], short, 30), [])
+})
+
+test('the threshold reported is the one scdet ran with, clamped to 1–100', async () => {
+  // The handler itself: the catalog schema refuses 250 before it, but the schema is one entry
+  // path, and main clamps whatever reaches it — the report must say what actually ran.
+  assert.equal((await detectCuts({ itemId: 'clip_take', threshold: 250 })).threshold, 100)
+  assert.equal((await detectCuts({ itemId: 'clip_take', threshold: 0.2 })).threshold, 1)
+  // Positive control: an in-range threshold is reported as given, and none as the default.
+  assert.equal((await detectCuts({ itemId: 'clip_take', threshold: 27 })).threshold, 27)
+  assert.equal((await detectCuts({ itemId: 'clip_take' })).threshold, 10)
 })
 
 test('refusals say what to pass instead', async () => {

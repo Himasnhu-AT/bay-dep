@@ -73,6 +73,15 @@ test('main’s read-back findings reach the agent, and a blocking one means not 
   assert.equal((warned.findings as unknown[]).length, 1)
 })
 
+test('a done export that wrote zero frames is not complete, though main found nothing wrong with the file', () => {
+  const empty = exportStatus({ ...done, framesDone: 0, findings: [] }, '/out.mp4', null)
+  assert.equal(empty.complete, false)
+  assert.match(String(empty.warning), /zero frames/)
+  assert.ok((empty.findings as { severity: string }[]).some((f) => f.severity === 'blocking'))
+  // Positive control: the same export with its frames is complete.
+  assert.equal(exportStatus({ ...done, findings: [] }, '/out.mp4', null).complete, true)
+})
+
 test('frames written with something missing are a blocking finding too', () => {
   const incomplete = describeIncomplete([{ frame: 3, missing: ['Title'], gradeIssues: [] }])
   const status = exportStatus({ ...done, findings: [] }, '/out.mp4', incomplete)

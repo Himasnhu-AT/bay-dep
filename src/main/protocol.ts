@@ -11,9 +11,9 @@
  */
 
 import { protocol } from 'electron'
-import { resolve as resolvePath, sep } from 'node:path'
+import { resolve as resolvePath } from 'node:path'
 import { cacheDir } from './paths'
-import { BAY_SCHEME, serveFile } from './serve'
+import { BAY_SCHEME, allowedBy, serveFile } from './serve'
 
 export { BAY_SCHEME, mediaUrl } from './serve'
 
@@ -54,11 +54,10 @@ export function allowPaths(paths: readonly (string | null | undefined)[]): void 
 }
 
 export function isAllowed(p: string): boolean {
-  if (allowed.has(p)) return true
   // Cache entries are bay's own output — posters, filmstrip frames — and are served by the
-  // same scheme, so the directory is allowed as a whole rather than file by file.
-  const cache = cacheDir()
-  return p === cache || p.startsWith(cache + sep)
+  // same scheme, so the directory is allowed as a whole rather than file by file. `allowedBy`
+  // resolves `p` first, so a `..` cannot walk out of that directory.
+  return allowedBy(allowed, cacheDir(), p)
 }
 
 export function registerBayProtocolHandler(): void {

@@ -123,7 +123,9 @@ const api: BayApi = {
     clearKey: (provider) => ipcRenderer.invoke(IPC.generationClearKey, provider),
     start: (request) => ipcRenderer.invoke(IPC.generationStart, request),
     job: (id) => ipcRenderer.invoke(IPC.generationJob, id),
-    jobs: () => ipcRenderer.invoke(IPC.generationJobs)
+    jobs: () => ipcRenderer.invoke(IPC.generationJobs),
+    spending: () => ipcRenderer.invoke(IPC.generationSpending),
+    setLimits: (limits) => ipcRenderer.invoke(IPC.generationSetLimits, limits)
   },
 
   agent: {

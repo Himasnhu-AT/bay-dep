@@ -39,10 +39,23 @@ export interface ExpectedExport {
   audio: boolean
   /** The range's length: frames / fps. */
   durationUs: number
+  /** The timeline's frame rate: a container may round its length by up to a frame. */
+  fps: number
 }
 
-/** How far a delivered file's length may stray from the range before it is wrong: 2%. */
+/** How far a delivered file's length may stray from the range before it is wrong: 2%… */
 export const DURATION_TOLERANCE = 0.02
+/**
+ * …or one frame plus this, whichever is more. 2% of a short export is less than the encoder's own
+ * rounding: WebM/Opus adds ~8 ms of priming to a file, which is 4% of a 200 ms export.
+ */
+export const DURATION_SLACK_US = 20_000
+
+/** The largest drift from `expected` a delivered length may have and still be right. */
+export function durationToleranceUs(expected: ExpectedExport): number {
+  const frameUs = expected.fps > 0 ? 1_000_000 / expected.fps : 0
+  return Math.max(expected.durationUs * DURATION_TOLERANCE, frameUs + DURATION_SLACK_US)
+}
 
 /**
  * The findings for a delivered export. `probeError` is what the prober said when it could not
@@ -99,8 +112,9 @@ export function exportFindings(
   if (file.durationUs === null) {
     out.push({ severity: 'warn', message: 'The exported file does not state its length, so it could not be checked.' })
   } else if (expected.durationUs > 0) {
-    const drift = Math.abs(file.durationUs - expected.durationUs) / expected.durationUs
-    if (drift > DURATION_TOLERANCE) {
+    const driftUs = Math.abs(file.durationUs - expected.durationUs)
+    const drift = driftUs / expected.durationUs
+    if (driftUs > durationToleranceUs(expected)) {
       const got = (file.durationUs / 1_000_000).toFixed(2)
       const want = (expected.durationUs / 1_000_000).toFixed(2)
       out.push({
