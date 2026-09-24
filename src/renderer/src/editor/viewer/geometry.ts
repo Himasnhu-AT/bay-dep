@@ -450,3 +450,68 @@ export function resizeCursor(handle: Handle, angle: number): 'ns-resize' | 'nesw
   const octant = ((Math.round(degrees / 45) % 4) + 4) % 4
   return (['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'] as const)[octant]!
 }
+
+// ---------------------------------------------------------------------------
+// Crop on canvas
+// ---------------------------------------------------------------------------
+
+/**
+ * The least of each axis a crop leaves, as `normaliseCrop` (`@shared/project`) enforces it. Kept
+ * here too because a drag has to stop at it *before* writing: `normaliseCrop` clamps only the
+ * right and bottom edges against their opposites, so a left edge dragged past the right one
+ * would be written as-is and push the right edge instead of stopping.
+ */
+const MIN_KEPT = 0.02
+
+export interface CropDragStart {
+  /** The layout as drawn when the drag began (its zoom and rotation place the box). */
+  layout: Layout
+  /** The crop when the drag began, normalised. */
+  crop: Crop
+  /** The handle grabbed on the *cropped* frame: an edge moves one inset, a corner two. */
+  handle: Handle
+  /** Where the pointer went down, canvas units. */
+  pointer: Point
+}
+
+const round4 = (n: number): number => Math.round(n * 10_000) / 10_000
+
+/**
+ * The crop insets after dragging a crop handle from `start.pointer` to `pointer`. The insets are
+ * fractions of the *uncropped* box, measured along its own (rotated, zoomed) axes, so an edge
+ * follows the pointer at any rotation or push-in. With `symmetric` (⇧) the opposite inset takes
+ * the same value, cropping evenly about the centre. Each inset stays in [0, 1) and leaves at
+ * least 2% of the source on its axis, the rule `normaliseCrop` applies.
+ */
+export function cropDragResult(start: CropDragStart, pointer: Point, opts: { symmetric?: boolean } = {}): Crop {
+  const box = itemFrame(start.layout)
+  const c = normaliseCrop(start.crop)
+  if (!box || box.halfW <= 0 || box.halfH <= 0) return c
+  const from = toLocal(box, start.pointer)
+  const to = toLocal(box, pointer)
+  const du = (to.x - from.x) / (box.halfW * 2)
+  const dv = (to.y - from.y) / (box.halfH * 2)
+  const d = handleDirection(start.handle)
+  const next: Crop = { ...c }
+
+  const axis = (low: 'left' | 'top', high: 'right' | 'bottom', dir: -1 | 0 | 1, delta: number): void => {
+    if (dir === 0) return
+    const moving = dir < 0 ? low : high
+    const opposite = dir < 0 ? high : low
+    // Dragging the low edge towards +axis crops more; the high edge crops more towards −axis.
+    const raw = c[moving] + (dir < 0 ? delta : -delta)
+    if (opts.symmetric) {
+      const value = Math.min((1 - MIN_KEPT) / 2, Math.max(0, raw))
+      next[moving] = round4(value)
+      next[opposite] = round4(value)
+    } else {
+      next[moving] = round4(Math.min(1 - MIN_KEPT - c[opposite], Math.max(0, raw)))
+    }
+  }
+  axis('left', 'right', d.x, du)
+  axis('top', 'bottom', d.y, dv)
+  return next
+}
+
+/** The four inset names, for writing a crop one edge at a time (`setCrop`). */
+export const CROP_INSETS: readonly (keyof Crop)[] = ['left', 'top', 'right', 'bottom']

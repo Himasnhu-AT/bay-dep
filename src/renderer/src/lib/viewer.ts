@@ -31,6 +31,12 @@ interface ViewerState {
   grid: boolean
   zoom: ViewerZoom
   fullscreen: boolean
+  /**
+   * Crop on canvas (⇧C): the selected clip's edges drag its crop insets instead of resizing it.
+   * Not remembered — a mode left on would make the next resize a crop.
+   */
+  cropMode: boolean
+  setCropMode(on: boolean): void
   /** The live engine, set by `Preview` while mounted — the meters read its analysers. */
   engine: EngineHandle | null
   toggleSafeAreas(): void
@@ -45,6 +51,10 @@ export const useViewer = create<ViewerState>((set, get) => ({
   grid: remembered(GRID_KEY) === '1',
   zoom: 'fit',
   fullscreen: false,
+  cropMode: false,
+  setCropMode(on) {
+    set({ cropMode: on })
+  },
   engine: null,
   toggleSafeAreas() {
     const next = !get().safeAreas

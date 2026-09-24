@@ -18,10 +18,16 @@ import { clampFade, formatDb, volumeAtY, yForVolume } from '@/lib/timelineLayout
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
 import { useFilmstrip, useWaveform } from '@/lib/useMediaCache'
+import { BLADE_CURSOR } from '@/lib/timelineTool'
 
 /** Below this width a clip is a coloured sliver; fetching pictures for it is wasted work. */
 const THUMBS_MIN_WIDTH = 96
 const STRIP_FRAMES = 24
+/** A trim handle; with ⌥ held (or a trim mode armed) it rolls the cut, and the cursor says so. */
+const TRIM_HANDLE_CLASS =
+  't-fast absolute inset-y-0 w-2 cursor-col-resize bg-accent/0 hover:bg-accent/70 ' +
+  'in-data-[trim-hint=slip]:cursor-ew-resize! in-data-[trim-hint=slide]:cursor-ew-resize! in-data-[trim-hint=roll]:cursor-ew-resize!'
+
 /**
  * Filmstrip frames are requested at this many *device* pixels tall.
  *
@@ -49,6 +55,8 @@ export interface ClipProps {
   previewFrom: number
   previewDuration: number
   dragging: boolean
+  /** The blade tool is in hand: the clip is a cut target, so its drag handles are hidden. */
+  blade?: boolean
   /** The item is passed back so the timeline can keep one stable handler for every clip —
    * a fresh closure per clip per render would defeat the `memo` below. */
   onPointerDownBody(event: React.PointerEvent, item: Item): void
@@ -202,6 +210,7 @@ function ClipImpl({
   previewFrom,
   previewDuration,
   dragging,
+  blade = false,
   onPointerDownBody,
   onPointerDownTrim,
   onContextMenu
@@ -250,7 +259,7 @@ function ClipImpl({
   // The level line on a sound clip. Not offered while volume is keyframed: the keys decide the
   // level then, and a line that wrote the static field would draw nowhere (`@shared/keyframes`).
   const volumeKeyed = Boolean(item.keyframes?.volume?.length)
-  const showVolume = audio && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
+  const showVolume = !blade && audio && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
   const beginVolume = useDrag({
     threshold: 1,
     onStart: () => setVolumeDrag(item.volume),
@@ -281,6 +290,7 @@ function ClipImpl({
         width,
         height: height - 8,
         top: 4,
+        cursor: blade && !locked ? BLADE_CURSOR : undefined,
         backgroundColor: audio ? 'var(--color-clip-audio)' : 'var(--color-clip-video)',
         borderColor: selected
           ? 'var(--color-accent)'
@@ -292,7 +302,12 @@ function ClipImpl({
       title={disabled ? 'Disabled — plays no picture or sound' : hidden ? 'On a hidden track — not in the picture' : undefined}
       className={cn(
         'group absolute overflow-hidden rounded-sm border select-none',
-        locked ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing',
+        locked
+          ? 'cursor-not-allowed'
+          : !blade &&
+              // Holding ⌥ (or a trim mode armed from the menu) shows what a drag will do: the
+              // timeline puts the mode on `data-trim-hint`, so no clip re-renders for it.
+              'cursor-grab active:cursor-grabbing in-data-[trim-hint=slip]:cursor-ew-resize! in-data-[trim-hint=slide]:cursor-move! in-data-[trim-hint=roll]:cursor-ew-resize!',
         selected && 'ring-1 ring-accent',
         dragging && 'z-10 opacity-85 shadow-pop',
         // Disabled (⇧E): still on the timeline, drawn and heard nowhere. A hidden track's clips
@@ -418,7 +433,7 @@ function ClipImpl({
 
       {/* Fade handles: a corner square at the top, where the wedge meets the clip's top edge.
           Shown on hover and while selected, so they do not crowd an unfocused timeline. */}
-      {!locked && width >= 24 && (
+      {!locked && !blade && width >= 24 && (
         <>
           {(['in', 'out'] as const).map((edge) => {
             const x = edge === 'in' ? Math.max(8, fadeIn) : Math.min(width - 8, width - fadeOut)
@@ -461,7 +476,7 @@ function ClipImpl({
         Trim handles are 8px of hit area on a 1px-looking edge. Anything narrower and
         grabbing the edge of a clip becomes a test of mouse skill rather than an edit.
       */}
-      {!locked && (
+      {!locked && !blade && (
         <>
           <div
             role="presentation"
@@ -469,7 +484,8 @@ function ClipImpl({
               event.stopPropagation()
               onPointerDownTrim(event, item, 'start')
             }}
-            className="t-fast absolute inset-y-0 left-0 w-2 cursor-col-resize bg-accent/0 hover:bg-accent/70"
+            title="Drag to trim the start. ⌥-drag rolls this cut."
+            className={TRIM_HANDLE_CLASS + ' left-0'}
           />
           <div
             role="presentation"
@@ -477,7 +493,8 @@ function ClipImpl({
               event.stopPropagation()
               onPointerDownTrim(event, item, 'end')
             }}
-            className="t-fast absolute inset-y-0 right-0 w-2 cursor-col-resize bg-accent/0 hover:bg-accent/70"
+            title="Drag to trim the end. ⌥-drag rolls this cut."
+            className={TRIM_HANDLE_CLASS + ' right-0'}
           />
         </>
       )}

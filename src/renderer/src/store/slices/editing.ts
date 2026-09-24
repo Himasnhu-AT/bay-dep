@@ -10,6 +10,7 @@ import { attributePatch, copyClips, pasteClips } from '@shared/clipboard'
 import { applyMoves, clipsUnderPlayhead, planCloseGap, planNudge, planPullBack } from '@shared/editing'
 import { linkedPartners, withLinked } from '@shared/links'
 import { applyFreezeFrame, freezeRefusal, type FreezeResult } from '@shared/freeze-frame'
+import { applyTrackMoves, checkTrackMoves } from '@shared/track-move'
 import { makeTrack, newId, nextTrackName } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -22,6 +23,7 @@ type Actions = Pick<
   | 'pasteAttributes'
   | 'toggleDisabled'
   | 'nudgeSelection'
+  | 'moveItemsToTracks'
   | 'closeGapAt'
   | 'trimToPlayhead'
   | 'removeInOutRange'
@@ -153,6 +155,17 @@ export function editingSlice({ set, get, edit, editTimeline, currentTimeline }: 
       }
       if (plan.moves.length > 0) editTimeline((tl) => applyMoves(tl, plan.moves))
       return true
+    },
+
+    moveItemsToTracks(moves) {
+      const state = get()
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'No timeline is open.' }
+      // Checked again against the timeline as it is now: the plan was made during a drag.
+      const checked = checkTrackMoves(state.project, timeline, moves)
+      if (!checked.ok) return { error: checked.error }
+      if (checked.moves.length > 0) editTimeline((tl) => applyTrackMoves(tl, checked.moves))
+      return { ok: true }
     },
 
     closeGapAt(trackId, frame) {
