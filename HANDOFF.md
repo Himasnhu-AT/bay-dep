@@ -27,6 +27,46 @@ Then `docs/testing.md` and `test/app/README.md`.
   Each agent was told to leave a `WIP:` commit with a status; read `git log -3` on each branch.
 - Not pushed: the owner pushes. If this doc is on a remote, the owner pushed it.
 
+
+## FINAL STATUS OF EACH WIP BRANCH (read this first; written at shutdown)
+Suggested merge order: **loose-ends → keyframes → detach-fonts → ffmpeg → release**.
+- `worktree-agent-ad75e621443e6beef` (**loose-ends**, 40f3342): DONE, gates green (1380).
+  - Real silent-audio cause: Chromium remembers a failed media load per URL + CORS mode, so the
+    8afacd6 CORS retry never succeeded. The fix retries at `bay://…?retry=N` (mediaRetry.ts retryUrl).
+    audio-soak.mjs: 36/36; without the fix 4/4 forced-error sweeps went silent.
+  - menu.mjs rewritten: the "dead" items were the instrument (a global Escape into the user's foreground
+    app, and the Space not yet switched).
+  - brfCode #evict fix: a 9th .brf module used to be recorded as a timeout.
+  - test.md §2 filled in.
+  - Firebase email-link quota is **5/day on Spark** (25k/day with billing). Tell the owner.
+  - Left: CLAUDE.md notes on the Space/global-keystroke trap and the per-URL media failure memory.
+- `worktree-agent-ae6e41f9171615aaa` (**keyframes**): DONE, 1416 tests. The audio-finish/transition-audio
+  failures on its merged build are very likely the silent-audio bug fixed in loose-ends (the detach-fonts
+  agent saw the same failures on plain 38cfab4). Merge loose-ends first, then re-run those probes.
+- `worktree-agent-a747e923b9ac4ac87` (**detach audio + font import**, 801a0cf).
+  - Features done: probes detach-audio 20/20; fonts pass, including reopening after a restart.
+  - Last full test run had 2 fails (undo-step gate), since fixed in that file.
+  - Re-run the full typecheck/test/build, the Part B mutations, and graft build.
+  - Security finding: `media/import.ts adoptAssets` calls allowPath on every project asset path,
+    bypassing `admissibleFromProject` (dot-folder refusal for shared .bay files). Fix it.
+- `worktree-agent-add8d5bc6efbf239c` (**ffmpeg**, de162f5): LGPL FFmpeg 8.1.3.
+  - Built from pinned source with script/build-ffmpeg.sh (binaries gitignored: run the script to
+    produce vendor/ffmpeg/*).
+  - h264_videotoolbox at q 53/72/79 (≥ x264 CRF 28/20/16 by SSIM/PSNR/VMAF on 5 clips).
+  - FFmpeg 8 needs `setparams` for the colour tags.
+  - NOT run yet: full test, build, app probes, bundle; capabilities.test fixes; the export_timeline
+    description still says CRF. NOTICE names hyattherate2005@gmail.com as the LGPL source-offer contact.
+- `worktree-agent-a65fa5cbd222ac851` (**release**, 6cd159d): signed + notarized + stapled DMG built and
+  verified (spctl "accepted, Notarized Developer ID"). Entitlements are allow-jit only. The packaged
+  app passed 11/11 features through the packaged MCP with a test account; the gate works and the
+  BAY_ACCESS bypass is ignored.
+  - Updater built with feed `UPDATE_FEED=null` → "Updates: releasing soon".
+  - NOT done: the 0.1.0→0.1.1 update proof (use `--app-name bay-reltest`, since Squirrel relaunches
+    without args).
+  - The DMG is at that worktree's `release/bay-0.1.0-arm64.dmg`; it is gitignored and must be rebuilt
+    on another machine with `pnpm release:signed`, which needs the owner's keychain.
+  - Merge it AFTER ffmpeg, then re-verify: its ffmpeg paths assume the npm package.
+
 ## What is left (priority order)
 1. Verify + merge the 5 branches above (keyframes first; fix the audio probe failures).
 2. **Wave 2** (not started; all build on keyframes): grade hue qualifier + sharpen + curves UI;
