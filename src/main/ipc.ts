@@ -105,6 +105,8 @@ interface ChannelApi {
   exportFinish: BayApi['export']['finish']
   exportCancel: BayApi['export']['cancel']
   exportChoosePath: BayApi['export']['chooseOutputPath']
+  exportReveal: BayApi['export']['reveal']
+  exportOpen: BayApi['export']['open']
 
   accessStatus: BayApi['access']['status']
   accessSignIn: BayApi['access']['signIn']
@@ -251,6 +253,16 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   exportCancel: (_event, jobId) => encode.cancel(jobId),
   exportChoosePath: (event, defaultName, format) =>
     encode.chooseOutputPath(defaultName, format, windowOf(event)),
+  exportReveal: async (_event, outputPath) => {
+    if (!encode.wasDelivered(outputPath)) return false
+    shell.showItemInFolder(outputPath)
+    return true
+  },
+  exportOpen: async (_event, outputPath) => {
+    if (!encode.wasDelivered(outputPath)) return false
+    // `openPath` resolves with an error string rather than rejecting; empty means it opened.
+    return (await shell.openPath(outputPath)) === ''
+  },
 
   accessStatus: async () => access.accessStatus(),
   accessSignIn: () => access.signIn(),

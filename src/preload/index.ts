@@ -161,6 +161,8 @@ const api: BayApi = {
     cancel: (jobId: string) => ipcRenderer.invoke(IPC.exportCancel, jobId) as Promise<void>,
     chooseOutputPath: (defaultName: string, format: ExportFormat) =>
       ipcRenderer.invoke(IPC.exportChoosePath, defaultName, format) as Promise<string | null>,
+    reveal: (outputPath: string) => ipcRenderer.invoke(IPC.exportReveal, outputPath) as Promise<boolean>,
+    open: (outputPath: string) => ipcRenderer.invoke(IPC.exportOpen, outputPath) as Promise<boolean>,
     onProgress: (listener: (progress: ExportProgress) => void) => {
       // The wrapper has to be held onto: `removeListener` matches by identity, so building a
       // fresh arrow inside the unsubscribe would remove nothing and leak a listener per

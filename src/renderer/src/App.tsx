@@ -11,6 +11,7 @@ import { Inspector } from '@/editor/Inspector'
 import { LeftRail, SidePanel } from '@/editor/LeftRail'
 import { ProjectsHome } from '@/home/ProjectsHome'
 import { SettingsDialog } from '@/settings/SettingsDialog'
+import { ProjectSettingsDialog } from '@/settings/ProjectSettingsDialog'
 import { Button, Modal } from '@/components'
 import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
 import type { RefObject } from 'react'
@@ -344,7 +345,6 @@ export function App(): ReactNode {
       <TopBar
         onHome={requestHome}
         onExport={() => setExportOpen(true)}
-        onSave={() => void onSave()}
         saving={saving}
       />
 
@@ -436,6 +436,7 @@ export function App(): ReactNode {
       <StatusBar />
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <ProjectSettingsDialog />
       <SettingsDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 

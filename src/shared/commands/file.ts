@@ -22,6 +22,7 @@ export const fileCommands = [
   },
   { id: 'file.export', label: 'Export…', group: 'File', shortcut: 'Mod+E', accelerator: 'native' },
   SEPARATOR,
+  { id: 'file.projectSettings', label: 'Project Settings…', group: 'File' },
   {
     id: 'app.settings',
     label: 'Settings…',

@@ -19,6 +19,7 @@ import type {
   TransitionKind
 } from '@shared/project'
 import type { BrfCodeMeta, BrfDocument } from '@shared/brf'
+import type { CanvasFit } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { RippleDeleteResult } from '@shared/ripple'
@@ -152,7 +153,10 @@ export interface EditorActions {
   // project ------------------------------------------------------------------
   setProject(project: Project, options?: { resetHistory?: boolean }): void
   renameProject(name: string): void
-  setCanvasPreset(presetId: string): void
+  /** A named canvas size, refitting clips the way `resizeCanvas` (and `set_canvas`) does. */
+  setCanvasPreset(presetId: string, fit?: CanvasFit): { refitted: number } | { error: string }
+  /** The colour shown wherever no video covers the canvas. `#RRGGBB`. */
+  setBackground(color: string): void
   // agent ---------------------------------------------------------------------
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
@@ -337,7 +341,7 @@ export interface EditorActions {
    * (`auto` picks cover or contain the way placement does), compositions to the full frame, text
    * kept at the same place in proportion. One undo step.
    */
-  resizeCanvas(width: number, height: number, fit: 'auto' | 'cover' | 'contain'): { refitted: number } | { error: string }
+  resizeCanvas(width: number, height: number, fit: CanvasFit): { refitted: number } | { error: string }
   addCaptions(
     cues: readonly CaptionCue[],
     look?: { style?: TextStyle; layout?: Layout }

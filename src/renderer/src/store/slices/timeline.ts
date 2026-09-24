@@ -3,7 +3,7 @@
  * transitions, subtitles, captions, markers and scripted edits.
  */
 
-import { CANVAS_PRESETS, activeTimeline, allItems, placementLayout, coverLayout, containLayout, defaultLayout, findAsset, findItem, itemEnd, type Asset, type Item, type Project, type Transition, retimeTimeline } from '@shared/project'
+import { CANVAS_PRESETS, checkCanvasSize, activeTimeline, allItems, placementLayout, coverLayout, containLayout, defaultLayout, findAsset, findItem, itemEnd, type Asset, type Item, type Project, type Transition, retimeTimeline } from '@shared/project'
 import { captionAssetName, captionLayout, captionStyle, checkCues } from '@shared/captions'
 import { applyScriptOps } from '@shared/script'
 import { clone, makeTrack, newId } from '../factory'
@@ -20,6 +20,7 @@ type Actions = Pick<
   | 'patchTransition'
   | 'placeSubtitles'
   | 'resizeCanvas'
+  | 'setBackground'
   | 'addCaptions'
   | 'addMarker'
   | 'moveMarker'
@@ -28,17 +29,23 @@ type Actions = Pick<
 
 export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
   return {
-    setCanvasPreset(presetId) {
+    setCanvasPreset(presetId, fit = 'auto') {
       const preset = CANVAS_PRESETS.find((p) => p.id === presetId)
-      if (!preset) return
+      if (!preset) return { error: `There is no canvas preset "${presetId}".` }
+      // The same path as `set_canvas`: a preset is only a named size, and a size change refits
+      // what was laid out for the old one. This used to set width and height alone (and retime to
+      // the preset's 30fps), so the human's canvas change left clips framed for the old shape
+      // while the agent's refitted them. The rate stays the project's; Frame rate changes it.
+      return get().resizeCanvas(preset.width, preset.height, fit)
+    },
+
+    setBackground(color) {
+      // Hex only: the compositor paints it as a fillStyle, and an unparseable colour there keeps
+      // the previous fill rather than failing, which would be a background that silently ignored
+      // the change.
+      if (!/^#[0-9a-f]{6}$/i.test(color)) return
       editTimeline((timeline) => {
-        timeline.width = preset.width
-        timeline.height = preset.height
-        // Through `retimeTimeline` rather than a bare assignment: a preset carries a rate, and
-        // a preset change that moved every clip in time without moving its frame numbers would
-        // be a silent re-cut. It is a no-op while every preset is 30fps, which is exactly the
-        // kind of latency that makes this the wrong line to leave for later.
-        retimeTimeline(timeline, preset.fps)
+        if (timeline.background.toLowerCase() !== color.toLowerCase()) timeline.background = color
       })
     },
 
@@ -175,9 +182,8 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
     },
 
     resizeCanvas(width, height, fit) {
-      if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16 || width > 8192 || height > 8192) {
-        return { error: `A canvas must be whole pixels from 16 to 8192 a side; got ${width}×${height}.` }
-      }
+      const problem = checkCanvasSize(width, height)
+      if (problem) return { error: problem }
       let refitted = 0
       editTimeline((timeline, project) => {
         const oldWidth = timeline.width

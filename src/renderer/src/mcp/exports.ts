@@ -15,6 +15,7 @@
 import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
 import { parseLoudness } from '@shared/loudness'
+import { checkExportRange } from '@shared/export-presets'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
 import { fail, project, timeline, type Handlers } from './helpers'
@@ -76,18 +77,14 @@ export async function exportTimeline(
     )
   }
 
-  const fromFrame = args.fromFrame === undefined ? 0 : Math.max(0, Math.round(Number(args.fromFrame)))
-  const toFrame =
-    args.toFrame === undefined ? duration - 1 : Math.max(0, Math.round(Number(args.toFrame)))
-  if (toFrame < fromFrame) {
-    fail(`toFrame (${toFrame}) is before fromFrame (${fromFrame}), so the range is empty.`)
-  }
-  if (fromFrame >= duration) {
-    fail(
-      `fromFrame ${fromFrame} is past the end of the timeline (${duration} frames), so the ` +
-        `range holds nothing. Export from 0, or shorten fromFrame.`
-    )
-  }
+  // The one range check, shared with the export form's Range (`@shared/export-presets`).
+  const range = checkExportRange(
+    args.fromFrame === undefined ? undefined : Number(args.fromFrame),
+    args.toFrame === undefined ? undefined : Number(args.toFrame),
+    duration
+  )
+  if ('error' in range) fail(range.error)
+  const { fromFrame, toFrame } = range
 
   subscribe()
   let job

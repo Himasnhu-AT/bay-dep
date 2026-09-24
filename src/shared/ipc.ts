@@ -520,6 +520,13 @@ export interface BayApi {
     finish(jobId: string): Promise<void>
     cancel(jobId: string): Promise<void>
     chooseOutputPath(defaultName: string, format: ExportFormat): Promise<string | null>
+    /**
+     * Show a finished export in Finder, or open it in the default app. Only a path an export in
+     * this session reported `done` for: anything else resolves `false` and nothing happens, so
+     * these cannot be used to open an arbitrary file.
+     */
+    reveal(outputPath: string): Promise<boolean>
+    open(outputPath: string): Promise<boolean>
     onProgress(listener: (progress: ExportProgress) => void): () => void
   }
 
@@ -665,6 +672,8 @@ export const IPC = {
   exportFinish: 'export:finish',
   exportCancel: 'export:cancel',
   exportChoosePath: 'export:choose-path',
+  exportReveal: 'export:reveal',
+  exportOpen: 'export:open',
   exportProgress: 'export:progress',
 
   accessStatus: 'access:status',

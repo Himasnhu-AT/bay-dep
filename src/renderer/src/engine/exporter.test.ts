@@ -56,6 +56,17 @@ class StubContext {
   }
   save(): void {}
   restore(): void {}
+  clips: number[][] = []
+  #path: number[] = []
+  beginPath(): void {
+    this.#path = []
+  }
+  rect(x: number, y: number, w: number, h: number): void {
+    this.#path = [x, y, w, h]
+  }
+  clip(): void {
+    this.clips.push(this.#path)
+  }
   fillRect(): void {
     this.fills += 1
   }
@@ -309,6 +320,31 @@ test('each frame is exactly width * height * 4 bytes at the delivery size', { ti
   // The timeline is 16x8 and the delivery is 64x32, so the context carries the 4x scale —
   // the compositor draws in timeline coordinates and this is where the size enters.
   assert.deepEqual(lastContext?.transform, [4, 0, 0, 4, 0, 0])
+})
+
+test('a delivery of another shape is the whole canvas with bars, never stretched', { timeout: 10_000 }, async () => {
+  // The 16x8 (2:1) canvas into a 32x64 (1:2) vertical file. A scale per axis — what this did
+  // before — is [2, 0, 0, 8, 0, 0]: the picture four times taller than it is wide. One scale,
+  // centred, is 2 on both axes with the canvas 16px tall in the middle of the 64 (24 above).
+  const encoder = fakeEncoder()
+  encoder.install()
+  const exporter = new FrameExporter({
+    project: project(),
+    timelineId: 'tl',
+    jobId: 'job-bars',
+    fromFrame: 0,
+    toFrame: 0,
+    width: 32,
+    height: 64
+  })
+  const running = exporter.run()
+  await drain()
+  encoder.releaseAll()
+  await running
+
+  assert.deepEqual(lastContext?.transform, [2, 0, 0, 2, 0, 24])
+  // Drawing is clipped to the canvas, so a clip framed past its edge stays out of the bars.
+  assert.deepEqual(lastContext?.clips, [[0, 0, 16, 8]])
 })
 
 test('cancelling stops the walk and tears the job down', { timeout: 10_000 }, async () => {

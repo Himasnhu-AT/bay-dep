@@ -414,6 +414,14 @@ const STORE_CASES: Record<string, StoreCase> = {
     }
   },
   removeTrack: { delta: 1, run: (f) => state().removeTrack(f.v2) },
+  setBackground: {
+    delta: 1,
+    run: () => {
+      // Derived, not a literal: whatever the fixture's background is, set a different one.
+      const current = state().project.timelines[0]!.background.toLowerCase()
+      state().setBackground(current === '#102030' ? '#304050' : '#102030')
+    }
+  },
 
   // Single-target edits: one entry each, which a stray second `edit()` would break.
   renameProject: { delta: 1, run: () => state().renameProject('Renamed') },

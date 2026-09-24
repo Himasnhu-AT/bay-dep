@@ -1,3 +1,4 @@
+import { CANVAS_PRESETS } from '../project'
 import type { ToolSpec } from './spec'
 
 export const order = 260
@@ -18,11 +19,15 @@ export const tool: ToolSpec = {
     properties: {
       preset: {
         type: 'string',
-        enum: ['vertical-1080', 'landscape-1080', 'square-1080', 'landscape-4k'],
-        description: 'A named canvas. vertical-1080 is 1080×1920, for shorts, reels and TikTok.'
+        // From the same list Project Settings offers, so the two cannot name different canvases.
+        enum: CANVAS_PRESETS.map((preset) => preset.id),
+        description:
+          'A named canvas: ' +
+          CANVAS_PRESETS.map((preset) => `${preset.id} (${preset.width}×${preset.height})`).join(', ') +
+          '. vertical-1080 is for shorts, reels and TikTok.'
       },
-      width: { type: 'integer', description: 'Instead of a preset: width in pixels (with height).' },
-      height: { type: 'integer', description: 'Instead of a preset: height in pixels (with width).' },
+      width: { type: 'integer', description: 'Instead of a preset: width in pixels (with height). Even, 16 to 8192.' },
+      height: { type: 'integer', description: 'Instead of a preset: height in pixels (with width). Even, 16 to 8192.' },
       fit: {
         type: 'string',
         enum: ['auto', 'cover', 'contain'],

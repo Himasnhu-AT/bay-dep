@@ -23,6 +23,7 @@ import {
   matchFrameRate
 } from '@shared/project'
 import {
+  Button,
   Field,
   IconButton,
   NumberField,
@@ -35,6 +36,7 @@ import {
 import { call, formatSourceDuration } from '@/lib/bay'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
+import { useProjectSettingsDialog } from '@/store/project-settings-dialog'
 import { AdjustmentsSection } from './AdjustmentsSection'
 import { GradeSection } from './GradeSection'
 import { isGradeableKind } from '@shared/grade'
@@ -101,7 +103,12 @@ function TimelineInspector(): ReactNode {
               ...CANVAS_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })),
               ...(matching ? [] : [{ value: 'custom', label: 'Custom', disabled: true }])
             ]}
-            onChange={setCanvasPreset}
+            onChange={(id) => {
+              // Refits clips the way set_canvas does (fit: auto); say so, since it moved them.
+              const result = setCanvasPreset(id)
+              if ('error' in result) notify(result.error, 'error')
+              else if (result.refitted > 0) notify(`Canvas changed; ${result.refitted} clip${result.refitted === 1 ? '' : 's'} refitted. Undo to put them back.`)
+            }}
           />
         </Field>
         {/* A rate, not a readout, because every clip's position is *expressed in* this number —
@@ -136,6 +143,10 @@ function TimelineInspector(): ReactNode {
           <Readout label="Resolution" value={`${timeline.width} × ${timeline.height}`} />
           <Readout label="Tracks" value={timeline.tracks.length} />
         </div>
+        {/* Custom sizes, how clips refit, and the background are in Project Settings. */}
+        <Button variant="subtle" className="mt-2 w-full" onClick={() => useProjectSettingsDialog.getState().show()}>
+          Project Settings…
+        </Button>
       </Section>
       <Section title="Selection">
         <div className="flex items-start gap-2 text-ink-2">
