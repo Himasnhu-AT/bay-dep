@@ -10,9 +10,10 @@
  * and starts nothing. A store dry run could not promise that, because the effect it would have to
  * undo is a paid request.
  *
- * When a job lands, the file is imported through the ordinary import path (`importMedia`), so
- * it is an asset like any other, admitted to `bay://` by main, and deduplicated by path — polling
- * a finished job again returns the same asset.
+ * When a job lands, the file is imported through the ordinary import path (`media.importPaths`,
+ * as `import_media` does), so it is an asset like any other, admitted to `bay://` by main, and
+ * deduplicated by path — polling a finished job again returns the same asset. Adding it and
+ * placing it are one `transact`: one undo step.
  */
 
 import {
@@ -23,8 +24,8 @@ import {
 } from '@shared/generation'
 import { VALIDATE_ONLY } from '@shared/mcp'
 import { bay } from '@/lib/bay'
-import { fail, resolveAsset, type Handlers } from './helpers'
-import { importMedia, placeAsset } from './write'
+import { ToolError, fail, resolveAsset, store, usToFramesAtTimeline, type Handlers } from './helpers'
+import { placeAsset } from './write'
 
 function api(): NonNullable<ReturnType<typeof bay>> {
   const bridge = bay()
@@ -130,26 +131,58 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
   }
   if (!job.outputPath) fail(`Job ${job.id} is done but main recorded no file for it. This is a fault in bay; generate again.`)
 
-  const imported = await importMedia({ paths: [job.outputPath] })
-  const asset = (imported.assets as Record<string, unknown>[])[0]
-  if (!asset || asset.error) {
+  let entries
+  try {
+    entries = await bridge.media.importPaths([job.outputPath])
+  } catch (error) {
+    fail(`The file landed at ${job.outputPath} but could not be imported: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const imported = entries[0]?.asset
+  if (!imported || imported.error) {
     return {
       ...summarise(job),
       status: 'failed',
-      error: `The file landed at ${job.outputPath} but could not be imported${asset?.error ? `: ${String(asset.error)}` : ''}.`
+      error: `The file landed at ${job.outputPath} but could not be imported${imported?.error ? `: ${imported.error}` : ''}.`
     }
   }
-  const result: Record<string, unknown> = { ...summarise(job), asset }
-  if (args.place === true) {
-    result.placed = placeAsset({
-      assetId: asset.id,
-      ...(args.atFrame !== undefined ? { atFrame: args.atFrame } : {}),
-      ...(args.trackId !== undefined ? { trackId: args.trackId } : {})
-    })
-  } else {
-    result.next = `The asset is in the media pool. Place it with place_asset { assetId: "${String(asset.id)}" } where the edit needs it.`
+  const asset = {
+    id: imported.id,
+    name: imported.name,
+    kind: imported.kind,
+    path: imported.path,
+    durationInFrames: imported.durationUs > 0 ? usToFramesAtTimeline(imported.durationUs) : null,
+    width: imported.width,
+    height: imported.height,
+    hasAudio: imported.hasAudio,
+    hasVideo: imported.hasVideo
   }
-  return result
+  // Import and place are one undo step, like every other tool.
+  // A refused placement (a locked or occupied track) still leaves the asset imported, and says
+  // so: failing the whole call would hide that the paid-for file is already in the pool.
+  let placed: Record<string, unknown> | undefined
+  let placeError: string | undefined
+  store().transact(() => {
+    store().addAssets([imported])
+    if (args.place !== true) return
+    try {
+      placed = placeAsset({
+        assetId: imported.id,
+        ...(args.atFrame !== undefined ? { atFrame: args.atFrame } : {}),
+        ...(args.trackId !== undefined ? { trackId: args.trackId } : {})
+      })
+    } catch (error) {
+      if (!(error instanceof ToolError)) throw error
+      placeError = error.message
+    }
+  })
+  const place = `place_asset { assetId: "${imported.id}" }`
+  return {
+    ...summarise(job),
+    asset,
+    ...(placed ? { placed } : {}),
+    ...(placeError ? { placeError, next: `The asset is imported but was not placed: ${placeError} Retry with ${place}.` } : {}),
+    ...(!placed && !placeError ? { next: `The asset is in the media pool. Place it with ${place} where the edit needs it.` } : {})
+  }
 }
 
 export const handlers: Handlers = {
