@@ -68,6 +68,8 @@ function AssetCard({ asset }: { asset: Asset }): ReactNode {
 
   return (
     <div
+      // Found by the clip menu's Reveal in Media.
+      data-asset-id={asset.id}
       draggable={!broken}
       onDragStart={(event) => {
         event.dataTransfer.setData(ASSET_DRAG_TYPE, asset.id)

@@ -34,7 +34,8 @@ import {
   type Item,
   type Project,
   type Timeline,
-  type Track
+  type Track,
+  playableTimeline
 } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt, resolveAudioOffsets, transitionOfItemAt } from '@shared/audio-gain'
@@ -504,7 +505,9 @@ export class AudioEngine {
    * picture: it touches only the items that exist at this frame plus whatever was playing
    * and no longer is.
    */
-  update({ project, timeline, frame, playing }: AudioUpdate): void {
+  update({ project, timeline: given, frame, playing }: AudioUpdate): void {
+    // A disabled clip sounds nowhere; export's graph takes the same view (`buildAudioGraph`).
+    const timeline = playableTimeline(given)
     const context = this.context()
     const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
     const active = new Set<string>()

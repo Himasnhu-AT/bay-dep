@@ -13,7 +13,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  canonicalShortcut,
   formatShortcut,
   matchesShortcut,
   parseShortcut,
@@ -124,18 +123,45 @@ test('every id is unique and namespaced by its group', () => {
   for (const c of COMMANDS) assert.match(c.id, /^[a-z]+\.[a-zA-Z]+$/)
 })
 
-test("the standard editing keys other work will add are still free", () => {
-  // Reserved by convention: split ⌘B, copy/paste/cut, in/out I/O, JKL shuttle, fit ⇧Z, snap N.
-  const taken = new Set(
-    COMMANDS.flatMap((c) =>
-      (typeof c.shortcut === 'string' ? [c.shortcut] : (c.shortcut ?? [])).map((s) =>
-        canonicalShortcut(parseShortcut(s)!)
-      )
-    )
-  )
-  for (const s of ['Mod+B', 'Mod+C', 'Mod+V', 'Mod+X', 'I', 'O', 'J', 'K', 'L', 'Shift+Z', 'N']) {
-    assert.equal(taken.has(canonicalShortcut(parseShortcut(s)!)), false, `${s} is taken`)
+test('the standard NLE editing keys reach the commands every editor binds them to', () => {
+  // These were reserved (checked free) until the editing commands claimed them; now each must
+  // reach its command, so a later command cannot quietly take ⌘B or J from the timeline.
+  const expected: [KeyLike, string][] = [
+    [key('b', { metaKey: true }), 'clip.split'],
+    [key('B', { metaKey: true, shiftKey: true }), 'clip.splitAll'],
+    [key('c', { metaKey: true }), 'edit.copy'],
+    [key('x', { metaKey: true }), 'edit.cut'],
+    [key('v', { metaKey: true }), 'edit.paste'],
+    [key('V', { metaKey: true, altKey: true, shiftKey: true, code: 'KeyV' }), 'edit.pasteAttributes'],
+    [key('i'), 'mark.setIn'],
+    [key('o'), 'mark.setOut'],
+    [key('≈', { altKey: true, code: 'KeyX' }), 'mark.clearRange'],
+    [key('j'), 'playback.shuttleReverse'],
+    [key('k'), 'playback.shuttleStop'],
+    [key('l'), 'playback.shuttleForward'],
+    [key('l', { metaKey: true }), 'playback.toggleLoop'],
+    [key('Z', { shiftKey: true }), 'timeline.zoomToFit'],
+    [key('n'), 'timeline.toggleSnapping'],
+    [key('=', { metaKey: true }), 'timeline.zoomIn'],
+    [key('-', { metaKey: true }), 'timeline.zoomOut'],
+    [key('q'), 'clip.trimStartRipple'],
+    [key('w'), 'clip.trimEndRipple'],
+    [key('œ', { altKey: true, code: 'KeyQ' }), 'clip.trimStart'],
+    [key('ArrowLeft', { altKey: true }), 'clip.nudgeLeft'],
+    [key('ArrowRight', { altKey: true, shiftKey: true }), 'clip.nudgeRightMany'],
+    [key('ArrowUp'), 'playback.prevEdit'],
+    [key('ArrowDown', { shiftKey: true }), 'playback.nextMarker'],
+    [key('E', { shiftKey: true }), 'clip.toggleEnabled'],
+    [key('t', { metaKey: true }), 'clip.addTransition'],
+    [key('Backspace', { metaKey: true, shiftKey: true }), 'mark.removeRange']
+  ]
+  for (const [event, id] of expected) {
+    assert.equal(commandForKey(event, false)?.id, id, `${JSON.stringify(event)} should run ${id}`)
   }
+  // ⌘C/⌘V/⌘X also run while typing (their handlers hand the key to the text); single keys never do.
+  assert.equal(commandForKey(key('c', { metaKey: true }), true)?.id, 'edit.copy')
+  assert.equal(commandForKey(key('i'), true), undefined)
+  assert.equal(commandForKey(key('j'), true), undefined)
 })
 
 test('shortcutOf gives the primary binding', () => {
