@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import {
+  adjustmentsOf,
   defaultAdjustments,
   type Adjustments,
   type BlendMode,
@@ -107,7 +108,7 @@ export function AdjustmentsSection({
   if (!first) return null
 
   const read = (key: keyof Adjustments): { value: number; mixed: boolean } => {
-    const of = (item: Item): number => (item.adjustments ?? defaultAdjustments())[key]
+    const of = (item: Item): number => adjustmentsOf(item.adjustments)[key]
     const value = of(first)
     return { value, mixed: items.some((item) => !same(of(item), value)) }
   }
@@ -119,7 +120,7 @@ export function AdjustmentsSection({
     transact(() => {
       for (const item of items) {
         patchItem(item.id, {
-          adjustments: { ...defaultAdjustments(), ...item.adjustments, [key]: value }
+          adjustments: { ...adjustmentsOf(item.adjustments), [key]: value }
         })
       }
     })

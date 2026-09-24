@@ -183,6 +183,29 @@ test('a NaN saved as null in the layout falls back to identity, field by field',
   assert.equal(repaired.top, 12, 'a finite field is left alone')
 })
 
+test('a partial adjustments object is filled field by field; a whole one is left alone', () => {
+  // `{ brightness }` alone put undefined in front of the inspector's sliders, which threw.
+  const partial = damagedItem({ adjustments: { brightness: 1.2, blur: null } })
+  applyTransforms(partial)
+  assert.deepEqual(firstItem(partial).adjustments, {
+    brightness: 1.2,
+    contrast: 1,
+    saturate: 1,
+    hueRotate: 0,
+    blur: 0,
+    grayscale: 0,
+    sepia: 0,
+    invert: 0
+  })
+  const whole = { brightness: 0.9, contrast: 1.1, saturate: 1, hueRotate: 5, blur: 2, grayscale: 0, sepia: 0.1, invert: 0 }
+  const kept = damagedItem({ adjustments: { ...whole } })
+  applyTransforms(kept)
+  assert.deepEqual(firstItem(kept).adjustments, whole)
+  const junk = damagedItem({ adjustments: 'bright' })
+  applyTransforms(junk)
+  assert.equal(firstItem(junk).adjustments, undefined)
+})
+
 test('item timing is clamped to what the store would have allowed', () => {
   const project = damagedItem({ from: -5, durationInFrames: 0, fadeInFrames: 40, fadeOutFrames: -3 })
   applyTransforms(project)

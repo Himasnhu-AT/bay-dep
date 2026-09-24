@@ -182,6 +182,14 @@ test('an explicit trackId that is occupied is refused with the clashing clip, no
   const { project, timeline } = fixture()
   const clash = detachAudio(project, timeline, ['A'], { ...options, trackId: 'a1' })
   assert.match(clash.refused[0]?.reason ?? '', /A1 has M at 0-40, which overlaps A at 0-90/)
+  // The same refusal said to a person: the clip's name and timecodes, the menu's words, no ids.
+  const human = clash.refused[0]?.forPerson ?? ''
+  assert.equal(
+    human,
+    'A1 already has "bed.mp4" at 00:00:00:00–00:00:01:10, where this sound would go. Choose another track or New audio track.'
+  )
+  assert.doesNotMatch(human, /\bM\b|\bA\b|trackId|a1/, 'no ids or tool arguments in the sentence for a person')
+  assert.deepEqual(clash.refused[0]?.conflict, { trackId: 'a1', trackName: 'A1', itemId: 'M', from: 0, to: 40 })
   assert.equal(find(timeline, 'A').audioDetached, undefined, 'nothing changed')
   // The nearest legal call: B (90–150) fits on A1.
   const fits = detachAudio(project, timeline, ['B'], { ...options, trackId: 'a1' })

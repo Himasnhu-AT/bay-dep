@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MAX_SHUTTLE_RATE, nextShuttle } from './shuttle'
+import { holdsK, MAX_SHUTTLE_RATE, nextShuttle } from './shuttle'
 
 const press = (keys: string, from = 0): number => {
   let rate = from
@@ -45,4 +45,18 @@ test('holding K turns J and L into one-frame steps, and stops playback', () => {
   assert.deepEqual(nextShuttle({ rate: 4, kHeld: true }, 'J'), { rate: 0, step: -1 })
   // Positive control: the same key without K held plays rather than steps.
   assert.equal(nextShuttle({ rate: 0, kHeld: false }, 'L').step, undefined)
+})
+
+test('Playback › Stop from the menu does not leave K held, so the next L plays', () => {
+  // The menu's Stop, then the menu's (or the key's) Play Forwards.
+  let held = holdsK('K', 'menu', false)
+  let rate = nextShuttle({ rate: 1, kHeld: held }, 'K').rate
+  held = holdsK('L', 'menu', held)
+  const next = nextShuttle({ rate, kHeld: held }, 'L')
+  assert.equal(next.step, undefined, 'stepped one frame instead of playing')
+  assert.equal(next.rate, 1)
+  // Positive control: the K key itself does hold, until its key-up, so K+L still steps.
+  held = holdsK('K', 'key', false)
+  rate = nextShuttle({ rate: 1, kHeld: held }, 'K').rate
+  assert.deepEqual(nextShuttle({ rate, kHeld: holdsK('L', 'key', held) }, 'L'), { rate: 0, step: 1 })
 })

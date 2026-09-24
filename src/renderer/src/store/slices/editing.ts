@@ -8,7 +8,8 @@
 import { activeTimeline, findItem, itemEnd, timelineDuration, type Item } from '@shared/project'
 import { attributePatch, copyClips, pasteClips } from '@shared/clipboard'
 import { applyMoves, clipsUnderPlayhead, planCloseGap, planNudge, planPullBack } from '@shared/editing'
-import { linkedPartners, withLinked } from '@shared/links'
+import { withLinked } from '@shared/links'
+import { applySpeedPlan, planSpeed } from '@shared/speed'
 import { insertTime, liftRange, type OpenSpanResult } from '@shared/insert-edit'
 import { applyFreezeFrame, freezeRefusal, type FreezeResult } from '@shared/freeze-frame'
 import { applyTrackMoves, checkTrackMoves } from '@shared/track-move'
@@ -108,16 +109,17 @@ export function editingSlice({ set, get, edit, editTimeline, currentTimeline }: 
       if (attributes.length === 0) return 0
       const chosen = new Set(attributes)
       let changed = 0
-      editTimeline((timeline) => {
+      editTimeline((timeline, project) => {
         for (const id of state.selection) {
           const found = findItem(timeline, id)
           if (!found || found.track.locked) continue
+          // Speed goes through the same plan as Speed… and `edit_item({ speed })`: the clip keeps
+          // its footage, so its length changes (stopping at the next clip), and a linked sound
+          // follows. Planned before the patch, which would otherwise hide the old rate.
+          const speedPlan = chosen.has('speed') ? planSpeed(project, timeline, id, source.speed) : null
           assignPatch(found.item, attributePatch(source, found.item, chosen))
+          if (speedPlan) applySpeedPlan(timeline, speedPlan)
           changed += 1
-          // Speed is a sync field: a linked sound follows its picture's rate, as in `patchItem`.
-          if (chosen.has('speed')) {
-            for (const partner of linkedPartners(timeline, id)) partner.speed = source.speed
-          }
         }
       })
       if (changed === 0) state.notify('The selected clips are on locked tracks. Unlock them to paste attributes.', 'error')

@@ -80,7 +80,24 @@ export const tool: ToolSpec = {
           'Duck music (from 0, 30fps) to -12 dB over 0:10-0:14 with half-second ramps: { volume: ' +
           '[{ frame: 285, db: 0 }, { frame: 300, db: -12 }, { frame: 420, db: -12 }, { frame: 435, db: 0 }] }.'
       },
-      speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
+      speed: {
+        type: 'number',
+        description:
+          'Playback rate. 1 is source speed. The clip keeps the footage it plays, so its length changes: ' +
+          '2 halves durationInFrames, 0.5 doubles it (as in every editor), never past the end of the ' +
+          'footage. In place, a longer clip stops at the next clip on its track (or a linked clip\'s) and ' +
+          'the result warns how much shorter it is; pass ripple: true to move the later clips on those ' +
+          'tracks by the change instead (a shorter clip then pulls them back). Pass durationInFrames too ' +
+          'to set the length yourself. The result\'s retimed block reports the lengths and any moves. ' +
+          'Keyframes are item-relative and are not rescaled.'
+      },
+      ripple: {
+        type: 'boolean',
+        description:
+          'With speed: move later clips on this clip\'s track and its linked clips\' tracks by the change ' +
+          'in length, so nothing is clamped or left with a gap. Other tracks do not move and are named ' +
+          'in a warning if they are now out of step. Default false.'
+      },
       fadeInFrames: { type: 'integer', minimum: 0 },
       fadeOutFrames: { type: 'integer', minimum: 0 },
       audioLeadFrames: {

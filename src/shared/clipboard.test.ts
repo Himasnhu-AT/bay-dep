@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { attributePatch, copyClips, pasteClips, type ClipboardPayload } from './clipboard'
+import { attributePatch, copyClips, describeDuplicate, duplicateClips, pasteClips, type ClipboardPayload } from './clipboard'
 import { linkedPartners, normaliseLinks } from './links'
 import { itemsOverlap, type Asset, type Item, type Project, type Timeline, type Track } from './project'
 
@@ -205,4 +205,59 @@ test('paste attributes carries only what is chosen, and pastes absence as absenc
   assert.ok('grade' in fromUngraded && fromUngraded.grade === undefined, 'no grade is pasted as removing one')
   assert.equal(fromUngraded.volume, 1)
   assert.ok('keyframes' in fromUngraded && fromUngraded.keyframes === undefined, 'volume keys removed, nothing left')
+})
+
+// -- duplicate -------------------------------------------------------------------
+
+const frameText = (frame: number): string => `f${frame}`
+
+test('duplicate puts the copy straight after a clip that nothing follows, on its own track', () => {
+  const { project, timeline } = fixture()
+  const result = duplicateClips(project, timeline, ['Q'], options)
+  assert.ok(result.ok)
+  const copy = all(timeline).find((i) => i.id === result.itemIds[0])
+  assert.equal(copy?.trackId, 'v1')
+  assert.equal(copy?.from, 60)
+  assert.equal(describeDuplicate(timeline, result, frameText), 'Duplicated the clip at f60 on V1.')
+})
+
+test('duplicate of a clip with another after it goes to the nearest track with room, and says so', () => {
+  // P (0–30) is followed by Q on V1: the old duplicate skipped it and changed nothing, silently.
+  const { project, timeline } = fixture()
+  // Array order V3 (free), V4 (busy), V1, V2 (free): V2 is one track away, V3 two.
+  const v2 = track('v2', 'video', [])
+  const v3 = track('v3', 'video', [])
+  const v4 = track('v4', 'video', [clip('X', 'v4', 30, 30)])
+  timeline.tracks.unshift(v3, v4)
+  timeline.tracks.splice(3, 0, v2)
+  const before = all(timeline).length
+  const result = duplicateClips(project, timeline, ['P'], options)
+  assert.ok(result.ok, !result.ok ? result.error : '')
+  assert.equal(all(timeline).length, before + 1, 'a copy was made')
+  const copy = all(timeline).find((i) => i.id === result.itemIds[0])
+  assert.equal(copy?.from, 30, 'straight after P')
+  assert.equal(copy?.trackId, 'v2', 'the nearest video track with room, not V3 further off, V4 (busy) or a new one')
+  assert.ok(!all(timeline).some((a) => a !== copy && a.trackId === copy?.trackId && itemsOverlap(a, copy!)), 'no overlap')
+  assert.equal(describeDuplicate(timeline, result, frameText), 'V1 had no room after it, so the copy went at f30 on V2.')
+})
+
+test('duplicate makes a new track when no track of the kind has room, and never overwrites', () => {
+  const { project, timeline } = fixture()
+  const result = duplicateClips(project, timeline, ['P'], options)
+  assert.ok(result.ok)
+  assert.equal(result.createdTrackIds.length, 1)
+  const copy = all(timeline).find((i) => i.id === result.itemIds[0])
+  assert.equal(copy?.trackId, result.createdTrackIds[0])
+  assert.equal(all(timeline).find((i) => i.id === 'Q')?.from, 30, 'Q untouched')
+  assert.match(describeDuplicate(timeline, result, frameText), /^V1 had no room after it, so the copy went at f30 on .+ \(a new track\)\.$/)
+})
+
+test('duplicate of a locked track\'s clip is refused by name; the same clip unlocked duplicates', () => {
+  const { project, timeline } = fixture()
+  timeline.tracks[0]!.locked = true
+  const refused = duplicateClips(project, timeline, ['Q'], options)
+  assert.equal(refused.ok, false)
+  assert.match(!refused.ok ? refused.error : '', /V1 is locked/)
+  timeline.tracks[0]!.locked = false
+  assert.equal(duplicateClips(project, timeline, ['Q'], options).ok, true)
 })

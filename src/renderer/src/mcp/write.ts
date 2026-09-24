@@ -31,6 +31,7 @@ import { findTool, resolveId } from '@shared/mcp'
 import { describeFont } from '@shared/fonts'
 import { linkedPartners, withLinked } from '@shared/links'
 import { itemRippleNote, planItemRipple } from '@shared/item-ripple'
+import { planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
@@ -185,14 +186,35 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   }
 
   const from = args.from === undefined ? item.from : Math.max(0, Math.round(Number(args.from)))
-  const durationInFrames =
+  let durationInFrames =
     args.durationInFrames === undefined
       ? item.durationInFrames
       : Math.max(1, Math.round(Number(args.durationInFrames)))
 
+  // Speed keeps the footage, as in every editor and in the clip menu's Speed… (`@shared/speed`):
+  // with no durationInFrames, the clip's length changes so the same stretch of source plays,
+  // clamped to the footage. In place, it stops at the next clip on its (or a linked clip's)
+  // track unless `ripple` moves the later clips; moved in the same call, a collision is refused
+  // like any other move. An explicit durationInFrames is kept as given.
+  if (args.speed !== undefined && !(Number(args.speed) > 0)) {
+    fail(`speed must be greater than 0; got ${JSON.stringify(args.speed)}.`)
+  }
+  let speedPlan: SpeedPlan | null = null
+  if (args.speed !== undefined && args.durationInFrames === undefined) {
+    const speed = Number(args.speed)
+    if (from === item.from && destination.id === track.id) {
+      speedPlan = planSpeed(project(), timeline(), item.id, speed, { ripple: args.ripple === true })
+      if (speedPlan) durationInFrames = speedPlan.length
+    } else {
+      const { wanted, available } = retimedLength(item, findAsset(project(), item.assetId)?.durationUs ?? 0, speed, timeline().fps)
+      durationInFrames = Math.min(wanted, available)
+    }
+  }
+
   const timingChanged =
     from !== item.from || durationInFrames !== item.durationInFrames || destination.id !== track.id
-  if (timingChanged) {
+  // A speed plan already fits its length (clamped or rippled), so only other timing is checked.
+  if (timingChanged && !speedPlan) {
     assertNoCollision(destination, { id: item.id, from, durationInFrames })
   }
   // Linked clips (a picture and its detached sound) take the same change of position, length,
@@ -200,7 +222,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   // agent believing both moved. `linked: false` changes this clip alone.
   const linked = args.linked !== false
   const partners = linked ? linkedPartners(timeline(), item.id) : []
-  if (partners.length > 0 && (from !== item.from || durationInFrames !== item.durationInFrames)) {
+  if (partners.length > 0 && !speedPlan && (from !== item.from || durationInFrames !== item.durationInFrames)) {
     for (const partner of partners) {
       const partnerTrack = resolveTrack(partner.trackId)
       assertUnlocked(partnerTrack, `moving ${partner.id}, which is linked to ${item.id} (pass linked: false to edit ${item.id} alone)`)
@@ -238,11 +260,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
 
   const patch: Partial<Omit<Item, 'id' | 'trackId'>> = { from, durationInFrames, layout }
   if (args.volume !== undefined) patch.volume = Number(args.volume)
-  if (args.speed !== undefined) {
-    const speed = Number(args.speed)
-    if (speed <= 0) fail(`speed must be greater than 0; got ${speed}.`)
-    patch.speed = speed
-  }
+  if (args.speed !== undefined && !speedPlan) patch.speed = Number(args.speed)
   if (args.fadeInFrames !== undefined) patch.fadeInFrames = Math.round(Number(args.fadeInFrames))
   if (args.fadeOutFrames !== undefined) patch.fadeOutFrames = Math.round(Number(args.fadeOutFrames))
 
@@ -283,7 +301,8 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   // field was added for. The clip still plays; it runs out early.
   if (sourceAsset && sourceAsset.durationUs > 0) {
     const startUs = patch.sourceStartUs ?? item.sourceStartUs
-    const speed = (patch.speed ?? item.speed) > 0 ? (patch.speed ?? item.speed) : 1
+    const givenSpeed = args.speed !== undefined ? Number(args.speed) : item.speed
+    const speed = givenSpeed > 0 ? givenSpeed : 1
     const consumedUs = framesToUs(durationInFrames, timeline().fps) * speed
     if (startUs + consumedUs > sourceAsset.durationUs) {
       const availableFrames = Math.floor(
@@ -431,7 +450,10 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
 
   const fadeIn = patch.fadeInFrames ?? item.fadeInFrames
   const fadeOut = patch.fadeOutFrames ?? item.fadeOutFrames
-  if (fadeIn + fadeOut > durationInFrames) {
+  // A speed change that shortens the clip keeps its fades inside it (`applySpeedPlan`); only
+  // fades given in this call are refused for not fitting.
+  const fadesGiven = args.fadeInFrames !== undefined || args.fadeOutFrames !== undefined
+  if (fadeIn + fadeOut > durationInFrames && (!speedPlan || fadesGiven)) {
     fail(
       `fadeInFrames ${fadeIn} + fadeOutFrames ${fadeOut} is longer than the clip ` +
         `(${durationInFrames} frames). Shorten the fades or lengthen the clip.`
@@ -445,8 +467,17 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     // The move is not linked: `patchItem` below carries the change of `from` to linked clips, and
     // a linked move here as well would shift them twice.
     if (destination.id !== track.id) store().moveItem(item.id, from, destination.id, { linked: false })
-    store().patchItem(item.id, patch, { linked })
+    if (speedPlan) {
+      // Speed and length through the shared plan (linked clips and ripple included); the rest of
+      // the patch without them, so the length is not applied twice.
+      const { durationInFrames: _length, ...rest } = patch
+      store().patchItem(item.id, rest, { linked })
+      store().setClipSpeed(item.id, speedPlan.speed, { ripple: args.ripple === true })
+    } else {
+      store().patchItem(item.id, patch, { linked })
+    }
   })
+  const speedReport = speedPlan ? describeSpeedPlan(speedPlan) : null
 
   const after = resolveItem(item.id)
   // Ordered by how well each fault hides: the tail warning is about footage that is missing
@@ -455,6 +486,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   const look = lookWarnings(after.item, after.track, timeline())
   const sound = audioFinishReport(after.item, project(), timeline())
   const warnings = [
+    ...(speedReport?.warning ? [speedReport.warning] : []),
     ...(sourceTailWarning ? [sourceTailWarning] : []),
     ...shadowedByKeys(args, after.item),
     ...gradeWarnings(after.item.grade, findAsset(project(), after.item.assetId)),
@@ -487,8 +519,38 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
     ...linkReport(after.item.id),
+    ...(speedReport?.report ?? {}),
     ...(warnings.length > 0 ? { warnings } : {})
   }
+}
+
+/** What a speed change did to the timeline, for the agent: lengths, the clamp and the ripple, by id. */
+function describeSpeedPlan(plan: SpeedPlan): { report: Record<string, unknown>; warning: string | null } {
+  const tl = timeline()
+  const name = (id: string): string => tl.tracks.find((t) => t.id === id)?.name ?? id
+  const report: Record<string, unknown> = {
+    retimed: {
+      fromDurationInFrames: plan.fromLength,
+      durationInFrames: plan.length,
+      sameFootageDurationInFrames: plan.wanted,
+      ...(plan.shifts.length > 0
+        ? { rippled: plan.shifts.map((s) => ({ itemId: s.itemId, from: s.to })), rippledTracks: plan.rippledTrackIds.map(name) }
+        : {})
+    }
+  }
+  const clamp = plan.clampedBy
+  const warning =
+    clamp?.kind === 'next-clip'
+      ? `At ${plan.speed}x the clip needs ${plan.wanted} frames to play the same footage, but ${clamp.itemId} starts at ` +
+        `frame ${clamp.at} on ${name(clamp.trackId)}, so it is ${plan.length} frames and plays less of its source. ` +
+        `Pass ripple: true to move the later clips instead.`
+      : clamp?.kind === 'footage'
+        ? `Only ${clamp.available} frames of footage remain from the in-point at ${plan.speed}x, so the clip is ` +
+          `${plan.length} frames, not ${plan.wanted}.`
+        : plan.outOfSyncTrackIds.length > 0
+          ? itemRippleNote(plan.rippledTrackIds.map(name), plan.outOfSyncTrackIds.map(name))
+          : null
+  return { report, warning }
 }
 
 /**

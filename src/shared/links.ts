@@ -21,6 +21,7 @@
 
 import type { Item, Project, Timeline, Track, TransitionKind } from './project'
 import { itemEnd, resolveTransition } from './project'
+import { formatTimecode } from './timecode'
 
 /** Items whose spans overlap. Items that merely abut (a cut between them) do not. */
 function overlaps(a: Item, b: Item): boolean {
@@ -139,10 +140,24 @@ export interface DetachedPair {
   linkId: string
 }
 
+/**
+ * An item a detach or reattach did not act on. `reason` is for an agent: it names ids and tool
+ * arguments, because an agent's next call needs them. `forPerson` says the same thing to someone
+ * at the timeline — clip names and timecodes, and the menu's words — because a toast reading
+ * "A1 has itm_mufes3qw7oa3uwt at 30-180 … Omit trackId" tells a person nothing they can act on.
+ */
+export interface LinkRefusal {
+  itemId: string
+  reason: string
+  forPerson: string
+  /** The item already where the sound would go, when that is why. */
+  conflict?: { trackId: string; trackName: string; itemId: string; from: number; to: number }
+}
+
 export interface DetachResult {
   detached: DetachedPair[]
-  /** One sentence per item that was not detached, saying why and what to do instead. */
-  refused: { itemId: string; reason: string }[]
+  /** One per item that was not detached, saying why and what to do instead. */
+  refused: LinkRefusal[]
   /** Things the detach changed that the caller should hear about. */
   warnings: string[]
   /** Audio tracks this call had to create, by id. */
@@ -188,10 +203,18 @@ export function detachAudio(
     createdTrackIds: [],
     addedTransitionIds: []
   }
+  const nameOf = (item: Item | undefined): string =>
+    `"${(item && project.assets.find((a) => a.id === item.assetId)?.name) || 'this clip'}"`
+  const span = (item: Item): string =>
+    `${formatTimecode(item.from, timeline.fps)}–${formatTimecode(itemEnd(item), timeline.fps)}`
   const chosen = options.trackId ? timeline.tracks.find((t) => t.id === options.trackId) : undefined
   if (options.trackId && !chosen) {
     for (const itemId of itemIds) {
-      result.refused.push({ itemId, reason: `there is no track ${options.trackId} on this timeline` })
+      result.refused.push({
+        itemId,
+        reason: `there is no track ${options.trackId} on this timeline`,
+        forPerson: 'That track is no longer on the timeline. Choose another track or New audio track.'
+      })
     }
     return result
   }
@@ -199,7 +222,8 @@ export function detachAudio(
     for (const itemId of itemIds) {
       result.refused.push({
         itemId,
-        reason: `${chosen.name} is a video track; detached sound goes on an audio track. Omit trackId to let bay pick one`
+        reason: `${chosen.name} is a video track; detached sound goes on an audio track. Omit trackId to let bay pick one`,
+        forPerson: `${chosen.name} is a video track — detached sound goes on an audio track.`
       })
     }
     return result
@@ -211,14 +235,19 @@ export function detachAudio(
     const track = trackOfItem(timeline, itemId)
     const item = track?.items.find((i) => i.id === itemId)
     if (!track || !item) {
-      result.refused.push({ itemId, reason: `there is no item ${itemId} on this timeline` })
+      result.refused.push({
+        itemId,
+        reason: `there is no item ${itemId} on this timeline`,
+        forPerson: 'That clip is no longer on the timeline.'
+      })
       continue
     }
     const asset = project.assets.find((a) => a.id === item.assetId)
     if (track.kind === 'audio') {
       result.refused.push({
         itemId,
-        reason: `${itemId} is on audio track ${track.name}, so its sound is already an item of its own`
+        reason: `${itemId} is on audio track ${track.name}, so its sound is already an item of its own`,
+        forPerson: `${nameOf(item)} is already a sound clip on ${track.name}.`
       })
       continue
     }
@@ -227,7 +256,10 @@ export function detachAudio(
         itemId,
         reason:
           `${itemId} draws ${asset ? `${asset.name}, which has ${asset.hasAudio ? 'no picture' : 'no sound'}` : 'a missing asset'}, ` +
-          `so there is no sound to separate from a picture`
+          `so there is no sound to separate from a picture`,
+        forPerson: !asset
+          ? `${nameOf(item)} is missing its media, so there is no sound to detach.`
+          : `${nameOf(item)} has ${asset.hasAudio ? 'no picture' : 'no sound'}, so there is nothing to detach.`
       })
       continue
     }
@@ -237,12 +269,17 @@ export function detachAudio(
         itemId,
         reason:
           `${itemId}'s sound is already detached` +
-          (partners.length > 0 ? ` — it is ${partners.join(', ')}` : ' (its audio item was unlinked)')
+          (partners.length > 0 ? ` — it is ${partners.join(', ')}` : ' (its audio item was unlinked)'),
+        forPerson: `${nameOf(item)}'s sound is already detached.`
       })
       continue
     }
     if (track.locked) {
-      result.refused.push({ itemId, reason: `${track.name} is locked; unlock it to detach ${itemId}'s sound` })
+      result.refused.push({
+        itemId,
+        reason: `${track.name} is locked; unlock it to detach ${itemId}'s sound`,
+        forPerson: `${track.name} is locked — unlock it in the track header to detach ${nameOf(item)}'s sound.`
+      })
       continue
     }
 
@@ -251,7 +288,8 @@ export function detachAudio(
       if (target.locked) {
         result.refused.push({
           itemId,
-          reason: `${target.name} is locked; unlock it, or omit trackId to let bay pick a free audio track`
+          reason: `${target.name} is locked; unlock it, or omit trackId to let bay pick a free audio track`,
+          forPerson: `${target.name} is locked. Unlock it, or choose another track or New audio track.`
         })
         continue
       }
@@ -261,7 +299,17 @@ export function detachAudio(
           itemId,
           reason:
             `${target.name} has ${clash.id} at ${spanText(clash)}, which overlaps ${itemId} at ${spanText(item)}. ` +
-            `Omit trackId to let bay pick a free audio track`
+            `Omit trackId to let bay pick a free audio track`,
+          forPerson:
+            `${target.name} already has ${nameOf(clash)} at ${span(clash)}, where this sound would go. ` +
+            `Choose another track or New audio track.`,
+          conflict: {
+            trackId: target.id,
+            trackName: target.name,
+            itemId: clash.id,
+            from: clash.from,
+            to: itemEnd(clash)
+          }
         })
         continue
       }
@@ -393,7 +441,7 @@ function copyTransitionsToSound(
 
 export interface ReattachResult {
   reattached: { pictureId: string; removedAudioIds: string[] }[]
-  refused: { itemId: string; reason: string }[]
+  refused: LinkRefusal[]
 }
 
 /**
@@ -407,12 +455,20 @@ export function reattachAudio(timeline: Timeline, itemIds: readonly string[]): R
   for (const itemId of itemIds) {
     const given = everyItem(timeline).find((i) => i.id === itemId)
     if (!given) {
-      result.refused.push({ itemId, reason: `there is no item ${itemId} on this timeline` })
+      result.refused.push({
+        itemId,
+        reason: `there is no item ${itemId} on this timeline`,
+        forPerson: 'That clip is no longer on the timeline.'
+      })
       continue
     }
     const picture = given.audioDetached ? given : linkedPartners(timeline, itemId).find((p) => p.audioDetached)
     if (!picture) {
-      result.refused.push({ itemId, reason: `${itemId} has no detached sound to reattach` })
+      result.refused.push({
+        itemId,
+        reason: `${itemId} has no detached sound to reattach`,
+        forPerson: 'This clip has no detached sound to reattach.'
+      })
       continue
     }
     if (done.has(picture.id)) continue
@@ -422,7 +478,11 @@ export function reattachAudio(timeline: Timeline, itemIds: readonly string[]): R
     )
     const locked = [picture, ...sounds].map((i) => trackOfItem(timeline, i.id)).find((t) => t?.locked)
     if (locked) {
-      result.refused.push({ itemId, reason: `${locked.name} is locked; unlock it to reattach ${picture.id}'s sound` })
+      result.refused.push({
+        itemId,
+        reason: `${locked.name} is locked; unlock it to reattach ${picture.id}'s sound`,
+        forPerson: `${locked.name} is locked — unlock it in the track header to reattach this sound.`
+      })
       continue
     }
     const sound = sounds.length === 1 ? sounds[0] : undefined

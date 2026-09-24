@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { isInsideFloating } from './Floating'
 import { isTopModal, openModal, takeKey } from './modalStack'
 import { IconButton } from './IconButton'
+import { isolatePointerEvents } from './isolate'
 
 export interface ModalProps {
   open: boolean
@@ -57,7 +58,12 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
       )
     // A field that asked for focus (`autoFocus` — the name in a Rename dialog) keeps it; otherwise
     // the first control. Taking it unconditionally put focus on the header's Close button.
-    if (!panel.contains(document.activeElement)) focusables()[0]?.focus()
+    // The first control of the *body*, not the header's Close: focused, Close also showed its
+    // tooltip over the dialog's first line (Paste Attributes).
+    if (!panel.contains(document.activeElement)) {
+      const all = focusables()
+      ;(all.find((element) => !element.closest('header')) ?? all[0])?.focus()
+    }
 
     const onKeyDown = (event: KeyboardEvent): void => {
       // A menu or popover opened from inside the dialog owns its own Escape and Tab: Escape
@@ -102,7 +108,11 @@ export function Modal({ open, title, onClose, children, footer, width = 480 }: M
   return createPortal(
     <div
       className="fixed inset-0 z-(--z-modal) flex items-center justify-center bg-black/55 p-8"
+      // Portalled, but React still bubbles through the component tree: a dialog opened from a
+      // clip or a lane must not start a drag, a scrub or a selection there (see `isolate.ts`).
+      {...isolatePointerEvents}
       onPointerDown={(event) => {
+        event.stopPropagation()
         if (event.target === event.currentTarget) onClose()
       }}
     >

@@ -38,9 +38,9 @@ export const playbackHandlers = {
       state.togglePlay()
     }
   },
-  'playback.shuttleReverse': { when: inEditor, run: () => shuttle('J') },
-  'playback.shuttleStop': { when: inEditor, run: () => shuttle('K') },
-  'playback.shuttleForward': { when: inEditor, run: () => shuttle('L') },
+  'playback.shuttleReverse': { when: inEditor, run: ({ source }) => shuttle('J', source) },
+  'playback.shuttleStop': { when: inEditor, run: ({ source }) => shuttle('K', source) },
+  'playback.shuttleForward': { when: inEditor, run: ({ source }) => shuttle('L', source) },
   'playback.toggleLoop': {
     when: inEditor,
     run: ({ state }) => {

@@ -409,6 +409,22 @@ export function defaultAdjustments(): Adjustments {
 }
 
 /**
+ * An item's adjustments with every field present: each missing or non-finite field reads as its
+ * identity. A `.bay` or an agent edit carrying a partial object (`{ brightness: 1.2 }`) is legal
+ * to draw — the filter chain already falls back per field — and the inspector's sliders read
+ * these, since one `undefined.toFixed` in a slider unmounted the whole window.
+ */
+export function adjustmentsOf(adjustments: Partial<Adjustments> | null | undefined): Adjustments {
+  const out = defaultAdjustments()
+  if (!adjustments || typeof adjustments !== 'object') return out
+  for (const key of Object.keys(out) as (keyof Adjustments)[]) {
+    const value = adjustments[key]
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value
+  }
+  return out
+}
+
+/**
  * There is deliberately no filter-string builder here.
  *
  * There were two — this one and `adjustmentFilter` in `renderer/src/engine/looks.ts` — and they

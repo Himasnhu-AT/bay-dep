@@ -42,6 +42,18 @@ export function nextShuttle({ rate, kHeld }: ShuttleInput, key: 'J' | 'K' | 'L')
   return { rate: direction * Math.min(MAX_SHUTTLE_RATE, Math.abs(rate) * 2) }
 }
 
+/** Where a J/K/L came from: a key on the keyboard, or a menu item / button that has no key to hold. */
+export type ShuttleSource = 'key' | 'menu' | 'ui'
+
+/**
+ * Whether K counts as held after this press. Only a K *key* goes down and later comes up; the
+ * menu's Playback › Stop and a Stop button have no key-up, so marking K held for them left every
+ * later L or J stepping one frame until a real K was pressed and released.
+ */
+export function holdsK(key: 'J' | 'K' | 'L', source: ShuttleSource, held: boolean): boolean {
+  return key === 'K' && source === 'key' ? true : held
+}
+
 // ---------------------------------------------------------------------------
 // The driver
 // ---------------------------------------------------------------------------
@@ -119,11 +131,12 @@ function play(rate: number): void {
   handle = requestAnimationFrame(tick)
 }
 
-/** J, K or L pressed. */
-export function shuttle(key: 'J' | 'K' | 'L'): void {
+/** J, K or L pressed — on the keyboard (`'key'`), or chosen from a menu or button. */
+export function shuttle(key: 'J' | 'K' | 'L', source: ShuttleSource = 'key'): void {
   listen()
-  // Set here as well as by the listener: the first K arrives before the listener exists.
-  if (key === 'K') kHeld = true
+  // Set here as well as by the listener: the first K arrives before the listener exists. Only
+  // for the key itself — a menu Stop has no key-up to clear it.
+  kHeld = holdsK(key, source, kHeld)
   const next = nextShuttle({ rate: currentRate(), kHeld }, key)
   if (next.step !== undefined) {
     stopShuttle()
