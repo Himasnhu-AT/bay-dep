@@ -5,8 +5,9 @@
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
-import { applyTrimPlan, planTrim } from '@shared/trim'
-import { makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
+import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
+import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
+import { clone, makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
 
@@ -27,6 +28,9 @@ type Actions = Pick<
   | 'setCompositionVariable'
   | 'duplicateSelected'
   | 'patchItem'
+  | 'detachAudio'
+  | 'reattachAudio'
+  | 'unlinkItems'
   | 'patchLayout'
   | 'addTrack'
   | 'removeTrack'
@@ -94,6 +98,11 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         get().notify(`${asset.name} could not be read, so it cannot be placed.`, 'error')
         return null
       }
+      if (asset.kind === 'font') {
+        // A typeface draws nothing by itself; text names its family.
+        get().notify(`${asset.name} is a font — choose "${asset.font?.family ?? asset.name}" in a text clip's Font.`, 'info')
+        return null
+      }
       if (asset.kind === 'lut') {
         // A LUT has no picture; placing it would make a clip that draws nothing forever.
         get().notify(`${asset.name} is a colour LUT — apply it to a clip from Grade in the inspector.`, 'info')
@@ -150,7 +159,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return itemId
     },
 
-    moveItem(itemId, toFrame, toTrackId) {
+    moveItem(itemId, toFrame, toTrackId, options) {
       editTimeline((timeline) => {
         const found = findItem(timeline, itemId)
         if (!found) return
@@ -166,54 +175,91 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         )
         if (collides) return
 
+        // Linked clips move by the same frames on their own tracks, or nothing moves: half a
+        // linked move is a picture out of sync with its own sound.
+        const delta = from - item.from
+        const partners = options?.linked === false || delta === 0 ? [] : linkedPartners(timeline, itemId)
+        const followers: { item: Item; from: number }[] = []
+        for (const partner of partners) {
+          const partnerTrack = findTrack(timeline, partner.trackId)
+          const next = partner.from + delta
+          if (!partnerTrack || partnerTrack.locked || next < 0) return
+          const shifted = { ...partner, from: next }
+          const clash = partnerTrack.items.some(
+            (other) =>
+              other.id !== partner.id &&
+              !partners.some((p) => p.id === other.id) &&
+              itemsOverlap(other, shifted)
+          )
+          if (clash) return
+          followers.push({ item: partner, from: next })
+        }
+
         track.items = track.items.filter((i) => i.id !== item.id)
         destination.items.push(moved)
         destination.items.sort((a, b) => a.from - b.from)
+        for (const follower of followers) {
+          follower.item.from = follower.from
+          findTrack(timeline, follower.item.trackId)?.items.sort((a, b) => a.from - b.from)
+        }
       })
     },
 
-    trimItem(itemId, edge, toFrame) {
+    trimItem(itemId, edge, toFrame, options) {
       editTimeline((timeline) => {
         const found = findItem(timeline, itemId)
         if (!found) return
-        const { item, track } = found
-        if (track.locked) return
+        const { item } = found
         const frame = Math.round(toFrame)
-
-        if (edge === 'start') {
-          const maxStart = itemEnd(item) - 1
-          const nextFrom = Math.max(0, Math.min(frame, maxStart))
-          const delta = nextFrom - item.from
-          if (delta === 0) return
-          // Trimming the head must move the read point into the source by the same
-          // amount, or the clip slides its content instead of revealing less of it.
-          const nextSourceStart = item.sourceStartUs + framesToUs(delta, timeline.fps) * item.speed
-          if (nextSourceStart < 0) return
-          const collides = track.items.some(
+        // The edge's movement in frames, applied to every linked clip's same edge — so a picture
+        // and its detached sound trimmed together stay in sync however they were placed.
+        const delta =
+          edge === 'start'
+            ? Math.max(0, Math.min(frame, itemEnd(item) - 1)) - item.from
+            : Math.max(1, frame - item.from) - item.durationInFrames
+        if (delta === 0) return
+        const group = [item, ...(options?.linked === false ? [] : linkedPartners(timeline, itemId))]
+        const plans: { item: Item; from: number; durationInFrames: number; sourceStartUs: number }[] = []
+        for (const member of group) {
+          const memberTrack = findTrack(timeline, member.trackId)
+          if (!memberTrack || memberTrack.locked) return
+          let next: { from: number; durationInFrames: number; sourceStartUs: number }
+          if (edge === 'start') {
+            const nextFrom = member.from + delta
+            if (nextFrom < 0 || nextFrom > itemEnd(member) - 1) return
+            // Trimming the head must move the read point into the source by the same
+            // amount, or the clip slides its content instead of revealing less of it.
+            const nextSourceStart = member.sourceStartUs + framesToUs(delta, timeline.fps) * member.speed
+            if (nextSourceStart < 0) return
+            next = {
+              from: nextFrom,
+              durationInFrames: member.durationInFrames - delta,
+              sourceStartUs: Math.round(nextSourceStart)
+            }
+          } else {
+            const nextDuration = member.durationInFrames + delta
+            if (nextDuration < 1) return
+            next = { from: member.from, durationInFrames: nextDuration, sourceStartUs: member.sourceStartUs }
+          }
+          const collides = memberTrack.items.some(
             (other) =>
-              other.id !== item.id &&
-              itemsOverlap(other, { ...item, from: nextFrom, durationInFrames: item.durationInFrames - delta })
+              other.id !== member.id &&
+              itemsOverlap(other, { ...member, from: next.from, durationInFrames: next.durationInFrames })
           )
           if (collides) return
-          item.from = nextFrom
-          item.durationInFrames -= delta
-          item.sourceStartUs = Math.round(nextSourceStart)
-        } else {
-          const nextDuration = Math.max(1, frame - item.from)
-          const collides = track.items.some(
-            (other) =>
-              other.id !== item.id &&
-              itemsOverlap(other, { ...item, durationInFrames: nextDuration })
-          )
-          if (collides) return
-          item.durationInFrames = nextDuration
+          plans.push({ item: member, ...next })
         }
-        if (item.fadeInFrames > item.durationInFrames) item.fadeInFrames = item.durationInFrames
-        if (item.fadeOutFrames > item.durationInFrames) item.fadeOutFrames = item.durationInFrames
+        for (const plan of plans) {
+          plan.item.from = plan.from
+          plan.item.durationInFrames = plan.durationInFrames
+          plan.item.sourceStartUs = plan.sourceStartUs
+          if (plan.item.fadeInFrames > plan.item.durationInFrames) plan.item.fadeInFrames = plan.item.durationInFrames
+          if (plan.item.fadeOutFrames > plan.item.durationInFrames) plan.item.fadeOutFrames = plan.item.durationInFrames
+        }
       })
     },
 
-    trimEdit(spec) {
+    trimEdit(spec, options) {
       const project = get().project
       const timeline = activeTimeline(project)
       if (!timeline) return { ok: false, error: 'No timeline is open.' }
@@ -222,8 +268,37 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       // never reaches `edit()` at all, so it cannot leave an empty undo step behind.
       const plan = planTrim(project, timeline, spec)
       if (!plan.ok) return plan
-      editTimeline((tl) => applyTrimPlan(tl, plan))
-      return plan
+      const partners = options?.linked === false ? [] : linkedPartners(timeline, spec.itemId)
+      if (partners.length === 0) {
+        editTimeline((tl) => applyTrimPlan(tl, plan))
+        return plan
+      }
+      // The same slip, slide or roll on each linked clip, planned in turn against the timeline as
+      // the ones before it left it, so a linked picture and its sound stay in sync. Any refusal
+      // refuses the whole edit, named, with the way to trim the one clip alone.
+      const scratch = clone(project)
+      const scratchTimeline = activeTimeline(scratch)
+      if (!scratchTimeline) return plan
+      applyTrimPlan(scratchTimeline, plan)
+      const plans: TrimPlan[] = [plan]
+      for (const partner of partners) {
+        const next = planTrim(scratch, scratchTimeline, { ...spec, itemId: partner.id })
+        if (!next.ok) {
+          return {
+            ok: false,
+            error:
+              `${spec.itemId} is linked to ${partner.id}, which cannot follow: ${next.error} ` +
+              `Unlink them (detach_audio with action "unlink") to ${spec.mode} ${spec.itemId} alone.`,
+            ...(plan.range ? { range: plan.range } : {})
+          }
+        }
+        applyTrimPlan(scratchTimeline, next)
+        plans.push(next)
+      }
+      editTimeline((tl) => {
+        for (const each of plans) applyTrimPlan(tl, each)
+      })
+      return { ...plan, changes: plans.flatMap((each) => each.changes) }
     },
 
     splitAt(frame) {
@@ -231,7 +306,9 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       const timeline = activeTimeline(state.project)
       if (!timeline) return
       const at = Math.round(frame ?? state.playhead)
-      const targets = state.selection.length > 0 ? state.selection : null
+      // A selected clip splits with the clips linked to it, so a cut picture and its sound come
+      // out as two linked pairs rather than a picture cut over a sound that is not.
+      const targets = state.selection.length > 0 ? withLinked(timeline, state.selection) : null
 
       const created: string[] = []
       editTimeline((tl) => {
@@ -271,9 +348,12 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     deleteSelected() {
-      const ids = get().selection
-      if (ids.length === 0) return
+      const selection = get().selection
+      if (selection.length === 0) return
       editTimeline((timeline) => {
+        // Deleting a linked clip deletes what it is linked to: a detached sound left behind by its
+        // picture, or a picture left silent by its sound, is never what "delete this clip" meant.
+        const ids = withLinked(timeline, selection)
         for (const track of timeline.tracks) {
           if (track.locked) continue
           track.items = track.items.filter((item) => !ids.includes(item.id))
@@ -393,14 +473,79 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       if (created.length > 0) set({ selection: created })
     },
 
-    patchItem(itemId, patch) {
+    patchItem(itemId, patch, options) {
       editTimeline((timeline) => {
         const found = findItem(timeline, itemId)
         if (!found || found.track.locked) return
+        const before = { ...found.item }
         Object.assign(found.item, patch)
         if (found.item.durationInFrames < 1) found.item.durationInFrames = 1
         if (found.item.from < 0) found.item.from = 0
+        if (options?.linked === false) return
+        // The sync fields carry to linked clips as the same change — a delta for positions, the
+        // value for speed — so a linked picture and its sound stay in step. Everything else (level,
+        // fades, look) is each clip's own.
+        const after = found.item
+        for (const partner of linkedPartners(timeline, itemId)) {
+          if (findTrack(timeline, partner.trackId)?.locked) continue
+          if (after.from !== before.from) partner.from = Math.max(0, partner.from + after.from - before.from)
+          if (after.durationInFrames !== before.durationInFrames) {
+            partner.durationInFrames = Math.max(1, partner.durationInFrames + after.durationInFrames - before.durationInFrames)
+          }
+          if (after.sourceStartUs !== before.sourceStartUs) {
+            partner.sourceStartUs = Math.max(0, partner.sourceStartUs + after.sourceStartUs - before.sourceStartUs)
+          }
+          if (after.speed !== before.speed) partner.speed = after.speed
+        }
+        for (const track of timeline.tracks) track.items.sort((a, b) => a.from - b.from)
       })
+    },
+
+    detachAudio(itemIds, trackId) {
+      const holder: { value: ReturnType<typeof detachAudio> | null } = { value: null }
+      editTimeline((tl, project) => {
+        holder.value = detachAudio(project, tl, itemIds, {
+          ...(trackId ? { trackId } : {}),
+          makeId: newId,
+          makeAudioTrack: (timeline) => {
+            const track = makeTrack('audio', 1)
+            track.name = nextTrackName(timeline, 'audio')
+            return track
+          }
+        })
+      })
+      const result = holder.value ?? {
+        detached: [],
+        refused: itemIds.map((itemId) => ({ itemId, reason: 'no timeline is open' })),
+        warnings: [],
+        createdTrackIds: [],
+        addedTransitionIds: []
+      }
+      if (result.detached.length > 0) {
+        set({ selection: result.detached.flatMap((pair) => [pair.pictureId, pair.audioId]) })
+      }
+      return result
+    },
+
+    reattachAudio(itemIds) {
+      const holder: { value: ReturnType<typeof reattachAudio> | null } = { value: null }
+      editTimeline((tl) => {
+        holder.value = reattachAudio(tl, itemIds)
+      })
+      return (
+        holder.value ?? {
+          reattached: [],
+          refused: itemIds.map((itemId) => ({ itemId, reason: 'no timeline is open' }))
+        }
+      )
+    },
+
+    unlinkItems(itemIds) {
+      const holder: { value: string[] } = { value: [] }
+      editTimeline((tl) => {
+        holder.value = unlinkItems(tl, itemIds)
+      })
+      return holder.value
     },
 
     patchLayout(itemId, patch) {

@@ -25,6 +25,7 @@ import {
   type CompositionVariable
 } from '@shared/composition'
 import { bay } from '@/lib/bridge'
+import { importedFonts } from './importedFonts'
 
 /**
  * How much decoded composition imagery to keep.
@@ -360,7 +361,8 @@ export class CompositionPool {
           width,
           height,
           variables,
-          cssVariables: cssVariables(info, variables)
+          cssVariables: cssVariables(info, variables),
+          fonts: importedFonts.compositionFonts()
         })
         if (!frame) {
           this.#failedAt.set(key, performance.now())

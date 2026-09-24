@@ -10,7 +10,8 @@
 
 import type { StoreApi } from 'zustand'
 import { activeTimeline, type Project, type Timeline } from '@shared/project'
-import { clone } from './factory'
+import { normaliseLinks } from '@shared/links'
+import { clone, newId } from './factory'
 import { agentActingDepth, agentFileWriterNow } from './agent-turns'
 import type { EditorState, EditorStore } from './types'
 
@@ -65,6 +66,10 @@ export function createKit(set: Set, get: Get): StoreKit {
       const before = state.project
       const next = clone(before)
       mutator(next)
+      // Linked clips are re-grouped by time overlap after every edit, so a split, a
+      // `remove_range` or a duplicate of a linked pair comes out as linked pairs — without each of
+      // those operations having to know links exist (`@shared/links`).
+      for (const timeline of next.timelines) normaliseLinks(timeline, () => newId('lnk'))
 
       // A mutator that declined to do anything must leave no trace. Several of them refuse
       // by design — `moveItem` onto occupied time, `patchTrack` on a missing track, a split

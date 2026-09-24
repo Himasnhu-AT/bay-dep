@@ -222,6 +222,25 @@ vs 125 is 27.5% vs 51.4% of the frame. Each (family, settings) is a face cloned 
 `@font-face` rules or `local()` (full/PostScript names only). A loading face makes the item
 *pending*, so export and `preview_frame` wait on `variationFaces.settle` like any other source.
 
+**Fonts are assets, not machine state** (`kind: 'font'`, `@shared/fonts`, `media/font-file.ts`,
+`engine/importedFonts.ts`). Main reads the file's own tables (name ID 16 before ID 1: a variable
+font's ID 1 is its default instance, "Archivo SemiBold") and copies it, content-addressed, into
+`<userData>/fonts`, admitted to `bay://` like any asset path. The compositor registers each as a
+`FontFace` with the axis ranges as descriptors (a single weight would clamp every other one), a
+loading face makes text *pending*, `brfFonts` clones variation faces from the imported source, and
+composition windows get the same bytes as a `data:` `@font-face` — only files from that folder,
+with descriptors checked, since a `.bay` may be someone else's.
+
+**Detached audio is a linked item, and the picture's element is shared where it can be**
+(`@shared/links`, `detach_audio`). The picture gets `audioDetached`, the sound an audio-track item
+with the same asset/in/span; items sharing a `linkId` and overlapping in time move, trim, slip,
+split and delete together. Links are re-derived from overlap after every `edit()`
+(`normaliseLinks`), so a split or `remove_range` of a pair yields two pairs without either knowing
+links exist. Preview: an aligned sound plays through the picture's own element (one decode);
+anything else gets an `<audio>` stand-in with the picture element claimed silently. Export skips
+the detached picture as an input. Gain lookups ask for the item's *own* transition
+(`transitionOfItemAt`), because a picture dissolve and its copied audio cross-fade share frames.
+
 A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
 undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
 anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main
@@ -247,6 +266,20 @@ paused — they vanished during playback. Live, a miss shows the latest decoded 
 within a second, the newest queued capture is served first, stale ones are dropped, and three frames
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
+
+**A media load that failed is retried under a new URL, with CORS** (`mediaRetry.ts`). Chromium
+remembers a failed load per URL and CORS mode. A `bay://` path refused before it was allowlisted
+kept failing after the allowlist, even on a fresh element. Meanwhile `fetch` of that URL answered
+200. So the same-URL retry could never work, and dropping CORS "worked" only by changing the key,
+into a load that plays silence. `test/app/audio-soak.mjs` reproduces the race: before the fix,
+every forced iteration was silent; after it, none were.
+
+**A GUI probe must never send a global keystroke or trust Accessibility for window presence**
+(`test/app/menu.mjs`, `test/app/README.md`). Accessibility lists only the active Space. With
+another app full screen, bay has "0 windows". `key code 53` lands in whatever app is in front,
+and it once landed in the user's chat app while they were typing. Use the window server's list
+(`CGWindowListCopyWindowInfo`), and send a key only after re-checking `frontmost` in the same
+script.
 
 **A cut during playback is prepared before the playhead reaches it** (`Compositor.preroll`,
 `engine/pictureHold.ts`, `test/app/cut-playback.mjs`). Every cut played one black picture, cold
@@ -344,6 +377,13 @@ Offline it keeps working for 14 days from the last successful check; a 404 on th
 unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
 bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
 `safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
+
+**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
+email directly on the website's `/admin`; an entitled user refers one from inside bay
+(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
+(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
+`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
+site says "Releasing soon" and points at the waitlist.
 
 ## graft — read the graph before you grep
 

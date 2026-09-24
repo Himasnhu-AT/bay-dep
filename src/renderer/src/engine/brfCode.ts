@@ -54,6 +54,8 @@ interface Runner {
   seq: number
   pending: Map<number, { resolve: (reply: BrfWorkerReply) => void; timer: ReturnType<typeof setTimeout> }>
   usedAt: number
+  /** Stopped to make room for another module: its failures are not the module's. */
+  evicted?: boolean
 }
 
 /** A stable key for a source: the text itself would do, but not as a Map key a thousand times. */
@@ -216,10 +218,7 @@ export class BrfCodeRuntime {
     }
     if (this.#runners.size >= MAX_RUNNERS) {
       const oldest = [...this.#runners.entries()].sort((a, b) => a[1].usedAt - b[1].usedAt)[0]
-      if (oldest) {
-        oldest[1].worker.terminate()
-        this.#runners.delete(oldest[0])
-      }
+      if (oldest) this.#evict(oldest[0], oldest[1])
     }
     if (!this.#spawn) {
       const error = 'cannot run here: this environment has no workers'
@@ -273,6 +272,9 @@ export class BrfCodeRuntime {
    * every `settle` after that waited out its whole timeout.
    */
   #fail(key: string, runner: Runner, error: string): void {
+    // An evicted runner's waiters were answered when it was stopped; what fails after that is the
+    // eviction, not the module, and must not be recorded against it.
+    if (runner.evicted) return
     this.#errors.set(key, error)
     runner.worker.terminate()
     const waiting = [...runner.pending.entries()]
@@ -283,6 +285,26 @@ export class BrfCodeRuntime {
     }
     if (this.#runners.get(key) === runner) this.#runners.delete(key)
     this.#notify()
+  }
+
+  /**
+   * Stops the least recently used runner to make room for another module (at most MAX_RUNNERS).
+   * Its waiters are answered at once and nothing is recorded against the module: before this,
+   * the terminated worker answered nothing, so its requests ran into the 3s timeout and the module
+   * was marked "took longer than 3s … look for a loop that never ends" for good — nine `.brf`
+   * clips on one frame left one of them permanently broken (test.md §2.8). The next frame that
+   * needs it starts a fresh worker.
+   */
+  #evict(key: string, runner: Runner): void {
+    runner.evicted = true
+    runner.worker.terminate()
+    const waiting = [...runner.pending.entries()]
+    runner.pending.clear()
+    for (const [id, entry] of waiting) {
+      clearTimeout(entry.timer)
+      entry.resolve({ id, ok: false, error: 'was stopped to make room for another .brf module; ask again' })
+    }
+    this.#runners.delete(key)
   }
 
   #request(

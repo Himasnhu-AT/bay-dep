@@ -9,7 +9,11 @@ export const tool: ToolSpec = {
     'including any that could not be read — check `error` on each before placing it. ' +
     'Importing a path already in the project reuses the existing asset rather than ' +
     'duplicating it. A .cube file imports as a colour LUT (kind "lut"): it is not placed, it is ' +
-    'applied to a clip with edit_item { grade: { lut: { assetId, intensity } } }.',
+    'applied to a clip with edit_item { grade: { lut: { assetId, intensity } } }. A .ttf, .otf, .woff ' +
+    'or .woff2 imports as a font (kind "font"), variable fonts included: it is not placed either — ' +
+    'the result gives its `family`, which text items (text.fontFamily), .brf text (font, with ' +
+    '`variations` for any axis it lists) and compositions (font-family) then name. The font ' +
+    'travels with the project; never install one system-wide for bay.',
   category: 'write',
   readOnly: false,
   dryRunRefusal:

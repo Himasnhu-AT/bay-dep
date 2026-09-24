@@ -13,9 +13,11 @@
  * from the same source the family already has, and the text is drawn in `"<synthetic>", <font>`
  * (the author's list stays behind it for glyphs the face lacks). Where the source comes from:
  *
- * 1. an `@font-face` rule in the editor's own stylesheets (the fonts bay bundles) — every rule of
+ * 1. a font the project imported (`importedFonts.ts`) — its own file over `bay://`, so the face
+ *    and every axis it declares travel with the project;
+ * 2. an `@font-face` rule in the editor's own stylesheets (the fonts bay bundles) — every rule of
  *    the family is cloned, so a font split by `unicode-range` keeps all its ranges;
- * 2. otherwise an installed font, through `local()` — which Chromium matches by full or
+ * 3. otherwise an installed font, through `local()` — which Chromium matches by full or
  *    PostScript name only (measured: `local("Skia")` failed, `local("Skia-Regular")` loaded).
  *
  * Nothing here reaches the network: a rule's URLs are the editor's own files, and `local()` is
@@ -25,6 +27,7 @@
  */
 
 import { DEFAULT_FONT, type BrfDocument, type Layer } from '@shared/brf'
+import { importedFonts } from './importedFonts'
 
 export type Variations = Record<string, number>
 
@@ -43,6 +46,8 @@ export interface FontEnv {
   rulesFor(family: string): FaceSource[]
   /** Every family the page's `@font-face` rules declare — named in the refusal. */
   families(): string[]
+  /** Every family the project imported — named in the refusal too, first. */
+  importedFamilies?(): string[]
   /** Registers `source` as `family` with `variationSettings`; resolves once usable. */
   load(family: string, source: FaceSource, variationSettings: string): Promise<void>
   /** Unregisters every face of `family`. */
@@ -143,23 +148,42 @@ export class VariationFaces {
         this.#entries.set(key, { family: synthetic, state: 'ready' })
       } else {
         this.#env.remove(synthetic)
-        const bundled = this.#env.families()
+        const imported = this.#env.importedFamilies?.() ?? []
+        const bundled = this.#env.families().filter((f) => !imported.includes(f))
+        const quoted = (list: string[]): string => list.map((f) => `"${f}"`).join(', ')
         this.#entries.set(key, {
           family: synthetic,
           state: 'failed',
           error:
             rules.length > 0
               ? `font "${family}" could not be loaded with variations ${settings}`
-              : `font "${family}" cannot take variations: it is not one of bay's fonts` +
-                (bundled.length ? ` (${bundled.map((f) => `"${f}"`).join(', ')})` : '') +
+              : `font "${family}" cannot take variations: it is not a font this project imported` +
+                (imported.length ? ` (${quoted(imported)})` : ' (none — import_media a .ttf/.otf/.woff2 to add one)') +
+                `, not one of bay's fonts` +
+                (bundled.length ? ` (${quoted(bundled)})` : '') +
                 ` and no installed font answers to ${localNames(family).map((n) => `"${n}"`).join(', ')}. ` +
-                `Name an installed font by its full or PostScript name (e.g. "Skia-Regular"), or drop variations`
+                `Import the font file with import_media and name its family, name an installed font by its full or PostScript name (e.g. "Skia-Regular"), or drop variations`
         })
       }
       for (const listener of this.#listeners) listener()
     })
     this.#inflight.add(loading)
     return entry
+  }
+
+  /**
+   * Forgets every face of `families` and every face that failed, so the next ask starts again.
+   * Called when the project's imported fonts change: a family refused before its file was
+   * imported must not stay refused after, and a clone of a removed font must not outlive it.
+   */
+  forget(families: readonly string[]): void {
+    const names = new Set(families.map((f) => f.toLowerCase()))
+    for (const [key, entry] of [...this.#entries]) {
+      const family = key.slice(0, key.indexOf('|'))
+      if (entry.state !== 'failed' && !names.has(family)) continue
+      this.#entries.delete(key)
+      this.#env.remove(entry.family)
+    }
   }
 
   #evict(): void {
@@ -234,8 +258,14 @@ function documentEnv(): FontEnv {
     return out
   }
   return {
-    rulesFor: (family) => rules().filter((r) => r.family.toLowerCase() === family.toLowerCase()).map((r) => r.source),
-    families: () => [...new Set(rules().map((r) => r.family))],
+    // An imported font first: it is the face the project asked for, from its own file.
+    rulesFor: (family) => {
+      const imported = importedFonts.sourcesFor(family)
+      if (imported.length > 0) return imported
+      return rules().filter((r) => r.family.toLowerCase() === family.toLowerCase()).map((r) => r.source)
+    },
+    families: () => [...new Set([...importedFonts.families(), ...rules().map((r) => r.family)])],
+    importedFamilies: () => importedFonts.families(),
     async load(family, source, settings) {
       const descriptors: Record<string, string> = { variationSettings: settings }
       if (source.weight) descriptors.weight = source.weight
@@ -262,3 +292,5 @@ const noEnv: FontEnv = {
 
 /** The one set of faces preview, `preview_frame` and export all draw through. */
 export const variationFaces = new VariationFaces(typeof document !== 'undefined' && typeof FontFace !== 'undefined' ? documentEnv() : noEnv)
+
+importedFonts.onChange((families) => variationFaces.forget(families))

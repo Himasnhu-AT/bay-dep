@@ -32,6 +32,8 @@ import {
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
 import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
+import { linkedPartners } from '@shared/links'
+import { describeFont, importedFonts } from '@shared/fonts'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -43,7 +45,11 @@ function describeItem(item: Item): Record<string, unknown> {
     // The one thing that stays on the item rather than moving to the lookup. A missing
     // asset is rare, so it costs nothing here, and it is a correctness signal an agent
     // scanning items must not have to resolve an id to notice.
-    ...(findAsset(project(), item.assetId) ? {} : { assetMissing: true })
+    ...(findAsset(project(), item.assetId) ? {} : { assetMissing: true }),
+    // A linked pair is one clip to move, trim and delete, so a scan of the timeline must show it
+    // without an inspect per item.
+    ...(item.linkId ? { linkedItemIds: linkedPartners(timeline(), item.id).map((p) => p.id) } : {}),
+    ...(item.audioDetached ? { audioDetached: true } : {})
   }
 }
 
@@ -105,6 +111,13 @@ export function readProject(): Record<string, unknown> {
     // Always present, empty or not: an agent that has to test for the key before reading it
     // will eventually forget, and "no markers" is an answer worth stating.
     markers: [...(tl.markers ?? [])].sort((a, b) => a.frame - b.frame).map(describeMarker),
+    // The typefaces the project brings, by family — what text, .brf and compositions may name.
+    // Always present, like markers: "no imported fonts" is an answer worth stating.
+    fonts: importedFonts(state.project.assets).map((asset) => ({
+      assetId: asset.id,
+      family: asset.font.family,
+      ...(asset.font.axes.length > 0 ? { axes: asset.font.axes.map((a) => `${a.tag} ${a.min}–${a.max}`) } : {})
+    })),
     assetCount: state.project.assets.length
   }
 }
@@ -132,7 +145,13 @@ export function browseAssets(): Record<string, unknown> {
       height: asset.height,
       hasVideo: asset.hasVideo,
       hasAudio: asset.hasAudio,
-      ...(asset.error ? { error: asset.error, placeable: false } : { placeable: true })
+      ...(asset.error
+        ? { error: asset.error, placeable: false }
+        : asset.kind === 'font'
+          ? { placeable: false, font: describeFont(asset) }
+          : asset.kind === 'lut'
+            ? { placeable: false }
+            : { placeable: true })
     }))
   }
 }
@@ -142,6 +161,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
   const asset = findAsset(project(), item.assetId)
   const tl = timeline()
   const soundFinish = audioFinishReport(item, project(), tl)
+  const partners = linkedPartners(tl, item.id)
+  const pictureOf = partners.find((p) => p.audioDetached)
   return {
     timeUnit: 'frames',
     id: item.id,
@@ -184,7 +205,20 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // nothing" is a statement about a caller having set something that does nothing.
     ...(item.crop && isCropped(item.crop) ? { crop: item.crop } : {}),
     ...(item.variables ? { variables: item.variables } : {}),
-    audio: {
+    // What this clip moves, trims, splits and deletes with (see detach_audio).
+    ...(partners.length > 0 ? { link: { linkedItemIds: partners.map((p) => p.id) } } : {}),
+    audio: item.audioDetached
+      ? {
+          detached: true,
+          soundItemIds: partners.filter((p) => !p.audioDetached && p.assetId === item.assetId).map((p) => p.id),
+          note:
+            'This clip plays no sound of its own: it was detached. Its fades fade only the picture; ' +
+            'level, fades and duck of the sound are on ' +
+            (partners.length > 0 ? partners.map((p) => p.id).join(', ') : 'an audio item that is no longer linked') +
+            '. detach_audio { action: "reattach" } gives it back.'
+        }
+      : {
+      ...(pictureOf ? { detachedFrom: pictureOf.id } : {}),
       volume: item.volume,
       fadeInFrames: item.fadeInFrames,
       fadeOutFrames: item.fadeOutFrames,
@@ -192,7 +226,7 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       // report edit_item returns, so a read and a write cannot describe one clip differently.
       ...(soundFinish.report ?? {}),
       ...(soundFinish.warnings.length > 0 ? { notes: soundFinish.warnings } : {})
-    },
+        },
     asset: asset
       ? {
           id: asset.id,

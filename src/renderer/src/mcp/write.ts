@@ -28,6 +28,8 @@ import {
   type TrackKind
 } from '@shared/project'
 import { findTool, resolveId } from '@shared/mcp'
+import { describeFont } from '@shared/fonts'
+import { linkedPartners, withLinked } from '@shared/links'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
@@ -83,7 +85,9 @@ export async function importMedia(args: Record<string, unknown>): Promise<Record
       reused: entry.reused,
       ...(entry.asset.error
         ? { error: entry.asset.error, placeable: false }
-        : entry.asset.kind === 'lut'
+        : entry.asset.kind === 'font'
+          ? { placeable: false, font: describeFont(entry.asset) }
+          : entry.asset.kind === 'lut'
           ? {
               placeable: false,
               lutSize: entry.asset.lut?.size,
@@ -103,6 +107,14 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
     fail(
       `Asset ${asset.name} could not be read (${asset.error}), so it cannot be placed. ` +
         `Re-importing will not help — the file itself is the problem.`
+    )
+  }
+
+  if (asset.kind === 'font') {
+    const family = asset.font?.family ?? asset.name
+    fail(
+      `${asset.name} is a font, which is not placed: name its family "${family}" instead — ` +
+        `text.fontFamily on a text item, font in .brf text, or font-family in a composition.`
     )
   }
 
@@ -178,6 +190,29 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     from !== item.from || durationInFrames !== item.durationInFrames || destination.id !== track.id
   if (timingChanged) {
     assertNoCollision(destination, { id: item.id, from, durationInFrames })
+  }
+  // Linked clips (a picture and its detached sound) take the same change of position, length,
+  // in-point and speed, so they are checked here too — a refusal after the fact would leave the
+  // agent believing both moved. `linked: false` changes this clip alone.
+  const linked = args.linked !== false
+  const partners = linked ? linkedPartners(timeline(), item.id) : []
+  if (partners.length > 0 && (from !== item.from || durationInFrames !== item.durationInFrames)) {
+    for (const partner of partners) {
+      const partnerTrack = resolveTrack(partner.trackId)
+      assertUnlocked(partnerTrack, `moving ${partner.id}, which is linked to ${item.id} (pass linked: false to edit ${item.id} alone)`)
+      const partnerFrom = partner.from + (from - item.from)
+      if (partnerFrom < 0) {
+        fail(
+          `${partner.id} is linked to ${item.id} and would start at frame ${partnerFrom}. Move ${item.id} ` +
+            `to frame ${item.from - partner.from} or later, or pass linked: false to move it alone.`
+        )
+      }
+      assertNoCollision(partnerTrack, {
+        id: partner.id,
+        from: partnerFrom,
+        durationInFrames: Math.max(1, partner.durationInFrames + (durationInFrames - item.durationInFrames))
+      })
+    }
   }
 
   const layout: Layout = { ...item.layout }
@@ -379,8 +414,10 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     // The track change has to go through `moveItem` — `patchItem` deliberately omits
     // `trackId` — and everything else rides in one `patchItem`, `layout` included, because
     // layout is a field of Item. Inside one transaction that is still a single undo step.
-    if (destination.id !== track.id) store().moveItem(item.id, from, destination.id)
-    store().patchItem(item.id, patch)
+    // The move is not linked: `patchItem` below carries the change of `from` to linked clips, and
+    // a linked move here as well would shift them twice.
+    if (destination.id !== track.id) store().moveItem(item.id, from, destination.id, { linked: false })
+    store().patchItem(item.id, patch, { linked })
   })
 
   const after = resolveItem(item.id)
@@ -417,7 +454,22 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.grade ? { grade: after.item.grade } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
+    ...linkReport(after.item.id),
     ...(warnings.length > 0 ? { warnings } : {})
+  }
+}
+
+/**
+ * The link fields a result reports for `itemId`: what it is linked to, and whether its sound is
+ * detached. Empty for a clip that is neither, so ordinary results do not grow.
+ */
+export function linkReport(itemId: string): Record<string, unknown> {
+  const found = allItems(timeline()).find((i) => i.id === itemId)
+  if (!found) return {}
+  const partners = linkedPartners(timeline(), itemId).map((p) => p.id)
+  return {
+    ...(partners.length > 0 ? { linkedItemIds: partners } : {}),
+    ...(found.audioDetached ? { audioDetached: true } : {})
   }
 }
 
@@ -523,7 +575,11 @@ export function splitAt(args: Record<string, unknown>): Record<string, unknown> 
     }
   }
 
-  const locked = targets.filter((i) => tl.tracks.find((t) => t.id === i.trackId)?.locked)
+  // A cut clip's linked clips are cut with it (the store expands the selection), so they are
+  // checked here too.
+  const cutIds = withLinked(tl, targets.map((i) => i.id))
+  const cut = allItems(tl).filter((i) => cutIds.includes(i.id) && frame > i.from && frame < itemEnd(i))
+  const locked = cut.filter((i) => tl.tracks.find((t) => t.id === i.trackId)?.locked)
   if (locked.length > 0) {
     fail(
       `${locked.map((i) => i.id).join(', ')} ${locked.length === 1 ? 'is' : 'are'} on a locked ` +
@@ -539,23 +595,30 @@ export function splitAt(args: Record<string, unknown>): Record<string, unknown> 
   const created = allItems(timeline()).length - before
   if (created === 0) fail(`Frame ${frame} produced no cut. Nothing on the timeline changed.`)
 
+  const alsoCut = cut.filter((i) => !targets.some((t) => t.id === i.id)).map((i) => i.id)
   return {
     frame,
-    itemsCut: targets.length,
+    itemsCut: targets.length + alsoCut.length,
     newItems: store().selection,
-    note: `${targets.length} item${targets.length === 1 ? '' : 's'} cut at frame ${frame}.`
+    ...(alsoCut.length > 0 ? { linkedAlsoCut: alsoCut } : {}),
+    note:
+      `${targets.length + alsoCut.length} item${targets.length + alsoCut.length === 1 ? '' : 's'} cut at frame ${frame}` +
+      (alsoCut.length > 0 ? `, including ${alsoCut.join(', ')}, linked to what you named.` : '.')
   }
 }
 
 export function deleteItems(args: Record<string, unknown>): Record<string, unknown> {
   const tl = timeline()
   const known = allItems(tl).map((i) => i.id)
-  const ids = (args.itemIds as string[]).map((given) => {
-    const resolved = resolveId(given, known)
+  const given = (args.itemIds as string[]).map((each) => {
+    const resolved = resolveId(each, known)
     if (!resolved.ok) fail(resolved.error)
     return resolved.id
   })
-  if (ids.length === 0) fail('No itemIds were given, so there is nothing to delete.')
+  if (given.length === 0) fail('No itemIds were given, so there is nothing to delete.')
+  // A linked clip goes with what it is linked to — the store deletes both — so the ripple below
+  // must be computed over both, and the result names what was deleted beyond what was asked.
+  const ids = withLinked(tl, given)
 
   const doomed = allItems(tl).filter((i) => ids.includes(i.id))
   const lockedTracks = tl.tracks.filter(
@@ -591,11 +654,15 @@ export function deleteItems(args: Record<string, unknown>): Record<string, unkno
   store().transact(() => {
     store().select(ids)
     store().deleteSelected()
-    for (const shift of shifts) store().moveItem(shift.id, shift.to)
+    // Unlinked: every survivor that shifts is in the list, so letting a move carry its linked
+    // clip as well would shift that clip twice.
+    for (const shift of shifts) store().moveItem(shift.id, shift.to, undefined, { linked: false })
   })
 
+  const alsoDeleted = ids.filter((id) => !given.includes(id))
   return {
     deleted: ids,
+    ...(alsoDeleted.length > 0 ? { linkedAlsoDeleted: alsoDeleted } : {}),
     rippled: ripple ? shifts.length : 0,
     durationInFrames: timelineDuration(timeline()),
     ...(ripple && shifts.length > 0

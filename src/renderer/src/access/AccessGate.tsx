@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ExternalLink, LoaderCircle, LogIn, UserPlus } from 'lucide-react'
+import { Check, Copy, ExternalLink, LoaderCircle, LogIn, UserPlus } from 'lucide-react'
 import { describeAccess, isEntitled, type AccessStatus } from '@shared/access'
 import { Button } from '@/components'
 import { bay } from '@/lib/bridge'
@@ -154,12 +154,15 @@ function Actions(props: {
   }
 
   if (status.state === 'no-access') {
+    // Two ways in: a referral from someone who has access — who must type this exact address, so
+    // the screen hands it over with a Copy button — or the website's waitlist.
     return (
       <div className="flex flex-col gap-3">
+        {status.reason === 'no-grant' && <CopyEmail email={status.email} />}
         <div className="flex flex-wrap items-center gap-2">
           {status.reason === 'no-grant' && (
             <Button variant="primary" size="md" icon={<UserPlus className="size-3.5" />} onClick={() => void api?.access.requestAccess()}>
-              Request access
+              Join the waitlist
             </Button>
           )}
           <Button size="md" disabled={busy} icon={<LogIn className="size-3.5" />} onClick={() => void signIn()}>
@@ -167,7 +170,7 @@ function Actions(props: {
           </Button>
         </div>
         <Button variant="ghost" className="-ml-2.5 self-start" disabled={busy} onClick={() => void run(() => api?.access.recheck() ?? Promise.resolve())}>
-          I was just given access — check again
+          Check again
         </Button>
       </div>
     )
@@ -177,6 +180,35 @@ function Actions(props: {
     <div className="flex flex-wrap items-center gap-2">
       <Button variant="primary" size="md" disabled={busy} icon={<LogIn className="size-3.5" />} onClick={() => void signIn()}>
         {status.state === 'error' ? 'Try again' : 'Sign in with your browser'}
+      </Button>
+    </div>
+  )
+}
+
+/** The address a referrer must enter, with a Copy button. The copy is confirmed, not assumed. */
+function CopyEmail({ email }: { email: string }): ReactNode {
+  const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no')
+  useEffect(() => {
+    if (copied === 'no') return
+    const t = setTimeout(() => setCopied('no'), 2000)
+    return () => clearTimeout(t)
+  }, [copied])
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-line bg-surface-0 py-1 pr-1 pl-2.5" data-access-email>
+      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-0 select-text" title={email}>
+        {email}
+      </span>
+      <Button
+        size="sm"
+        icon={copied === 'yes' ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        onClick={() => {
+          navigator.clipboard.writeText(email).then(
+            () => setCopied('yes'),
+            () => setCopied('failed')
+          )
+        }}
+      >
+        {copied === 'yes' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy'}
       </Button>
     </div>
   )

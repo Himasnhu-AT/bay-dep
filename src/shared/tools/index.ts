@@ -11,6 +11,7 @@ import { tool as addTransition } from './add-transition'
 import { tool as applyScript } from './apply-script'
 import { tool as browseAssets } from './browse-assets'
 import { tool as deleteItems } from './delete-items'
+import { tool as detachAudio } from './detach-audio'
 import { tool as detectBeats } from './detect-beats'
 import { tool as editAsset } from './edit-asset'
 import { tool as editItem } from './edit-item'
@@ -60,6 +61,7 @@ export const TOOLS: ToolSpec[] = [
   placeAsset,
   editAsset,
   editItem,
+  detachAudio,
   trimItem,
   applyScript,
   splitAt,

@@ -84,6 +84,10 @@ function candidates(
       // file gets audio the user never heard.
       if (asset.error) continue
       if (item.volume <= 0) continue
+      // A picture whose sound was detached plays none: its linked audio item is the one input
+      // that sound is decoded from. Skipped here, not merely enveloped to zero, so the file is not
+      // opened a second time to contribute silence.
+      if (item.audioDetached) continue
       const span = audibleSpan(project, timeline, item)
       const startFrame = Math.max(span.firstFrame, fromFrame)
       const endFrame = Math.min(span.endFrame, toFrameExclusive)

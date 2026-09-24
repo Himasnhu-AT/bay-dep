@@ -208,10 +208,19 @@ export default function Home() {
               </ActionLink>
             </Reveal>
           ) : (
-            <Reveal delay={0.2}>
-              <ActionLink href="/waitlist" className="mt-16">
-                Request access
-              </ActionLink>
+            <Reveal delay={0.2} className="mt-16 max-w-[60ch]">
+              <div id="download">
+                <Eyebrow>Releasing soon</Eyebrow>
+                <p className="mt-6 text-base text-ink-soft">
+                  {product.name} is releasing soon, and there is no download
+                  yet. Join the waitlist and we&rsquo;ll let you in. If someone
+                  you know already uses it, they can refer you from inside the
+                  app.
+                </p>
+                <ActionLink href="/waitlist" className="mt-8">
+                  Join the waitlist
+                </ActionLink>
+              </div>
             </Reveal>
           )}
 

@@ -186,6 +186,39 @@ seconds, the probes are measuring the machine. `PROBE_TIMEOUT_MS` raises every p
 (`cdp.mjs`), which separates "slow here" from "hung" for the export check; it cannot make a
 cross-fade audible while the decoder is elsewhere.
 
+## Native dialogs: Accessibility sees one Space, and a keystroke goes to whoever is in front
+
+`menu.mjs` reported Import Media… and Save As… as dead on runs where both worked, and each run
+blamed a different item. There were three faults, all in the probe:
+
+- **Accessibility lists only the windows on the active Space.** With another app full screen,
+  `count of windows` for bay was 0 until `set frontmost` had finished switching Spaces. That took
+  longer than the probe waited, so a sheet that was there read as 0. The window server's list
+  (`CGWindowListCopyWindowInfo` via JXA) covers every Space. Identify a dialog there by its title
+  and by a window number that did not exist before the click: "on screen" still means the active
+  Space.
+- **`key code 53` is a global keystroke.** It goes to whichever app is frontmost when it lands.
+  Here it landed in the user's chat app, where they were typing. The sheet stayed open, the next
+  dialog queued behind it, and each item was scored by the one before it. Send keys only after
+  checking `frontmost` in the same script, and prove the dialog is gone before the next click.
+- **Save on a project that has a file writes without a dialog.** "No sheet" was correct, and the
+  old probe really did write its fixture. Clear `filePath` in the store for the Save check.
+
+The probe also records what the renderer receives (`window.bay.app.onMenuCommand`). That needs no
+focus, so it separates "the command never arrived" from "the dialog was not seen".
+
+## A failed media URL stays failed: retry under a new URL
+
+Chromium remembers a failed media load per URL and CORS mode. In the app, a `bay://` path that
+was refused before main allowlisted it went on failing with error 4 after the allowlist. That
+happened on the same element and on a brand-new element, while `fetch` of the same URL already
+answered 200. So a retry of the identical URL can never succeed. The retry from 8afacd6 did
+exactly that and ended in silence, and the probe runs that went silent were this. Retries now use
+`?retry=N` (`mediaRetry.ts`). `audio-soak.mjs` reproduces the real race: it allowlists only after
+the refusal appears on the console. Without the fix, all 4 of 4 forced iterations were silent;
+with it, all 36 iterations passed with no silence. `SABOTAGE=nocors` (all 8 iterations silent) is
+the control that shows the probe can hear silence.
+
 ## The standing rule
 
 A probe is subject to the same discipline as a test: **it must be shown capable of detecting the
