@@ -6,8 +6,11 @@
  */
 
 import { BrowserWindow, dialog, shell } from 'electron'
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { readdir, readFile, rename as renameFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { copyName, displayFolder, fileStem, projectStems, refuseUnlisted, renamedPath } from './manage'
 import { posterFor, uniqueProjectName } from './library'
 import { thumbnailFile } from '../media/thumbnails'
 import type { RecentProject } from '@shared/ipc'
@@ -162,7 +165,7 @@ export async function recent(): Promise<RecentProject[]> {
       db.forgetRecent(row.filePath)
       continue
     }
-    out.push(row)
+    out.push({ ...row, folder: displayFolder(row.filePath, homedir()) })
   }
   return out
 }
@@ -210,6 +213,64 @@ export function forget(filePath: string): void {
 
 export function reveal(filePath: string): void {
   shell.showItemInFolder(filePath)
+}
+
+/**
+ * The gate for the three calls below: the renderer names the file, so main acts only on a `.bay`
+ * that is already on the projects list (`manage.ts` says why). Throws the reason as is.
+ */
+function listedProject(filePath: string): void {
+  const db = database()
+  const listed = db ? db.listRecent(1000).map((row) => row.filePath) : []
+  const refusal = refuseUnlisted(filePath, listed)
+  if (refusal) throw new Error(refusal)
+}
+
+async function stemsBeside(filePath: string): Promise<string[]> {
+  return projectStems(await readdir(dirname(filePath)).catch(() => [] as string[]))
+}
+
+function listed(project: Project): RecentProject {
+  const filePath = project.filePath!
+  return {
+    id: project.id,
+    name: project.name,
+    filePath,
+    updatedAt: project.updatedAt,
+    folder: displayFolder(filePath, homedir())
+  }
+}
+
+export async function rename(filePath: string, name: string): Promise<RecentProject> {
+  listedProject(filePath)
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  if (trimmed === '') throw new Error('A project needs a name.')
+  const project = await readProjectFile(filePath)
+  const target = renamedPath(filePath, trimmed, await stemsBeside(filePath))
+  // The file first, then the document at its new path, so the name and `filePath` inside it
+  // are the ones it now has. A move that fails leaves everything as it was.
+  if (target !== filePath) await renameFile(filePath, target)
+  const written = await writeProjectFile({ ...project, name: trimmed }, target)
+  if (target !== filePath) database()?.forgetRecent(filePath)
+  rememberRecent(written)
+  return listed(written)
+}
+
+export async function duplicate(filePath: string): Promise<RecentProject> {
+  listedProject(filePath)
+  const project = await readProjectFile(filePath)
+  const name = copyName(project.name || basename(filePath, `.${EXTENSION}`), await stemsBeside(filePath))
+  const target = join(dirname(filePath), `${fileStem(name)}.${EXTENSION}`)
+  // A new id: the autosave sidecar and the agent's change cards are keyed by it, and two
+  // projects sharing one would restore each other's work.
+  const written = await persist({ ...project, id: `prj_${randomUUID()}`, name }, target)
+  return listed(written)
+}
+
+export async function trash(filePath: string): Promise<void> {
+  listedProject(filePath)
+  await shell.trashItem(filePath)
+  database()?.forgetRecent(filePath)
 }
 
 export async function initial(): Promise<Project> {

@@ -11,6 +11,8 @@ export interface CommandHost {
   save(): void
   saveAs(): void
   open(): void
+  /** Create a project in the projects folder and open it — from the editor or the projects screen. */
+  newProject(): void
   importMedia(): void
   openExport(): void
   openShortcuts(): void

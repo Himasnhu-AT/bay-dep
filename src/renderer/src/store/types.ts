@@ -50,7 +50,7 @@ export type ClipDialog =
   | { kind: 'pasteAttributes' }
   | { kind: 'speed'; itemId: string; x: number; y: number }
 
-export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export'
+export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export' | 'transcript'
 
 export interface EditorState {
   project: Project
@@ -245,6 +245,12 @@ export interface EditorActions {
     patch: { name?: string; text?: string; brf?: BrfDocument; brfCode?: { source: string; meta: BrfCodeMeta } }
   ): void
   patchAsset(assetId: string, patch: Partial<Asset>): void
+  /**
+   * Point missing assets at the files where they are now (`@shared/relink`): each is replaced by
+   * its freshly probed asset, keeping its name and date, and every item that placed it follows.
+   * One undoable edit however many were relinked.
+   */
+  relinkAssets(relinks: { assetId: string; replacement: Asset }[]): void
 
   // items --------------------------------------------------------------------
   /** Places an asset at `atFrame`, choosing a track that has room. Returns the new item id. */

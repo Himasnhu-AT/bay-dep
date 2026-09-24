@@ -87,8 +87,8 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'name', type: 'string', label: 'Name', default: 'Himanshu' },
-      { id: 'role', type: 'string', label: 'Role', default: 'building bay' },
+      { id: 'name', type: 'string', label: 'Name', default: 'Your Name' },
+      { id: 'role', type: 'string', label: 'Title or role', default: 'Title or role' },
       { id: 'accent', type: 'color', label: 'Accent', default: '#11D1A0' },
       { id: 'bottom', type: 'number', label: 'Distance from bottom', default: 24, min: 0, max: 90, unit: '%' }
     ]
@@ -105,7 +105,7 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     height: 1920,
     variables: [
       { id: 'kicker', type: 'string', label: 'Kicker', default: 'A SHORT FILM ABOUT' },
-      { id: 'title', type: 'string', label: 'Title', default: 'Overthinking' },
+      { id: 'title', type: 'string', label: 'Title', default: 'Your Title' },
       { id: 'accent', type: 'color', label: 'Kicker colour', default: '#FF4D3D' },
       { id: 'scrim', type: 'number', label: 'Scrim strength', default: 0.72, min: 0, max: 1, step: 0.05 }
     ]
@@ -170,7 +170,7 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     height: 1920,
     variables: [
       { id: 'line', type: 'string', label: 'Call to action', default: 'follow for more' },
-      { id: 'handle', type: 'string', label: 'Handle', default: '@codesapiens' },
+      { id: 'handle', type: 'string', label: 'Handle', default: '@yourhandle' },
       { id: 'accent', type: 'color', label: 'Accent', default: '#11D1A0' }
     ]
   }

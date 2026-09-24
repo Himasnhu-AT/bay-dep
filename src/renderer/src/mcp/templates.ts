@@ -65,8 +65,12 @@ export async function addTemplate(args: Record<string, unknown>): Promise<Record
   // an orphan asset, or a clip with its values stripped, would be two actions pretending to be
   // one.
   let placed: string | null = null
+  // Named for what it is ("Lower third"), not for the file main wrote. Only a new asset: main
+  // dedupes by path, so a second placement of the same template returns the same asset, which
+  // the user may have renamed since.
+  const fresh = !store().project.assets.some((a) => a.id === asset.id)
   store().transact(() => {
-    store().addAssets([asset])
+    store().addAssets([fresh ? { ...asset, name: spec.name } : asset])
     placed = store().placeAsset(asset.id, atFrame)
     if (!placed) return
     for (const [id, value] of Object.entries(values)) {

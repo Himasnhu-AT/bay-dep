@@ -399,6 +399,11 @@ const STORE_CASES: Record<string, StoreCase> = {
   duplicateSelected: { delta: 1, run: (f) => { state().select([f.b, f.c, f.d]); state().duplicateSelected() } },
   rippleDelete: { delta: 1, run: () => { state().rippleDelete(10, 20) } },
   removeAsset: { delta: 1, run: () => state().removeAsset(ASSET.id) },
+  // Relinking one asset repoints every clip that places it: many items, one step.
+  relinkAssets: {
+    delta: 1,
+    run: () => state().relinkAssets([{ assetId: ASSET.id, replacement: importedAsset('/moved/clip.mp4').asset }])
+  },
   addAssets: {
     delta: 1,
     run: () => state().addAssets([importedAsset('/x/1.mp4').asset, importedAsset('/x/2.mp4').asset])

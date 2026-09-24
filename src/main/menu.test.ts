@@ -90,6 +90,7 @@ test('every File command reaches the renderer as its registry id', () => {
 
   const byLabel = (label: string) => items.find((item) => item.label === label)
   for (const [label, expected] of [
+    ['New Project', 'file.newProject'],
     ['Open…', 'file.open'],
     ['Save', 'file.save'],
     ['Save As…', 'file.saveAs'],
@@ -110,6 +111,7 @@ test('the File accelerators are the ones a Mac user will try', () => {
   const items = itemsOf(template, 'File')
   const accel = (label: string) => items.find((item) => item.label === label)?.accelerator
 
+  assert.equal(accel('New Project'), 'CmdOrCtrl+N')
   assert.equal(accel('Open…'), 'CmdOrCtrl+O')
   assert.equal(accel('Save'), 'CmdOrCtrl+S')
   assert.equal(accel('Save As…'), 'CmdOrCtrl+Shift+S')

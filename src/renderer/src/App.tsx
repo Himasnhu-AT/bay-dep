@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { completeBrfImports } from '@/lib/brfImport'
+import { placeCaptions } from '@/lib/mediaActions'
 import { cn } from '@/lib/cn'
 import { bay, call, importMessage } from '@/lib/bay'
 import { useCommands } from '@/lib/commands'
@@ -213,6 +214,18 @@ export function App(): ReactNode {
   }, [switchProject])
 
   /**
+   * A new project is opened the way a chosen one is: straight in from the projects screen, and
+   * through `switchProject` from the editor, which ends the agent's session about the old one.
+   */
+  const onNewProject = useCallback((): void => {
+    void call('Create project', (client) => client.project.create()).then((project) => {
+      if (!project) return
+      if (useEditor.getState().screen === 'home') enterProject(project)
+      else switchProject(project)
+    })
+  }, [enterProject, switchProject])
+
+  /**
    * macOS handing bay a document while it runs. Every *menu item* arrives as a registry
    * command and is run by `useCommands` below; this is the one menu-channel message that is
    * not a command, because it carries a path.
@@ -270,6 +283,7 @@ export function App(): ReactNode {
     save: () => void onSave(),
     saveAs: () => void onSaveAs(),
     open: onOpen,
+    newProject: onNewProject,
     importMedia: () => void onImport(),
     openExport: () => setExportOpen(true),
     openShortcuts: () => setShortcutsOpen(true),
@@ -279,7 +293,14 @@ export function App(): ReactNode {
   // -- files dropped on the window ------------------------------------------
 
   const importPaths = useCallback(
-    async (paths: string[]): Promise<void> => {
+    async (dropped: string[]): Promise<void> => {
+      // Caption files are not media: their cues go onto the timeline through `add_captions`.
+      const isCaptions = (path: string): boolean => /\.(srt|vtt)$/i.test(path)
+      for (const path of dropped.filter(isCaptions)) {
+        const file = await call('Import captions', (api) => api.media.readCaptions(path))
+        if (file) placeCaptions(file)
+      }
+      const paths = dropped.filter((path) => !isCaptions(path))
       if (paths.length === 0) return
       // Going through `importPaths` is not optional: it is what adds these paths to the
       // `bay://` allowlist, and a path that skips it reads back as a 403 on playback.

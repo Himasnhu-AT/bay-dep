@@ -25,6 +25,7 @@ export function useCommands(host: CommandHost): void {
       save: () => latest.current.save(),
       saveAs: () => latest.current.saveAs(),
       open: () => latest.current.open(),
+      newProject: () => latest.current.newProject(),
       importMedia: () => latest.current.importMedia(),
       openExport: () => latest.current.openExport(),
       openShortcuts: () => latest.current.openShortcuts(),
