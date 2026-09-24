@@ -17,6 +17,7 @@ import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus, ReferralResult } from './access'
+import type { UpdateStatus } from './update'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -549,6 +550,26 @@ export interface BayApi {
     onChange(listener: (status: AccessStatus) => void): () => void
   }
 
+  /**
+   * In-app updates (`src/main/update/updater.ts`, `src/shared/update.ts`). Main checks and
+   * downloads. The renderer shows the status and decides when it is safe to restart. All of
+   * these work while bay is locked.
+   */
+  update: {
+    status(): Promise<UpdateStatus>
+    /** Check now. Background checks run at launch and every six hours. */
+    check(): Promise<UpdateStatus>
+    /** Download the available update. Nothing downloads without this call. */
+    download(): Promise<UpdateStatus>
+    /**
+     * Quit and relaunch into the downloaded update. Call only after the open project is saved
+     * or autosaved (`restartPlan`).
+     */
+    install(): Promise<UpdateStatus>
+    /** Every status change, pushed. Returns an unsubscribe function. */
+    onChange(listener: (status: UpdateStatus) => void): () => void
+  }
+
   window: {
     minimise(): Promise<void>
     toggleMaximise(): Promise<void>
@@ -645,6 +666,13 @@ export const IPC = {
   accessRefer: 'access:refer',
   /** main -> renderer: the new `AccessStatus`, whenever it changes. */
   accessChanged: 'access:changed',
+
+  updateStatus: 'update:status',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  /** main -> renderer: the new `UpdateStatus`, whenever it changes. */
+  updateChanged: 'update:changed',
 
   windowMinimise: 'window:minimise',
   windowToggleMaximise: 'window:toggle-maximise',

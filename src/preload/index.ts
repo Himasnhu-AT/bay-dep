@@ -28,6 +28,7 @@ import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 import type { WhisperDownload } from '@shared/whisper'
 import type { AccessStatus } from '@shared/access'
+import type { UpdateStatus } from '@shared/update'
 
 const api: BayApi = {
   app: {
@@ -211,6 +212,18 @@ const api: BayApi = {
       const handler = (_event: unknown, payload: AccessStatus): void => listener(payload)
       ipcRenderer.on(IPC.accessChanged, handler)
       return () => ipcRenderer.removeListener(IPC.accessChanged, handler)
+    }
+  },
+
+  update: {
+    status: () => ipcRenderer.invoke(IPC.updateStatus),
+    check: () => ipcRenderer.invoke(IPC.updateCheck),
+    download: () => ipcRenderer.invoke(IPC.updateDownload),
+    install: () => ipcRenderer.invoke(IPC.updateInstall),
+    onChange: (listener: (status: UpdateStatus) => void) => {
+      const handler = (_event: unknown, payload: UpdateStatus): void => listener(payload)
+      ipcRenderer.on(IPC.updateChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.updateChanged, handler)
     }
   },
 

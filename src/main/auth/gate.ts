@@ -28,7 +28,14 @@ export const OPEN_WHILE_LOCKED: ReadonlySet<string> = new Set([
   // Losing access mid-session must not cost the user their work: the renderer writes the open
   // project to its autosave sidecar at the moment it locks. The sidecar is crash recovery — it
   // never overwrites a project file and opens no dialog — so allowing it opens nothing else.
-  'projectAutosave'
+  'projectAutosave',
+  // Updates: a locked bay must still be able to update itself, because an update is how a
+  // build that cannot sign in gets fixed. These reach the update feed and nothing else, and
+  // restarting saves nothing (a locked renderer writes only the autosave sidecar, above).
+  'updateStatus',
+  'updateCheck',
+  'updateDownload',
+  'updateInstall'
 ])
 
 /** Refusal text for a call on `channel` now, or null when the call may run. */

@@ -159,6 +159,51 @@ working tree, so build first or you are testing the past.
 read it before writing one. [`CLAUDE.md`](CLAUDE.md) is the working agreement — the conventions, and
 a register of mistakes made here with what each one cost.
 
+## Releasing
+
+```bash
+pnpm release:signed      # build → sign → notarize → staple → DMG + update zip, verified
+pnpm release             # unsigned DMG, for local testing only
+```
+
+`script/release-signed` reads [`.bay-release`](.bay-release): the signing identity and the
+`notarytool` keychain profile name. It uses the same variable names as `~/bin/xcnotarize`'s
+`.xcnotarize`, and it holds no secrets. The credentials live in the login keychain. Set them up
+once with `xcrun notarytool store-credentials xcnotarize --apple-id … --team-id 38QXSRV6AP`.
+The script:
+
+- signs the app with electron-builder: hardened runtime, and only `allow-jit` as an entitlement
+  (measured; see `build/entitlements.mac.plist`). Then it checks **every** Mach-O in the
+  bundle, including whatever is in `app.asar.unpacked`, for the Developer ID, the hardened
+  runtime, a secure timestamp and the arm64 slice. A new or swapped binary needs no change.
+- notarizes the app, staples it, and zips it for the updater. Then it builds the DMG (the app
+  beside an Applications link, like xcnotarize's), signs it, notarizes it and staples it. It
+  fails if Apple's log (`release/notary/<id>.json`) lists any issue.
+- checks Gatekeeper with `spctl` on the DMG, on the app, on a quarantined copy and on the app
+  inside the update zip. Each must say `source=Notarized Developer ID`.
+- writes `release/bay-<version>-arm64.dmg`, `…-mac.zip`, their `.sha256` files and
+  `latest-mac.yml`.
+
+`--version 0.1.1` stamps another version without touching `package.json`. `--notes file.txt`
+puts release notes in `latest-mac.yml`. `--out dir` writes somewhere other than `release/`.
+Builds are arm64 only: the bundled ffmpeg and `claude` are the ones installed for this Mac.
+
+**Updates.** bay updates itself from a *generic feed*: an https folder that holds
+`latest-mac.yml` and the zip it names. No feed is configured yet, so a packaged bay checks
+nothing and Settings › About reads "Updates: releasing soon". To switch updates on, set one line
+in `src/shared/update-feed.ts`:
+
+```ts
+export const UPDATE_FEED: string | null = 'https://downloads.example.com/bay/mac/'
+```
+
+Then, for each release, upload `bay-<version>-arm64-mac.zip`, `bay-<version>-arm64.dmg` and
+`latest-mac.yml` to that folder. The feed must serve the files itself. bay contacts only the
+feed's origin and refuses redirects to another host. A shared-drive link that redirects to a
+download server will not work as a feed, though it is fine for the website's DMG link. To try
+an update without publishing anything, serve a release folder locally and start bay with
+`BAY_UPDATE_FEED=http://127.0.0.1:<port>/`. Only loopback addresses are accepted.
+
 ## History
 
 bay began as a fork of [OpenCut](https://github.com/bay-app/opencut), a browser-first editor. It

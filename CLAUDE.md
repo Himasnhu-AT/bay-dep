@@ -66,7 +66,7 @@ pnpm typecheck        # tsc over both projects; the renderer and node halves are
 pnpm test             # the whole suite, on node:test — no test framework in the tree
 pnpm bundle           # unpacked app bundle, for checking real app identity
 pnpm release          # packaged artifact via electron-builder (unsigned; see below)
-pnpm release:signed   # signed with BAY_SIGN_IDENTITY; notarised only when Apple creds are set
+pnpm release:signed   # sign + notarize + staple → DMG, update zip, latest-mac.yml (.bay-release; README "Releasing")
 ./run.sh              # build, then run exactly ONE instance with CDP on 9222 (--no-build, --stop)
 ```
 
@@ -333,6 +333,25 @@ Offline it keeps working for 14 days from the last successful check; a 404 on th
 unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
 bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
 `safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
+
+**Releases are signed by `script/release-signed`, and every Mach-O is checked by content, not by
+name** (`pnpm release:signed`, `.bay-release`). electron-builder signs. The script then walks
+the bundle, `app.asar.unpacked` included, which `codesign --deep` skips. It refuses any binary
+without the Developer ID, the hardened runtime, a secure timestamp or the arm64 slice. So the
+ffmpeg swap needs no signing change. It notarizes the app, then the DMG, and fails on any
+issue in Apple's log. The only entitlement is `allow-jit`, measured in a signed build. The four
+that were there before had comments no one had tested. `disable-library-validation` claimed
+ffmpeg needed it, but library validation governs dylibs loaded into a process, not executables
+it spawns. Builds are arm64 only, because `node_modules` holds this Mac's ffmpeg and `claude`.
+
+**An update restarts bay with no arguments.** Squirrel relaunches the bundle as Finder would:
+no `--user-data-dir`, and no environment. A test update from an isolated profile therefore
+relaunches onto the default profile, which is the real user's. Test updates only with builds
+made with `--app-name bay-reltest` (their data lives under that name). The renderer decides
+when a restart is safe (`restartPlan`/`runRestart` in `@shared/update`): it saves first, or
+writes the autosave sidecar while locked, and installs only if that succeeded. The update
+channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
+cannot sign in gets fixed.
 
 ## graft — read the graph before you grep
 
@@ -800,7 +819,7 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with two exceptions, both main's.** No telemetry, no
+- **Nothing reaches the network — with three exceptions, all main's.** No telemetry, no
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
   origin; loosening it is a product decision, not a fix. The first exception is **access**: main
   (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
@@ -814,7 +833,12 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   renderer passes `download: true` only then). `downloadVerified` checks the size and SHA-256 from
   the redirect's `x-linked-size`/`x-linked-etag` — measured to be exactly `shasum -a 256` of the
   file — and writes to `.part` until they match, so a half-download never sits at a name the model
-  search would pick. Audio never leaves the machine.
+  search would pick. Audio never leaves the machine. The third is **updates**
+  (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
+  editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
+  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
+  shipped bay contacts nothing and Settings › About says "Updates: releasing soon".
+  `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

@@ -134,3 +134,18 @@ test('losing access mid-session keeps the work: the autosave sidecar is writable
     assert.ok(refuseChannel('projectSaveAs', status), `${status.state} must refuse projectSaveAs`)
   }
 })
+
+test('a locked bay can still update itself, and the update channels open nothing else', () => {
+  // An update is how a build that cannot sign in gets fixed, so checking, downloading and
+  // restarting into one must work while locked.
+  const update = ['updateStatus', 'updateCheck', 'updateDownload', 'updateInstall']
+  for (const status of LOCKED) {
+    for (const channel of update) assert.equal(refuseChannel(channel, status), null, `${status.state} must allow ${channel}`)
+    // The pair: the channels a restart could be confused with stay refused. Saving the project
+    // file is not an update step (a locked renderer writes the autosave sidecar only).
+    for (const channel of ['projectSave', 'projectSaveAs', 'projectOpen', 'exportStart']) {
+      assert.ok(refuseChannel(channel, status), `${status.state} must still refuse ${channel}`)
+    }
+  }
+  for (const channel of update) assert.ok(channel in IPC, `${channel} is an IPC channel`)
+})

@@ -1,0 +1,20 @@
+# Release settings for script/release-signed. It is sourced as bash, the way the owner's
+# ~/bin/xcnotarize reads ./.xcnotarize, and uses the same variable names.
+# Precedence: flags > environment > this file.
+#
+# Nothing here is a secret. The identity name is printed in every binary it signs. The notary
+# credentials live in the login keychain under the profile name. Create them once with
+# `xcrun notarytool store-credentials xcnotarize --apple-id … --team-id 38QXSRV6AP`, or run
+# `xcnotarize setup`. Never put a password, API key or app-specific password in this file.
+
+# The certificate electron-builder signs with (`security find-identity -v -p codesigning`).
+SIGN_ID="Developer ID Application: Himanshu . (38QXSRV6AP)"
+
+# The notarytool keychain profile. `xcrun notarytool history --keychain-profile xcnotarize` must succeed.
+NOTARY_PROFILE="xcnotarize"
+
+# arm64 only, for now: the bundled binaries in node_modules are the host's. ffmpeg-ffprobe-static
+# downloads one platform's ffmpeg at install time, and pnpm installs only this Mac's
+# claude-agent-sdk-darwin-* package. An x64 build made here would ship arm64 ffmpeg and no
+# `claude`. The script refuses any Mach-O in app.asar.unpacked that lacks the target arch.
+ARCH="arm64"

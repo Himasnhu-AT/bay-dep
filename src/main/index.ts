@@ -25,6 +25,7 @@ import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
 import { onAccessChange, startAccess, stopAccess } from './auth/access'
+import { startUpdates, stopUpdates } from './update/updater'
 import { disposeAgent } from './agent/host'
 import { isEntitled } from '@shared/access'
 
@@ -192,6 +193,10 @@ void app.whenReady().then(() => {
     if (!isEntitled(status)) void disposeAgent()
   })
   void startAccess().then((status) => console.log(`[bay] access: ${status.state}`))
+  // Updates run whether or not bay is signed in (their channels are open while locked).
+  void startUpdates().catch((error: unknown) => {
+    console.warn(`[bay] update: could not start: ${error instanceof Error ? error.message : String(error)}`)
+  })
   installMenu()
 
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
@@ -238,6 +243,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   stopAccess()
+  stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()
   // Anything queued and never claimed — a document double-clicked at launch that the renderer
