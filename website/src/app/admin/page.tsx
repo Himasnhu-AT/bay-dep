@@ -11,17 +11,13 @@ export const metadata: Metadata = {
 /** Not linked from anywhere. The Firestore rules, not this page, decide who can use it. */
 export default function AdminPage() {
   return (
-    <main className="flex-1 pt-24 pb-28">
+    <main className="flex-1 pb-28">
+      <PageHeader
+        eyebrow="Owner"
+        title="Who gets in."
+      />
       <Wrap>
-        <PageHeader
-          eyebrow="Owner"
-          title={
-            <>
-              Who gets <em className="text-brass italic">in</em>.
-            </>
-          }
-        />
-        <div className="mt-[82px]">
+        <div className="mt-16">
           <Admin />
         </div>
       </Wrap>

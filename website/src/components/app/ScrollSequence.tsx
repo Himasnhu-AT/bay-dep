@@ -35,13 +35,13 @@ const PLAYHEAD_KEYFRAMES = playheadKeyframes();
  * it, so scrolling does not re-render the figure on every frame.
  */
 
-const FIGURE = "mx-auto w-full max-w-[1560px] px-4 sm:px-8";
+const FIGURE = "mx-auto w-full max-w-[1560px] px-5 sm:px-8";
 
 function Caption() {
   const status = (
     <a
       href="/status"
-      className="text-brass-deep underline underline-offset-2 transition-colors hover:text-ink"
+      className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:text-on-night"
     >
       What actually runs today
     </a>
@@ -50,8 +50,8 @@ function Caption() {
   // The same claims in fewer words where there is less room. A phone still gets
   // the two that matter: the window is drawn, and the edit is real.
   return (
-    <p className="mt-2.5 max-w-[84ch] text-xs leading-relaxed text-muted sm:mt-4">
-      <span className="text-brass-deep">Fig. 1</span> &middot;{" "}
+    <p className="mt-2.5 max-w-[84ch] text-xs leading-relaxed text-on-night-muted sm:mt-4">
+      <span className="font-medium text-on-night-soft">Fig. 1</span>{" "}
       <span className="sm:hidden">
         The window is drawn; the edit, its frames and its tool calls are real.{" "}
         {status}.
@@ -66,7 +66,7 @@ function Caption() {
         {REEL.fps}fps, {REEL.seconds}s. Footage from Pexels; see the{" "}
         <a
           href="#credits"
-          className="underline underline-offset-2 transition-colors hover:text-ink"
+          className="underline underline-offset-2 transition-colors hover:text-on-night"
         >
           credits
         </a>
@@ -79,13 +79,10 @@ function Caption() {
 function Note({ chapter }: { chapter: (typeof CHAPTERS)[number] }) {
   return (
     <>
-      <p className="text-eyebrow font-medium text-brass-deep uppercase">
-        {chapter.eyebrow}
-      </p>
-      <h3 className="mt-2.5 font-serif text-lead font-normal text-ink sm:text-section">
+      <h3 className="text-lead font-semibold text-on-night sm:text-section">
         {chapter.title}
       </h3>
-      <p className="mt-3 max-w-[74ch] text-base text-ink-soft">
+      <p className="mt-2 max-w-[74ch] text-base text-on-night-soft">
         <span className="sm:hidden">{chapter.short}</span>
         <span className="hidden sm:inline">{chapter.body}</span>
       </p>
@@ -211,7 +208,7 @@ export function ScrollSequence() {
           {/* The note holds a fixed height so the figure underneath never moves
               as the beats change. A figure that jogged on every beat would read
               as a bug. */}
-          <div className="relative mb-3 min-h-[118px] sm:mb-4 sm:min-h-[128px]">
+          <div className="relative mb-3 min-h-[104px] sm:mb-4 sm:min-h-[112px]">
             {CHAPTERS.map((c, i) => (
               <div
                 key={c.eyebrow}
@@ -238,9 +235,9 @@ export function ScrollSequence() {
             {/* A rule that keeps drawing as the sequence advances. The site draws
                 rules; this is the same gesture, held open across six beats. It
                 is a transform, not a width, so advancing it lays nothing out. */}
-            <div aria-hidden className="mt-2.5 h-px w-full bg-line sm:mt-6">
+            <div aria-hidden className="mt-2.5 h-px w-full bg-night-line sm:mt-6">
               <div
-                className="h-px w-full origin-left bg-brass transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                className="h-px w-full origin-left bg-accent transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
                 style={{ transform: `scaleX(${(step + 1) / STEPS.length})` }}
               />
             </div>

@@ -1,19 +1,20 @@
 /**
- * Everything the access pages do with Firebase, over the loader in firebase.ts.
+ * Everything the access pages do with Firebase, over firebase.ts.
  * The collection shapes are the access contract's; the Firestore rules check
  * every write, so a mismatch here is refused rather than stored.
  *
- *   waitlist/{email}  someone asking for access
+ *   waitlist/{email}  someone asking for access; written signed out, read by
+ *                     the admin alone
  *   access/{email}    a grant, which is what the desktop app checks
  *
- * Doc ids are the email, lowercased and trimmed.
+ * Doc ids are the email, lowercased and trimmed. Signing in is Google only.
  */
 
 import type { User } from "firebase/auth";
 import {
   ADMIN_EMAIL,
-  EMAIL_FOR_LINK,
   type Firebase,
+  joinWaitlistRequest,
   loadFirebase,
   setSessionMark,
 } from "@/lib/firebase";
@@ -46,19 +47,15 @@ export function explain(err: unknown): string {
     case "auth/cancelled-popup-request":
       return "The Google window closed before sign-in finished. Try again when you are ready.";
     case "auth/popup-blocked":
-      return "Your browser blocked the Google window. Allow pop-ups for this site, or use an email link instead.";
+      return "Your browser blocked the Google window. Allow pop-ups for this site and try again.";
     case "auth/configuration-not-found":
     case "auth/unauthorized-domain":
     case "auth/unauthorized-continue-uri":
       return `Sign-in is not set up for this site yet, so this is our fault, not yours. Please ${write}.`;
     case "auth/operation-not-allowed":
-      return `That way of signing in is switched off. Try the other one, or ${write}.`;
-    case "auth/invalid-email":
-    case "auth/missing-email":
+      return `Signing in with Google is switched off for this site, so this is our fault, not yours. Please ${write}.`;
+    case "invalid-email":
       return "That does not look like an email address. Check it and try again.";
-    case "auth/invalid-action-code":
-    case "auth/expired-action-code":
-      return "This sign-in link has expired or has already been used. Ask for a new one below.";
     case "auth/network-request-failed":
     case "unavailable":
       return "Could not reach the sign-in service. Check your connection and try again.";
@@ -71,28 +68,14 @@ export function explain(err: unknown): string {
     case "permission-denied":
       return `The access list refused that request. If you think it should not have, ${write}.`;
   }
+  if (err instanceof TypeError) {
+    // What fetch throws when the request never got an answer.
+    return "Could not reach the access list. Check your connection and try again.";
+  }
   if (err instanceof Error && /chunk|dynamically imported module|Loading/i.test(err.message)) {
     return "The sign-in code did not load. Check your connection and reload the page.";
   }
   return `Something went wrong${code ? ` (${code})` : ""}. Try again, or ${write}${code ? " and quote that code" : ""}.`;
-}
-
-/** Sends a passwordless sign-in link. `next` is where the link lands after it completes. */
-export async function sendEmailLink(email: string, next: string) {
-  const fb = await loadFirebase();
-  const address = normalizeEmail(email);
-  const url = new URL("/waitlist/finish", window.location.origin);
-  url.searchParams.set("next", next);
-  await fb.authApi.sendSignInLinkToEmail(fb.auth, address, {
-    url: url.toString(),
-    handleCodeInApp: true,
-  });
-  try {
-    localStorage.setItem(EMAIL_FOR_LINK, address);
-  } catch {
-    // Without storage the finish page asks for the address instead.
-  }
-  return address;
 }
 
 export async function signInWithGoogle(): Promise<User> {
@@ -123,42 +106,54 @@ export async function currentUser(): Promise<{ fb: Firebase; user: User | null }
 }
 
 export type Standing =
-  /** Signed in, has not asked yet. */
-  | { kind: "none"; email: string }
-  | { kind: "pending"; email: string; since: Date | null }
   | { kind: "approved"; email: string }
-  /** Was approved once, and the grant has since been removed. */
-  | { kind: "revoked"; email: string }
-  /** Signed in with an address that is not verified, which the rules will not accept. */
+  /** No grant for this address. Whether it is on the waitlist is private to the admin. */
+  | { kind: "none"; email: string }
+  /** A Google account whose address is not verified, which the rules will not accept. */
   | { kind: "unverified"; email: string };
 
+/** Whether the signed-in account has access: its own grant is the one thing it may read. */
 export async function standingOf(user: User): Promise<Standing> {
   const fb = await loadFirebase();
   const email = normalizeEmail(user.email ?? "");
   if (!user.emailVerified) return { kind: "unverified", email };
   const { doc, getDoc } = fb.fs;
   const grant = await getDoc(doc(fb.db, "access", email));
-  if (grant.exists()) return { kind: "approved", email };
-  const entry = await getDoc(doc(fb.db, "waitlist", email));
-  if (!entry.exists()) return { kind: "none", email };
-  const data = entry.data() as { status?: string; createdAt?: { toDate(): Date } };
-  if (data.status === "approved") return { kind: "revoked", email };
-  return { kind: "pending", email, since: data.createdAt?.toDate() ?? null };
+  return grant.exists() ? { kind: "approved", email } : { kind: "none", email };
 }
 
-/** Creates waitlist/{email} with exactly the keys the rules accept. */
-export async function requestAccess(user: User, note: string) {
-  const fb = await loadFirebase();
-  const email = normalizeEmail(user.email ?? "");
-  const trimmed = note.trim().slice(0, NOTE_LIMIT);
-  const { doc, setDoc, serverTimestamp } = fb.fs;
-  await setDoc(doc(fb.db, "waitlist", email), {
-    email,
-    uid: user.uid,
-    createdAt: serverTimestamp(),
-    status: "pending",
-    ...(trimmed ? { note: trimmed } : {}),
-  });
+/**
+ * The same address test the rules apply to a waitlist entry's id, so a visitor
+ * is told about a typo here rather than getting a refusal from the server. Keep
+ * the two in step: firebase/firestore.rules, `isJoinableEmail`.
+ */
+export const isJoinableEmail = (email: string) =>
+  email.length <= 254 &&
+  /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(email);
+
+export class JoinError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
+}
+
+/**
+ * Puts an address on the waitlist, signed out, in one request. Resolves with
+ * the address as stored.
+ *
+ * A refusal (403) is treated as joined. The rules refuse a well-formed entry
+ * for one reason only, that the address is already on the list, and the caller
+ * has already checked the address against the same pattern the rules use. The
+ * entry is not readable by the visitor (the list is private), so a repeat join
+ * cannot be told from a first one, and saying "you're on the list" is true in
+ * both cases.
+ */
+export async function joinWaitlist(raw: string, note = ""): Promise<string> {
+  const email = normalizeEmail(raw);
+  if (!isJoinableEmail(email)) throw new JoinError("invalid-email");
+  const res = await joinWaitlistRequest(email, note.trim().slice(0, NOTE_LIMIT) || undefined);
+  if (res.ok || res.status === 403) return email;
+  throw new JoinError(res.status === 429 ? "resource-exhausted" : res.status >= 500 ? "unavailable" : `http-${res.status}`);
 }
 
 // Admin. The rules refuse all of these to anyone but the owner; the page only

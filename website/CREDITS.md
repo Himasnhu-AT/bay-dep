@@ -8,7 +8,8 @@ requests anything from these sources.
 
 Four clips from Pexels, downloaded on 2026-09-24. They were edited in the app (cut, trimmed,
 graded, keyframed and dissolved) and are served only in that edited form, as frames in
-`public/plate/` and as the "before" and "after" videos in `public/compare/`. The "before"
+`public/plate/` and as the "before" and "after" videos in
+`public/compare/`. The "before"
 video is the same four source ranges, cut to the same frames and scaled, and nothing else.
 
 | Clip in the edit | Title on Pexels | Author | Page | File downloaded |

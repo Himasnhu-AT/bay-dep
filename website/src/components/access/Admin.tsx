@@ -44,7 +44,7 @@ function Row({
     <li className="grid grid-cols-1 items-baseline gap-2.5 border-b border-line py-6 sm:grid-cols-[140px_1fr] sm:gap-8">
       <div>{aside}</div>
       <div className="min-w-0">
-        <p className="font-serif text-section font-normal break-words text-ink">
+        <p className="text-section font-semibold break-words text-ink">
           {title}
         </p>
         {children}
@@ -152,7 +152,7 @@ function Lists({ admin }: { admin: User }) {
   return (
     <div>
       {notice ? (
-        <p role="status" className="mb-10 border-l border-brass-deep pl-4 text-base text-ink">
+        <p role="status" className="mb-10 border-l border-accent-ink pl-4 text-base text-ink">
           {notice}
         </p>
       ) : null}
@@ -183,7 +183,7 @@ function Lists({ admin }: { admin: User }) {
 
       <section data-state="admin-lists">
         <div className="flex flex-wrap items-baseline justify-between gap-5">
-          <p className="text-eyebrow font-medium text-muted uppercase">
+          <p className="text-sm font-medium text-ink-soft">
             Waiting, newest first
           </p>
           {waitlist.kind === "ok" && waitlist.rows.length > 0 ? (
@@ -212,7 +212,7 @@ function Lists({ admin }: { admin: User }) {
                       type="checkbox"
                       checked={picked.has(e.email)}
                       onChange={() => toggle(e.email)}
-                      className="accent-[var(--color-brass-deep)]"
+                      className="accent-[var(--color-accent-ink)]"
                     />
                     {day(e.createdAt)}
                   </label>
@@ -241,7 +241,7 @@ function Lists({ admin }: { admin: User }) {
       </section>
 
       <section className="mt-20">
-        <p className="text-eyebrow font-medium text-muted uppercase">
+        <p className="text-sm font-medium text-ink-soft">
           Has access
         </p>
         {grants.kind === "loading" ? (
@@ -291,8 +291,7 @@ export function Admin() {
     case "idle":
       return (
         <SignIn
-          next="/admin"
-          intro="The waitlist and the grants. Sign in with the owner's address."
+          intro="The waitlist and the grants. Sign in with the owner's Google account."
           onSignedIn={signedIn}
         />
       );
@@ -319,7 +318,7 @@ export function Admin() {
             <Lists admin={account.user} />
           ) : (
             <div data-state="not-authorised" className="max-w-[60ch]">
-              <p className="text-eyebrow font-medium text-brass-deep uppercase">
+              <p className="text-eyebrow font-semibold text-accent-ink">
                 Not authorised
               </p>
               <p className="mt-4 text-base text-ink-soft">

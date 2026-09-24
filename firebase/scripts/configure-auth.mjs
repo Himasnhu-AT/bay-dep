@@ -1,5 +1,11 @@
-// Configure Firebase Auth for bay-editor-app: email link (passwordless) on, and
-// the authorised domains bay signs in from. Reads the result back and prints it.
+// Configure Firebase Auth for bay-editor-app: Google is the only way in. The
+// Email/Password provider (and with it the email link) is switched off, the
+// authorised domains bay signs in from are added, and the result is read back:
+// it exits non-zero unless email sign-in is off and Google is on.
+//
+// Why off rather than unused: the website no longer sends sign-in links, and an
+// enabled provider still answers anyone who calls the Identity Toolkit API
+// directly with the public API key, sending mail in the project's name.
 //
 // The firebase CLI has no command for this, so it calls the Identity Toolkit
 // Admin API with the CLI's own logged-in credentials (its configstore). The
@@ -64,8 +70,8 @@ if (!dryRun) {
   const domains = [...new Set([...(current.json.authorizedDomains ?? []), ...DOMAINS])]
   const patch = await call(
     'PATCH',
-    `${ADMIN}/config?updateMask=signIn.email.enabled,signIn.email.passwordRequired,authorizedDomains`,
-    { signIn: { email: { enabled: true, passwordRequired: false } }, authorizedDomains: domains },
+    `${ADMIN}/config?updateMask=signIn.email.enabled,authorizedDomains`,
+    { signIn: { email: { enabled: false } }, authorizedDomains: domains },
   )
   if (patch.status !== 200) {
     console.error(`PATCH config: HTTP ${patch.status}\n${JSON.stringify(patch.json, null, 2)}`)
@@ -78,9 +84,10 @@ const after = await call('GET', `${ADMIN}/config`)
 const google = await call('GET', `${ADMIN}/defaultSupportedIdpConfigs/google.com`)
 const email = after.json.signIn?.email ?? {}
 const live = {
-  // The API omits a boolean that is false (proto3 JSON), so an absent passwordRequired IS false:
-  // `=== false` read a correctly configured email link as missing.
-  emailLink: email.enabled === true && email.passwordRequired !== true,
+  // The API omits a boolean that is false (proto3 JSON), so an absent `enabled`
+  // IS off: test `!== true`, never `=== false`, which would read a correctly
+  // disabled provider as still on.
+  emailSignInOff: email.enabled !== true,
   emailSignIn: email,
   authorizedDomains: after.json.authorizedDomains ?? [],
   google: google.status === 200 ? { enabled: google.json.enabled === true } : `HTTP ${google.status}`,
@@ -88,7 +95,7 @@ const live = {
 console.log(JSON.stringify(live, null, 2))
 
 const missing = [
-  !live.emailLink && 'email link sign-in',
+  !live.emailSignInOff && 'Email/Password (and email link) switched off',
   ...DOMAINS.filter((d) => !live.authorizedDomains.includes(d)).map((d) => `authorised domain ${d}`),
   !(google.status === 200 && google.json.enabled === true) &&
     `Google provider (console: https://console.firebase.google.com/project/${PROJECT}/authentication/providers → Add new provider → Google → Enable → Save)`,

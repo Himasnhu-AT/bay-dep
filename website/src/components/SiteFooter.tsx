@@ -2,31 +2,35 @@ import Link from "next/link";
 import { Wrap } from "@/components/layout";
 import { product } from "@/lib/product";
 
+const LINK =
+  "text-[13px] text-on-night-soft transition-colors duration-200 hover:text-on-night";
+
+/** Night, like the nav: the other cover of the page. */
 export function SiteFooter() {
   return (
-    <footer className="border-t border-line py-[30px]">
-      <Wrap className="flex flex-wrap items-center justify-between gap-5">
-        <div className="text-xs tracking-[0.04em] text-muted">
+    <footer className="bg-night py-10">
+      <Wrap className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-[13px] text-on-night-muted">
           © {product.year} {product.name}, a{" "}
           <a
             href={product.studio.url}
-            className="transition-colors hover:text-brass-deep"
+            className="text-on-night-soft underline decoration-on-night-muted/50 underline-offset-4 transition-colors hover:text-on-night"
           >
             {product.studio.name}
           </a>{" "}
           app
         </div>
-        <div className="flex gap-8">
-          <Link
-            href="/status"
-            className="text-[13px] tracking-[0.06em] text-ink-soft transition-colors hover:text-brass-deep"
-          >
+        <div className="flex flex-wrap gap-x-7 gap-y-3">
+          <Link href="/agents" className={LINK}>
+            Agents
+          </Link>
+          <Link href="/status" className={LINK}>
             Status
           </Link>
-          <a
-            href={`mailto:${product.email}`}
-            className="text-[13px] tracking-[0.06em] text-ink-soft transition-colors hover:text-brass-deep"
-          >
+          <Link href="/waitlist" className={LINK}>
+            Request access
+          </Link>
+          <a href={`mailto:${product.email}`} className={LINK}>
             {product.email}
           </a>
         </div>

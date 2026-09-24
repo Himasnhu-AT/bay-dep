@@ -1,44 +1,39 @@
 import type { Metadata } from "next";
 import { Reveal } from "@/components/Reveal";
 import { Waitlist } from "@/components/access/Waitlist";
-import { Eyebrow, PageHeader, Wrap } from "@/components/layout";
+import { Block, PageHeader, Wrap } from "@/components/layout";
 import { product } from "@/lib/product";
 
 export const metadata: Metadata = {
   title: "Request access",
-  description: `${product.name} is by invitation. Sign in with your email and ask for access, or see whether you already have it.`,
+  description: `${product.name} is by invitation. Join the waitlist with your email address, or sign in with Google to see whether you already have access.`,
 };
 
 export default function WaitlistPage() {
   return (
-    <main className="flex-1 pt-24 pb-28">
+    <main className="flex-1 pb-28">
+      <PageHeader
+        eyebrow="Request access"
+        title="By invitation, for now."
+        lead={`${product.name} is ${product.status.toLowerCase()}, and you need an invitation to use it. Put your address on the waitlist; no account is needed.`}
+      />
       <Wrap>
-        <PageHeader
-          eyebrow="Request access"
-          title={
-            <>
-              By <em className="text-brass italic">invitation</em>, for now.
-            </>
-          }
-          lead={`${product.name} is ${product.status.toLowerCase()}, and you need an invitation to use it. Sign in with your email to ask for one, or to see where your request stands.`}
-        />
-
-        <Reveal delay={0.3} className="mt-[82px]">
+        <Reveal delay={0.3} className="mt-16">
           <Waitlist />
         </Reveal>
 
-        <Reveal delay={0.12} className="mt-24 max-w-[60ch]">
-          <Eyebrow>What it will not do</Eyebrow>
-          <p className="mt-6 text-base text-ink-soft">
-            Signing in here uses Google&rsquo;s sign-in service, and this is the
-            only page on the site that talks to it, and only after you press a
-            button. Your address goes on a list that one person reads. It is not
-            added to a newsletter, it is not shared, and nothing on this site
-            counts your visit. In the app, the same sign-in checks your access
-            and does nothing else: your projects, media and renders stay on your
-            Mac.
-          </p>
-        </Reveal>
+        <div className="mt-24">
+          <Block title="What it will not do" delay={0.12}>
+            Nothing on this page talks to anyone until you press a button.
+            Joining sends your address to the access list, kept in
+            Google&rsquo;s Firestore, and signing in uses Google&rsquo;s
+            sign-in service. The list is read by one person. Your address is
+            not added to a newsletter, it is not shared, no email is sent to
+            it, and nothing on this site counts your visit. In the app, signing
+            in with Google checks your access and does nothing else: your
+            projects, media and renders stay on your Mac.
+          </Block>
+        </div>
       </Wrap>
     </main>
   );

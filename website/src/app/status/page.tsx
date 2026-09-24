@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Reveal } from "@/components/Reveal";
 import {
-  Eyebrow,
+  Headline,
   PageHeader,
   RuledList,
   RuledRow,
@@ -70,30 +70,30 @@ const notYet = [
 ];
 
 function Section({
-  eyebrow,
+  heading,
   lead,
   rows,
   state,
 }: {
-  eyebrow: string;
+  heading: string;
   lead: string;
   rows: { title: string; body: string }[];
   state: string;
 }) {
   return (
-    <section className="mt-20 first:mt-16">
-      <Reveal className="max-w-[60ch]">
-        <Eyebrow>{eyebrow}</Eyebrow>
-        <p className="mt-6 text-base text-ink-soft">{lead}</p>
+    <section className="mt-24 first:mt-16">
+      <Reveal>
+        <Headline>{heading}</Headline>
+        <p className="mt-4 max-w-[56ch] text-lead text-ink-soft">{lead}</p>
       </Reveal>
-      <RuledList>
+      <RuledList className="mt-10">
         {rows.map((r, i) => (
           <RuledRow
             key={r.title}
             delay={0.06 + Math.min(i, 4) * 0.05}
             wide
             aside={
-              <span className="text-eyebrow font-medium text-brass-deep uppercase">
+              <span className="text-eyebrow font-semibold text-accent-ink">
                 {state}
               </span>
             }
@@ -109,47 +109,42 @@ function Section({
 
 export default function StatusPage() {
   return (
-    <main className="flex-1 pt-24 pb-28">
+    <main className="flex-1 pb-28">
+      <PageHeader
+        eyebrow="Status"
+        title="What actually runs."
+        lead={`${product.name} is ${product.status.toLowerCase()}. Rather than describe it as finished and let you find out otherwise, here is the split: the parts that work, the parts that are known to be wrong, and the parts that have not been written.`}
+      />
       <Wrap>
-        <PageHeader
-          eyebrow="Status"
-          title={
-            <>
-              What actually <em className="text-brass italic">runs</em>.
-            </>
-          }
-          lead={`${product.name} is ${product.status.toLowerCase()}. Rather than describe it as finished and let you find out otherwise, here is the split: the parts that work, the parts that are known to be wrong, and the parts that have not been written.`}
-        />
-
         <Section
-          eyebrow="Works today"
+          heading="Works today."
           lead="Used, and covered by tests that run on every change."
           rows={built}
           state="Built"
         />
 
         <Section
-          eyebrow="Known to be wrong"
+          heading="Known to be wrong."
           lead="Found, reproduced, and not yet fixed. Listing them here is cheaper than you discovering them."
           rows={wrong}
           state="Open"
         />
 
         <Section
-          eyebrow="Not written yet"
+          heading="Not written yet."
           lead="Planned and sized, with nothing behind it in the app today."
           rows={notYet}
           state="Planned"
         />
 
-        <Reveal delay={0.1} className="mt-20 max-w-[60ch]">
-          <Eyebrow>No download</Eyebrow>
-          <p className="mt-6 text-base text-ink-soft">
+        <Reveal delay={0.1} className="mt-24 border-t border-line pt-12">
+          <h2 className="text-section font-semibold text-ink">No download</h2>
+          <p className="mt-3 max-w-[60ch] text-base text-ink-soft">
             There is no build on this site, because there is not one worth
             handing to a stranger. {product.name} is by invitation: you can{" "}
             <a
               href="/waitlist"
-              className="text-brass-deep underline underline-offset-2 transition-colors hover:text-ink"
+              className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink"
             >
               ask for access
             </a>

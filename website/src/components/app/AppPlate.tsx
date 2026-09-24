@@ -481,10 +481,11 @@ export function AppPlate({ step, live = false }: { step: number; live?: boolean 
   const scrollLanes = s.tracks.length > 4;
 
   return (
-    // The tip-in. Ruled along its top edge in brass rather than floated on a
-    // shadow: a plate bound into a printed page, not a window hovering over one.
-    <div className="@container/plate border-t-2 border-t-brass">
-      <div className="relative flex flex-col overflow-hidden border border-app-line bg-app-surface-0 font-app text-app-ink-0 antialiased">
+    // The window, set on night: 12px corners like every surface on the site,
+    // and an edge one step lighter than the app's own hairline so it holds its
+    // shape against the darker ground. No shadow: there is nothing to cast on.
+    <div className="@container/plate">
+      <div className="relative flex flex-col overflow-hidden rounded-[12px] border border-app-line-strong bg-app-surface-0 font-app text-app-ink-0 antialiased">
         <TopBar edited={s.edited} />
 
         <div className="flex min-h-0 flex-col @5xl/plate:flex-row">

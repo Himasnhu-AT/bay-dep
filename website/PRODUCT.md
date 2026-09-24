@@ -83,8 +83,10 @@ download, and the site must not imply one exists.
 - The site must make no third-party requests at runtime: no analytics, no tag manager, no
   session recorder, no remotely fetched fonts, no embedded player. The site is an argument
   that the software minds its own business, so it has to as well. The one exception is
-  access: the app is by invitation, and the sign-in, waitlist and admin pages load
-  Firebase (Google) when the visitor presses a sign-in button, never on arrival. See
+  access: the app is by invitation. Joining the waitlist sends one request to Firestore
+  when the visitor presses Join, with no account; signing in (Google only, to check
+  access, on /admin and for the desktop app) loads Firebase when its button is pressed.
+  Never on arrival, and the site sends no email. See
   CLAUDE.md, "The one rule".
 - Voice rules are binding and live in VOICE.md: no em dashes, no rule of three, no
   promotional adjectives, second person, concrete over abstract.
@@ -141,12 +143,12 @@ app's output is that one credited edit, and it is captioned as such.
 ## Accessibility & Inclusion
 
 - Contrast is measured against the page ground, not eyeballed. The existing table in
-  DESIGN.md is authoritative for the paper world and must be extended, with measured
+  DESIGN.md is authoritative for paper and night and must be extended, with measured
   ratios, for any new surface.
 - Reduced motion is honored: `prefers-reduced-motion: reduce` must leave the page fully
   readable with every transform and transition cleared. A scroll-driven sequence needs a
   static, complete equivalent.
 - No content may depend on a script having run. The hidden pre-state is scoped to
   `@media (scripting: enabled)`.
-- Keyboard reachability and visible focus (brass 1px outline, 3px offset) are global and
+- Keyboard reachability and visible focus (2px accent outline, 3px offset) are global and
   must not be removed.

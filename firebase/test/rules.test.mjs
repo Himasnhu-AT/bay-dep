@@ -67,13 +67,20 @@ async function seed(fn) {
   await env.withSecurityRulesDisabled(async (ctx) => fn(ctx.firestore()))
 }
 
-const joinPayload = (who, extra = {}) => ({
-  email: who.email,
-  uid: who.uid,
+/** A waitlist entry exactly as the website writes it, signed out. */
+const joinPayload = (email, extra = {}) => ({
+  email,
   createdAt: serverTimestamp(),
   status: 'pending',
   ...extra,
 })
+
+/** A signed-out client: joining the waitlist needs no account. */
+const anon = () => env.unauthenticatedContext().firestore()
+
+/** Join as a signed-out visitor, under `email` as both id and field. */
+const join = (email, extra = {}, db = anon()) =>
+  setDoc(doc(db, 'waitlist', email), joinPayload(email, extra))
 
 const userDoc = (who, used = 0) => ({
   email: who.email,
@@ -118,82 +125,89 @@ function referBatch(db, referrer, friendEmail, { by = 1, grant = {}, counter = {
 // ---------------------------------------------------------------------------
 
 describe('waitlist', () => {
-  test('a verified user joins under their own email', async () => {
-    await assertSucceeds(setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB)))
+  test('a signed-out visitor joins; so does a signed-in one', async () => {
+    await assertSucceeds(join(BOB.email))
+    await assertSucceeds(join(CAROL.email, {}, as(CAROL)))
   })
 
-  test('with a note of 500 chars: allowed; 501: refused', async () => {
-    await assertSucceeds(
-      setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB, { note: 'x'.repeat(500) })),
-    )
-    await env.clearFirestore()
-    await assertFails(
-      setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB, { note: 'x'.repeat(501) })),
-    )
+  test('a second join of the same address is refused; a different address is not', async () => {
+    await assertSucceeds(join(BOB.email))
+    await assertFails(join(BOB.email))
+    await assertFails(join(BOB.email, {}, as(BOB)))
+    await assertSucceeds(join(CAROL.email))
   })
 
-  test('an unverified email cannot join', async () => {
-    await assertFails(
-      setDoc(doc(as(BOB, { verified: false }), 'waitlist', BOB.email), joinPayload(BOB)),
-    )
+  test('with a note of 500 chars: allowed; 501, or a note that is not a string: refused', async () => {
+    await assertFails(join(BOB.email, { note: 'x'.repeat(501) }))
+    await assertFails(join(BOB.email, { note: ['x'] }))
+    await assertSucceeds(join(BOB.email, { note: 'x'.repeat(500) }))
   })
 
-  test("cannot join as someone else's email (id or field)", async () => {
-    const db = as(BOB)
-    await assertFails(setDoc(doc(db, 'waitlist', CAROL.email), joinPayload(CAROL, { uid: BOB.uid })))
-    await assertFails(setDoc(doc(db, 'waitlist', BOB.email), joinPayload(BOB, { email: CAROL.email })))
-    await assertFails(setDoc(doc(db, 'waitlist', BOB.email), joinPayload(BOB, { uid: CAROL.uid })))
+  test('the id must be the address, lowercase', async () => {
+    await assertFails(setDoc(doc(anon(), 'waitlist', BOB.email), joinPayload(CAROL.email)))
+    await assertFails(join('Bob@Example.com'))
+    await assertSucceeds(join('bob@example.com'))
   })
 
-  test('cannot create with status approved', async () => {
-    await assertFails(
-      setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB, { status: 'approved' })),
-    )
+  test('the id must be a strict email', async () => {
+    for (const bad of ['not-an-email', 'bob@example', 'bob@example.c', 'bo b@example.com', 'bob@@example.com', 'bob@exa_mple.com', '@example.com']) {
+      await assertFails(join(bad), `accepted ${bad}`)
+    }
+    await assertSucceeds(join('bob.o+bay@mail.example.co'))
   })
 
-  test('cannot backdate createdAt or add keys', async () => {
-    const db = as(BOB)
-    await assertFails(
-      setDoc(doc(db, 'waitlist', BOB.email), joinPayload(BOB, { createdAt: Timestamp.now() })),
-    )
-    await assertFails(
-      setDoc(doc(db, 'waitlist', BOB.email), joinPayload(BOB, { priority: 1 })),
-    )
+  test('the id is at most 254 characters', async () => {
+    const at = (n) => 'a'.repeat(n - '@example.com'.length) + '@example.com'
+    assert.equal(at(255).length, 255)
+    await assertFails(join(at(255)))
+    await assertSucceeds(join(at(254)))
   })
 
-  test('the requester cannot approve their own entry', async () => {
-    await assertSucceeds(setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB)))
-    await assertFails(updateDoc(doc(as(BOB), 'waitlist', BOB.email), { status: 'approved' }))
-    await assertFails(
-      setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB, { status: 'approved' })),
-    )
+  test('status must be pending', async () => {
+    await assertFails(join(BOB.email, { status: 'approved' }))
+    await assertSucceeds(join(BOB.email))
   })
 
-  test('the requester reads their own entry; nobody else does', async () => {
-    await assertSucceeds(setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB)))
-    await assertSucceeds(getDoc(doc(as(BOB), 'waitlist', BOB.email)))
-    await assertFails(getDoc(doc(as(CAROL), 'waitlist', BOB.email)))
-    await assertFails(getDoc(doc(as(ALICE), 'waitlist', BOB.email)))
+  test('createdAt must be the server time; no other keys', async () => {
+    await assertFails(join(BOB.email, { createdAt: Timestamp.now() }))
+    await assertFails(join(BOB.email, { uid: BOB.uid }))
+    await assertFails(join(BOB.email, { priority: 1 }))
+    await assertSucceeds(join(BOB.email))
   })
 
-  test('only the admin lists the waitlist', async () => {
-    await assertSucceeds(setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB)))
+  test('a join missing a key is refused', async () => {
+    const { status, ...noStatus } = joinPayload(BOB.email)
+    const { createdAt, ...noCreatedAt } = joinPayload(BOB.email)
+    assert.ok(status && createdAt)
+    await assertFails(setDoc(doc(anon(), 'waitlist', BOB.email), noStatus))
+    await assertFails(setDoc(doc(anon(), 'waitlist', BOB.email), noCreatedAt))
+    await assertSucceeds(join(BOB.email))
+  })
+
+  test('nobody but the admin reads, lists, updates or deletes an entry, not even its owner', async () => {
+    await assertSucceeds(join(BOB.email))
     await approved(ALICE)
-    await assertFails(getDocs(collection(as(BOB), 'waitlist')))
-    await assertFails(getDocs(collection(as(ALICE), 'waitlist')))
+    for (const db of [anon(), as(BOB), as(ALICE)]) {
+      await assertFails(getDoc(doc(db, 'waitlist', BOB.email)))
+      await assertFails(getDocs(collection(db, 'waitlist')))
+      await assertFails(updateDoc(doc(db, 'waitlist', BOB.email), { status: 'approved' }))
+      await assertFails(deleteDoc(doc(db, 'waitlist', BOB.email)))
+    }
+    const got = await assertSucceeds(getDoc(doc(as(ADMIN), 'waitlist', BOB.email)))
+    assert.equal(got.data().status, 'pending')
     const snap = await assertSucceeds(getDocs(collection(as(ADMIN), 'waitlist')))
     assert.equal(snap.size, 1)
   })
 
   test("the owner's email unverified is not the admin", async () => {
-    await assertSucceeds(setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB)))
+    await assertSucceeds(join(BOB.email))
     await assertFails(getDocs(collection(as(ADMIN, { verified: false }), 'waitlist')))
     await assertFails(getDocs(collection(as(BOB, { email: 'VashisathAmanav@gmail.com' }), 'waitlist')))
     await assertSucceeds(getDocs(collection(as(ADMIN), 'waitlist')))
   })
 
   test('the admin approves: grant + status in one batch', async () => {
-    await assertSucceeds(setDoc(doc(as(BOB), 'waitlist', BOB.email), joinPayload(BOB)))
+    await assertSucceeds(join(BOB.email))
     const db = as(ADMIN)
     const b = writeBatch(db)
     b.set(doc(db, 'access', BOB.email), {
@@ -548,15 +562,84 @@ describe('desktop REST shapes', () => {
   })
 })
 
+// The website joins the waitlist signed out, with one REST commit and no SDK
+// (website/src/lib/firebase.ts, joinWaitlistRequest). This is that request, byte
+// for byte in shape, and the codes the page reads: 200 joined, 403 refused (for
+// a well-formed address, only because it is already on the list).
+//
+// It sends no `currentDocument: { exists: false }` precondition, on purpose.
+// With one, a repeat join answers 409 ALREADY_EXISTS before the rules run, so
+// the answer would differ from a malformed address's 403, and anyone could ask
+// whether an address is on the list without adding it. Without it, a repeat is
+// an update, the rules refuse it, and it is the same 403 as any other refusal.
+
+/** The website's join, as it sends it: no Authorization header. */
+async function websiteJoin(email, note, { precondition = false } = {}) {
+  const res = await fetch(`${BASE}:commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      writes: [
+        {
+          update: {
+            name: `${NAME}/waitlist/${email}`,
+            fields: {
+              email: str(email),
+              status: str('pending'),
+              ...(note ? { note: str(note) } : {}),
+            },
+          },
+          updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }],
+          ...(precondition ? { currentDocument: { exists: false } } : {}),
+        },
+      ],
+    }),
+  })
+  return { status: res.status, body: await res.json().catch(() => null) }
+}
+
+describe('website REST join', () => {
+  test('signed out: 200 the first time, 403 the second; another address still 200', async () => {
+    const first = await websiteJoin(BOB.email, 'Alice sent me')
+    assert.equal(first.status, 200, JSON.stringify(first.body))
+    assert.equal((await websiteJoin(BOB.email)).status, 403)
+    assert.equal((await websiteJoin(CAROL.email)).status, 200)
+    const got = await getDoc(doc(as(ADMIN), 'waitlist', BOB.email))
+    assert.equal(got.data().note, 'Alice sent me')
+  })
+
+  test('why there is no precondition: with one, a repeat answers 409 and says the address is listed', async () => {
+    assert.equal((await websiteJoin(BOB.email)).status, 200)
+    assert.equal((await websiteJoin(BOB.email, undefined, { precondition: true })).status, 409)
+    assert.equal((await websiteJoin(BOB.email)).status, 403)
+  })
+
+  test('a malformed address is 403 too, which is why the page checks it first', async () => {
+    assert.equal((await websiteJoin('Bob@Example.com')).status, 403)
+    assert.equal((await websiteJoin('bob@example')).status, 403)
+    assert.equal((await websiteJoin(BOB.email)).status, 200)
+  })
+})
+
 describe('default deny', () => {
   test('an unmatched collection is closed, even to the admin', async () => {
     await assertFails(setDoc(doc(as(ADMIN), 'config', 'x'), { a: 1 }))
     await assertFails(getDoc(doc(as(ADMIN), 'config', 'x')))
   })
 
-  test('signed out: nothing', async () => {
-    const db = env.unauthenticatedContext().firestore()
+  test('signed out: a waitlist join and nothing else', async () => {
+    await approved(ALICE)
+    const db = anon()
     await assertFails(getDoc(doc(db, 'access', ALICE.email)))
-    await assertFails(setDoc(doc(db, 'waitlist', BOB.email), joinPayload(BOB)))
+    await assertFails(
+      setDoc(doc(db, 'access', BOB.email), {
+        email: BOB.email,
+        via: 'admin',
+        grantedBy: ADMIN.uid,
+        grantedAt: serverTimestamp(),
+      }),
+    )
+    await assertFails(getDoc(doc(db, 'users', ALICE.uid)))
+    await assertSucceeds(join(BOB.email, {}, db))
   })
 })

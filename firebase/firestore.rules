@@ -46,24 +46,36 @@ service cloud.firestore {
     }
 
     // ---- waitlist/{email} -------------------------------------------------
-    // Someone asking for access. Emails are private: the requester and the admin
-    // may read an entry, nobody else.
+    // Someone asking for access. Joining needs no account: the website writes
+    // the entry on submit, signed out. So the shape is the whole defence, and it
+    // is exact: the id is the address, a strict lowercase email of at most 254
+    // characters; the keys are exactly email, createdAt, status and an optional
+    // note of at most 500; status is pending and createdAt is the server's time.
+    //
+    // A duplicate is refused by what `create` means: over an existing entry the
+    // write is an update, and only the admin may update. Nobody but the admin
+    // reads an entry, so the list of addresses stays private, and a visitor
+    // cannot tell a new join from a repeat (the website treats both as joined).
+
+    function isJoinableEmail(id) {
+      return id.size() <= 254
+        && id.matches('^[a-z0-9._%+-]+@[a-z0-9-]+(\\.[a-z0-9-]+)*\\.[a-z]{2,}$');
+    }
 
     match /waitlist/{email} {
-      allow create: if verified()
-        && email == myEmail()
-        && request.resource.data.keys().hasAll(['email', 'uid', 'createdAt', 'status'])
-        && request.resource.data.keys().hasOnly(['email', 'uid', 'createdAt', 'status', 'note'])
+      // No hasAll: email, status and createdAt are each compared below, and a
+      // comparison with a missing key is an error, which denies. A hasAll here
+      // could not be told apart from its absence by any write.
+      allow create: if isJoinableEmail(email)
+        && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status', 'note'])
         && request.resource.data.email == email
-        && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.createdAt == request.time
         && (!('note' in request.resource.data)
             || (request.resource.data.note is string
                 && request.resource.data.note.size() <= 500));
 
-      allow get: if isAdmin() || (verified() && email == myEmail());
-      allow list, update, delete: if isAdmin();
+      allow get, list, update, delete: if isAdmin();
     }
 
     // ---- access/{email} ---------------------------------------------------

@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Reveal } from "@/components/Reveal";
 import {
+  Block,
+  Columns,
   Command,
-  Eyebrow,
+  Headline,
   PageHeader,
   RuledList,
   RuledRow,
@@ -46,58 +48,51 @@ const tools = [
 
 export default function AgentsPage() {
   return (
-    <main className="flex-1 pt-24 pb-28">
+    <main className="flex-1 pb-28">
+      <PageHeader
+        eyebrow="Agents"
+        title="An editor that can be told what to do."
+        lead={`Most tools bolt an assistant onto the side of the app and hope the two agree. ${product.name} does not have a second implementation to disagree with: the engine is served directly, so an agent works the same timeline you do.`}
+      />
       <Wrap>
-        <PageHeader
-          eyebrow="Agents"
-          title={
-            <>
-              An editor that can be{" "}
-              <em className="text-brass italic">told</em> what to do.
-            </>
-          }
-          lead={`Most tools bolt an assistant onto the side of the app and hope the two agree. ${product.name} does not have a second implementation to disagree with: the engine is served directly, so an agent works the same timeline you do.`}
-        />
+        <Columns className="mt-16">
+          <Block title="From Claude Code" delay={0.3}>
+            <p className="mb-7">
+              Edits land in the window in front of you, and your undo works on
+              them. If the app is not running, the first tool call opens it. The
+              connection is a local socket only your user account can open;
+              there is no port, and nothing on another machine can reach it.
+            </p>
+            <Command>
+              claude mcp add {product.name.toLowerCase()} --env
+              ELECTRON_RUN_AS_NODE=1 --
+              /Applications/{product.name.toLowerCase()}.app/Contents/MacOS/
+              {product.name.toLowerCase()}{" "}
+              /Applications/{product.name.toLowerCase()}.app/Contents/Resources/app.asar/out/main/mcp/index.js
+            </Command>
+          </Block>
 
-        <Reveal delay={0.3} className="mt-16 max-w-[60ch]">
-          <Eyebrow>From Claude Code</Eyebrow>
-          <p className="mt-6 mb-7 text-base text-ink-soft">
-            Edits land in the window in front of you, and your undo works on
-            them. If the app is not running, the first tool call opens it. The
-            connection is a local socket only your user account can open; there
-            is no port, and nothing on another machine can reach it.
-          </p>
-        </Reveal>
-
-        <Reveal delay={0.36} className="max-w-[60ch] space-y-2.5">
-          <Command>
-            claude mcp add {product.name.toLowerCase()} --env
-            ELECTRON_RUN_AS_NODE=1 --
-            /Applications/{product.name.toLowerCase()}.app/Contents/MacOS/
-            {product.name.toLowerCase()}{" "}
-            /Applications/{product.name.toLowerCase()}.app/Contents/Resources/app.asar/out/main/mcp/index.js
-          </Command>
-        </Reveal>
-
-        <Reveal delay={0.42} className="mt-14 max-w-[60ch]">
-          <Eyebrow>Inside the editor</Eyebrow>
-          <p className="mt-6 mb-7 text-base text-ink-soft">
+          <Block title="Inside the editor" delay={0.38}>
             The Agent panel runs Claude Code for you, with the editor&apos;s
             tools and nothing else: no shell, no files, no web. It makes the
             edit, shows you what changed with a one-click Revert, and checks the
             frame before it says it is done. If you would rather approve each
             plan first, one switch makes it ask.
-          </p>
+          </Block>
+        </Columns>
+
+        <Reveal className="mt-24">
+          <Headline>What an agent can call.</Headline>
         </Reveal>
 
-        <RuledList>
+        <RuledList className="mt-10">
           {tools.map((t, i) => (
             <RuledRow
               key={t.label}
               delay={0.06 + Math.min(i, 4) * 0.06}
               wide
               aside={
-                <span className="text-eyebrow font-medium text-brass-deep uppercase">
+                <span className="text-eyebrow font-semibold text-accent-ink">
                   {t.label}
                 </span>
               }
@@ -108,15 +103,14 @@ export default function AgentsPage() {
           ))}
         </RuledList>
 
-        <Reveal delay={0.12} className="mt-20 max-w-[60ch]">
-          <Eyebrow>What it will not do</Eyebrow>
-          <p className="mt-6 text-base text-ink-soft">
+        <div className="mt-20">
+          <Block title="What it will not do" delay={0.12}>
             The connection is bound to your own machine. It is not a hosted
             API, there is no key to obtain, and nothing about your project is
             sent anywhere for an agent to reach it. Any MCP client can drive it,
             including one running a local model.
-          </p>
-        </Reveal>
+          </Block>
+        </div>
       </Wrap>
     </main>
   );

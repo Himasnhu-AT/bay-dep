@@ -20,14 +20,36 @@ const source = readFileSync(RULES, 'utf8')
 const dir = mkdtempSync(join(tmpdir(), 'bay-rules-mutants-'))
 
 const MUTANTS = [
-  ['waitlist: join under any email id',
-    "        && email == myEmail()\n        && request.resource.data.keys().hasAll(['email', 'uid', 'createdAt', 'status'])",
-    "        && request.resource.data.keys().hasAll(['email', 'uid', 'createdAt', 'status'])"],
+  ['waitlist: the id need not be a joinable email',
+    'allow create: if isJoinableEmail(email)\n', 'allow create: if true\n'],
+  ['waitlist: no length cap on the id',
+    'return id.size() <= 254\n        && ', 'return '],
+  ['waitlist: the email pattern admits uppercase and any domain',
+    "id.matches('^[a-z0-9._%+-]+@[a-z0-9-]+(\\\\.[a-z0-9-]+)*\\\\.[a-z]{2,}$')",
+    "id.matches('^[^@\\\\s/]+@[^@\\\\s/]+\\\\.[^@\\\\s/]+$')"],
+  ['waitlist: extra keys allowed',
+    "        && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status', 'note'])\n", ''],
+  ['waitlist: the email field need not match the id',
+    "        && request.resource.data.email == email\n        && request.resource.data.status == 'pending'",
+    "        && request.resource.data.status == 'pending'"],
   ['waitlist: status need not be pending',
     "request.resource.data.status == 'pending'", 'true'],
-  ['waitlist: any signed-in user may list/update/delete',
-    "      allow list, update, delete: if isAdmin();\n    }\n\n    // ---- access",
-    "      allow list, update, delete: if signedIn();\n    }\n\n    // ---- access"],
+  ['waitlist: createdAt may be any time',
+    "        && request.resource.data.createdAt == request.time\n        && (!('note'",
+    "        && (!('note'"],
+  ['waitlist: a note may be 501 chars',
+    'request.resource.data.note.size() <= 500', 'request.resource.data.note.size() <= 501'],
+  ['waitlist: a note need not be a string',
+    '(request.resource.data.note is string\n                && ', '('],
+  ['waitlist: anyone may read an entry',
+    '      allow get, list, update, delete: if isAdmin();\n',
+    '      allow get: if true;\n      allow list, update, delete: if isAdmin();\n'],
+  ['waitlist: a signed-in user may list the waitlist',
+    '      allow get, list, update, delete: if isAdmin();\n',
+    '      allow list: if signedIn();\n      allow get, update, delete: if isAdmin();\n'],
+  ['waitlist: anyone may overwrite an entry (a repeat join replaces it)',
+    '      allow get, list, update, delete: if isAdmin();\n',
+    '      allow update: if true;\n      allow get, list, delete: if isAdmin();\n'],
   ['admin: email_verified not required',
     "return verified() && request.auth.token.email == 'hyattherate2005@gmail.com';",
     "return signedIn() && request.auth.token.email == 'hyattherate2005@gmail.com';"],
@@ -94,7 +116,12 @@ for (const [label, from, to] of MUTANTS) {
     console.error(`HARNESS: "${label}" matches ${n} times, not once; fix the mutation string.`)
     process.exit(2)
   }
-  const mutant = source.replace(from, to)
+  // A function, not the string: a string replacement reads `$'`, `$&` and the
+  // like as patterns, and the email regex ends in `$'`. Passed as a string it
+  // spliced the rest of the file into the mutant, which then failed to load and
+  // was scored as caught.
+  const mutant = source.replace(from, () => to)
+  if (!mutant.includes(to)) throw new Error(`HARNESS: "${label}" did not insert its replacement verbatim`)
   if (mutant === source) throw new Error(`HARNESS: "${label}" did not change the source`)
   const file = join(dir, `${MUTANTS.findIndex((m) => m[0] === label)}.rules`)
   writeFileSync(file, mutant)

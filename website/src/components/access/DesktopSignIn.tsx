@@ -3,7 +3,6 @@
 import type { User } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 import { ActionButton } from "@/components/layout";
-import { HANDOFF_AUTO } from "@/components/access/FinishLink";
 import { SignIn } from "@/components/access/SignIn";
 import { useAccount } from "@/components/access/useAccount";
 import { standingOf } from "@/lib/access";
@@ -110,7 +109,7 @@ function Handing({ target, user, auto }: { target: Target; user: User; auto: boo
     case "ready":
       return (
         <div data-state="confirm" className="max-w-[60ch]">
-          <p className="font-serif text-lead font-light text-ink">
+          <p className="text-lead font-medium text-ink">
             Sign in to {product.name} as {user.email}?
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-5">
@@ -129,7 +128,7 @@ function Handing({ target, user, auto }: { target: Target; user: User; auto: boo
     case "failed":
       return (
         <div data-state="handoff-failed" className="max-w-[60ch]">
-          <p className="text-eyebrow font-medium text-brass-deep uppercase">
+          <p className="text-eyebrow font-semibold text-accent-ink">
             Not handed over
           </p>
           <p role="alert" className="mt-4 text-base text-ink">
@@ -143,10 +142,10 @@ function Handing({ target, user, auto }: { target: Target; user: User; auto: boo
     case "sent":
       return (
         <div data-state="handed-off" className="max-w-[60ch]">
-          <p className="text-eyebrow font-medium text-brass-deep uppercase">
+          <p className="text-eyebrow font-semibold text-accent-ink">
             Signed in
           </p>
-          <p className="mt-4 font-serif text-lead font-light text-ink">
+          <p className="mt-4 text-lead font-medium text-ink">
             Signed in. Return to {product.name}; you can close this tab.
           </p>
           {handoff.access === "no" ? (
@@ -170,12 +169,6 @@ export function DesktopSignIn() {
     // The query is only readable on the client; the page is prerendered.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTarget(parseTarget(window.location.search));
-    try {
-      if (sessionStorage.getItem(HANDOFF_AUTO) === "1") {
-        sessionStorage.removeItem(HANDOFF_AUTO);
-        setAuto(true);
-      }
-    } catch {}
   }, []);
 
   if (target === "unread") return null;
@@ -183,7 +176,7 @@ export function DesktopSignIn() {
   if (!target) {
     return (
       <div data-state="bad-request" className="max-w-[60ch]">
-        <p className="text-eyebrow font-medium text-brass-deep uppercase">
+        <p className="text-eyebrow font-semibold text-accent-ink">
           Nothing to sign in to
         </p>
         <p className="mt-4 text-base text-ink-soft">
@@ -200,8 +193,7 @@ export function DesktopSignIn() {
     case "idle":
       return (
         <SignIn
-          next={`/desktop/sign-in${window.location.search}`}
-          intro={`Sign in with the address that has access to ${product.name}. This tab hands the sign-in to the app on this Mac, and only to it.`}
+          intro={`Sign in with the Google account that has access to ${product.name}. This tab hands the sign-in to the app on this Mac, and only to it.`}
           onSignedIn={(user) => {
             setAuto(true);
             signedIn(user);
@@ -228,7 +220,7 @@ export function DesktopSignIn() {
     case "signed-in":
       return (
         <div>
-          <p className="mb-10 flex flex-wrap items-baseline gap-x-5 gap-y-2 text-xs tracking-[0.04em] text-muted">
+          <p className="mb-10 flex flex-wrap items-baseline gap-x-5 gap-y-2 text-sm text-muted">
             <span>Signed in as {account.user.email}</span>
             <ActionButton quiet onClick={() => void signOut()}>
               Use a different account

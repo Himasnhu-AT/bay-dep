@@ -14,7 +14,7 @@ keyed by uid.
 
 | Collection | What it is | Who writes it | Who reads it |
 |---|---|---|---|
-| `waitlist/{email}` | A request for access: `email, uid, createdAt, status:'pending', note?` (a note is at most 500 chars) | The signed-in user creates their own entry, with a verified email and exactly these keys. Only the admin can update or delete an entry. | The requester (their own entry) and the admin. Only the admin can list. |
+| `waitlist/{email}` | A request for access: `email, createdAt, status:'pending', note?` (a note is at most 500 chars) | Anyone, signed out, from the website's form. The id must be a strict lowercase email of at most 254 characters equal to `email`, the keys exactly these, `status` pending and `createdAt` the request time. A second join of the same address is an update, which only the admin may make, so it is refused. Only the admin can update or delete an entry. | The admin only. Not even the person who joined can read their entry back, so the list of addresses stays private. |
 | `access/{email}` | A grant: `email, via:'admin'\|'referral', grantedBy, grantedAt, referrerEmail?` | The admin creates admin grants. An approved user creates referral grants (see below). Only the admin can update or delete a grant (revoking means deleting it). | The grantee, the referrer (grants they made) and the admin. Only the admin can list. |
 | `users/{uid}` | Referral counter: `email, referralsUsed (0..5), createdAt, lastReferral?` | The user creates their own doc with `referralsUsed: 0`. After that, the user can change it only inside a referral batch. The admin can update or delete it. | The user themself and the admin. |
 
@@ -63,8 +63,8 @@ above, alone), and can reset a user's counter by updating `users/{uid}`.
 pnpm install
 pnpm test             # rules tests on the Firestore emulator (needs a JDK, see below)
 pnpm mutate           # weakens each key rule in turn and requires the suite to fail
-pnpm deploy           # deploys rules + indexes to bay-editor-app
-pnpm auth:configure   # turns on email-link sign-in and the authorised domains, then reads them back
+pnpm run deploy       # deploys rules + indexes to bay-editor-app (NOT `pnpm deploy`: a pnpm built-in)
+pnpm auth:configure   # switches Email/Password (and email link) off, adds the authorised domains, requires Google, reads it all back
 ```
 
 The emulator needs Java 21 or newer. It is keg-only from Homebrew, so the JDK is not on `PATH`:
@@ -84,7 +84,10 @@ surface that refused everything would pass every negative control on its own. Th
 `desktop REST shapes` pin the exact REST writes the desktop app sends, and the status codes it
 gets back, which the app uses to choose its error messages.
 
-`test/mutate.mjs` checks that the suite catches each rule it guards. For each key rule it
+`test/mutate.mjs` checks that the suite catches each rule it guards. It also checks that each
+replacement landed verbatim: it replaces through a function, because a string replacement reads
+`$'` as "the rest of the file", and the email pattern ends in `$'`. Done as a string, that
+mutant spliced the file into itself, failed to load, and was scored as caught. For each key rule it
 weakens that one rule in a temporary copy, loaded through `$RULES_FILE`, and requires the suite
 to fail. It checks that every replacement matches exactly once, and it runs the baseline before
 and after. The rules file on disk is never edited.
@@ -98,6 +101,10 @@ On the Spark plan, the Identity Toolkit API cannot initialise Authentication.
 1. Open https://console.firebase.google.com/project/bay-editor-app/authentication and click **Get started**.
 2. Go to **Sign-in method → Add new provider → Google → Enable**. Pick the support email, then
    **Save**. This creates the OAuth client, which no public API does.
-3. Run `pnpm auth:configure`. It enables **Email link (passwordless)**, adds `localhost` and
+3. Run `pnpm auth:configure`. It switches the **Email/Password** provider off (which also
+   switches off the email link; the website no longer sends one), adds `localhost` and
    `bay.everholt.com` to the authorised domains, and prints the live config read back from the
-   API. It exits non-zero while anything is still missing.
+   API. It exits non-zero unless email sign-in is off and Google is on. `--dry-run` only reads.
+
+Google is the only way to sign in: on the website (checking access, `/admin`,
+`/desktop/sign-in`) and in the desktop app. Joining the waitlist needs no sign-in at all.

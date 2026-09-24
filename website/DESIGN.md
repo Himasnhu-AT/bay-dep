@@ -4,17 +4,41 @@ The visual system for bay.everholt.com. It exists so a page nobody has built yet
 looks like it belongs. If you are writing the words rather than the layout, read
 [VOICE.md](./VOICE.md) as well.
 
-The one rule: **the page should look like a printed page, not an app.** Paper, ink, one
-metal accent, a lot of empty space, and rules where a book would put rules. If a change
-makes the site feel more like a dashboard, it is wrong even when it looks nice.
+The one rule: **the app is shown on its own ground, and read about on paper.** The site
+has two surfaces and one accent. Night is the app's dark, and it is where the product
+appears: the nav, the top of every page, the edit on the home page, a terminal line, the
+footer. Paper is where you read. The orange is the app's own accent and is the only
+colour that is not a neutral. If a change makes a page feel like a dashboard, or adds a
+third ground, a second accent or a decoration that carries no information, it is wrong
+even when it looks nice.
 
-**The one exception is the plate.** A printed book does not become a dashboard because it
-carries a tipped-in plate, and neither does this site. The editor may appear on the page
-as a dark rectangle set into the paper, in the app's own colours, provided it is a
-faithful re-creation of the real interface and is captioned as one. See
-[The plate](#the-plate). Nothing else on the site may borrow those colours: they are the
-app's, and outside the plate they are simply a second theme, which this site does not
-have.
+This replaced a printed-page system (cream paper, Fraunces, a brass accent, the editor
+as a dark plate tipped into the page) on 2026-09-24, when the rebuilt plate made the
+rest of the site look like a different product. What survived: the reading column and
+its measure, rules drawn in from the left, one easing curve, the honesty rules, and the
+plate itself.
+
+## Surfaces
+
+**Every page is bound in night.** The nav is night on every page and the footer is night
+on every page, so paper is always something you are inside. Inner pages open on a band
+of night that carries the page's label, `h1` and lead (`PageHeader`), then turn to paper
+for everything below it. The home page stays on night from the nav through the hero, the
+request, the edit and the before-and-after, turns to paper for the reading, and returns
+to night for the close, which runs into the footer.
+
+**Where night meets paper, the edge is hard and placed.** Never a gradient, never a fade.
+On an inner page it is the bottom of the header band. On the home page it is the
+**seam**: paper begins halfway down the before-and-after frame (`.seam` in
+`globals.css`), so the one picture belongs to both grounds and the change of ground reads
+as deliberate rather than as two blocks stacked. Anything after the frame inside that
+section must be `relative` so it paints above the seam's paper.
+
+**Night inside paper is allowed in one case: a line of the machine's.** `Command` is a
+terminal line set on night. Nothing else on a paper page borrows the dark.
+
+There is no system dark mode. The site already carries both grounds, each in a fixed
+place; flipping them with the OS would put the reading on night and the app on paper.
 
 ## Tokens
 
@@ -23,65 +47,89 @@ utilities it generates. Do not write a hex value into a component.
 
 ### Colour
 
-| Token | Value | Utility | Use |
-|---|---|---|---|
-| `--color-paper` | `#f5f1e8` | `bg-paper` | The page. There is no second background colour. |
-| `--color-ink` | `#16130d` | `text-ink` | Headlines, wordmark, anything that must be read first. |
-| `--color-ink-soft` | `#4a4438` | `text-ink-soft` | Body copy and nav links. Most words on the site. |
-| `--color-muted` | `#6f6857` | `text-muted` | Eyebrows, footer, marginal notes. |
-| `--color-brass` | `#9a7b3f` | `text-brass` | The accent, at display sizes only. |
-| `--color-brass-deep` | `#806331` | `text-brass-deep` | The same accent for anything under 24px. |
-| `--color-line` | `#d9d1bf` | `border-line` | Every rule and divider. Always 1px. |
+| Token | Value | Use |
+|---|---|---|
+| `paper` | `#f3f2ee` | The reading ground. A warm neutral, not cream: it sits beside the app's neutral greys. |
+| `paper-raised` | `#fbfaf8` | The inside of a field. Nothing else. |
+| `ink` | `#151513` | Headlines and anything read first, on paper. |
+| `ink-soft` | `#45443f` | Body copy on paper. Most words on the site. |
+| `muted` | `#6a6962` | Captions, the quiet clause of a headline, a field's edge. |
+| `line` | `#dddbd4` | Rules on paper. Always 1px, never meaning-bearing. |
+| `night` | `#0b0b0b` | The app's ground, one step below the app's own `#121212` so its window holds its shape on it. |
+| `night-line` | `#262626` | Rules on night (the app's own hairline). |
+| `on-night` | `#ededed` | Headlines on night (the app's primary ink). |
+| `on-night-soft` | `#a1a1a1` | Body on night (the app's secondary ink). |
+| `on-night-muted` | `#8a8a8a` | Captions and quiet clauses on night (the app's label ink). |
+| `accent` | `#d9773f` | The app's accent, value for value. Buttons everywhere; text and marks on night. |
+| `accent-hover` | `#e5874f` | A button under the pointer. |
+| `accent-ink` | `#a4501c` | The same hue for text on paper: labels, links, marks. |
 
-**The brass rule: one idea per screen wears the accent.** On a page that means the
-italic word in the headline, plus the small structural marks that repeat (the numerals on the home page, the state labels on the status page). Brass on a whole paragraph,
-or on two competing headlines, spends the only emphasis the palette has.
+**One accent, and it is the app's.** The button is the accent on both grounds, with
+night text on it. On night the accent may also be text (the page label, a link). On
+paper the accent is never text; `accent-ink` is. Anything that is not a button, a link,
+a page label or a small repeated mark (a status word, a feature's tool name) is a
+neutral. A second accent is the answer to nothing.
 
-**Two brasses, by size.** `brass` is the headline colour and the colour of the short rule
-under the hero. Anything smaller than 24px that is made of words takes `brass-deep`: nav
-active states, status labels, numerals. The hue reads as the same accent; the darker one
-is legible at 11px, which the lighter one is not. See the contrast table below.
-
-There is no dark mode and no second theme. Paper is the brand.
+**Emphasis is the second clause, not a colour.** A headline that has two parts sets the
+second in the quiet ink (`Headline quiet=…`): "What went in, and what came out. *Drag the
+line across the frame.*" This replaced the italic brass word. Nothing in a headline is
+coloured.
 
 ### Type
 
-Two families, loaded through `next/font` so nothing is fetched from Google at runtime.
+One family: **Inter**, variable in weight and in optical size (`axes: ["opsz"]`), loaded
+through `next/font` so nothing is fetched at runtime. It is the face the app draws its
+interface in, so the site and the plate are one typeface. `font-optical-sizing: auto`
+gives the display cut at large sizes by itself. The only other face is the app's own
+monospace fallback (`font-app-mono`), for commands and tool names.
 
-- **Fraunces** (`font-serif`) for headlines, section titles, leads, numerals, and pull
-  quotes. Weight 300 for anything large, 400 for section titles. Italic carries emphasis.
-- **Inter** (`font-sans`) for body copy, nav, labels, and buttons. Weights 400 and 500.
+| Utility | Size | Weight | Tracking | Where |
+|---|---|---|---|---|
+| `text-display` | `clamp(44px, 6.6vw, 96px)` | 600 | -0.04em | The home `h1`. One per site. |
+| `text-title` | `clamp(38px, 5.4vw, 68px)` | 600 | -0.035em | An inner page's `h1`. |
+| `text-headline` | `clamp(28px, 3.4vw, 44px)` | 600 | -0.025em | A section's `h2` (`Headline`). |
+| `text-quote` | `clamp(24px, 3vw, 36px)` | 600 | -0.02em | The closing statement (`PullQuote`). |
+| `text-lead` | `clamp(18px, 1.9vw, 22px)` | 400 | -0.012em | The paragraph under an `h1` or a headline. |
+| `text-section` | 21px | 600 | -0.012em | A row or block title (`h2`/`h3`). |
+| `text-eyebrow` | 13px | 600 | 0 | The page label, sentence case, in the accent. |
 
-Six sizes, and every piece of text on the site is one of them:
+Body is Tailwind's `text-base` (16px, 1.6). Captions are `text-sm` or `text-xs`. Tracking
+tightens as size grows and is never set on small text; there is no uppercase, spaced-out
+label anywhere on the site. Weight does the emphasis: 600 for headings, 500 for
+buttons, links and labels, 400 for reading. Line length is capped at `60ch` for body,
+`56ch` for leads, and headings are `text-balance`.
 
-| Utility | Size | Where |
-|---|---|---|
-| `text-eyebrow` | 11px, `0.28em` tracking, uppercase | The label above a headline. |
-| `text-display` | `clamp(44px, 7.4vw, 92px)` | The home headline. One per site. |
-| `text-title` | `clamp(40px, 6vw, 72px)` | The `h1` of an inner page. One per page. |
-| `text-lead` | `clamp(18px, 2.1vw, 23px)` | The serif paragraph under an `h1`. |
-| `text-section` | 26px | `h2`, meaning a row title. |
-| `text-quote` | `clamp(20px, 2.6vw, 28px)` | The closing italic line. |
-
-Body copy is the Tailwind default `text-base` in `text-ink-soft`. Line length is capped
-at `60ch` for body and `56ch` for leads and quotes, because a 1080px column of unbroken
-prose is unreadable and the caps are what make the layout feel typeset.
+**One label per page.** The `Eyebrow` sits over the `h1` and nowhere else. A section is
+opened by its `Headline` (or, for a small block, a `text-section` `h2`), not by a caps
+label over a smaller title.
 
 ### Space
 
-- The column is `max-w-page` (1080px) with `px-8` gutters. The `Wrap` component is the
-  only thing that should apply it.
-- **One thing is allowed outside the column: the figure.** It runs to 1560px because it
-  carries a conversation and an editor at once, and at 1080px neither is readable. This is
-  the only exception on the site, and widening anything else to match it is how a page
-  loses its measure.
-- Inner pages open with `pt-24 pb-28`. The home page is a centred hero instead.
-- The gap between the page header and the first rule is `mt-[82px]`. Rows are `py-11`
-  on desktop and `py-9` below `sm`.
-- A closing pull quote sits `mt-20` under the last rule.
+- The column is `max-w-page` (1080px) with `px-5` gutters on a phone and `px-8` from
+  `sm`. The `Wrap` component is the only thing that should apply it.
+- **One thing is allowed outside the column: the plate.** It runs to 1560px because it
+  carries a conversation and an editor at once. The hero frame and the before-and-after
+  stay in the column.
+- A page header band is `pt-16 pb-16`, `sm:pt-24 sm:pb-24`. The first block on paper under
+  it is `mt-16`. Sections on paper are `mt-24` apart; a headline to its list is `mt-10`.
+- Rows are `py-8`, `sm:py-10`. The home page's night sections are `pt-28`, `sm:pt-36`.
 
-Prefer these numbers over inventing new ones. The rhythm is more valuable than any
-individual measurement being perfect.
+Prefer these numbers over inventing new ones.
+
+### Shape
+
+**12px corners on every surface, full round on every button.** The hero frame, the
+plate's window, the before-and-after frame, `Command` and `Field` are `rounded-[12px]`.
+`ActionLink` and `ActionButton` are pills. Rules have no corners. No shadows anywhere:
+the grounds are flat, and a surface is separated by its edge or by the ground changing.
+
+## The hero
+
+The home page opens on night with the label, the headline, one sentence, the button and
+a secondary link to `/status`, and nothing else: no image. The first picture of the app is
+the pinned sequence directly below, which starts at the first scroll. (The owner removed a
+hero frame and a separate "here is that edit, being made" introduction on 2026-09-24: the
+sequence introduces itself.)
 
 ## The plate
 
@@ -130,7 +178,9 @@ when a plate colour stops matching the app's.
 
 **The palette is not ours.** Every value is copied from the dark theme in
 `../src/renderer/src/styles.css` and lives in the `@theme` block as `--color-app-*`, under
-the app's own token name. Do not tune them to taste, and do not use them outside the plate.
+the app's own token name. Do not tune them to taste. The site's own night tokens
+(`on-night`, `night-line`, `accent`) share several of these values on purpose, but are
+separate tokens: the `app-*` set follows the app, and the test holds them to it.
 
 | Token | Value | The app's role |
 |---|---|---|
@@ -145,10 +195,14 @@ the app's own token name. Do not tune them to taste, and do not use them outside
 | `app-clip-audio` / `-edge` | `#25382f` / `#356047` | a sound clip and its border |
 | `app-waveform` | `#5fd39a` | the waveform, at 45% as the app draws it |
 
-**Type.** The plate's chrome is Inter, which the app draws its interface in and the site
-already loads. The app's monospace is JetBrains Mono, which the site does not load; the
+**Type.** The plate's chrome is Inter, which the app draws its interface in and which is
+now the site's only face. The app's monospace is JetBrains Mono, which the site does not load; the
 plate uses the app's own fallback, the system monospace, rather than fetch a font for a
 dozen tool names.
+
+**The chapter notes have no numbers.** Each beat's note is its title and body only; the
+accent rule under the plate that fills as the sequence advances says how far along you
+are. `Chapter.eyebrow` is still in `src/lib/sequence.ts` as the chapter's key.
 
 **The phone split.** Below `@5xl` the window stacks: top bar, preview and transport, the
 timeline with a narrow header, then the agent panel at 27vh, with the rail, inspector,
@@ -182,16 +236,16 @@ only other place the plate's colours appear (the frame's ground before a poster 
 - **It tracks the pointer 1:1** from wherever you press on the frame, with pointer capture,
   and `touch-action: pan-y` so a vertical swipe still scrolls the page. The same control is
   a range input for the keyboard and screen readers (arrows, Home, End), which takes no
-  pointer events and draws a brass focus rule inside the frame.
+  pointer events and draws an accent focus ring inside the frame.
 - **The two videos keep one clock.** The after video leads; on each frame it presents
   (`requestVideoFrameCallback`), the before video is re-seeked only if it has drifted more
   than two frames.
 - **Labels are not laid over the picture.** Which side is which is said in the caption
   under it. "Hear the edit" unmutes the after video; nothing plays sound unasked.
 
-The plate is ruled along its top edge in brass and casts no shadow. It is a leaf bound
-into a printed page, not a window floating over one, and a drop shadow is the one gesture
-that would make the page read as a dashboard.
+The plate and the before-and-after frame have 12px corners and no shadow. The plate's
+window is edged in `app-line-strong` (`#333`), one step lighter than the app's own
+hairline, so it holds its shape on night, which is darker than the app's ground.
 
 ## Components
 
@@ -200,68 +254,87 @@ marketing pages have five client components and no more: `Reveal`, which needs a
 observer, the nav, which needs the current path, `ScrollSequence`, which needs scroll
 position, `BeforeAfter`, which needs a pointer and two videos, and `DepthFallback`, which
 does nothing where CSS scroll timelines work. The
-access pages (`/waitlist`, `/waitlist/finish`, `/desktop/sign-in`, `/admin`) are server
+access pages (`/waitlist`, `/desktop/sign-in`, `/admin`) are server
 pages around one client component each, in `src/components/access/`, because signing in
 is interactive by nature.
 
 ```tsx
-<main className="flex-1 pt-24 pb-28">
+<main className="flex-1 pb-28">
+  <PageHeader
+    eyebrow="Status"
+    title="What actually runs."
+    lead="One paragraph. Two sentences, three at the outside."
+  />
   <Wrap>
-    <PageHeader
-      eyebrow="What we make"
-      title={<>One app, <em className="text-brass italic">one job</em>.</>}
-      lead="One serif paragraph. Two sentences, three at the outside."
-    />
+    <div className="mt-16">
+      <Headline quiet="The second clause, in the quiet ink.">A section opens.</Headline>
+    </div>
 
-    <RuledList>
-      <RuledRow aside={<span>I</span>} title="A row title">
+    <RuledList className="mt-10">
+      <RuledRow aside={<span className="text-eyebrow font-semibold text-accent-ink">Built</span>} title="A row title">
         The body of the row. Plain sentences.
       </RuledRow>
     </RuledList>
 
-    <PullQuote>&ldquo;The line you want people to remember.&rdquo;</PullQuote>
+    <Columns ruled className="mt-24">
+      <Block title="What it will not do">The omission, stated.</Block>
+      <Block title="Where it actually is">The limit, stated first.</Block>
+    </Columns>
+
+    <PullQuote>The line you want people to remember.</PullQuote>
   </Wrap>
 </main>
 ```
 
-- **`Wrap`** is the column. Nothing sits outside it.
-- **`Eyebrow`** is the caps label. Use it to open a page or a late section.
-- **`PageHeader`** is the label, the `h1`, and the lead, with the reveal delays already
-  set. Pass `title` as JSX so one word can be brass and italic.
-- **`RuledList` / `RuledRow`** is the site's only list style: a narrow left column for a
-  numeral, a status, or another marginal note, and the substance on the right. Pass
-  `wide` when the left column holds a status and a kind rather than a numeral. It
-  collapses to one column below `sm`.
-- **`ActionButton`** is `ActionLink` for an action that is not a navigation: send a link,
-  request access, approve. Same box and fill. `quiet` drops the box to an underlined
-  word, for the secondary action beside a primary one (Continue with Google, Sign out,
-  Revoke), so a screen still asks for one thing. Disabled is `line` border and `muted`
-  text, with no hover.
-- **`Field`** is a line to write on: an eyebrow label and an input ruled underneath in
-  `ink-soft`, turning `brass-deep` on focus, never a box. The rule carries meaning here,
-  so it may not be `line` (1.4:1). `multiline` makes it a textarea; `hint` is a `text-xs`
-  muted line below. Errors are not red: they are a sentence in `ink` ruled down its left
-  edge in `brass-deep`, with `role="alert"`, and every one of them says what to do next.
-- **`Command`** is a line you would actually type. The only monospace on the site, ruled
-  down its left edge in brass on a slightly deeper paper rather than boxed in a shadow,
-  so it reads as a line from a terminal and not as a widget. One line each; if you want
-  a block of them, stack `Command`s with `space-y-2.5` so each stays a discrete
-  instruction.
-- **`PullQuote`** closes a page. At most one, and only when the line earns it.
+- **`Wrap`** is the column.
+- **`PageHeader`** is the night band at the top of an inner page: the label, the `h1` and
+  the lead, with the reveal delays set. It sits outside the page's `Wrap`.
+- **`Eyebrow`** is the page label: 13px, semibold, sentence case, `accent` on night and
+  `accent-ink` on paper. One per page, over the `h1`. `tone="night"` on night.
+- **`Headline`** opens a section: `text-headline`, with `quiet` for a second clause in the
+  quiet ink. `tone="night"` on night.
+- **`RuledList` / `RuledRow`** is the site's list: a left column for a status or a verb
+  in `accent-ink`, and the substance on the right, rules drawn in between. `wide` when the
+  left column holds a word longer than a status. It collapses below `sm`.
+- **`MarkedGrid`** is four (or any even number of) notes in two columns, each headed by
+  the thing in the app it is about, in monospace: `⌘Z`, `Revert`, `preview_frame`.
+  Exactly as many cells as notes. Home page.
+- **`Columns` / `Block`** is a pair of small titled blocks side by side from `md`.
+  `Block` is the `text-section` `h2` and its body; it is also how a lone block opens,
+  such as every page's "What it will not do".
+- **`ActionLink`** is the site's button: a 48px pill in `accent` with night text on it
+  (6.2:1), an arrow that nudges 4px, `scale(0.98)` while pressed. The same on both grounds.
+  One per screen. **`ActionButton`** is the same for an action that is not a navigation
+  (join, approve); `quiet` makes it an underlined word for the secondary action beside a
+  primary one (Sign in with Google under the waitlist's join form, Sign out, Revoke), so
+  a screen still asks for one thing. Disabled is `line` fill and `muted`
+  text.
+- **`TextLink`** is a link in running copy or beside a button: underlined, `accent-ink`
+  on paper and `accent` on night, `arrow` for the secondary action next to an
+  `ActionLink`.
+- **`Field`** is a raised box (`paper-raised`) with a 1px `muted` edge (4.9:1, because the
+  edge is what says "type here"), 12px corners, the label above it in `ink-soft`, and an
+  `accent-ink` edge plus a soft accent ring on focus. `multiline` makes it a textarea;
+  `hint` is a `text-sm` muted line below. Errors are not red: a sentence in `ink` ruled
+  down its left edge in `accent-ink`, with `role="alert"`, that says what to do next.
+- **`Command`** is a line you would actually type, set on night with 12px corners in the
+  app's monospace, the `$` in the accent. The only night on a paper page. One command
+  each; stack them with `space-y-2.5`.
+- **`PullQuote`** is the closing statement, set at `text-quote` in `ink`, at most one per
+  page.
 - **`AppPlate` / `AgentPanel` / `ScrollSequence`** are the figure, its agent panel and the
   scroll driver; **`BeforeAfter`** is the comparison under it. Home page only.
 - **`Reveal`** wraps anything that should arrive when it is scrolled to.
 - **`Rule`** is a standalone 1px line that draws itself in from the left.
 
-If you find yourself needing a card, a shadow, a gradient, a rounded corner larger than
-1px, or a second accent colour, the answer is almost certainly a `RuledRow` instead.
+If you find yourself needing a card, a shadow, a gradient, a glow, a third ground or a
+second accent, the answer is almost certainly a `RuledRow`, a `Block`, or nothing.
 
 ## Motion
 
-**The gesture is ruling a line on paper.** A rule is never faded in; it is drawn, from the
-left, at the moment its content arrives. Everything else on the site is a quiet arrival
-underneath that one idea. If a proposed animation cannot be described as something that
-happens to paper or ink, it does not belong here.
+**Things arrive, and rules are drawn.** A rule is never faded in; it is drawn from the
+left at the moment its content arrives. Everything else is a quiet arrival or a change of
+depth as you scroll. Transforms and opacity only, always.
 
 One curve, `--ease-paper`, which is `cubic-bezier(0.16, 1, 0.3, 1)`. It decelerates hard,
 so motion reads as a confident arrival rather than a slide. No bounce, no elastic, ever.
@@ -271,45 +344,48 @@ Four behaviours, and no fifth without amending this section:
 **Arrival** (`Reveal`, default). Opacity 0 to 1 and 14px up, 0.7s. Applied to any block of
 content that should announce itself once.
 
-**Settle** (`Reveal variant="settle"`). The same, from 20px and `blur(5px)`, over 0.9s. Ink
-resolving into paper. This is the home headline, and it should stay the only place on the
-site that uses it. A focal moment repeated on every page is not a focal moment.
+**Settle** (`Reveal variant="settle"`). The same, from 24px, over 1s. This is the home
+headline, and it should stay the only place on the site that uses it. A focal moment
+repeated on every page is not a focal moment. (It was a blur until 2026-09-24; a filter is
+not a transform, so it went.)
 
 **Rule** (`data-rule`). `scaleX(0)` to 1 from the left origin, 0.8s, starting 0.08s after
 the content it belongs to, so the line lands just behind the words. Used by `RuledList`,
-every `RuledRow`, and the short brass rule under the home hero.
+every `RuledRow`, and every `MarkedGrid` note.
 
-**Nudge** (`data-nudge`). The one looping animation on the site, on the hero's scroll cue:
-a 2.1s fall and return. A cue that plays once is missed by anyone who was still reading the
-headline, which is the whole audience it exists for. It is scoped to
-`@media (scripting: enabled)` and cleared under `prefers-reduced-motion`. Do not add a
-second loop anywhere; a page with two things moving forever has no focal point.
+Nothing loops. The hero's scroll cue and its looping nudge went with the printed-page
+system: the frame rising under the headline is the reason to scroll, and a label that says
+so is noise.
 
 **Depth** (`data-depth`). The one scroll-linked motion besides the sequence, added at the
-owner's request: leaves of one page lifting at different rates as you turn past them.
+owner's request: layers of one page moving at different rates as you scroll past them.
 Three kinds, all in `globals.css`:
 
 - `peel`, the home hero. Each line rises faster than the page by `--depth` of the scroll
-  over the first screen (eyebrow 0.16, headline 0.10, lead and rule 0.05, the cue 0) and
+  over the first screen (label 0.14, headline 0.10, lead and actions 0.06) and
   fades toward `--fade`. Upper lines move faster than lower ones, so they separate as they
   leave rather than colliding, and the bottom of the hero moves with the page so it never
   runs into the section under it.
 - `enter`, a plate arriving. It starts `--enter` (6vh) below its place and settles as its
-  `[data-depth-root]` finishes entering, so the plate reads as set beneath the paper. The
+  `[data-depth-root]` finishes entering, so the plate reads as set into the page. The
   note above it moves with the page. In the pinned sequence it settles exactly as the
   plate pins; in the stacked fallback each plate does it once.
-- `drift`, the numerals beside the home page's rows, `--drift` (18px) either side of their
-  place while the row crosses the screen. Marginalia sit at a different depth from text.
+- `lift`, the home hero's frame. It grows from `--lift` (0.92) to full size over the first
+  70vh of scroll, from its top edge, so the picture comes forward as the words above it
+  leave. `scale`, on the compositor. (The old `drift` on the home page's numerals went
+  with the numerals.)
 
 How it is built, which is the part to keep: CSS scroll-driven animations
-(`animation-timeline: scroll()` / `view()`) of `translate` and `opacity` only, which the
+(`animation-timeline: scroll()` / `view()`) of `translate`, `scale` and `opacity` only, which the
 browser runs on the compositor with no script and no layout. Where they are unsupported,
 `DepthFallback` reproduces the same curves from one passive, rAF-throttled listener that
 reads every rectangle before writing any `translate`. Nothing starts hidden; every
 from-state is visible and a few pixels off its place. `prefers-reduced-motion: reduce`
-switches all of it off in both paths. Measured with a scrolling frame probe at 1440×900,
-before and after, at 1× and 4× CPU throttle: 60fps held in both, with no added layouts
-per frame. Keep that true: never animate `top`, `margin`, `height` or `width` from scroll,
+switches all of it off in both paths. Measured with a scrolling frame probe at 1440×900
+on 2026-09-24 (the dev server, 16px per frame over the whole home page): at 1× every one
+of 1042 frames was 16.7ms; at 4× the median held at 16.7ms and 45 frames reached 33ms,
+every one of them at a step boundary inside the pinned sequence, where the plate
+re-renders for its new step. Nothing outside the sequence dropped a frame. Keep that true: never animate `top`, `margin`, `height` or `width` from scroll,
 and never add a depth that makes one element pass over another.
 
 ### Scroll
@@ -363,10 +439,10 @@ purely to soften the two or three that share the first screen.
 
 ### Feedback
 
-Hover and focus are 200ms to 300ms on the same curve. Nav links draw a 1px brass rule
+Hover and focus are 200ms to 300ms on the same curve. Nav links draw a 1px accent rule
 underneath, the same gesture as the page rules, rather than only changing colour. The
-`ActionLink` fills with ink and nudges its arrow 6px. Rows are not interactive, so they
-have no hover state at all.
+button lightens to `accent-hover`, nudges its arrow 4px, and presses to `scale(0.98)` on
+pointer-down, not on release. Rows are not interactive, so they have no hover state.
 
 ### Safety
 
@@ -375,29 +451,36 @@ scripting is off, or the browser does not know that query, none of it applies an
 renders fully visible. No content on this site can be hidden by a script that failed to
 run, and there is no inline script to make it so.
 
-`prefers-reduced-motion: reduce` clears every transform, blur, and transition, and turns
+`prefers-reduced-motion: reduce` clears every transform and transition, and turns
 smooth scrolling off. Use `Reveal` and `data-rule` rather than hand-rolling motion and
 this keeps holding.
 
 ## Accessibility
 
-Measured against paper (`#f5f1e8`), which is the only background on the site:
+Measured against paper (`#f3f2ee`):
 
 | Colour | Ratio | Verdict |
 |---|---|---|
-| `ink` | 16.4:1 | Passes AA and AAA at any size. |
-| `ink-soft` | 8.6:1 | Passes AA and AAA at any size. Body copy lives here. |
-| `muted` | 4.9:1 | Passes AA at any size. |
-| `brass-deep` | 5.0:1 | Passes AA at any size. |
-| `brass` | 3.5:1 | Large text only, meaning 24px and up. Fails AA below that. |
-| `line` | 1.4:1 | Decorative rules only. Never a border that carries meaning. |
+| `ink` | 16.3:1 | Passes AA and AAA at any size. |
+| `ink-soft` | 8.7:1 | Passes AA and AAA at any size. Body copy lives here. |
+| `muted` | 4.9:1 | Passes AA at any size. Also a field's edge. |
+| `accent-ink` | 5.0:1 | Passes AA at any size. Labels and links on paper. |
+| `accent` | 2.8:1 | Never text on paper. It is the button's fill, and the text on the button is night. |
+| `line` | 1.2:1 | Decorative rules only. Never a border that carries meaning. |
 
-Two of these are deliberate departures from the original designs, in which muted
-(`#8a8272`, 3.4:1) and brass (`#9a7b3f`, 3.5:1) were both used for 11px to 13px text,
-which needs 4.5:1. Muted was darkened, and brass was split into a display colour and a text
-colour rather than darkening the headline accent. If you retune the palette, re-measure:
-the ratio is `(L1 + 0.05) / (L2 + 0.05)` on relative luminance, and getting it wrong is
-invisible to you and not to the person reading it.
+Measured against night (`#0b0b0b`):
+
+| Colour | Ratio | Verdict |
+|---|---|---|
+| `on-night` | 16.8:1 | Passes AA and AAA at any size. |
+| `on-night-soft` | 7.6:1 | Passes AA and AAA at any size. Body on night. |
+| `on-night-muted` | 5.7:1 | Passes AA at any size. Captions, quiet clauses. |
+| `accent` | 6.2:1 | Passes AA at any size. The page label and links on night. |
+| night on `accent` | 6.2:1 | Passes AA at any size. The button's label (7.4:1 on `accent-hover`). |
+
+If you retune the palette, re-measure: the ratio is `(L1 + 0.05) / (L2 + 0.05)` on
+relative luminance, and getting it wrong is invisible to you and not to the person
+reading it.
 
 Measured against the app's panel (`app-surface-1`, `#181818`) and its controls
 (`app-surface-2`, `#212121`), which is where these appear:
@@ -418,10 +501,10 @@ where it should be fixed; when it is, the token test brings the plate along.
 
 Other standing rules:
 
-- Focus is a brass 1px outline with 3px offset, set globally. Do not remove it.
+- Focus is a 2px accent outline with 3px offset, set globally. Do not remove it.
 - Nav links stay visible at every width. The original designs hid them below 640px,
   which leaves a phone with no way to move around the site.
-- One `h1` per page, `h2` for row titles, in order.
+- One `h1` per page, `h2` for sections and blocks, `h3` for rows and notes, in order.
 - Decorative arrows and rules get `aria-hidden`.
 
 ## Adding a page
@@ -429,7 +512,7 @@ Other standing rules:
 1. `src/app/<name>/page.tsx`, exporting `metadata` with a `title` and a `description`.
    The title template in `layout.tsx` appends the product name, so pass "Status" on its
    own rather than repeating the product name in it.
-2. Open with `<main className="flex-1 pt-24 pb-28">` and a `Wrap`.
+2. Open with `<main className="flex-1 pb-28">`, a `PageHeader`, then a `Wrap`.
 3. Build the page out of the components above. If the page needs a shape that does not
    exist yet, add it to `layout.tsx` and document it here in the same commit, so the next
    page inherits it instead of reinventing it.

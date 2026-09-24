@@ -64,7 +64,7 @@ export function DepthFallback() {
       const params = paramsNow();
       // Reads first.
       const rects = params.map((p) =>
-        p.kind === "peel" || !p.root ? null : p.root.getBoundingClientRect(),
+        p.kind === "peel" || p.kind === "lift" || !p.root ? null : p.root.getBoundingClientRect(),
       );
       // Then writes.
       params.forEach((p, i) => {
@@ -79,10 +79,11 @@ export function DepthFallback() {
           const span = r.height >= vh ? vh : r.height;
           const t = clamp((vh - r.top) / span);
           p.el.style.translate = `0 ${(0.06 * vh * (1 - t)).toFixed(2)}px`;
-        } else if (p.kind === "drift" && r) {
-          // Matches `cover 0%` to `cover 100%`, and --drift (18px) in globals.css.
-          const t = clamp((vh - r.top) / (vh + r.height));
-          p.el.style.translate = `0 ${(18 - 36 * t).toFixed(2)}px`;
+        } else if (p.kind === "lift") {
+          // Matches `0` to `70vh` on the root scroll timeline, and --lift
+          // (0.92) in globals.css. Keep the two in step.
+          const t = clamp(y / (0.7 * vh));
+          p.el.style.scale = String(0.92 + 0.08 * t);
         }
       });
     };
@@ -101,6 +102,7 @@ export function DepthFallback() {
       for (const el of touched) {
         el.style.translate = "";
         el.style.opacity = "";
+        el.style.scale = "";
       }
     };
   }, []);

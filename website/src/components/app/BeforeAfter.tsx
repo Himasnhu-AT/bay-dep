@@ -169,6 +169,8 @@ export function BeforeAfter() {
 
   return (
     <figure>
+      {/* The seam: paper begins halfway down this frame. See globals.css. */}
+      <div className="seam">
       <div
         ref={stage}
         onPointerDown={(e) => {
@@ -185,7 +187,7 @@ export function BeforeAfter() {
         onPointerCancel={() => {
           dragging.current = false;
         }}
-        className="relative aspect-video cursor-ew-resize touch-pan-y overflow-hidden border-t-2 border-t-brass bg-app-surface-0 select-none"
+        className="relative aspect-video cursor-ew-resize touch-pan-y overflow-hidden rounded-[12px] bg-app-surface-0 select-none"
         // The divider is one custom property: every layer reads it through a transform.
         style={{ ["--p" as string]: position }}
       >
@@ -227,20 +229,21 @@ export function BeforeAfter() {
           className="pointer-events-none absolute inset-0 will-change-transform"
           style={{ transform: "translateX(calc(var(--p) * 1%))" }}
         >
-          <span className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-paper/85" />
-          <span className="absolute top-1/2 left-0 grid size-9 -translate-1/2 place-items-center rounded-full border border-paper/70 bg-ink text-paper">
+          <span className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-on-night/85" />
+          <span className="absolute top-1/2 left-0 grid size-10 -translate-1/2 place-items-center rounded-full border border-on-night/70 bg-night text-on-night">
             <ChevronsLeftRight className="size-4" strokeWidth={1.5} />
           </span>
         </div>
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-0 outline outline-1 -outline-offset-4 outline-brass peer-focus-visible:opacity-100"
+          className="pointer-events-none absolute inset-0 rounded-[12px] opacity-0 outline-2 -outline-offset-4 outline-accent outline-solid peer-focus-visible:opacity-100"
         />
       </div>
+      </div>
 
-      <figcaption className="mt-2.5 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-xs leading-relaxed text-muted sm:mt-4">
+      <figcaption className="relative mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm leading-relaxed text-muted sm:mt-4">
         <span>
-          <span className="text-brass-deep">Fig. 2</span> &middot; Left of the line, the four clips as they
+          <span className="font-medium text-ink-soft">Fig. 2</span> Left of the line, the four clips as they
           came from Pexels, cut to the same frames. Right of it, the edit in Fig. 1.
         </span>
         <span className="ml-auto flex items-center gap-4">
@@ -248,7 +251,7 @@ export function BeforeAfter() {
             type="button"
             onClick={togglePlay}
             disabled={!near}
-            className="text-brass-deep underline underline-offset-2 transition-colors hover:text-ink disabled:text-muted disabled:no-underline"
+            className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink disabled:text-muted disabled:no-underline"
           >
             {playing ? "Pause" : "Play"}
           </button>
@@ -257,7 +260,7 @@ export function BeforeAfter() {
             onClick={toggleSound}
             disabled={!near}
             aria-pressed={sound}
-            className="text-brass-deep underline underline-offset-2 transition-colors hover:text-ink disabled:text-muted disabled:no-underline"
+            className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink disabled:text-muted disabled:no-underline"
           >
             {sound ? "Mute" : "Hear the edit"}
           </button>

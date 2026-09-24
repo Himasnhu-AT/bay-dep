@@ -4,8 +4,11 @@
  *
  * Nothing here runs on page load. The config is plain data, and the SDK is
  * reached only through `loadFirebase()`, which pulls it in with a dynamic
- * `import()` the first time a visitor asks to sign in. Until then the browser
- * has not fetched a byte of it, let alone contacted Google. Do not import from
+ * `import()` the first time a visitor presses "Sign in with Google". Until then
+ * the browser has not fetched a byte of it, let alone contacted Google.
+ *
+ * Joining the waitlist does not load the SDK at all: it is one REST request,
+ * `joinWaitlistRequest` below, sent when the visitor presses the button. Do not import from
  * `firebase/*` anywhere else, statically or otherwise: a static import would put
  * the SDK in the page bundle and start it before anyone asked.
  *
@@ -33,8 +36,44 @@ export const ADMIN_EMAIL = "hyattherate2005@gmail.com";
  * button. It holds no token and no address.
  */
 export const SESSION_MARK = "bay.signedIn";
-/** The address a sign-in link was sent to, so the link can be completed on this device. */
-export const EMAIL_FOR_LINK = "bay.emailForSignIn";
+
+/**
+ * Joining the waitlist, as one Firestore REST commit, signed out. The SDK would
+ * open a write channel (several requests, and ~100 KB of code) to make the same
+ * single write; this sends exactly the document the rules accept, with the
+ * server's clock for createdAt. There is deliberately no "must not exist"
+ * precondition: with one, a repeat answers 409 before the rules run, which
+ * tells anyone whether an address is on the list. Without it a repeat is an
+ * update, which the rules refuse with the same 403 as any refusal.
+ * firebase/test/rules.test.mjs pins this exact request against the rules.
+ */
+export function joinWaitlistRequest(email: string, note?: string): Promise<Response> {
+  const root = `projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+  const str = (v: string) => ({ stringValue: v });
+  return fetch(
+    `https://firestore.googleapis.com/v1/${root}:commit?key=${firebaseConfig.apiKey}`,
+    {
+      method: "POST",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        writes: [
+          {
+            update: {
+              name: `${root}/waitlist/${email}`,
+              fields: {
+                email: str(email),
+                status: str("pending"),
+                ...(note ? { note: str(note) } : {}),
+              },
+            },
+            updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }],
+          },
+        ],
+      }),
+    },
+  );
+}
 
 async function load() {
   const [app, auth, firestore] = await Promise.all([
