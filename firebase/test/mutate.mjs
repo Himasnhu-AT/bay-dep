@@ -54,6 +54,9 @@ const MUTANTS = [
   ['access: any signed-in user may update/delete a grant',
     "      allow list, update, delete: if isAdmin();\n    }\n\n    // ---- users",
     "      allow list: if isAdmin();\n      allow update, delete: if signedIn();\n    }\n\n    // ---- users"],
+  ['access: the admin can neither list nor revoke (the /admin page)',
+    "      allow list, update, delete: if isAdmin();\n    }\n\n    // ---- users",
+    "      allow update: if isAdmin();\n    }\n\n    // ---- users"],
   ['users create: referralsUsed need not be 0',
     'request.resource.data.referralsUsed == 0', 'true'],
   ['users update: no new grant required',
@@ -100,7 +103,7 @@ for (const [label, from, to] of MUTANTS) {
     survived++
     console.log(`SURVIVED  ${label}`)
   } else {
-    const suites = new Set(['waitlist', 'access', 'users', 'desktop REST shapes', 'default deny'])
+    const suites = new Set(['waitlist', 'admin grant form', 'access', 'users', 'desktop REST shapes', 'default deny'])
     const tests = failed.filter((t) => !suites.has(t))
     console.log(`caught    ${label}\n            by: ${tests.join(' | ') || '(load error: exit ' + code + ')'}`)
   }

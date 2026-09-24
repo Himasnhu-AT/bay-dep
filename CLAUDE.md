@@ -334,6 +334,13 @@ unverified email, or a refresh token Google refuses locks at once; ages run from
 bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
 `safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
 
+**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
+email directly on the website's `/admin`; an entitled user refers one from inside bay
+(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
+(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
+`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
+site says "Releasing soon" and points at the waitlist.
+
 ## graft — read the graph before you grep
 
 This repo is indexed by [graft](https://github.com/graft-dev/graft): a prebuilt graph of every

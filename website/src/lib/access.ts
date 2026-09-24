@@ -234,6 +234,37 @@ export async function approve(admin: User, emails: string[]) {
   await batch.commit();
 }
 
+/** The same test the rules apply to a grant's id: lowercase, no whitespace, one @. */
+export const isGrantableEmail = (email: string) =>
+  /^[^@\s/]+@[^@\s/]+\.[^@\s/]+$/.test(email);
+
+/**
+ * A direct grant from the admin page's form, for an address that never joined
+ * the waitlist (or did: its entry is marked approved in the same batch, so it
+ * leaves the pending list). It reads first, because over an existing grant the
+ * write would be an update, which the rules let the admin make, and it would
+ * overwrite a referral's record of who referred whom. So an address that
+ * already has access is reported, not re-granted.
+ */
+export async function grant(admin: User, raw: string): Promise<"granted" | "exists"> {
+  const fb = await loadFirebase();
+  const email = normalizeEmail(raw);
+  const { doc, getDoc, writeBatch, serverTimestamp } = fb.fs;
+  const ref = doc(fb.db, "access", email);
+  if ((await getDoc(ref)).exists()) return "exists";
+  const entry = await getDoc(doc(fb.db, "waitlist", email));
+  const batch = writeBatch(fb.db);
+  batch.set(ref, {
+    email,
+    via: "admin",
+    grantedBy: admin.uid,
+    grantedAt: serverTimestamp(),
+  });
+  if (entry.exists()) batch.update(entry.ref, { status: "approved" });
+  await batch.commit();
+  return "granted";
+}
+
 /** Revoking is deleting the grant. The desktop app notices on its next check. */
 export async function revoke(email: string) {
   const fb = await loadFirebase();

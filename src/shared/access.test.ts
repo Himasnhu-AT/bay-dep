@@ -43,6 +43,16 @@ test('the sentences carry what the person needs: the email, the date, the code',
   assert.match(describeAccess(states[9]!).title, /disabled/)
 })
 
+test('no grant: the sentence names both ways in, a referral of this email and the waitlist', () => {
+  const { title, detail } = describeAccess(states[6]!)
+  assert.match(title, /a@example\.com does not have access/)
+  assert.match(detail, /invite-only/)
+  assert.match(detail, /refer this email/)
+  assert.match(detail, /join the waitlist/)
+  // Positive control: the unverified reason is the other sentence, and offers neither.
+  assert.doesNotMatch(describeAccess(states[7]!).detail, /refer|waitlist/)
+})
+
 test('the locked message says it is locked, why, and how to unlock', () => {
   const message = lockedMessage({ state: 'no-access', email: 'a@example.com', reason: 'no-grant' })
   assert.match(message, /^bay is locked: a@example\.com does not have access/)
