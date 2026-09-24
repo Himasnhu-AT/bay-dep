@@ -15,6 +15,9 @@ import {
   normaliseCrop,
   isCropped,
   type Crop,
+  KEYFRAME_PROPERTIES,
+  type KeyframeProperty,
+  type Layout,
   FRAME_RATES,
   formatFps,
   matchFrameRate
@@ -37,6 +40,8 @@ import { GradeSection } from './GradeSection'
 import { isGradeableKind } from '@shared/grade'
 import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
+import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
+import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
 
 /**
  * One value across a multi-selection, or `mixed` when they disagree.
@@ -163,6 +168,14 @@ export function Inspector(): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
   const moveItem = useEditor((state) => state.moveItem)
   const trimItem = useEditor((state) => state.trimItem)
+  const setKeyframe = useEditor((state) => state.setKeyframe)
+  const notify = useEditor((state) => state.notify)
+  // The playhead only when one animated clip is selected: every other inspector state shows
+  // stored values, and subscribing to the playhead for those would re-render at the frame rate.
+  const single = selected.length === 1 ? selected[0] : undefined
+  const keyedPlayhead = useEditor((state) => (single?.keyframes ? state.playhead : -1))
+  // The diamonds draw from this too: filled or hollow matters only once there are keys, and
+  // their clicks read the live playhead, so nothing else needs to subscribe.
 
   const fps = timeline?.fps ?? 30
   const count = selected.length
@@ -186,6 +199,28 @@ export function Inspector(): ReactNode {
   })
   const layout = (read: (item: Item) => number): { value: number; mixed: boolean } =>
     common(selected, read)
+  /** What a clip shows at the playhead: its keyed values when it is animated, else as stored. */
+  const view = (item: Item): Layout =>
+    item.keyframes && keyedPlayhead >= 0 ? animatedLayoutAt(item, keyedPlayhead) : item.layout
+
+  /**
+   * Writes `value` to `property` on `item` at the playhead if the property is animated — adding a
+   * key there or editing the one already there — and returns true; false means "not animated,
+   * write the stored field". An animated property's stored field draws nowhere, so writing it
+   * would be a control that changes nothing.
+   */
+  const keyed = (item: Item, property: KeyframeProperty, value: number): boolean => {
+    if (!item.keyframes?.[property]?.length) return false
+    const frame = relativeFrame(item, useEditor.getState().playhead)
+    if (frame === null) {
+      notify(`Move the playhead over the clip to change its animated ${property}: its keys set it everywhere.`)
+      return true
+    }
+    setKeyframe(item.id, property, frame, value)
+    return true
+  }
+  const diamond = (property: KeyframeProperty): ReactNode =>
+    single ? <KeyDiamond item={single} property={property} playhead={keyedPlayhead} /> : null
   const hasPicture = selected.some((item) => findAsset(project, item.assetId)?.hasVideo !== false)
 
   /**
@@ -197,12 +232,27 @@ export function Inspector(): ReactNode {
    */
   const applyLayout = (patch: Parameters<typeof patchLayout>[1]): void => {
     transact(() => {
-      for (const item of selected) patchLayout(item.id, patch)
+      for (const item of selected) {
+        const rest: Partial<Layout> = {}
+        for (const [key, value] of Object.entries(patch) as [keyof Layout, never][]) {
+          if ((KEYFRAME_PROPERTIES as readonly string[]).includes(key) && typeof value === 'number' &&
+              keyed(item, key as KeyframeProperty, value)) continue
+          rest[key] = value
+        }
+        if (Object.keys(rest).length > 0) patchLayout(item.id, rest)
+      }
     })
   }
   const applyItem = (patch: Parameters<typeof patchItem>[1]): void => {
     transact(() => {
-      for (const item of selected) patchItem(item.id, patch)
+      for (const item of selected) {
+        if (patch.volume !== undefined && keyed(item, 'volume', patch.volume)) {
+          const { volume: _keyed, ...rest } = patch
+          if (Object.keys(rest).length > 0) patchItem(item.id, rest)
+          continue
+        }
+        patchItem(item.id, patch)
+      }
     })
   }
 
@@ -212,7 +262,7 @@ export function Inspector(): ReactNode {
   const frame = { width: timeline?.width ?? 0, height: timeline?.height ?? 0 }
   const origin = (selected[0]?.layout.origin ?? DEFAULT_LAYOUT_ORIGIN) as LayoutOrigin
   const positionOf = (item: Item): { x: number; y: number } =>
-    positionFromOrigin(item.layout, frame, origin)
+    positionFromOrigin(view(item), frame, origin)
 
   const left = layout((item) => positionOf(item).x)
   const top = layout((item) => positionOf(item).y)
@@ -221,11 +271,14 @@ export function Inspector(): ReactNode {
   const setPosition = (axis: 'x' | 'y', next: number): void => {
     transact(() => {
       for (const item of selected) {
-        const current = positionFromOrigin(item.layout, frame, origin)
-        patchLayout(
-          item.id,
-          positionToOrigin({ ...current, [axis]: next }, item.layout, frame, origin)
-        )
+        const shown = view(item)
+        const current = positionFromOrigin(shown, frame, origin)
+        const patch = positionToOrigin({ ...current, [axis]: next }, shown, frame, origin)
+        // An animated X or Y keys the playhead; the other axis, if static, is written as before.
+        const rest: Partial<Layout> = {}
+        if (patch.left !== undefined && !keyed(item, 'left', patch.left)) rest.left = patch.left
+        if (patch.top !== undefined && !keyed(item, 'top', patch.top)) rest.top = patch.top
+        if (Object.keys(rest).length > 0) patchLayout(item.id, rest)
       }
     })
   }
@@ -258,11 +311,14 @@ export function Inspector(): ReactNode {
       for (const item of selected) patchLayout(item.id, { origin: next })
     })
   }
-  const width = layout((item) => item.layout.width)
-  const height = layout((item) => item.layout.height)
-  const rotation = layout((item) => item.layout.rotation)
-  const opacity = layout((item) => item.layout.opacity)
-  const volume = layout((item) => item.volume)
+  const width = layout((item) => view(item).width)
+  const height = layout((item) => view(item).height)
+  const rotation = layout((item) => view(item).rotation)
+  const scale = layout((item) => view(item).scale ?? 1)
+  const opacity = layout((item) => view(item).opacity)
+  const volume = layout((item) =>
+    item.keyframes?.volume && keyedPlayhead >= 0 ? animatedVolumeAt(item, keyedPlayhead) : item.volume
+  )
   const speed = layout((item) => item.speed)
   const fadeIn = layout((item) => item.fadeInFrames)
   const fadeOut = layout((item) => item.fadeOutFrames)
@@ -367,7 +423,14 @@ export function Inspector(): ReactNode {
             in the model (every item does), but X/Y/W/H/Rotate/Opacity on a music bed are six
             controls that move nothing anyone can see. */}
         {hasPicture && (
-        <Section title="Transform">
+        <Section
+          title="Transform"
+          actions={
+            single?.keyframes ? (
+              <KeyNavigation item={single} properties={PICTURE_PROPERTIES} playhead={keyedPlayhead} />
+            ) : undefined
+          }
+        >
           {/* Wrapped in a Field for a visible caption: `Select` carries only an aria-label,
               which is enough when a Section title names it and not enough here, where it sits
               among X, Y, W and H and would otherwise be an unexplained dropdown. */}
@@ -386,54 +449,81 @@ export function Inspector(): ReactNode {
             />
           </Field>
           <div className="grid grid-cols-2 gap-1.5">
-            <NumberField
-              label="X"
-              value={left.value}
-              mixed={left.mixed}
-              onCommit={(next) => setPosition('x', next)}
-              suffix="px"
-            />
-            <NumberField
-              label="Y"
-              value={top.value}
-              mixed={top.mixed}
-              onCommit={(next) => setPosition('y', next)}
-              suffix="px"
-            />
-            <NumberField
-              label="W"
-              value={width.value}
-              mixed={width.mixed}
-              onCommit={(next) => applyLayout({ width: Math.max(1, next) })}
-              min={1}
-              suffix="px"
-            />
-            <NumberField
-              label="H"
-              value={height.value}
-              mixed={height.mixed}
-              onCommit={(next) => applyLayout({ height: Math.max(1, next) })}
-              min={1}
-              suffix="px"
-            />
+            <Keyed diamond={diamond('left')}>
+              <NumberField
+                label="X"
+                value={left.value}
+                mixed={left.mixed}
+                onCommit={(next) => setPosition('x', next)}
+                suffix="px"
+              />
+            </Keyed>
+            <Keyed diamond={diamond('top')}>
+              <NumberField
+                label="Y"
+                value={top.value}
+                mixed={top.mixed}
+                onCommit={(next) => setPosition('y', next)}
+                suffix="px"
+              />
+            </Keyed>
+            <Keyed diamond={diamond('width')}>
+              <NumberField
+                label="W"
+                value={width.value}
+                mixed={width.mixed}
+                onCommit={(next) => applyLayout({ width: Math.max(1, next) })}
+                min={1}
+                suffix="px"
+              />
+            </Keyed>
+            <Keyed diamond={diamond('height')}>
+              <NumberField
+                label="H"
+                value={height.value}
+                mixed={height.mixed}
+                onCommit={(next) => applyLayout({ height: Math.max(1, next) })}
+                min={1}
+                suffix="px"
+              />
+            </Keyed>
           </div>
-          <div className="mt-1.5">
-            <NumberField
-              label="Rotate"
-              value={rotation.value}
-              mixed={rotation.mixed}
-              onCommit={(next) => applyLayout({ rotation: next })}
-              suffix="°"
-            />
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            <Keyed diamond={diamond('rotation')}>
+              <NumberField
+                label="Rotate"
+                value={rotation.value}
+                mixed={rotation.mixed}
+                onCommit={(next) => applyLayout({ rotation: next })}
+                suffix="°"
+              />
+            </Keyed>
+            {/* A zoom about the centre, like Rotate: it enlarges a title rather than reflowing
+                it, and it is what a push-in keys. */}
+            <Keyed diamond={diamond('scale')}>
+              <NumberField
+                label="Scale"
+                // Whole percent: the half-width field clips a decimal ("130.0" read "13(").
+                value={Math.round(scale.value * 100)}
+                mixed={scale.mixed}
+                onCommit={(next) => applyLayout({ scale: Math.max(0, next) / 100 })}
+                min={0}
+                step={1}
+                precision={0}
+                suffix="%"
+              />
+            </Keyed>
           </div>
           <div className="mt-2">
-            <SliderField
-              label="Opacity"
-              value={opacity.value ?? 1}
-              mixed={opacity.mixed}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onCommit={(next) => applyLayout({ opacity: next })}
-            />
+            <Keyed diamond={diamond('opacity')}>
+              <SliderField
+                label="Opacity"
+                value={opacity.value ?? 1}
+                mixed={opacity.mixed}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onCommit={(next) => applyLayout({ opacity: next })}
+              />
+            </Keyed>
           </div>
         </Section>
         )}
@@ -509,17 +599,26 @@ export function Inspector(): ReactNode {
           />
         )}
 
-        <Section title="Audio & speed">
-          <SliderField
-            label="Volume"
-            min={0}
-            max={2}
-            step={0.01}
-            value={volume.value ?? 1}
-            mixed={volume.mixed}
-            format={(v) => `${Math.round(v * 100)}%`}
-            onCommit={(next) => applyItem({ volume: next })}
-          />
+        <Section
+          title="Audio & speed"
+          actions={
+            single?.keyframes?.volume ? (
+              <KeyNavigation item={single} properties={['volume']} playhead={keyedPlayhead} />
+            ) : undefined
+          }
+        >
+          <Keyed diamond={asset?.hasAudio || asset?.kind === 'html' ? diamond('volume') : null}>
+            <SliderField
+              label="Volume"
+              min={0}
+              max={2}
+              step={0.01}
+              value={volume.value ?? 1}
+              mixed={volume.mixed}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onCommit={(next) => applyItem({ volume: next })}
+            />
+          </Keyed>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             <NumberField
               label="In"

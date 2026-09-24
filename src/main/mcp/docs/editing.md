@@ -211,6 +211,27 @@ track — the music bed under the dialogue track. It follows the key track's cli
 not their loudness, so the preview and the export duck identically; the dip is complete as the
 key starts and a pause inside a dialogue clip stays ducked. 6 dB is light, 12 firm.
 
+## Animation: keyframes
+
+`edit_item` `keyframes: { property: [{ frame, value, ease? }] }` animates opacity, left, top,
+width, height, rotation, `scale` (a zoom about the centre) and volume. A keyed property takes its
+value from its keys at every frame — its static field no longer draws, and setting it while keys
+exist is warned about. **`frame` is item-relative**: 0 is the clip's first frame, `durationInFrames`
+its end; for timeline frame T use `T - from`. The result's `animation` reads each property back
+in timeline frames, so check it there.
+
+- Push in 4% over a 150-frame clip: `{ scale: [{ frame: 0, value: 1 }, { frame: 150, value: 1.04 }] }`.
+- Fade a title up over half a second: `{ opacity: [{ frame: 0, value: 0 }, { frame: 15, value: 1 }] }`.
+- Ride the music down to −12 dB from 0:10 to 0:14 (clip at 0, 30 fps): `{ volume: [{ frame: 285, db: 0 },
+  { frame: 300, db: -12 }, { frame: 420, db: -12 }, { frame: 435, db: 0 }] }` — volume keys take `db`.
+
+`ease` shapes the segment *from* that key to the next: `linear` (default), `hold`, `in`, `out`,
+`inOut`, or a cubic-bezier `[x1, y1, x2, y2]`. Each property you name is replaced whole; `null`
+removes it, `keyframes: null` removes all. Keys move with the clip; trimming its head keeps them on
+the same footage; `split_at` and `remove_range` divide them so each piece animates exactly as the
+whole did; speed and slip leave them where they are. Fades, transitions and ducking still multiply
+on top of an animated opacity or volume.
+
 ## Looks
 
 `edit_item` carries `adjustments` (brightness, contrast, saturate, hueRotate, blur, grayscale,

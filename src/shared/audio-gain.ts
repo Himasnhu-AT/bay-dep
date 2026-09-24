@@ -21,6 +21,7 @@ import {
   resolveTransition,
   transitionAtFrame
 } from './project'
+import { animatedVolumeAt, volumeMayBeAudible } from './keyframes'
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -235,7 +236,7 @@ export function duckGainAt(project: Project, timeline: Timeline, item: Item, fra
   for (const keyItem of key.items) {
     if (keyItem.id === item.id) continue
     const asset = findAsset(project, keyItem.assetId)
-    if (!asset || asset.error || !asset.hasAudio || !(keyItem.volume > 0)) continue
+    if (!asset || asset.error || !asset.hasAudio || !volumeMayBeAudible(keyItem)) continue
     depth = Math.max(depth, duckDepth(frame, audibleSpan(project, timeline, keyItem), attack, release))
   }
   return 1 - depth * (1 - 10 ** (-amount / 20))
@@ -257,7 +258,9 @@ export function duckGainAt(project: Project, timeline: Timeline, item: Item, fra
  * a J-cut needs goes.
  *
  * Volume is clamped to 0..2 as the inspector allows; a non-finite one is treated as 1, since
- * one NaN would otherwise silence the item with no error anywhere.
+ * one NaN would otherwise silence the item with no error anywhere. With volume keyframes the
+ * volume is theirs at this frame (`animatedVolumeAt`), so a ride is sampled here and nowhere else:
+ * the preview's gain nodes and export's per-frame envelope both read it through this function.
  */
 export function itemAudioGainAt(
   project: Project,
@@ -265,7 +268,8 @@ export function itemAudioGainAt(
   item: Item,
   frame: Frames
 ): number {
-  const volume = Number.isFinite(item.volume) ? Math.max(0, Math.min(2, item.volume)) : 1
+  const level = animatedVolumeAt(item, frame)
+  const volume = Number.isFinite(level) ? Math.max(0, Math.min(2, level)) : 1
   if (volume === 0) return 0
 
   const active = transitionAtFrame(project, timeline, frame)

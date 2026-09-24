@@ -8,6 +8,7 @@ import type {
   Crop,
   Frames,
   Item,
+  KeyframeProperty,
   Layout,
   Project,
   TextStyle,
@@ -249,6 +250,11 @@ export interface EditorActions {
   /** Set one edge of a clip's crop, as a fraction of the source. */
   setCrop(itemId: string, edge: keyof Crop, fraction: number): void
   patchLayout(itemId: string, patch: Partial<Layout>): void
+  /**
+   * Put a key on one property at an item-relative frame — replacing one already there — or, with
+   * `value` null, remove the key at that frame. The inspector's diamond and auto-key both land here.
+   */
+  setKeyframe(itemId: string, property: KeyframeProperty, frame: Frames, value: number | null): void
 
   // tracks -------------------------------------------------------------------
   addTrack(kind: TrackKind): string

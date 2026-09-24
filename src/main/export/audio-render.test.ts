@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Asset, Item, Project, Timeline } from '@shared/project'
 import { buildAudioGraph } from './audio-graph'
+import { animatedVolumeAt } from '@shared/keyframes'
 
 const require_ = createRequire(import.meta.url)
 const FFMPEG = (require_('ffmpeg-ffprobe-static') as { ffmpegPath?: string | null }).ffmpegPath ?? ''
@@ -277,4 +278,36 @@ test('ducked music is amountDb down under the key, and back up after the release
   assert.ok(Math.abs(20 * Math.log10(levelAt(samples, 450, 150) / open)) <= 0.5, 'back to unity after the release')
   // The key itself is untouched.
   assert.ok(levelAt(samples, 900, 90) > open * 0.8, 'the line plays at its own level')
+})
+
+test('a volume ride keyed from 0 to −12 dB is in the file, within 0.5 dB, at every point measured', { skip: SKIP }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-ride-'))
+  // Static volume 0 on purpose: with keys the keys are what plays, and a walker that still read
+  // `item.volume` would drop the clip from the file entirely.
+  const ride: Item = {
+    ...clip('ride', 'bed', 0, 150, 0),
+    volume: 0,
+    keyframes: { volume: [{ frame: 30, value: 1 }, { frame: 90, value: 10 ** (-12 / 20) }] }
+  }
+  const reference: Item = clip('flat', 'bed', 0, 150, 0)
+  const bed = tone('bed', lavfi(dir, 'bed.wav', 'sine=frequency=600:duration=10'))
+  const measure = (item: Item): Int16Array => {
+    const timeline = timelineOf([{ id: 't', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, items: [item] }])
+    return render(dir, projectOf(timeline, [bed]), timeline, 150)
+  }
+  const flat = measure(reference)
+  const rode = measure(ride)
+  // A frame's level is the mean of the gain across it, and the envelope is linear between frame
+  // starts — so the expected value at frame n is the curve at n + 0.5, from the shared sampler.
+  const expectedDb = (frame: number): number => 20 * Math.log10(animatedVolumeAt(ride, frame + 0.5))
+  const measuredDb = (frame: number): number => 20 * Math.log10(levelAt(rode, 600, frame) / levelAt(flat, 600, frame))
+  for (const frame of [15, 45, 60, 75, 120]) {
+    assert.ok(
+      Math.abs(measuredDb(frame) - expectedDb(frame)) <= 0.5,
+      `frame ${frame}: expected ${expectedDb(frame).toFixed(2)} dB, measured ${measuredDb(frame).toFixed(2)} dB`
+    )
+  }
+  // The three points on the ramp are really on a ramp: strictly falling, between the ends.
+  const on = [45, 60, 75].map(measuredDb)
+  assert.ok(on[0]! > on[1]! && on[1]! > on[2]! && on[0]! < -0.5 && on[2]! > -11.5, `a ramp: ${on.map((d) => d.toFixed(2))}`)
 })

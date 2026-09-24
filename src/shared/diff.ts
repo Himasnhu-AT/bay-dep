@@ -114,6 +114,14 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       if (!same(o.blendMode, item.blendMode)) out.push({ kind: 'changed', text: `Blend mode of ${name}: ${o.blendMode ?? 'normal'} → ${item.blendMode ?? 'normal'}` })
       if (!same(o.text, item.text)) out.push({ kind: 'changed', text: `Restyled the text of ${name}` })
       if (!same(o.variables, item.variables)) out.push({ kind: 'changed', text: `Changed the content of ${name}` })
+      // A head trim shifts keys to keep them on their footage; that is the trim, already said above.
+      if (!same(o.keyframes, item.keyframes) && o.from === item.from) {
+        const keyed = Object.keys(item.keyframes ?? {})
+        out.push({
+          kind: 'changed',
+          text: keyed.length > 0 ? `Animated ${keyed.join(', ')} on ${name}` : `Removed the animation from ${name}`
+        })
+      }
     }
     for (const [id, { item, track }] of oldItems) {
       if (!newItems.has(id)) {

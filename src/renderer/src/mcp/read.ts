@@ -32,6 +32,7 @@ import {
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
 import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
+import { describeKeyframes } from '@shared/keyframes'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -184,6 +185,11 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // nothing" is a statement about a caller having set something that does nothing.
     ...(item.crop && isCropped(item.crop) ? { crop: item.crop } : {}),
     ...(item.variables ? { variables: item.variables } : {}),
+    // Keys as stored (item-relative frames) and what they do in timeline frames. Absent means no
+    // property is animated; where one is, its static field above is not what draws.
+    ...(item.keyframes
+      ? { keyframes: item.keyframes, animation: describeKeyframes(item) }
+      : {}),
     audio: {
       volume: item.volume,
       fadeInFrames: item.fadeInFrames,

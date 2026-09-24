@@ -32,6 +32,7 @@
 
 import type { Item, Layout, Project, Timeline, Track } from '@shared/project'
 import { PROJECT_VERSION } from '@shared/project'
+import { repairKeyframes } from '@shared/keyframes'
 
 /** A document as parsed from JSON, before anything vouches for its shape. */
 export type RawDocument = Record<string, unknown>
@@ -186,7 +187,22 @@ export const TRANSFORMS: Transform[] = [
         for (const key of Object.keys(identity) as (keyof typeof identity)[]) {
           if (!finite(layout[key])) repaired[key] = identity[key]
         }
+        // `scale` is optional: absent is 1. A `null` from a NaN is removed rather than drawn.
+        if ('scale' in repaired && !finite(repaired.scale)) delete repaired.scale
         item.layout = repaired
+      })
+    }
+  },
+  {
+    // Keys sorted, one per frame, finite — what the sampler's binary search assumes. A no-op on
+    // anything bay wrote; it exists for a hand-edited file.
+    name: 'item-keyframes',
+    apply(project) {
+      eachItem(project, (item) => {
+        if (item.keyframes === undefined) return
+        const repaired = repairKeyframes(item.keyframes)
+        if (repaired) item.keyframes = repaired
+        else delete item.keyframes
       })
     }
   }

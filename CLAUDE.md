@@ -770,6 +770,18 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
   peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
   default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
+- **Keyframes have one sampler and item-relative frames** (`item.keyframes`, `@shared/keyframes`,
+  `edit_item.keyframes`). The compositor paints `animatedItemAt` (in `#paintItem`, so every kind
+  and a transition's two sides animate alike) and `itemAudioGainAt` reads `animatedVolumeAt`, so
+  preview, `preview_frame` and export — picture and the per-frame volume envelope — sample one
+  curve. No keys returns the item itself. A keyed property takes its value from the keys and its
+  static field draws nowhere; `layout.scale` is a zoom about the centre (a transform, so type
+  enlarges rather than reflows). Frame 0 is `item.from`: moves carry keys; an in-point trim
+  (store trim, roll/slide's `keyframeShiftFrames`, ripple's kept tail, `apply_script` head trim)
+  shifts them to stay on their footage; splits use `sliceKeyframes` (keys inside plus the nearest
+  beyond each end — exact); slip and speed leave them; `retimeTimeline` scales them. Anything that
+  asks "can this clip sound" must use `volumeMayBeAudible`, not `item.volume > 0` — a clip keyed up
+  from volume 0 was otherwise dropped from export.
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field

@@ -7,7 +7,7 @@ export const tool: ToolSpec = {
   name: 'edit_item',
   description:
     'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
-    'it sits on the canvas, its opacity, volume, fades, speed, look or colour grade. Only the fields you pass ' +
+    'it sits on the canvas, its opacity, volume, fades, speed, look, colour grade or keyframe animation. Only the fields you pass ' +
     'change. Moving an item onto occupied time on the same track is refused rather than ' +
     'silently overlapping — move the other item first, or use a different track. ' +
     'Returns the item complete after the edit. **That returned state is authoritative: you ' +
@@ -42,7 +42,37 @@ export const tool: ToolSpec = {
       width: { type: 'number' },
       height: { type: 'number' },
       opacity: { type: 'number', minimum: 0, maximum: 1 },
+      scale: {
+        type: 'number',
+        minimum: 0,
+        maximum: 100,
+        description:
+          'A zoom about the item\'s centre, drawn like rotation: 1.1 is 10% bigger, 1 unchanged. ' +
+          'Enlarges a title\'s type rather than reflowing it, which width/height would do.'
+      },
       volume: { type: 'number', minimum: 0, maximum: 2 },
+      // No `type`: null must pass (it removes every key), and the validator does not recurse —
+      // `mergeKeyframes` checks each key and names the property, index and legal range.
+      keyframes: {
+        description:
+          'Animate properties over the clip: { property: [{ frame, value, ease? }, ...] }. ' +
+          'Properties: opacity, left, top, width, height, rotation, scale, volume. A property with ' +
+          'keys takes its value from them at every frame (its static field no longer draws); before ' +
+          'the first key the first value holds, after the last the last. Fades, transitions and ' +
+          'ducking still multiply on top.\n' +
+          '- frame is ITEM-RELATIVE: 0 is the clip\'s first frame, durationInFrames its end. For ' +
+          'timeline frame T use T - from. Keys move with the clip; trimming its head keeps them on ' +
+          'the footage; split_at divides them; speed does not retime them.\n' +
+          '- value is in the static field\'s unit (opacity 0..1, volume linear gain 0..2, scale 1 = ' +
+          'unchanged, pixels, degrees). Volume keys may give db instead of value: { frame, db: -12 }.\n' +
+          '- ease shapes the segment FROM this key to the next: "linear" (default), "hold" (jump at ' +
+          'the next key), "in", "out", "inOut" (CSS ease-in/out), or a cubic-bezier [x1, y1, x2, y2].\n' +
+          'Each property you name is replaced whole; others are kept. { scale: null } removes that ' +
+          'property\'s keys; keyframes: null removes all.\n' +
+          'Push in 4% over a 150-frame clip: { scale: [{ frame: 0, value: 1 }, { frame: 150, value: 1.04 }] }. ' +
+          'Duck music (from 0, 30fps) to -12 dB over 0:10-0:14 with half-second ramps: { volume: ' +
+          '[{ frame: 285, db: 0 }, { frame: 300, db: -12 }, { frame: 420, db: -12 }, { frame: 435, db: 0 }] }.'
+      },
       speed: { type: 'number', description: 'Playback rate. 1 is source speed.' },
       fadeInFrames: { type: 'integer', minimum: 0 },
       fadeOutFrames: { type: 'integer', minimum: 0 },

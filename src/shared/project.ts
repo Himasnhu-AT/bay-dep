@@ -185,7 +185,56 @@ export interface Layout {
    * frame, whatever this says.
    */
   origin?: LayoutOrigin
+  /**
+   * A uniform zoom about the box's centre, drawn as a transform like `rotation`. Absent means 1.
+   *
+   * A zoom rather than a bigger box, because a box that grows reflows a title's words instead of
+   * enlarging them, and because "push in 4%" is then one number — `width`, `height`, `left` and
+   * `top` moving together to keep a centre is four, and an agent keeps them in step badly.
+   */
+  scale?: number
 }
+
+/**
+ * How a keyframe's value travels to the next key's: the curve of the segment that *starts* at
+ * this key (After Effects' convention). `hold` keeps this value until the next key, then jumps.
+ * `in`/`out`/`inOut` are CSS's `ease-in`/`ease-out`/`ease-in-out`; a tuple is a CSS
+ * `cubic-bezier(x1, y1, x2, y2)` with x1 and x2 in 0..1. Absent means `linear`.
+ */
+export type KeyframeEase = 'linear' | 'hold' | 'in' | 'out' | 'inOut' | [number, number, number, number]
+
+/**
+ * One key: a value at a frame. **`frame` is item-relative** — 0 is the item's first frame
+ * (`item.from`), whatever the timeline's fps and wherever the clip sits — so moving a clip
+ * carries its animation with it. The rules for every other edit are in `@shared/keyframes`.
+ */
+export interface Keyframe {
+  frame: Frames
+  value: number
+  ease?: KeyframeEase
+}
+
+/**
+ * Every property that can be animated. Each is also a static field — the six layout fields,
+ * `scale` and `volume` — and **a property with keys takes its value from them at every frame**;
+ * the static field is what it reads with none. Fades, transitions and ducking still multiply on
+ * top, as they do over a static value.
+ */
+export const KEYFRAME_PROPERTIES = [
+  'opacity',
+  'left',
+  'top',
+  'width',
+  'height',
+  'rotation',
+  'scale',
+  'volume'
+] as const
+
+export type KeyframeProperty = (typeof KEYFRAME_PROPERTIES)[number]
+
+/** Keys per property, sorted by frame with no two on one frame. An empty list is stored as absence. */
+export type ItemKeyframes = Partial<Record<KeyframeProperty, Keyframe[]>>
 
 /**
  * How a text item is drawn.
@@ -395,6 +444,12 @@ export interface Item {
   audioTrailFrames?: Frames
   /** Duck this clip's sound while another track is sounding — music under dialogue. */
   duck?: AudioDuck
+  /**
+   * Animation: keys per property, sampled by `@shared/keyframes` — the one function the
+   * compositor, `preview_frame`, export and the audio gain all read. Absent is the fast path and
+   * means every property holds its static value, which is every project written before this.
+   */
+  keyframes?: ItemKeyframes
 }
 
 /**
@@ -644,6 +699,21 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
       const half = Math.floor(item.durationInFrames / 2)
       item.fadeInFrames = Math.min(Math.round(item.fadeInFrames * k), half)
       item.fadeOutFrames = Math.min(Math.round(item.fadeOutFrames * k), half)
+      // Keys are item-relative frames, so they scale like durations: the same wall-clock moment
+      // into the clip. Two keys that round onto one frame keep the later one, which is what the
+      // curve reached there.
+      // New lists rather than edits in place: a split or duplicate may share one with its twin.
+      if (item.keyframes) {
+        const scaled: ItemKeyframes = {}
+        for (const property of KEYFRAME_PROPERTIES) {
+          const list = item.keyframes[property]
+          if (!list || list.length === 0) continue
+          const byFrame = new Map<number, Keyframe>()
+          for (const key of list) byFrame.set(Math.round(key.frame * k), { ...key, frame: Math.round(key.frame * k) })
+          scaled[property] = [...byFrame.values()].sort((a, b) => a.frame - b.frame)
+        }
+        item.keyframes = scaled
+      }
       floor = end
     }
   }

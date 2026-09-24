@@ -17,6 +17,7 @@
 import type { AudioDuck, Item, Project, Timeline, Track } from '@shared/project'
 import { findAsset } from '@shared/project'
 import { MAX_DUCK_DB, resolveAudioOffsets } from '@shared/audio-gain'
+import { volumeMayBeAudible } from '@shared/keyframes'
 import { fail, resolveTrack } from './helpers'
 
 type Patch = Pick<Item, 'audioLeadFrames' | 'audioTrailFrames' | 'duck'>
@@ -146,7 +147,7 @@ export function audioFinishReport(
     const keys =
       key?.items.filter((i) => {
         const a = findAsset(project, i.assetId)
-        return a && !a.error && a.hasAudio && i.volume > 0
+        return a && !a.error && a.hasAudio && volumeMayBeAudible(i)
       }) ?? []
     if (!key) {
       warnings.push(`duck: the key track ${item.duck.keyTrackId} no longer exists, so nothing ducks this clip.`)

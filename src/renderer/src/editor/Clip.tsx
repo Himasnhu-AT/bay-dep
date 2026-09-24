@@ -202,6 +202,7 @@ function ClipImpl({
 
   const fadeIn = item.fadeInFrames * pixelsPerFrame
   const fadeOut = item.fadeOutFrames * pixelsPerFrame
+  const keyFrames = keyFramesOf(item)
 
   return (
     <div
@@ -258,6 +259,21 @@ function ClipImpl({
         />
       )}
 
+      {/* A diamond per keyed frame, any property, along the bottom edge — where the keys are,
+          not what they do; the inspector says what. Not interactive, so a drag starting on one
+          is still a clip drag. */}
+      {keyFrames.length > 0 && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0.5 h-2">
+          {keyFrames.map((frame) => (
+            <span
+              key={frame}
+              className="absolute bottom-0 size-1.5 -translate-x-1/2 rotate-45 border border-black/50 bg-accent"
+              style={{ left: frame * pixelsPerFrame }}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="pointer-events-none relative flex h-full items-start gap-1 px-1.5 py-1">
         <Icon aria-hidden="true" className="mt-px size-3 shrink-0 text-on-media/70" />
         {/* Over a filmstrip the name gets the same dark backing as the speed badge: a text
@@ -306,6 +322,18 @@ function ClipImpl({
       )}
     </div>
   )
+}
+
+/** Every frame, item-relative and inside the clip, that holds a key of any property. */
+function keyFramesOf(item: Item): number[] {
+  if (!item.keyframes) return []
+  const frames = new Set<number>()
+  for (const list of Object.values(item.keyframes)) {
+    for (const key of list ?? []) {
+      if (key.frame >= 0 && key.frame <= item.durationInFrames) frames.add(key.frame)
+    }
+  }
+  return [...frames].sort((a, b) => a - b)
 }
 
 /**

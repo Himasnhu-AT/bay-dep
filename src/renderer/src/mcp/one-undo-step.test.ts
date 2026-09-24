@@ -460,6 +460,7 @@ const STORE_CASES: Record<string, StoreCase> = {
   patchItem: { delta: 1, run: (f) => state().patchItem(f.a, { volume: 0.5, fadeInFrames: 4 }) },
   patchLayout: { delta: 1, run: (f) => state().patchLayout(f.a, { left: 10, opacity: 0.5 }) },
   setCrop: { delta: 1, run: (f) => state().setCrop(f.a, 'left', 0.1) },
+  setKeyframe: { delta: 1, run: (f) => state().setKeyframe(f.a, 'scale', 10, 1.1) },
   setCompositionVariable: {
     delta: 1,
     run: () => {

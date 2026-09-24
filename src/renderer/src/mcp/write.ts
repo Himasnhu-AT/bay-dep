@@ -47,6 +47,8 @@ import {
   usToFramesAtTimeline, type Handlers } from './helpers'
 import { frameOrPlayhead, itemsCrossing } from './read'
 import { mergeTextStyle } from './textStyle'
+import { describeKeyframes, mergeKeyframes } from '@shared/keyframes'
+import { KEYFRAME_PROPERTIES } from '@shared/project'
 
 export async function importMedia(args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const paths = args.paths as string[]
@@ -186,6 +188,15 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   }
   if (layout.width < 1 || layout.height < 1) {
     fail(`width and height must be at least 1 pixel; got ${layout.width}x${layout.height}.`)
+  }
+  if (args.scale !== undefined) {
+    const scale = Number(args.scale)
+    if (!Number.isFinite(scale) || scale < 0 || scale > 100) {
+      fail(`scale is a zoom about the item's centre, 0..100 with 1 unchanged; got ${JSON.stringify(args.scale)}.`)
+    }
+    // 1 is stored as absence, so an unzoomed clip carries no field and skips the transform.
+    if (scale === 1) delete layout.scale
+    else layout.scale = scale
   }
 
   const patch: Partial<Omit<Item, 'id' | 'trackId'>> = { from, durationInFrames, layout }
@@ -366,6 +377,21 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   // J/L cuts and ducking: validated in `audioFinish.ts`, where the gain rules they feed live.
   Object.assign(patch, audioFinishPatch(args, item, track, project(), timeline()))
 
+  // Keyframes: validated against the clip as it will be after this call (its new length), so a
+  // key refused as past the end names the end the agent is about to have.
+  if (args.keyframes !== undefined) {
+    const asset = findAsset(project(), item.assetId)
+    const merged = mergeKeyframes(item.keyframes, args.keyframes, {
+      itemId: item.id,
+      from,
+      durationInFrames,
+      hasPicture: track.kind === 'video',
+      hasAudio: Boolean(asset?.hasAudio) || asset?.kind === 'html'
+    })
+    if (!merged.ok) fail(merged.error)
+    patch.keyframes = merged.keyframes
+  }
+
   const fadeIn = patch.fadeInFrames ?? item.fadeInFrames
   const fadeOut = patch.fadeOutFrames ?? item.fadeOutFrames
   if (fadeIn + fadeOut > durationInFrames) {
@@ -391,6 +417,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   const sound = audioFinishReport(after.item, project(), timeline())
   const warnings = [
     ...(sourceTailWarning ? [sourceTailWarning] : []),
+    ...shadowedByKeys(args, after.item),
     ...gradeWarnings(after.item.grade, findAsset(project(), after.item.assetId)),
     ...sound.warnings,
     ...look.warnings
@@ -415,10 +442,32 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
     ...(after.item.grade ? { grade: after.item.grade } : {}),
+    ...(after.item.keyframes
+      ? { keyframes: after.item.keyframes, animation: describeKeyframes(after.item) }
+      : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
     ...(warnings.length > 0 ? { warnings } : {})
   }
+}
+
+/**
+ * A static field set in this call on a property whose keys decide it at every frame: stored, and
+ * drawn nowhere. Said, because it reads back as accepted and changes nothing on screen.
+ */
+function shadowedByKeys(args: Record<string, unknown>, item: Item): string[] {
+  const out: string[] = []
+  for (const property of KEYFRAME_PROPERTIES) {
+    if (args[property] === undefined) continue
+    const keys = item.keyframes?.[property]
+    if (!keys || keys.length === 0) continue
+    out.push(
+      `${property} ${JSON.stringify(args[property])} is stored but changes nothing: ${property} has ` +
+        `${keys.length} keyframe${keys.length === 1 ? '' : 's'}, which set it at every frame. Edit the ` +
+        `keys (keyframes: { ${property}: [...] }), or pass keyframes: { ${property}: null } to go back to the static value.`
+    )
+  }
+  return out
 }
 
 /**

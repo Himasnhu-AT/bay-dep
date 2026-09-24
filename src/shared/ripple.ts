@@ -21,6 +21,7 @@
 
 import type { Frames, Item, Timeline, Transition } from './project'
 import { framesToUs, itemEnd } from './project'
+import { shiftKeyframes, sliceKeyframes } from './keyframes'
 
 export interface RippleDeleteResult {
   /** How much timeline was removed. Zero means nothing overlapped and nothing moved. */
@@ -135,8 +136,12 @@ export function rippleDelete(
             item.sourceStartUs + sourceAdvanceUs(end - itemFrom, timeline.fps, item.speed),
           layout: { ...item.layout },
           // A fade-in belongs to the clip's original start, which the tail is not.
-          fadeInFrames: 0
+          fadeInFrames: 0,
+          // Each side keeps the keys that shape it, so both draw exactly what the take did.
+          keyframes: sliceKeyframes(item.keyframes, end - itemFrom, item.durationInFrames)
         }
+        if (!tail.keyframes) delete tail.keyframes
+        if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, headFrames)
         item.durationInFrames = headFrames
         item.fadeOutFrames = Math.min(item.fadeOutFrames, headFrames)
         tail.fadeOutFrames = Math.min(tail.fadeOutFrames, tailFrames)
@@ -163,6 +168,8 @@ export function rippleDelete(
       item.from = start
       item.durationInFrames = tailFrames
       item.sourceStartUs += sourceAdvanceUs(lost, timeline.fps, item.speed)
+      // The head went and the tail landed on the cut: keys stay on the footage they were on.
+      if (item.keyframes) item.keyframes = shiftKeyframes(item.keyframes, -lost)
       item.fadeInFrames = Math.min(item.fadeInFrames, tailFrames)
       item.fadeOutFrames = Math.min(item.fadeOutFrames, tailFrames)
       result.trimmedItemIds.push(item.id)

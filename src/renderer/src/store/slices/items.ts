@@ -5,6 +5,7 @@
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
+import { cloneKeyframes, shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim } from '@shared/trim'
 import { makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
 import type { EditorActions } from '../types'
@@ -28,6 +29,7 @@ type Actions = Pick<
   | 'duplicateSelected'
   | 'patchItem'
   | 'patchLayout'
+  | 'setKeyframe'
   | 'addTrack'
   | 'removeTrack'
   | 'patchTrack'
@@ -198,6 +200,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
           item.from = nextFrom
           item.durationInFrames -= delta
           item.sourceStartUs = Math.round(nextSourceStart)
+          // Keys stay on the timeline frame, and the footage, they were on (`@shared/keyframes`).
+          if (item.keyframes) item.keyframes = shiftKeyframes(item.keyframes, -delta)
         } else {
           const nextDuration = Math.max(1, frame - item.from)
           const collides = track.items.some(
@@ -252,8 +256,12 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
               sourceStartUs:
                 item.sourceStartUs + Math.round(framesToUs(leftDuration, tl.fps) * item.speed),
               layout: { ...item.layout },
-              fadeInFrames: 0
+              fadeInFrames: 0,
+              // Each half keeps the keys that shape it, so the pair draws exactly what the whole did.
+              keyframes: sliceKeyframes(item.keyframes, leftDuration, item.durationInFrames)
             }
+            if (!right.keyframes) delete right.keyframes
+            if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, leftDuration)
             item.durationInFrames = leftDuration
             item.fadeOutFrames = Math.min(item.fadeOutFrames, leftDuration)
             right.fadeOutFrames = Math.min(right.fadeOutFrames, rightDuration)
@@ -378,7 +386,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
               ...item,
               id: newId('itm'),
               from: itemEnd(item),
-              layout: { ...item.layout }
+              layout: { ...item.layout },
+              ...(item.keyframes ? { keyframes: cloneKeyframes(item.keyframes) } : {})
             }
             if (track.items.some((other) => itemsOverlap(other, copy))) continue
             additions.push(copy)
@@ -408,6 +417,16 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         const found = findItem(timeline, itemId)
         if (!found || found.track.locked) return
         Object.assign(found.item.layout, patch)
+      })
+    },
+
+    setKeyframe(itemId, property, frame, value) {
+      editTimeline((timeline) => {
+        const found = findItem(timeline, itemId)
+        if (!found || found.track.locked) return
+        const next = withKeyframe(found.item.keyframes, property, Math.round(frame), value)
+        if (next) found.item.keyframes = next
+        else delete found.item.keyframes
       })
     },
 
