@@ -19,9 +19,9 @@ const FORMATS: { value: ExportFormat; label: string }[] = [
 ]
 
 const QUALITIES = [
-  { value: 'draft', label: 'Draft — fast, soft' },
+  { value: 'draft', label: 'Draft — small, soft' },
   { value: 'good', label: 'Good — the default' },
-  { value: 'best', label: 'Best — slow, large' }
+  { value: 'best', label: 'Best — largest file' }
 ] as const
 
 type Quality = (typeof QUALITIES)[number]['value']
@@ -241,7 +241,7 @@ export function ExportForm({ compact = false }: ExportFormProps): ReactNode {
               value={quality}
               options={QUALITIES.map((entry) => ({ value: entry.value, label: entry.label }))}
               onChange={(next) => setQuality(next)}
-              // Quality is a CRF for the video encoders; a WAV has nothing to apply it to.
+              // Quality drives the video encoder (VideoToolbox -q:v, VP9 CRF); a WAV has nothing to apply it to.
               disabled={running || audioOnly}
             />
           </Field>

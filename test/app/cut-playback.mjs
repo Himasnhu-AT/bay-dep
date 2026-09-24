@@ -35,7 +35,7 @@
  * (a positive control that the sampler sees ordinary picture changes and tracks them).
  *
  * Media: TAKES=<folder> uses s1*…s5* .mp4 from it (the user's urban-shinobi takes); otherwise it
- * makes its own under ~/.bay-probe-media/cut-playback-v2 — 768x1344 24 fps H.264 with keyframes 5 s
+ * makes its own under ~/.bay-probe-media/cut-playback-v3 — 768x1344 24 fps H.264 with keyframes 5 s
  * apart and B-frames, so a seek to a trimmed in-point has to decode from a distant keyframe, as the
  * real takes do. Builds its timeline in the page; the harness restores the project. Nothing saves.
  *
@@ -61,7 +61,7 @@ async function media() {
     return { clips: clips.map((c) => join(process.env.TAKES, c)), score: score ? join(process.env.TAKES, score) : null }
   }
   // Versioned by name: a changed recipe must not be satisfied by a specimen from the old one.
-  const dir = join(homedir(), '.bay-probe-media', 'cut-playback-v2')
+  const dir = join(homedir(), '.bay-probe-media', 'cut-playback-v3')
   await mkdir(dir, { recursive: true })
   const clips = []
   for (let n = 1; n <= 5; n++) {

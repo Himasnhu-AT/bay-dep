@@ -22,7 +22,11 @@ exports.default = async function checkFfmpegVendor(context) {
   const root = join(__dirname, '..')
   const dir = join(root, 'vendor', 'ffmpeg', `${platform}-${arch}`)
   const fail = (why) => {
-    throw new Error(`bay cannot be packaged for ${platform}-${arch}: ${why}. Run script/build-ffmpeg.sh ${arch} first.`)
+    const fix =
+      platform === 'darwin'
+        ? `Run script/build-ffmpeg.sh ${arch} first.`
+        : 'script/build-ffmpeg.sh builds macOS only; this platform needs its own LGPL build first (vendor/ffmpeg/README.md).'
+    throw new Error(`bay cannot be packaged for ${platform}-${arch}: ${why}. ${fix}`)
   }
   const exe = platform === 'win32' ? '.exe' : ''
   let buildinfo

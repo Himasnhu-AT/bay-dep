@@ -12,8 +12,9 @@
  * Then it runs them: each export format is really encoded (a few frames, audio and video through
  * the same args), because an encoder that is listed can still refuse its options.
  *
- * Proven: with `videoCodecArgs` switched back to `libx264`, the first and last tests fail naming
- * it (the LGPL build has no libx264); pointed at a build without zimg, `zscale` is named.
+ * Proven: with `h264Args` switched back to `libx264`, the encoder test names `encoder libx264` and
+ * the encode test fails with "Encoder not found"; with `vidstabtransform` added to `masterFilter`
+ * (GPL, not in the build), the encoder test names `filter vidstabtransform`.
  */
 
 import { test } from 'node:test'
@@ -24,7 +25,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ExportFormat } from '@shared/ipc'
 import type { Asset, Item, Project, Timeline } from '@shared/project'
-import { audioCodecArgs, containerArgs, extensionFor, videoCodecArgs, type ExportQuality } from '../export/codec-args'
+import {
+  audioCodecArgs,
+  containerArgs,
+  extensionFor,
+  H264_RATE_CONTROL,
+  videoCodecArgs,
+  type ExportQuality,
+  type H264RateControl
+} from '../export/codec-args'
 import { buildAudioGraph } from '../export/audio-graph'
 import { masterFilter } from '../export/master'
 import { NO_VENDORED_FFMPEG, vendoredTools } from './vendor'
@@ -36,6 +45,8 @@ const SKIP = TOOLS ? false : NO_VENDORED_FFMPEG
 
 const FORMATS: ExportFormat[] = ['mp4', 'mov', 'webm', 'wav', 'mp3', 'png-sequence']
 const QUALITIES: ExportQuality[] = ['draft', 'good', 'best']
+const MODES: H264RateControl[] = ['quality', 'bitrate']
+const HD = { width: 1920, height: 1080, fps: 30 }
 
 /** The names of the filters in a filtergraph string: split on `,`/`;` outside quotes, labels off. */
 function filterNames(graph: string): string[] {
@@ -143,14 +154,20 @@ test('every encoder and filter bay asks for is in the ffmpeg it ships', { skip: 
     const audio = valueOf(audioCodecArgs(format), '-c:a')
     if (audio) codecs.add(audio)
     for (const quality of QUALITIES) {
-      const video = valueOf(videoCodecArgs(format, quality), '-c:v')
-      if (video) codecs.add(video)
+      for (const mode of MODES) {
+        const video = valueOf(videoCodecArgs(format, quality, HD, mode), '-c:v')
+        if (video) codecs.add(video)
+      }
     }
   }
   codecs.add('mjpeg') // thumbnails are .jpg
   codecs.add('pcm_s16le') // the export's audio pass writes a WAV before the mux
   const wanted = filtersTheCodeWrites()
-  assert.ok(wanted.has('amix') && wanted.has('alimiter') && wanted.has('scale'), `the graphs must parse: ${[...wanted].join(' ')}`)
+  // Every name here comes from a parsed graph, none from the inline list: proof the parse ran.
+  assert.ok(
+    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat'].every((f) => wanted.has(f)),
+    `the graphs must parse: ${[...wanted].join(' ')}`
+  )
   const missing = [
     ...[...codecs].filter((c) => !encoders.has(c)).map((c) => `encoder ${c}`),
     ...[...wanted].filter((f) => !filters.has(f)).map((f) => `filter ${f}`)
@@ -193,22 +210,28 @@ test('it is LGPL 2.1: nothing GPL or non-free is compiled in', { skip: SKIP }, (
   assert.ok(!filters.has('vidstabdetect') && filters.has('deshake'), 'stabilisation is deshake, not vid.stab')
 })
 
+// On this machine's own rate control only: -q:v is refused by an x86_64 ffmpeg and -b:v is the
+// only mode it has, so each machine encodes the mode it would really export with (codec-args.test
+// holds the other mode's arguments on either machine).
 test('every export format actually encodes, audio and video, through its own args', { skip: SKIP, timeout: 60_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'bay-capabilities-'))
-  for (const format of FORMATS) {
-    const out = format === 'png-sequence' ? join(dir, 'seq-%04d.png') : join(dir, `probe.${extensionFor(format)}`)
+  const cases: { format: ExportFormat; mode: H264RateControl }[] = FORMATS.map((format) => ({ format, mode: H264_RATE_CONTROL }))
+  // The bitrate mode also runs on Apple silicon: VideoToolbox accepts -b:v on every Mac.
+  if (H264_RATE_CONTROL === 'quality') cases.push({ format: 'mp4', mode: 'bitrate' })
+  for (const { format, mode } of cases) {
+    const out = format === 'png-sequence' ? join(dir, 'seq-%04d.png') : join(dir, `probe-${mode}.${extensionFor(format)}`)
     const audioOnly = format === 'wav' || format === 'mp3'
     const args = [
       '-v', 'error', '-y',
       ...(audioOnly ? [] : ['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=0.5']),
       ...(format === 'png-sequence' ? [] : ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.5']),
-      ...(audioOnly ? ['-vn'] : videoCodecArgs(format, 'good')),
+      ...(audioOnly ? ['-vn'] : videoCodecArgs(format, 'good', { width: 320, height: 180, fps: 30 }, mode)),
       ...(format === 'png-sequence' ? [] : audioCodecArgs(format)),
       ...containerArgs(format),
       out
     ]
     const run = spawnSync(FFMPEG, args, { encoding: 'utf8' })
-    assert.equal(run.status, 0, `${format} did not encode: ${run.stderr.trim().split('\n').slice(-3).join(' | ')}`)
+    assert.equal(run.status, 0, `${format}/${mode} did not encode: ${run.stderr.trim().split('\n').slice(-3).join(' | ')}`)
     if (format === 'png-sequence') continue
     const streams = execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name', '-of', 'csv=p=0', out], { encoding: 'utf8' })
     if (!audioOnly) assert.match(streams, /video/, `${format} has no video stream`)
