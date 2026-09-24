@@ -29,7 +29,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return verified() && request.auth.token.email == 'vashisathamanav@gmail.com';
+      return verified() && request.auth.token.email == 'hyattherate2005@gmail.com';
     }
 
     // A doc id that is an email as bay writes it: lowercase, no whitespace, one @.

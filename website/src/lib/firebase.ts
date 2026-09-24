@@ -24,7 +24,7 @@ export const firebaseConfig = {
 } as const;
 
 /** The owner. The rules decide who is an admin; this only decides what the page offers. */
-export const ADMIN_EMAIL = "vashisathamanav@gmail.com";
+export const ADMIN_EMAIL = "hyattherate2005@gmail.com";
 
 /**
  * Set once a visitor has signed in on this browser, cleared when they sign out.

@@ -21,7 +21,7 @@ keyed by uid.
 **Entitlement** means `access/{token.email}` exists **and** the token's `email_verified` is
 true.
 
-**Admin** means `token.email == 'vashisathamanav@gmail.com'` and `email_verified == true`. The
+**Admin** means `token.email == 'hyattherate2005@gmail.com'` and `email_verified == true`. The
 admin is recognised by the verified email alone, so no custom claims are needed.
 
 Anything outside these three collections is denied, including to the admin.

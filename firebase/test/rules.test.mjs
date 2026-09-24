@@ -34,7 +34,7 @@ const RULES =
   process.env.RULES_FILE ?? fileURLToPath(new URL('../firestore.rules', import.meta.url))
 const [host, port] = (process.env.FIRESTORE_EMULATOR_HOST ?? '127.0.0.1:8181').split(':')
 
-const ADMIN = { uid: 'admin-uid', email: 'vashisathamanav@gmail.com' }
+const ADMIN = { uid: 'admin-uid', email: 'hyattherate2005@gmail.com' }
 const ALICE = { uid: 'alice-uid', email: 'alice@example.com' } // approved
 const BOB = { uid: 'bob-uid', email: 'bob@example.com' } // not approved
 const CAROL = { uid: 'carol-uid', email: 'carol@example.com' } // not approved
