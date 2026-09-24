@@ -13,7 +13,14 @@ import type { AgentEntry, AgentEvent } from './agent'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
-import type { GenerationJob, GenerationProvider, GenerationRequest, ProviderKeyStatus } from './generation'
+import type {
+  GenerationJob,
+  GenerationLimits,
+  GenerationProvider,
+  GenerationRequest,
+  GenerationSpending,
+  ProviderKeyStatus
+} from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessReport, LoudnessTarget } from './loudness'
@@ -475,8 +482,16 @@ export interface BayApi {
     keys(): Promise<ProviderKeyStatus[]>
     setKey(provider: GenerationProvider, fields: Record<string, string>): Promise<{ ok: true; keys: ProviderKeyStatus[] } | { ok: false; error: string }>
     clearKey(provider: GenerationProvider): Promise<ProviderKeyStatus[]>
-    /** Persists the job, then submits it. Resolves once the submission settles or a few seconds pass. */
-    start(request: GenerationRequest): Promise<{ ok: true; job: GenerationJob } | { ok: false; error: string }>
+    /**
+     * Persists the job, then submits it. Resolves once the submission settles or a few seconds
+     * pass. Refused, with nothing sent, when the row cannot be written or the spend guard's
+     * session budget or jobs-at-once limit would be passed; `spending` is where it stands after.
+     */
+    start(request: GenerationRequest): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | { ok: false; error: string }>
+    /** The spend guard: this session's estimated spend, jobs active, and the limits main enforces. */
+    spending(): Promise<GenerationSpending>
+    /** Settings › Providers. Checked and persisted by main; the renderer cannot pass limits with a call. */
+    setLimits(limits: GenerationLimits): Promise<{ ok: true; spending: GenerationSpending } | { ok: false; error: string }>
     /** One job as it stands, or null for an id main has never seen. */
     job(id: string): Promise<GenerationJob | null>
     /** Every job main remembers, newest first. */
@@ -768,6 +783,8 @@ export const IPC = {
   generationStart: 'generation:start',
   generationJob: 'generation:job',
   generationJobs: 'generation:jobs',
+  generationSpending: 'generation:spending',
+  generationSetLimits: 'generation:set-limits',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',

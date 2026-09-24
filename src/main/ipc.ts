@@ -54,7 +54,9 @@ import {
   generationJob,
   generationJobs,
   generationKeys,
+  generationSpending,
   setGenerationKey,
+  setGenerationLimits,
   startGenerationJob
 } from './generate/service'
 
@@ -114,6 +116,8 @@ interface ChannelApi {
   generationStart: BayApi['generation']['start']
   generationJob: BayApi['generation']['job']
   generationJobs: BayApi['generation']['jobs']
+  generationSpending: BayApi['generation']['spending']
+  generationSetLimits: BayApi['generation']['setLimits']
 
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
@@ -186,6 +190,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   generationStart: (_event, request) => startGenerationJob(request),
   generationJob: (_event, id) => generationJob(id),
   generationJobs: () => generationJobs(),
+  generationSpending: () => generationSpending(),
+  generationSetLimits: (_event, limits) => setGenerationLimits(limits),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {

@@ -10,7 +10,7 @@
 import { beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Project } from '@shared/project'
-import type { GenerationJob, GenerationRequest, ProviderKeyStatus } from '@shared/generation'
+import type { GenerationJob, GenerationRequest, GenerationSpending, ProviderKeyStatus } from '@shared/generation'
 import { useEditor, emptyProject } from '@/store/editor'
 import { executeToolCall } from './index'
 
@@ -18,6 +18,10 @@ const started: GenerationRequest[] = []
 const imported: string[][] = []
 let keys: ProviderKeyStatus[] = []
 let jobs: GenerationJob[] = []
+/** What main's spend guard reports. */
+let spending: GenerationSpending = { spentUsd: 0, budgetUsd: 5, active: 0, maxActive: 3 }
+/** Set to answer the next start with a job main already failed (a key the provider refused). */
+let failNextStart: string | null = null
 
 const asset = (id: string, extra: Partial<Asset>): Asset => ({
   id,
@@ -47,14 +51,18 @@ const asset = (id: string, extra: Partial<Asset>): Asset => ({
           provider: request.provider,
           model: request.model,
           kind: request.kind,
-          status: 'running',
+          status: failNextStart ? 'failed' : 'running',
+          ...(failNextStart ? { error: failNextStart } : {}),
           request,
           createdAt: Date.now(),
           updatedAt: Date.now()
         }
+        failNextStart = null
         jobs.unshift(job)
-        return { ok: true, job }
+        spending = { ...spending, spentUsd: spending.spentUsd + 3.2 }
+        return { ok: true, job, spending }
       },
+      spending: async () => spending,
       job: async (id: string) => jobs.find((j) => j.id === id) ?? null,
       jobs: async () => jobs
     },
@@ -79,6 +87,8 @@ beforeEach(() => {
     { provider: 'kling', set: false, persisted: true }
   ]
   jobs = []
+  spending = { spentUsd: 0, budgetUsd: 5, active: 0, maxActive: 3 }
+  failNextStart = null
   const base = emptyProject()
   const project: Project = {
     ...base,
@@ -178,4 +188,49 @@ test('track_generation: an unknown id names the recent jobs; a known one answers
   assert.equal(unknown.ok, false)
   assert.match(unknown.ok ? '' : unknown.error, /no generation job "nope"\. Recent jobs: job-1 \(image, running\)/)
   assert.equal((await call('track_generation', { jobId: 'job-1' })).ok, true)
+})
+
+test('a real call reports the session spend; a dry run reports the guard would refuse, before anything starts', async () => {
+  const real = await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf' })
+  assert.equal(real.ok, true)
+  const value = real.ok ? (real.value as Record<string, unknown>) : {}
+  assert.equal(value.sessionSpendUsd, 3.2)
+  assert.equal(value.sessionBudgetUsd, 5)
+
+  // $3.20 spent of $5: a second 8-second Veo clip would pass the budget, and the dry run says so.
+  const dry = await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf', validateOnly: true })
+  const planned = dry.ok ? (dry.value as Record<string, unknown>) : {}
+  assert.match(String(planned.blocked), /\$3\.20 spent of \$5\.00.*Settings › Providers/)
+  // Positive control: a call that fits is not blocked.
+  const fits = await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf', durationSeconds: 4, validateOnly: true })
+  assert.equal((fits.ok ? (fits.value as Record<string, unknown>) : {}).blocked, undefined)
+  assert.equal(started.length, 1, 'dry runs start nothing')
+})
+
+test('a job main has already failed comes back as the error, not as "call track_generation"', async () => {
+  failNextStart = 'Incorrect API key provided.'
+  const failed = await call('generate_image', { model: 'gpt-image-1', prompt: 'x' })
+  assert.equal(failed.ok, false)
+  assert.match(failed.ok ? '' : failed.error, /OpenAI refused the request: Incorrect API key provided\./)
+  assert.doesNotMatch(failed.ok ? '' : failed.error, /track_generation/)
+  // Positive control: a running job is handed to track_generation.
+  const running = await call('generate_image', { model: 'gpt-image-1', prompt: 'x' })
+  assert.match(String(running.ok ? (running.value as Record<string, unknown>).next : ''), /track_generation \{ jobId: "job-2" \}/)
+})
+
+test('track_generation with place: true on a job already placed does not place a second copy', async () => {
+  await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf' })
+  Object.assign(jobs[0]!, { status: 'done', outputPath: '/data/generated/surf-abc.mp4', findings: [] })
+  const first = await call('track_generation', { jobId: 'job-1', place: true, atFrame: 0 })
+  assert.ok(first.ok && (first.value as Record<string, unknown>).placed, 'the first call places it')
+  const pastBefore = useEditor.getState().past.length
+
+  const again = await call('track_generation', { jobId: 'job-1', place: true, atFrame: 0 })
+  assert.equal(again.ok, true)
+  const value = again.ok ? (again.value as Record<string, unknown>) : {}
+  assert.equal(value.placed, false)
+  assert.match(String(value.note), /already imported and on the timeline \(item .+\), so it was not placed again\. Call place_asset \{ assetId: "generated1" \}/i)
+  const items = useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items)
+  assert.equal(items.filter((i) => i.assetId === 'generated1').length, 1, 'one copy on the timeline')
+  assert.equal(useEditor.getState().past.length, pastBefore, 'no undo step for a call that changed nothing')
 })

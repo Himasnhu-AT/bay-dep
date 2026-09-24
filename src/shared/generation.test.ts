@@ -6,7 +6,17 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MODELS, PROVIDERS, describeModels, estimateCost, findingsFor, validateGeneration, type GenerationKind } from './generation'
+import {
+  MODELS,
+  PROVIDERS,
+  describeModels,
+  estimateCost,
+  estimateToolCallUsd,
+  findingsFor,
+  spendRefusal,
+  validateGeneration,
+  type GenerationKind
+} from './generation'
 
 function refused(input: Record<string, unknown>, kind: GenerationKind, pattern: RegExp): void {
   const result = validateGeneration(input, kind)
@@ -53,6 +63,44 @@ test('Veo at 1080p needs 8 seconds, and says so; 1080p at 8 is fine', () => {
   accepted({ model: 'veo-3.1-generate-preview', prompt: 'x', resolution: '1080p', durationSeconds: 8 }, 'video')
   // And at 720p, 6 seconds is legal.
   accepted({ model: 'veo-3.1-generate-preview', prompt: 'x', resolution: '720p', durationSeconds: 6 }, 'video')
+})
+
+test('a refused option is said once: no rule about it adds "not undefined"', () => {
+  // durationSeconds 5 is refused; the 1080p rule about duration must not pile on with "not undefined".
+  const bad = validateGeneration({ model: 'veo-3.1-generate-preview', prompt: 'x', resolution: '1080p', durationSeconds: 5 }, 'video')
+  assert.equal(bad.ok, false)
+  const errors = bad.ok ? [] : bad.errors
+  assert.equal(errors.length, 1, errors.join(' | '))
+  assert.match(errors[0]!, /does not take durationSeconds 5\. Allowed: 4, 6, 8\./)
+  assert.ok(!errors.join(' ').includes('undefined'))
+  // Same with a reference: the duration is refused once, not again by the first-frame rule.
+  const withReference = validateGeneration({ model: 'veo-3.1-generate-preview', prompt: 'x', durationSeconds: 7, referencePath: '/m/a.png' }, 'video')
+  assert.equal(withReference.ok ? 0 : withReference.errors.length, 1)
+  // Positive control: a valid duration that breaks a rule is still refused by the rule.
+  refused({ model: 'veo-3.1-generate-preview', prompt: 'x', resolution: '1080p', durationSeconds: 4 }, 'video', /durationSeconds must be 8 with resolution 1080p, not 4/)
+})
+
+test('a reference named like an Object property is not a picture type', () => {
+  // `'constructor' in {}` is true, so an `in` check took these as pictures.
+  for (const name of ['/m/a.constructor', '/m/a.toString', '/m/a.__proto__', '/m/a.hasOwnProperty']) {
+    refused({ model: 'gpt-image-1', prompt: 'x', referencePath: name }, 'image', /must be a PNG, JPEG or WebP picture/)
+  }
+  accepted({ model: 'gpt-image-1', prompt: 'x', referencePath: '/m/a.webp' }, 'image')
+})
+
+test('the agent panel prices a generate call as written, and nothing else', () => {
+  assert.equal(estimateToolCallUsd('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf' }), 3.2)
+  assert.equal(estimateToolCallUsd('generate_image', { model: 'gpt-image-1', prompt: 'x', quality: 'high', referenceAssetId: 'still' }), 0.25)
+  assert.equal(estimateToolCallUsd('generate_image', { model: 'no-such-model', prompt: 'x' }), null)
+  assert.equal(estimateToolCallUsd('place_asset', { model: 'gpt-image-1', prompt: 'x' }), null)
+})
+
+test('the spend guard fits a call up to the budget exactly, and refuses a cent past it or a job past the cap', () => {
+  const at = { spentUsd: 4.8, budgetUsd: 5, active: 0, maxActive: 3 }
+  assert.equal(spendRefusal(at, 0.2), null)
+  assert.match(spendRefusal(at, 0.21) ?? '', /\$4\.80 spent of \$5\.00.*Settings › Providers/)
+  assert.match(spendRefusal({ ...at, active: 3 }, 0) ?? '', /3 generation jobs are already running, and the limit is 3 at once/)
+  assert.equal(spendRefusal({ ...at, active: 2 }, 0.1), null)
 })
 
 test('a reference on a model that takes none is refused; a reference that is not a picture is refused', () => {

@@ -84,6 +84,65 @@ test('a key with a field missing or a space inside is refused by name; a whole o
   assert.deepEqual(await ring.set('kling', { accessKey: 'ak', secretKey: 'sk' }), { ok: true })
 })
 
+test('two saves at once never overlap their writes, and the file ends holding both keys', async () => {
+  let inFlight = 0
+  let most = 0
+  const storage = memoryStorage()
+  const slow: KeyStorage & { bytes: Buffer | null } = {
+    get bytes() {
+      return storage.bytes
+    },
+    read: storage.read,
+    write: async (bytes) => {
+      inFlight++
+      most = Math.max(most, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      storage.bytes = bytes
+      inFlight--
+    }
+  }
+  const ring = new KeyRing(sealing, slow)
+  await Promise.all([ring.set('openai', { apiKey: 'o' }), ring.set('gemini', { apiKey: 'g' })])
+  assert.equal(most, 1, 'the app writes through one temp file, so two writes at once corrupt or lose it')
+  assert.deepEqual(Object.keys(JSON.parse(storage.bytes!.toString()).sealed).sort(), ['gemini', 'openai'])
+})
+
+test('a key set before the file was read keeps the keys the file held', async () => {
+  const sealed = sealing.encrypt(JSON.stringify({ accessKey: 'ak', secretKey: 'sk' })).toString('base64')
+  const storage = memoryStorage(Buffer.from(`{"version":1,"sealed":{"kling":"${sealed}"}}`))
+  const ring = new KeyRing(sealing, storage)
+  // No `load()` first: Settings can save a key while main is still starting.
+  await ring.set('openai', { apiKey: SECRET })
+  assert.deepEqual(Object.keys(JSON.parse(storage.bytes!.toString()).sealed).sort(), ['kling', 'openai'])
+  assert.deepEqual(ring.get('kling'), { accessKey: 'ak', secretKey: 'sk' })
+})
+
+test('a keys file that cannot be parsed is reported per provider, not silently dropped; a good one reports nothing', async () => {
+  const broken = new KeyRing(sealing, memoryStorage(Buffer.from('{"version":1,"sealed":{"openai":')))
+  await broken.load()
+  for (const status of broken.status()) {
+    assert.equal(status.set, false)
+    assert.match(status.problem ?? '', /saved provider keys could not be read \(.+\)\. Set the key again\./)
+  }
+  // Setting the key again clears that provider's problem.
+  await broken.set('openai', { apiKey: SECRET })
+  assert.equal(broken.status().find((s) => s.provider === 'openai')?.problem, undefined)
+
+  // A key sealed by another keychain is named for its provider only.
+  const foreign = new KeyRing(sealing, memoryStorage(Buffer.from('{"version":1,"sealed":{"gemini":"bm90LXNlYWxlZA=="}}')))
+  await foreign.load()
+  assert.match(foreign.status().find((s) => s.provider === 'gemini')?.problem ?? '', /Google Gemini key could not be unsealed/)
+  assert.equal(foreign.status().find((s) => s.provider === 'openai')?.problem, undefined)
+
+  // Positive control: a readable file has no problem anywhere.
+  const good = new KeyRing(sealing, memoryStorage())
+  await good.set('openai', { apiKey: SECRET })
+  const again = new KeyRing(sealing, memoryStorage(Buffer.from(JSON.stringify({ version: 1, sealed: {} }))))
+  await again.load()
+  assert.ok(good.status().every((s) => s.problem === undefined))
+  assert.ok(again.status().every((s) => s.problem === undefined))
+})
+
 test('clearing a key removes it from memory and from the file', async () => {
   const storage = memoryStorage()
   const ring = new KeyRing(sealing, storage)
