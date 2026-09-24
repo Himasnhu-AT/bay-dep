@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { applySpeedPlan, planSpeed, retimedLength, speedNote } from './speed'
+import { applySpeedPlan, planSpeed, retimedLength, speedNote, trimBounds } from './speed'
 import { findItem, type Asset, type Item, type Project, type Timeline, type Track } from './project'
 
 const FPS = 30
@@ -146,4 +146,15 @@ test('speeding up keeps the fades inside the shorter clip', () => {
   const a = item(timeline, 'A')
   assert.equal(a.durationInFrames, 37, '150 frames of footage at 4x, whole frames only')
   assert.ok(a.fadeInFrames + a.fadeOutFrames <= a.durationInFrames)
+})
+
+test('trim bounds: the edges stop at the footage; a still has none', () => {
+  // 5 s source at 30 fps, in-point 1 s, 90 frames placed at 100: 30 frames of head room before,
+  // 120 frames available from the in-point, so the end can reach 220.
+  const clip = { from: 100, durationInFrames: 90, speed: 1, sourceStartUs: 1_000_000 }
+  assert.deepEqual(trimBounds(clip, 5_000_000, 30), { earliestFrom: 70, latestEnd: 220 })
+  // At 2× the same footage covers half the frames.
+  assert.deepEqual(trimBounds({ ...clip, speed: 2 }, 5_000_000, 30), { earliestFrom: 85, latestEnd: 160 })
+  // A still: unlimited end, start only at 0.
+  assert.deepEqual(trimBounds(clip, 0, 30), { earliestFrom: 0, latestEnd: Number.POSITIVE_INFINITY })
 })

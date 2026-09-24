@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Music2, Video } from 'lucide-react'
+import { trimBounds } from '@shared/speed'
 import { allItems, findAsset, formatTimecode, itemEnd, textAssetName, type Asset, type Item, type Marker, type Track } from '@shared/project'
 import { shortcutOf } from '@shared/commands'
 import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
@@ -499,11 +500,14 @@ export function Timeline(): ReactNode {
         const scrolled = (scrollRef.current?.scrollLeft ?? 0) - trimScrollAtGrab.current
         const raw = trimEdgeFrame(current.edge === 'start' ? item.from : itemEnd(item), state.dx + scrolled, pixelsPerFrame)
         const frame = state.meta ? Math.round(raw) : snap(raw, new Set([item.id]))
+        // The edge stops where the footage does, so what is drawn is what the store keeps.
+        const bounds = trimBounds(item, findAsset(project, item.assetId)?.durationUs ?? 0, timeline.fps)
         if (current.edge === 'start') {
-          const from = Math.max(0, Math.min(frame, itemEnd(item) - 1))
+          const from = Math.max(bounds.earliestFrom, Math.min(frame, itemEnd(item) - 1))
           return { ...current, from, durationInFrames: itemEnd(item) - from }
         }
-        return { ...current, from: item.from, durationInFrames: Math.max(1, frame - item.from) }
+        const end = Math.min(frame, bounds.latestEnd)
+        return { ...current, from: item.from, durationInFrames: Math.max(1, end - item.from) }
       })
     },
     onEnd: () => {

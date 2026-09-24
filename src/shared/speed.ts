@@ -205,3 +205,22 @@ export function speedNote(
   }
   return null
 }
+
+/**
+ * How far a clip's edges can be dragged before they run out of footage: the earliest start
+ * (source time 0 at this speed) and the latest end (`retimedLength`'s `available` from the
+ * in-point). Infinite for a source with no duration — a still or a title. The trim preview uses
+ * it so the edge it draws is the edge the store will keep; unclamped, a drag drew the clip past
+ * its footage and then snapped back on release without a word.
+ */
+export function trimBounds(
+  item: Pick<Item, 'from' | 'durationInFrames' | 'speed' | 'sourceStartUs'>,
+  sourceDurationUs: number,
+  fps: number
+): { earliestFrom: Frames; latestEnd: Frames } {
+  if (!(sourceDurationUs > 0)) return { earliestFrom: 0, latestEnd: Number.POSITIVE_INFINITY }
+  const speed = effectiveSpeed(item.speed)
+  const before = Math.floor(usToFrames(Math.max(0, item.sourceStartUs), fps) / speed)
+  const { available } = retimedLength(item, sourceDurationUs, item.speed, fps)
+  return { earliestFrom: Math.max(0, item.from - before), latestEnd: item.from + available }
+}
