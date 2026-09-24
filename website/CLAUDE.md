@@ -33,8 +33,9 @@ that together are the rule:
   `/` and every page without a sign-in button make zero third-party requests, and that
   was measured with a network capture. Measure it again after touching any of this.
 - **Only for access.** Sign-in, the waitlist request, the grant check, and the owner's
-  `/admin`. Never analytics, never Firebase Analytics, never Performance Monitoring,
-  never App Check's reCAPTCHA on page load, never a "while we're here".
+  `/admin` (approve waitlist entries, grant an email directly, revoke). Never analytics,
+  never Firebase Analytics, never Performance Monitoring, never App Check's reCAPTCHA on
+  page load, never a "while we're here".
 - **Only from one module.** `firebase/*` is imported in `src/lib/firebase.ts` and nowhere
   else (types excepted). A static import anywhere else puts the SDK in a page bundle and
   starts it before anyone asked.
@@ -88,10 +89,11 @@ authority.
   stay a one-line edit.
 - **Status is honest.** The four words are defined in VOICE.md and describe the app
   today. Do not promote it to balance a layout.
-- **No download link until there is a build.** `download` stays undefined and the button
-  does not render. No "coming soon" buttons. The waitlist is not email capture standing
-  in for a download: it is how access to the app is granted, it sends no mail beyond a
-  sign-in link, and it must never grow a newsletter checkbox.
+- **No download link until there is a build.** `download` stays undefined and the home
+  page shows a "Releasing soon" section instead, whose only action is the waitlist: it
+  says there is no download yet rather than showing a dead button. The waitlist is not
+  email capture standing in for a download: it is how access to the app is granted, it
+  sends no mail beyond a sign-in link, and it must never grow a newsletter checkbox.
 - **Every page carries a "What it will not do" section.** The omissions are the reason
   the site is worth reading, and they are the first thing a rewrite tends to drop.
 - **No screenshots until they are real.** A placeholder dates the page and nobody comes
