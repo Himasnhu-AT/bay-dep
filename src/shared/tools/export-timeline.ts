@@ -26,8 +26,9 @@ export const tool: ToolSpec = {
         type: 'string',
         enum: ['draft', 'good', 'best'],
         description:
-          'Video encode quality. "good" (default) is H.264 CRF 20; "best" is CRF 16, for a master ' +
-          'you deliver; "draft" is fast and small, for a look. Audio is 256 kbps AAC at every quality.'
+          'Video encode quality. "good" (default) matches what x264 CRF 20 used to give; "best" ' +
+          'matches CRF 16, for a master you deliver; "draft" is small, for a look. H.264 is Apple ' +
+          'VideoToolbox, VP9 for webm. Audio is 256 kbps AAC at every quality.'
       },
       loudness: {
         description:

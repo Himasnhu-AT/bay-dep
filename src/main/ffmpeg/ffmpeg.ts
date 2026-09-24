@@ -7,10 +7,10 @@
  */
 
 import { accessSync, constants } from 'node:fs'
-import { createRequire } from 'node:module'
 import { delimiter, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import type { SpawnOptionsWithoutStdio } from 'node:child_process'
+import { vendoredTools } from './vendor'
 
 export interface MediaTools {
   ready: boolean
@@ -61,29 +61,14 @@ function executable(path: string | null | undefined): string | null {
 }
 
 /**
- * Inside a packaged app the static binaries live in the asar archive, which cannot be
- * spawned — the OS needs a real file. electron-builder's `asarUnpack` writes them beside it
- * in `app.asar.unpacked`, and the path has to be rewritten to match or every spawn fails in
- * production while working perfectly in development.
+ * bay's own LGPL build (`script/build-ffmpeg.sh`, located by `vendoredTools`). It used to be the
+ * npm `ffmpeg-ffprobe-static` package — a GPL+nonfree 6.1.1 that could not legally ship — and the
+ * asar-unpack rewrite that package needed is gone with it: the vendored binaries are copied to
+ * `Resources/ffmpeg/` as plain files, outside the archive.
  */
-function unAsar(path: string | null): string | null {
-  if (!path) return null
-  return path.includes('app.asar') ? path.replace('app.asar', 'app.asar.unpacked') : path
-}
-
-function staticPaths(): { ffmpeg: string | null; ffprobe: string | null } {
-  try {
-    const require_ = createRequire(import.meta.url)
-    const mod = require_('ffmpeg-ffprobe-static') as {
-      ffmpegPath?: string | null
-      ffprobePath?: string | null
-    }
-    return { ffmpeg: unAsar(mod.ffmpegPath ?? null), ffprobe: unAsar(mod.ffprobePath ?? null) }
-  } catch {
-    // The package is optional in practice: a source checkout whose postinstall was skipped
-    // still has to launch.
-    return { ffmpeg: null, ffprobe: null }
-  }
+function bundledPaths(): { ffmpeg: string | null; ffprobe: string | null } {
+  const tools = vendoredTools()
+  return { ffmpeg: tools?.ffmpeg ?? null, ffprobe: tools?.ffprobe ?? null }
 }
 
 /**
@@ -107,7 +92,7 @@ let resolved: MediaTools | null = null
 
 function resolveTools(): MediaTools {
   if (resolved) return resolved
-  const bundled = staticPaths()
+  const bundled = bundledPaths()
   const ffmpeg = executable(bundled.ffmpeg) ?? onPath('ffmpeg')
   const ffprobe = executable(bundled.ffprobe) ?? onPath('ffprobe')
   resolved = { ready: ffmpeg !== null && ffprobe !== null, ffmpeg, ffprobe }

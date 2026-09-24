@@ -11,16 +11,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { mkdtempSync } from 'node:fs'
+import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { videoCodecArgs } from './codec-args'
 
-const require_ = createRequire(import.meta.url)
-const FFMPEG = (require_('ffmpeg-ffprobe-static') as { ffmpegPath?: string | null }).ffmpegPath ?? ''
-const FFPROBE = (require_('ffmpeg-ffprobe-static') as { ffprobePath?: string | null }).ffprobePath ?? ''
-const SKIP = existsSync(FFMPEG) && existsSync(FFPROBE) ? false : `no bundled ffmpeg at "${FFMPEG}" — run pnpm install`
+
+const FFMPEG = vendoredTools()?.ffmpeg ?? ''
+const FFPROBE = vendoredTools()?.ffprobe ?? ''
+const SKIP = FFMPEG && FFPROBE ? false : NO_VENDORED_FFMPEG
 const SIZE = 64
 
 function roundTrip(rgb: [number, number, number], format: 'mp4' | 'webm'): [number, number, number] {
@@ -57,5 +57,30 @@ for (const format of ['mp4', 'webm'] as const) {
       const off = Math.max(...got.map((v, i) => Math.abs(v - rgb[i]!)))
       assert.ok(off <= 2, `${format}: drew rgb(${rgb.join(', ')}), the file plays as rgb(${got.join(', ')}) — ${off} off`)
     }
+  })
+}
+
+// The matrix alone is not a colour description. A player (QuickTime above all) reads primaries and
+// transfer too, and treats "unknown" as a guess. ffmpeg 8 dropped both from the stream while still
+// setting the matrix — `-color_primaries`/`-color_trc` stopped reaching the encoder — so the
+// round trip above, which reads only the matrix, passed over a file tagged half-way.
+for (const format of ['mp4', 'webm'] as const) {
+  test(`a ${format} export is tagged BT.709 primaries, transfer and matrix, limited range`, { skip: SKIP, timeout: 30_000 }, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bay-colour-tags-'))
+    const file = join(dir, `t.${format}`)
+    execFileSync(FFMPEG, [
+      '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${SIZE}x${SIZE}`, '-r', '30', '-i', 'pipe:0',
+      ...videoCodecArgs(format, 'good'), '-frames:v', '1', '-y', file
+    ], { input: Buffer.alloc(SIZE * SIZE * 4, 0x80) })
+    const tags = execFileSync(FFPROBE, [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=color_primaries,color_transfer,color_space,color_range', '-of', 'json', file
+    ]).toString()
+    const stream = (JSON.parse(tags) as { streams: Record<string, string>[] }).streams[0]
+    assert.deepEqual(
+      { primaries: stream?.color_primaries, transfer: stream?.color_transfer, matrix: stream?.color_space, range: stream?.color_range },
+      { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', range: 'tv' },
+      `${format} is not fully tagged`
+    )
   })
 }

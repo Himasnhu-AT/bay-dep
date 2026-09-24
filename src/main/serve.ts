@@ -42,7 +42,11 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.bmp': 'image/bmp',
   '.tif': 'image/tiff',
-  '.tiff': 'image/tiff'
+  '.tiff': 'image/tiff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
 }
 
 function mimeFor(p: string): string {

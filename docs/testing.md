@@ -207,7 +207,7 @@ clip; screenshot and look.
 
 **A sound is in the export.** Export a WAV through `window.bayMcp.execute({ tool:
 'export_timeline', … })`, poll `track_export` until `done`, then measure the file with the bundled
-ffmpeg (`require('ffmpeg-ffprobe-static').ffmpegPath`) — decode to raw samples and check the
+ffmpeg (`vendor/ffmpeg/darwin-arm64/ffmpeg`, or `FFMPEG` from `test/app/ffmpeg.mjs`) — decode to raw samples and check the
 level per frame, not "a file exists".
 
 ## Debug mode and agent transcripts

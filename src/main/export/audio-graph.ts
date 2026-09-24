@@ -87,6 +87,10 @@ function candidates(
       // Not `item.volume`: with volume keys that is not what plays, and a clip keyed up from 0
       // would be dropped from the file while the preview played it.
       if (!volumeMayBeAudible(item)) continue
+      // A picture whose sound was detached plays none: its linked audio item is the one input
+      // that sound is decoded from. Skipped here, not merely enveloped to zero, so the file is not
+      // opened a second time to contribute silence.
+      if (item.audioDetached) continue
       const span = audibleSpan(project, timeline, item)
       const startFrame = Math.max(span.firstFrame, fromFrame)
       const endFrame = Math.min(span.endFrame, toFrameExclusive)

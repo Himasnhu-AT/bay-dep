@@ -19,7 +19,7 @@
  * frame to wait for, the second is a placeholder to draw.
  */
 
-import { LOAD_RETRY_DELAYS_MS, RETRY_CROSS_ORIGIN, loadRetryDelay } from './mediaRetry'
+import { LOAD_RETRY_DELAYS_MS, RETRY_CROSS_ORIGIN, loadRetryDelay, retryUrl } from './mediaRetry'
 import type { Asset, AssetKind } from '@shared/project'
 
 /** Live `<video>` elements. Chosen as a cap, not measured — raise it with a measurement. */
@@ -118,6 +118,9 @@ function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
       return null
     case 'lut':
       // A colour table, read from the project by the grade pass. Never placed, never decoded.
+      return null
+    case 'font':
+      // A typeface, registered as a FontFace (`engine/importedFonts.ts`). Never placed.
       return null
     case 'html':
       // A composition has no media element. It is a page that gets seeked and captured, and
@@ -359,7 +362,7 @@ export class MediaPool {
         retryTimer = setTimeout(() => {
           retryTimer = null
           element.crossOrigin = RETRY_CROSS_ORIGIN
-          element.src = url
+          element.src = retryUrl(url, slot.loadRetries)
           if (!(element instanceof HTMLImageElement)) element.load()
         }, delay)
         return

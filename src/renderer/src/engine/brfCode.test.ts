@@ -101,3 +101,42 @@ test('when one request times out, the runner’s other requests are answered too
   await runtime.settle(6000)
   assert.equal(runtime.stats.inflight, 0, 'a chunk was stranded when its sibling timed out')
 })
+
+test('nine modules on one frame: the runner evicted to make room is not blamed for its own eviction', { timeout: 15_000 }, async () => {
+  // The runtime keeps 8 workers; a 9th module evicts the least recently used. A terminated worker
+  // answers nothing, so what the evicted runner was still waiting on ran into the 3s timeout, and
+  // the timeout recorded "took longer than 3s … look for a loop that never ends" against a module
+  // that had done nothing wrong. Every later frame of it then answered that error.
+  const runtime = new BrfCodeRuntime()
+  runtime.useWorkers((): WorkerLike => {
+    const handle = createHandler()
+    let alive = true
+    const worker: WorkerLike = {
+      onmessage: null,
+      onerror: null,
+      postMessage(message) {
+        // Answers a little later, like a real worker, and never after it is terminated.
+        setTimeout(() => {
+          if (alive) worker.onmessage?.({ data: handle(message as BrfWorkerRequest) } as MessageEvent<BrfWorkerReply>)
+        }, 20)
+      },
+      terminate() {
+        alive = false
+      }
+    }
+    return worker
+  })
+  const modules = Array.from({ length: 9 }, (_, i) =>
+    `export default ({ t }) => <scene duration={2}><rect w={${10 + i}} h={10} fill="#fff" /></scene>`)
+  for (const m of modules) assert.deepEqual(runtime.scene(m, {}, 0, 30, 640, 360), { pending: true })
+  assert.equal(runtime.stats.runners, 8, 'the specimen must actually evict: nine modules, eight runners')
+  await runtime.settle(5000)
+  await new Promise((r) => setTimeout(r, 3300)) // past the timeout a stranded request would hit
+  const errors = modules.map((m) => runtime.scene(m, {}, 0, 30, 640, 360)).filter((r) => 'error' in r)
+  assert.deepEqual(errors, [], 'an evicted module must be re-run on demand, not marked failed')
+  assert.equal(runtime.stats.errors, 0)
+  // And it comes back: asked again, every module draws.
+  await runtime.settle(5000)
+  const drawn = modules.map((m) => runtime.scene(m, {}, 0, 30, 640, 360)).filter((r) => 'doc' in r)
+  assert.equal(drawn.length, modules.length, 'every module draws once its chunk is back')
+})

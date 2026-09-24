@@ -26,15 +26,14 @@ import { attach, runProbe } from './cdp.mjs'
 import { grainSeed, grainValue, evalCurve, curveKnots } from '../../src/shared/grade.ts'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.FFMPEG ??
-  'node_modules/ffmpeg-ffprobe-static/ffmpeg'
+import { FFMPEG, H264 } from './ffmpeg.mjs'
 // The specimens are made here unless MEDIA names a folder that already holds them: a probe that
 // needs files nobody can regenerate is a probe nobody else can run.
 const MEDIA = process.env.MEDIA ?? join(homedir(), '.bay-probe-media', 'grade')
 await mkdir(MEDIA, { recursive: true })
 const specimens = [
-  ['grey.mp4', ['-f', 'lavfi', '-i', 'color=c=0x808080:s=1080x1920:r=30:d=5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']],
-  ['bars.mp4', ['-f', 'lavfi', '-i', 'smptehdbars=s=1080x1920:r=30:d=5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']],
+  ['grey.mp4', ['-f', 'lavfi', '-i', 'color=c=0x808080:s=1080x1920:r=30:d=5', ...H264, '-pix_fmt', 'yuv420p']],
+  ['bars.mp4', ['-f', 'lavfi', '-i', 'smptehdbars=s=1080x1920:r=30:d=5', ...H264, '-pix_fmt', 'yuv420p']],
   ['dot.png', ['-f', 'lavfi', '-i', "color=c=black:s=1080x1920,geq=lum='if(lt(hypot(X-540,Y-960),24),255,0)':cb=128:cr=128", '-frames:v', '1']]
 ]
 for (const [name, args] of specimens) {

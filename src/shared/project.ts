@@ -22,7 +22,7 @@ import type { Grade, LutData } from './grade'
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
  * timeline — a clip's `grade.lut` refers to it by id.
  */
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut'
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut' | 'font'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -101,6 +101,13 @@ export interface Asset {
    */
   lut?: LutData
   /**
+   * For `kind: 'font'` — a typeface the project brings with it (`.ttf`, `.otf`, `.woff`, `.woff2`,
+   * variable or static). Like a LUT it is never placed: text items, `.brf` text and HTML
+   * compositions name its `family`. `path` is bay's own copy of the file (main copies it on import
+   * into its fonts folder), so the project keeps drawing in it if the original moves.
+   */
+  font?: FontInfo
+  /**
    * The source's beat grid (`@shared/beats`), once `detect_beats` has analysed it. In source
    * time, so it is a property of the file and every placement maps it through its own in-point
    * and speed. Derived data like the poster: written silently, and recomputable from the file.
@@ -109,6 +116,37 @@ export interface Asset {
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
+}
+
+/** A variable font's design axis, as its `fvar` table declares it. */
+export interface FontAxis {
+  /** The four-letter tag: `wght`, `wdth`, `slnt`, `ital`, `opsz`, or a font's own (`GRAD`). */
+  tag: string
+  min: number
+  default: number
+  max: number
+}
+
+/** What main read from a font file's own tables — enough to register it and to describe it. */
+export interface FontInfo {
+  /**
+   * The CSS family name the face registers under: the typographic family (name ID 16) when the
+   * font has one, else its family (ID 1). A variable font's ID 1 is often its default instance
+   * ("Archivo SemiBold"), which is not what anyone types; ID 16 is ("Archivo").
+   */
+  family: string
+  fullName: string | null
+  postscriptName: string | null
+  /** `font-weight` descriptor: one weight, or the `wght` axis range as "min max". */
+  weight: string
+  /** `font-stretch` descriptor: one width, or the `wdth` axis range, in percent. */
+  stretch: string
+  style: 'normal' | 'italic'
+  /** Empty for a static font. */
+  axes: FontAxis[]
+  format: 'truetype' | 'opentype' | 'woff' | 'woff2'
+  /** Where the file was imported from, before bay copied it. */
+  importedFrom: string
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +488,18 @@ export interface Item {
    * means every property holds its static value, which is every project written before this.
    */
   keyframes?: ItemKeyframes
+  /**
+   * Items sharing a `linkId` (and overlapping in time) are one clip to the edit operations: move,
+   * trim, slip, split and delete act on all of them unless asked not to. Set by "Detach audio" on
+   * the picture and the audio item it made (`@shared/links`). Absent means not linked.
+   */
+  linkId?: string
+  /**
+   * This clip's own sound is not played — it was detached onto an audio item of its own, which is
+   * where its level, fades and duck now live. The picture's fades then fade only the picture.
+   * Absent or false means the clip sounds as it always did.
+   */
+  audioDetached?: boolean
 }
 
 /**

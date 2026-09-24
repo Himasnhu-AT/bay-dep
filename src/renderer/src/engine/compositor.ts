@@ -34,6 +34,7 @@ import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
 import { brfRuntime } from './brfCode'
+import { importedFonts } from './importedFonts'
 import type { BrfDocument } from '@shared/brf'
 import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
@@ -242,6 +243,10 @@ export class Compositor {
     const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
 
     this.#pool.beginGeneration()
+    // The project's imported fonts registered before anything draws — every drawing path (the
+    // preview, `preview_frame`, export) comes through here, so none can draw text in a face the
+    // project has and the document does not. A no-op when the font set has not changed.
+    importedFonts.sync(project.assets)
     this.#project = project
 
     const width = Math.max(1, finite(timeline.width, 1))
@@ -509,6 +514,12 @@ export class Compositor {
     }
 
     if (asset.kind === 'text') {
+      // An imported face still loading: drawn now, the words would be in a fallback face, which
+      // looks deliberate. Incomplete, like a decoding video, and waited for the same way.
+      if (item.text && importedFonts.isLoading(item.text.fontFamily)) {
+        notePending(stats, asset.name)
+        return
+      }
       const fit = this.#drawText(ctx, item, asset, frame, opts.alphaMul)
       if (fit) stats.textFits.push(fit)
       stats.drawn += 1

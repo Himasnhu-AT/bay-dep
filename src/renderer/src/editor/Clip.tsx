@@ -2,6 +2,8 @@ import { memo, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Code2,
+  Link2,
+  VolumeX,
   ImageIcon,
   Music2,
   Type as TypeIcon,
@@ -36,6 +38,8 @@ export interface ClipProps {
   height: number
   selected: boolean
   locked: boolean
+  /** The kind of track the clip sits on: a video file's detached sound draws as audio. */
+  trackKind: 'video' | 'audio'
   /** Live drag/trim preview. The store is not written until the pointer goes up. */
   previewFrom: number
   previewDuration: number
@@ -44,6 +48,7 @@ export interface ClipProps {
    * a fresh closure per clip per render would defeat the `memo` below. */
   onPointerDownBody(event: React.PointerEvent, item: Item): void
   onPointerDownTrim(event: React.PointerEvent, item: Item, edge: 'start' | 'end'): void
+  onContextMenu(event: React.MouseEvent, item: Item): void
 }
 
 /**
@@ -62,7 +67,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   text: TypeIcon,
   html: Code2,
   brf: Sparkles,
-  lut: Palette
+  lut: Palette,
+  font: TypeIcon
 }
 
 /**
@@ -186,14 +192,17 @@ function ClipImpl({
   height,
   selected,
   locked,
+  trackKind,
   previewFrom,
   previewDuration,
   dragging,
   onPointerDownBody,
-  onPointerDownTrim
+  onPointerDownTrim,
+  onContextMenu
 }: ClipProps): ReactNode {
   const width = Math.max(2, previewDuration * pixelsPerFrame)
-  const audio = asset?.kind === 'audio' || (asset ? !asset.hasVideo && asset.hasAudio : false)
+  const audio =
+    trackKind === 'audio' || asset?.kind === 'audio' || (asset ? !asset.hasVideo && asset.hasAudio : false)
   const Icon = asset ? KIND_ICON[asset.kind] : AlertTriangle
   const showThumbs = width >= THUMBS_MIN_WIDTH
 
@@ -209,7 +218,12 @@ function ClipImpl({
       role="option"
       aria-selected={selected}
       aria-label={asset?.name ?? 'Missing media'}
-      onPointerDown={(event) => onPointerDownBody(event, item)}
+      onPointerDown={(event) => {
+        // A right-click opens the menu; it must not also start a drag.
+        if (event.button !== 0) return
+        onPointerDownBody(event, item)
+      }}
+      onContextMenu={(event) => onContextMenu(event, item)}
       style={{
         left: previewFrom * pixelsPerFrame,
         width,
@@ -289,6 +303,22 @@ function ClipImpl({
         >
           {asset?.name ?? 'Missing media'}
         </span>
+        {/* Linked: this clip moves, trims and deletes with its picture or sound. Detached: the
+            picture plays no sound of its own. Both are states with no other cue on the lane. */}
+        {item.linkId && (
+          <Link2
+            role="img"
+            aria-label="Linked"
+            className="mt-px size-3 shrink-0 text-on-media/80"
+          >
+            <title>Linked — moves, trims and deletes with its {audio ? 'picture' : 'sound'}</title>
+          </Link2>
+        )}
+        {item.audioDetached && (
+          <VolumeX role="img" aria-label="Sound detached" className="mt-px size-3 shrink-0 text-on-media/80">
+            <title>Sound detached — this picture plays no sound of its own</title>
+          </VolumeX>
+        )}
         {item.speed !== 1 && (
           <span className="ml-auto shrink-0 rounded-xs bg-black/55 px-1 text-[10px] text-on-media tabular-nums">
             {item.speed}×

@@ -607,18 +607,27 @@ export function Inspector(): ReactNode {
             ) : undefined
           }
         >
-          <Keyed diamond={asset?.hasAudio || asset?.kind === 'html' ? diamond('volume') : null}>
-            <SliderField
-              label="Volume"
-              min={0}
-              max={2}
-              step={0.01}
-              value={volume.value ?? 1}
-              mixed={volume.mixed}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onCommit={(next) => applyItem({ volume: next })}
-            />
-          </Keyed>
+          {/* A detached picture plays no sound, so a volume here would be a slider that does
+              nothing; its level lives on the linked audio item. Fades still fade the picture. */}
+          {selected.every((item) => item.audioDetached) ? (
+            <p className="text-[11px] text-ink-2">
+              Sound detached — level, fades and duck of the sound are on the linked audio clip. Fades
+              here fade the picture only.
+            </p>
+          ) : (
+            <Keyed diamond={asset?.hasAudio || asset?.kind === 'html' ? diamond('volume') : null}>
+              <SliderField
+                label="Volume"
+                min={0}
+                max={2}
+                step={0.01}
+                value={volume.value ?? 1}
+                mixed={volume.mixed}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onCommit={(next) => applyItem({ volume: next })}
+              />
+            </Keyed>
+          )}
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             <NumberField
               label="In"

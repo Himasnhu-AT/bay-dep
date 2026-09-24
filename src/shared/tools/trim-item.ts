@@ -42,6 +42,13 @@ export const tool: ToolSpec = {
           'Signed frames. Positive slips to LATER source footage, slides the clip RIGHT, and ' +
           'rolls the cut LATER; negative is the opposite.'
       },
+      linked: {
+        type: 'boolean',
+        description:
+          'Default true: a clip linked to others (a picture and its detached sound — see ' +
+          'detach_audio) is slipped, slid or rolled with them, so they stay in sync. false ' +
+          'changes only this clip and leaves them out of step.'
+      },
       edge: {
         type: 'string',
         enum: ['start', 'end'],

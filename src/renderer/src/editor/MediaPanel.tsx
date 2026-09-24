@@ -39,7 +39,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   text: TypeIcon,
   html: Code2,
   brf: Sparkles,
-  lut: Palette
+  lut: Palette,
+  font: TypeIcon
 }
 
 /**
@@ -54,7 +55,8 @@ const KIND_NOTE: Record<AssetKind, string> = {
   text: 'Text clip',
   html: 'HTML composition',
   brf: 'Motion graphic',
-  lut: 'Colour LUT'
+  lut: 'Colour LUT',
+  font: 'Font'
 }
 
 function AssetCard({ asset }: { asset: Asset }): ReactNode {

@@ -39,8 +39,7 @@ import { join } from 'node:path'
 import { attach, check, PreconditionError, runProbe } from './cdp.mjs'
 
 const run = promisify(execFile)
-const FFMPEG = process.env.FFMPEG ?? 'node_modules/ffmpeg-ffprobe-static/ffmpeg'
-const FFPROBE = process.env.FFPROBE ?? 'node_modules/ffmpeg-ffprobe-static/ffprobe'
+import { FFMPEG, FFPROBE } from './ffmpeg.mjs'
 const sabotage = process.env.VERIFY_PROBE === '1'
 
 /** The guide's "Counter with a growing bar" (src/main/mcp/docs/brf.md), verbatim. */

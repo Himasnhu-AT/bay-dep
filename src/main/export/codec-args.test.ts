@@ -5,7 +5,8 @@
  * a transcription of `codec-args.ts`. An `.mp4` has to be H.264 + AAC in 4:2:0 or QuickTime and
  * most phones refuse it; a `.webm` may only carry VP8/VP9/AV1 video and Opus/Vorbis audio, or
  * browsers reject the file; an `.mp3` is MP3. Numbers are checked by the direction they must
- * move (more quality, lower CRF), not by their current values.
+ * move as quality rises, not by their current values. H.264 is checked in both of the rate
+ * controls VideoToolbox is driven in (quality on Apple silicon, bitrate on Intel) on any machine.
  */
 
 import { test } from 'node:test'
@@ -18,7 +19,8 @@ import {
   extensionFor,
   tailOf,
   videoCodecArgs,
-  type ExportQuality
+  type ExportQuality,
+  type H264RateControl
 } from './codec-args'
 
 /** The value following `flag`, or undefined when the flag is absent. */
@@ -28,6 +30,8 @@ function valueOf(args: readonly string[], flag: string): string | undefined {
 }
 
 const QUALITIES: ExportQuality[] = ['draft', 'good', 'best']
+const MODES: H264RateControl[] = ['quality', 'bitrate']
+const HD = { width: 1920, height: 1080, fps: 30 }
 
 /** The formats an agent can ask for, read from the tool's schema rather than listed here. */
 function agentFormats(): ExportFormat[] {
@@ -55,10 +59,13 @@ test('every format an agent can request has an audio codec, and the video ones a
 test('mp4 and mov are H.264 + AAC in 4:2:0, with the index moved to the front', () => {
   for (const format of ['mp4', 'mov'] as const) {
     for (const quality of QUALITIES) {
-      const video = videoCodecArgs(format, quality)
-      assert.equal(valueOf(video, '-c:v'), 'libx264', `${format}/${quality}`)
-      // 4:4:4 from an RGBA pipe is ffmpeg's default for libx264, and QuickTime cannot play it.
-      assert.equal(valueOf(video, '-pix_fmt'), 'yuv420p', `${format}/${quality}`)
+      for (const mode of MODES) {
+        const video = videoCodecArgs(format, quality, HD, mode)
+        // H.264, and never x264: bay's ffmpeg is LGPL and has none (capabilities.test.ts asks it).
+        assert.equal(valueOf(video, '-c:v'), 'h264_videotoolbox', `${format}/${quality}/${mode}`)
+        // An RGBA pipe would otherwise go to 4:4:4, which QuickTime cannot play.
+        assert.equal(valueOf(video, '-pix_fmt'), 'yuv420p', `${format}/${quality}/${mode}`)
+      }
     }
     assert.match(valueOf(audioCodecArgs(format), '-c:a') ?? '', /^aac(_at)?$/, format)
     assert.match(valueOf(containerArgs(format), '-movflags') ?? '', /faststart/, format)
@@ -89,24 +96,43 @@ test('a PNG sequence is encoded as PNG frames', () => {
   assert.equal(valueOf(videoCodecArgs('png-sequence', 'good'), '-c:v'), 'png')
 })
 
-test('higher quality means a lower CRF, inside each encoder’s legal range', () => {
-  for (const [format, max] of [['mp4', 51], ['webm', 63]] as const) {
-    const crf = QUALITIES.map((q) => Number(valueOf(videoCodecArgs(format, q), '-crf')))
-    for (const value of crf) {
-      assert.ok(Number.isInteger(value) && value >= 0 && value <= max, `${format} CRF ${value} out of 0–${max}`)
-    }
-    const [draft, good, best] = crf as [number, number, number]
-    assert.ok(draft > good && good > best, `${format}: draft ${draft}, good ${good}, best ${best}`)
-  }
+test('higher quality asks more of each encoder, inside its legal range', () => {
+  const vp9 = QUALITIES.map((q) => Number(valueOf(videoCodecArgs('webm', q), '-crf')))
+  for (const value of vp9) assert.ok(Number.isInteger(value) && value >= 0 && value <= 63, `VP9 CRF ${value} out of 0–63`)
+  assert.ok(vp9[0]! > vp9[1]! && vp9[1]! > vp9[2]!, `VP9 CRF must fall as quality rises: ${vp9.join(', ')}`)
+
+  // VideoToolbox's quality scale runs the other way: 1–100, higher is better.
+  const q = QUALITIES.map((quality) => Number(valueOf(videoCodecArgs('mp4', quality, HD, 'quality'), '-q:v')))
+  for (const value of q) assert.ok(Number.isInteger(value) && value >= 1 && value <= 100, `-q:v ${value} out of 1–100`)
+  assert.ok(q[0]! < q[1]! && q[1]! < q[2]!, `-q:v must rise with quality: ${q.join(', ')}`)
+
+  const kbps = QUALITIES.map((quality) => parseInt(valueOf(videoCodecArgs('mp4', quality, HD, 'bitrate'), '-b:v') ?? '', 10))
+  assert.ok(kbps[0]! < kbps[1]! && kbps[1]! < kbps[2]!, `-b:v must rise with quality: ${kbps.join(', ')}`)
 })
 
-test('draft trades encoder effort for speed; good and best do not', () => {
-  const preset = (q: ExportQuality): string | undefined => valueOf(videoCodecArgs('mp4', q), '-preset')
-  const order = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow']
-  const rank = (q: ExportQuality): number => order.indexOf(preset(q) ?? '')
-  for (const q of QUALITIES) assert.ok(rank(q) >= 0, `${q} preset ${preset(q)} is not an x264 preset`)
-  assert.ok(rank('draft') < rank('good'), 'draft must be a faster preset than good')
-  assert.ok(rank('best') >= rank('good'), 'best must not be a faster preset than good')
+test('on an Intel Mac the H.264 bitrate follows the picture, and -q:v is never sent', () => {
+  // ffmpeg refuses -q:v for VideoToolbox on x86_64 ("qscale not available for encoder"), so a
+  // quality flag there is a failed export, not a worse one.
+  for (const quality of QUALITIES) {
+    const hd = videoCodecArgs('mp4', quality, HD, 'bitrate')
+    assert.equal(valueOf(hd, '-q:v'), undefined, quality)
+    const uhd60 = videoCodecArgs('mp4', quality, { width: 3840, height: 2160, fps: 60 }, 'bitrate')
+    const ratio = parseInt(valueOf(uhd60, '-b:v') ?? '', 10) / parseInt(valueOf(hd, '-b:v') ?? '', 10)
+    assert.ok(Math.abs(ratio - 8) < 0.01, `4K60 has 8× the pixels per second of 1080p30; its bitrate is ${ratio.toFixed(3)}×`)
+  }
+  // And this machine's default is the mode its own ffmpeg accepts.
+  const native = videoCodecArgs('mp4', 'good')
+  if (process.arch === 'arm64') assert.ok(valueOf(native, '-q:v'), 'Apple silicon uses the constant-quality mode')
+  else assert.equal(valueOf(native, '-q:v'), undefined, 'an Intel build must not send -q:v')
+})
+
+test('H.264 has a keyframe at least every 250 frames, so a long export still seeks', () => {
+  for (const mode of MODES) {
+    for (const quality of QUALITIES) {
+      const gop = Number(valueOf(videoCodecArgs('mp4', quality, HD, mode), '-g'))
+      assert.ok(gop > 0 && gop <= 250, `${mode}/${quality}: -g ${gop}`)
+    }
+  }
 })
 
 test('a file format’s extension is its own name; a PNG sequence is a folder with none', () => {

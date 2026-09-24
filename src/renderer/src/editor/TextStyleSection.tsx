@@ -23,6 +23,7 @@ import {
 } from '@/components'
 import { useTextFit } from '@/lib/useTextFit'
 import { useEditor } from '@/store/editor'
+import { importedFamilies } from '@shared/fonts'
 
 /**
  * Families **measured** as present on this machine, not assumed.
@@ -88,6 +89,8 @@ export interface TextStyleSectionProps {
 export function TextStyleSection({ items, asset }: TextStyleSectionProps): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
   const transact = useEditor((state) => state.transact)
+  // Narrow: the asset list changes on import, not per frame.
+  const imported = importedFamilies(useEditor((state) => state.project.assets))
   const first = items[0]
   const fit = useTextFit(first, asset, {
     left: first?.layout.left ?? 0,
@@ -98,6 +101,12 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
 
   if (!first) return null
   const style = first.text ?? defaultTextStyle()
+  // The project's own fonts first: they are the ones that travel with it. A family's value is
+  // the quoted name with a generic fallback behind it, the shape every other entry has.
+  const families = [
+    ...imported.map((family) => ({ value: `"${family.replace(/"/g, '')}", sans-serif`, label: `${family} · imported` })),
+    ...FAMILIES
+  ]
 
   /** Applies a partial style to every selected text item, as one undo step. */
   const set = (patch: Partial<TextStyle>): void => {
@@ -131,11 +140,11 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         <Field label="Font">
           <Select
             label="Font family"
-            value={FAMILIES.some((f) => f.value === style.fontFamily) ? style.fontFamily : 'custom'}
+            value={families.some((f) => f.value === style.fontFamily) ? style.fontFamily : 'custom'}
             options={
-              FAMILIES.some((f) => f.value === style.fontFamily)
-                ? FAMILIES
-                : [...FAMILIES, { value: 'custom', label: 'Custom (from a file)' }]
+              families.some((f) => f.value === style.fontFamily)
+                ? families
+                : [...families, { value: 'custom', label: 'Custom (from a file)' }]
             }
             onChange={(value) => value !== 'custom' && set({ fontFamily: value })}
           />

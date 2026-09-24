@@ -19,8 +19,6 @@ import {
   serialiseBounds,
   type Bounds
 } from '../window-state'
-import { allowPaths } from '../protocol'
-import { admissibleFromProject } from '../serve'
 import { adoptAssets } from '../media/import'
 import { describeStorage, openDatabase, type AppDatabase } from './db'
 import {
@@ -178,9 +176,9 @@ export async function recent(): Promise<RecentProject[]> {
  * probe fine and then fail to play, because `bay://` would refuse every one of them.
  */
 function admitAssets(project: Project): Project {
+  // Not every path a document names: `adoptAssets` admits only what `admissibleFromProject`
+  // allows (plus bay's own font copies), and is the one place that decides.
   adoptAssets(project.assets)
-  // Not every path a document names: see `admissibleFromProject`.
-  allowPaths(project.assets.map((asset) => asset.path).filter((path) => path !== null && admissibleFromProject(path)))
   return project
 }
 
@@ -253,7 +251,9 @@ async function chooseSavePath(
 async function persist(project: Project, filePath: string): Promise<Project> {
   const written = await writeProjectFile(project, filePath)
   rememberRecent(written)
-  allowPaths(written.assets.map((asset) => asset.path))
+  // Through the same gate as opening: a project opened with a refused path and then saved must not
+  // admit that path on the way out. What the user imported this session was admitted at import.
+  adoptAssets(written.assets)
   return written
 }
 

@@ -19,3 +19,36 @@ renderer on the first edit to either.
 
 bay implements the composition contract itself and does not depend on any HyperFrames package at
 build or run time.
+
+## FFmpeg (and the libraries built into it)
+
+bay includes `ffmpeg` and `ffprobe` executables (in `bay.app/Contents/Resources/ffmpeg/`) built
+from the FFmpeg project's source code, https://ffmpeg.org. FFmpeg is a trademark of Fabrice
+Bellard, originator of the FFmpeg project.
+
+These executables are licensed under the **GNU Lesser General Public License, version 2.1 or
+later**. They were configured with `--disable-gpl --disable-version3 --disable-nonfree`; no GPL
+or non-free component is compiled in. The exact configure line, the version, and the SHA-256 of
+every source archive used are recorded in `Contents/Resources/ffmpeg/BUILDINFO`; the full text of
+each licence is in `Contents/Resources/ffmpeg/LICENSES/`:
+
+- FFmpeg 8.1.3 — LGPL-2.1-or-later (`FFmpeg-COPYING.LGPLv2.1`, `FFmpeg-LICENSE.md`)
+- LAME 3.100 — LGPL-2.0-or-later (`lame-COPYING`)
+- libvpx 1.17.0 — BSD-3-Clause, with Google's patent grant (`libvpx-LICENSE`, `libvpx-PATENTS`)
+- Opus 1.6.1 — BSD-3-Clause (`opus-COPYING`)
+- zimg 3.0.6 — WTFPL (`zimg-COPYING`)
+- dav1d 1.5.4 — BSD-2-Clause (`dav1d-COPYING`)
+
+bay runs these programs as separate processes; bay's own code is not linked with them and is not
+covered by their licences.
+
+**Source code.** The complete corresponding source for these executables is the set of source
+archives listed in BUILDINFO, unmodified except for one line removed from LAME's symbol list, plus
+the build script `script/build-ffmpeg.sh` that configures, builds and verifies them. It is
+published with bay's source and alongside each bay release. For at least three years from the
+date you received this copy of bay, Freeholt will also provide that source, on request, for no
+more than the cost of physically performing the distribution: write to
+hyattherate2005@gmail.com naming the bay version you have.
+
+You may rebuild the executables from that source, modify them under the terms of their licences,
+and replace the copies in `Contents/Resources/ffmpeg/` with your own.
