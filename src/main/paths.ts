@@ -49,6 +49,15 @@ export function generatedDir(): string {
   return ensure(join(app.getPath('userData'), 'generated'))
 }
 
+/**
+ * bay's copies of imported fonts (`media/font-import.ts`), named by content hash. Not a cache:
+ * a project's text draws from here for as long as it uses the font. Each copy is admitted to
+ * `bay://` like any asset path — at import, and when a project naming it is opened.
+ */
+export function fontsDir(): string {
+  return ensure(join(app.getPath('userData'), 'fonts'))
+}
+
 /** Scratch space for export intermediates — half-written video before the audio is muxed. */
 export function exportScratchDir(): string {
   return ensure(join(cacheDir(), 'export'))

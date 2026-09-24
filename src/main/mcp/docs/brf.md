@@ -72,15 +72,19 @@ Colours: `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgba(r,g,b,a)`, `white`, `black`, `tra
 Gradient fills: `"linear(180, #000000cc, #00000000 80%)"` (angle as CSS: 0 up, 90 right, 180
 down) or `"radial(#ffffff22, #00000000)"`; they span the element's own box.
 
-Fonts: `font` is a family the editor has — `"Inter Variable"` and `"JetBrains Mono Variable"`
-ship with bay — or one installed on this Mac. Nothing is fetched: a web font name that is not
-installed draws in the fallback.
+Fonts: `font` is a family the editor has — a font the project **imported** (`import_media` a
+`.ttf`/`.otf`/`.woff`/`.woff2`; the result and `read_project.fonts` give its `family`),
+`"Inter Variable"` or `"JetBrains Mono Variable"` (they ship with bay), or one installed on this
+Mac. Prefer importing: an imported font travels with the project, an installed one does not.
+Never install a font system-wide for bay. Nothing is fetched: a web font name that is not
+available draws in the fallback.
 
 **Variable-font axes**: `variations={{ wdth: 87, wght: 600 }}` sets any axis the font has —
 width, weight, optical size, slant, or its own (`GRAD`, `XTRA`). An axis given here wins over
-`weight`. Axes need a font bay can load a copy of: one that ships with bay, or an installed font
+`weight`. Axes need a font bay can load a copy of: an imported font (by its `family`, any axis its
+file declares — `read_project.fonts` lists them), one that ships with bay, or an installed font
 named by its **full or PostScript name** (`"Skia-Regular"`, not `"Skia"`). Any other family is
-refused by `write_brf` with the names it tried. Each distinct set of values is a font face of its
+refused by `write_brf`, naming the project's imported fonts and bay's. Each distinct set of values is a font face of its
 own, loaded the first time it is drawn — so when animating an axis, step it
 (`Math.round(v / 10) * 10`) rather than giving every frame a new value.
 

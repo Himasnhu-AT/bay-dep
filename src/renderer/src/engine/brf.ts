@@ -25,6 +25,7 @@ import {
 import { sourceTimeAt, type Asset, type Item } from '@shared/project'
 import { clampToAsset } from './compositionPool'
 import { variationFaces } from './brfFonts'
+import { importedFonts } from './importedFonts'
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
@@ -373,7 +374,10 @@ export class BrfSurfaces {
     // anything is painted: a face still loading makes the whole item pending (drawn once it
     // arrives, and waited for by export), never drawn in the plain face as a stand-in.
     for (const op of ops) {
-      if (op.kind !== 'text' || !op.variations) continue
+      if (op.kind !== 'text') continue
+      // An imported face still loading is pending too — with or without axes.
+      if (importedFonts.isLoading(op.font)) return { pending: true }
+      if (!op.variations) continue
       const face = variationFaces.resolve(op.font, op.variations)
       if ('pending' in face) return { pending: true }
       if ('error' in face) return { error: face.error }

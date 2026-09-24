@@ -119,6 +119,9 @@ function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
     case 'lut':
       // A colour table, read from the project by the grade pass. Never placed, never decoded.
       return null
+    case 'font':
+      // A typeface, registered as a FontFace (`engine/importedFonts.ts`). Never placed.
+      return null
     case 'html':
       // A composition has no media element. It is a page that gets seeked and captured, and
       // its frames arrive as bitmaps from the composition pool — giving it a <video> or an

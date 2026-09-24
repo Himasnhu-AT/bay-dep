@@ -254,6 +254,20 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, args: (f) => ({ itemIds: [f.a, f.c], ripple: true }) }
   ],
   remove_range: [{ delta: 1, args: () => ({ fromFrame: 10, toFrame: 20 }) }],
+  detach_audio: [
+    // Two clips at once, with a transition between them: new items on an audio track (a new one,
+    // since A1 is occupied), both pictures marked, and the transition copied — one step.
+    {
+      delta: 1,
+      before: (f) => {
+        const added = state().addTransition({ fromItemId: f.a, toItemId: f.b, kind: 'cross-dissolve', durationInFrames: 10 })
+        assert.ok('id' in added, 'the fixture must accept a transition')
+      },
+      args: (f) => ({ itemIds: [f.a, f.b] })
+    },
+    { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'unlink' }) },
+    { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'reattach' }) }
+  ],
   add_track: [{ delta: 1, args: () => ({ kind: 'audio' }) }],
   add_transition: [
     { delta: 1, args: (f) => ({ fromItemId: f.a, toItemId: f.b, kind: 'cross-dissolve' }) }
@@ -458,6 +472,25 @@ const STORE_CASES: Record<string, StoreCase> = {
   moveItem: { delta: 1, run: (f) => state().moveItem(f.a, 200, f.v3) },
   trimItem: { delta: 1, run: (f) => state().trimItem(f.a, 'start', 10) },
   patchItem: { delta: 1, run: (f) => state().patchItem(f.a, { volume: 0.5, fadeInFrames: 4 }) },
+  detachAudio: { delta: 1, run: (f) => { state().detachAudio([f.a, f.b, f.c]) } },
+  reattachAudio: {
+    delta: 1,
+    run: (f) => {
+      state().detachAudio([f.a, f.c])
+      const before = past()
+      state().reattachAudio([f.a, f.c])
+      assert.equal(past() - before, 1)
+    }
+  },
+  unlinkItems: {
+    delta: 1,
+    run: (f) => {
+      state().detachAudio([f.a, f.c])
+      const before = past()
+      state().unlinkItems([f.a, f.c])
+      assert.equal(past() - before, 1)
+    }
+  },
   patchLayout: { delta: 1, run: (f) => state().patchLayout(f.a, { left: 10, opacity: 0.5 }) },
   setCrop: { delta: 1, run: (f) => state().setCrop(f.a, 'left', 0.1) },
   setCompositionVariable: {
@@ -597,7 +630,9 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'removeTransition',
       'patchTransition',
       'moveMarker',
-      'removeMarker'
+      'removeMarker',
+      'reattachAudio',
+      'unlinkItems'
     ]
     if (!selfMeasured.includes(action)) {
       assert.equal(

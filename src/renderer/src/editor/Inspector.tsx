@@ -510,6 +510,14 @@ export function Inspector(): ReactNode {
         )}
 
         <Section title="Audio & speed">
+          {/* A detached picture plays no sound, so a volume here would be a slider that does
+              nothing; its level lives on the linked audio item. Fades still fade the picture. */}
+          {selected.every((item) => item.audioDetached) ? (
+            <p className="text-[11px] text-ink-2">
+              Sound detached — level, fades and duck of the sound are on the linked audio clip. Fades
+              here fade the picture only.
+            </p>
+          ) : (
           <SliderField
             label="Volume"
             min={0}
@@ -520,6 +528,7 @@ export function Inspector(): ReactNode {
             format={(v) => `${Math.round(v * 100)}%`}
             onCommit={(next) => applyItem({ volume: next })}
           />
+          )}
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             <NumberField
               label="In"

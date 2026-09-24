@@ -211,6 +211,25 @@ vs 125 is 27.5% vs 51.4% of the frame. Each (family, settings) is a face cloned 
 `@font-face` rules or `local()` (full/PostScript names only). A loading face makes the item
 *pending*, so export and `preview_frame` wait on `variationFaces.settle` like any other source.
 
+**Fonts are assets, not machine state** (`kind: 'font'`, `@shared/fonts`, `media/font-file.ts`,
+`engine/importedFonts.ts`). Main reads the file's own tables (name ID 16 before ID 1: a variable
+font's ID 1 is its default instance, "Archivo SemiBold") and copies it, content-addressed, into
+`<userData>/fonts`, admitted to `bay://` like any asset path. The compositor registers each as a
+`FontFace` with the axis ranges as descriptors (a single weight would clamp every other one), a
+loading face makes text *pending*, `brfFonts` clones variation faces from the imported source, and
+composition windows get the same bytes as a `data:` `@font-face` — only files from that folder,
+with descriptors checked, since a `.bay` may be someone else's.
+
+**Detached audio is a linked item, and the picture's element is shared where it can be**
+(`@shared/links`, `detach_audio`). The picture gets `audioDetached`, the sound an audio-track item
+with the same asset/in/span; items sharing a `linkId` and overlapping in time move, trim, slip,
+split and delete together. Links are re-derived from overlap after every `edit()`
+(`normaliseLinks`), so a split or `remove_range` of a pair yields two pairs without either knowing
+links exist. Preview: an aligned sound plays through the picture's own element (one decode);
+anything else gets an `<audio>` stand-in with the picture element claimed silently. Export skips
+the detached picture as an input. Gain lookups ask for the item's *own* transition
+(`transitionOfItemAt`), because a picture dissolve and its copied audio cross-fade share frames.
+
 A module's source lives on its asset (`asset.brfCode`), so writing one is an ordinary `edit()` —
 undoable, in the turn's diff — and `write_brf` runs it across its whole duration before changing
 anything, so an error on frame 45 is a refusal with its line, not a placeholder later. Main

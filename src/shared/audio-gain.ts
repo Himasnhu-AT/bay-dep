@@ -235,10 +235,37 @@ export function duckGainAt(project: Project, timeline: Timeline, item: Item, fra
   for (const keyItem of key.items) {
     if (keyItem.id === item.id) continue
     const asset = findAsset(project, keyItem.assetId)
-    if (!asset || asset.error || !asset.hasAudio || !(keyItem.volume > 0)) continue
+    if (!asset || asset.error || !asset.hasAudio || !(keyItem.volume > 0) || keyItem.audioDetached) continue
     depth = Math.max(depth, duckDepth(frame, audibleSpan(project, timeline, keyItem), attack, release))
   }
   return 1 - depth * (1 - 10 ** (-amount / 20))
+}
+
+/**
+ * The transition over `item` at `frame`, if one of its own cuts has one there.
+ *
+ * Asked per item rather than through `transitionAtFrame`, which answers with the *first*
+ * transition at the frame anywhere on the timeline. That was enough while one cut at a time could
+ * carry sound; with detached audio a picture dissolve and the audio cross-fade under it sit at the
+ * same frames on two tracks, and the audio items' gain must come from their own transition, not
+ * from whichever of the two happens to be listed first.
+ */
+export function transitionOfItemAt(
+  project: Project,
+  timeline: Timeline,
+  item: Item,
+  frame: Frames
+): ReturnType<typeof transitionAtFrame> {
+  for (const transition of timeline.transitions ?? []) {
+    if (transition.fromItemId !== item.id && transition.toItemId !== item.id) continue
+    const resolved = resolveTransition(project, timeline, transition)
+    if (!resolved) continue
+    if (frame < resolved.firstFrame || frame > resolved.lastFrame) continue
+    const span = resolved.lastFrame - resolved.firstFrame + 1
+    const progress = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
+    return { resolved, progress: Math.max(0, Math.min(1, progress)) }
+  }
+  return null
 }
 
 /**
@@ -265,10 +292,13 @@ export function itemAudioGainAt(
   item: Item,
   frame: Frames
 ): number {
+  // A picture whose sound was detached onto an audio item plays none of its own: that item is the
+  // one place the sound comes from, in preview and in export alike.
+  if (item.audioDetached) return 0
   const volume = Number.isFinite(item.volume) ? Math.max(0, Math.min(2, item.volume)) : 1
   if (volume === 0) return 0
 
-  const active = transitionAtFrame(project, timeline, frame)
+  const active = transitionOfItemAt(project, timeline, item, frame)
   let transitionGain = 1
   let fadeIn = item.fadeInFrames
   let fadeOut = item.fadeOutFrames

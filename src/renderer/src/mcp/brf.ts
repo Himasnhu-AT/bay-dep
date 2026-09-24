@@ -15,6 +15,7 @@ import { brfCodeAssetFields } from '@shared/brf'
 import { resolveVariables } from '@shared/composition'
 import { allItems, usToFrames, type Asset } from '@shared/project'
 import { brfRuntime } from '@/engine/brfCode'
+import { importedFonts } from '@/engine/importedFonts'
 import { newId } from '@/store/editor'
 import { dryRun } from '@/store/dry-run'
 import { fail, project, resolveAsset, store, timeline, type Handlers } from './helpers'
@@ -61,6 +62,9 @@ export async function writeBrf(args: Record<string, unknown>): Promise<Record<st
   const overrides = existing && firstPlacement
     ? resolveVariables({ variables: existing.compositionVariables ?? [] }, firstPlacement.variables)
     : undefined
+  // The project's imported fonts registered first, so a font imported a moment ago is one the
+  // check can find — the preview registers them on its next draw, which may not have happened.
+  importedFonts.sync(project().assets)
   const checked = await brfRuntime.verify(code, tl.fps, tl.width, tl.height, overrides)
   if (!checked.ok) {
     fail(`The .brf ${checked.error}\nNothing was changed. Fix it and call write_brf again.`)

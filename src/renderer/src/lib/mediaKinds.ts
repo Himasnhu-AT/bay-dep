@@ -16,7 +16,8 @@ const POSTER: Record<AssetKind, boolean> = {
   text: false,
   html: false,
   brf: false,
-  lut: false
+  lut: false,
+  font: false
 }
 
 const FILMSTRIP: Record<AssetKind, boolean> = {
@@ -27,7 +28,8 @@ const FILMSTRIP: Record<AssetKind, boolean> = {
   text: false,
   html: false,
   brf: false,
-  lut: false
+  lut: false,
+  font: false
 }
 
 /** A poster can be made: a file ffmpeg reads, that probed without error. */

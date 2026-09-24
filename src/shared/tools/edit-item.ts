@@ -37,6 +37,13 @@ export const tool: ToolSpec = {
           'has nothing before its start to dissolve from, and add_transition will say so.'
       },
       trackId: { type: 'string' },
+      linked: {
+        type: 'boolean',
+        description:
+          'Default true: a clip linked to others (a picture and its detached sound — see ' +
+          'detach_audio) moves, retimes and changes speed with them, so they stay in sync. false ' +
+          'changes only this clip and leaves them out of step.'
+      },
       left: { type: 'number', description: 'Canvas x in pixels. Negative is valid.' },
       top: { type: 'number', description: 'Canvas y in pixels. Negative is valid.' },
       width: { type: 'number' },
