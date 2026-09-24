@@ -400,6 +400,17 @@ test('validateOnly on a tool that cannot dry-run is not a way past the gate', ()
   assert.equal(verdict.allowed, false)
 })
 
+test('validateOnly on a self-validating generate tool passes the gate; the paid call does not', () => {
+  const args = { model: 'veo-3.1-generate-preview', prompt: 'a lighthouse at dusk' }
+  const dry = checkApproval('generate_video', { ...args, validateOnly: true }, gatedButUnapproved)
+  assert.equal(dry.allowed, true)
+  assert.equal(dry.index, undefined)
+  // Positive control for the gate: the same call without the flag is a paid job, and is refused.
+  const real = checkApproval('generate_video', args, gatedButUnapproved)
+  assert.equal(real.allowed, false)
+  assert.match(real.refusal ?? '', /propose_edit/)
+})
+
 test('a dry run inside a proposal is refused, and told to make it directly', () => {
   const built = build({
     question: 'q',

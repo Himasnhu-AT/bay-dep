@@ -16,6 +16,8 @@ import { tool as detectBeats } from './detect-beats'
 import { tool as editAsset } from './edit-asset'
 import { tool as editItem } from './edit-item'
 import { tool as exportTimeline } from './export-timeline'
+import { tool as generateImage } from './generate-image'
+import { tool as generateVideo } from './generate-video'
 import { tool as importMedia } from './import-media'
 import { tool as inspectItem } from './inspect-item'
 import { tool as listProjects } from './list-projects'
@@ -34,6 +36,7 @@ import { tool as setCanvas } from './set-canvas'
 import { tool as setPlayhead } from './set-playhead'
 import { tool as splitAt } from './split-at'
 import { tool as trackExport } from './track-export'
+import { tool as trackGeneration } from './track-generation'
 import { tool as transcribe } from './transcribe'
 import { tool as trimItem } from './trim-item'
 import { tool as undo } from './undo'
@@ -79,4 +82,7 @@ export const TOOLS: ToolSpec[] = [
   undo,
   exportTimeline,
   trackExport,
+  generateImage,
+  generateVideo,
+  trackGeneration,
 ]

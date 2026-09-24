@@ -123,6 +123,11 @@ const validateOnlyProperty = {
     'refused the same way, so this is how to test a plan before proposing or making it.'
 }
 
+/** Whether a tool takes `validateOnly`: a store dry run, or one its own handler answers. */
+export function acceptsValidateOnly(spec: ToolSpec): boolean {
+  return spec.dryRunnable === true || spec.selfValidating === true
+}
+
 /**
  * The schema a tool is published and validated with: its own, plus `validateOnly` when the
  * catalog marks it dry-runnable.
@@ -132,7 +137,7 @@ const validateOnlyProperty = {
  * does nothing, and one that accepted it unadvertised would be one no agent finds.
  */
 export function publishedSchema(spec: ToolSpec): ToolSpec['inputSchema'] {
-  if (!spec.dryRunnable) return spec.inputSchema
+  if (!acceptsValidateOnly(spec)) return spec.inputSchema
   return {
     ...spec.inputSchema,
     properties: { ...spec.inputSchema.properties, [VALIDATE_ONLY]: validateOnlyProperty }
@@ -161,6 +166,8 @@ export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): Dr
   const { [VALIDATE_ONLY]: _flag, ...rest } = args
   if (flag === false) return { mode: 'run', args: rest }
   if (spec.dryRunnable) return { mode: 'dry', args: rest }
+  // The handler answers the flag itself, so it reaches the handler: `run`, flag kept.
+  if (spec.selfValidating) return { mode: 'run', args: { ...rest, [VALIDATE_ONLY]: true } }
   if (spec.readOnly) {
     return {
       mode: 'refused',
@@ -172,7 +179,7 @@ export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): Dr
     mode: 'refused',
     error:
       `${spec.name} cannot be dry-run. ${spec.dryRunRefusal ?? 'Its effects reach outside the project, where a dry run cannot put them back.'} ` +
-      `Tools that accept validateOnly: ${TOOLS.filter((t) => t.dryRunnable).map((t) => t.name).join(', ')}.`
+      `Tools that accept validateOnly: ${TOOLS.filter(acceptsValidateOnly).map((t) => t.name).join(', ')}.`
   }
 }
 

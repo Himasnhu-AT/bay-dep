@@ -48,6 +48,14 @@ import { writeGenerated, writeTemplate } from './html/templates'
 import * as access from './auth/access'
 import * as update from './update/updater'
 import { refuseChannel } from './auth/gate'
+import {
+  clearGenerationKey,
+  generationJob,
+  generationJobs,
+  generationKeys,
+  setGenerationKey,
+  startGenerationJob
+} from './generate/service'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
 type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'accessChanged' | 'updateChanged'
@@ -97,6 +105,13 @@ interface ChannelApi {
   projectRename: BayApi['project']['rename']
   projectDuplicate: BayApi['project']['duplicate']
   projectTrash: BayApi['project']['trash']
+
+  generationKeys: BayApi['generation']['keys']
+  generationSetKey: BayApi['generation']['setKey']
+  generationClearKey: BayApi['generation']['clearKey']
+  generationStart: BayApi['generation']['start']
+  generationJob: BayApi['generation']['job']
+  generationJobs: BayApi['generation']['jobs']
 
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
@@ -162,6 +177,13 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   agentStop: async () => stopAgent(),
   agentDispose: async () => disposeAgent(),
   agentExportTranscript: (_event, projectName, log) => exportTranscript(projectName, log),
+
+  generationKeys: () => generationKeys(),
+  generationSetKey: (_event, provider, fields) => setGenerationKey(provider, fields),
+  generationClearKey: (_event, provider) => clearGenerationKey(provider),
+  generationStart: (_event, request) => startGenerationJob(request),
+  generationJob: (_event, id) => generationJob(id),
+  generationJobs: () => generationJobs(),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {

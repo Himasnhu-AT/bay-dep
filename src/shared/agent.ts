@@ -21,7 +21,7 @@
  * not the user's attention, is what enforces it.
  */
 
-import { TOOLS, VALIDATE_ONLY, findTool, type ToolSpec } from './mcp'
+import { TOOLS, VALIDATE_ONLY, acceptsValidateOnly, findTool, type ToolSpec } from './mcp'
 import type { Pin } from './pins'
 import type { ChangeLine } from './diff'
 
@@ -265,10 +265,12 @@ export function checkApproval(
 
   // A dry run changes nothing, so there is nothing to approve — and gating it would forbid the
   // one move that lets an agent check a plan *before* putting it in front of the user. Only for
-  // tools the catalog marks dry-runnable: on any other tool the flag is refused by the executor,
-  // and a gate that waved it through would be trusting that refusal to happen. No `index`, so
-  // nothing is spent.
-  if (args[VALIDATE_ONLY] === true && findTool(toolName)?.dryRunnable) return { allowed: true }
+  // tools the catalog marks dry-runnable or self-validating (whose handler checks and prices a
+  // generation and starts nothing): on any other tool the flag is refused by the executor, and a
+  // gate that waved it through would be trusting that refusal to happen. No `index`, so nothing
+  // is spent.
+  const spec = findTool(toolName)
+  if (args[VALIDATE_ONLY] === true && spec && acceptsValidateOnly(spec)) return { allowed: true }
 
   const approved = gate.approved
   if (!approved) {

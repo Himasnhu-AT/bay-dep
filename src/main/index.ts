@@ -35,6 +35,7 @@ import { cancelAll } from './export/encode'
 import { menuCommandTarget, menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
 import { onAccessChange, startAccess, stopAccess } from './auth/access'
+import { startGeneration, stopGeneration } from './generate/service'
 import { startUpdates, stopUpdates } from './update/updater'
 import { disposeAgent } from './agent/host'
 import { isEntitled } from '@shared/access'
@@ -245,6 +246,11 @@ void app.whenReady().then(() => {
   void startUpdates().catch((error: unknown) => {
     console.warn(`[bay] update: could not start: ${error instanceof Error ? error.message : String(error)}`)
   })
+  // Generation keys and jobs. Contacts nothing unless a job was still running at the last quit,
+  // in which case its polling resumes rather than paying for the clip twice.
+  void startGeneration().catch((error: unknown) => {
+    console.warn(`[bay] generation: could not start: ${error instanceof Error ? error.message : String(error)}`)
+  })
   installMenu()
   onRecentsChanged(rebuildMenu)
   rebuildMenu()
@@ -294,6 +300,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   stopAccess()
+  stopGeneration()
   stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()

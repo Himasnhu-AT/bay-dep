@@ -5,6 +5,7 @@ import { useEditor } from '@/store/editor'
 import { useAccess } from '@/access/AccessGate'
 import { AccountSection } from './AccountSection'
 import { TranscriptionSection } from './TranscriptionSection'
+import { ProvidersSection } from './ProvidersSection'
 import { AboutSection, AgentSection, EditingSection, GeneralSection, PlaybackSection, UpdatesSection } from './sections'
 
 /**
@@ -25,7 +26,7 @@ export function SettingsDialog(): ReactNode {
   )
 }
 
-type PageId = 'account' | 'general' | 'editing' | 'playback' | 'transcription' | 'agent' | 'updates' | 'about'
+type PageId = 'account' | 'general' | 'editing' | 'playback' | 'transcription' | 'agent' | 'providers' | 'updates' | 'about'
 
 const PAGES: { id: PageId; label: string; render(): ReactNode }[] = [
   { id: 'general', label: 'General', render: () => <GeneralSection /> },
@@ -33,6 +34,7 @@ const PAGES: { id: PageId; label: string; render(): ReactNode }[] = [
   { id: 'playback', label: 'Playback', render: () => <PlaybackSection /> },
   { id: 'transcription', label: 'Transcription', render: () => <TranscriptionSection /> },
   { id: 'agent', label: 'Agent', render: () => <AgentSection /> },
+  { id: 'providers', label: 'Providers', render: () => <ProvidersSection /> },
   { id: 'account', label: 'Account', render: () => <AccountSection /> },
   { id: 'updates', label: 'Updates', render: () => <UpdatesSection /> },
   { id: 'about', label: 'About', render: () => <AboutSection /> }

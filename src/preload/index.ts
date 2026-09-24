@@ -116,6 +116,15 @@ const api: BayApi = {
     }
   },
 
+  generation: {
+    keys: () => ipcRenderer.invoke(IPC.generationKeys),
+    setKey: (provider, fields) => ipcRenderer.invoke(IPC.generationSetKey, provider, fields),
+    clearKey: (provider) => ipcRenderer.invoke(IPC.generationClearKey, provider),
+    start: (request) => ipcRenderer.invoke(IPC.generationStart, request),
+    job: (id) => ipcRenderer.invoke(IPC.generationJob, id),
+    jobs: () => ipcRenderer.invoke(IPC.generationJobs)
+  },
+
   agent: {
     start: () => ipcRenderer.invoke(IPC.agentStart),
     send: (text: string) => ipcRenderer.invoke(IPC.agentSend, text),

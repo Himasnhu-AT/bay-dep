@@ -369,7 +369,8 @@ Settings turns the old gate back on: every write is refused until the user appro
 `propose_edit` plan, the approval is delivered as the model's next turn naming each call byte for
 byte, and each approved call runs once. Outside a session (a terminal client on the socket)
 nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, because it changes
-nothing.
+nothing — and on a `selfValidating` one (the generate tools, whose handler receives the flag,
+checks and prices the call, and starts no paid job), for the same reason.
 
 **bay is invite-only, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A Mac
 is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST to a
@@ -890,7 +891,7 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with three exceptions, all main's.** No telemetry, no
+- **Nothing reaches the network — with four exceptions, all main's.** No telemetry, no
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
   origin; loosening it is a product decision, not a fix. The first exception is **access**: main
   (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
@@ -909,7 +910,21 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
   `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
   shipped bay contacts nothing and Settings › About says "Updates: releasing soon".
-  `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else.
+  `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
+  **AI generation** (`src/main/generate/`, `@shared/generation`, `generate_image`/`generate_video`/
+  `track_generation`), and only with a key the user set in Settings › Providers (sealed by
+  `safeStorage`, memory-only without a keychain, never returned to the renderer), only when a
+  generation tool starts a job or a job still running at the last quit is resumed. Hosts, per
+  provider, enforced by `providerHttp` on every hop of a redirect (manual follow; credentials
+  only to the API host): `api.openai.com`; `generativelanguage.googleapis.com` (Gemini images and
+  Veo), with Veo downloads allowed to redirect to `*.googleusercontent.com` and
+  `storage.googleapis.com`; `api-singapore.klingai.com`, with results from `*.klingai.com` and
+  `*.kling.ai`. What is sent is the prompt, the options and the one reference picture a call
+  names (only a file already admitted to `bay://`). The job row is persisted *before* the request
+  is sent, so a restart resumes polling instead of paying twice; results land content-addressed
+  in `<userData>/generated`, are ffprobed, and a file with no picture is a blocking finding that
+  is never imported. The redirect hosts for Veo and Kling downloads are from the providers' docs,
+  not observed — the tests use a local stub and never a live API.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

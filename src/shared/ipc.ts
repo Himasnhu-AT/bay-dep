@@ -13,6 +13,7 @@ import type { AgentEntry, AgentEvent } from './agent'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
+import type { GenerationJob, GenerationProvider, GenerationRequest, ProviderKeyStatus } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessReport, LoudnessTarget } from './loudness'
@@ -443,6 +444,25 @@ export interface BayApi {
   }
 
   /**
+   * AI image and video generation (`src/shared/generation.ts`, `src/main/generate/`) — bay's
+   * fourth network exception. Main alone calls the providers, with keys set here and only when
+   * a generation tool asks. Keys go in and never come back out: `keys` answers set/not-set.
+   * Main re-validates every request against the catalog; the renderer's check is for the
+   * agent's benefit, not the lock.
+   */
+  generation: {
+    keys(): Promise<ProviderKeyStatus[]>
+    setKey(provider: GenerationProvider, fields: Record<string, string>): Promise<{ ok: true; keys: ProviderKeyStatus[] } | { ok: false; error: string }>
+    clearKey(provider: GenerationProvider): Promise<ProviderKeyStatus[]>
+    /** Persists the job, then submits it. Resolves once the submission settles or a few seconds pass. */
+    start(request: GenerationRequest): Promise<{ ok: true; job: GenerationJob } | { ok: false; error: string }>
+    /** One job as it stands, or null for an id main has never seen. */
+    job(id: string): Promise<GenerationJob | null>
+    /** Every job main remembers, newest first. */
+    jobs(): Promise<GenerationJob[]>
+  }
+
+  /**
    * HTML compositions — HyperFrames pages, rendered as a source of pictures.
    *
    * Lives in main rather than the renderer even though the renderer is itself a browser, for
@@ -715,6 +735,17 @@ export const IPC = {
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
   mediaFreezeFrame: 'media:freeze-frame',
+
+  /**
+   * renderer -> main: AI generation (the fourth network exception). Keys in, set/not-set out;
+   * jobs are started and read here and nowhere else.
+   */
+  generationKeys: 'generation:keys',
+  generationSetKey: 'generation:set-key',
+  generationClearKey: 'generation:clear-key',
+  generationStart: 'generation:start',
+  generationJob: 'generation:job',
+  generationJobs: 'generation:jobs',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',
