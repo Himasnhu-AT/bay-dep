@@ -71,9 +71,17 @@ export function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
+/**
+ * "V N" / "A N" for the lowest N no track of that kind is called — the rule markers follow.
+ * Counting the tracks named a new one after a track that still existed once any had been
+ * deleted: remove V2 of three and the next new track was a second "V3".
+ */
 export function nextTrackName(timeline: Timeline, kind: TrackKind): string {
-  const count = timeline.tracks.filter((t) => t.kind === kind).length
-  return `${kind === 'video' ? 'V' : 'A'}${count + 1}`
+  const prefix = kind === 'video' ? 'V' : 'A'
+  const taken = new Set(timeline.tracks.filter((t) => t.kind === kind).map((t) => t.name))
+  let n = 1
+  while (taken.has(`${prefix}${n}`)) n += 1
+  return `${prefix}${n}`
 }
 
 /**
