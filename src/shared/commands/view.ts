@@ -19,5 +19,7 @@ export const viewCommands = [
     label: 'Full-Screen Preview',
     group: 'View',
     shortcut: 'Mod+Shift+F'
-  }
+  },
+  // Crop by dragging the selected clip's edges in the viewer — the inspector's Crop fields.
+  { id: 'view.cropMode', label: 'Crop in Viewer', group: 'View', shortcut: 'Shift+C' }
 ] as const satisfies readonly CommandEntry[]

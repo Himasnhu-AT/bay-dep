@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Grid3x3, Maximize } from 'lucide-react'
+import { Crop, Grid3x3, Maximize } from 'lucide-react'
 import { IconButton, Menu, Select, useFloatingTrigger } from '@/components'
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { useViewer, VIEWER_ZOOMS, type ViewerZoom } from '@/lib/viewer'
@@ -15,6 +15,7 @@ export function ViewerControls(): ReactNode {
   const setZoom = useViewer((state) => state.setZoom)
   const safeAreas = useViewer((state) => state.safeAreas)
   const grid = useViewer((state) => state.grid)
+  const cropMode = useViewer((state) => state.cropMode)
   const overlays = useFloatingTrigger()
   const anyOverlay = safeAreas || grid
 
@@ -47,6 +48,14 @@ export function ViewerControls(): ReactNode {
           },
           { label: 'Thirds Grid', checked: grid, onSelect: () => runCommand('view.grid') }
         ]}
+      />
+      <IconButton
+        label="Crop in viewer (drag edges, ⇧ both sides)"
+        shortcut={shortcutOf('view.cropMode')}
+        tooltipSide="top"
+        active={cropMode}
+        icon={<Crop className="size-3.5" />}
+        onClick={() => runCommand('view.cropMode')}
       />
       <IconButton
         label="Full-screen preview"

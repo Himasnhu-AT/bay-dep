@@ -1,5 +1,6 @@
 import { gapAt } from '@shared/editing'
 import { selectDuration, selectFps, selectSelectedItems, selectTimeline } from '@/store/editor'
+import { useTimelineTool } from '@/lib/timelineTool'
 import type { CommandContext, Handlers } from './types'
 
 const inEditor = ({ state }: CommandContext): boolean => state.screen === 'editor'
@@ -68,5 +69,7 @@ export const timelineHandlers = {
       if ('error' in result) state.notify(result.error, 'error')
       else state.setPlayhead(result.from)
     }
-  }
+  },
+  'tool.select': { when: inEditor, run: () => useTimelineTool.getState().setTool('select') },
+  'tool.blade': { when: inEditor, run: () => useTimelineTool.getState().setTool('blade') }
 } satisfies Handlers

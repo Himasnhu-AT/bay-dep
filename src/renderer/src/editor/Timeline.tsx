@@ -32,6 +32,11 @@ import { TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
 import { ClipDialogs, clipMenuEntries } from './ClipCommands'
+import { detachToEntries, rippleDeleteThisTrack, trimModeEntries } from './clipMenuExtras'
+import { bladeFrame, clipZone, nearerEdge } from '@/lib/blade'
+import { useTimelineTool } from '@/lib/timelineTool'
+import { pointerHint } from '@/lib/pointerHint'
+import { planTrackShift, type TrackMove } from '@shared/track-move'
 
 /** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
 const NO_MARKERS: readonly Marker[] = []
@@ -88,7 +93,24 @@ interface MoveGesture {
   sourceTrackId: string
   deltaFrames: number
   targetTrackId: string
+  /** A multi-clip drag onto other lanes: where each clip lands (`planTrackShift`). */
+  lanes?: TrackMove[]
+  /** Why a multi-clip drag is staying on its own tracks, shown in the readout. */
+  blocked?: string
 }
+
+/** What the pointer is over, for the blade's cut line and the ⌥ / armed-trim hints. */
+interface Hover {
+  itemId: string
+  trackId: string
+  zone: 'start' | 'end' | 'body'
+  /** The frame a blade click would cut at; null when not in blade mode or on an edge. */
+  frame: number | null
+}
+
+const sameHover = (a: Hover | null, b: Hover | null): boolean =>
+  a === b ||
+  (a !== null && b !== null && a.itemId === b.itemId && a.zone === b.zone && a.frame === b.frame && a.trackId === b.trackId)
 
 interface TrimGesture {
   itemId: string
@@ -167,6 +189,36 @@ export function Timeline(): ReactNode {
   const [marquee, setMarquee] = useState<MarqueeGesture | null>(null)
   const [hoverGap, setHoverGap] = useState<Gap | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const tool = useTimelineTool((state) => state.tool)
+  const armed = useTimelineTool((state) => state.armed)
+  const [hover, setHover] = useState<Hover | null>(null)
+  // ⌥ and ⇧ as held now — for the cursor and the hint while the pointer rests on a clip.
+  const [mods, setMods] = useState({ alt: false, shift: false })
+
+  useEffect(() => {
+    const sync = (event: KeyboardEvent): void => {
+      const next = { alt: event.altKey, shift: event.shiftKey }
+      setMods((current) => (current.alt === next.alt && current.shift === next.shift ? current : next))
+    }
+    const clear = (): void => setMods((current) => (current.alt || current.shift ? { alt: false, shift: false } : current))
+    // Escape puts the blade down and cancels an armed trim. The app's own Escape handler only
+    // closes its dialogs, and a modal open now owns the key.
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || document.querySelector('[aria-modal="true"]')) return
+      const tools = useTimelineTool.getState()
+      if (tools.tool !== 'select' || tools.armed) tools.setTool('select')
+    }
+    window.addEventListener('keydown', sync)
+    window.addEventListener('keyup', sync)
+    window.addEventListener('keydown', onEscape)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('keydown', sync)
+      window.removeEventListener('keyup', sync)
+      window.removeEventListener('keydown', onEscape)
+      window.removeEventListener('blur', clear)
+    }
+  }, [])
 
   const fps = timeline?.fps ?? 30
   const tracks = useMemo(() => timeline?.tracks ?? [], [timeline])
@@ -245,6 +297,15 @@ export function Timeline(): ReactNode {
     },
     [tracks]
   )
+
+  /** The lane under the pointer, whatever its kind or lock — the planner says why it cannot be used. */
+  const laneAtClientY = useCallback((clientY: number): string | null => {
+    for (const [trackId, element] of laneRefs.current) {
+      const box = element.getBoundingClientRect()
+      if (clientY >= box.top && clientY <= box.bottom) return trackId
+    }
+    return null
+  }, [])
 
   const autoScroll = useCallback((clientX: number): void => {
     const scroller = scrollRef.current
@@ -343,23 +404,50 @@ export function Timeline(): ReactNode {
         // edge it wants to snap to.
         const snapped = state.meta ? Math.round(raw) : snap(raw, new Set(current.itemIds))
         const source = timeline.tracks.find((track) => track.id === current.sourceTrackId)
-        // Only a single clip may change lane. Carrying a multi-selection across tracks
-        // needs a relative-track model the store does not have, and guessing wrong drops
-        // clips silently onto the wrong lane.
-        const targetTrackId =
-          current.itemIds.length === 1 && source
-            ? (trackAtClientY(state.y, source.kind) ?? current.sourceTrackId)
-            : current.sourceTrackId
-        return { ...current, deltaFrames: snapped - current.anchorFrom, targetTrackId }
+        const deltaFrames = snapped - current.anchorFrom
+        if (current.itemIds.length === 1 || !source) {
+          const targetTrackId = source ? (trackAtClientY(state.y, source.kind) ?? current.sourceTrackId) : current.sourceTrackId
+          return { ...current, deltaFrames, targetTrackId }
+        }
+        // Several clips change lanes by whole lanes of the grabbed clip's kind, or not at all:
+        // the plan either lands every clip on free time on an unlocked lane of its kind, or it
+        // says why not and the clips stay on their tracks (`@shared/track-move`).
+        const over = laneAtClientY(state.y)
+        if (!over || over === current.sourceTrackId) {
+          return { ...current, deltaFrames, targetTrackId: current.sourceTrackId, lanes: undefined, blocked: undefined }
+        }
+        const store = useEditor.getState()
+        const plan = planTrackShift(store.project, timeline, {
+          // A linked clip goes where its partner goes, as it does in a same-lane drag.
+          itemIds: store.linkedSelection ? withLinked(timeline, current.itemIds) : current.itemIds,
+          anchorId: current.itemIds[0]!,
+          targetTrackId: over,
+          deltaFrames,
+          order: ordered.map((track) => track.id)
+        })
+        return plan.ok
+          ? { ...current, deltaFrames, targetTrackId: over, lanes: plan.moves, blocked: undefined }
+          : { ...current, deltaFrames, targetTrackId: current.sourceTrackId, lanes: undefined, blocked: plan.error }
       })
     },
     onEnd: () => {
       const current = move
       setMove(null)
       if (!current || !timeline) return
-      if (current.deltaFrames === 0 && current.targetTrackId === current.sourceTrackId) return
+      if (current.deltaFrames === 0 && current.targetTrackId === current.sourceTrackId) {
+        if (current.blocked) useEditor.getState().notify(`Kept on their tracks: ${current.blocked}`)
+        return
+      }
 
       const store = useEditor.getState()
+      if (current.lanes) {
+        // One edit, all clips or none: the plan is checked again against the timeline as it is.
+        const result = store.moveItemsToTracks(current.lanes)
+        if ('error' in result) store.notify(result.error, 'error')
+        return
+      }
+      // Released over a lane the group could not go to: it moved in time on its own tracks.
+      if (current.blocked) store.notify(`Kept on their tracks: ${current.blocked}`)
       const moving = allItems(timeline).filter((item) => current.itemIds.includes(item.id))
       // Moving right, the rightmost clip must vacate its space first — otherwise the one
       // behind it collides with a clip that is itself about to move out of the way.
@@ -489,9 +577,62 @@ export function Timeline(): ReactNode {
     [timeline, beginTrimMode]
   )
 
+  /** The frame a blade click at `clientX` on `item` cuts at (`lib/blade`), or null on its edge. */
+  const bladeFrameAt = useCallback(
+    (clientX: number, item: Item, suspendSnap: boolean): number | null => {
+      // Its own edges (and its linked partner's, which coincide) would snap the cut onto an edge.
+      const ignore = new Set(timeline ? withLinked(timeline, [item.id]) : [item.id])
+      return bladeFrame(frameAtClientX(clientX), item, (frame) => (suspendSnap ? Math.round(frame) : snap(frame, ignore)))
+    },
+    [timeline, frameAtClientX, snap]
+  )
+
+  /**
+   * The blade's click: `splitAt` at the frame under the pointer — the store action ⌘B runs, with
+   * the clicked clip (and what is linked to it) as the selection it cuts. ⇧ cuts every unlocked
+   * track there, as ⇧⌘B does at the playhead.
+   */
+  const bladeCut = useCallback(
+    (event: React.PointerEvent, item: Item): void => {
+      const store = useEditor.getState()
+      const track = tracks.find((candidate) => candidate.id === item.trackId)
+      if (!track || !timeline) return
+      if (track.locked && !event.shiftKey) {
+        store.notify(`Track ${track.name} is locked — unlock it in the track header to cut it.`)
+        return
+      }
+      const frame = bladeFrameAt(event.clientX, item, event.metaKey || event.ctrlKey)
+      if (frame === null) {
+        store.notify('That is the clip’s edge, so there is nothing to cut. Click inside the clip.')
+        return
+      }
+      if (event.shiftKey) {
+        store.splitAt(frame, { allTracks: true })
+        return
+      }
+      store.select(store.linkedSelection ? withLinked(timeline, [item.id]) : [item.id])
+      store.splitAt(frame)
+    },
+    [tracks, timeline, bladeFrameAt]
+  )
+
   const onClipPointerDown = useCallback(
     (event: React.PointerEvent, item: Item): void => {
       const store = useEditor.getState()
+      const tools = useTimelineTool.getState()
+      if (tools.tool === 'blade') {
+        bladeCut(event, item)
+        return
+      }
+      // A trim mode armed from the clip menu is this drag's, then it disarms. A roll needs a
+      // cut, so on the body it rolls the nearer one.
+      if (tools.armed) {
+        const mode = tools.armed
+        tools.arm(null)
+        const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+        startTrimMode(event, item, mode, mode === 'roll' ? nearerEdge(event.clientX - box.left, box.width) : undefined)
+        return
+      }
       // Alt is the trim-mode modifier: alone it slips the footage inside the clip, with Shift it
       // slides the clip between its neighbours. Checked before the Shift-click branch below, so
       // Alt+Shift is a slide rather than a selection toggle.
@@ -531,13 +672,21 @@ export function Timeline(): ReactNode {
       })
       beginMove(event)
     },
-    [timeline, tracks, beginMove, startTrimMode]
+    [timeline, tracks, beginMove, startTrimMode, bladeCut]
   )
 
   const onTrimPointerDown = useCallback(
     (event: React.PointerEvent, item: Item, edge: 'start' | 'end'): void => {
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
+      const tools = useTimelineTool.getState()
+      // An armed slip or slide acts on the clip wherever it is grabbed; an armed roll rolls this edge.
+      if (tools.armed) {
+        const mode = tools.armed
+        tools.arm(null)
+        startTrimMode(event, item, mode, mode === 'roll' ? edge : undefined)
+        return
+      }
       // Alt on a handle rolls the cut at that edge instead of trimming one side of it.
       if (event.altKey) {
         startTrimMode(event, item, 'roll', edge)
@@ -614,6 +763,22 @@ export function Timeline(): ReactNode {
     if (marquee || move || trim || trimMode) return
     const next = event.target === event.currentTarget ? (gapAt(track, frameAtClientX(event.clientX)) ?? null) : null
     setHoverGap((current) => (sameGap(current, next) ? current : next))
+
+    // The clip under the pointer (a clip's events bubble here): where the blade would cut, and
+    // which part of the clip a ⌥-drag would slip, slide or roll.
+    const altNow = event.altKey
+    if (altNow !== mods.alt || event.shiftKey !== mods.shift) setMods({ alt: altNow, shift: event.shiftKey })
+    const raw = frameAtClientX(event.clientX)
+    const item = event.target === event.currentTarget ? undefined : track.items.find((i) => raw >= i.from && raw < itemEnd(i))
+    const hovered: Hover | null = item
+      ? {
+          itemId: item.id,
+          trackId: track.id,
+          zone: clipZone((raw - item.from) * pixelsPerFrame, item.durationInFrames * pixelsPerFrame),
+          frame: tool === 'blade' ? bladeFrameAt(event.clientX, item, event.metaKey || event.ctrlKey) : null
+        }
+      : null
+    setHover((current) => (sameHover(current, hovered) ? current : hovered))
   }
 
   const onLaneContextMenu = (event: React.MouseEvent<HTMLDivElement>, track: Track): void => {
@@ -719,7 +884,13 @@ export function Timeline(): ReactNode {
   const nothingPlaced = tracks.every((track) => track.items.length === 0)
 
   return (
-    <div ref={panelRef} className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1">
+    <div
+      ref={panelRef}
+      // What a drag on a clip will do right now, for the clips' cursors (`Clip.tsx` reads it with
+      // `in-data-[trim-hint=…]`, so holding ⌥ re-renders no clip).
+      data-trim-hint={armed ?? (mods.alt && tool === 'select' ? (mods.shift ? 'slide' : 'slip') : undefined)}
+      className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1"
+    >
       <TimelineToolbar fps={fps} />
       <div
         ref={scrollRef}
@@ -780,7 +951,10 @@ export function Timeline(): ReactNode {
                   }}
                   onPointerDown={(event) => onLanePointerDown(event, track)}
                   onPointerMove={(event) => onLanePointerMove(event, track)}
-                  onPointerLeave={() => setHoverGap(null)}
+                  onPointerLeave={() => {
+                    setHoverGap(null)
+                    setHover(null)
+                  }}
                   onContextMenu={(event) => onLaneContextMenu(event, track)}
                   onDragOver={(event) => {
                     if (!event.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return
@@ -862,6 +1036,7 @@ export function Timeline(): ReactNode {
                         previewFrom={trimming ? trim.from : item.from}
                         previewDuration={trimming ? trim.durationInFrames : item.durationInFrames}
                         dragging={(movingIds?.has(item.id) ?? false) || trimMode?.itemId === item.id}
+                        blade={tool === 'blade'}
                         onPointerDownBody={onClipPointerDown}
                         onPointerDownTrim={onTrimPointerDown}
                         onContextMenu={onClipContextMenu}
@@ -916,7 +1091,9 @@ export function Timeline(): ReactNode {
               {allItems(timeline)
                 .filter((item) => move.itemIds.includes(item.id))
                 .map((item) => {
-                  const laneId = item.id === move.itemIds[0] ? move.targetTrackId : item.trackId
+                  const laneId =
+                    move.lanes?.find((planned) => planned.itemId === item.id)?.trackId ??
+                    (item.id === move.itemIds[0] ? move.targetTrackId : item.trackId)
                   const top = laneTops.get(laneId)
                   if (top === undefined) return null
                   const lane = tracks.find((candidate) => candidate.id === laneId)
@@ -936,6 +1113,23 @@ export function Timeline(): ReactNode {
                 })}
             </div>
           )}
+
+          {/* The blade's cut: on the clip under the pointer, or down every lane with ⇧ — where a
+              click would cut, snapped as the click will be. */}
+          {tool === 'blade' && hover?.frame != null && (() => {
+            const lane = tracks.find((candidate) => candidate.id === hover.trackId)
+            const laneTop = laneTops.get(hover.trackId)
+            if (!lane || laneTop === undefined) return null
+            const top = mods.shift ? RULER_HEIGHT : laneTop + 2
+            const height = mods.shift ? cursor - RULER_HEIGHT : heightOf(lane) - 4
+            return (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute z-[41] w-px bg-accent"
+                style={{ left: HEADER_WIDTH + hover.frame * pixelsPerFrame, top, height }}
+              />
+            )
+          })()}
 
           {marquee && (marquee.x !== marquee.originX || marquee.y !== marquee.originY) && (
             <div
@@ -975,14 +1169,19 @@ export function Timeline(): ReactNode {
       )}
 
       {/* The same readout for a move or a trim: how far, and where it lands, in timecode. */}
-      {(move?.deltaFrames || trim) && timeline ? (
-        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
+      {((move && (move.deltaFrames || move.lanes || move.blocked)) || trim) && timeline ? (
+        <div className="pointer-events-none absolute bottom-2 left-1/2 z-50 max-w-[80%] -translate-x-1/2 rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop">
           {move ? (
             <>
               Move {formatDelta(move.deltaFrames)}
               <span className="ml-2 text-ink-2">
                 starts {formatTimecode(Math.max(0, move.anchorFrom + move.deltaFrames), fps, true)}
+                {move.lanes && (() => {
+                  const target = tracks.find((track) => track.id === move.targetTrackId)
+                  return target ? ` · to ${target.name}` : ''
+                })()}
               </span>
+              {move.blocked && <span className="mt-0.5 block text-pretty text-ink-1">Stays on its tracks: {move.blocked}</span>}
             </>
           ) : trim ? (
             (() => {
@@ -998,6 +1197,19 @@ export function Timeline(): ReactNode {
           ) : null}
         </div>
       ) : null}
+
+      {/* Before any drag: what the tool in hand, an armed trim, or ⌥ over a clip will do. The
+          gestures have no other visible affordance, so this is where they are learned. */}
+      {!move && !trim && !trimMode && !marquee && (() => {
+        const hint = pointerHint(tool, armed, mods, hover, fps)
+        return hint ? (
+          <div
+            className="pointer-events-none absolute bottom-2 left-1/2 z-50 max-w-[80%] -translate-x-1/2 truncate rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop"
+          >
+            {hint}
+          </div>
+        ) : null
+      })()}
 
       {/* Centred on the *lanes*, not on the panel — otherwise it lands over the add-track
           row and reads as a label for it. `cursor` is where the last lane ends. */}
@@ -1026,8 +1238,13 @@ export function Timeline(): ReactNode {
         label="Clip"
         items={[
           ...(menuItem && menu ? clipMenuEntries(menuItem, menu) : []),
+          // Directly under Ripple Delete: the other ripple, which closes only this track's gap.
+          { label: 'Ripple Delete (This Track Only)', disabled: menuTrack?.locked ?? true, danger: true, onSelect: rippleDeleteThisTrack },
+          { kind: 'separator' },
+          ...trimModeEntries(menuTrack?.locked ?? true),
           { kind: 'separator' },
           { label: 'Detach audio', disabled: !canDetach, onSelect: () => runMenu('detach') },
+          ...(menuItem && timeline ? detachToEntries(menuItem, timeline, canDetach) : []),
           { label: 'Unlink', disabled: !menuLinked, onSelect: () => runMenu('unlink') },
           { label: 'Reattach audio', disabled: !canReattach, onSelect: () => runMenu('reattach') }
         ]}

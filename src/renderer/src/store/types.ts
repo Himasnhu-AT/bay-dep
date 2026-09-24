@@ -23,6 +23,7 @@ import type { CanvasFit } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { RippleDeleteResult } from '@shared/ripple'
+import type { TrackMove } from '@shared/track-move'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { CaptionCue } from '@shared/captions'
@@ -331,6 +332,11 @@ export interface EditorActions {
   toggleDisabled(itemIds?: string[]): void
   /** Move the selection by `delta` frames, refusing (with a toast naming the blocker) if blocked. */
   nudgeSelection(delta: Frames): boolean
+  /**
+   * Move clips to new frames and tracks together — a multi-clip drag across lanes, planned by
+   * `planTrackShift` (`@shared/track-move`). All or none, one undo step; a refusal is returned.
+   */
+  moveItemsToTracks(moves: readonly TrackMove[]): { ok: true } | { error: string }
   /** Close the gap containing `frame` on one track — see `planCloseGap` in `@shared/editing`. */
   closeGapAt(trackId: string, frame: Frames): { closedFrames: number; from: Frames; to: Frames } | { error: string }
   /**

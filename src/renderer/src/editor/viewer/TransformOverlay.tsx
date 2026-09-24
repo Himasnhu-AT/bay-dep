@@ -14,15 +14,17 @@
  */
 
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
-import { findAsset, findItem, type Item, type KeyframeProperty, type Layout } from '@shared/project'
+import { findAsset, findItem, normaliseCrop, type Item, type KeyframeProperty, type Layout } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
 import { itemsToDraw } from '@/engine/compositor'
-import { requestTextFocus } from '@/lib/viewer'
+import { requestTextFocus, useViewer } from '@/lib/viewer'
 import { selectTimeline, useEditor } from '@/store/editor'
 import {
   boundsOf,
   contains,
   corners,
+  CROP_INSETS,
+  cropDragResult,
   dragResult,
   HANDLES,
   handlePoint,
@@ -30,6 +32,7 @@ import {
   resizeCursor,
   snapTargets,
   topmostAt,
+  type CropDragStart,
   type DragStart,
   type Frame,
   type Handle,
@@ -93,6 +96,7 @@ type Hit =
   | ((
       | { kind: 'handle'; handle: Handle }
       | { kind: 'rotate' }
+      | { kind: 'crop'; handle: Handle }
       | { kind: 'item' }
     ) & { entry: Entry; live: Entry[]; selected: Entry[] })
   | null
@@ -103,6 +107,8 @@ interface Drag {
   /** Every selected clip's layout at the start, for moving several together. */
   starts: Map<string, Layout>
   began: boolean
+  /** Set when the drag is a crop handle (crop mode): the insets move, the layout does not. */
+  crop?: CropDragStart
   screenStart: Point
   pointerId: number
 }
@@ -146,6 +152,22 @@ export function TransformOverlay({
   void project
   const selected = drawnEntries(useEditor.getState().playhead).filter((entry) => selection.includes(entry.item.id) && entry.frame)
   const single = selected.length === 1 ? selected[0] : undefined
+  const cropMode = useViewer((state) => state.cropMode)
+  // In crop mode, the whole uncropped box, dashed: what dragging an edge back out would reveal.
+  const cropBox =
+    cropMode && single && !single.locked ? itemFrame(animatedItemAt(single.item, useEditor.getState().playhead).layout) : null
+
+  // Escape leaves crop mode (the app's own Escape only closes its dialogs). Not while a modal is
+  // open — Escape there is the modal's.
+  useEffect(() => {
+    if (!cropMode) return
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape' || document.querySelector('[aria-modal="true"]')) return
+      useViewer.getState().setCropMode(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [cropMode])
 
   const toCanvas = (event: { clientX: number; clientY: number }): Point => {
     const rect = rootRef.current?.getBoundingClientRect()
@@ -162,7 +184,13 @@ export function TransformOverlay({
     const live = drawnEntries(useEditor.getState().playhead)
     const liveSelected = live.filter((entry) => useEditor.getState().selection.includes(entry.item.id) && entry.frame)
     const one = liveSelected.length === 1 ? liveSelected[0] : undefined
-    if (one?.frame && !one.locked) {
+    if (one?.frame && !one.locked && useViewer.getState().cropMode) {
+      // Crop mode: the handles on what is drawn move the crop, and there is no rotate knob.
+      const slop = HANDLE_HIT_PX / scale
+      for (const { handle } of HANDLES) {
+        if (dist(p, handlePoint(one.frame, handle)) <= slop) return { kind: 'crop', handle, entry: one, live, selected: liveSelected }
+      }
+    } else if (one?.frame && !one.locked) {
       const slop = HANDLE_HIT_PX / scale
       if (dist(p, rotateKnob(one.frame, scale)) <= slop) return { kind: 'rotate', entry: one, live, selected: liveSelected }
       for (const { handle } of HANDLES) {
@@ -179,12 +207,22 @@ export function TransformOverlay({
     const current = drag.current
     const next = pending.current
     if (!current || !next) return
-    const result = dragResult(current.start, next.point, next.mods, SNAP_PX / scale)
     const state = useEditor.getState()
     if (!current.began) {
       current.began = true
       state.beginGesture()
     }
+    if (current.crop) {
+      // The same `setCrop` the inspector's Crop fields write, one inset at a time, only where
+      // it changed — all inside the gesture, so the drag is one undo step.
+      const id = current.itemIds[0]!
+      const timeline = selectTimeline(state)
+      const now = normaliseCrop(timeline ? findItem(timeline, id)?.item.crop : undefined)
+      const crop = cropDragResult(current.crop, next.point, { symmetric: next.mods.shift })
+      for (const edge of CROP_INSETS) if (crop[edge] !== now[edge]) state.setCrop(id, edge, crop[edge])
+      return
+    }
+    const result = dragResult(current.start, next.point, next.mods, SNAP_PX / scale)
     let ok = true
     if (current.start.mode.kind === 'move' && current.itemIds.length > 1) {
       // Several clips move by the grabbed one's delta, each from where it started.
@@ -269,6 +307,9 @@ export function TransformOverlay({
       itemIds: [...starts.keys()],
       starts,
       began: false,
+      ...(target.kind === 'crop'
+        ? { crop: { layout: drawn.layout, crop: normaliseCrop(drawn.crop), handle: target.handle, pointer: p } }
+        : {}),
       screenStart: { x: event.clientX, y: event.clientY },
       pointerId: event.pointerId
     }
@@ -368,7 +409,42 @@ export function TransformOverlay({
             strokeDasharray={entry.locked ? '4 3' : undefined}
           />
         ))}
-        {single?.frame && !single.locked && (
+        {cropBox && single?.frame && (
+          <>
+            <polygon
+              points={corners(cropBox).map(toView).join(' ')}
+              className="fill-none stroke-ink-2"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+            />
+            {HANDLES.map(({ handle, x, y }) => {
+              const at = handlePoint(single.frame!, handle)
+              // Crop handles are bars along the edge (L-shapes at the corners), the mark every
+              // editor uses for crop, so they read differently from the resize squares.
+              const long = HANDLE_PX * 1.6
+              const w = x === 0 ? long : 3
+              const h = y === 0 ? long : 3
+              const angle = (single.frame!.angle * 180) / Math.PI
+              return x !== 0 && y !== 0 ? (
+                <g key={handle} transform={`rotate(${angle} ${at.x * scale} ${at.y * scale})`} className="fill-accent">
+                  <rect x={at.x * scale - (x > 0 ? long - 1.5 : 1.5)} y={at.y * scale - 1.5} width={long} height={3} />
+                  <rect x={at.x * scale - 1.5} y={at.y * scale - (y > 0 ? long - 1.5 : 1.5)} width={3} height={long} />
+                </g>
+              ) : (
+                <rect
+                  key={handle}
+                  x={at.x * scale - w / 2}
+                  y={at.y * scale - h / 2}
+                  width={w}
+                  height={h}
+                  transform={`rotate(${angle} ${at.x * scale} ${at.y * scale})`}
+                  className="fill-accent"
+                />
+              )
+            })}
+          </>
+        )}
+        {single?.frame && !single.locked && !cropMode && (
           <>
             <line
               x1={handlePoint(single.frame, 'n').x * scale}
@@ -421,6 +497,6 @@ function rotateKnob(frame: Frame, scale: number): Point {
 function cursorFor(target: Hit): string {
   if (!target) return 'default'
   if (target.kind === 'rotate') return 'grab'
-  if (target.kind === 'handle') return resizeCursor(target.handle, target.entry.frame?.angle ?? 0)
+  if (target.kind === 'handle' || target.kind === 'crop') return resizeCursor(target.handle, target.entry.frame?.angle ?? 0)
   return target.entry.locked ? 'not-allowed' : 'move'
 }
