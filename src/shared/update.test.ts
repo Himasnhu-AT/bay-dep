@@ -155,6 +155,12 @@ test('errors are recovery instructions, not stack traces', () => {
   assert.match(signature, /not signed by the same developer/)
   const refused = updateErrorMessage('Error: bay refused to contact evil.example for an update: updates come only from updates.example.com.', 'check', feed)
   assert.equal(refused, 'bay refused to contact evil.example for an update: updates come only from updates.example.com.')
+  // The host guard cancels in Chromium, which reports only ERR_BLOCKED_BY_CLIENT; the guard's own
+  // sentence (naming the host) is what the user reads. Paired: without a recorded refusal the
+  // same code falls through to the generic sentence rather than inventing a host.
+  const guard = 'bay refused to contact 127.0.0.1:8125 for an update: updates come only from 127.0.0.1:8124.'
+  assert.equal(updateErrorMessage('Error: net::ERR_BLOCKED_BY_CLIENT', 'download', feed, guard), guard)
+  assert.equal(updateErrorMessage('Error: net::ERR_BLOCKED_BY_CLIENT', 'download', feed, null), 'net::ERR_BLOCKED_BY_CLIENT Retry to download the update again.')
   const other = updateErrorMessage('Error: something odd happened. More detail here.', 'download', feed)
   assert.equal(other, 'something odd happened. Retry to download the update again.')
 })

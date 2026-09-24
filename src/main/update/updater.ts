@@ -32,6 +32,8 @@ let updater: AppUpdater | null = null
 let timer: NodeJS.Timeout | null = null
 let feedLabel = ''
 let lastStep: UpdateStep = 'check'
+/** The host guard's last refusal: Chromium reports it only as ERR_BLOCKED_BY_CLIENT. */
+let lastRefusal: string | null = null
 const listeners = new Set<(status: UpdateStatus) => void>()
 
 export function updateStatus(): UpdateStatus {
@@ -57,7 +59,7 @@ function fail(error: unknown, during: UpdateStep): UpdateStatus {
   console.warn(`[bay] update: ${during} failed: ${raw.split('\n')[0]}`)
   const next = 'next' in status ? status.next : null
   const notes = 'notes' in status ? status.notes : ''
-  return publish({ state: 'error', current: app.getVersion(), feed: feedLabel, during, message: updateErrorMessage(raw, during, feedLabel), next, notes })
+  return publish({ state: 'error', current: app.getVersion(), feed: feedLabel, during, message: updateErrorMessage(raw, during, feedLabel, lastRefusal), next, notes })
 }
 
 /** Call once, after `ready`. */
@@ -78,7 +80,10 @@ export async function startUpdates(): Promise<void> {
   const updaterSession = session.fromPartition('electron-updater', { cache: false })
   updaterSession.webRequest.onBeforeRequest((details, callback) => {
     const verdict = allowUpdateRequest(details.url, feed)
-    if (!verdict.ok) console.warn(`[bay] update: ${verdict.reason}`)
+    if (!verdict.ok) {
+      lastRefusal = verdict.reason
+      console.warn(`[bay] update: ${verdict.reason}`)
+    }
     callback({ cancel: !verdict.ok })
   })
 

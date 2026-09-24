@@ -183,8 +183,11 @@ export function describeUpdate(status: UpdateStatus): { title: string; detail: s
  * What went wrong, as a sentence someone can act on. electron-updater's own messages are stack-
  * shaped ("HttpError: 404 … Headers: {…}") and name no remedy.
  */
-export function updateErrorMessage(raw: string, during: UpdateStep, feed: string): string {
+export function updateErrorMessage(raw: string, during: UpdateStep, feed: string, refusal: string | null = null): string {
   const text = raw.replace(/\s+/g, ' ').trim()
+  // bay's own host guard cancelled a request (Chromium reports only ERR_BLOCKED_BY_CLIENT), so
+  // the guard's sentence, which names the host, is the message.
+  if (/ERR_BLOCKED_BY_CLIENT/.test(text) && refusal) return refusal
   if (/refused to contact|not an update host/i.test(text)) return text.replace(/^Error: /, '')
   if (/ERR_INTERNET_DISCONNECTED|ENOTFOUND|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ERR_NETWORK_CHANGED|ECONNREFUSED|ERR_CONNECTION/i.test(text)) {
     return `bay could not reach ${feed}. Check the connection and retry.`
