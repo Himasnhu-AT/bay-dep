@@ -94,7 +94,11 @@ export function requestTextFocus(itemId: string): void {
   pendingTextFocus = { itemId, at: Date.now() }
   useEditor.getState().setRegionHidden('inspector', false)
   openSection('inspector.clip')
-  window.dispatchEvent(new CustomEvent(FOCUS_TEXT_EVENT, { detail: { itemId } }))
+  // After the reveal has rendered: until then the inspector is still `inert` and the section's
+  // body hidden, and a focus() there silently does nothing (measured: focus stayed on body).
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => window.dispatchEvent(new CustomEvent(FOCUS_TEXT_EVENT, { detail: { itemId } })))
+  )
 }
 
 /** A focus request not yet taken, for a field that mounts just after it. Stale after a second. */
