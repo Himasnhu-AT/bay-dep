@@ -256,6 +256,20 @@ within a second, the newest queued capture is served first, stale ones are dropp
 ahead are fetched while playing. Export and `preview_frame` build their own pools, which still
 answer exactly or wait: a stand-in frame there would put the wrong picture in a file.
 
+**A media load that failed is retried under a new URL, with CORS** (`mediaRetry.ts`). Chromium
+remembers a failed load per URL and CORS mode. A `bay://` path refused before it was allowlisted
+kept failing after the allowlist, even on a fresh element. Meanwhile `fetch` of that URL answered
+200. So the same-URL retry could never work, and dropping CORS "worked" only by changing the key,
+into a load that plays silence. `test/app/audio-soak.mjs` reproduces the race: before the fix,
+every forced iteration was silent; after it, none were.
+
+**A GUI probe must never send a global keystroke or trust Accessibility for window presence**
+(`test/app/menu.mjs`, `test/app/README.md`). Accessibility lists only the active Space. With
+another app full screen, bay has "0 windows". `key code 53` lands in whatever app is in front,
+and it once landed in the user's chat app while they were typing. Use the window server's list
+(`CGWindowListCopyWindowInfo`), and send a key only after re-checking `frontmost` in the same
+script.
+
 **A cut during playback is prepared before the playhead reaches it** (`Compositor.preroll`,
 `engine/pictureHold.ts`, `test/app/cut-playback.mjs`). Every cut played one black picture, cold
 and warm, graded or not: the incoming clip's element was first told where to be by the draw *at*
@@ -352,6 +366,13 @@ Offline it keeps working for 14 days from the last successful check; a 404 on th
 unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
 bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
 `safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
+
+**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
+email directly on the website's `/admin`; an entitled user refers one from inside bay
+(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
+(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
+`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
+site says "Releasing soon" and points at the waitlist.
 
 ## graft — read the graph before you grep
 
