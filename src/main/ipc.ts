@@ -43,10 +43,11 @@ import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
 import { writeGenerated, writeTemplate } from './html/templates'
 import * as access from './auth/access'
+import * as update from './update/updater'
 import { refuseChannel } from './auth/gate'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'accessChanged'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'accessChanged' | 'updateChanged'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
@@ -112,6 +113,11 @@ interface ChannelApi {
   accessRecheck: BayApi['access']['recheck']
   accessRequestAccess: BayApi['access']['requestAccess']
   accessRefer: BayApi['access']['refer']
+
+  updateStatus: BayApi['update']['status']
+  updateCheck: BayApi['update']['check']
+  updateDownload: BayApi['update']['download']
+  updateInstall: BayApi['update']['install']
 
   windowMinimise: BayApi['window']['minimise']
   windowToggleMaximise: BayApi['window']['toggleMaximise']
@@ -253,6 +259,11 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   accessRecheck: () => access.recheck(),
   accessRequestAccess: async () => access.requestAccess(),
   accessRefer: (_event, email) => access.refer(email),
+
+  updateStatus: async () => update.updateStatus(),
+  updateCheck: () => update.checkForUpdates(),
+  updateDownload: () => update.downloadUpdate(),
+  updateInstall: () => update.installUpdate(),
 
   windowMinimise: async (event) => {
     windowOf(event)?.minimize()

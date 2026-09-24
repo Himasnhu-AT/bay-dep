@@ -15,6 +15,7 @@ import { cn } from '@/lib/cn'
 import { bayTheme, type ThemePreference } from '@/lib/theme'
 import { useEditor } from '@/store/editor'
 import { useAccess } from '@/access/AccessGate'
+import { AboutUpdates } from '@/update/UpdateBanner'
 import { REFERRAL_LIMIT, describeAccess } from '@shared/access'
 
 /**
@@ -82,6 +83,10 @@ function SettingsBody(): ReactNode {
           checked={debugMode}
           onChange={() => toggleDebugMode()}
         />
+      </Section>
+
+      <Section title="About">
+        <AboutUpdates />
       </Section>
     </div>
   )

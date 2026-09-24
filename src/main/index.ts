@@ -25,8 +25,10 @@ import { cancelAll } from './export/encode'
 import { menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
 import { onAccessChange, startAccess, stopAccess } from './auth/access'
+import { startUpdates, stopUpdates } from './update/updater'
 import { disposeAgent } from './agent/host'
 import { isEntitled } from '@shared/access'
+import { appNameFor } from './app-name'
 
 // The main bundle is ESM, where `__dirname` does not exist. Everything loaded by path — the
 // preload script and the production renderer — is resolved from here.
@@ -37,8 +39,9 @@ const APP_NAME = 'bay'
 // `setName` before anything else reads it. On macOS the menu bar takes the name from the
 // bundle's Info.plist in a packaged app, but the About panel, `app.getPath('userData')` and
 // every dialog title come from here — so an unpackaged run says "bay" too, and userData does
-// not split between "Electron" and "bay" the first time someone packages the app.
-app.setName(APP_NAME)
+// not split between "Electron" and "bay" the first time someone packages the app. A test build
+// stamped with a `bay-…` productName keeps that name, and so its own data (`./app-name`).
+app.setName(appNameFor(app.getName(), app.isPackaged))
 
 // Before `whenReady`, without exception: Electron reads the privileged-scheme table during
 // startup and a later registration is accepted and then ignored.
@@ -192,6 +195,10 @@ void app.whenReady().then(() => {
     if (!isEntitled(status)) void disposeAgent()
   })
   void startAccess().then((status) => console.log(`[bay] access: ${status.state}`))
+  // Updates run whether or not bay is signed in (their channels are open while locked).
+  void startUpdates().catch((error: unknown) => {
+    console.warn(`[bay] update: could not start: ${error instanceof Error ? error.message : String(error)}`)
+  })
   installMenu()
 
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
@@ -238,6 +245,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   stopAccess()
+  stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()
   // Anything queued and never claimed — a document double-clicked at launch that the renderer
