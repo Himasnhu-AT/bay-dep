@@ -24,6 +24,7 @@ type Actions = Pick<
   | 'addMarker'
   | 'moveMarker'
   | 'removeMarker'
+  | 'patchMarker'
 >
 
 export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
@@ -323,6 +324,17 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         // Back to absent rather than an empty list, so a project that tried markers and removed
         // them all saves exactly as one that never had any.
         if (tl.markers.length === 0) delete tl.markers
+      })
+    },
+
+    patchMarker(markerId, patch) {
+      editTimeline((tl) => {
+        const marker = tl.markers?.find((m) => m.id === markerId)
+        if (!marker) return
+        const label = patch.label?.trim()
+        if (label) marker.label = label
+        if (patch.color === null) delete marker.color
+        else if (patch.color !== undefined) marker.color = patch.color
       })
     }
   }

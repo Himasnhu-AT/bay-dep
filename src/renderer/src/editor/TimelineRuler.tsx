@@ -2,6 +2,7 @@ import type { ReactNode, RefObject } from 'react'
 import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
+import { RulerMarkers } from './TimelineMarkers'
 
 export interface TimelineRulerProps {
   fps: number
@@ -96,31 +97,20 @@ export function TimelineRuler({
       style={{ width: contentWidth }}
     >
       {/*
-        Flags along the top edge, clear of the timecode labels at the bottom. Pointer events stay
-        on so the label shows as a tooltip; a press still bubbles to the ruler and scrubs, so a
-        marker never gets in the way of moving the playhead — and pressing one lands on it.
-        Only markers inside the visible window are mounted, for the same reason ticks are.
+        Flags along the top edge, clear of the timecode labels at the bottom. A flag is a
+        control: click to edit, drag to move (`TimelineMarkers`); the rest of the ruler scrubs.
       */}
       {/* Time ranges pinned in the agent composer: the stretch the agent has been told to stay
           inside, shown where the user can see it rather than only as a chip in a side panel. */}
       <PinnedRanges pixelsPerFrame={pixelsPerFrame} />
-      {markers
-        .filter((marker) => marker.frame >= viewStart && marker.frame <= viewEnd)
-        .map((marker) => (
-          <div
-            key={marker.id}
-            title={`${marker.label} · ${formatTimecode(marker.frame, fps, true)}`}
-            aria-label={`Marker: ${marker.label}`}
-            className="absolute top-0 z-[1] -ml-[4px] h-[9px] w-[9px]"
-            style={{ left: marker.frame * pixelsPerFrame }}
-          >
-            <div
-              aria-hidden="true"
-              className="size-full [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]"
-              style={{ backgroundColor: marker.color ?? 'var(--color-accent)' }}
-            />
-          </div>
-        ))}
+      <InOutRange pixelsPerFrame={pixelsPerFrame} durationFrames={durationFrames} fps={fps} />
+      <RulerMarkers
+        markers={markers}
+        fps={fps}
+        pixelsPerFrame={pixelsPerFrame}
+        viewStart={viewStart}
+        viewEnd={viewEnd}
+      />
       {ticks.map((frame) => {
         const major = frame % labelStep === 0
         return (
@@ -162,5 +152,41 @@ function PinnedRanges({ pixelsPerFrame }: { pixelsPerFrame: number }): ReactNode
         ) : null
       )}
     </>
+  )
+}
+
+/**
+ * The In/Out range (I / O), shaded across the ruler. Either end alone reaches the timeline's edge.
+ * Out is exclusive, so the shade stops where the Out frame begins. Neutral rather than accent, so
+ * it never reads as the agent's pinned range, which is drawn in the same place.
+ */
+function InOutRange({
+  pixelsPerFrame,
+  durationFrames,
+  fps
+}: {
+  pixelsPerFrame: number
+  durationFrames: number
+  fps: number
+}): ReactNode {
+  const rangeIn = useEditor((state) => state.rangeIn)
+  const rangeOut = useEditor((state) => state.rangeOut)
+  if (rangeIn === null && rangeOut === null) return null
+  const from = rangeIn ?? 0
+  const to = rangeOut ?? Math.max(from + 1, durationFrames)
+  const label =
+    `In ${rangeIn === null ? 'start' : formatTimecode(rangeIn, fps, true)} · ` +
+    `Out ${rangeOut === null ? 'end' : formatTimecode(rangeOut, fps, true)}`
+  return (
+    <div
+      data-in-out-range
+      title={`${label}. ⌥X clears.`}
+      aria-label={`In to Out range: ${label}`}
+      className="pointer-events-none absolute inset-y-0 bg-ink-0/10"
+      style={{ left: from * pixelsPerFrame, width: Math.max(1, (to - from) * pixelsPerFrame) }}
+    >
+      {rangeIn !== null && <div aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-ink-1" />}
+      {rangeOut !== null && <div aria-hidden="true" className="absolute inset-y-0 right-0 w-0.5 bg-ink-1" />}
+    </div>
   )
 }

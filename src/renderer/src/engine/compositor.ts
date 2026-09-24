@@ -26,7 +26,8 @@ import {
   type Timeline,
   isCropped,
   cropSourceRect,
-  cropDestRect
+  cropDestRect,
+  playableTimeline
 } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
@@ -238,6 +239,8 @@ export class Compositor {
     frame: number,
     options: DrawOptions = {}
   ): DrawStats {
+    // A disabled clip draws nowhere — here, `preview_frame` and export all come through this line.
+    timeline = playableTimeline(timeline)
     const mode = options.mode ?? 'scrub'
     const now = options.now ?? (() => performance.now())
     const stats: DrawStats = { drawn: 0, pending: 0, placeholders: 0, textFits: [], unresolvedNames: [], pendingNames: [] }
@@ -359,6 +362,7 @@ export class Compositor {
    * element, two source times); `PictureHold` covers it.
    */
   preroll(project: Project, timeline: Timeline, frame: number, options: { now?: number } = {}): void {
+    timeline = playableTimeline(timeline)
     const fps = finite(timeline.fps, 30) > 0 ? timeline.fps : 30
     const now = options.now ?? performance.now()
     for (const target of prerollTargets(project, timeline, frame, Math.ceil(PREROLL_SECONDS * fps))) {

@@ -91,3 +91,13 @@ test('without keys the same clip draws its static layout and applies no zoom', (
   assert.equal(box?.args[0], 100)
   assert.equal(box?.alpha, 1)
 })
+
+test('a disabled clip draws nothing; enabled, the same clip draws its box', () => {
+  // `disabled` (⇧E) is read in `drawFrame` through `playableTimeline`, the entry the preview,
+  // `preview_frame` and export all share.
+  const { keyframes: _dropped, ...plain } = keyedItem
+  const off = draw({ ...plain, disabled: true }, 80)
+  assert.equal(off.find((c) => c.name === 'fillRect' && c.args[2] === 800), undefined)
+  const on = draw(plain, 80)
+  assert.ok(on.find((c) => c.name === 'fillRect' && c.args[2] === 800), 'positive control: the box is drawn')
+})

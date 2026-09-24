@@ -500,6 +500,12 @@ export interface Item {
    * Absent or false means the clip sounds as it always did.
    */
   audioDetached?: boolean
+  /**
+   * Switched off: the clip stays on the timeline, and neither draws nor sounds — in the preview,
+   * `preview_frame` and export alike, because all three read the timeline through
+   * `playableTimeline`. Absent or false is enabled, which is every project written before this.
+   */
+  disabled?: boolean
 }
 
 /**
@@ -563,6 +569,12 @@ export interface Track {
   locked: boolean
   muted: boolean
   hidden: boolean
+  /**
+   * Sound only, like `muted`: while any track is soloed, only soloed tracks are heard. Absent
+   * means not soloed — an optional field, so files written before it load unchanged. Read it
+   * through `trackAudible`, never directly, or preview and export will disagree about it.
+   */
+  solo?: boolean
   items: Item[]
 }
 
@@ -866,6 +878,44 @@ export function allItems(timeline: Timeline): Item[] {
   return timeline.tracks.flatMap((t) => t.items)
 }
 
+const playable = new WeakMap<Timeline, Timeline>()
+
+/**
+ * The timeline as it plays: disabled clips taken out, and with them any transition that needed
+ * one. The one place "disabled" is decided — the compositor, the preview's audio and export's
+ * audio graph each take their timeline through here, so a switched-off clip cannot draw in one
+ * and sound in another. Returns `timeline` itself when nothing is disabled (the common case, and
+ * caches keyed on the timeline's identity stay warm), and the same derived object for the same
+ * timeline every time.
+ */
+export function playableTimeline(timeline: Timeline): Timeline {
+  if (!timeline.tracks.some((track) => track.items.some((item) => item.disabled))) return timeline
+  const cached = playable.get(timeline)
+  if (cached) return cached
+  const off = new Set<string>()
+  for (const track of timeline.tracks) for (const item of track.items) if (item.disabled) off.add(item.id)
+  const derived: Timeline = {
+    ...timeline,
+    tracks: timeline.tracks.map((track) => ({ ...track, items: track.items.filter((item) => !off.has(item.id)) })),
+    ...(timeline.transitions
+      ? { transitions: timeline.transitions.filter((t) => !off.has(t.fromItemId) && !off.has(t.toItemId)) }
+      : {})
+  }
+  playable.set(timeline, derived)
+  return derived
+}
+
+/**
+ * Whether a track's sound reaches the mix: not muted, and — while any track is soloed — soloed
+ * itself. The one rule for mute and solo, read by the preview's audio engine, export's audio
+ * graph and ducking alike, so a solo heard in the preview is the solo written to the file.
+ * Governs sound only; `hidden` is picture's and is independent of both.
+ */
+export function trackAudible(tracks: readonly Pick<Track, 'muted' | 'solo'>[], track: Pick<Track, 'muted' | 'solo'>): boolean {
+  if (track.muted) return false
+  return track.solo === true || !tracks.some((other) => other.solo === true)
+}
+
 /**
  * Every item playing at `frame`, ordered the way the compositor must draw them:
  * lowest video track first, so later entries paint on top.
@@ -895,7 +945,7 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
   for (const track of timeline.tracks) {
     if (kind && track.kind !== kind) continue
     if (track.kind === 'video' && track.hidden) continue
-    if (track.kind === 'audio' && track.muted) continue
+    if (track.kind === 'audio' && !trackAudible(timeline.tracks, track)) continue
     for (const item of track.items) {
       if (frame >= item.from && frame < itemEnd(item)) out.push(item)
     }

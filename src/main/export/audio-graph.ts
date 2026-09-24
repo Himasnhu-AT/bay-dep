@@ -9,7 +9,7 @@
  */
 
 import type { Item, Project, Timeline } from '@shared/project'
-import { US_PER_SECOND, effectiveSpeed, findAsset, sourceTimeAt } from '@shared/project'
+import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceTimeAt, trackAudible } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
@@ -74,7 +74,7 @@ function candidates(
   for (const track of timeline.tracks) {
     // A muted track is muted whichever kind it is — a video track carries its clips' sound
     // too, and dropping that would lose the dialogue in most real edits.
-    if (track.muted) continue
+    if (!trackAudible(timeline.tracks, track)) continue
     for (const item of track.items) {
       const asset = findAsset(project, item.assetId)
       if (!asset || !asset.path || !asset.hasAudio) continue
@@ -199,7 +199,7 @@ function soundCandidates(
   const out: SoundCandidate[] = []
   for (const track of timeline.tracks) {
     // Muted governs sound for every kind of track, compositions included.
-    if (track.muted) continue
+    if (!trackAudible(timeline.tracks, track)) continue
     for (const item of track.items) {
       const asset = findAsset(project, item.assetId)
       if (!asset || asset.kind !== 'html' || asset.error) continue
@@ -253,6 +253,8 @@ export function buildAudioGraph(
   toFrameExclusive: number,
   sounds: CompositionSounds = new Map()
 ): AudioGraph | null {
+  // A disabled clip is not heard in the file, as it is not heard in the preview (`AudioEngine.update`).
+  timeline = playableTimeline(timeline)
   const fps = timeline.fps > 0 ? timeline.fps : 30
   const found = candidates(project, timeline, fromFrame, toFrameExclusive)
   const declared = soundCandidates(project, timeline, fromFrame, toFrameExclusive, sounds)
