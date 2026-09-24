@@ -19,7 +19,7 @@
  * frame to wait for, the second is a placeholder to draw.
  */
 
-import { LOAD_RETRY_DELAYS_MS, RETRY_CROSS_ORIGIN, loadRetryDelay } from './mediaRetry'
+import { LOAD_RETRY_DELAYS_MS, RETRY_CROSS_ORIGIN, loadRetryDelay, retryUrl } from './mediaRetry'
 import type { Asset, AssetKind } from '@shared/project'
 
 /** Live `<video>` elements. Chosen as a cap, not measured — raise it with a measurement. */
@@ -359,7 +359,7 @@ export class MediaPool {
         retryTimer = setTimeout(() => {
           retryTimer = null
           element.crossOrigin = RETRY_CROSS_ORIGIN
-          element.src = url
+          element.src = retryUrl(url, slot.loadRetries)
           if (!(element instanceof HTMLImageElement)) element.load()
         }, delay)
         return
