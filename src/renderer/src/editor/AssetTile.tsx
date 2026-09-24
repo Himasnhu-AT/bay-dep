@@ -72,7 +72,8 @@ export interface AssetTileProps {
   /** A running action's words ("Detecting beats…"), shown in place of the facts. */
   busy: string | undefined
   renaming: boolean
-  onSelect(): void
+  /** `open` when a click opened the source viewer, which then takes focus; a right-click only selects. */
+  onSelect(open?: boolean): void
   onPlace(): void
   onMenu(at: { x: number; y: number }): void
   onRename(name: string | null): void
@@ -113,7 +114,9 @@ export function AssetTile(props: AssetTileProps): ReactNode {
   const common = {
     type: 'button' as const,
     'aria-pressed': selected,
-    onClick: props.onSelect,
+    // A pointer click opens the source viewer and moves focus into it; Space (detail 0) leaves
+    // focus on the card, so a keyboard user can keep moving through the grid and Tab in.
+    onClick: (event: MouseEvent) => props.onSelect(event.detail > 0),
     onDoubleClick: () => {
       if (canPlace) props.onPlace()
     },

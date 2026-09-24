@@ -666,7 +666,8 @@ const STORE_CASES: Record<string, StoreCase> = {
       state().setRangeOut(20)
       state().removeInOutRange()
     }
-  }
+  },
+  openSpan: { delta: 1, run: () => { state().openSpan(15, 10, 'insert') } }
 }
 
 /** Store functions that manage history themselves, so "exactly one entry" does not apply. */

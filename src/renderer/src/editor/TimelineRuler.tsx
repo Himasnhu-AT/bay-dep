@@ -1,8 +1,26 @@
-import type { ReactNode, RefObject } from 'react'
+import { useLayoutEffect, type ReactNode, type RefObject } from 'react'
 import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
 import { RulerMarkers } from './TimelineMarkers'
+
+/** A label starts this far right of its tick (`left-1`). */
+const LABEL_INSET = 4
+
+/**
+ * Hides each time label whose start has scrolled under the sticky track headers. Partly covered,
+ * `0:00` read as `):00` — a label cut off at the header's edge reads as a different number, so
+ * one is shown whole or not at all. Imperative, like the playhead: the lanes scroll far more
+ * often than React should render the ruler. Called by the timeline on scroll and after every
+ * ruler render.
+ */
+export function hideCoveredRulerLabels(ruler: HTMLElement | null, scrollLeft: number): void {
+  if (!ruler) return
+  for (const label of ruler.querySelectorAll<HTMLElement>('[data-ruler-label]')) {
+    const left = Number(label.dataset.rulerLabel)
+    label.style.visibility = left < scrollLeft ? 'hidden' : ''
+  }
+}
 
 export interface TimelineRulerProps {
   fps: number
@@ -71,6 +89,13 @@ export function TimelineRuler({
     ticks.push(frame)
   }
 
+  // New labels (a zoom, a scroll past the render window) mount visible; recheck them at once.
+  useLayoutEffect(() => {
+    const ruler = innerRef.current
+    const scroller = ruler?.closest<HTMLElement>('[data-timeline-scroller]')
+    if (scroller) hideCoveredRulerLabels(ruler, scroller.scrollLeft)
+  })
+
   const onPointerDown = useDrag({
     onStart: (state) => {
       onScrubStart()
@@ -122,7 +147,10 @@ export function TimelineRuler({
           >
             <div className={major ? 'h-2.5 w-px bg-line-strong' : 'h-1.5 w-px bg-line'} />
             {major && (
-              <span className="absolute bottom-[11px] left-1 text-[10px] whitespace-nowrap text-ink-2 tabular-nums">
+              <span
+                data-ruler-label={frame * pixelsPerFrame + LABEL_INSET}
+                className="absolute bottom-[11px] left-1 text-[10px] whitespace-nowrap text-ink-2 tabular-nums"
+              >
                 {formatTimecode(frame, fps, withFrames)}
               </span>
             )}

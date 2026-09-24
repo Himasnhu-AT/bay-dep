@@ -1,38 +1,16 @@
 import { useState, type ReactNode } from 'react'
 import { Type as TypeIcon } from 'lucide-react'
-import { textAssetName, type Asset } from '@shared/project'
 import { Button, Panel, ScrollArea } from '@/components'
-import { newId, useEditor } from '@/store/editor'
+import { addTitle } from '@/lib/mediaActions'
 import { SubtitlesSection } from './SubtitlesSection'
 
 export function TextPanel(): ReactNode {
-  const addAssets = useEditor((state) => state.addAssets)
-  const placeAsset = useEditor((state) => state.placeAsset)
   const [draft, setDraft] = useState('')
 
   const add = (place: boolean): void => {
     const text = draft.trim()
     if (!text) return
-    // Text is the one asset kind with no file behind it, so the renderer may mint it
-    // directly — everything else has to come back from a probe in the main process.
-    const asset: Asset = {
-      id: newId('ast'),
-      kind: 'text',
-      name: textAssetName(text),
-      path: null,
-      durationUs: 0,
-      width: null,
-      height: null,
-      fps: null,
-      hasAudio: false,
-      hasVideo: false,
-      posterPath: null,
-      waveformPath: null,
-      text,
-      createdAt: Date.now()
-    }
-    addAssets([asset])
-    if (place) placeAsset(asset.id)
+    addTitle(text, place)
     setDraft('')
   }
 

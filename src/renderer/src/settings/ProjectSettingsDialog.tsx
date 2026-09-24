@@ -24,6 +24,7 @@ import {
 import { shortcutOf, formatShortcut } from '@/lib/commands'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useProjectSettingsDialog } from '@/store/project-settings-dialog'
+import { applyProjectSettings } from './projectSettingsApply'
 
 /**
  * File › Project Settings…: the project's name and the active timeline's canvas, rate and
@@ -60,6 +61,7 @@ function ProjectSettingsBody({ onDone }: { onDone(): void }): ReactNode {
   const [fit, setFit] = useState<CanvasFit>('auto')
   const [fps, setFps] = useState(timeline?.fps ?? 30)
   const [background, setBackground] = useState(timeline?.background ?? '#000000')
+  const [applyError, setApplyError] = useState<string | null>(null)
 
   // A proposal arriving while the dialog is already open (a second "Change canvas" click).
   useEffect(() => {
@@ -86,25 +88,13 @@ function ProjectSettingsBody({ onDone }: { onDone(): void }): ReactNode {
 
   const apply = (): void => {
     const state = useEditor.getState()
-    let refitted = 0
-    let nudged = 0
-    let error: string | null = null
-    // One undo step for the whole dialog: a canvas, a rate and a name chosen together are
-    // taken back together.
-    state.transact(() => {
-      if (trimmedName && trimmedName !== name) state.renameProject(trimmedName)
-      if (sizeChanged) {
-        const result = state.resizeCanvas(width, height, fit)
-        if ('error' in result) error = result.error
-        else refitted = result.refitted
-      }
-      if (Math.abs(fps - timeline.fps) > 1e-9) nudged = state.setFps(fps).nudged
-      if (hexBackground.toLowerCase() !== timeline.background.toLowerCase()) state.setBackground(hexBackground)
-    })
-    if (error) {
-      state.notify(error, 'error')
+    // One undo step for the whole dialog, or nothing at all (see `applyProjectSettings`).
+    const outcome = applyProjectSettings(state, { name: draftName, width, height, fit, fps, background: hexBackground })
+    if (!outcome.ok) {
+      setApplyError(outcome.error)
       return
     }
+    const { refitted, nudged } = outcome
     const parts: string[] = []
     if (sizeChanged) {
       parts.push(
@@ -208,6 +198,12 @@ function ProjectSettingsBody({ onDone }: { onDone(): void }): ReactNode {
           Shows wherever no video covers the canvas.
         </p>
       </div>
+
+      {applyError && (
+        <div className="px-4 pb-3">
+          <InlineAlert tone="danger">Nothing was changed. {applyError}</InlineAlert>
+        </div>
+      )}
 
       <footer className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
         <Button type="button" variant="ghost" size="md" onClick={onDone}>

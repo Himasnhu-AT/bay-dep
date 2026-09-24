@@ -6,7 +6,8 @@ import { Button, ColorField, Field, Section, SectionReset, Select, SliderField }
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { hasModelFor, SUBTITLE_LANGUAGES, subtitleArgs } from '@/lib/subtitleOptions'
-import { executeToolCall } from '@/mcp'
+import { addSubtitles } from '@/mcp/subtitles'
+import { runUserTool } from '@/lib/userTool'
 import { selectTimeline, useEditor } from '@/store/editor'
 
 /**
@@ -157,7 +158,7 @@ export function SubtitlesSection(): ReactNode {
     if (!target) return
     setBusy(true)
     const args = subtitleArgs({ itemId: target.id, style, language, accent, scale, bottom })
-    const result = await executeToolCall({ id: `ui-subtitles-${Date.now()}`, tool: 'add_subtitles', args })
+    const result = await runUserTool('add_subtitles', addSubtitles, args)
     setBusy(false)
     if (result.ok) {
       const value = result.value as { words?: number; replaced?: string }

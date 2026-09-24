@@ -12,7 +12,7 @@ import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } f
 import { clone, makeTrack, newId, nextTrackName, trackWithRoom } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
-import { stillDurationFrames } from '../editing-prefs'
+import { editingPrefs, stillDurationFrames } from '../editing-prefs'
 
 type Actions = Pick<
   EditorActions,
@@ -145,10 +145,12 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         // Cover or contain, decided by how much of the source cover would crop. A phone video
         // on a landscape timeline keeps under a third of its picture under cover, and arriving
-        // as a band out of the middle reads as bay having mangled the clip.
+        // as a band out of the middle reads as bay having mangled the clip. Settings › Editing
+        // can fix it to always Fit or always Fill; this is the one placement path, so the
+        // setting reaches `place_asset`, a drop, a double-click and the source viewer alike.
         const layout =
           asset.width && asset.height
-            ? placementLayout(tl, asset.width, asset.height)
+            ? placementLayout(tl, asset.width, asset.height, editingPrefs().newClipFit)
             : defaultLayout(tl)
         const item: Item = {
           id: itemId,

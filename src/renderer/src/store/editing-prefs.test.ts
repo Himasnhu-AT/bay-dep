@@ -101,3 +101,15 @@ test('placing a title runs for the preferred length — the preference reaches t
   useEditingPrefs.getState().setStillSeconds(7)
   assert.equal(place(), 7 * fps)
 })
+
+test('New clips framing: read back under its literal key, a corrupt value falls back to Auto, the default is stored as absent', async () => {
+  assert.equal((await launch(storage())).useEditingPrefs.getState().newClipFit, 'auto')
+  assert.equal((await launch(storage({ 'bay.newClipFit': 'contain' }))).useEditingPrefs.getState().newClipFit, 'contain')
+  assert.equal((await launch(storage({ 'bay.newClipFit': 'stretch' }))).useEditingPrefs.getState().newClipFit, 'auto')
+  const stub = storage()
+  const state = (await launch(stub)).useEditingPrefs.getState()
+  state.setNewClipFit('cover')
+  assert.equal(stub.values.get('bay.newClipFit'), 'cover')
+  state.setNewClipFit('auto')
+  assert.equal(stub.values.has('bay.newClipFit'), false)
+})

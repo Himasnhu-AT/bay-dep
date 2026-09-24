@@ -10,6 +10,7 @@
  */
 
 import { create } from 'zustand'
+import type { CanvasFit } from '@shared/project'
 import { remember, remembered } from './prefs'
 
 export interface EditingPrefs {
@@ -19,12 +20,18 @@ export interface EditingPrefs {
   transitionSeconds: number
   /** During playback, scroll the timeline to keep the playhead in view. */
   followPlayhead: boolean
+  /**
+   * How a new clip whose shape differs from the canvas is framed: `auto` fills unless that would
+   * crop away too much of it, `contain` (Fit) always shows it whole, `cover` (Fill) always fills.
+   */
+  newClipFit: CanvasFit
 }
 
 export const EDITING_DEFAULTS: EditingPrefs = {
   stillSeconds: 5,
   transitionSeconds: 1,
-  followPlayhead: true
+  followPlayhead: true,
+  newClipFit: 'auto'
 }
 
 /** The bounds each number is held to, so a hand-edited or corrupt value cannot place a 0-frame clip. */
@@ -34,8 +41,11 @@ export const TRANSITION_SECONDS = { min: 0.1, max: 5 }
 const KEYS = {
   stillSeconds: 'bay.stillSeconds',
   transitionSeconds: 'bay.transitionSeconds',
-  followPlayhead: 'bay.followPlayhead'
+  followPlayhead: 'bay.followPlayhead',
+  newClipFit: 'bay.newClipFit'
 } as const
+
+const FITS: readonly CanvasFit[] = ['auto', 'cover', 'contain']
 
 function readNumber(key: string, fallback: number, range: { min: number; max: number }): number {
   const raw = remembered(key)
@@ -49,6 +59,7 @@ interface EditingPrefsStore extends EditingPrefs {
   setStillSeconds(seconds: number): void
   setTransitionSeconds(seconds: number): void
   setFollowPlayhead(on: boolean): void
+  setNewClipFit(fit: CanvasFit): void
 }
 
 export const useEditingPrefs = create<EditingPrefsStore>((set) => ({
@@ -56,6 +67,7 @@ export const useEditingPrefs = create<EditingPrefsStore>((set) => ({
   transitionSeconds: readNumber(KEYS.transitionSeconds, EDITING_DEFAULTS.transitionSeconds, TRANSITION_SECONDS),
   // Opt-out: absent means on.
   followPlayhead: remembered(KEYS.followPlayhead) !== '0',
+  newClipFit: FITS.find((fit) => fit === remembered(KEYS.newClipFit)) ?? EDITING_DEFAULTS.newClipFit,
 
   setStillSeconds(seconds) {
     if (!Number.isFinite(seconds)) return
@@ -72,6 +84,11 @@ export const useEditingPrefs = create<EditingPrefsStore>((set) => ({
   setFollowPlayhead(on) {
     remember(KEYS.followPlayhead, on ? null : '0')
     set({ followPlayhead: on })
+  },
+  setNewClipFit(fit) {
+    if (!FITS.includes(fit)) return
+    remember(KEYS.newClipFit, fit === EDITING_DEFAULTS.newClipFit ? null : fit)
+    set({ newClipFit: fit })
   }
 }))
 

@@ -11,6 +11,7 @@ import {
   useEditingPrefs
 } from '@/store/editing-prefs'
 import { AboutUpdates, useUpdate } from '@/update/UpdateBanner'
+import type { CanvasFit } from '@shared/project'
 import { Row, Section, SwitchRow } from './parts'
 
 export function GeneralSection(): ReactNode {
@@ -71,6 +72,8 @@ export function EditingSection(): ReactNode {
   const transitionSeconds = useEditingPrefs((state) => state.transitionSeconds)
   const setStillSeconds = useEditingPrefs((state) => state.setStillSeconds)
   const setTransitionSeconds = useEditingPrefs((state) => state.setTransitionSeconds)
+  const newClipFit = useEditingPrefs((state) => state.newClipFit)
+  const setNewClipFit = useEditingPrefs((state) => state.setNewClipFit)
   const fps = useEditor((state) => selectTimeline(state)?.fps ?? null)
 
   return (
@@ -105,6 +108,27 @@ export function EditingSection(): ReactNode {
           suffix="s"
           onCommit={setTransitionSeconds}
           className="w-28"
+        />
+      </Row>
+      <Row
+        label="New clips"
+        hint={
+          {
+            auto: 'A video or image shaped differently from the canvas fills it, unless that would crop away too much; then it is shown whole.',
+            contain: 'A video or image shaped differently from the canvas is shown whole, with bars where the shapes differ.',
+            cover: 'A video or image shaped differently from the canvas fills it; the edges that do not fit are cropped.'
+          }[newClipFit]
+        }
+      >
+        <SegmentedControl<CanvasFit>
+          label="Framing for new clips"
+          value={newClipFit}
+          options={[
+            { value: 'auto', label: 'Auto' },
+            { value: 'contain', label: 'Fit' },
+            { value: 'cover', label: 'Fill' }
+          ]}
+          onChange={setNewClipFit}
         />
       </Row>
     </Section>

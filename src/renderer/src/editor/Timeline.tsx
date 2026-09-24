@@ -28,7 +28,7 @@ import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
 import { JunctionMarkers } from './JunctionMarkers'
 import { TransitionDialog } from './TransitionDialog'
-import { TimelineRuler } from './TimelineRuler'
+import { hideCoveredRulerLabels, TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
 import { ClipDialogs, clipMenuEntries } from './ClipCommands'
@@ -304,6 +304,7 @@ export function Timeline(): ReactNode {
       const x = useEditor.getState().playhead * pixelsPerFrame
       element.style.display = x < scroller.scrollLeft ? 'none' : 'block'
     }
+    hideCoveredRulerLabels(rulerRef.current, scroller.scrollLeft)
   }, [pixelsPerFrame])
 
   useEffect(() => {

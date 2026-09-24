@@ -7,7 +7,9 @@ import { brfRuntime } from '@/engine/brfCode'
 import { importedFonts } from '@/engine/importedFonts'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
-import { executeToolCall } from '@/mcp'
+import { writeBrf } from '@/mcp/brf'
+import { writeComposition } from '@/mcp/compositions'
+import { runUserTool } from '@/lib/userTool'
 import { selectTimeline, useEditor } from '@/store/editor'
 
 /**
@@ -155,15 +157,11 @@ export function CodeEditorModal({ assetId, open, onClose }: CodeEditorModalProps
     setChecked(false)
     const result =
       kind === 'brf'
-        ? await executeToolCall({ id: `ui-write-brf-${Date.now()}`, tool: 'write_brf', args: { assetId: asset.id, code: source } })
+        ? await runUserTool('write_brf', writeBrf, { assetId: asset.id, code: source })
         : // `import: false`: the tool would import the rewritten file as a *new* asset (main mints
           // a fresh id once the path is forgotten), leaving a duplicate in the pool while every
           // placed clip still names this one. This asset is refreshed in place below instead.
-          await executeToolCall({
-            id: `ui-write-composition-${Date.now()}`,
-            tool: 'write_composition',
-            args: { path: asset.path, html: source, import: false }
-          })
+          await runUserTool('write_composition', writeComposition, { path: asset.path, html: source, import: false })
     if (result.ok && kind === 'html' && (result.value as { usable?: boolean }).usable !== false && asset.path) {
       await refreshComposition(asset)
     }
@@ -321,11 +319,7 @@ export function CodeEditorModal({ assetId, open, onClose }: CodeEditorModalProps
  * placed. Resolves to its asset id, or null (already reported) when it could not be made.
  */
 export async function createMotionGraphic(): Promise<string | null> {
-  const result = await executeToolCall({
-    id: `ui-new-brf-${Date.now()}`,
-    tool: 'write_brf',
-    args: { code: BRF_STARTER, name: 'Motion graphic' }
-  })
+  const result = await runUserTool('write_brf', writeBrf, { code: BRF_STARTER, name: 'Motion graphic' })
   if (!result.ok) {
     useEditor.getState().notify(result.error, 'error')
     return null

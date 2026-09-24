@@ -98,6 +98,8 @@ export function MediaPanel(): ReactNode {
   const [sort, setSort] = useState<MediaSort>(() => remembered(SORT_KEY, MEDIA_SORTS.map((s) => s.id), 'added'))
   const [view, setView] = useState<View>(() => remembered(VIEW_KEY, ['grid', 'list'] as const, 'grid'))
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Bumped when a click opens an asset, so the source viewer takes focus and I/O mark the source.
+  const [sourceFocus, setSourceFocus] = useState(0)
   const [menu, setMenu] = useState<{ assetId: string; at: { x: number; y: number } } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [busy, setBusy] = useState<ReadonlyMap<string, string>>(new Map())
@@ -320,7 +322,7 @@ export function MediaPanel(): ReactNode {
         />
       ) : (
         <>
-          {selected && <SourceViewer asset={selected} onClose={() => setSelectedId(null)} />}
+          {selected && <SourceViewer asset={selected} focusToken={sourceFocus} onClose={() => setSelectedId(null)} />}
 
           <div className="flex flex-col gap-1.5 border-b border-line px-3 py-2">
             <SearchField label="Search media" placeholder="Search media…" value={query} onValueChange={setQuery} />
@@ -417,7 +419,10 @@ export function MediaPanel(): ReactNode {
                     bytes={files.sizes.get(asset.id)}
                     busy={busy.get(asset.id)}
                     renaming={asset.id === renamingId}
-                    onSelect={() => setSelectedId(asset.id)}
+                    onSelect={(open) => {
+                      setSelectedId(asset.id)
+                      if (open) setSourceFocus((n) => n + 1)
+                    }}
                     onPlace={() => place(asset)}
                     onMenu={(at) => setMenu({ assetId: asset.id, at })}
                     onRename={(name) => rename(asset, name)}

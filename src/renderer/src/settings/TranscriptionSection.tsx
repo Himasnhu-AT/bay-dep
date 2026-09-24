@@ -84,7 +84,7 @@ export function TranscriptionSection(): ReactNode {
   return (
     <Section
       title="Transcription"
-      description="Captions and transcript-driven cuts are transcribed on this Mac with whisper.cpp. Your audio never leaves it."
+      description="Subtitles and the Transcript panel are transcribed on this Mac with whisper.cpp. Your audio never leaves it."
     >
       {/* The engine */}
       <Row label="whisper.cpp" hint={status?.engine ?? undefined}>

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -25,6 +25,7 @@ import {
 import { useTextFit } from '@/lib/useTextFit'
 import { useEditor } from '@/store/editor'
 import { importedFamilies } from '@shared/fonts'
+import { FontFamilyField } from './FontFamilyField'
 
 /**
  * Families **measured** as present on this machine, not assumed.
@@ -61,6 +62,9 @@ const FAMILIES: { value: string; label: string }[] = [
   { value: '"Courier New", Courier, monospace', label: 'Courier' }
 ]
 
+/** The list's "type any family" entry. Not a stack a text item can hold (stacks are quoted). */
+const OTHER = '__other__'
+
 const WEIGHTS = [
   { value: '300', label: 'Light' },
   { value: '400', label: 'Regular' },
@@ -93,6 +97,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   // Narrow: the asset list changes on import, not per frame.
   const imported = importedFamilies(useEditor((state) => state.project.assets))
   const first = items[0]
+  // "Other…" chosen while the current family is still a listed one: show the typed field anyway.
+  const [typing, setTyping] = useState(false)
   const fit = useTextFit(first, asset, {
     left: first?.layout.left ?? 0,
     top: first?.layout.top ?? 0,
@@ -108,6 +114,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
     ...imported.map((family) => ({ value: `"${family.replace(/"/g, '')}", sans-serif`, label: `${family} · imported` })),
     ...FAMILIES
   ]
+
+  const listed = families.some((f) => f.value === style.fontFamily)
 
   /** Applies a partial style to every selected text item, as one undo step. */
   const set = (patch: Partial<TextStyle>): void => {
@@ -154,15 +162,19 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         <Field label="Font">
           <Select
             label="Font family"
-            value={families.some((f) => f.value === style.fontFamily) ? style.fontFamily : 'custom'}
-            options={
-              families.some((f) => f.value === style.fontFamily)
-                ? families
-                : [...families, { value: 'custom', label: 'Custom (from a file)' }]
-            }
-            onChange={(value) => value !== 'custom' && set({ fontFamily: value })}
+            value={listed && !typing ? style.fontFamily : OTHER}
+            options={[...families, { value: OTHER, label: 'Other…' }]}
+            onChange={(value) => {
+              setTyping(value === OTHER)
+              if (value !== OTHER) set({ fontFamily: value })
+            }}
           />
         </Field>
+        {(!listed || typing) && (
+          <div className="mt-1.5 pl-[72px]">
+            <FontFamilyField value={style.fontFamily} onCommit={(fontFamily) => set({ fontFamily })} />
+          </div>
+        )}
         <div className="mt-1.5">
           <Field label="Weight">
             <Select

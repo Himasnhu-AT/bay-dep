@@ -9,12 +9,13 @@
  */
 
 import type { Asset } from '@shared/project'
-import { usToFrames, timelineDuration } from '@shared/project'
+import { textAssetName, usToFrames, timelineDuration } from '@shared/project'
 import { captionsToSrt } from '@shared/caption-export'
 import { canRelink, relinkMismatch, siblingCandidates } from '@shared/relink'
 import { detectBeats } from '@/mcp/beats'
 import { addCaptions } from '@/mcp/captions'
-import { selectTimeline, useEditor } from '@/store/editor'
+import { newId, selectTimeline, useEditor } from '@/store/editor'
+import { stillDurationFrames } from '@/store/editing-prefs'
 import { bay, call } from './bay'
 
 const state = (): ReturnType<typeof useEditor.getState> => useEditor.getState()
@@ -27,7 +28,10 @@ function messageOf(error: unknown): string {
  * Places an asset — or the part of it between `inUs` and `outUs` — at `atFrame` (the playhead
  * when omitted), as one undo step, selects the new clip and returns its id.
  */
-export function placeAssetRange(asset: Asset, options: { atFrame?: number; inUs?: number; outUs?: number } = {}): string | null {
+export function placeAssetRange(
+  asset: Asset,
+  options: { atFrame?: number; trackId?: string; inUs?: number; outUs?: number } = {}
+): string | null {
   const s = state()
   const timeline = selectTimeline(s)
   if (!timeline) return null
@@ -36,13 +40,81 @@ export function placeAssetRange(asset: Asset, options: { atFrame?: number; inUs?
   const trimmed = asset.durationUs > 0 && (inUs > 0 || outUs < asset.durationUs) && outUs > inUs
   let placed: string | null = null
   s.transact(() => {
-    placed = s.placeAsset(asset.id, options.atFrame)
+    placed = s.placeAsset(asset.id, options.atFrame, options.trackId)
     if (placed && trimmed) {
       s.patchItem(placed, { sourceStartUs: inUs, durationInFrames: Math.max(1, usToFrames(outUs - inUs, timeline.fps)) })
     }
   })
   if (placed) s.select([placed])
   return placed
+}
+
+/**
+ * The source monitor's Insert and Overwrite: the asset (or its marked part) at the playhead on the
+ * lowest unlocked track of its kind, as one undo step. Insert opens the time on every unlocked
+ * track first, so everything after the playhead slides right by the clip's length and stays in
+ * sync; Overwrite clears only that span of that track and moves nothing. Selects the new clip.
+ */
+export function editIntoTimeline(
+  asset: Asset,
+  mode: 'insert' | 'overwrite',
+  options: { inUs?: number; outUs?: number } = {}
+): string | null {
+  const s = state()
+  const timeline = selectTimeline(s)
+  if (!timeline) return null
+  // Anything `placeAsset` refuses (an unreadable file, a font, a LUT) is refused there, with its
+  // own message, before any room is made for it.
+  if (asset.error || asset.kind === 'font' || asset.kind === 'lut') return placeAssetRange(asset, options)
+  const inUs = Math.max(0, options.inUs ?? 0)
+  const outUs = options.outUs ?? asset.durationUs
+  const frames =
+    asset.durationUs > 0
+      ? Math.max(1, usToFrames(Math.max(0, outUs - inUs) || asset.durationUs, timeline.fps))
+      : stillDurationFrames(timeline.fps)
+  const kind = asset.hasVideo || asset.kind === 'image' || asset.kind === 'text' ? 'video' : 'audio'
+  const target = timeline.tracks.find((track) => track.kind === kind && !track.locked)
+  const at = s.playhead
+  let placed: string | null = null
+  s.transact(() => {
+    if (target) {
+      const room = s.openSpan(at, frames, mode, target.id)
+      if (!room) return
+    }
+    placed = placeAssetRange(asset, { atFrame: at, ...(target ? { trackId: target.id } : {}), ...options })
+  })
+  return placed
+}
+
+/**
+ * A title: a text asset, placed at the playhead when `place`. Adding and placing are one undo
+ * step — one ⌘Z takes the whole title back, not the clip and then, separately, the asset.
+ */
+export function addTitle(text: string, place: boolean): string {
+  const s = state()
+  // Text is the one asset kind with no file behind it, so the renderer may mint it
+  // directly — everything else has to come back from a probe in the main process.
+  const asset: Asset = {
+    id: newId('ast'),
+    kind: 'text',
+    name: textAssetName(text),
+    path: null,
+    durationUs: 0,
+    width: null,
+    height: null,
+    fps: null,
+    hasAudio: false,
+    hasVideo: false,
+    posterPath: null,
+    waveformPath: null,
+    text,
+    createdAt: Date.now()
+  }
+  s.transact(() => {
+    s.addAssets([asset])
+    if (place) s.placeAsset(asset.id)
+  })
+  return asset.id
 }
 
 /** The frame after everything on the active timeline — where "Append" puts a clip. */

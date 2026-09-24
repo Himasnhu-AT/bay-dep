@@ -1,38 +1,47 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowRightToLine, Pause, Play, Plus, X } from 'lucide-react'
+import { ArrowRightToLine, Pause, Play, Plus, Replace, X } from 'lucide-react'
 import type { Asset } from '@shared/project'
+import { formatTimecode } from '@shared/timecode'
 import { Button, IconButton, Slider } from '@/components'
 import { assetUrl } from '@/engine/mediaPool'
-import { endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
+import { editIntoTimeline, endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
 import { revealItem } from '@/lib/revealItem'
 import { useEditor } from '@/store/editor'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 
 /**
  * A small source monitor for the asset selected in the Media panel: play it, scrub it, mark the
- * part you want with In and Out, then insert that part at the playhead or append it to the end.
- * Selecting an asset never edits the timeline; only these two buttons (or a double-click, Enter
- * or a drag in the panel) do.
+ * part you want with In and Out, then Insert it at the playhead (everything after slides right, on
+ * every track), Overwrite what is there, or Append it to the end. Selecting an asset never edits
+ * the timeline; only these buttons (or a double-click, Enter or a drag in the panel) do.
+ *
+ * Opening it from a click moves focus into it (`focusToken`), so I and O mark the source and not
+ * the timeline's range.
  *
  * Its media element is its own — never one of the compositor's pooled elements, which the
  * preview seeks every frame — and it loads with CORS like the pool does, so the two share
  * Chromium's per-URL cache entry rather than racing two loads of one file.
  */
 
-/** Source time as `m:ss.ff`, in frames of the source's own rate (or 30 when it has none). */
+/** Source time as the editor's one timecode, in frames of the source's own rate (or 30). */
 function formatSourceTime(us: number, fps: number | null): string {
   const rate = fps && fps > 0 ? fps : 30
-  const totalFrames = Math.max(0, Math.floor((us / 1_000_000) * rate + 1e-6))
-  const perSecond = Math.round(rate)
-  const seconds = Math.floor(totalFrames / perSecond)
-  const frames = totalFrames % perSecond
-  const minutes = Math.floor(seconds / 60)
-  return `${minutes}:${String(seconds % 60).padStart(2, '0')}.${String(frames).padStart(2, '0')}`
+  return formatTimecode(Math.floor((us / 1_000_000) * rate + 1e-6), rate)
 }
 
-export function SourceViewer({ asset, onClose }: { asset: Asset; onClose(): void }): ReactNode {
+export function SourceViewer({
+  asset,
+  onClose,
+  focusToken = 0
+}: {
+  asset: Asset
+  onClose(): void
+  /** Changes each time a click opens this asset; the viewer then takes focus. */
+  focusToken?: number
+}): ReactNode {
   const notify = useEditor((state) => state.notify)
   const media = useRef<HTMLVideoElement & HTMLAudioElement>(null)
+  const root = useRef<HTMLElement>(null)
   const [playing, setPlaying] = useState(false)
   const [atUs, setAtUs] = useState(0)
   const [inUs, setInUs] = useState<number | null>(null)
@@ -50,6 +59,10 @@ export function SourceViewer({ asset, onClose }: { asset: Asset; onClose(): void
     setInUs(null)
     setOutUs(null)
   }, [asset.id])
+
+  useEffect(() => {
+    if (focusToken > 0) root.current?.focus({ preventScroll: true })
+  }, [focusToken])
 
   const seek = (us: number): void => {
     const clamped = Math.min(Math.max(0, us), duration)
@@ -76,15 +89,14 @@ export function SourceViewer({ asset, onClose }: { asset: Asset; onClose(): void
     if (inUs !== null && inUs >= atUs) setInUs(null)
   }
 
-  const place = (where: 'playhead' | 'end'): void => {
-    const placed = placeAssetRange(asset, {
-      ...(where === 'end' ? { atFrame: endOfTimeline() } : {}),
-      ...(inUs !== null ? { inUs } : {}),
-      ...(outUs !== null ? { outUs } : {})
-    })
+  const place = (where: 'insert' | 'overwrite' | 'end'): void => {
+    const range = { ...(inUs !== null ? { inUs } : {}), ...(outUs !== null ? { outUs } : {}) }
+    const placed =
+      where === 'end' ? placeAssetRange(asset, { atFrame: endOfTimeline(), ...range }) : editIntoTimeline(asset, where, range)
     if (placed) {
       revealItem(placed)
-      notify(`${asset.name} ${where === 'end' ? 'appended to the end' : 'inserted at the playhead'}. ⌘Z to undo.`)
+      const what = { insert: 'inserted at the playhead', overwrite: 'written over the playhead', end: 'appended to the end' }[where]
+      notify(`${asset.name} ${what}. ⌘Z to undo.`)
     }
   }
 
@@ -109,8 +121,19 @@ export function SourceViewer({ asset, onClose }: { asset: Asset; onClose(): void
         case 'ArrowRight':
           if (timed) seek(atUs + step * (event.shiftKey ? 10 : 1))
           return timed
+        // Final Cut's keys for the three edits; the timeline's own W/D/E never see them here.
         case 'Enter':
-          place('playhead')
+        case 'w':
+        case 'W':
+          place('insert')
+          return true
+        case 'd':
+        case 'D':
+          place('overwrite')
+          return true
+        case 'e':
+        case 'E':
+          place('end')
           return true
         default:
           return false
@@ -130,6 +153,7 @@ export function SourceViewer({ asset, onClose }: { asset: Asset; onClose(): void
 
   return (
     <section
+      ref={root}
       aria-label={`Source: ${asset.name}`}
       tabIndex={-1}
       onKeyDown={onKeyDown}
@@ -227,19 +251,27 @@ export function SourceViewer({ asset, onClose }: { asset: Asset; onClose(): void
         </>
       )}
 
-      <div className="mt-2 grid grid-cols-2 gap-1.5">
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
         <Button
           variant="primary"
           icon={<Plus className="size-3.5" />}
-          title={`Insert ${marked ? 'the marked part' : 'it'} at the playhead (Enter)`}
-          onClick={() => place('playhead')}
+          title={`Insert ${marked ? 'the marked part' : 'it'} at the playhead; everything after slides right (W or Enter)`}
+          onClick={() => place('insert')}
         >
           Insert
         </Button>
         <Button
           variant="subtle"
+          icon={<Replace className="size-3.5" />}
+          title={`Overwrite what is at the playhead with ${marked ? 'the marked part' : 'it'}; nothing moves (D)`}
+          onClick={() => place('overwrite')}
+        >
+          Overwrite
+        </Button>
+        <Button
+          variant="subtle"
           icon={<ArrowRightToLine className="size-3.5" />}
-          title={`Append ${marked ? 'the marked part' : 'it'} after the end of the timeline`}
+          title={`Append ${marked ? 'the marked part' : 'it'} after the end of the timeline (E)`}
           onClick={() => place('end')}
         >
           Append

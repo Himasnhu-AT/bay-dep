@@ -134,10 +134,16 @@ check(
   300
 )
 
+// The rate shows in the status bar only in debug mode (the bar keeps developer data behind it),
+// so turn it on for the read and put it back as found.
+const debugWas = await state('s.debugMode')
+if (!debugWas) await evaluate(`window.bayEngine.store.getState().toggleDebugMode()`)
+await new Promise((r) => setTimeout(r, 100))
 const bar = await evaluate(`(() => {
   const footer = document.querySelector('footer')
   return footer ? footer.textContent : null
 })()`)
+if (!debugWas) await evaluate(`window.bayEngine.store.getState().toggleDebugMode()`)
 check('the status bar rendered', bar, (t) => typeof t === 'string' && t.length > 0)
 check(
   'the duration timecode has no fractional frames field',

@@ -9,6 +9,7 @@ import {
   gainToDb,
   hasSourceTime,
   isVisualItem,
+  keyTimeBounds,
   MAX_VOLUME_DB,
   VOLUME_DB_FLOOR
 } from './inspector'
@@ -108,4 +109,14 @@ test('editKey moves and eases one key; mergeKeyframes refuses a move onto anothe
   if (!clash.ok) assert.match(clash.error, /two keys on frame 20/)
   // Positive control: the legal move merges.
   assert.equal(mergeKeyframes(undefined, { opacity: moved }, target).ok, true)
+})
+
+test('a key can move to the clip’s last frame and no further: the frame after the clip is never drawn', () => {
+  const item = { from: 100, durationInFrames: 30 }
+  const { min, max } = keyTimeBounds(item)
+  assert.equal(min, 100)
+  assert.equal(max, 129)
+  // The clip covers [from, from + duration): its last drawn frame is max, and max + 1 is outside.
+  assert.ok(max < item.from + item.durationInFrames && max + 1 === item.from + item.durationInFrames)
+  assert.deepEqual(keyTimeBounds({ from: 5, durationInFrames: 1 }), { min: 5, max: 5 })
 })

@@ -92,7 +92,7 @@ export function Preview(): ReactNode {
             <Film aria-hidden="true" className="size-6 text-ink-2" />
             <p className="text-[12px] text-ink-2">Nothing on the timeline yet</p>
             <p className="max-w-[36ch] text-[11px] text-ink-2/70">
-              Import media and click a clip to place it at the playhead.
+              Import media, then double-click a clip or drag it onto a track.
             </p>
           </div>
         )}

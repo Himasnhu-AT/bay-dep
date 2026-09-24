@@ -23,6 +23,7 @@ import type { CanvasFit } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { RippleDeleteResult } from '@shared/ripple'
+import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { CaptionCue } from '@shared/captions'
@@ -340,6 +341,13 @@ export interface EditorActions {
   trimToPlayhead(edge: 'start' | 'end', ripple: boolean): void
   /** Remove In→Out across every unlocked track and close it up: the `remove_range` tool's path. */
   removeInOutRange(): void
+  /**
+   * Make room for a source clip of `frames` at `atFrame`: `insert` opens the time on every
+   * unlocked track (later clips slide right, sync kept); `overwrite` clears it on `trackId` only
+   * and moves nothing. Places nothing — the caller places into the room inside one `transact`.
+   * `null` when refused (the reason is toasted).
+   */
+  openSpan(atFrame: Frames, frames: Frames, mode: 'insert' | 'overwrite', trackId?: string): OpenSpanResult | null
   setClipDialog(dialog: ClipDialog | null): void
 
   // tracks -------------------------------------------------------------------

@@ -7,7 +7,7 @@ import {
   type KeyframeEase,
   type KeyframeProperty
 } from '@shared/project'
-import { EASE_CHOICES, easeChoice, editKey, formatDb, gainToDb } from '@shared/inspector'
+import { EASE_CHOICES, easeChoice, editKey, formatDb, gainToDb, keyTimeBounds } from '@shared/inspector'
 import { Button, Field, NumberField, Section, SectionReset, Select } from '@/components'
 import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -142,8 +142,8 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
             label="Key at"
             ariaLabel={`Time of the selected ${NAMES[current.property]} key`}
             value={item.from + current.key.frame}
-            min={item.from}
-            max={item.from + item.durationInFrames}
+            min={keyTimeBounds(item).min}
+            max={keyTimeBounds(item).max}
             {...tc}
             onCommit={(next) => write(current.property, { to: Math.round(next) - item.from })}
           />

@@ -58,8 +58,10 @@ export const TEMPLATE_URI_PREFIX = 'bay://template/'
 
 export const TEMPLATES: readonly TemplateSpec[] = [
   {
+    // The id is what `add_template` and saved projects name; only the label changed, so it no
+    // longer reads as the Text panel's word-by-word Subtitles generator.
     id: 'subtitle',
-    name: 'Subtitle',
+    name: 'Caption bar',
     description:
       'One line of speech at the bottom of the frame, rising in and out. The workhorse: a ' +
       'short-form video is mostly this. For word-level highlighting, generate one composition ' +
@@ -69,7 +71,7 @@ export const TEMPLATES: readonly TemplateSpec[] = [
     width: 1080,
     height: 1920,
     variables: [
-      { id: 'text', type: 'string', label: 'Subtitle', default: 'Everything you do lands in the same document.' },
+      { id: 'text', type: 'string', label: 'Caption', default: 'Everything you do lands in the same document.' },
       { id: 'size', type: 'number', label: 'Text size', default: 64, min: 24, max: 120 },
       { id: 'bottom', type: 'number', label: 'Distance from bottom', default: 11, min: 0, max: 90, unit: '%' },
       { id: 'ink', type: 'color', label: 'Text', default: '#FFFFFF' },

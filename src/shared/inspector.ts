@@ -148,6 +148,15 @@ export function easeChoice(ease: KeyframeEase | undefined): string {
 }
 
 /**
+ * The timeline frames a key of this clip may be moved to: its first frame to its last. The clip
+ * covers `[from, from + durationInFrames)`, so `from + durationInFrames` is the frame *after* it —
+ * a key there is never drawn.
+ */
+export function keyTimeBounds(item: { from: number; durationInFrames: number }): { min: number; max: number } {
+  return { min: item.from, max: item.from + Math.max(0, item.durationInFrames - 1) }
+}
+
+/**
  * The property's key list with the key on `frame` changed — moved to `to`, or given `ease`, or
  * both. The result is meant for `mergeKeyframes`, which is what refuses a move onto a frame
  * another key holds (and says so), so this does not second-guess it. `linear` is written as

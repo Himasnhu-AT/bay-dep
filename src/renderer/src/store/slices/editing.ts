@@ -9,6 +9,7 @@ import { activeTimeline, findItem, itemEnd, timelineDuration, type Item } from '
 import { attributePatch, copyClips, pasteClips } from '@shared/clipboard'
 import { applyMoves, clipsUnderPlayhead, planCloseGap, planNudge, planPullBack } from '@shared/editing'
 import { linkedPartners, withLinked } from '@shared/links'
+import { insertTime, liftRange, type OpenSpanResult } from '@shared/insert-edit'
 import { makeTrack, newId, nextTrackName } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -24,6 +25,7 @@ type Actions = Pick<
   | 'closeGapAt'
   | 'trimToPlayhead'
   | 'removeInOutRange'
+  | 'openSpan'
   | 'setClipDialog'
 >
 
@@ -244,6 +246,41 @@ export function editingSlice({ set, get, editTimeline, currentTimeline }: StoreK
         return
       }
       set({ rangeIn: null, rangeOut: null })
+    },
+
+    openSpan(atFrame, frames, mode, trackId) {
+      const state = get()
+      const timeline = currentTimeline()
+      if (!timeline || frames <= 0) return null
+      if (mode === 'overwrite') {
+        const track = trackId ? timeline.tracks.find((t) => t.id === trackId) : undefined
+        if (!track) return null
+        if (track.locked) {
+          state.notify(`${track.name} is locked, so nothing can be overwritten on it. Unlock it first.`)
+          return null
+        }
+      }
+      const holder: { value: OpenSpanResult | null } = { value: null }
+      editTimeline((tl) => {
+        holder.value =
+          mode === 'insert'
+            ? insertTime(tl, atFrame, frames, () => newId('itm'))
+            : liftRange(tl, trackId!, atFrame, atFrame + frames, () => newId('itm'))
+      })
+      const result = holder.value
+      if (result && result.desyncedTrackIds.length > 0) {
+        const names = timeline.tracks
+          .filter((track) => result.desyncedTrackIds.includes(track.id))
+          .map((track) => track.name)
+          .join(', ')
+        // Named, as remove_range names them: the user has to unlock a specific track to fix it.
+        const many = result.desyncedTrackIds.length > 1
+        state.notify(
+          `${names} ${many ? 'are' : 'is'} locked and did not move, so ${many ? 'they are' : 'it is'} now out of sync after the insert.`,
+          'error'
+        )
+      }
+      return result
     },
 
     setClipDialog(dialog) {

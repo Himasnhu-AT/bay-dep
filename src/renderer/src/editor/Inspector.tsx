@@ -456,7 +456,7 @@ export function Inspector(): ReactNode {
             </div>
           )}
           <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
-            Times read minutes:seconds:frames. Type a timecode, 4.5s or 135f.
+            Times read hours:minutes:seconds:frames. Type a timecode (00:00:04:15), 4.5s for seconds or 135f for frames; a bare number is seconds.
             {timedItems.length > 0
               ? ' Source in slips the footage under the clip without moving it; speed changes how fast the source is read, not the clip’s length.'
               : ''}

@@ -402,7 +402,10 @@ export function App(): ReactNode {
             id="side"
             defaultSize="300px"
             minSize="220px"
-            maxSize="55%"
+            // A pixel cap, not a share of the window: at 55% a side panel dragged (or remembered)
+            // wide took the room the inspector and preview need, and grew with every larger
+            // window. The library clamps a remembered layout to this on load.
+            maxSize="480px"
             // Pixel-stable: resizing the window, or any panel beside it, goes to the preview —
             // the one region that is meant to take whatever space is left.
             groupResizeBehavior="preserve-pixel-size"
@@ -411,7 +414,11 @@ export function App(): ReactNode {
             panelRef={sideRef}
             onResize={followCollapse('side', sideRef)}
           >
-            <SidePanel />
+            {/* `inert` while collapsed: a 0px panel is still mounted, and without it its controls
+                stayed in the tab order and the accessibility tree, reachable but invisible. */}
+            <div inert={hiddenRegions.side} className="h-full min-h-0">
+              <SidePanel />
+            </div>
           </ResizablePanel>
           <ResizableHandle aria-label="Resize side panel" />
 
@@ -447,7 +454,9 @@ export function App(): ReactNode {
                     panelRef={inspectorRef}
                     onResize={followCollapse('inspector', inspectorRef)}
                   >
-                    <Inspector />
+                    <div inert={hiddenRegions.inspector} className="h-full min-h-0">
+                      <Inspector />
+                    </div>
                   </ResizablePanel>
                 </ResizablePanelGroup>
               </ResizablePanel>
@@ -462,7 +471,7 @@ export function App(): ReactNode {
                 panelRef={timelineRef}
                 onResize={followCollapse('timeline', timelineRef)}
               >
-                <div className="flex h-full min-h-0 flex-col">
+                <div inert={hiddenRegions.timeline} className="flex h-full min-h-0 flex-col">
                   <Timeline />
                 </div>
               </ResizablePanel>

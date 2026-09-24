@@ -78,16 +78,24 @@ export function StatusBar(): ReactNode {
 
   return (
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-surface-1 px-3 text-[11px]">
-      {/* `formatFps`, not `fps`: the stored rate is a quotient, so this read
-          `fps 29.97002997002997` the moment a project could be NTSC. */}
-      <Stat label="fps" value={formatFps(fps)} />
-      <Stat label="duration" value={formatTimecode(duration, fps)} />
-      <Stat
-        label="canvas"
-        value={timeline ? `${timeline.width}×${timeline.height}` : '—'}
-      />
-      <Stat label="media" value={assetCount} />
-      <Stat label="selected" value={selectionCount} />
+      {/* What a person editing needs: how long the programme is and what is selected. The rest
+          (rate, canvas, media count, the agent socket) is in Project Settings and the Media panel,
+          and shows here only in debug mode (View › Toggle Debug Mode). */}
+      <Stat label="Duration" value={formatTimecode(duration, fps)} />
+      {selectionCount > 0 && (
+        <span className="text-ink-1 tabular-nums">
+          {selectionCount} {selectionCount === 1 ? 'clip' : 'clips'} selected
+        </span>
+      )}
+      {debugMode && (
+        <>
+          {/* `formatFps`, not `fps`: the stored rate is a quotient, so this read
+              `fps 29.97002997002997` the moment a project could be NTSC. */}
+          <Stat label="fps" value={formatFps(fps)} />
+          <Stat label="canvas" value={timeline ? `${timeline.width}×${timeline.height}` : '—'} />
+          <Stat label="media" value={assetCount} />
+        </>
+      )}
 
       {/* A model download a transcription started on its own would otherwise be a tool call that
           sat for two minutes with no explanation. */}
@@ -155,7 +163,7 @@ export function StatusBar(): ReactNode {
         </Tooltip>
       )}
 
-      {agent?.ready && (
+      {debugMode && agent?.ready && (
         <Tooltip side="top" label={summariseAgentSurface(agent)} detail="MCP over a unix socket">
           <span tabIndex={0} className="rounded-sm text-ink-2">
             agent{' '}

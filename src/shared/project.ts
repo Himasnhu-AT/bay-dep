@@ -1177,9 +1177,13 @@ const MIN_COVER_VISIBLE = 0.9
 export function placementLayout(
   timeline: Pick<Timeline, 'width' | 'height'>,
   sourceWidth: number,
-  sourceHeight: number
+  sourceHeight: number,
+  /** Settings › Editing › New clips. `auto` is the rule above; the others always cover or contain. */
+  fit: CanvasFit = 'auto'
 ): Layout {
   if (sourceWidth <= 0 || sourceHeight <= 0) return defaultLayout(timeline)
+  if (fit === 'cover') return coverLayout(timeline, sourceWidth, sourceHeight)
+  if (fit === 'contain') return containLayout(timeline, sourceWidth, sourceHeight)
   return coverKeeps(timeline, sourceWidth, sourceHeight) >= MIN_COVER_VISIBLE
     ? coverLayout(timeline, sourceWidth, sourceHeight)
     : containLayout(timeline, sourceWidth, sourceHeight)
