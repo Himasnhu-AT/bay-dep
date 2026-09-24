@@ -169,6 +169,8 @@ export function describeUpdate(status: UpdateStatus): { title: string; detail: s
     case 'available':
       return { title: `bay ${status.next} is available.`, detail: `You have ${status.current}. Nothing downloads until you press Update.` }
     case 'downloading': {
+      // At 100% the file is here and macOS is unpacking it and checking its signature.
+      if (status.percent >= 100) return { title: `Preparing bay ${status.next}…`, detail: 'macOS is checking the update. You can keep working.' }
       const size = status.total > 0 ? ` (${megabytes(status.transferred)} of ${megabytes(status.total)})` : ''
       return { title: `Downloading bay ${status.next}: ${Math.floor(status.percent)}%${size}.`, detail: 'You can keep working.' }
     }

@@ -15,7 +15,7 @@
  *   autosaves first (`restartPlan`), then calls `install`.
  */
 
-import { app, BrowserWindow, session } from 'electron'
+import { app, autoUpdater as nativeUpdater, BrowserWindow, session } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import electronUpdater from 'electron-updater'
@@ -106,8 +106,28 @@ export async function startUpdates(): Promise<void> {
     info: (message?: unknown) => console.log(`[bay] update: ${String(message)}`),
     warn: (message?: unknown) => console.warn(`[bay] update: ${String(message)}`),
     error: (message?: unknown) => console.warn(`[bay] update: ${String(message).split('\n')[0]}`),
-    debug: () => undefined
+    // Kept on: electron-updater's hand-off to Squirrel.Mac is reported only at debug level, and
+    // it is the step that fails silently.
+    debug: (message?: unknown) => console.log(`[bay] update (debug): ${String(message)}`)
   }
+  // On a Mac, electron-updater says "downloaded" when ITS copy of the zip is on disk. Squirrel.Mac
+  // then fetches the zip from it, unpacks it and checks its signature, and only then can it
+  // install. So "Restart to update" is offered only once Squirrel says it is ready. Until then
+  // the status stays at downloading, 100%, which reads "Preparing…". An unpackaged bay has no
+  // Squirrel and cannot install, so there electron-updater's word is final.
+  const waitForSquirrel = process.platform === 'darwin' && app.isPackaged
+  let downloaded: { next: string; notes: string } | null = null
+  let squirrelReady = false
+  const offerRestart = (): void => {
+    if (!downloaded || (waitForSquirrel && !squirrelReady)) return
+    publish({ state: 'ready', current, feed: feedLabel, next: downloaded.next, notes: downloaded.notes })
+  }
+  nativeUpdater.on('update-downloaded', () => {
+    console.log('[bay] update: Squirrel has the update ready to install')
+    squirrelReady = true
+    offerRestart()
+  })
+  nativeUpdater.on('before-quit-for-update', () => console.log('[bay] update: quitting to install'))
 
   instance.on('update-available', (info) => {
     if (!isNewer(info.version, current)) return
@@ -121,7 +141,9 @@ export async function startUpdates(): Promise<void> {
     publish({ ...status, percent: progress.percent, transferred: progress.transferred, total: progress.total })
   })
   instance.on('update-downloaded', (info) => {
-    publish({ state: 'ready', current, feed: feedLabel, next: info.version, notes: 'notes' in status ? status.notes : releaseNotesText(info.releaseNotes) })
+    downloaded = { next: info.version, notes: 'notes' in status ? status.notes : releaseNotesText(info.releaseNotes) }
+    if (status.state === 'downloading') publish({ ...status, percent: 100, transferred: status.total, total: status.total })
+    offerRestart()
   })
   instance.on('error', (error) => {
     fail(error, lastStep)

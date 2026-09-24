@@ -137,6 +137,9 @@ test('no feed yet reads as the owner wrote it, and is not an error', () => {
 test('every status has a sentence, and progress reads as one', () => {
   const downloading = describeUpdate({ ...base, state: 'downloading', next: '0.1.1', notes: '', percent: 42.7, transferred: 61_000_000, total: 146_000_000 })
   assert.equal(downloading.title, 'Downloading bay 0.1.1: 42% (61 MB of 146 MB).')
+  // Downloaded but not yet installable: no Restart button, and the sentence says why it waits.
+  const preparing = describeUpdate({ ...base, state: 'downloading', next: '0.1.1', notes: '', percent: 100, transferred: 1, total: 1 })
+  assert.equal(preparing.title, 'Preparing bay 0.1.1…')
   assert.equal(describeUpdate({ ...base, state: 'available', next: '0.1.1', notes: '', releaseDate: null }).title, 'bay 0.1.1 is available.')
   assert.equal(describeUpdate({ ...base, state: 'ready', next: '0.1.1', notes: '' }).title, 'bay 0.1.1 is downloaded.')
   assert.equal(describeUpdate({ ...base, state: 'error', during: 'install', message: 'm', next: '0.1.1', notes: '' }).title, 'bay could not install the update.')
