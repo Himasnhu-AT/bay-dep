@@ -3,7 +3,7 @@ import { AudioLines } from 'lucide-react'
 import { findAsset, type Item, type Project, type Timeline } from '@shared/project'
 import { animatedVolumeAt } from '@shared/keyframes'
 import { canSound, commonValue } from '@shared/inspector'
-import { EmptyState, ScrollArea, Section } from '@/components'
+import { EmptyState, ScrollArea, Section, SectionBars } from '@/components'
 import { cn } from '@/lib/cn'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -38,6 +38,7 @@ export function AudioPanel({ className }: AudioPanelProps): ReactNode {
         </span>
       </header>
       <ScrollArea className="flex-1">
+        <SectionBars>
         {!timeline ? null : soundItems.length === 0 ? (
           <EmptyState
             icon={<AudioLines className="size-6" />}
@@ -63,6 +64,7 @@ export function AudioPanel({ className }: AudioPanelProps): ReactNode {
           />
         )}
         {timeline && <MixSummary project={project} timeline={timeline} />}
+        </SectionBars>
       </ScrollArea>
     </section>
   )

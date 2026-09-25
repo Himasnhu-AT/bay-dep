@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { AudioLines, Captions, FolderOpen, SlidersHorizontal } from 'lucide-react'
 import { formatTimecode } from '@shared/project'
 import { EXPORT_PRESETS, isAudioOnly, matchExportPreset, resolveExportSize, type ExportPreset } from '@shared/export-presets'
-import { Button, Panel, ScrollArea, Section, Tabs } from '@/components'
+import { Button, Panel, ScrollArea, Section, SectionBars, Tabs } from '@/components'
 import { cn } from '@/lib/cn'
 import { exportCaptions, hasCaptions } from '@/lib/mediaActions'
 import { useEditor } from '@/store/editor'
@@ -52,6 +52,7 @@ export function DeliverSettings({ className }: DeliverSettingsProps): ReactNode 
   return (
     <Panel title="Render Settings" className={cn('h-full', className)} bodyClassName="flex flex-col">
       <ScrollArea className="flex-1">
+        <SectionBars>
         <Section title="Presets">
           <PresetCards />
         </Section>
@@ -63,6 +64,7 @@ export function DeliverSettings({ className }: DeliverSettingsProps): ReactNode 
         <Section title="Render">
           <RangeChoice />
         </Section>
+        </SectionBars>
 
         <Tabs<DeliverTab>
           label="Render settings"

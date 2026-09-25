@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import { ClipboardCopy, ClipboardPaste, FileUp, Palette, RotateCcw } from 'lucide-react'
 import { findAsset, type Asset, type Item } from '@shared/project'
 import { isGradeableKind } from '@shared/grade'
-import { Button, EmptyState, ScrollArea, ToolbarGroup, ToolButton } from '@/components'
+import { Button, EmptyState, ScrollArea, Section, SectionBars, ToolbarGroup, ToolButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { runCommand } from '@/lib/commands'
 import { useSelectedItems } from '@/lib/useSelectedItems'
@@ -110,14 +110,16 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
       {header}
       <ScrollArea className="flex-1">
         <div className="grid grid-cols-1 gap-2 p-2 @2xl:grid-cols-2 @5xl:grid-cols-3">
-          <Card title="Primaries" subtitle="Balance, wheels, texture">
+          <Card label="Primaries">
             <GradeSection items={items} luts={usableLuts} />
           </Card>
-          <Card title="Adjustments" subtitle="A quick look over the grade">
+          <Card label="Adjustments and blend">
             <AdjustmentsSection items={items} timeline={timeline} />
           </Card>
-          <Card title="LUTs" subtitle={`${usableLuts.length} in this project`}>
-            <LutList items={items} luts={luts} />
+          <Card label="LUTs">
+            <Section id="color.luts" title={`LUTs · ${usableLuts.length}`} collapsible>
+              <LutList items={items} luts={luts} />
+            </Section>
           </Card>
         </div>
         {copied && <p className="px-3 pb-3 text-[11px] text-ink-2">Grade on the clipboard: {copied}.</p>}
@@ -126,15 +128,14 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
   )
 }
 
-/** A labelled card on the Color page: a header strip over the section it holds. */
-function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }): ReactNode {
+/**
+ * A column on the Color page. Its sections draw their own title bars (`SectionBars`, the
+ * inspector's look), so the card adds a border and no second heading over "Grade".
+ */
+function Card({ label, children }: { label: string; children: ReactNode }): ReactNode {
   return (
-    <section aria-label={title} className="min-w-0 self-start overflow-hidden rounded-sm border border-line bg-surface-1">
-      <header className="flex h-8 items-center gap-2 border-b border-line bg-chrome-raised px-3">
-        <h3 className="text-[12px] font-semibold text-ink-0">{title}</h3>
-        {subtitle && <span className="truncate text-[10px] text-ink-2">{subtitle}</span>}
-      </header>
-      {children}
+    <section aria-label={label} className="min-w-0 self-start overflow-hidden rounded-sm border border-line bg-surface-1">
+      <SectionBars>{children}</SectionBars>
     </section>
   )
 }
@@ -163,7 +164,7 @@ function LutList({ items, luts }: { items: Item[]; luts: Asset[] }): ReactNode {
     })
 
   return (
-    <div className="px-3 py-3">
+    <div>
       {luts.length === 0 ? (
         <p className="text-[11px] text-pretty text-ink-2">No LUTs in this project. Import a .cube file to add one.</p>
       ) : (
