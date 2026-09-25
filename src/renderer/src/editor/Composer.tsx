@@ -610,7 +610,7 @@ function ToolbarButton({
         )}
       >
         <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-        <span className="hidden @[330px]:inline">{text}</span>
+        <span className="hidden @[240px]:inline">{text}</span>
       </button>
     </Tooltip>
   )
@@ -639,7 +639,7 @@ function ApprovalBadge({ on }: { on: boolean }): ReactNode {
         )}
       >
         {on ? <ShieldCheck aria-hidden="true" className="size-3 shrink-0" /> : <Shield aria-hidden="true" className="size-3 shrink-0" />}
-        <span className="hidden @[250px]:inline">{on ? 'Asks first' : 'Edits directly'}</span>
+        <span className="hidden @[350px]:inline">{on ? 'Asks first' : 'Edits directly'}</span>
       </button>
     </Tooltip>
   )

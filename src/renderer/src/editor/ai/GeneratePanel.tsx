@@ -84,7 +84,7 @@ function AskTheAgent({ onDraft }: { onDraft: (text: string) => void }): ReactNod
                 <Icon aria-hidden="true" className="size-4 shrink-0 text-ink-1" />
                 <span className="min-w-0 flex-1">
                   <span className="block text-[12px] font-medium text-ink-0">{action.title}</span>
-                  <span className="block truncate text-[11px] text-ink-2">{action.detail}</span>
+                  <span className="block text-[11px] leading-snug text-pretty text-ink-2">{action.detail}</span>
                 </span>
               </button>
             </li>

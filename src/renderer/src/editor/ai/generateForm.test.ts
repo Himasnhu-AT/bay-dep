@@ -74,6 +74,13 @@ test('a spent budget names what was spent and the limit; the same call under bud
   assert.equal(startBlocker({ provider: 'openai', keys: keys(true), spending: spending({ spentUsd: 4.9 }), estimatedCostUsd: 0.05 }), null)
 })
 
+test('prices show in cents unless cents would hide them', async () => {
+  const { usd } = await import('./generateForm')
+  assert.equal(usd(0.05), '$0.05')
+  assert.equal(usd(0.013), '$0.013')
+  assert.equal(usd(0.4), '$0.40')
+})
+
 test('a full queue says it clears when a job finishes', () => {
   const full = startBlocker({ provider: 'openai', keys: keys(true), spending: spending({ active: 3 }), estimatedCostUsd: 0.05 })
   assert.equal(full?.reason, 'room')

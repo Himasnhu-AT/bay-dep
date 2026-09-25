@@ -183,7 +183,9 @@ export function startBlocker(input: {
 }
 
 export function usd(value: number): string {
-  return `$${value < 0.1 && value > 0 ? value.toFixed(3) : value.toFixed(2)}`
+  // Cents, unless that would hide a price: $0.013 an image is not "$0.01".
+  const cents = value.toFixed(2)
+  return `$${Math.abs(Number(cents) - value) < 1e-9 || value >= 0.1 ? cents : value.toFixed(3)}`
 }
 
 /** One line for a job in the list: where it stands, in words. */
