@@ -18,8 +18,10 @@ import {
   type GenerationProvider,
   type GenerationRequest,
   type GenerationSpending,
-  type ProviderKeyStatus
+  type ProviderKeyStatus,
+  type StartRefused
 } from '@shared/generation'
+import { DubRecords, type StoredDub } from './dub-records'
 import type { Cipher } from '../auth/token-store'
 import { probe } from '../ffmpeg/probe'
 import { generatedDir } from '../paths'
@@ -150,10 +152,38 @@ export async function clearGenerationKey(provider: GenerationProvider): Promise<
 }
 
 export async function startGenerationJob(
-  request: GenerationRequest
-): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | { ok: false; error: string }> {
+  request: GenerationRequest,
+  options?: { reservationId?: string }
+): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | StartRefused> {
   await whenReady()
-  return table().start(request)
+  const reservationId = typeof options?.reservationId === 'string' ? options.reservationId : undefined
+  return table().start(request, reservationId !== undefined ? { reservationId } : {})
+}
+
+export async function reserveGeneration(
+  totalUsd: number
+): Promise<{ ok: true; reservationId: string; spending: GenerationSpending } | StartRefused> {
+  await whenReady()
+  return table().reserve(totalUsd)
+}
+
+export async function releaseGeneration(reservationId: string): Promise<GenerationSpending> {
+  await whenReady()
+  return table().release(reservationId)
+}
+
+let dubRecords: DubRecords | null = null
+function dubStore(): DubRecords {
+  dubRecords ??= new DubRecords(join(app.getPath('userData'), 'generation-dubs.json'))
+  return dubRecords
+}
+
+export function generationDubs(): Promise<StoredDub[]> {
+  return dubStore().list()
+}
+
+export function saveGenerationDub(record: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+  return dubStore().save(record)
 }
 
 export async function generationJob(id: string): Promise<GenerationJob | null> {

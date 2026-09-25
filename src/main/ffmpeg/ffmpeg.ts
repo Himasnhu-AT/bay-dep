@@ -128,14 +128,69 @@ export interface RunResult {
   stderr: string
 }
 
+/**
+ * A run that bay ended rather than the tool: it ran past its time, or its caller stopped
+ * wanting it. The process is killed before this is thrown, so nothing is left running.
+ */
+export class MediaToolStoppedError extends Error {
+  readonly tool: string
+  readonly reason: 'timeout' | 'aborted'
+
+  constructor(tool: string, reason: 'timeout' | 'aborted', timeoutMs = 0) {
+    const name = tool.split('/').pop() || tool
+    super(
+      reason === 'timeout'
+        ? `${name} ran past ${Math.max(1, Math.round(timeoutMs / 1000))} seconds and was stopped.`
+        : `${name} was stopped before it finished.`
+    )
+    this.name = 'MediaToolStoppedError'
+    this.tool = tool
+    this.reason = reason
+  }
+}
+
+/**
+ * Bounds on one run. Both optional; absent is what `run` always did — wait however long the
+ * tool takes. Either one kills the process with SIGKILL (a tool stuck on a pathological input
+ * need not answer SIGTERM) and rejects with `MediaToolStoppedError`.
+ */
+export interface RunLimits {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
 /** Runs a tool to completion, capturing stdout as text. Rejects with stderr's tail. */
 export function run(
   bin: string,
   args: readonly string[],
-  options?: SpawnOptionsWithoutStdio
+  options?: SpawnOptionsWithoutStdio,
+  limits: RunLimits = {}
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
+    if (limits.signal?.aborted) {
+      reject(new MediaToolStoppedError(bin, 'aborted'))
+      return
+    }
     const child = spawn(bin, [...args], { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stopped: MediaToolStoppedError | null = null
+    // Answers at once rather than on `close`: a child the tool spawned can hold its pipes open
+    // after the tool itself is dead, and `close` waits for the pipes.
+    const stop = (reason: 'timeout' | 'aborted'): void => {
+      if (stopped) return
+      stopped = new MediaToolStoppedError(bin, reason, limits.timeoutMs)
+      child.kill('SIGKILL')
+      child.stdout.destroy()
+      child.stderr.destroy()
+      settle()
+      reject(stopped)
+    }
+    const timer = limits.timeoutMs !== undefined ? setTimeout(() => stop('timeout'), limits.timeoutMs) : null
+    const onAbort = (): void => stop('aborted')
+    limits.signal?.addEventListener('abort', onAbort, { once: true })
+    function settle(): void {
+      if (timer) clearTimeout(timer)
+      limits.signal?.removeEventListener('abort', onAbort)
+    }
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -147,9 +202,14 @@ export function run(
       stderr += chunk
       if (stderr.length > STDERR_TAIL_BYTES * 4) stderr = stderr.slice(-STDERR_TAIL_BYTES * 2)
     })
-    child.on('error', reject)
+    child.on('error', (error) => {
+      settle()
+      reject(error)
+    })
     child.on('close', (code) => {
-      if (code === 0) resolve({ stdout, stderr })
+      settle()
+      if (stopped) reject(stopped)
+      else if (code === 0) resolve({ stdout, stderr })
       else reject(new MediaToolError(bin, code, tail(stderr)))
     })
   })

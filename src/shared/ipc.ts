@@ -20,7 +20,8 @@ import type {
   GenerationProvider,
   GenerationRequest,
   GenerationSpending,
-  ProviderKeyStatus
+  ProviderKeyStatus,
+  StartRefused
 } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
@@ -525,7 +526,25 @@ export interface BayApi {
      * pass. Refused, with nothing sent, when the row cannot be written or the spend guard's
      * session budget or jobs-at-once limit would be passed; `spending` is where it stands after.
      */
-    start(request: GenerationRequest): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | { ok: false; error: string }>
+    start(
+      request: GenerationRequest,
+      options?: { reservationId?: string }
+    ): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | StartRefused>
+    /**
+     * Holds `totalUsd` of the session budget for jobs that will start over time (a dub's lines),
+     * so a generation started meanwhile cannot take the money they need. A start that passes the
+     * reservation's id draws from it; `release` drops what is left. Refused like a start that
+     * would pass the budget.
+     */
+    reserve(totalUsd: number): Promise<{ ok: true; reservationId: string; spending: GenerationSpending } | StartRefused>
+    release(reservationId: string): Promise<GenerationSpending>
+    /**
+     * Dubs in flight, kept by main beside the job table so a reload does not forget them. Main
+     * keeps each record as the renderer wrote it (`DubRecordData` in `@shared/dub`), bounded in id,
+     * size and count; the renderer checks what it reads back.
+     */
+    dubs(): Promise<unknown[]>
+    saveDub(record: unknown): Promise<{ ok: true } | { ok: false; error: string }>
     /** The spend guard: this session's estimated spend, jobs active, and the limits main enforces. */
     spending(): Promise<GenerationSpending>
     /** Settings › Providers. Checked and persisted by main; the renderer cannot pass limits with a call. */
@@ -845,6 +864,10 @@ export const IPC = {
   generationJobs: 'generation:jobs',
   generationSpending: 'generation:spending',
   generationSetLimits: 'generation:set-limits',
+  generationReserve: 'generation:reserve',
+  generationRelease: 'generation:release',
+  generationDubs: 'generation:dubs',
+  generationSaveDub: 'generation:save-dub',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',

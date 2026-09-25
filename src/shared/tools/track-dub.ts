@@ -12,7 +12,9 @@ export const tool: ToolSpec = {
     'all one undo step — and returns what was placed, lines sped up (with warnings past the ' +
     'accepted tempo), lines refused as too long (with the cut to make), failed lines, and the ' +
     'translated lines as add_captions cues. Calling it again after placement returns the same ' +
-    "result. Call with no dubId to list this session's dubs.",
+    'result — and if the placed lines have been undone, places them again from the files already ' +
+    'generated, paying nothing twice. Dubs are kept by the app, so a reload of the window does not ' +
+    "lose one: queued lines still start and landed lines are still placed. Call with no dubId to list the dubs.",
   category: 'write',
   readOnly: false,
   dryRunRefusal:
@@ -22,7 +24,7 @@ export const tool: ToolSpec = {
   inputSchema: {
     type: 'object',
     properties: {
-      dubId: { type: 'string', description: "The dubId apply_dub returned. Omit to list this session's dubs." }
+      dubId: { type: 'string', description: "The dubId apply_dub returned. Omit to list the dubs." }
     }
   }
 }

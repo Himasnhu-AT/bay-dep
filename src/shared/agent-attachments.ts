@@ -68,6 +68,66 @@ export function classifyFile(name: string, mime: string, size: number): { ok: tr
   return { ok: false, error: `“${name}” is not an image or a video. Attach PNG, JPEG, WebP, GIF or a video file.` }
 }
 
+/**
+ * Whether a dropped file is one the agent panel attaches (a picture type the agent takes, or a
+ * video), by MIME type or extension alone — its size does not decide *who* handles the drop, only
+ * whether the attachment is then accepted.
+ */
+export function isAttachableFile(name: string, mime: string): boolean {
+  const type = mime.toLowerCase()
+  if (IMAGE_MIME[type]) return true
+  const extension = name.toLowerCase().split('.').pop() ?? ''
+  return type.startsWith('video/') || VIDEO_EXTENSIONS.includes(extension)
+}
+
+/**
+ * Who takes each file of a drop on the agent panel. Pictures and video are attached to the
+ * message; everything else — audio, captions, a composition, a TIFF the agent cannot take but the
+ * project can — goes to the project's import, exactly as it would have anywhere else in the
+ * window. A drop with nothing attachable in it is not the panel's at all (`attach` is empty), so
+ * the window's own handler imports the whole of it.
+ */
+export function splitDrop(files: readonly { name: string; type: string }[]): { attach: number[]; importRest: number[] } {
+  const attach: number[] = []
+  const importRest: number[] = []
+  files.forEach((file, index) => (isAttachableFile(file.name, file.type) ? attach : importRest).push(index))
+  return { attach, importRest }
+}
+
+/**
+ * Past this many pictures in one conversation, the panel says so. Every picture stays in the
+ * model's context for the rest of the conversation and is paid for again on every turn.
+ */
+export const MANY_IMAGES = 15
+
+/** The panel's note for a conversation that has sent `count` pictures, or null below the threshold. */
+export function manyImagesNote(count: number): string | null {
+  if (count <= MANY_IMAGES) return null
+  return (
+    `This conversation has sent ${count} pictures. Each one stays in the model’s context and is read again on every turn, ` +
+    'which slows replies and costs more — start a New conversation when the earlier ones are no longer needed.'
+  )
+}
+
+/**
+ * A file name as it may appear in text the model reads: control characters (a newline would
+ * start a line of its own in the message), format characters (bidi overrides that reorder what a
+ * person reviewing the transcript sees) and line/paragraph separators become spaces, runs of
+ * whitespace one space, and the length is capped.
+ */
+export function cleanAttachmentName(name: string): string {
+  return name
+    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, NAME_LIMIT)
+}
+
+/** A name quoted as data for the model: a JSON string, so no quote in it can close the quote. */
+export function quoteName(name: string): string {
+  return JSON.stringify(cleanAttachmentName(name))
+}
+
 function megabytes(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)
 }
@@ -108,7 +168,8 @@ export function validateAttachments(value: unknown): { ok: true; attachments: Ag
     const item = raw as Record<string, unknown>
     const kind = item['kind']
     if (kind !== 'image' && kind !== 'video') return { ok: false, error: `${which} must be an image or a video.` }
-    const name = typeof item['name'] === 'string' && item['name'].trim() !== '' ? item['name'].slice(0, NAME_LIMIT) : `attachment ${index + 1}`
+    const given = typeof item['name'] === 'string' ? cleanAttachmentName(item['name']) : ''
+    const name = given !== '' ? given : `attachment ${index + 1}`
     if (item['source'] === 'bytes') {
       const data = item['data']
       if (!(data instanceof Uint8Array)) return { ok: false, error: `${which} (“${name}”) carries no bytes.` }

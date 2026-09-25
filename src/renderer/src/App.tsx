@@ -18,6 +18,7 @@ import { useDefaultLayout, usePanelRef, type PanelImperativeHandle } from 'react
 import type { RefObject } from 'react'
 import type { Project } from '@shared/project'
 import type { RegionId } from '@/store/editor'
+import { IMPORT_FILES_EVENT } from '@/lib/agentAttachments'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Preview } from '@/editor/Preview'
 import { StatusBar } from '@/editor/StatusBar'
@@ -366,13 +367,23 @@ export function App(): ReactNode {
       void importPaths(paths)
     }
 
+    // The files of a drop on the agent panel that it does not attach (audio, captions, a TIFF…):
+    // imported exactly as if they had been dropped anywhere else.
+    const onImportFiles = (event: Event): void => {
+      const files = (event as CustomEvent<File[]>).detail ?? []
+      const paths = files.map(pathForFile).filter((path): path is string => path !== null)
+      if (paths.length > 0) void importPaths(paths)
+    }
+
     window.addEventListener('dragover', onDragOver)
     window.addEventListener('dragleave', onDragLeave)
     window.addEventListener('drop', onDrop)
+    window.addEventListener(IMPORT_FILES_EVENT, onImportFiles)
     return () => {
       window.removeEventListener('dragover', onDragOver)
       window.removeEventListener('dragleave', onDragLeave)
       window.removeEventListener('drop', onDrop)
+      window.removeEventListener(IMPORT_FILES_EVENT, onImportFiles)
     }
   }, [importPaths, notify])
 

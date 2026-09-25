@@ -14,6 +14,7 @@ import {
   type AgentAttachmentInput,
   type AgentAttachmentView
 } from '@shared/agent-attachments'
+import type { AgentEntry } from '@shared/agent'
 import type { Asset } from '@shared/project'
 import { bay } from './bridge'
 
@@ -142,4 +143,58 @@ export async function toInput(pending: PendingAttachment): Promise<AgentAttachme
 
 export function toView(pending: PendingAttachment): AgentAttachmentView {
   return { kind: pending.kind, name: pending.name, thumb: pending.thumb }
+}
+
+/** How many pictures (an image, or a video's contact sheet) the conversation has sent. */
+export function picturesSent(log: readonly AgentEntry[]): number {
+  let count = 0
+  for (const entry of log) if (entry.kind === 'user') count += entry.attachments?.length ?? 0
+  return count
+}
+
+/**
+ * The window event the agent panel raises for the files of a drop that are not its to attach, so
+ * the window's import takes them (`App.tsx`) exactly as a drop anywhere else would have.
+ */
+export const IMPORT_FILES_EVENT = 'bay:import-files'
+
+/** The steps of delivering one message with its attachments, injected so the order is testable. */
+export interface DeliverSteps<A> {
+  /** Starts the conversation when none is running; resolves ok at once when one is. */
+  start(): Promise<{ ok: true } | { ok: false; error: string }>
+  toInputs(attached: readonly A[]): Promise<AgentAttachmentInput[]>
+  send(inputs: AgentAttachmentInput[]): Promise<{ ok: boolean; error?: string }>
+  /** Puts attachments back in the composer. */
+  giveBack(attached: A[]): void
+  /** Shows why the message did not go. */
+  problem(message: string): void
+}
+
+/**
+ * Starts (if needed), reads the attachments and sends. Every way this can fail says why and hands
+ * the attachments back to the composer — a start that failed, a file that could no longer be read
+ * (a dropped file moved or deleted before send), a refusal from main — because the user already
+ * saw the chips disappear on send, and losing them silently is losing their work. Never throws.
+ */
+export async function deliverMessage<A>(attached: A[], steps: DeliverSteps<A>): Promise<boolean> {
+  const fail = (message: string): false => {
+    steps.problem(message)
+    if (attached.length > 0) steps.giveBack(attached)
+    return false
+  }
+  try {
+    const started = await steps.start()
+    if (!started.ok) return fail(started.error)
+    let inputs: AgentAttachmentInput[]
+    try {
+      inputs = await steps.toInputs(attached)
+    } catch (error) {
+      return fail(`An attachment could not be read (${error instanceof Error ? error.message : String(error)}). Remove it and attach the file again.`)
+    }
+    const sent = await steps.send(inputs)
+    if (!sent.ok) return fail(sent.error ?? 'The message could not be delivered.')
+    return true
+  } catch (error) {
+    return fail(`The message could not be delivered: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }

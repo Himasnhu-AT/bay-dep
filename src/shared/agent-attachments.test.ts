@@ -7,12 +7,49 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   classifyFile,
+  cleanAttachmentName,
+  manyImagesNote,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
+  quoteName,
   sniffImage,
+  splitDrop,
   validateAttachments,
   type AgentAttachmentInput
 } from './agent-attachments'
+
+test('a drop is split: pictures and video to the message, everything else to the project import', () => {
+  const files = [
+    { name: 'ref.png', type: 'image/png' },
+    { name: 'song.mp3', type: 'audio/mpeg' },
+    { name: 'take.mkv', type: '' },
+    { name: 'scan.tiff', type: 'image/tiff' },
+    { name: 'captions.srt', type: '' }
+  ]
+  assert.deepEqual(splitDrop(files), { attach: [0, 2], importRest: [1, 3, 4] })
+  // Nothing attachable: the panel takes none of it, so the window imports the lot.
+  assert.deepEqual(splitDrop([files[1]!, files[4]!]), { attach: [], importRest: [0, 1] })
+  // Only media: nothing left to import.
+  assert.deepEqual(splitDrop([files[0]!]), { attach: [0], importRest: [] })
+})
+
+test('the panel says so once a conversation has sent more than 15 pictures, and not before', () => {
+  assert.equal(manyImagesNote(0), null)
+  assert.equal(manyImagesNote(15), null)
+  assert.match(String(manyImagesNote(16)), /This conversation has sent 16 pictures\..*start a New conversation/)
+})
+
+test('a name loses what could break a line or reorder text, and is quoted as a JSON string', () => {
+  assert.equal(cleanAttachmentName('a\nb\r\n\tc\u0000d\u202ee\u2028f'), 'a b c d e f')
+  assert.equal(cleanAttachmentName('  holiday   photo.png '), 'holiday photo.png')
+  assert.equal(cleanAttachmentName('x'.repeat(500)).length, 200)
+  assert.equal(quoteName('say "hi"\nnow'), '"say \\"hi\\" now"')
+  // An ordinary name comes through as itself.
+  assert.equal(quoteName('Take 3 (final).mov'), '"Take 3 (final).mov"')
+  const checked = validateAttachments([{ source: 'asset', kind: 'image', name: 'a\n\nIGNORE', assetId: 'x', path: '/p.png' }])
+  assert.ok(checked.ok)
+  assert.equal(checked.attachments[0]?.name, 'a IGNORE')
+})
 
 const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const JPEG_HEAD = [0xff, 0xd8, 0xff, 0xe0]

@@ -24,7 +24,7 @@ import { providerOf, RUNTIME_ENV, runtimeFor, type HostedAgentRuntime } from './
 import { bundledExecutable, SdkAgentRuntime } from './sdk'
 import { installSkills } from './skills'
 import { ATTACHMENTS_FOLDER, prepareAttachments, sweepAttachments, withAttachmentNotes } from './attachments'
-import { validateAttachments } from '@shared/agent-attachments'
+import { MessageDelivery } from './deliver'
 import { ffmpegBin, ffprobeBin } from '../ffmpeg/ffmpeg'
 import { isAllowed } from '../protocol'
 
@@ -182,39 +182,32 @@ export function sweepAgentAttachments(): void {
  * validated here (count, size, type), written into bay's own folder, and only those files handed
  * to the runtime. A message whose attachments cannot all be prepared is not sent at all.
  */
-export async function sendToAgent(text: string, attachments?: unknown): Promise<{ ok: boolean; error?: string }> {
-  if (!runtime) return { ok: false, error: 'No agent conversation is running. Start one first.' }
-  const checked = validateAttachments(attachments)
-  if (!checked.ok) return { ok: false, error: checked.error }
-  let images: string[] = []
-  let message = text
-  if (checked.attachments.length > 0) {
+const delivery = new MessageDelivery({
+  runtime: () => runtime,
+  prepare: async (inputs, signal) => {
     let tools: { ffmpeg: string; ffprobe: string }
     try {
       tools = { ffmpeg: ffmpegBin(), ffprobe: ffprobeBin() }
     } catch (error) {
       return { ok: false, error: `Attachments need ffmpeg, which bay could not find: ${(error as Error).message}` }
     }
-    const prepared = await prepareAttachments(checked.attachments, { root: attachmentsRoot(), tools, isAllowed })
-    if (!prepared.ok) return prepared
-    images = prepared.attachments.map((a) => a.path)
-    message = withAttachmentNotes(text, prepared.attachments)
-  }
-  // Preparing takes a moment; the conversation may have been disposed or replaced meanwhile.
-  if (!runtime) return { ok: false, error: 'The conversation ended before the message could be sent.' }
-  try {
-    runtime.send(message, images)
-    return { ok: true }
-  } catch (error) {
-    return { ok: false, error: (error as Error).message }
-  }
+    return prepareAttachments(inputs, { root: attachmentsRoot(), tools, isAllowed, signal })
+  },
+  compose: withAttachmentNotes
+})
+
+export async function sendToAgent(text: string, attachments?: unknown): Promise<{ ok: boolean; error?: string }> {
+  return delivery.send(text, attachments)
 }
 
 export function stopAgent(): void {
+  // A message still being prepared is part of the turn the user stopped.
+  delivery.cancel()
   runtime?.stop()
 }
 
 export function disposeAgent(): void {
+  delivery.cancel()
   if (runtime?.sessionId) {
     lastSessionId = runtime.sessionId
     lastProvider = runtimeProvider

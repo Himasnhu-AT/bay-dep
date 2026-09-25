@@ -7,6 +7,7 @@ import { CANVAS_PRESETS, checkCanvasSize, activeTimeline, allItems, placementLay
 import { captionAssetName, captionLayout, captionStyle, checkCues } from '@shared/captions'
 import { applyScriptOps } from '@shared/script'
 import { linkedPartners } from '@shared/links'
+import { DUB_MUTE_DB } from '@shared/dub'
 import { clone, makeTrack, newId, nextMarkerName } from '../factory'
 import type { DubPlaced, EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -193,6 +194,17 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
       if (!timeline) return { error: 'No timeline is open.' }
       const existing = timeline.tracks.find((t) => t.kind === 'audio' && t.name === spec.trackName)
       if (existing?.locked) return { error: `The track "${spec.trackName}" is locked. Unlock it, then place the dub again.` }
+      // The new lines are checked against each other as well as against what is on the track:
+      // two lines laid over one another would both play.
+      const order = [...spec.clips].sort((a, b) => a.from - b.from)
+      for (const [i, clip] of order.entries()) {
+        const next = order[i + 1]
+        if (next && clip.from + clip.durationInFrames > next.from) {
+          return {
+            error: `Two dub lines overlap: one at frame ${clip.from} runs ${clip.durationInFrames} frames, past the next at ${next.from}. Nothing was placed.`
+          }
+        }
+      }
       const itemIds = spec.clips.map(() => newId('itm'))
       const placed: DubPlaced = {
         trackId: existing?.id ?? '',
@@ -201,6 +213,7 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         replaced: 0,
         ducked: [],
         muted: [],
+        replacedDucks: [],
         lockedOriginals: []
       }
       edit((project) => {
@@ -253,18 +266,24 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
             placed.lockedOriginals.push(item.id)
             continue
           }
-          if (spec.original.mode === 'mute') {
-            item.volume = 0
-            placed.muted.push(item.id)
-          } else {
-            item.duck = {
-              keyTrackId: track.id,
-              amountDb: spec.original.amountDb,
-              attackFrames: Math.round(tl.fps * 0.25),
-              releaseFrames: Math.round(tl.fps * 0.5)
-            }
-            placed.ducked.push(item.id)
+          // A mute is a duck too — the deepest one, keyed to the dub track — so the original is
+          // silent under the dubbed lines only, and silent even when its volume is keyframed
+          // (`item.volume` is not read where keys exist; a duck multiplies after them).
+          const previous = item.duck
+          if (previous && previous.keyTrackId !== track.id) {
+            placed.replacedDucks.push({
+              itemId: item.id,
+              keyTrackId: previous.keyTrackId,
+              keyTrackName: tl.tracks.find((t) => t.id === previous.keyTrackId)?.name ?? previous.keyTrackId
+            })
           }
+          item.duck = {
+            keyTrackId: track.id,
+            amountDb: spec.original.mode === 'mute' ? DUB_MUTE_DB : spec.original.amountDb,
+            attackFrames: Math.round(tl.fps * 0.25),
+            releaseFrames: Math.round(tl.fps * 0.5)
+          }
+          ;(spec.original.mode === 'mute' ? placed.muted : placed.ducked).push(item.id)
         }
       })
       return placed

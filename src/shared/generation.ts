@@ -617,6 +617,27 @@ export interface GenerationSpending extends GenerationLimits {
   spentUsd: number
   /** Jobs queued or running now, resumed ones included. */
   active: number
+  /**
+   * Estimated USD held for work already agreed but not yet started — a dub's remaining lines
+   * (`GenerationJobs.reserve`). Counted against the budget like spent money, so another call
+   * cannot take the room a dub's later lines need. Absent is none.
+   */
+  reservedUsd?: number
+}
+
+/**
+ * Why main refused to start a job, for a caller that acts on the difference: `room` — the
+ * jobs-at-once limit is full, and the same call will be taken once a job finishes; `budget` — the
+ * session budget would be passed, and nothing changes that but the user; `other` — anything else
+ * (an invalid request, no key, a row that could not be written).
+ */
+export type StartRefusal = 'room' | 'budget' | 'other'
+
+/** What `start` answers when it refuses: the sentence, and which kind of refusal it is. */
+export interface StartRefused {
+  ok: false
+  error: string
+  reason: StartRefusal
 }
 
 /** Checks limits the user typed (or a file holds). Every refusal names the range that is taken. */
@@ -641,17 +662,29 @@ export function checkLimits(input: unknown): { ok: true; limits: GenerationLimit
  * cannot raise it, and must not try to route around it. Main enforces it; a dry run reports it.
  */
 export function spendRefusal(spending: GenerationSpending, estimateUsd: number): string | null {
+  return spendRefusalOf(spending, estimateUsd)?.error ?? null
+}
+
+/** `spendRefusal` with which limit it was: `room` (jobs at once) or `budget`. */
+export function spendRefusalOf(spending: GenerationSpending, estimateUsd: number): { reason: 'room' | 'budget'; error: string } | null {
   if (spending.active >= spending.maxActive) {
-    return (
-      `${spending.active} generation job${spending.active === 1 ? ' is' : 's are'} already running, and the limit is ${spending.maxActive} at once. Nothing was sent. ` +
-      'Wait for one to finish (track_generation), or ask the user to raise "Jobs at once" in Settings › Providers.'
-    )
+    return {
+      reason: 'room',
+      error:
+        `${spending.active} generation job${spending.active === 1 ? ' is' : 's are'} already running, and the limit is ${spending.maxActive} at once. Nothing was sent. ` +
+        'Wait for one to finish (track_generation), or ask the user to raise "Jobs at once" in Settings › Providers.'
+    }
   }
-  if (spending.spentUsd + estimateUsd > spending.budgetUsd + 1e-9) {
-    return (
-      `This call (~${usd(estimateUsd)}) would take generation spending this session past its limit: ${usd(spending.spentUsd)} spent of ${usd(spending.budgetUsd)}. ` +
-      'Nothing was sent. Ask the user to raise the session budget in Settings › Providers if they want to spend more; do not retry until they have.'
-    )
+  const reserved = spending.reservedUsd ?? 0
+  if (spending.spentUsd + reserved + estimateUsd > spending.budgetUsd + 1e-9) {
+    return {
+      reason: 'budget',
+      error:
+        `This call (~${usd(estimateUsd)}) would take generation spending this session past its limit: ${usd(spending.spentUsd)} spent` +
+        (reserved > 0 ? ` and ${usd(reserved)} held for a dub still generating` : '') +
+        ` of ${usd(spending.budgetUsd)}. ` +
+        'Nothing was sent. Ask the user to raise the session budget in Settings › Providers if they want to spend more; do not retry until they have.'
+    }
   }
   return null
 }
