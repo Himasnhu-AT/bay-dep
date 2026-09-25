@@ -25,7 +25,7 @@ import {
   writeWindowBounds
 } from './project/store'
 import type { RecentProject } from '@shared/ipc'
-import { cacheDir } from './paths'
+import { cacheDir, downloadsDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
@@ -38,7 +38,7 @@ import { onAccessChange, startAccess, stopAccess } from './auth/access'
 import { startGeneration, stopGeneration } from './generate/service'
 import { startUpdates, stopUpdates } from './update/updater'
 import { disposeAgent } from './agent/host'
-import { cancelUrlImports } from './media/url-import'
+import { cancelUrlImports, sweepIncompleteDownloads } from './media/url-import'
 import { isEntitled } from '@shared/access'
 import { appNameFor } from './app-name'
 
@@ -265,6 +265,13 @@ void app.whenReady().then(() => {
         `[bay] Reclaimed ${removed.length} stale cache director${removed.length === 1 ? 'y' : 'ies'}: ${removed.join(', ')}`
       )
     }
+  })
+
+  // A download bay was killed in the middle of (a crash, a force quit) left a folder with no
+  // completion marker; nothing will ever import it. Startup, before any download can start, is
+  // when they go. Finished downloads carry the marker and are media placed clips play from.
+  void sweepIncompleteDownloads(downloadsDir()).then((removed) => {
+    if (removed.length > 0) console.log(`[bay] Removed ${removed.length} unfinished download folder${removed.length === 1 ? '' : 's'}: ${removed.join(', ')}`)
   })
 
   // One pass at startup, before anything is in use. This is the only moment the whole cache

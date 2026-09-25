@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkDownloadUrl } from './url-import'
+import { checkDownloadUrl, downloadConfirmation } from './url-import'
 
 const refused = (raw: unknown): string => {
   const checked = checkDownloadUrl(raw)
@@ -15,8 +15,73 @@ const refused = (raw: unknown): string => {
 
 test('a web page address passes, normalised, with its host named', () => {
   const checked = checkDownloadUrl('  https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10  ')
-  assert.deepEqual(checked, { ok: true, url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10', host: 'www.youtube.com' })
-  assert.ok(checkDownloadUrl('http://127.0.0.1:8080/clip.mp4').ok, 'plain http passes too')
+  assert.deepEqual(checked, { ok: true, url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10', host: 'www.youtube.com', query: '?v=dQw4w9WgXcQ&t=10' })
+  assert.ok(checkDownloadUrl('http://video.example:8080/clip.mp4').ok, 'plain http passes too')
+})
+
+test('loopback, private, link-local and CGNAT addresses and localhost names are refused, with what to use instead', () => {
+  const local = [
+    'http://127.0.0.1:8080/clip.mp4',
+    'http://127.1.2.3/',
+    'http://2130706433/', // 127.0.0.1 as one number: the URL parser makes it dotted before the check
+    'http://0x7f.1/',
+    'http://0.0.0.0/',
+    'http://10.0.0.5/',
+    'http://172.16.0.1/',
+    'http://172.31.255.255/',
+    'http://192.168.1.1/',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://100.64.0.1/',
+    'http://100.127.255.255/',
+    'http://[::1]/',
+    'http://[::]/',
+    'http://[0:0:0:0:0:0:0:1]/',
+    'http://[::ffff:127.0.0.1]/',
+    'http://[::ffff:c0a8:101]/',
+    'http://[fc00::1]/',
+    'http://[fd12:3456::1]/',
+    'http://[fe80::1]/',
+    'http://[febf::1]/',
+    'http://localhost:3000/',
+    'http://LOCALHOST/',
+    'http://localhost./',
+    'http://printer.localhost/'
+  ]
+  for (const url of local) assert.match(refused(url), /not a public website\..*public web pages only.*import_media/, url)
+  assert.match(refused('http://169.254.169.254/'), /link-local/)
+  assert.match(refused('http://[::1]/'), /loopback/)
+  // Positive controls: the nearest public addresses on either side of every range still pass.
+  const nearby = [
+    'http://172.15.255.255/',
+    'http://172.32.0.1/',
+    'http://100.63.255.255/',
+    'http://100.128.0.1/',
+    'http://11.0.0.1/',
+    'http://169.253.1.1/',
+    'http://192.169.0.1/',
+    'http://[2606:4700::1111]/',
+    'http://[fec0::1]/',
+    'https://localhost.example.com/',
+    'https://mylocalhost.com/'
+  ]
+  for (const url of nearby) assert.ok(checkDownloadUrl(url).ok, url)
+  // The test-only allowance admits loopback, for the downloader's real-binary test and nothing else.
+  assert.ok(checkDownloadUrl('http://127.0.0.1:8080/clip.mp4', { allowPrivateHosts: true }).ok)
+})
+
+test('the confirmation shows the query on its own line and warns about an embedded address or a long query', () => {
+  const confirm = (url: string): string => {
+    const checked = checkDownloadUrl(url)
+    assert.ok(checked.ok)
+    return downloadConfirmation(checked).detail
+  }
+  assert.equal(downloadConfirmation({ url: 'https://a.example/v', host: 'a.example', query: '' }).message, 'Download a video from a.example?')
+  assert.match(confirm('https://a.example/watch?v=1'), /\nQuery string \(sent to a\.example\):\n\?v=1$/)
+  assert.match(confirm('https://a.example/watch?u=http://b.example'), /contains another web address/)
+  assert.match(confirm('https://a.example/watch?u=%2F%2Fb.example'), /contains another web address/)
+  assert.match(confirm(`https://a.example/watch?t=${'x'.repeat(101)}`), /is 104 characters long/)
+  // Positive control: exactly 100 characters, no address, is shown without a warning.
+  assert.doesNotMatch(confirm(`https://a.example/watch?t=${'x'.repeat(97)}`), /Warning/)
 })
 
 test('yt-dlp options passed as the address are refused, not run', () => {

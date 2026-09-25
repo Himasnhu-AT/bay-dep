@@ -21,7 +21,7 @@
 import { extname, isAbsolute, resolve } from 'node:path'
 import { isCompositionPath } from '@shared/composition'
 import { VALIDATE_ONLY } from '@shared/mcp'
-import { checkDownloadUrl } from '@shared/url-import'
+import { checkDownloadUrl, downloadConfirmation } from '@shared/url-import'
 import { findFileReference } from './file-args'
 
 export type CallOrigin = 'socket' | 'in-app'
@@ -132,7 +132,8 @@ export async function checkCallPolicy(
       if (!env.confirm) {
         return `Downloading needs the user's go-ahead in bay's window, and bay could not ask. Nothing was downloaded.`
       }
-      const agreed = await env.confirm(`Download a video from ${checked.host}?`, `bay's agent wants to download:\n${checked.url}`)
+      const { message, detail } = downloadConfirmation(checked)
+      const agreed = await env.confirm(message, detail)
       return agreed
         ? null
         : `The user declined the download from ${checked.host}. Nothing was downloaded; do not ask again unless they bring it up.`

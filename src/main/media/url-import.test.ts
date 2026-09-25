@@ -13,11 +13,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { findYtDlp, importFromUrl, ytDlpArgs, ytDlpMissingMessage } from './url-import'
+import { DOWNLOAD_COMPLETE_MARKER, findYtDlp, importFromUrl, sweepIncompleteDownloads, ytDlpArgs, ytDlpMissingMessage } from './url-import'
 import { vendoredTools } from '../ffmpeg/vendor'
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'bay-url-import-'))
@@ -35,6 +35,7 @@ test('the argument list shuts every door and ends with the address after --', ()
   assert.equal(after('--merge-output-format'), 'mp4')
   assert.match(after('--format') ?? '', /height<=\?1080/)
   assert.equal(after('--max-filesize'), String(2 * 1024 ** 3))
+  assert.equal(after('--match-filter'), '!is_live', 'a live stream is refused, not recorded until the clock runs out')
   assert.ok(!args.some((a) => a.startsWith('--exec') && a !== '--no-exec'), 'no exec hook, ever')
   // Without bay's ffmpeg yt-dlp is left to find its own rather than handed an empty path.
   assert.ok(!ytDlpArgs({ url: 'https://a.example/', outDir: '/d', ffmpeg: null }).includes('--ffmpeg-location'))
@@ -67,7 +68,7 @@ const FAKE = join(scratch(), 'fake-yt-dlp.mjs')
 writeFileSync(
   FAKE,
   `
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 const args = process.argv.slice(2)
@@ -79,6 +80,9 @@ else if (mode === 'old') { console.error('Usage: yt-dlp [OPTIONS] URL\\n\\nyt-dl
 else if (mode === 'error') { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'half.mp4.part'), 'x'); console.error('WARNING: something\\nERROR: [generic] Unable to download webpage: HTTP Error 404'); process.exit(1) }
 else if (mode === 'hang') { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'half.mp4.part'), 'x'); setInterval(() => {}, 1000) }
 else if (mode === 'nothing') { process.exit(0) }
+else if (mode === 'grow') { mkdirSync(dir, { recursive: true }); const p = join(dir, 'stream.mp4.part'); writeFileSync(p, ''); setInterval(() => appendFileSync(p, Buffer.alloc(1 << 20)), 20) }
+else if (mode === 'fragments') { const f = join(dir, 'frags'); mkdirSync(f, { recursive: true }); let n = 0; setInterval(() => writeFileSync(join(f, 'seg' + (n++) + '.ts.part'), Buffer.alloc(1 << 20)), 20) }
+else if (mode === 'big') { mkdirSync(dir, { recursive: true }); const p = join(dir, 'Big [x].mp4'); writeFileSync(p, Buffer.alloc(5 << 20)); console.log(p) }
 `
 )
 
@@ -157,6 +161,84 @@ test('a download that runs past the limit is killed and leaves nothing', { timeo
   assert.deepEqual(readdirSync(downloadsDir), [])
 })
 
+test('a download that grows past the cap with no size announced is stopped, and leaves nothing', { timeout: 15_000 }, async () => {
+  for (const mode of ['grow', 'fragments']) {
+    const downloadsDir = scratch()
+    const started = Date.now()
+    const result = await importFromUrl('https://video.example/live', deps(mode, downloadsDir, { maxBytes: 3 * 1024 ** 2, pollMs: 50, timeoutMs: 10_000 }))
+    assert.equal(result.ok, false, mode)
+    assert.match(result.ok ? '' : result.error, /passed bay's 3 MB limit \(\d+ MB so far\), so it was stopped and nothing was kept/, mode)
+    assert.ok(Date.now() - started < 5_000, `${mode}: stopped by the cap, not by the clock`)
+    assert.deepEqual(readdirSync(downloadsDir), [], `${mode}: the parts are gone`)
+  }
+})
+
+test('a file that lands over the cap between two measurements is still refused; under the cap it is kept', async () => {
+  const downloadsDir = scratch()
+  // Polling far slower than the stand-in, so only the final measurement can see it.
+  const over = await importFromUrl('https://video.example/a', deps('big', downloadsDir, { maxBytes: 4 * 1024 ** 2, pollMs: 60_000 }))
+  assert.match(over.ok ? '' : over.error, /passed bay's 4 MB limit \(5 MB so far\)/)
+  assert.deepEqual(readdirSync(downloadsDir), [])
+  const under = await importFromUrl('https://video.example/a', deps('big', downloadsDir, { maxBytes: 6 * 1024 ** 2, pollMs: 60_000 }))
+  assert.ok(under.ok && 'path' in under, JSON.stringify(under))
+})
+
+test('one download at a time: a second is refused with when to retry, and starts once the first is done', { timeout: 10_000 }, async () => {
+  const downloadsDir = scratch()
+  const count = spawned.length
+  const first = importFromUrl('https://video.example/a', deps('hang', downloadsDir, { timeoutMs: 1_000 }))
+  const second = await importFromUrl('https://other.example/b', deps('ok', downloadsDir))
+  assert.equal(second.ok, false)
+  assert.match(second.ok ? '' : second.error, /Another import_url download is still running.*Nothing was started for other\.example.*then call import_url again/)
+  assert.equal((await first).ok, false)
+  assert.equal(spawned.length, count + 1, 'only the first ran')
+  // Positive control: with the first finished, the same call starts.
+  const third = await importFromUrl('https://other.example/b', deps('ok', downloadsDir))
+  assert.ok(third.ok, JSON.stringify(third))
+})
+
+test('an address on this Mac or a private network is refused before yt-dlp runs; only the test allowance admits it', async () => {
+  const downloadsDir = scratch()
+  const count = spawned.length
+  for (const url of ['http://127.0.0.1:9/clip.mp4', 'http://localhost/clip.mp4', 'http://192.168.0.2/clip.mp4', 'http://[::1]/clip.mp4']) {
+    const result = await importFromUrl(url, deps('ok', downloadsDir))
+    assert.match(result.ok ? '' : result.error, /not a public website/, url)
+  }
+  assert.equal(spawned.length, count, 'nothing was run')
+  const allowed = await importFromUrl('http://127.0.0.1:9/clip.mp4', deps('ok', downloadsDir, { allowPrivateHostsForTests: true }))
+  assert.ok(allowed.ok, JSON.stringify(allowed))
+})
+
+test('a finished download is marked; a crash’s unmarked folders are swept at startup, and nothing else is', { timeout: 10_000 }, async () => {
+  const downloadsDir = scratch()
+  const done = await importFromUrl('https://video.example/a', deps('ok', downloadsDir))
+  assert.ok(done.ok && 'path' in done)
+  const finished = readdirSync(downloadsDir)[0]!
+  assert.ok(existsSync(join(downloadsDir, finished, DOWNLOAD_COMPLETE_MARKER)), 'the marker is written once the file is checked')
+
+  const orphan = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d'
+  mkdirSync(join(downloadsDir, orphan))
+  writeFileSync(join(downloadsDir, orphan, 'half.mp4.part'), 'x')
+  mkdirSync(join(downloadsDir, 'not-a-download'))
+  writeFileSync(join(downloadsDir, '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'), 'a file, not a folder')
+
+  // A download in progress has no marker yet and must survive a sweep that runs beside it.
+  const hanging = importFromUrl('https://video.example/h', deps('hang', downloadsDir, { timeoutMs: 1_500 }))
+  let live: string | undefined
+  for (let i = 0; i < 100 && !live; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    live = readdirSync(downloadsDir).find((name) => ![finished, orphan, 'not-a-download', '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'].includes(name))
+  }
+  assert.ok(live, 'the hanging download made its folder')
+
+  const removed = await sweepIncompleteDownloads(downloadsDir)
+  assert.deepEqual(removed, [orphan])
+  assert.deepEqual(readdirSync(downloadsDir).sort(), [finished, live, 'not-a-download', '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'].sort())
+  assert.ok(existsSync(done.path), 'the finished download is still there to play from')
+  await hanging
+  assert.deepEqual(await sweepIncompleteDownloads(join(downloadsDir, 'missing')), [], 'no downloads folder yet is not an error')
+})
+
 // ---------------------------------------------------------------------------
 // The real yt-dlp, against 127.0.0.1
 // ---------------------------------------------------------------------------
@@ -187,13 +269,57 @@ test('the real yt-dlp accepts every argument and downloads from a local server i
     const result = await importFromUrl(`http://127.0.0.1:${port}/clip.mp4`, {
       downloadsDir,
       ffmpeg: FFMPEG,
-      locate: async () => realYtDlp
+      locate: async () => realYtDlp,
+      allowPrivateHostsForTests: true
     })
     assert.ok(result.ok && 'path' in result, JSON.stringify(result))
     assert.ok(requests > 0, 'the request reached the local server')
     assert.ok(result.path.endsWith('.mp4'), result.path)
     assert.deepEqual(readFileSync(result.path), bytes, 'the file is the one served')
   } finally {
+    server.close()
+  }
+})
+
+test('the real yt-dlp, fed a chunked stream with no length, is stopped at bay’s cap', { skip: REAL_SKIP, timeout: 60_000 }, async () => {
+  // yt-dlp's --max-filesize compares only a Content-Length it is given: with none, it downloads on.
+  const chunk = Buffer.alloc(1024 * 1024)
+  let served = 0
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'video/mp4' }) // chunked: no content-length
+    if (request.method === 'HEAD') return void response.end()
+    let n = 0
+    const timer = setInterval(() => {
+      if (response.destroyed || n >= 20) {
+        clearInterval(timer)
+        response.end()
+        return
+      }
+      response.write(chunk)
+      served += chunk.length
+      n++
+    }, 60)
+    response.on('close', () => clearInterval(timer))
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as { port: number }).port
+  const dir = scratch()
+  const downloadsDir = join(dir, 'downloads')
+  try {
+    const result = await importFromUrl(`http://127.0.0.1:${port}/stream.mp4`, {
+      downloadsDir,
+      ffmpeg: FFMPEG,
+      locate: async () => realYtDlp,
+      maxBytes: 4 * 1024 * 1024,
+      pollMs: 100,
+      allowPrivateHostsForTests: true
+    })
+    assert.equal(result.ok, false, JSON.stringify(result))
+    assert.match(result.ok ? '' : result.error, /passed bay's 4 MB limit .* so it was stopped and nothing was kept/)
+    assert.ok(served < 20 * 1024 * 1024, `stopped mid-stream, after ${served} bytes of 20 MB`)
+    assert.deepEqual(readdirSync(downloadsDir), [], 'the partial file is gone')
+  } finally {
+    server.closeAllConnections()
     server.close()
   }
 })
