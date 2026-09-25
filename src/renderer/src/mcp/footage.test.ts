@@ -22,13 +22,16 @@ let installed = true
 let indexAnswer: VisionIndexAnswer
 let searchAnswer: VisionSearchAnswer
 let jobRunning = false
+/** The job status reports when none is running: the last one this session, if any. */
+let lastJob: VisionIndexJob | null = null
+let planAnswer: VisionIndexAnswer | null = null
 
 const status = (): VisionStatus => ({
   installed,
   modelDir: '/models',
   bytesOnDisk: 0,
   download: null,
-  index: jobRunning ? { ...JOB, filesTotal: 3, filesDone: 1, framesDone: 40, current: 'beach.mov' } : null
+  index: jobRunning ? { ...JOB, filesTotal: 3, filesDone: 1, framesDone: 40, current: 'beach.mov' } : lastJob
 })
 
 ;(globalThis as { window?: unknown }).window = {
@@ -37,7 +40,7 @@ const status = (): VisionStatus => ({
       status: async () => status(),
       index: async (assets: VisionAssetRef[], options?: { dryRun?: boolean; download?: boolean }) => {
         calls.push({ method: 'index', args: [assets, options] })
-        return indexAnswer
+        return options?.dryRun && planAnswer ? planAnswer : indexAnswer
       },
       cancelIndex: async () => {
         calls.push({ method: 'cancelIndex', args: [] })
@@ -88,6 +91,8 @@ beforeEach(() => {
   calls.length = 0
   installed = true
   jobRunning = false
+  lastJob = null
+  planAnswer = null
   indexAnswer = { ok: true, started: true, downloading: false, job: { ...JOB, phase: 'planning', checking: 2, filesTotal: 0 } }
   searchAnswer = { ok: true, hits: [], separation: 0, framesSearched: 0, unindexed: [] }
   useEditor.getState().setAutoDownloadModels(false)
@@ -294,4 +299,23 @@ test('each job state has its own sentence', () => {
   assert.match(describeJob({ ...base, state: 'running', phase: 'planning', checking: 2, filesTotal: 1, alreadyIndexed: 1 }), /2 of 4 checked, 1 to index; 1 already indexed/)
   assert.equal(describeJob({ ...base, state: 'done', filesTotal: 0, filesDone: 0, alreadyIndexed: 4 }), 'All 4 files were already indexed.')
   assert.match(describeJob({ ...base, state: 'done', filesDone: 4, failed: [{ assetId: 'x', name: 'x.mov', error: 'moov atom not found' }] }), /3 of 4 files indexed.*x\.mov \(moov atom not found\)/)
+})
+
+test('a bare call after a job finished reports it and starts nothing; a new file still starts a job', async () => {
+  lastJob = { ...JOB, state: 'done', phase: 'indexing', checking: 0, filesTotal: 2, filesDone: 2, framesDone: 19, finishedAt: 1 }
+  planAnswer = { ok: true, started: false, plan: { ...PLAN, indexed: 2, toIndex: 0, frames: 0, estimatedSeconds: 0 }, job: lastJob }
+  const polled = await run('index_footage', {})
+  assert.ok(polled.ok, polled.ok ? '' : polled.error)
+  const value = polled.value as { done?: boolean; lastJob?: string; started?: boolean }
+  assert.equal(value.done, true)
+  assert.match(value.lastJob ?? '', /2 of 2 files indexed \(19 frames\)/)
+  assert.deepEqual(calls.map((c) => (c.args[1] as { dryRun?: boolean }).dryRun), [true], 'only the plan was asked for; no job started')
+
+  // The same poll with a new file in the project: the plan says one to index, so a job starts.
+  calls.length = 0
+  planAnswer = { ok: true, started: false, plan: { ...PLAN, indexed: 2, toIndex: 1, frames: 10 }, job: lastJob }
+  const fresh = await run('index_footage', {})
+  assert.ok(fresh.ok)
+  assert.equal((fresh.value as { started?: boolean }).started, true)
+  assert.deepEqual(calls.map((c) => (c.args[1] as { dryRun?: boolean }).dryRun), [true, false])
 })

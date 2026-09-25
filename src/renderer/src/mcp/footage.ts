@@ -94,6 +94,21 @@ export async function indexFootage(args: Record<string, unknown>): Promise<Recor
 
   const refs = footageRefs(project().assets, args['assetIds'], resolveAsset)
   const dryRun = args[VALIDATE_ONLY] === true
+  // A bare call after a job has finished is how an agent polls, as the `next` below tells it to.
+  // Starting a job there answered with that new job's first moment ("0 of 1 checked") on every
+  // poll, so an agent following the instructions polled for ever. Ask first whether anything is
+  // new: the plan is cheap here, since the job just hashed these files and the keys are cached.
+  if (args['assetIds'] === undefined && !dryRun && status.index && status.installed) {
+    const check = await api.vision.index(refs, { dryRun: true })
+    if (check.ok && !check.started && check.plan.toIndex === 0) {
+      return {
+        done: true,
+        lastJob: describeJob(status.index),
+        indexed: describePlan(check.plan),
+        next: 'Nothing new to index. search_footage searches every indexed file.'
+      }
+    }
+  }
   const answer = await api.vision.index(refs, { dryRun, download: useEditor.getState().autoDownloadModels })
   if (!answer.ok) fail(answer.error)
   if (answer.started) {
