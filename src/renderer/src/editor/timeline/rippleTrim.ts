@@ -137,6 +137,17 @@ export function applyRippleTrim(itemId: string, edge: 'start' | 'end', toFrame: 
     if (!trimmed) {
       return 'The trim was refused: it would run past the footage, or into a linked clip’s neighbour on another track.'
     }
+    // A grow the store stopped short (the footage ran out) moved what follows by the whole ask;
+    // pull it back by the shortfall, or a gap opens that nothing reports. The head ripple ends
+    // with the clip's start back where it began, so its shortfall is how far past it the start is.
+    if (plan.before.length > 0 && now) {
+      const shortfall = edge === 'end' ? plan.trim.toFrame - itemEnd(now) : now.from - plan.trim.toFrame
+      if (shortfall > 0) {
+        const back = plan.before.map((move) => ({ ...move, from: move.from - shortfall }))
+        const moved = useEditor.getState().moveItemsToTracks(back)
+        if ('error' in moved) warning = `Trimmed as far as the footage goes, but a gap was left open: ${moved.error}`
+      }
+    }
     if (plan.after.length > 0) {
       const moved = useEditor.getState().moveItemsToTracks(plan.after)
       if ('error' in moved) warning = `Trimmed, but the gap was left open: ${moved.error}`

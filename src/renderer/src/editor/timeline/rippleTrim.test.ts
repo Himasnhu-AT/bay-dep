@@ -155,3 +155,16 @@ test('a refused head grow leaves no undo step and no unsaved mark; a legal one l
   assert.equal(useEditor.getState().past.length, past + 1, 'a legal grow is one undo step')
   assert.equal(useEditor.getState().dirty, true)
 })
+
+test('ripple end, grown past the footage: stops at the footage and what follows moves only as far', () => {
+  const ids = load()
+  // `b` reads 2 s to 4 s of 20 s footage at 30 fps: 480 frames of tail room, asked for 600.
+  const past = useEditor.getState().past.length
+  assert.equal(applyRippleTrim(ids.b, 'end', 720), null)
+  const [, end] = span(ids.b)
+  // The specimen really was stopped short, or this test checks nothing.
+  assert.equal(end, 600, 'the store stopped the tail at the end of the footage')
+  assert.deepEqual(span(ids.c), [end + 30, end + 60], 'c keeps its 30-frame gap: no hole opened behind the stop')
+  assert.deepEqual(span(ids.d), [100, 130], 'V2 is another track and must not move')
+  assert.equal(useEditor.getState().past.length, past + 1, 'one undo step')
+})
