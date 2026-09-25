@@ -26,7 +26,7 @@ import { useDrag } from '@/lib/useDrag'
 import { newId, selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { editingPrefs } from '@/store/editing-prefs'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
-import { junctionsForTrack } from '@/lib/junctions'
+import { junctionsForTrack, type Junction } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
 import { JunctionMarkers } from './JunctionMarkers'
@@ -282,6 +282,21 @@ export function Timeline(): ReactNode {
           .find((junction) => junction.key === junctionKey) ?? null)
   const contentFrames = Math.max(duration, fps * 10) + fps * TAIL_SECONDS
   const contentWidth = Math.max(contentFrames * pixelsPerFrame, view.width - HEADER_WIDTH, 320)
+
+  /**
+   * A click on a cut: the two clips either side are selected and the Inspector shows its
+   * Transition tab, where the cut's transition is edited inline, as in Resolve. ⌥-click, or a
+   * page with no Inspector showing (only the Edit page has one), opens the transition dialog here.
+   */
+  const openJunctionAt = useCallback((junction: Junction, how: { dialog: boolean }): void => {
+    const store = useEditor.getState()
+    if (how.dialog || store.page !== 'edit' || store.hiddenRegions.inspector) {
+      setJunctionKey(junction.key)
+      return
+    }
+    store.select([junction.from.id, junction.to.id])
+    store.setInspectorTab('transition')
+  }, [])
 
   // -- geometry -------------------------------------------------------------
 
@@ -1150,7 +1165,7 @@ export function Timeline(): ReactNode {
                       track={track}
                       pixelsPerFrame={pixelsPerFrame}
                       height={height}
-                      onOpen={(junction) => setJunctionKey(junction.key)}
+                      onOpen={openJunctionAt}
                     />
                   )}
                 </div>
