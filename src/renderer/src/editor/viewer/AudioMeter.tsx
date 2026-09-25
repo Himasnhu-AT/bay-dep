@@ -228,33 +228,44 @@ export function AudioMeter({
     </Tooltip>
   )
 
-  const meter = (
-    <Tooltip side="top" label={tipLabel} detail={playing ? peakText || liveDetail : idleDetail}>
-      <canvas
-        ref={canvasRef}
-        role="img"
-        aria-label={name}
-        tabIndex={0}
-        className={cn('rounded-xs', className ?? (vertical ? 'h-40' : 'w-[88px]'))}
-        style={vertical ? { width: thickness } : { height: thickness }}
-      />
-    </Tooltip>
-  )
+  const tip = { side: 'top' as const, label: tipLabel, detail: playing ? peakText || liveDetail : idleDetail }
 
   if (!vertical) {
     return (
       <div className="flex shrink-0 items-center gap-1" onPointerEnter={describe} onFocus={describe}>
-        {meter}
+        <Tooltip {...tip}>
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label={name}
+            tabIndex={0}
+            className={cn('rounded-xs', className ?? 'w-[88px]')}
+            style={{ height: thickness }}
+          />
+        </Tooltip>
         {clipLight}
       </div>
     )
   }
 
+  // Vertical, the canvas is sized by a box that takes the strip's remaining height, and measured
+  // from it. A canvas left at an auto CSS height takes its height from its own pixel buffer, so
+  // each resize to `height × dpr` would grow it again on the next measure.
   return (
-    <div className="flex min-h-0 flex-col items-center gap-1.5" onPointerEnter={describe} onFocus={describe}>
+    <div className="flex min-h-0 flex-1 flex-col items-center gap-1.5" onPointerEnter={describe} onFocus={describe}>
       {clipLight}
       <div className="flex min-h-0 flex-1 items-stretch gap-1">
-        {meter}
+        <Tooltip {...tip}>
+          <div className={cn('relative min-h-0 rounded-xs', className ?? 'min-h-24')} style={{ width: thickness }}>
+            <canvas
+              ref={canvasRef}
+              role="img"
+              aria-label={name}
+              tabIndex={0}
+              className="absolute inset-0 size-full rounded-xs"
+            />
+          </div>
+        </Tooltip>
         {scale && <MeterScale />}
       </div>
       {readout && (
